@@ -36,6 +36,7 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
     }, [open, controller, recovery]);
     const page = state.page, detail = state.detail;
     const accounting = recoveryState.status?.accounting;
+    const executionGrant = recoveryState.status?.managed?.executionGrant;
     return h(Fragment, null,
       h('button', { type: 'button', style: buttonStyle(), onClick: () => setOpen(true) }, '运行与子任务'),
       open ? h(ResourceDialog, { title: '本会话的运行与子任务', detail: '查看运行用量、恢复状态及各轮子任务。子任务结果仍需父任务验收。', wide: true, onClose: () => setOpen(false) },
@@ -44,7 +45,12 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
         accounting ? h('section', { 'aria-label': 'Native 运行用量' },
           h('p', null, `运行用量${accounting.incomplete ? '（统计不完整，显示已知用量）' : accounting.final ? '' : '（截至目前）'}：模型 ${accounting.total.modelCalls} 次 · 工具 ${accounting.total.toolCalls} 次 · 输入 ${accounting.total.inputTokens} / 输出 ${accounting.total.outputTokens} tokens。`),
           h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,
-        recoveryState.status && recoveryState.status.state !== 'closed' ? h('section', { 'aria-label': '原运行恢复' },
+        executionGrant && (executionGrant.blockedReason || recoveryState.status.managed.commandState === 'discarded')
+          ? h('section', { 'aria-label': '任务执行授权' }, h('p', null,
+            recoveryState.status.managed.commandState === 'discarded' ? '排队任务已因执行授权撤销而关闭。'
+              : ['execution_grant_suspended', 'execution_grant_admission_paused'].includes(executionGrant.blockedReason)
+                ? '任务正在排队，等待执行授权恢复。' : '任务正在排队，执行授权需要重新确认。')) : null,
+        recoveryState.status && recoveryState.status.state !== 'closed' && !executionGrant?.blockedReason ? h('section', { 'aria-label': '原运行恢复' },
           h('p', null, recoveryState.status.managed && recoveryState.status.phase === 'paused'
             ? '原托管运行已暂停，请通过原控制端恢复。'
             : recoveryState.status.managed && recoveryState.status.phase === 'awaiting_interaction'

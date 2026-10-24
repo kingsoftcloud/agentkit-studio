@@ -14,7 +14,7 @@ import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { command, permitIssuer } from '../tests/fixtures/native-managed-kernel.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  'mixed-history': { type: 'boolean' } } });
+  'mixed-history': { type: 'boolean' }, 'execution-grants': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source), archive = resolve(values.archive);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-managed-children-')));
@@ -22,6 +22,8 @@ const archiveSha256 = createHash('sha256').update(await readFile(archive)).diges
 console.log(`Managed child evidence: ${root}`);
 const issuer = permitIssuer(), requests = [], failures = [], receipts = [], commands = [], runs = [];
 const ordinaryRuns = [];
+const grantEvidence = [];
+let discardedEvidence;
 let harness, ledger, localLedger, scope, identity, current, parentStep, childStep, continued;
 const admissions = async () => (await readFile(join(root, 'managed-tool-admissions.jsonl'), 'utf8').catch(error => {
   if (error.code === 'ENOENT') return ''; throw error;
@@ -30,6 +32,19 @@ async function until(check, label) {
   const deadline = Date.now() + 15000;
   for (;;) { assert.deepEqual(failures, []); const result = await check(); if (result) return result;
     assert.ok(Date.now() < deadline, `Timed out: ${label}`); await new Promise(resolve => setTimeout(resolve, 15)); }
+}
+async function grantControl(action, operation, fields = {}, expected = true) {
+  const id = randomUUID(), request = { id, action, operation, ...fields };
+  const pending = join(root, `grant-proof-request-${id}.tmp`);
+  await writeFile(pending, canonical(request));
+  // Atomic publication so the actual Host never observes a partial request.
+  const { rename } = await import('node:fs/promises'); await rename(pending, join(root, 'grant-proof-request.json'));
+  const result = await until(async () => {
+    try { return JSON.parse(await readFile(join(root, `grant-proof-response-${id}.json`), 'utf8')); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  }, `trusted grant ${action}/${operation}`);
+  assert.equal(result.ok, expected, canonical(result)); grantEvidence.push({ request, result });
+  return expected ? result.value : result;
 }
 async function rpc(method, payload = identity, expected = true) {
   const { origin, cookie } = JSON.parse(await readFile(join(root, 'control-auth.json'), 'utf8'));
@@ -50,6 +65,14 @@ const server = createServer(async (request, response) => {
       assert.deepEqual((body.tools ?? []).map(row => row.function.name), ['read_workspace_file']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       if (childStep++ === 0) {
+        if (values['execution-grants'] && !current.startsWith('ordinary-')) {
+          const before = await grantControl(current, 'get'); assert.equal(before.in_flight_message_ids.length, 1);
+          if (current === 'cancel') {
+            await grantControl(current, 'admission', { allowed: false, options: { expected_revision: 3, idempotency_key: 'pause-in-flight' } });
+            assert.equal((await grantControl(current, 'require')).state, 'active');
+          } else await grantControl(current, 'state', { state: current === 'send' ? 'revoked' : 'suspended',
+            options: { expected_revision: current === 'send' ? 1 : 3, idempotency_key: 'state-in-flight' } });
+        }
         const history = await rpc('sessions/native-child-history'), task = history.tasks[0];
         assert.ok(task); assert.equal(task.canSendInput, true); assert.equal(task.canCancel, true); assert.equal(task.canPromote, true);
         assert.equal(task.resultAvailable, false); assert.equal(task.usageIncludedInParent, false);
@@ -121,7 +144,8 @@ try {
   const plugin = join(root, 'home/profiles/sdk/node_modules/@kingsoftcloud'); await mkdir(plugin, { recursive: true });
   await symlink(installed, join(plugin, 'agentkit-studio'));
   const nodeBin = join(root, 'node-only-bin'); await mkdir(nodeBin); await symlink(process.execPath, join(nodeBin, 'node'));
-  const proof = join(root, 'managed-proof.json'); await writeFile(proof, canonical({ publicKeyPem: issuer.publicKeyPem }));
+  const proof = join(root, 'managed-proof.json'); await writeFile(proof, canonical({ publicKeyPem: issuer.publicKeyPem,
+    executionGrants: Boolean(values['execution-grants']) }));
   const patch = join(root, 'managed-children.patch.yml');
   await writeFile(patch, [
     '- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none',
@@ -151,21 +175,51 @@ try {
   ledger = new SqliteRunStore(join(root, 'studio/native-harness/managed-kernel/runs.sqlite'));
   localLedger = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   const localScope = { ...scope, tenantId: 'local', userId: 'local-user' };
+  if (values['execution-grants']) {
+    const cmd = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
+      payload: { content: 'This queued command must never start', execution_grant_id: 'sdk-occurrence/discard' } });
+    const { origin } = JSON.parse(await readFile(join(root, 'control-auth.json'), 'utf8'));
+    const response = await fetch(origin + '/_agentkit/native-kernel/v1/commands', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: canonical({ command: cmd, permit: issuer.issue(cmd) }), signal: AbortSignal.timeout(10000) });
+    assert.equal(response.status, 202); const receipt = await response.json();
+    const queued = await rpc('sessions/native-recovery-status', { ...identity, runId: receipt.run_id });
+    assert.equal(queued.managed.executionGrant.blockedReason, 'execution_grant_admission_paused'); assert.equal(queued.canResume, false);
+    const barrier = await grantControl('discard', 'state', { state: 'revoked', options: { expected_revision: 1, idempotency_key: 'discard-before-claim' } });
+    assert.deepEqual(barrier.discarded_message_ids, [receipt.message_id]);
+    const discarded = await rpc('sessions/native-recovery-status', { ...identity, runId: receipt.run_id });
+    assert.equal(discarded.state, 'closed'); assert.equal(discarded.phase, 'discarded'); assert.equal(discarded.canResume, false);
+    assert.equal(discarded.managed.commandState, 'discarded'); assert.equal(discarded.managed.owner, 'closed');
+    assert.equal(discarded.managed.executionGrant.qualified, false); assert.equal(discarded.error, null);
+    assert.equal(requests.length, 0); assert.equal((await admissions()).length, 0);
+    discardedEvidence = { command: cmd, receipt, queued, discarded, barrier };
+  }
   for (current of ['send', 'cancel', 'promote']) {
     parentStep = 0; childStep = 0; continued = Promise.withResolvers();
     const cmd = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
-      payload: { content: `Run bounded child ${current}` } });
+      payload: { content: `Run bounded child ${current}`, ...(values['execution-grants'] ? { execution_grant_id: `sdk-occurrence/${current}`,
+        ...(current === 'cancel' ? { execution_grant_attempt_epoch: 7 } : {}) } : {}) } });
     commands.push(cmd);
     const { origin } = JSON.parse(await readFile(join(root, 'control-auth.json'), 'utf8'));
     const send = () => fetch(origin + '/_agentkit/native-kernel/v1/commands', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: canonical({ command: cmd, permit: issuer.issue(cmd) }), signal: AbortSignal.timeout(10000) });
     const accepted = await send(); assert.equal(accepted.status, 202); const receipt = await accepted.json();
     runs.push(receipt.run_id);
+    if (values['execution-grants']) {
+      const barrier = await grantControl(current, 'get'); assert.deepEqual(barrier.queued_message_ids, [receipt.message_id]);
+      assert.equal(barrier.in_flight_message_ids.length, 0); assert.equal(barrier.commands[0].run_id, null);
+      assert.equal(requests.length, current === 'send' ? 0 : current === 'cancel' ? 4 + ordinaryRuns.length * 4 : 7 + ordinaryRuns.length * 4);
+      if (current === 'promote') await grantControl(current, 'state', { state: 'active', options: { expected_revision: 2, idempotency_key: 'release-queue' } });
+      else await grantControl(current, 'admission', { allowed: true, options: { expected_revision: 2, idempotency_key: 'release-queue' } });
+    }
     const status = await until(async () => {
       const state = await rpc('sessions/native-recovery-status', { ...identity, runId: receipt.run_id });
       return state.phase === 'completed' && state.managed.owner === 'closed' && state.managed.executionState === 'idle' ? state : null;
     }, `managed ${current} closes its actual SDK owner`);
     assert.equal(status.managed.executionState, 'idle'); assert.equal(status.canReconcile, false);
+    if (values['execution-grants']) {
+      const barrier = await grantControl(current, 'get'); assert.deepEqual(barrier.settled_message_ids, [receipt.message_id]);
+      assert.deepEqual(barrier.discarded_message_ids, []); assert.deepEqual(barrier.in_flight_message_ids, []);
+    }
     const parent = rootRecord(receipt.run_id), reservation = parent.snapshot.childBudgetReservations[0];
     assert.equal(parent.snapshot.phase, 'completed'); assert.equal(parent.snapshot.finalText, `Parent completed ${current}`);
     // A promoted child completes after the parent's first candidate. Its
@@ -226,6 +280,11 @@ try {
   assert.equal(before.history.filter(row => row.type === 'turn/end').length, 3 + ordinaryRuns.length);
   await writeFile(join(root, 'managed-session-history-warm.json'), canonical(before.history));
   await harness.close(); harness = new DeepSeekHarness(options); await harness.resumeSession(identity.sessionId);
+  if (values['execution-grants']) {
+    assert.equal((await grantControl('send', 'get')).grant.state, 'revoked');
+    assert.equal((await grantControl('promote', 'get')).grant.state, 'suspended');
+    assert.equal((await grantControl('cancel', 'require', {}, false)).code, 'execution_grant_clock_unverified');
+  }
   assert.deepEqual(await rpc('sessions/native-child-history'), history);
   for (let index = 0; index < receipts.length; index++) {
     const { method, control } = receipts[index];
@@ -255,7 +314,8 @@ try {
   assert.ok(processes.every(row => row.path === join(root, 'node-only-bin')));
   await harness.close(); harness = null;
   await writeFile(join(root, 'managed-children-proof.json'), canonical({ contract: 'agentkit.managed-children-proof/v1', archiveSha256,
-    processes, scope, runs, commands, receipts, ordinaryRuns, mixedHistory: Boolean(values['mixed-history']),
+    processes, scope, runs, commands, receipts, ordinaryRuns, mixedHistory: Boolean(values['mixed-history']), grantEvidence,
+    ...(discardedEvidence ? { discardedEvidence } : {}),
     counts: before.counts, publicEvents: before.history.length,
     coldModelCalls: requests.length - before.counts.models, coldToolCalls: (await admissions()).length - before.counts.tools }));
   console.log(`Managed children PASS: three signed Server roots${values['mixed-history'] ? ' alternating with three ordinary SDK turns and combined paged history/results' : ''}, actual SDK owner lifecycle, authenticated send/cancel/promote, exact retry, real workspace reads, distinct-PID cold replay with zero model/tool effects, Node-only PATH.`);

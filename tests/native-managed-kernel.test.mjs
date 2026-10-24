@@ -245,7 +245,7 @@ test('queue bound, unsupported controls and target/config changes fail explicitl
   const f = fixture(t, { queueLimit: 1 }), cmd = command(); await f.receive(cmd);
   assert.equal((await f.receive(command())).status, 'queue_full');
   assert.equal((await f.receive(command({ command_type: 'inject', payload: { context: 'content' } }))).status, 'unsupported');
-  assert.equal((await f.receive(command({ payload: { content: 'work', execution_grant_id: 'grant' } }))).status, 'unsupported');
+  assert.equal((await f.receive(command({ payload: { content: 'work', execution_grant_id: 'grant' } }))).error.code, 'execution_grant_not_found');
   f.config.resolveBinding = ({ command }) => binding(command, undefined, { hostBindingDigest: 'changed' });
   await f.reopen(); await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'NATIVE_KERNEL_BINDING_CHANGED' });
   await f.runtime.close(); assert.throws(() => createManagedNativeKernel({ ...f.config, target: { ...target, tenantId: 'other' } }), { code: 'NATIVE_KERNEL_TARGET_CHANGED' });

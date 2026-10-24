@@ -19,12 +19,27 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
     const receiptWait = value.receiptWait;
     if (value.managed !== undefined) check(value.managed?.contract === 'agentkit.studio-managed-native-recovery/v1'
       && value.managed.controlAuthority === 'server' && ['open', 'closed', 'pending'].includes(value.managed.owner)
-      && ['accepted', 'settled'].includes(value.managed.commandState)
+      && ['accepted', 'settled', 'discarded'].includes(value.managed.commandState)
       && ['queued', 'running', 'idle'].includes(value.managed.executionState)
       && typeof value.managed.commandId === 'string' && value.managed.commandId.trim() && value.managed.commandId.length <= 256
       && typeof value.managed.retryAcceptedCommand === 'boolean'
       && (!value.canResume || value.managed.retryAcceptedCommand) && value.canReconcile === false,
     '托管运行的控制权限与原记录不一致，请刷新核对。');
+    const grant = value.managed?.executionGrant;
+    if (grant !== undefined) check(grant?.contract === 'agentkit.managed-native-execution-grants/v1'
+      && typeof grant.grantId === 'string' && grant.grantId === grant.grantId.trim() && grant.grantId.length > 0 && grant.grantId.length <= 512
+      && ['active', 'suspended', 'revoked', 'missing'].includes(grant.state)
+      && [grant.revision, grant.admissionRevision].every(revision => grant.state === 'missing' ? revision === null : Number.isSafeInteger(revision) && revision >= 1)
+      && (grant.attemptEpoch === null || Number.isSafeInteger(grant.attemptEpoch) && grant.attemptEpoch >= 1)
+      && (grant.expiresAt === null || typeof grant.expiresAt === 'string' && Number.isFinite(Date.parse(grant.expiresAt)))
+      && typeof grant.admissionAllowed === 'boolean' && typeof grant.qualified === 'boolean'
+      && (grant.blockedReason === null || ['not_found', 'scope_mismatch', 'revoked', 'attempt_epoch_mismatch', 'expired',
+        'clock_unverified', 'suspended', 'admission_paused'].some(reason => grant.blockedReason === `execution_grant_${reason}`))
+      && (!grant.blockedReason || !value.canResume && !value.managed.retryAcceptedCommand),
+    '执行授权与原托管运行不一致，请刷新核对。');
+    if (value.managed?.commandState === 'discarded') check(value.state === 'closed' && value.phase === 'discarded'
+      && !value.canResume && !value.managed.retryAcceptedCommand && value.managed.owner === 'closed'
+      && !grant?.qualified, '已丢弃的托管命令不能重新执行。');
     if (receiptWait !== undefined) check(receiptWait?.contract === 'agentkit.native-a2a-receipt-wait/v1'
       && value.phase === 'awaiting_reconciliation'
       && ['operationKey', 'callId'].every(key => typeof receiptWait[key] === 'string' && receiptWait[key].trim()

@@ -12,6 +12,7 @@ import { privateDirectory, privateFile, createPrivate } from '../../packages/age
 import { nativeKernelFactId, projectNativeKernelEvent } from './native-kernel-events.mjs';
 import { createManagedNativeInteractions } from './native-managed-interaction.mjs';
 import { createManagedNativeScopedControls } from './native-managed-scoped-control.mjs';
+import { createManagedNativeExecutionGrants, managedExecutionGrantId } from './native-managed-execution-grants.mjs';
 
 export const MANAGED_NATIVE_KERNEL_CONTRACT = 'agentkit.managed-native-kernel/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -61,11 +62,12 @@ const rejection = (command, code, status = 'rejected') => ({ schema_version: 1, 
   status, error: { code, message: code, retryable: status === 'queue_full', details: {} } });
 
 export function createManagedNativeKernel({ directory, target, permitVerifier, resolveBinding, authorizeInteraction, scopedControl, assertCurrent,
-  queueLimit = 100, clock = Date.now, autoStart = true, beforeCommit, beforeProjection, onWorkerError } = {}) {
+  queueLimit = 100, clock = Date.now, monotonic, autoStart = true, beforeCommit, beforeProjection, onWorkerError } = {}) {
   invariant(text(directory) && object(target) && text(target.tenantId) && text(target.agentInstanceId)
     && typeof permitVerifier?.verify === 'function' && typeof resolveBinding === 'function' && typeof assertCurrent === 'function'
     && Number.isSafeInteger(queueLimit) && queueLimit > 0 && typeof autoStart === 'boolean'
     && (onWorkerError === undefined || typeof onWorkerError === 'function')
+    && (monotonic === undefined || typeof monotonic === 'function')
     && (scopedControl === undefined || typeof scopedControl?.prepare === 'function' && typeof scopedControl?.execute === 'function'),
   'NATIVE_KERNEL_CONFIGURATION_INVALID');
   const bindingTarget = copy(target), verifyPermit = permitVerifier.verify, owner = `native-server-${randomUUID()}`;
@@ -122,6 +124,12 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   };
   const runRow = id => db.prepare('SELECT * FROM managed_runs WHERE run_id=?').get(id);
   const commandRow = id => db.prepare('SELECT * FROM managed_commands WHERE command_id=?').get(id);
+  const grants = createManagedNativeExecutionGrants({ db, guard, transaction, target: bindingTarget, clock, monotonic, hash, wake: schedule,
+    readRun(id) {
+      const row = runRow(id); if (!row) return null;
+      try { return runStore.load(parseNativeJson(row.scope), id); }
+      catch (error) { if (error.code === 'run_not_found') return null; throw error; }
+    } });
   function append(sessionId, facts, command) {
     let seq = db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM managed_events WHERE session_id=?').get(sessionId).seq;
     for (const fact of facts) {
@@ -171,7 +179,13 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       return inspectSession({ scope: parseNativeJson(run.scope), sessionId, runId });
     } });
   const scopedTimer = setInterval(() => {
-    if (schedulingEnabled && !closed) try { scopedControls.drain(); } catch { /* A later trusted recovery retries the original durable delivery. */ }
+    if (schedulingEnabled && !closed) try {
+      scopedControls.drain();
+      // Observe cross-connection grant changes without resolving bindings or
+      // repeatedly trying a suspended FIFO head. No persisted expiry is an anchor.
+      for (const sessionId of grants.readySessions()) if (!active.has(sessionId)
+        && (!failures.has(sessionId) || failures.get(sessionId).startsWith('execution_grant_'))) schedule();
+    } catch { /* A later trusted recovery retries the original durable delivery. */ }
   }, 100);
   scopedTimer.unref?.();
   function projectAll() { for (const row of db.prepare('SELECT * FROM managed_runs ORDER BY rowid').all()) project(row); }
@@ -248,6 +262,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   }
   async function receive(raw, permit) {
     const attempt = copy(permit), command = commandView(raw), { authorization } = await authenticate(command, attempt, command.command_type);
+    managedExecutionGrantId(command);
     const prior = transaction(() => {
       consumeNonce(authorization, command, false); const value = existing(command, authorization);
       if (value) consumeNonce(authorization, command); return value;
@@ -263,7 +278,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     const scoped = command.command_type === 'interrupt' && command.payload.scope_id != null;
     if (!supported.has(command.command_type) || command.payload.scope_id != null && (!scoped || !scopedControls.supported)
       || command.command_type === 'resume' && (command.payload.target.kind !== 'run' || command.payload.input != null)
-      || command.command_type === 'enqueue' && ['legacy_history', 'execution_grant_id', 'execution_grant_attempt_epoch', 'execution_policy_ref', 'teams_context_ref']
+      || command.command_type === 'enqueue' && ['legacy_history', 'execution_policy_ref', 'teams_context_ref']
         .some(key => command.payload[key] != null)) return rejection(command, 'native_control_unsupported', 'unsupported');
     let binding, interactionDigest, managedInteraction, scopedTarget, admitted = false;
     try {
@@ -288,6 +303,8 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         interactionDigest = hash(pending);
       }
       if (command.command_type === 'enqueue') {
+        const grantError = transaction(() => grants.commandError(command));
+        if (grantError) return rejection(command, grantError);
         binding = await resolveOwnedBinding(bindingRequest(command, null, 'admit')); guard();
         check(object(binding) && object(binding.scope) && binding.scope.tenantId === command.tenant_id
           && binding.scope.agentId === command.agent_instance_id && text(binding.buildId) && object(binding.ports));
@@ -301,6 +318,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         consumeNonce(authorization, command); const duplicate = existing(command, authorization); if (duplicate) return duplicate;
         let runId;
         if (binding) {
+          const grantError = grants.commandError(command); if (grantError) return rejection(command, grantError);
           const count = db.prepare("SELECT COUNT(*) AS n FROM managed_commands WHERE session_id=? AND state='accepted'")
             .get(command.session_id).n;
           if (count >= queueLimit) return rejection(command, 'native_queue_full', 'queue_full');
@@ -426,6 +444,10 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         .find(row => parseNativeJson(row.data).command_type === 'enqueue');
       if (!row) return;
       const command = parseNativeJson(row.data), id = parseNativeJson(row.receipt).run_id, run = runRow(id), scope = parseNativeJson(run.scope);
+      // Durable start qualification is serialized with revocation/admission.
+      // It precedes even asynchronous execution resource lookup, and survives
+      // a lost start ACK without changing the original Native Run identity.
+      if (!grants.qualify(row)) continue;
       const resolved = await resolveOwnedBinding(bindingRequest(command, run, 'execute'));
       try {
         guard();
@@ -547,7 +569,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       // Trusted Host diagnostics only. An observer cannot replace the error,
       // retry work, or authorize any Native effect by throwing/rejecting.
       try { Promise.resolve(onWorkerError?.({ sessionId, error })).catch(() => {}); } catch {}
-      failures.set(sessionId, ['NATIVE_KERNEL_BINDING_CHANGED', 'NATIVE_KERNEL_AUTHORITY_LOST', 'lease_busy', 'stale_fence'].includes(error.code)
+      failures.set(sessionId, error.code?.startsWith('execution_grant_') ? error.code : ['NATIVE_KERNEL_BINDING_CHANGED', 'NATIVE_KERNEL_AUTHORITY_LOST', 'lease_busy', 'stale_fence'].includes(error.code)
         ? error.code : 'NATIVE_KERNEL_WORKER_FAILED');
       if (error.code === 'lease_busy' && schedulingEnabled && !closed) {
         // A cold Host can be ready before the killed process's durable lease
@@ -585,7 +607,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   function schedule() {
     if (!schedulingEnabled || closed || timer) return;
     timer = setTimeout(() => { timer = undefined; if (closed) return;
-      try { guard(); for (const row of db.prepare("SELECT DISTINCT session_id FROM managed_commands WHERE state='accepted'").all()) void start(row.session_id).catch(() => {}); }
+      try { guard(); for (const sessionId of grants.readySessions()) void start(sessionId).catch(() => {}); }
       catch { /* Explicit status/drain reports authority failure. */ }
     }, 0);
   }
@@ -617,8 +639,10 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       commandId: row.command_id, buildId: row.build_id, configDigest: hash(configuration),
       commandState: command.state, record, active: active.has(sessionId) && firstAccepted?.run_id === row.run_id,
       executing: executing.has(row.run_id),
+      executionGrant: grants.inspect(command),
       workerError: failures.get(sessionId) ?? null,
       retryable: command.state === 'accepted' && firstAccepted?.run_id === row.run_id && !active.has(sessionId)
+        && !grants.claimError(command)
         && (!record?.lease || record.lease.expiresAt <= clock())
         && !['paused', 'awaiting_interaction', 'awaiting_reconciliation', 'interrupted'].includes(phase) };
   }
@@ -666,18 +690,20 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   try { guard(); projectAll(); wake(); }
   catch (error) { clearInterval(scopedTimer); runStore.close(); db.close(); throw error; }
   return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory, readChildRecord,
+    executionGrants: grants.api,
     presentA2aInteraction: request => interactions.present(request),
     startRecovery() { guard(); schedulingEnabled = true; scopedControls.drain(); schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),
       inject: false, scopedInterrupt: scopedControls.supported, resumeTargets: Object.freeze(['run']), structuredInput: typeof authorizeInteraction === 'function',
-      approval: typeof authorizeInteraction === 'function', executionGrants: false }),
+      approval: typeof authorizeInteraction === 'function', executionGrants: true, teamsContext: false, executionPolicy: false }),
     async getStatus(query, permit) {
       const { request } = await authenticate(query, permit, 'get_status');
       check(text(request.session_id)); projectAll();
       const rows = db.prepare('SELECT * FROM managed_runs WHERE session_id=? ORDER BY rowid').all(request.session_id);
       return { contract: MANAGED_NATIVE_KERNEL_CONTRACT, runs: rows.map(row => {
-        let phase = 'pending'; try { phase = runStore.load(parseNativeJson(row.scope), row.run_id).snapshot.phase; }
+        let phase = commandRow(row.command_id).state === 'discarded' ? 'discarded' : 'pending';
+        try { phase = runStore.load(parseNativeJson(row.scope), row.run_id).snapshot.phase; }
         catch (error) { if (error.code !== 'run_not_found') throw error; }
         return { runId: row.run_id, phase };
       }), workerError: failures.get(request.session_id) ?? null };

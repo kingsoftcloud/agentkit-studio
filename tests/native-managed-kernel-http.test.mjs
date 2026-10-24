@@ -54,6 +54,22 @@ test('unsigned, altered, ambiguous and invalid-cursor requests fail before work 
   const query = f.query(cmd.session_id); assert.deepEqual((await (await f.send('/status', { query, permit: f.issuer.issue(query, 'get_status') })).json()).runs, []);
 });
 
+test('HTTP can reference trusted grants but cannot create them or invoke their management methods', async t => {
+  const f = await fixture(t), spec = { grant_id: 'http-occurrence', tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId,
+    session_id: 'a2a-kernel-managed', owner_ref: 'trusted-composition' };
+  const cmd = command({ payload: { content: 'x', execution_grant_id: spec.grant_id } });
+  const missing = await f.send('/commands', { command: cmd, permit: f.issuer.issue(cmd) });
+  assert.equal(missing.status, 400); assert.equal((await missing.json()).error.code, 'execution_grant_not_found');
+  assert.equal((await f.send('/execution-grants/ensure', { spec })).status, 404);
+  const invalid = command({ payload: { content: 'x', execution_grant_attempt_epoch: 1 } });
+  assert.equal((await f.send('/commands', { command: invalid, permit: f.issuer.issue(invalid) })).status, 400);
+  f.runtime.executionGrants.ensure(spec);
+  assert.equal((await f.send('/commands', { command: cmd, permit: f.issuer.issue(cmd) })).status, 202);
+  f.runtime.executionGrants.setState(spec, 'revoked', { expected_revision: 1, idempotency_key: 'stop' });
+  await f.runtime.drain(cmd.session_id);
+  assert.equal(f.runtime.executionGrants.get(spec).discarded_message_ids.length, 1);
+});
+
 test('closing an idle SSE reader leaves its durable command pending; transport close destroys open streams', async t => {
   const f = await fixture(t), cmd = command(); await f.send('/commands', { command: cmd, permit: f.issuer.issue(cmd) });
   const subscription = { ...f.query(cmd.session_id), after_seq: 1 }, controller = new AbortController();

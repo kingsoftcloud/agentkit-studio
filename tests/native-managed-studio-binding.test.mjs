@@ -202,6 +202,38 @@ test('existing Studio recovery route reads and retries the original managed ledg
     'opaque Native IDs use their persisted SDK delivery position rather than Number(turnId)');
 });
 
+test('existing product recovery route exposes grant-blocked queue and closes discarded work without starting an owner', async t => {
+  const h = await setup(t); h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
+  const issuer = permitIssuer({ target: h.target });
+  const runtime = createManagedNativeKernel({ directory: join(h.root, 'grant-receiver'), target: h.target,
+    permitVerifier: issuer.verifier, assertCurrent: () => true, autoStart: false,
+    resolveBinding: createStudioManagedNativeBinding({ ctx: h.ctx, target: h.target, principal: h.principal,
+      execution: { run: async () => assert.fail('blocked work cannot create an SDK owner') }, resolveHost: async () => h.host }) });
+  t.after(() => runtime.close());
+  h.services.studioManagedNativeSessionControl = createStudioManagedNativeSessionControl({ runtime, target: h.target, principal: h.principal });
+  const route = createSessionRoutes({ getNativeHost: async () => h.host }), request = { agentId: h.target.agentInstanceId, sessionId: h.session.id };
+  const spec = { grant_id: 'product-occurrence', tenant_id: h.target.tenantId, agent_instance_id: request.agentId,
+    session_id: request.sessionId, owner_ref: 'trusted-host' };
+  runtime.executionGrants.ensure(spec);
+  runtime.executionGrants.setAdmission(spec, false, { expected_revision: 1, idempotency_key: 'pause' });
+  const cmd = serverCommand({ ...h.makeCommand(), command_id: randomUUID(), payload: { content: 'Keep original work', execution_grant_id: spec.grant_id } });
+  const receipt = await runtime.receive(cmd, issuer.issue(cmd)); assert.equal(receipt.status, 'accepted');
+  await assert.rejects(runtime.drain(cmd.session_id), { code: 'execution_grant_admission_paused' });
+  const pending = (await route('sessions/native-recovery-status', request)).value;
+  assert.equal(pending.managed.executionGrant.blockedReason, 'execution_grant_admission_paused');
+  assert.equal(pending.managed.executionGrant.qualified, false); assert.equal(pending.canResume, false);
+  assert.equal(pending.state, 'available'); assert.equal(pending.error, null); assert.equal(h.requests.length, 0);
+  assert.doesNotMatch(JSON.stringify(pending), /owner_ref|trusted-host/u);
+  runtime.executionGrants.setState(spec, 'revoked', { expected_revision: 1, idempotency_key: 'stop' });
+  const discarded = (await route('sessions/native-recovery-status', request)).value;
+  assert.equal(discarded.managed.commandState, 'discarded'); assert.equal(discarded.state, 'closed');
+  assert.equal(discarded.phase, 'discarded'); assert.equal(discarded.managed.owner, 'closed');
+  const client = createNativeRecoveryState({ ...request, hostRemote: { nativeRecoveryStatus: async () => discarded,
+    resumeNativeRun: () => assert.fail('discarded work cannot be resumed') } });
+  await client.refresh(); assert.deepEqual(client.getSnapshot().status, discarded); assert.equal(client.getSnapshot().error, '');
+  await client.resume(); client.dispose(); assert.equal(h.requests.length, 0);
+});
+
 // --- Part A: createStudioNativeHarness.resolveManagedBinding (real assembler + real NativeKernel + managed SQLite) ---
 
 for (const failFlush of [false, true]) test(`managed receiver live preview settles only after durable flush (failFlush=${failFlush})`, { timeout: 10000 }, async t => {

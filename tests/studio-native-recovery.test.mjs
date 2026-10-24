@@ -190,6 +190,32 @@ test('the recovery client rejects a managed response that claims local approval 
   }
 });
 
+test('the recovery client retains versioned grant status and refuses forged permission to resume a blocked or discarded command', async () => {
+  const identity = { agentId: 'a', sessionId: 's' };
+  const grant = { contract: 'agentkit.managed-native-execution-grants/v1', grantId: 'occurrence/member', state: 'active',
+    attemptEpoch: null, revision: 1, admissionRevision: 2, admissionAllowed: false, expiresAt: null,
+    qualified: false, blockedReason: 'execution_grant_admission_paused' };
+  const valid = { contract: 'agentkit.studio-native-recovery/v1', ...identity, runId: 'original', state: 'available', phase: 'admitted',
+    canResume: false, canReconcile: false, managed: { contract: 'agentkit.studio-managed-native-recovery/v1',
+      commandId: 'original-command', commandState: 'accepted', controlAuthority: 'server', owner: 'pending', executionState: 'idle',
+      retryAcceptedCommand: false, executionGrant: grant } };
+  let response = structuredClone(valid), executions = 0;
+  const client = createNativeRecoveryState({ ...identity, hostRemote: { nativeRecoveryStatus: async () => response,
+    resumeNativeRun: async () => { executions++; assert.fail('grant status is not execution authority'); } } });
+  await client.refresh(); assert.deepEqual(client.getSnapshot().status, valid);
+  for (const alter of [value => { value.managed.executionGrant.contract = 'future/v2'; },
+    value => { value.managed.executionGrant.blockedReason = 'caller-approved'; },
+    value => { value.managed.executionGrant.revision = 0; }, value => { value.managed.executionGrant.qualified = 'yes'; },
+    value => { value.canResume = true; value.managed.retryAcceptedCommand = true; }]) {
+    response = structuredClone(valid); alter(response); await client.refresh();
+    assert.deepEqual(client.getSnapshot().status, valid); assert.ok(client.getSnapshot().error);
+  }
+  response = { ...structuredClone(valid), state: 'closed', phase: 'discarded', managed: { ...valid.managed,
+    commandState: 'discarded', owner: 'closed', executionGrant: { ...grant, state: 'revoked', revision: 2, blockedReason: null } } };
+  await client.refresh(); assert.equal(client.getSnapshot().error, ''); assert.equal(client.getSnapshot().status.phase, 'discarded');
+  await client.resume(); assert.equal(executions, 0); client.dispose();
+});
+
 test('the recovery client retains valid usage and rejects unknown, inconsistent or foreign accounting without execution', async () => {
   const usage = { inputTokens: 7, outputTokens: 9, modelCalls: 1, toolCalls: 2, cost: .25 };
   const zero = { inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 };

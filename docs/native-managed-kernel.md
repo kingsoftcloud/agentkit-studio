@@ -224,7 +224,49 @@ owner 固定真实 Native parent，SDK numeric turn 与 Server command-id 始终
 以及 resume.input 是分别校验的能力。
 未知格式仍返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化降级。
 inject、checkpoint/continuation resume、resume.input、
-execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
+Teams execution-policy/context 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
+
+### 执行授权：独立于运行与工具权限
+
+可信 Host 可通过 `runtime.executionGrants` 使用
+`agentkit.managed-native-execution-grants/v1`：`ensure/get/require/lookup/renew/setState/setAdmission`。
+这些方法不通过 HTTP 暴露；公共签名 enqueue 只能引用已存在的
+`execution_grant_id` 和可选 `execution_grant_attempt_epoch`。签名不创建授权，授权也不代替工具审批。
+授权绑定 tenant、AgentInstance、session、owner 和不可变 attempt epoch。`capabilities.executionGrants`
+为 true；`teamsContext`、`executionPolicy` 仍为 false，不能据此宣称 Teams 已迁移。
+
+授权、幂等操作回执和命令资格记录保存在同一个 `commands.sqlite`。执行资格取得与授权撤销
+共享 `BEGIN IMMEDIATE` 事务，发生在异步执行 binding 解析之前。保留原命令、message ID 和
+稳定 Run ID；资格不表示模型已运行，不替代 Native fence，也不允许重跑未知副作用。
+撤销只原子丢弃尚未取得资格的 enqueue；已经取得资格的旧式无期限任务继续完成。
+跨进程接管仍使用原 Run 和 Native 意图/回执，不能新建替代 Run。排队暂停只递增
+`admission_revision`，授权状态/续期递增独立的 `revision`；同 session 不同授权仍遵守 FIFO。
+暂停或撤销队首不会屏蔽已存在 Run 的签名控制命令。
+
+`get` 返回 queued/in_flight/discarded/settled message ID 及原命令明细；资格已提交但 Native 尚未
+初始化时属于 in_flight，不能谎报正在调用模型。操作回执与状态变更一同提交，重复操作返回
+当时的原始 barrier；参数不同拒绝。已撤销授权不能恢复。
+
+带期限的授权必须同时指定正整数 attempt epoch 和绝对时区时间 `expires_at`。
+新建/成功续期建立当前进程的单调时钟锚，且可用可信 Host 的 `remaining_ttl_seconds`
+缩短期限；事务锁等待消耗此预算。时钟回拨不能恢复已经耗尽的期限。进程重启会丢失锚：
+读记录、ensure 已有记录、查询或重放旧续期回执均不能恢复资格，必须由可信 Host 重新授权一次
+新的续期。另一个连接续期也不会偷偷给当前进程重建锚。期限精度为 JavaScript 毫秒。
+
+本层负责接收和取得执行资格；`require` 是供可信执行策略在每次模型/工具使用前检查的端口。
+Teams 的实时策略、物料与回调授权仍需单独接入，不能把本层队列授权当成完整的 Teams 能力。
+现有 `sessions/native-recovery-status` 和运行面板保留原控制端权限，显示等待授权或已丢弃状态；
+已丢弃命令不会被显示为可恢复运行。公开状态不包含可信 owner_ref，也不创建本地授权操作。
+
+定向验证：`node --test tests/native-managed-execution-grants.test.mjs tests/native-managed-grant-process.test.mjs`。
+实际 Studio/SDK 对照在普通包上运行：
+
+```sh
+node scripts/verify-studio-native-managed-children.mjs --source <维护版 SDK> --archive <普通 tgz> --execution-grants --mixed-history --keep
+```
+
+它通过可信测试 Host 创建按 occurrence 分隔的授权，公共 HTTP 只提交签名原命令；
+验证未放行时无执行、排队撤销、取得资格后撤销/暂停、原子任务控制、普通与托管交替以及独立进程冷恢复。
 
 ## 托管子任务的现有产品入口
 
@@ -276,7 +318,7 @@ runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有�
 此路径只允许核对同一原操作的回执。Native 工具 `awaiting_interaction` 仍需原 Server
 签名与可信 token 校验，Host 的 A2A 回调不能返回 approval/resume 或新增用户输入。
 Server 的 managed-A2A 结构化交互回复见下节；其他交互生产者和
-execution grants 的缺口仍按上节明确报告。
+Teams execution-policy/context 的缺口仍按上节明确报告。
 
 ## Server 定向取消原 A2A 调用
 

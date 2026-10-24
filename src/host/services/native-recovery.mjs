@@ -135,27 +135,30 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       (intent.payload.calls ?? []).filter(call => call.name === 'call_a2a_agent').map(call => ({ runId: snapshot.runId,
         operationKey: intent.operationKey, callId: call.callId }))) ?? [];
     const managedWaiting = managed && ['paused', 'awaiting_interaction'].includes(snapshot?.phase);
+    const discarded = managed?.commandState === 'discarded';
+    const grantBlocked = managed?.executionGrant?.blockedReason;
     return { contract: STUDIO_NATIVE_RECOVERY_CONTRACT, agentId: request.agentId, sessionId: request.sessionId,
       runId, turn: admission ? inspected.turn : null, accounting,
       ...(managed ? { managed: { contract: STUDIO_MANAGED_NATIVE_RECOVERY_CONTRACT,
         commandId: managed.commandId, commandState: managed.commandState, controlAuthority: 'server',
         executionState: managed.executing ? 'running' : managed.active ? 'queued' : 'idle',
-        owner: admission ? 'open' : inspected.turn ? 'closed' : 'pending',
+        owner: admission ? 'open' : inspected.turn || discarded ? 'closed' : 'pending',
+        ...(managed.executionGrant ? { executionGrant: copy(managed.executionGrant) } : {}),
         retryAcceptedCommand: managed.retryable } } : {}),
       ...(a2aTasks.length ? { a2aTasks } : {}),
       ...(reconciliation ? { reconciliation: copy(reconciliation) } : {}),
       ...(receiptWait ? { receiptWait: { contract: NATIVE_A2A_RECEIPT_WAIT,
         operationKey: reconciliation.operationKey, callId: receiptWait.call.callId } } : {}),
-      state: managed ? waiting || snapshot?.phase === 'interrupted' ? 'reconciliation_required'
+      state: managed ? discarded ? 'closed' : waiting || snapshot?.phase === 'interrupted' ? 'reconciliation_required'
         : terminal(snapshot?.phase) && !admission ? 'closed'
-          : managedWaiting ? 'available' : driving ? 'recovering' : managed.workerError || applicable?.error ? 'failed' : 'available'
+          : managedWaiting || grantBlocked ? 'available' : driving ? 'recovering' : managed.workerError || applicable?.error ? 'failed' : 'available'
         : !admission ? 'closed' : driving ? 'recovering' : waiting ? 'reconciliation_required'
         : record?.snapshot.phase === 'interrupted' ? 'reconciliation_required' : applicable?.error ? 'failed' : 'available',
-      phase: record?.snapshot.phase ?? (admission || managed ? 'admitted' : null),
+      phase: record?.snapshot.phase ?? (discarded ? 'discarded' : admission || managed ? 'admitted' : null),
       canResume: managed ? Boolean(managed.retryable && (admission || !terminal(snapshot?.phase)))
         : Boolean(admission && !driving && (!waiting || receiptWait) && record?.snapshot.phase !== 'interrupted'),
       canReconcile: !managed && Boolean(admission && waiting),
-      error: applicable?.error ?? (managed?.workerError ? { code: managed.workerError,
+      error: applicable?.error ?? (managed?.workerError && !grantBlocked && !discarded ? { code: managed.workerError,
         message: '原托管运行尚未恢复，请核对配置或恢复状态。' } : null) };
   };
   const status = async (request, signal) => summary(request, await inspect(request, signal));

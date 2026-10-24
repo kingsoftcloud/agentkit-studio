@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { closeSync, existsSync, fsyncSync, openSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ export const name = 'studio-native-children-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'credentials', 'connection', 'webServer'];
 export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
+  let grantProof;
   const a2aProof = options.managedA2aProofPath ? JSON.parse(await readFile(options.managedA2aProofPath, 'utf8')) : null;
   if (options.managedProofPath) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
     node: process.version, path: process.env.PATH }) + '\n');
@@ -50,6 +51,7 @@ export async function apply(ctx, options) {
   let nativeManagedKernel;
   if (options.managedProofPath) {
     const proof = JSON.parse(await readFile(options.managedProofPath, 'utf8'));
+    grantProof = proof.executionGrants === true;
     const target = { tenantId: 'managed-child-tenant', agentInstanceId: record.metadata.id };
     const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
     nativeManagedKernel = { target, principal: { userId: 'managed-child-user' }, assertCurrent: () => ctx.fiber.uid !== null,
@@ -63,6 +65,43 @@ export async function apply(ctx, options) {
     ...(nativeManagedKernel ? { nativeManagedKernel } : {}), env: { AGENTKIT_HOME: home,
     AGENTKIT_STUDIO_WORKSPACE: workspaceRoot, AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1',
     ...(a2aProof?.env ?? {}) } });
+  if (grantProof) {
+    // Test-only trusted Host composition. No production route or workspace
+    // option installs this file driver, creates grants or supplies authority.
+    const runtime = ctx.studioManagedNativeKernel, grants = runtime.executionGrants;
+    const specifications = Object.fromEntries(['send', 'cancel', 'promote', 'discard'].map(action => [action, {
+      grant_id: `sdk-occurrence/${action}`, tenant_id: 'managed-child-tenant', agent_instance_id: record.metadata.id,
+      session_id: 'native-child-parent', owner_ref: `trusted-proof/${action}`, attempt_epoch: action === 'cancel' ? 7 : null,
+    }]));
+    for (const [action, spec] of Object.entries(specifications)) {
+      grants.ensure(spec, action === 'cancel' ? { expires_at: new Date(Date.now() + 600000).toISOString() } : {});
+      if (action === 'promote') grants.setState(spec, 'suspended', { expected_revision: 1, idempotency_key: 'initial-suspend' });
+      else grants.setAdmission(spec, false, { expected_revision: 1, idempotency_key: 'initial-pause' });
+    }
+    await writeFile(join(home, 'grant-proof-ready.json'), JSON.stringify({ pid: process.pid, specifications }));
+    let busy = false, handled;
+    const timer = setInterval(async () => {
+      if (busy) return; busy = true;
+      try {
+        const request = JSON.parse(await readFile(join(home, 'grant-proof-request.json'), 'utf8'));
+        if (handled === request.id) return;
+        const spec = specifications[request.action]; if (!spec) throw Error('Unknown proof grant');
+        let result;
+        try {
+          if (request.operation === 'get') result = grants.get(spec);
+          else if (request.operation === 'require') result = grants.require(spec);
+          else if (request.operation === 'state') result = grants.setState(spec, request.state, request.options);
+          else if (request.operation === 'admission') result = grants.setAdmission(spec, request.allowed, request.options);
+          else throw Error('Unknown proof operation');
+          result = { ok: true, value: result };
+        } catch (error) { result = { ok: false, code: error.code, message: error.message }; }
+        const responsePath = join(home, `grant-proof-response-${request.id}.json`);
+        await writeFile(responsePath + '.tmp', JSON.stringify(result)); await rename(responsePath + '.tmp', responsePath); handled = request.id;
+      } catch (error) { if (error.code !== 'ENOENT') writeFileSync(join(home, 'grant-proof-error.txt'), String(error.stack)); }
+      finally { busy = false; }
+    }, 20);
+    ctx.effect(() => () => clearInterval(timer), 'managed grant proof driver');
+  }
   if (a2aProof) {
     // Only the human answer is controlled. The mounted question/approval
     // services, their audit records, ownership and remote effects remain real.

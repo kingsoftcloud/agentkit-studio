@@ -26,7 +26,13 @@ test('SIGKILL after signed structured answer commit restores the original answer
   for (;;) {
     assert.ok(Date.now() < deadline, JSON.stringify(original.messages));
     if (existsSync(join(directory, 'commands.sqlite'))) {
-      db ??= new DatabaseSync(join(directory, 'commands.sqlite'));
+      if (!db) {
+        db = new DatabaseSync(join(directory, 'commands.sqlite'), { readOnly: true });
+        // The file can exist before the worker commits its WAL/schema setup.
+        // This observer must wait for that writer instead of racing with a
+        // zero-timeout metadata read; it never mutates the held transaction.
+        db.exec('PRAGMA busy_timeout=5000');
+      }
       const table = db.prepare("SELECT name FROM sqlite_master WHERE name='managed_interactions'").get();
       if (table) pending = db.prepare('SELECT * FROM managed_interactions WHERE owner_until>?').get(Date.now());
       if (pending) break;
