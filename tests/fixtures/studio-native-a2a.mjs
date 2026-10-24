@@ -82,7 +82,7 @@ async function applyProof(ctx, options) {
       runtimeType: 'harness',
       spec: { context: { maxInputTokens: 8000, reserveOutputTokens: 256 },
         ...(options.childQuestion ? { subAgents: [{ name: 'researcher', instructions: 'Ask the remote research agent. Report its exact reply.',
-          tools: ['call_a2a_agent'], modelProfileId: 'child-fixture', maxTurns: 3, maxToolCalls: 2 }] } : {}) },
+          tools: ['call_a2a_agent'], modelProfileId: 'child-fixture', maxTurns: 3, maxToolCalls: 2, timeoutSeconds: 300 }] } : {}) },
       bindings: {
         modelProfileIds: ['fixture', ...(options.childQuestion ? ['child-fixture'] : [])],
         tools: ['call_a2a_agent'],

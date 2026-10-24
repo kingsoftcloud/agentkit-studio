@@ -30,6 +30,7 @@ import { studioNativeComponentStatus } from '../../providers/native-component-st
 import { nativeVisionProfileId } from '../../native-vision-model.mjs';
 import { createStudioNativeVisionBinding } from '../../providers/native-vision-binding.mjs';
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
+import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -529,11 +530,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           const candidates = [];
           for (const scope of scopes) for (const snapshot of store.list(scope)) {
             scanSignal.throwIfAborted();
-            if (!['awaiting_reconciliation', 'completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)) continue;
+            if (!['awaiting_reconciliation', 'preparing_context', 'executing_tools', 'verifying', 'completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)) continue;
             if (settledHeads.has(checkpointKey(snapshot))) continue;
             const record = store.load(scope, snapshot.runId);
             if (record.configuration.childOwnerBinding || record.lease && record.lease.expiresAt > Date.now()) continue;
-            const waiting = nativeA2aReceiptWaitSource(record);
+            const waiting = nativeA2aReceiptWaitSource(record) || nativeChildA2aWaitSource({ store, record });
             const cleanup = !waiting && ['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)
               && ((record.projections[NATIVE_A2A_QUESTION_CLEANUP] ?? 0) < snapshot.eventSeq
                 || snapshot.phase !== 'interrupted' && store.sessionHead(scope, snapshot.sessionId)?.runId === snapshot.runId)

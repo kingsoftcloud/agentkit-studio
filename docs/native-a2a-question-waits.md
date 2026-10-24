@@ -125,22 +125,32 @@ services in these child tests are explicit doubles.
 --archive <packed studio .tgz> --keep` additionally verifies a typed input through
 the fully mounted question/approval/Session services. It kills the actual Host
 while the original parent is collecting its waiting child, waits for the actual
-lease expiry and explicitly resumes that parent through the authenticated
-recovery RPC. A lost collector records the same child's known pending observation;
+lease expiry and automatically reattaches that parent once the SDK has published
+its live idle root, without a recovery resume RPC. Discovery never opens an
+absent Session; the SDK owns that write handle. Admission rechecks the same root,
+parent checkpoint/configuration, expired leases and sealed child checkpoints.
+A lost collector records the same child's known pending observation;
 a fresh fenced collector reconstructs its sealed ports and local question wait.
 This does not rerun the child tool. Unknown writes outside the classified original
 receipt wait remain unavailable, and cancellation is not inferred from observation.
 
-The mounted scenario passes on Node 26 and 22 with a Node-only PATH. Before
+The mounted input scenario passes on Node 26, and the remote-approval scenario
+(`--child-question-approval`) passes on Node 22, with a Node-only PATH. Before
 answering, reattachment leaves model/discovery/Send/Get/Cancel counts unchanged;
 the original child checkpoint and question identity survive. The separately
 audited continuation then settles one child allocation and closes the original
-DSH turn once. HTTP model, managed remote control plane/peer and human answerer
-are controlled fixtures; the dependency graph is linked from the maintained SDK.
-Mounted remote-approval-type questions, other child crash/cancellation boundaries,
-automatic parent adoption, browser/human acceptance, fresh installation and other
-product entry combinations remain open. Root startup recovery does not adopt
-child Runs independently.
+DSH turn once. Adding `--child-answer-crash` kills the replacement after its answer
+is durable but before separate operation consent completes. A third actual Host
+reuses that answer without another question and asks for fresh consent. The old
+unanswered approval remains audit history; no decision is invented for it. Both
+scenarios pass this second crash boundary, with exactly five model requests,
+one discovery, two Sends (initial and approved continuation), two receipt reads
+and no cancellation. HTTP model, managed remote control plane/peer and human
+answerer are controlled fixtures; the dependency graph is linked from the
+maintained SDK. Other child crash/cancellation boundaries, stale browser approval
+presentation, browser/human acceptance, fresh installation and other product
+entry combinations remain open. Root startup recovery does not adopt child Runs
+independently or adopt ordinary child tool approvals.
 
 ## Verification scope and remaining migration work
 

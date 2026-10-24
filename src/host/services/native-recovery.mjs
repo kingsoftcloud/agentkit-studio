@@ -3,6 +3,7 @@ import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/n
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_RECEIPT_WAIT, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
+import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 
 export const STUDIO_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-native-recovery/v1';
 export const STUDIO_NATIVE_USAGE_CONTRACT = 'agentkit.studio-native-usage/v1';
@@ -198,19 +199,36 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       return ids.includes(request.sessionId);
     };
     if (archived()) return { status: 'deferred' };
+    // Discovery must not open an absent Session. A user/SDK resume owns that
+    // handle; racing it through resolveAgent can create two writers. Only
+    // inspect a root already published by the Host, then pin that exact root
+    // across the asynchronous original-owner lookup below.
+    const registry = ctx.get('agents'), roots = registry?.roots?.() ?? [], registered = registry?.get?.(request.sessionId);
+    if (registered?.session?.id === request.sessionId)
+      invariant(roots.includes(registered), 'studio_native_recovery_live_root_required');
+    const liveRoot = roots.find(root => root.session?.id === request.sessionId && registry?.get?.(root.id) === root);
+    if (!liveRoot || liveRoot.status !== 'idle') return { status: 'deferred' };
     const inspected = await inspect(request, signal), { record, agent, scope, admission } = inspected;
     if (archived() || !record || controls.has(controlKey(request.agentId, request.sessionId))) return { status: 'deferred' };
     if (agent.status !== 'idle') return { status: 'deferred' };
-    invariant(ctx.get('agents')?.get?.(agent.id) === agent
+    invariant(agent === liveRoot && ctx.get('agents')?.get?.(agent.id) === agent
       && ctx.get('agents')?.roots?.().includes(agent), 'studio_native_recovery_live_root_required');
     if (record.configuration.childOwnerBinding || record.lease && record.lease.expiresAt > Date.now()) return { status: 'deferred' };
     const identity = { agentId: request.agentId, sessionId: request.sessionId, runId: request.runId };
     const capsule = readNativeRecoveryBinding(record, identity);
+    const checkpoint = canonical(record.snapshot), configuration = canonical(record.configuration);
+    const childWait = nativeChildA2aWaitSource({ store, record });
     const admit = () => {
-      invariant(!archived() && ctx.get('agents')?.get?.(agent.id) === agent && ctx.get('agents')?.roots?.().includes(agent),
+      invariant(!archived() && agent.session?.id === request.sessionId
+        && ctx.get('agents')?.get?.(agent.id) === agent && ctx.get('agents')?.roots?.().includes(agent),
         'studio_native_recovery_live_root_required');
+      const current = store.load(scope, request.runId);
+      invariant(canonical(current.snapshot) === checkpoint && canonical(current.configuration) === configuration
+        && (!current.lease || current.lease.expiresAt <= Date.now())
+        && (!childWait || canonical(nativeChildA2aWaitSource({ store, record: current })) === canonical(childWait)),
+      'studio_native_recovery_checkpoint_changed');
     };
-    if (nativeA2aReceiptWaitSource(record)) {
+    if (nativeA2aReceiptWaitSource(record) || childWait) {
       if (!admission || store.sessionHead(scope, request.sessionId)?.runId !== request.runId) return { status: 'deferred' };
       // resume performs its own asynchronous inspection and full frozen
       // configuration/preset/Build/prompt rebind before installing any port.

@@ -69,6 +69,8 @@ const { values } = parseArgs({
     'terminal-close-crash': { type: 'boolean', default: false },
     'busy-cancel': { type: 'boolean', default: false },
     'child-question-cold': { type: 'boolean', default: false },
+    'child-question-approval': { type: 'boolean', default: false },
+    'child-answer-crash': { type: 'boolean', default: false },
     'internal-control-plane': { type: 'boolean', default: false },
     'public-tool-activity': { type: 'boolean', default: false },
   },
@@ -82,6 +84,8 @@ assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel an
 assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values['reconcile-cold'], 'internal mode currently proves the normal mounted turn/history scenario');
 assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], 'public tool activity requires the internal canonical path');
 assert.ok(!values['child-question-cold'] || !values['busy-cancel'] && !values['reconcile-cold'] && !values['internal-control-plane'], 'child question recovery is a separate mounted scenario');
+assert.ok(!values['child-question-approval'] || values['child-question-cold'], 'child remote approval requires --child-question-cold');
+assert.ok(!values['child-answer-crash'] || values['child-question-cold'], 'child answer crash requires --child-question-cold');
 
 const managedMode = values['internal-control-plane'] || values['child-question-cold'];
 
@@ -109,6 +113,7 @@ const a2aSpec = {
   target_agent_id: 'a2a-agent-00000000000040008000000000000002',
   expected_version_id: 'a2a-version-00000000000040008000000000000003',
   exposure: 'tool',
+  ...(values['child-question-cold'] ? { timeout_seconds: 240 } : {}),
 };
 
 const a2aReply = 'The remote agent found 3 relevant documents.';
@@ -130,9 +135,15 @@ const workloadTokens = Object.fromEntries(['a2a-registry', 'a2a-task-sink', 'a2a
 let modelCalls = 0, discoveryCalls = 0, a2aSends = 0, a2aGets = 0, a2aCancels = 0;
 const modelRequests = [], a2aPeerRequests = [], discoveryRequests = [], serverFailures = [];
 const recoveryPeer = { complete: false, holdNextGet: false, cancelled: false, finishStream: null };
-const childPeer = { questions: [], approvals: [], releaseAnswers: false, answer: 'Shanghai' };
+const childPeer = { questions: [], approvals: [], releaseAnswers: false, releaseApprovals: !values['child-answer-crash'],
+  remoteApproval: values['child-question-approval'], answerCrash: values['child-answer-crash'],
+  answer: values['child-question-approval'] ? 'approve' : 'Shanghai' };
+const questionAnswer = id => ({ id, ...(childPeer.remoteApproval ? { selected: ['批准远端操作'] } : { selected: [], custom: childPeer.answer }) });
 const pausedQuestion = { state: 'TASK_STATE_INPUT_REQUIRED', message: { messageId: 'mounted-child-question', role: 'ROLE_AGENT',
-  parts: [{ text: 'Which city should the child research?' }], metadata: { input_schema: { type: 'string' } } } };
+  parts: [{ text: childPeer.remoteApproval ? 'Approve the remote research operation?' : 'Which city should the child research?' }],
+  metadata: { input_schema: { type: 'string', ...(childPeer.remoteApproval ? { enum: ['approve', 'reject'] } : {}) },
+    ...(childPeer.remoteApproval ? { ksadk_interaction: { version: 1, kind: 'approval', allowed_decisions: ['approve', 'reject'],
+      presentation: { title: 'remote-research', description: '{"arguments":{}}' } } } : {}) } } };
 const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 async function managedRecords(root) {
   const base = join(root, 'studio/native-harness/workspace-state');
@@ -208,12 +219,12 @@ const server = createHttpServer(async (request, response) => {
       assert.equal(body.sessionId, 'a2a-session'); assert.equal(body.questions.length, 1);
       childPeer.questions.push({ body, response });
       if (childPeer.releaseAnswers) { response.setHeader('Content-Type', 'application/json');
-        response.end(JSON.stringify({ answers: [{ id: body.questions[0].id, selected: [], custom: childPeer.answer }] })); }
+        response.end(JSON.stringify({ answers: [questionAnswer(body.questions[0].id)] })); }
       return;
     }
     if (values['child-question-cold'] && request.url === '/approval') {
-      assert.equal(body.toolName, 'a2a_continue_task'); childPeer.approvals.push(body);
-      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ outcome: 'allowed-once' })); return;
+      assert.equal(body.toolName, 'a2a_continue_task'); childPeer.approvals.push({ body, response });
+      if (childPeer.releaseApprovals) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ outcome: 'allowed-once' })); } return;
     }
 
     // === Model SSE server ===
@@ -317,7 +328,7 @@ const server = createHttpServer(async (request, response) => {
 
       if (values['child-question-cold'] && body.method === 'SendMessage') {
         a2aSends++; assert.equal(a2aSends, 2, 'only the independently approved continuation');
-        assert.equal(childPeer.approvals.length, 1); assert.equal(body.params.message.taskId, remoteTaskId);
+        assert.equal(childPeer.approvals.length, childPeer.answerCrash ? 2 : 1); assert.equal(body.params.message.taskId, remoteTaskId);
         assert.deepEqual(body.params.message.parts, [{ data: childPeer.answer }]); recoveryPeer.complete = true;
         response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(wrap({ task: { id: remoteTaskId, contextId: remoteContextId,
           status: { state: 'TASK_STATE_COMPLETED' }, artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }] } }))); return;
