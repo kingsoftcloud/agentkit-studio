@@ -20,10 +20,21 @@
 - `permitVerifier`：`createNativeKernelPermitVerifier({verificationKeys, target})`，
   `verificationKeys()` 从可信 Server key provider 返回 key-id→Ed25519 PEM 的对象或 Map。
   没有本地自签 fallback。生产 JWKS 获取、CA、轮换与部署证据仍需实际装配。
-- `resolveBinding({command, recovery})`：可信 Agent/Build 解析，返回
+- `resolveBinding({command, recovery, stage, runId, signal, store, admission})`：可信 Agent/Build 解析，返回
   `{scope, buildId, configuration, ports, release?}`。配置由现有 `configure()` 固定，包含
   正式输入消息及工具权限；恢复必须重建相同 scope、Build 和完整配置。
   每次调用的资源会在准入结束或该轮 worker 结束后调用可选 `release()`。
+  `stage` 为 `admit` 或 `execute`，`recovery` 保留原有布尔含义；`runId` 始终是原命令的
+  固定 Run。`signal` 属于 Host 生命周期，HTTP 断开不会撤销它。`store` 是实际执行所用的
+  Native 账本，仅可信装配代码可用，解析本身不得调用模型、执行工具或推进状态机。
+  首次准入 `admission=null`；执行及冷恢复携带数据库原始
+  `{scope, buildId, configuration}` 的独立副本。应从它恢复已准入的消息及恢复胶囊，重新
+  校验当前可信资源和权限，不能用当前可变文件、附件或默认模型重新生成原始输入。
+  修改这个副本不能改写数据库，返回不同配置会在执行前被拒绝。
+  `release({scope, sessionId, runId, stage, signal, reason?})` 收到对应的原运行身份。Host
+  退役会停止等待未完成的解析；之后返回的资源仅调用释放，`reason='owner_retired'`，
+  不再进入准入或执行。迟到清理不得依赖仍打开的账本。第三方忽略信号或清理失败时，
+  不承诺其外部资源已经释放；已有 `release()` 的等待仍要求宿主合作。
 - `authorizeInteraction({command, authorization, pending})`：可选的可信交互引用校验。
   缺失时拒绝审批回复。必须是只读或按原 command-id 幂等的授权校验，不能靠消耗一次性
   token 代替原子命令准入；它不负责执行工具。

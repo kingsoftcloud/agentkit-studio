@@ -148,6 +148,34 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     });
   }
   function projectAll() { for (const row of db.prepare('SELECT * FROM managed_runs ORDER BY rowid').all()) project(row); }
+  function bindingRequest(command, run, stage) {
+    return { command: copy(command), recovery: stage === 'execute', stage,
+      runId: run?.run_id ?? managedNativeRunId(command), signal: lifetime.signal, store: runStore,
+      admission: run ? { scope: parseNativeJson(run.scope), buildId: run.build_id,
+        configuration: parseNativeJson(run.config) } : null };
+  }
+  function resolveOwnedBinding(request) {
+    guard();
+    // A binding lookup is Host-owned, never HTTP-owned. Retirement must stop
+    // waiting even if a credential/resource provider ignores its signal. A
+    // late resource cannot become execution authority and is released instead.
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const stop = () => { settled = true; reject(lifetime.signal.reason ?? new Error('Native owner closed')); };
+      lifetime.signal.addEventListener('abort', stop, { once: true });
+      Promise.resolve().then(() => { guard(); return resolveBinding(request); }).then(binding => {
+        if (settled) {
+          void Promise.resolve().then(() => binding?.release?.({ scope: binding.scope === undefined ? undefined : copy(binding.scope), sessionId: request.command.session_id,
+            runId: request.runId, stage: request.stage, signal: request.signal, reason: 'owner_retired' })).catch(() => {});
+          return;
+        }
+        settled = true; lifetime.signal.removeEventListener('abort', stop); resolve(binding);
+      }, error => {
+        if (settled) return;
+        settled = true; lifetime.signal.removeEventListener('abort', stop); reject(error);
+      });
+    });
+  }
   const receipt = (row, command, duplicate = false) => ({ ...parseNativeJson(row.receipt), command_id: command.command_id,
     ...(duplicate ? { status: 'duplicate' } : {}) });
   async function authenticate(raw, permit, operation) {
@@ -196,7 +224,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         interactionDigest = hash(pending);
       }
       if (command.command_type === 'enqueue') {
-        binding = await resolveBinding({ command: copy(command), recovery: false }); guard();
+        binding = await resolveOwnedBinding(bindingRequest(command, null, 'admit')); guard();
         check(object(binding) && object(binding.scope) && binding.scope.tenantId === command.tenant_id
           && binding.scope.agentId === command.agent_instance_id && text(binding.buildId) && object(binding.ports));
         binding = { ...binding, configuration: configure(binding.configuration) };
@@ -245,7 +273,8 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       });
       if (accepted.status === 'accepted') applyControls(command.session_id);
       wake(); return accepted;
-    } finally { await binding?.release?.(); }
+    } finally { await binding?.release?.({ scope: binding.scope === undefined ? undefined : copy(binding.scope), sessionId: command.session_id,
+      runId: managedNativeRunId(command), stage: 'admit', signal: lifetime.signal }); }
   }
   function nativeCommand(command) {
     const payload = command.payload;
@@ -296,7 +325,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         .find(row => parseNativeJson(row.data).command_type === 'enqueue');
       if (!row) return;
       const command = parseNativeJson(row.data), id = parseNativeJson(row.receipt).run_id, run = runRow(id), scope = parseNativeJson(run.scope);
-      const resolved = await resolveBinding({ command: copy(command), recovery: true });
+      const resolved = await resolveOwnedBinding(bindingRequest(command, run, 'execute'));
       try {
         guard();
         invariant(hash(configure(resolved.configuration)) === hash(parseNativeJson(run.config))
@@ -327,7 +356,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           if (!terminal(snapshot.phase)) return;
           transaction(() => db.prepare("UPDATE managed_commands SET state='settled' WHERE command_id=?").run(row.command_id));
         } finally { if (kernels.get(id) === kernel) kernels.delete(id); }
-      } finally { await resolved?.release?.(); }
+      } finally { await resolved?.release?.({ scope: copy(scope), sessionId, runId: id, stage: 'execute', signal: lifetime.signal }); }
     }
   }
   function start(sessionId) {

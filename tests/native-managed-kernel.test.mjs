@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -197,4 +197,93 @@ test('a permit expiring during an asynchronous binding lookup cannot admit work'
   } });
   const cmd = command(); await assert.rejects(f.runtime.receive(cmd, issuer.issue(cmd)), { code: 'NATIVE_KERNEL_PERMIT_INVALID' });
   assert.equal(releases, 1); await f.runtime.drain(cmd.session_id);
+});
+
+test('cold binding reconstructs admitted input bytes and receives the actual Native ledger and release identity', async t => {
+  const requests = [], released = [], modelInputs = [];
+  let resourcePath;
+  const f = fixture(t, { resolveBinding: request => {
+    requests.push(request);
+    const resolved = binding(request.command, { model: { generate: async input => {
+      modelInputs.push(input.messages.filter(message => message.role === 'user').map(message => message.content)); return response();
+    } }, tools: { execute: async () => assert.fail('No tool expected') } });
+    if (request.admission) resolved.configuration = request.admission.configuration;
+    else resolved.configuration = { ...resolved.configuration, inputMessages: [{ role: 'user', content: readFileSync(resourcePath, 'utf8') }] };
+    return { ...resolved, release: async identity => { released.push(identity); } };
+  } });
+  resourcePath = join(f.directory, 'mutable-resource.txt'); writeFileSync(resourcePath, 'original admitted resource');
+  const cmd = command(), receipt = await f.receive(cmd);
+  assert.equal(requests[0].stage, 'admit'); assert.equal(requests[0].admission, null);
+  assert.equal(requests[0].runId, receipt.run_id); assert.equal(requests[0].recovery, false);
+  writeFileSync(resourcePath, 'changed after admission');
+  await f.reopen(); await f.runtime.drain(cmd.session_id);
+  assert.equal(requests.length, 2); assert.equal(requests[1].stage, 'execute'); assert.equal(requests[1].recovery, true);
+  assert.equal(requests[1].runId, receipt.run_id);
+  assert.equal(requests[1].store.load(requests[1].admission.scope, receipt.run_id).snapshot.phase, 'completed');
+  assert.deepEqual(modelInputs, [['original admitted resource']]);
+  assert.deepEqual(released.map(({ stage, runId, sessionId }) => ({ stage, runId, sessionId })),
+    ['admit', 'execute'].map(stage => ({ stage, runId: receipt.run_id, sessionId: cmd.session_id })));
+  assert.notEqual(requests[0].store, requests[1].store); // The cold owner actually reopened SQLite.
+});
+
+test('binding admission retirement rejects promptly and releases a late provider without admitting a command', { timeout: 3000 }, async t => {
+  const entered = Promise.withResolvers(), provider = Promise.withResolvers(), released = Promise.withResolvers();
+  const f = fixture(t, { resolveBinding: request => { entered.resolve(request); return provider.promise; } });
+  const cmd = command(), receiving = f.receive(cmd); const stopped = assert.rejects(receiving, /Native owner closed/);
+  const request = await entered.promise; await f.runtime.close(); await stopped; assert.equal(request.signal.aborted, true);
+  provider.resolve({ ...binding(cmd), release: async identity => { released.resolve(identity); } });
+  const identity = await released.promise; assert.equal(identity.runId, request.runId); assert.equal(identity.reason, 'owner_retired');
+  f.config.resolveBinding = ({ command }) => binding(command);
+  await f.reopen(); assert.deepEqual((await f.status(cmd.session_id)).runs, []);
+});
+
+test('binding execution retirement releases late resources and leaves the original admitted Run pending', { timeout: 3000 }, async t => {
+  const entered = Promise.withResolvers(), provider = Promise.withResolvers(), released = Promise.withResolvers();
+  let modelCalls = 0;
+  const f = fixture(t, { resolveBinding: request => {
+    if (request.stage === 'admit') return binding(request.command);
+    entered.resolve(request); return provider.promise;
+  } });
+  const cmd = command(), receipt = await f.receive(cmd), driving = f.runtime.drain(cmd.session_id);
+  const stopped = assert.rejects(driving, /Native owner closed/); const request = await entered.promise;
+  await f.runtime.close(); await stopped; assert.equal(request.signal.aborted, true);
+  provider.resolve({ ...binding(cmd, { model: { generate: async () => { modelCalls++; return response(); } } }),
+    release: async identity => { released.resolve(identity); } });
+  assert.equal((await released.promise).runId, receipt.run_id); assert.equal(modelCalls, 0);
+  f.config.resolveBinding = ({ command }) => binding(command);
+  await f.reopen(); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'pending');
+  const duplicate = await f.receive(cmd); assert.equal(duplicate.run_id, receipt.run_id);
+  await f.runtime.drain(cmd.session_id); assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});
+
+test('mutating a recovered binding snapshot cannot rewrite the admitted configuration or execute changed input', async t => {
+  let calls = 0;
+  const f = fixture(t, { resolveBinding: request => {
+    const resolved = binding(request.command, { model: { generate: async () => { calls++; return response(); } } });
+    if (request.admission) {
+      request.admission.configuration.inputMessages[0].content = 'unadmitted replacement';
+      resolved.configuration = request.admission.configuration;
+    }
+    return resolved;
+  } });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'NATIVE_KERNEL_BINDING_CHANGED' }); assert.equal(calls, 0);
+  f.config.resolveBinding = request => {
+    assert.equal(request.admission.configuration.inputMessages[0].content, cmd.payload.content);
+    return binding(request.command);
+  };
+  await f.reopen(); await f.runtime.drain(cmd.session_id);
+  assert.equal((await f.status(cmd.session_id)).runs[0].runId, receipt.run_id);
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'completed');
+});
+
+test('an invalid resource binding still releases its owner without masking the admission error', async t => {
+  let released;
+  const f = fixture(t, { resolveBinding: ({ command }) => {
+    const value = binding(command); delete value.scope;
+    return { ...value, release: async identity => { released = identity; } };
+  } });
+  const cmd = command(); await assert.rejects(f.receive(cmd), { code: 'NATIVE_KERNEL_COMMAND_INVALID' });
+  assert.equal(released.runId, managedNativeRunId(cmd)); assert.equal(released.stage, 'admit');
+  assert.equal(released.scope, undefined); assert.deepEqual((await f.status(cmd.session_id)).runs, []);
 });
