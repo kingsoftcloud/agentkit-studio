@@ -6,6 +6,46 @@ export const NATIVE_CHILD_HISTORY_CONTRACT = 'agentkit.studio-native-child-histo
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const id = value => typeof value === 'string' && value.trim() && value.length <= 256;
 
+function pageInventory(request, inventory) {
+  const offset = request.offset ?? 0, limit = request.limit ?? 16;
+  invariant(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 64
+    && (request.inventoryDigest === undefined || typeof request.inventoryDigest === 'string'
+      && /^[0-9a-f]{64}$/.test(request.inventoryDigest)), 'child_history_query_invalid');
+  invariant((!offset || request.inventoryDigest)
+    && (request.inventoryDigest === undefined || request.inventoryDigest === inventory.inventoryDigest), 'child_history_inventory_changed');
+  invariant(offset <= inventory.tasks.length, 'child_history_offset_invalid');
+  const tasks = inventory.tasks.slice(offset, offset + limit), nextOffset = offset + tasks.length;
+  return { ...inventory, tasks, totalTasks: inventory.tasks.length, offset, nextOffset, complete: nextOffset === inventory.tasks.length };
+}
+
+/** Combine inventories supplied by trusted owners, never caller-selected stores
+ * or principals. Keep each owner's ancestry order; the current owner comes first.
+ * The digest binds every source, including heads without children. */
+export function mergeNativeChildHistory(request, inventories) {
+  invariant(id(request.sessionId) && request.runId === undefined && Array.isArray(inventories) && inventories.length > 0,
+    'child_history_query_invalid');
+  invariant(inventories.every(value => value.contract === NATIVE_CHILD_HISTORY_CONTRACT
+    && value.sessionId === request.sessionId && (value.runId === null || id(value.runId)) && Array.isArray(value.tasks)),
+  'child_history_ancestry_invalid');
+  const present = inventories.filter(value => value.runId !== null);
+  if (present.length <= 1) return pageInventory(request, present[0] ?? inventories[0]);
+  const tasks = present.flatMap(value => value.tasks), runId = present[0].runId;
+  // A public child ID must resolve to exactly one owner. Never silently choose
+  // one ledger on collision or copy controls onto another owner's history.
+  invariant(new Set(tasks.map(task => task.childRunId)).size === tasks.length, 'child_history_ancestry_invalid');
+  const parents = new Set();
+  for (const source of present) {
+    const sourceParents = new Set([source.runId, ...source.tasks.map(task => task.parentRunId)]);
+    invariant([...sourceParents].every(parent => !parents.has(parent)), 'child_history_ancestry_invalid');
+    for (const parent of sourceParents) parents.add(parent);
+  }
+  const selected = tasks.map(task => task.parentRunId === runId ? task
+    : { ...task, canPromote: false, canCancel: false, canSendInput: false });
+  return pageInventory(request, { contract: NATIVE_CHILD_HISTORY_CONTRACT, sessionId: request.sessionId, runId,
+    inventoryDigest: hash({ contract: 'agentkit.native-child-inventory-merge/v1', sessionId: request.sessionId,
+      sources: present.map(value => [value.runId, value.inventoryDigest]) }), tasks: selected });
+}
+
 /** Read-only product history. No Kernel, factories, leases, commands or accounting writes. */
 export function createNativeChildHistory({ scope, store, liveTasks = () => [] }) {
   scopeKey(scope);
@@ -91,7 +131,15 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [] })
       usageComplete: terminal(snapshot.phase) && snapshot.diagnostics.providerUsageIncomplete !== true && snapshot.diagnostics.descendantUsageIncomplete !== true,
       usageIncludedInParent: accounted, continuationOf: binding.continuationOf ?? null, buildId: snapshot.buildId };
   };
+  const readInventory = request => {
+    const { head, records } = inventory(request);
+    return { contract: NATIVE_CHILD_HISTORY_CONTRACT, sessionId: request.sessionId, runId: head?.runId ?? null,
+      inventoryDigest: hash({ scope, sessionId: request.sessionId, runId: head?.runId ?? null,
+        children: records.map(({ parent, child }) => [parent.snapshot.runId, child.snapshot.runId]) }), tasks: records.map(taskRow) };
+  };
   return {
+    // Trusted Host composition only; public transports expose bounded list/result.
+    inventory: readInventory,
     // Trusted Host fact lookup. Public list/result responses never expose the
     // full record, and a current parent's lookup cannot select an ancestor's child.
     record(request) {
@@ -108,19 +156,7 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [] })
       return copy(found.child);
     },
     list(request) {
-      const offset = request.offset ?? 0, limit = request.limit ?? 16;
-      invariant(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 64
-        && (request.inventoryDigest === undefined || typeof request.inventoryDigest === 'string'
-          && /^[0-9a-f]{64}$/.test(request.inventoryDigest)), 'child_history_query_invalid');
-      const { head, records } = inventory(request);
-      const inventoryDigest = hash({ scope, sessionId: request.sessionId, runId: head?.runId ?? null,
-        children: records.map(({ parent, child }) => [parent.snapshot.runId, child.snapshot.runId]) });
-      invariant((!offset || request.inventoryDigest) && (request.inventoryDigest === undefined || request.inventoryDigest === inventoryDigest),
-        'child_history_inventory_changed');
-      invariant(offset <= records.length, 'child_history_offset_invalid');
-      const tasks = records.slice(offset, offset + limit).map(taskRow), nextOffset = offset + tasks.length;
-      return { contract: NATIVE_CHILD_HISTORY_CONTRACT, sessionId: request.sessionId, runId: head?.runId ?? null,
-        inventoryDigest, tasks, totalTasks: records.length, offset, nextOffset, complete: nextOffset === records.length };
+      return pageInventory(request, readInventory(request));
     },
     result(request) {
       const offset = request.offset ?? 0, limit = request.limit ?? 4000;

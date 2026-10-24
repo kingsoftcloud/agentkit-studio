@@ -43,11 +43,12 @@ export function createNativeChildrenState({ hostRemote, agentId, sessionId, comm
     const token = ++reading, previous = state.detail;
     set({ reading: true, error: '' });
     try {
-      const detail = await hostRemote.nativeChildResult({ ...identity, runId: state.page.runId, childRunId: task.childRunId,
+      const detail = await hostRemote.nativeChildResult({ ...identity, runId: task.parentRunId, childRunId: task.childRunId,
         ...(more ? { offset: previous.nextOffset } : {}) }, lifetime.signal);
       if (disposed || token !== reading) return;
       valid(detail);
-      check(validTask(detail.task) && detail.task.childRunId === task.childRunId && detail.runId === state.page.runId
+      check(validTask(detail.task) && detail.task.childRunId === task.childRunId && detail.runId === task.parentRunId
+        && detail.task.parentRunId === task.parentRunId
         && typeof detail.text === 'string' && (detail.task.resultAvailable || detail.text === '')
         && detail.offset === (more ? previous.nextOffset : 0) && detail.nextOffset === detail.offset + [...detail.text].length
         && Number.isSafeInteger(detail.totalChars) && detail.totalChars >= detail.nextOffset

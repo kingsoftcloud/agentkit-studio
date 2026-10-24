@@ -80,6 +80,24 @@ test('history and result paging reject changed inventories and payload identitie
   assert.equal(client.getSnapshot().detail.text, '😀首段后半段'); client.dispose();
 });
 
+test('mixed-owner historical results use the original parent and reject another parent in the reply', async () => {
+  const historic = { ...task, childRunId: 'historic-child', parentRunId: 'historic-managed-parent',
+    canPromote: false, phase: 'completed', resultAvailable: true };
+  const calls = []; let wrong = false;
+  const client = createNativeChildrenState({ agentId: 'agent', sessionId: 'session', hostRemote: {
+    nativeChildHistory: async () => page({ tasks: [historic] }),
+    nativeChildResult: async input => { calls.push(input); return { contract, sessionId: 'session',
+      runId: wrong ? 'parent' : historic.parentRunId, task: { ...historic, parentRunId: wrong ? 'parent' : historic.parentRunId },
+      text: input.offset ? '后段' : '😀前段', offset: input.offset ?? 0, nextOffset: input.offset ? 5 : 3,
+      totalChars: 5, complete: Boolean(input.offset), resultDigest: 'c'.repeat(64) }; },
+  } });
+  await client.refresh(); await client.read(historic); await client.read(historic, true);
+  assert.ok(calls.every(call => call.runId === historic.parentRunId));
+  assert.equal(client.getSnapshot().error, ''); assert.equal(client.getSnapshot().detail.text, '😀前段后段');
+  const accepted = client.getSnapshot().detail; wrong = true; await client.read(historic);
+  assert.equal(client.getSnapshot().detail, accepted); assert.match(client.getSnapshot().error, /读取失败/); client.dispose();
+});
+
 test('releasing a panel aborts its reads and suppresses late results and control retries', async () => {
   let done, signal, updates = 0, commands = 0;
   const client = createNativeChildrenState({ agentId: 'agent', sessionId: 'session', hostRemote: {
@@ -184,7 +202,7 @@ test('the actual header panel renders saved history, reads results and exposes o
       resumeNativeRun: async input => { recoveries.push(input); return { ...recovery, state: 'recovering', canResume: false }; },
       sendNativeChildInput: async input => { controls.push(['send', input]); return { commandId: input.commandId, status: 'accepted' }; },
       cancelNativeChild: async input => { controls.push(['cancel', input]); return { commandId: input.commandId, status: 'accepted' }; },
-      nativeChildResult: async input => { calls.push(input); return { contract, sessionId: 'session', runId: 'parent', task: historic,
+      nativeChildResult: async input => { calls.push(input); return { contract, sessionId: 'session', runId: 'old-parent', task: historic,
         text: '<script>untrusted task prose</script>', complete: true, offset: 0,
         nextOffset: [...'<script>untrusted task prose</script>'].length, totalChars: [...'<script>untrusted task prose</script>'].length, resultDigest: 'c'.repeat(64) }; },
     } });
@@ -208,6 +226,7 @@ test('the actual header panel renders saved history, reads results and exposes o
   assert.ok(walk(tree).some(node => node.children.includes(' · 历史轮次')));
   walk(tree).find(node => node.type === 'button' && node.children.includes('查看结果')).props.onClick(); await tick(); tree = child.render(mounted.props);
   assert.equal(calls[0].childRunId, 'old-child');
+  assert.equal(calls[0].runId, 'old-parent');
   assert.ok(walk(tree).some(node => node.type === 'pre' && node.children.includes('<script>untrusted task prose</script>')));
   assert.equal(walk(tree).some(node => node.type === 'script' || node.props.dangerouslySetInnerHTML), false);
   assert.equal(walk(tree).filter(node => node.type === 'button' && node.children.includes('停止子任务')).length, 1);

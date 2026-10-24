@@ -185,6 +185,96 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
 
+for (const firstManaged of [false, true]) test(`mixed history: alternating ${firstManaged ? 'managed' : 'ordinary'} first roots preserve both owners, paging and cold results`, { timeout: 30000 }, async t => {
+  const f = await setup(t, { sqlite: true, managed: true,
+    parentPlan: (_body, index) => index % 2 ? { call: { name: 'native_delegate', arguments: { role: 'reader', task: `Read ${index}` } } }
+      : { text: `Parent ${index}` },
+    childPlan: (_body, index) => index % 2 ? { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } }
+      : { text: `子任务😀 evidence ${index}` } });
+  const route = createSessionRoutes({ getNativeHost: async () => f.host });
+  const identity = { agentId: f.record.metadata.id, sessionId: 'parent-session' }, expected = [], records = [];
+  let previous;
+  for (let turn = 1; turn <= 5; turn++) {
+    const managed = (turn % 2 === 1) === firstManaged;
+    if (turn > 1) f.payload.agent.session.append('turn/start', { turn });
+    if (managed) { await f.admitManaged(); await f.receiver.drain(identity.sessionId); }
+    else await f.host.executeTurn({ ...f.payload, turn });
+    const store = managed ? f.managedLedger : f.ledger, scope = managed ? f.managedScope : f.scope;
+    const parent = store.load(scope, store.sessionHead(scope, identity.sessionId).runId);
+    const childRunId = parent.snapshot.childRunIds[0]; assert.ok(childRunId);
+    expected.push({ parentRunId: parent.snapshot.runId, childRunId, text: `子任务😀 evidence ${turn * 2}` });
+    records.push({ managed, parent });
+    const counts = { models: f.requests.length, tools: f.dispatches.length };
+    const history = (await route('sessions/native-child-history', { ...identity, limit: 2 })).value;
+    assert.equal(history.runId, parent.snapshot.runId); assert.equal(history.totalTasks, turn);
+    const tasks = [...history.tasks]; let page = history;
+    while (!page.complete) { page = (await route('sessions/native-child-history', { ...identity, offset: page.nextOffset,
+      limit: 2, inventoryDigest: history.inventoryDigest })).value; tasks.push(...page.tasks); }
+    assert.deepEqual(tasks.map(task => task.childRunId).sort(), expected.map(task => task.childRunId).sort());
+    assert.ok(tasks.every(task => !task.canCancel && !task.canSendInput && !task.canPromote && task.usageIncludedInParent));
+    for (const task of expected) {
+      const explicit = (await route('sessions/native-child-result', { ...identity, runId: task.parentRunId, childRunId: task.childRunId })).value;
+      assert.equal(explicit.runId, task.parentRunId); assert.equal(explicit.text, task.text);
+      const current = (await route('sessions/native-child-result', { ...identity, childRunId: task.childRunId, offset: 2, limit: 3 })).value;
+      assert.equal(current.runId, history.runId); assert.equal(current.task.parentRunId, task.parentRunId);
+      assert.equal(current.text, [...task.text].slice(2, 5).join(''));
+    }
+    if (previous) await assert.rejects(route('sessions/native-child-history', { ...identity, offset: 1,
+      inventoryDigest: previous.inventoryDigest }), /inventory_changed/);
+    previous = history;
+    assert.deepEqual({ models: f.requests.length, tools: f.dispatches.length }, counts);
+  }
+  const before = (await route('sessions/native-child-history', identity)).value;
+  const counts = { models: f.requests.length, tools: f.dispatches.length };
+  await f.reopenManaged();
+  assert.deepEqual((await route('sessions/native-child-history', identity)).value, before);
+  for (const task of expected) assert.equal((await route('sessions/native-child-result', { ...identity,
+    runId: task.parentRunId, childRunId: task.childRunId })).value.text, task.text);
+  for (const { managed, parent } of records) assert.deepEqual((managed ? f.managedLedger : f.ledger)
+    .load(parent.snapshot.scope, parent.snapshot.runId), parent);
+  await assert.rejects(route('sessions/native-child-result', { ...identity, childRunId: 'foreign' }), /result_unavailable/);
+  await assert.rejects(route('sessions/native-child-history', { ...identity, sessionId: 'other', runId: expected[0].parentRunId }), /IDENTITY_MISMATCH|run_unavailable/);
+  assert.deepEqual({ models: f.requests.length, tools: f.dispatches.length }, counts);
+});
+
+for (const firstManaged of [false, true]) test(`mixed history: ${firstManaged ? 'ordinary' : 'managed'} live owner alone exposes controls while historical results remain readable`, { timeout: 20000 }, async t => {
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const f = await setup(t, { sqlite: true, managed: true, releasePending: () => release.resolve(),
+    beforeChildModel: async index => { if (index === 3) { entered.resolve(); await release.promise; } },
+    parentPlan: (_body, index) => index % 2 ? { call: { name: 'native_delegate', arguments: { role: 'reader', task: `Read ${index}` } } }
+      : { text: `Parent ${index}` },
+    childPlan: (_body, index) => [1, 3].includes(index) ? { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } }
+      : { text: index < 3 ? 'Child 2' : 'Child 4' } });
+  const route = createSessionRoutes({ getNativeHost: async () => f.host }), identity = { agentId: f.record.metadata.id, sessionId: 'parent-session' };
+  if (firstManaged) { await f.admitManaged(); await f.receiver.drain(identity.sessionId); }
+  else { await f.host.executeTurn(f.payload); f.payload.agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } }); }
+  const old = (await route('sessions/native-child-history', identity)).value;
+  f.payload.agent.session.append('turn/start', { turn: 2 });
+  if (!firstManaged) await f.admitManaged();
+  const running = firstManaged ? f.host.executeTurn({ ...f.payload, turn: 2 }) : f.receiver.drain(identity.sessionId);
+  await entered.promise;
+  const current = (await route('sessions/native-child-history', identity)).value;
+  assert.notEqual(current.runId, old.runId); assert.equal(current.tasks.length, 2);
+  const active = current.tasks[0], historic = current.tasks[1];
+  assert.equal(active.parentRunId, current.runId); assert.equal(active.canCancel, true); assert.equal(active.canSendInput, true);
+  assert.equal(historic.parentRunId, old.runId); assert.equal(historic.canCancel, false); assert.equal(historic.canSendInput, false);
+  const counts = { models: f.requests.length, tools: f.dispatches.length };
+  const detail = (await route('sessions/native-child-result', { ...identity, runId: old.runId, childRunId: historic.childRunId })).value;
+  assert.equal(detail.runId, old.runId); assert.equal(detail.text, 'Child 2');
+  await assert.rejects(route('sessions/native-child-send', { ...identity, runId: current.runId, childRunId: historic.childRunId,
+    commandId: 'foreign-child-send', expectedGoalRevision: historic.goalRevision, text: 'wrong owner' }), { code: 'child_control_not_owned' });
+  assert.deepEqual({ models: f.requests.length, tools: f.dispatches.length }, counts);
+  const command = { ...identity, runId: current.runId, childRunId: active.childRunId,
+    commandId: 'current-child-send', expectedGoalRevision: active.goalRevision, text: 'Read original evidence with guidance' };
+  assert.equal((await route('sessions/native-child-send', command)).value.status, 'accepted');
+  assert.equal((await route('sessions/native-child-send', command)).value.status, 'duplicate');
+  assert.equal((await route('sessions/native-child-history', identity)).value.inventoryDigest, current.inventoryDigest);
+  release.resolve(); await running;
+  const settled = (await route('sessions/native-child-result', { ...identity, runId: current.runId, childRunId: active.childRunId })).value;
+  assert.equal(settled.task.phase, 'completed'); assert.equal(settled.task.resultAvailable, true); assert.equal(settled.text, 'Child 4');
+  assert.match(JSON.stringify(f.requests.filter(row => row.body.model === 'child-model').at(-1).body.messages), /Read original evidence with guidance/);
+});
+
 for (const action of ['send', 'cancel', 'promote']) test(`managed: original child ${action}, exact retry and cold history use the receiver ledger`, { timeout: 20000 }, async t => {
   const entered = Promise.withResolvers(), finishChild = Promise.withResolvers(), parentEntered = Promise.withResolvers(), finishParent = Promise.withResolvers();
   const f = await setup(t, { managed: true, childTool: 'native_delegate',

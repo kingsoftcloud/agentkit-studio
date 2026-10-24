@@ -13,13 +13,15 @@ import { parseArgs } from 'node:util';
 import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { command, permitIssuer } from '../tests/fixtures/native-managed-kernel.mjs';
 
-const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
+  'mixed-history': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source), archive = resolve(values.archive);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-managed-children-')));
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
 console.log(`Managed child evidence: ${root}`);
 const issuer = permitIssuer(), requests = [], failures = [], receipts = [], commands = [], runs = [];
+const ordinaryRuns = [];
 let harness, ledger, localLedger, scope, identity, current, parentStep, childStep, continued;
 const admissions = async () => (await readFile(join(root, 'managed-tool-admissions.jsonl'), 'utf8').catch(error => {
   if (error.code === 'ENOENT') return ''; throw error;
@@ -54,6 +56,15 @@ const server = createServer(async (request, response) => {
         const pending = await rpc('sessions/native-child-result', { ...identity, runId: history.runId, childRunId: task.childRunId });
         assert.equal(pending.text, ''); assert.equal(pending.task.resultAvailable, false);
         assert.equal((await rpc('sessions/native-child-tasks')).tasks[0].childRunId, task.childRunId);
+        if (current.startsWith('ordinary-')) {
+          assert.equal(history.totalTasks, runs.length + ordinaryRuns.length + 1);
+          for (const runId of runs) {
+            const original = rootRecord(runId), childId = original.snapshot.childRunIds[0];
+            const old = await rpc('sessions/native-child-result', { ...identity, runId, childRunId: childId });
+            assert.equal(old.task.parentRunId, runId); assert.equal(old.task.canSendInput, false);
+            assert.equal(old.text, runs.indexOf(runId) === 1 ? '' : `Child ${['send', 'cancel', 'promote'][runs.indexOf(runId)]} evidence`);
+          }
+        } else {
         const control = { ...identity, runId: history.runId, childRunId: task.childRunId, commandId: randomUUID(),
           ...(current === 'send' ? { text: 'Managed SDK guidance: read original proof.txt.', expectedGoalRevision: task.goalRevision } : {}) };
         const method = `sessions/native-child-${current}`;
@@ -73,6 +84,7 @@ const server = createServer(async (request, response) => {
           const tasks = await rpc('sessions/native-child-tasks', { ...identity, runId: history.runId });
           assert.equal(tasks.tasks[0].delivery, 'background'); assert.equal(tasks.tasks[0].canPromote, false);
           assert.equal(childStep, 1, 'parent continues before original child model completes');
+        }
         }
         call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
       } else {
@@ -173,19 +185,45 @@ try {
     assert.equal(detail.text, current === 'cancel' ? '' : `Child ${current} evidence`);
     const duplicate = await send(); assert.equal(duplicate.status, 200); assert.equal((await duplicate.json()).status, 'duplicate');
     assert.deepEqual(rootRecord(receipt.run_id), parent, 'terminal reads and duplicate confirmations cannot mutate the original root');
-    assert.deepEqual(localLedger.list(scope), []); assert.deepEqual(localLedger.list(localScope), []);
+    assert.deepEqual(localLedger.list(scope), []); assert.equal(localLedger.list(localScope).length, ordinaryRuns.length);
+    if (values['mixed-history']) {
+      current = `ordinary-${runs.length}`; parentStep = 0; childStep = 0; continued = Promise.withResolvers();
+      const result = await harness.session(identity.sessionId).run(`Read proof.txt using a bounded child for ${current}`);
+      assert.equal(result.finalResponse, `Parent completed ${current}`); assert.deepEqual(failures, []);
+      const ordinary = localLedger.load(localScope, localLedger.sessionHead(localScope, identity.sessionId).runId);
+      assert.equal(ordinary.snapshot.phase, 'completed');
+      const child = localLedger.load(ordinary.snapshot.childBudgetReservations[0].childScope, ordinary.snapshot.childRunIds[0]);
+      ordinaryRuns.push({ action: current, record: ordinary, child });
+      assert.equal(child.snapshot.finalText, `Child ${current} evidence`);
+      const page = await rpc('sessions/native-child-history', { ...identity, limit: 1 });
+      assert.equal(page.runId, ordinary.snapshot.runId); assert.equal(page.totalTasks, runs.length + ordinaryRuns.length);
+      const tasks = [...page.tasks]; let cursor = page;
+      while (!cursor.complete) { cursor = await rpc('sessions/native-child-history', { ...identity, limit: 1,
+        offset: cursor.nextOffset, inventoryDigest: page.inventoryDigest }); tasks.push(...cursor.tasks); }
+      assert.deepEqual(tasks.map(task => task.childRunId).sort(), [...runs.map(runId => rootRecord(runId).snapshot.childRunIds[0]),
+        ...ordinaryRuns.map(row => row.child.snapshot.runId)].sort());
+      assert.ok(tasks.every(task => !task.canSendInput && !task.canCancel && !task.canPromote));
+      for (const task of tasks) {
+        const original = await rpc('sessions/native-child-result', { ...identity, runId: task.parentRunId, childRunId: task.childRunId });
+        const selected = await rpc('sessions/native-child-result', { ...identity, childRunId: task.childRunId });
+        assert.equal(original.runId, task.parentRunId); assert.equal(selected.runId, page.runId); assert.equal(original.text, selected.text);
+      }
+    }
   }
   const history = await rpc('sessions/native-child-history');
-  assert.equal(history.totalTasks, 3, 'consecutive managed roots share original Session ancestry');
+  assert.equal(history.totalTasks, 3 + ordinaryRuns.length, 'default history retains both owners and their original Session ancestry');
   const before = { records: runs.map(rootRecord), childRecords: runs.map(runId => {
     const reservation = rootRecord(runId).snapshot.childBudgetReservations[0]; return ledger.load(reservation.childScope, reservation.childRunId);
   }), counts: { models: requests.length, tools: (await admissions()).length },
   history: JSON.parse(await readFile(join(root, 'managed-session-history.json'), 'utf8')) };
-  assert.equal(before.counts.models, 12); assert.equal(before.counts.tools, 5);
-  assert.deepEqual((await admissions()).map(row => row.name), ['native_delegate', 'read_workspace_file', 'native_delegate', 'native_delegate', 'read_workspace_file']);
+  assert.equal(before.counts.models, 12 + ordinaryRuns.length * 4); assert.equal(before.counts.tools, 5 + ordinaryRuns.length * 2);
+  const expectedTools = ['native_delegate', 'read_workspace_file', ...(values['mixed-history'] ? ['native_delegate', 'read_workspace_file'] : []),
+    'native_delegate', ...(values['mixed-history'] ? ['native_delegate', 'read_workspace_file'] : []),
+    'native_delegate', 'read_workspace_file', ...(values['mixed-history'] ? ['native_delegate', 'read_workspace_file'] : [])];
+  assert.deepEqual((await admissions()).map(row => row.name), expectedTools);
   const fileMtime = (await stat(join(root, 'workspace/proof.txt'), { bigint: true })).mtimeNs;
-  assert.equal(before.history.filter(row => row.type === 'turn/start').length, 3);
-  assert.equal(before.history.filter(row => row.type === 'turn/end').length, 3);
+  assert.equal(before.history.filter(row => row.type === 'turn/start').length, 3 + ordinaryRuns.length);
+  assert.equal(before.history.filter(row => row.type === 'turn/end').length, 3 + ordinaryRuns.length);
   await writeFile(join(root, 'managed-session-history-warm.json'), canonical(before.history));
   await harness.close(); harness = new DeepSeekHarness(options); await harness.resumeSession(identity.sessionId);
   assert.deepEqual(await rpc('sessions/native-child-history'), history);
@@ -199,6 +237,12 @@ try {
     const reservation = before.records[index].snapshot.childBudgetReservations[0];
     assert.deepEqual(ledger.load(reservation.childScope, reservation.childRunId), before.childRecords[index]);
   }
+  for (const { record, child } of ordinaryRuns) {
+    assert.deepEqual(localLedger.load(localScope, record.snapshot.runId), record);
+    assert.deepEqual(localLedger.load(child.snapshot.scope, child.snapshot.runId), child);
+    assert.equal((await rpc('sessions/native-child-result', { ...identity, runId: record.snapshot.runId,
+      childRunId: child.snapshot.runId })).text, child.snapshot.finalText);
+  }
   assert.deepEqual({ models: requests.length, tools: (await admissions()).length }, before.counts);
   assert.equal((await stat(join(root, 'workspace/proof.txt'), { bigint: true })).mtimeNs, fileMtime);
   const cold = JSON.parse(await readFile(join(root, 'managed-session-history.json'), 'utf8'));
@@ -211,9 +255,10 @@ try {
   assert.ok(processes.every(row => row.path === join(root, 'node-only-bin')));
   await harness.close(); harness = null;
   await writeFile(join(root, 'managed-children-proof.json'), canonical({ contract: 'agentkit.managed-children-proof/v1', archiveSha256,
-    processes, scope, runs, commands, receipts, counts: before.counts, publicEvents: before.history.length,
+    processes, scope, runs, commands, receipts, ordinaryRuns, mixedHistory: Boolean(values['mixed-history']),
+    counts: before.counts, publicEvents: before.history.length,
     coldModelCalls: requests.length - before.counts.models, coldToolCalls: (await admissions()).length - before.counts.tools }));
-  console.log('Managed children PASS: three consecutive signed Server roots, actual SDK owner lifecycle, authenticated send/cancel/promote, exact retry, original managed history/results, real workspace reads, distinct-PID cold replay with zero model/tool effects, Node-only PATH.');
+  console.log(`Managed children PASS: three signed Server roots${values['mixed-history'] ? ' alternating with three ordinary SDK turns and combined paged history/results' : ''}, actual SDK owner lifecycle, authenticated send/cancel/promote, exact retry, real workspace reads, distinct-PID cold replay with zero model/tool effects, Node-only PATH.`);
 } finally {
   await writeFile(join(root, 'controlled-model-requests.json'), canonical({ requests, failures }));
   continued?.resolve(); await harness?.close(); ledger?.close(); localLedger?.close(); server.closeAllConnections();

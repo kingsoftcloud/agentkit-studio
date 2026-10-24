@@ -603,11 +603,11 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     void start(query.sessionId).catch(() => {});
     return inspectSession(query);
   }
-  function readChildHistory(query, { result = false, liveTasks } = {}) {
+  function readChildHistory(query, { result = false, inventory = false, liveTasks } = {}) {
     const inspected = inspectSession(query);
     invariant(inspected, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
     const history = createNativeChildHistory({ scope: inspected.scope, store: runStore, liveTasks });
-    return history[result ? 'result' : 'list'](query);
+    return history[inventory ? 'inventory' : result ? 'result' : 'list'](query);
   }
   function readChildRecord(query) {
     const inspected = inspectSession(query);

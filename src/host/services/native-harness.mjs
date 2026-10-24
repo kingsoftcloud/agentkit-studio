@@ -8,7 +8,7 @@ import { createNativeModelPort, nativeModelRecoveryPolicy } from '../../../packa
 import { createNativeDshTurnExecutor, freezeNativeDshConfiguration, NATIVE_DSH_TURN_CONTRACT } from '../../../packages/agentkit-harness/src/native/dsh-turn-runtime.mjs';
 import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { nativeLiveStream } from '../../../packages/agentkit-harness/src/native/assistant-stream.mjs';
-import { createNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
+import { createNativeChildHistory, mergeNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { bindStudioNativeMemoryRecall } from '../../providers/native-memory-recall.mjs';
@@ -149,18 +149,44 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   const readChildren = (request, signal, result = false) => {
     signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
     const service = ctx.get('studioManagedNativeSessionControl');
-    if (service?.agentId !== request.agentId || !service.inspect({ agentId: request.agentId,
-      sessionId: request.sessionId, workspaceId, ...(request.runId === undefined ? {} : { runId: request.runId }) }))
+    const managedView = service?.agentId === request.agentId ? service.inspect({ agentId: request.agentId,
+      sessionId: request.sessionId, workspaceId, ...(request.runId === undefined ? {} : { runId: request.runId }) }) : null;
+    if (!managedView)
       return childHistory(request)[result ? 'result' : 'list'](request);
+    if (request.runId !== undefined) {
+      // A historical read is not recovery of the current SDK turn. The bound
+      // service checks this exact original admission/principal and ancestry,
+      // even while a different ordinary/managed turn owns the Session.
+      const control = controls.get(controlKey(request.agentId, request.sessionId));
+      return service.childHistory({ ...request, workspaceId }, { result,
+        liveTasks: control?.store ? liveChildTasks(request, managedView.scope, control.store) : undefined });
+    }
     const original = copy(request), bytes = canonical(request);
     return recovery.inspect({ agentId: original.agentId, sessionId: original.sessionId,
       ...(original.runId === undefined ? {} : { runId: original.runId }) }, signal).then(inspected => {
       signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
       invariant(canonical(request) === bytes, 'studio_native_child_history_invalid');
-      if (!inspected.managed) return childHistory(original)[result ? 'result' : 'list'](original);
       const control = controls.get(controlKey(original.agentId, original.sessionId));
-      return inspected.managedControl.childHistory({ ...original, workspaceId }, { result,
-        liveTasks: control?.store ? liveChildTasks(original, inspected.scope, control.store) : undefined });
+      const managed = inspected.managedControl ?? service;
+      invariant(ctx.get('studioManagedNativeSessionControl') === managed, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+      const managedOptions = { liveTasks: control?.store ? liveChildTasks(original, managedView.scope, control.store) : undefined };
+      // Each history authenticates its own tenant/principal, frozen roles and
+      // ancestry. Merge only read models; commands still target the original
+      // parent and its existing owner. Explicit runId reads remain owner-local.
+      const local = childHistory(original), identity = { sessionId: original.sessionId };
+      const localInventory = local.inventory(identity);
+      const managedInventory = managed.childHistory({ agentId: original.agentId, sessionId: original.sessionId, workspaceId },
+        { ...managedOptions, inventory: true });
+      const inventories = inspected.managed ? [managedInventory, localInventory] : [localInventory, managedInventory];
+      const page = mergeNativeChildHistory(result ? identity : original, inventories);
+      if (!result) return page;
+      const matches = inventories.filter(value => value.tasks.some(task => task.childRunId === original.childRunId));
+      invariant(matches.length === 1, 'child_history_result_unavailable');
+      const task = matches[0].tasks.find(task => task.childRunId === original.childRunId);
+      const selected = { ...original, runId: task.parentRunId };
+      const detail = matches[0] === localInventory ? local.result(selected)
+        : managed.childHistory({ ...selected, workspaceId }, { ...managedOptions, result: true });
+      return { ...detail, runId: page.runId };
     });
   };
   const resolveBinding = async ({ agent, input, binding, signal, prepareInput }, original, execution) => {

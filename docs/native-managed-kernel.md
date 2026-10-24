@@ -239,8 +239,10 @@ execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未�
 一致。它们不能授权 Server pause/resume/approval，也不能解除未知副作用的恢复状态。
 在原控制句柄已释放或 Host 重启后，只允许确认一个逐字段相同且已持久化的 commandId；
 该确认只读、返回 duplicate，新的控制命令仍需原活跃 owner。已完成的历史和分页结果
-不会重新绑定工具或唤醒任务，且不显示可执行操作。普通和托管 Run 混用时默认列表的
-跨账本合并仍需后续实现；显式 runId 可读取对应历史，不能据此声称所有混合历史已统一。
+不会重新绑定工具或唤醒任务，且不显示可执行操作。普通和托管 Run 混用时，默认目录
+合并两份原账本，当前 owner 的祖先链在前、另一 owner 的祖先链在后；
+各链内部保持原有顺序，不使用不同数据库的时间戳推断全局先后。显式 runId 仍读取对应
+原账本的祖先链。此处是只读目录合并，不合并执行、权限、用量归属或数据库。
 
 事实源从已提交 Native 事件生成 runtime/v2、control/v1 和 interaction/v1；包含文本、
 终态、每次模型用量增量、已提交的工具调用/结果、已提交 thinking 捕获以及暂停/恢复。
@@ -273,7 +275,8 @@ runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有�
 
 此路径只允许核对同一原操作的回执。Native 工具 `awaiting_interaction` 仍需原 Server
 签名与可信 token 校验，Host 的 A2A 回调不能返回 approval/resume 或新增用户输入。
-Server 结构化交互、scoped controls 和 execution grants 的缺口仍按上节明确报告。
+Server 的 managed-A2A 结构化交互回复见下节；其他交互生产者、scoped controls 和
+execution grants 的缺口仍按上节明确报告。
 
 ## 已执行的验证与复验入口
 
@@ -361,3 +364,27 @@ ACK；命令准入事件先于 resolved。版本 CAS 和首个答案决定胜者
 该模式挂起本地答案，通过真实签名 HTTP 命令答复，同时核验错误 token/版本/身份/类型
 无效、原问题和远端操作不重复、原账本及不同 PID 的终态冷恢复。独立进程故障测试另行
 验证签名答案提交后、原交互消费前 SIGKILL；该测试不替代实际 SDK 集成证明。
+
+## 普通与托管子任务的混合历史
+
+既有 `agentkit.studio-native-child-history/v1` 响应保留 `runId` 作为当前目录 head、
+`task.parentRunId` 作为该子任务的原父 Run。宿主从安装时绑定的 Server principal 和
+本地工作区分别读取原目录，合并后才进行统一的有界翻页。调用方不能选择 tenant、
+principal、账本或提供目录。两个来源的父/子 ID 冲突会拒绝查询，不猜测归属。
+
+合并目录的 opaque `inventoryDigest` 使用 `agentkit.native-child-inventory-merge/v1`
+摘要域，绑定两个来源的 head、原目录摘要及来源顺序。任一来源增添子任务、变化 head
+或切换当前 owner，旧分页游标失效并要求刷新。只有一个来源有历史时保持原游标。
+后台任务状态/用量变化保持既有目录身份；每页仍读取当前状态。
+
+历史记录不能取得当前控制权。结果面板使用选中记录的 `parentRunId` 读取和翻页，
+核对回复的父/子身份；不能将当前目录 head 套给另一账本的历史任务。显式历史读取
+直接核验原准入、冻结角色和祖先链，即使另一个 SDK turn 正在运行也不进入恢复接口、
+申请租约、唤醒 Kernel 或执行模型/工具。默认无 runId 的结果查询在两个受信目录中
+唯一定位原子任务，返回当前目录 head 和原任务身份。
+
+`scripts/verify-studio-native-managed-children.mjs --mixed-history` 在原签名 Server
+send/cancel/promote 验证之间穿插三个普通 SDK 对话，共六轮真实 owner 生命周期，
+检查活跃期间的跨账本历史结果、合并翻页、原结果及不同 PID 冷恢复。仍须传入
+`--source` 和 `--archive`。模型 HTTP 响应和 Server 签名方是受控测试端，不代表线上
+云服务、完整浏览器交互或所有平台验收。
