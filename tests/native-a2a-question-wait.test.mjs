@@ -15,21 +15,23 @@ import { createNativeToolAuthority } from '../src/providers/native-tool-authorit
 import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, createNativeA2aQuestionTerminator } from '../src/providers/native-a2a-receipt.mjs';
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
 import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
+import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 const remoteTask = (approval = false) => ({ id: 'original-remote', contextId: 'original-context', status: {
   state: 'TASK_STATE_INPUT_REQUIRED', message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'City?' }], metadata: {
     input_schema: { type: 'string', ...(approval ? { enum: ['approve', 'reject'] } : {}) },
     ...(approval ? { ksadk_interaction: { version: 1, kind: 'approval', allowed_decisions: ['approve', 'reject'],
       presentation: { title: 'remote-write', description: '{"arguments":{}}' } } } : {}) } } } });
-async function setup(t, { approval = false, timeout = 90, ...options } = {}) {
+async function setup(t, { approval = false, timeout = 90, rootRecovery = false, ...options } = {}) {
   const f = await internalPeer({ initialTask: remoteTask(approval), expectedContinuationParts: [{ data: approval ? 'approve' : 'Shanghai' }], ...options });
   const bindings = [{ ...spec, timeout_seconds: timeout }], path = join(f.root, 'runs.sqlite');
   let store = new SqliteRunStore(path), closed = false;
   const a2a = prepareNativeA2AHost({ env: f.env, bindings });
-  const fields = { a2a, scope, sessionId: 'session', stateRoot: join(f.root, 'state'), workspaceRoot: f.workspaceRoot, isClosed: () => closed };
-  const authority = createNativeToolAuthority({ scope, sessionId: 'session', store });
+  const ownedScope = rootRecovery ? { ...scope, userId: 'local-user' } : scope;
+  const fields = { a2a, scope: ownedScope, sessionId: 'session', stateRoot: join(f.root, 'state'), workspaceRoot: f.workspaceRoot, isClosed: () => closed };
+  const authority = createNativeToolAuthority({ scope: ownedScope, sessionId: 'session', store });
   const owner = a2a.forSession({ ...fields, assertCurrent: authority }); f.owners.push(owner);
   t.after(async () => { closed = true; await a2a.close(); store.close(); await f.close(); });
-  const port = createNativeA2aToolPort({ ...owner, scope, sessionId: 'session', spaceId: spec.space_id,
+  const port = createNativeA2aToolPort({ ...owner, scope: ownedScope, sessionId: 'session', spaceId: spec.space_id,
     authorize: () => 'allow', assertCurrent: authority, receiptObservation: true });
   let models = 0;
   const ports = { model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
@@ -37,13 +39,16 @@ async function setup(t, { approval = false, timeout = 90, ...options } = {}) {
     : { kind: 'final_candidate', text: 'finished', toolCalls: [], usage: emptyUsage() } },
     tools: { execute: request => port.execute(request), observeReceipt: request => createNativeA2aReceiptObserver({ ...fields, store })(request) } };
   let kernel = new NativeKernel({ store, digest, owner: 'original', ports });
-  const { config } = fixture({ tools: nativeA2aToolDefinitions({ receiptObservation: true }) });
-  kernel.start(initialSnapshot({ scope, sessionId: 'session', runId: 'run', turnId: 'turn', buildId: 'build',
+  const hostRecoveryBinding = rootRecovery ? nativeRecoveryBinding({ binding: { agentId: ownedScope.agentId, agentRevision: 1 },
+    input: { messages: [{ role: 'user', id: 'input', content: [{ type: 'text', text: 'original' }] }] },
+    source: { provider: 'fixture', model: 'original' }, selection: {}, systemPrompt: 'system' }) : undefined;
+  const { config } = fixture({ tools: nativeA2aToolDefinitions({ receiptObservation: true }), hostRecoveryBinding });
+  kernel.start(initialSnapshot({ scope: ownedScope, sessionId: 'session', runId: 'run', turnId: 'turn', buildId: 'build',
     parentRunId: null, taskChainId: 'chain' }, config, digest(config)), config);
-  const snapshot = await kernel.runUntilIdle(scope, 'run'); assert.equal(snapshot.phase, 'awaiting_reconciliation');
+  const snapshot = await kernel.runUntilIdle(ownedScope, 'run'); assert.equal(snapshot.phase, 'awaiting_reconciliation');
   return { ...f, fields, bindings, path, snapshot, models: () => models, get store() { return store; },
     wait: (questionHost, signal = new AbortController().signal) => createNativeA2aReceiptWaiter({ ...fields, store })({ snapshot, signal, questionHost }),
-    resume: async command => { kernel.submit(scope, 'run', command); return kernel.runUntilIdle(scope, 'run'); },
+    resume: async command => { kernel.submit(ownedScope, 'run', command); return kernel.runUntilIdle(ownedScope, 'run'); },
     reopen: () => { store.close(); store = new SqliteRunStore(path); kernel = new NativeKernel({ store, digest, owner: 'cold', ports }); },
   };
 }
@@ -246,6 +251,61 @@ for (const answered of [false, true]) test(`owning Run cancellation withdraws ${
   assert.deepEqual(f.record().managed.questions.log, events);
   assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
   assert.equal(f.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
+});
+
+function terminalWorker(f, action, guard) {
+  const child = fork(new URL('./fixtures/a2a-terminal-cleanup-worker.mjs', import.meta.url), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let stderr = ''; const messages = [];
+  child.stderr.on('data', bytes => { stderr += bytes; }); child.on('message', value => messages.push(value));
+  const exit = new Promise((resolve, reject) => { child.once('error', reject);
+    child.once('exit', (code, signal) => resolve({ code, signal, pid: child.pid, stderr })); });
+  const boundary = new Promise(resolve => child.on('message', value => { if (value.type === 'terminal-durable') resolve(value); }));
+  child.send({ root: f.root, workspaceRoot: f.workspaceRoot, env: f.env, bindings: f.bindings, scope: f.fields.scope, action, guard });
+  return { child, messages, exit, boundary };
+}
+
+for (const answered of [false, true]) test(`SIGKILL after owning terminal commit: closed-turn ${answered ? 'answered' : 'pending'} question cleanup replays locally`, { timeout: 15000 }, async t => {
+  const f = await setup(t, { rootRecovery: true }); let entered;
+  const ready = new Promise(resolve => { entered = resolve; }), controller = new AbortController();
+  const pause = () => { entered(); return new Promise(() => {}); };
+  const work = f.wait(host(answered ? submit : pause, answered ? pause : controlConsent), controller.signal);
+  const stopped = assert.rejects(work); await ready; controller.abort(); await stopped;
+  const savedQuestion = Object.values(f.record().managed.questions.entries)[0];
+  assert.equal(savedQuestion.status, answered ? 'submitted' : 'pending');
+  await f.fields.a2a.close();
+  const first = terminalWorker(f, 'terminal'); t.after(() => first.child.kill('SIGKILL'));
+  await Promise.race([first.boundary, first.exit.then(value => assert.fail(JSON.stringify(value)))]);
+  const terminal = f.store.load(f.fields.scope, 'run');
+  assert.equal(terminal.snapshot.phase, 'canceled');
+  assert.equal(terminal.projections['agentkit.native-a2a-question-cleanup/v1'], undefined);
+  assert.notEqual(Object.values(f.record().managed.questions.entries)[0].stage, 'withdrawn');
+  first.child.kill('SIGKILL'); const killed = await first.exit; assert.equal(killed.signal, 'SIGKILL');
+  const before = f.record(), calls = f.calls.filter(call => call.wireMethod).length;
+  for (const guard of ['archived', 'delegated', 'preset', 'lease']) {
+    const rejected = terminalWorker(f, 'recover', guard), result = await rejected.exit;
+    assert.equal(result.code, 0, result.stderr);
+    if (['archived', 'lease'].includes(guard)) assert.equal(rejected.messages[0].outcome.status, 'deferred');
+    else {
+      assert.equal(rejected.messages[0].type, 'guarded');
+      assert.equal(rejected.messages[0].code, guard === 'preset' ? 'studio_native_recovery_preset_changed' : 'studio_native_recovery_live_root_required');
+    }
+    assert.deepEqual(f.record(), before, `${guard} cannot settle the original question`);
+    assert.equal(f.store.load(f.fields.scope, 'run').projections['agentkit.native-a2a-question-cleanup/v1'], undefined);
+  }
+  const second = terminalWorker(f, 'recover'), cold = await second.exit;
+  assert.equal(cold.code, 0, cold.stderr); assert.equal(second.messages[0].outcome.status, 'cleaned');
+  const cleaned = f.store.load(f.fields.scope, 'run'), question = Object.values(f.record().managed.questions.entries)[0];
+  assert.equal(question.stage, 'withdrawn'); assert.equal(question.status, savedQuestion.status);
+  assert.equal(cleaned.projections['agentkit.native-a2a-question-cleanup/v1'], terminal.snapshot.eventSeq);
+  assert.deepEqual(cleaned.snapshot, terminal.snapshot); assert.deepEqual(cleaned.intents, terminal.intents);
+  assert.deepEqual(cleaned.receipts, terminal.receipts);
+  const after = f.record(), third = terminalWorker(f, 'recover'), replayed = await third.exit;
+  assert.equal(replayed.code, 0, replayed.stderr); assert.equal(third.messages[0].outcome.status, 'settled');
+  assert.deepEqual(f.record(), after); assert.deepEqual(f.store.load(f.fields.scope, 'run'), cleaned);
+  assert.equal(f.calls.filter(call => call.wireMethod).length, calls, 'cleanup never calls Get/Send/Cancel');
+  assert.equal(new Set([killed.pid, cold.pid, replayed.pid]).size, 3);
+  t.diagnostic(JSON.stringify({ terminalCleanup: true, answered, killedPid: killed.pid, coldPid: cold.pid,
+    thirdPid: replayed.pid, newTaskRequests: 0, originalRunId: 'run', phase: cleaned.snapshot.phase }));
 });
 
 test('an admitted unknown answer remains unresolved after the original deadline and never auto-queries or resends', async t => {

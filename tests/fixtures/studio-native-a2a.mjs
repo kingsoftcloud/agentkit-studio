@@ -23,7 +23,7 @@
  * registers tool admission logging. It does NOT call host.executeTurn directly.
  */
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
@@ -46,6 +46,22 @@ async function applyProof(ctx, options) {
   ctx.on('agent/assistant-stream', ({ agent, frame }) => {
     appendFileSync(join(options.directory, 'assistant-stream.jsonl'),
       JSON.stringify({ session: agent.session.id, frame }) + '\n');
+  });
+  if (options.holdTerminalClose) ctx.on('agent/created', ({ agent }) => {
+    const session = agent.session, append = session.append;
+    const boundary = join(options.directory, 'held-terminal-close.json');
+    // Explicit fault injector: fail the first real DSH turn/end append before
+    // any bytes are written, then the parent kills this actual Host process.
+    // The replacement runs the original method; no fake event is supplied.
+    const heldAppend = function(type, data, ...rest) {
+      if (session.id === 'a2a-session' && type === 'turn/end' && data.reason?.kind === 'completed' && !existsSync(boundary)) {
+        writeFileSync(boundary, JSON.stringify({ pid: process.pid, sessionId: session.id, turn: data.turn }), { mode: 0o600 });
+        throw Error('Verification held original turn/end before append');
+      }
+      return append.call(this, type, data, ...rest);
+    };
+    session.append = heldAppend;
+    ctx.effect(() => () => { if (session.append === heldAppend) session.append = append; }, 'verification terminal-close fault');
   });
 
   const workspaceRoot = join(options.directory, 'workspace');

@@ -8,6 +8,7 @@ import { A2A_QUESTION_LEDGER } from './native-a2a-question.mjs';
 import { awaitA2aControl } from './native-a2a-controls.mjs';
 
 export const NATIVE_A2A_RECEIPT_WAIT = 'agentkit.native-a2a-receipt-wait/v1';
+export const NATIVE_A2A_QUESTION_CLEANUP = 'agentkit.native-a2a-question-cleanup/v1';
 
 /** Local, read-only classification. This grants neither a receipt query nor
  * execution of the original tool. Rebinding still validates the full Host

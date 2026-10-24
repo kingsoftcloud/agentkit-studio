@@ -527,6 +527,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     permissionContract: STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT,
     componentContract: builtinNames.has('component_status') ? NATIVE_COMPONENT_TOOLS_CONTRACT : null,
     a2aBinding: a2a ? { ...a2a.binding, toolContract: NATIVE_A2A_TOOLS_CONTRACT, receiptWaitContract: NATIVE_A2A_RECEIPT_WAIT } : null,
+    settleA2aQuestions({ scope, sessionId, runId, store }) {
+      invariant(!closed && a2a && scope?.agentId === config.agentId && typeof store?.load === 'function',
+        'studio_native_a2a_cleanup_unavailable');
+      createNativeA2aQuestionTerminator({ a2a, scope, sessionId, store,
+        stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed })(store.load(scope, runId).snapshot);
+    },
     async controlA2aTask({ scope, sessionId, ...request }, { assertControl, authorizeControl }) {
       invariant(!closed && a2a && scope?.agentId === config.agentId, 'studio_native_a2a_control_unavailable');
       invariant(typeof assertControl === 'function' && typeof authorizeControl === 'function', 'A2A_CONTROL_AUTHORITY_REQUIRED');

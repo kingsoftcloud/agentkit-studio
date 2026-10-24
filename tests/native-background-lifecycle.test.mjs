@@ -25,7 +25,7 @@ test('real Cordis waits for portable frozen readiness and starts without a user 
   const ctx = new Context();
   t.after(() => ctx.fiber.dispose());
   let started = 0, closed = 0, signal;
-  for (const service of ['sessions', 'sessionProjections', 'llm', 'agentPresets', 'sessionController', 'agents', 'permissionPresets', 'approval']) ctx.provide(service, {});
+  for (const service of ['sessions', 'sessionProjections', 'llm', 'agentPresets', 'sessionController', 'agents', 'permissionPresets', 'approval', 'workspaceRegistry']) ctx.provide(service, {});
   bindNativeBackgroundRuntime(ctx, { readyService: FROZEN_RUNTIME_READY, getHost: async () => ({
     async startBackgroundWatcher(input) {
       started++; signal = input.signal;
@@ -103,4 +103,17 @@ test('startup integrity failure remains visible and releases the replacement gat
   const retry = binding.enter(); await retry.starting;
   assert.equal(calls, 2);
   await failed.retire(); await retry.retire();
+});
+
+test('the same ready dependency owner starts and retires background and wait recovery together', async () => {
+  const calls = [];
+  const binding = scopes({ getHost: async () => ({
+    async startBackgroundWatcher({ signal }) { calls.push('background'); return { close: () => { assert.equal(signal.aborted, true); calls.push('stop-background'); } }; },
+    async startWaitRecovery({ signal }) { calls.push('waits'); return { close: () => { assert.equal(signal.aborted, true); calls.push('stop-waits'); } }; },
+  }) });
+  assert.ok(binding.dependencies.includes('workspaceRegistry'));
+  const scope = binding.enter(); await scope.starting;
+  assert.deepEqual(calls, ['background', 'waits']);
+  await scope.retire();
+  assert.deepEqual(calls, ['background', 'waits', 'stop-background', 'stop-waits']);
 });

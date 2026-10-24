@@ -2,7 +2,7 @@ import { addUsage, canonical, copy, invariant, terminal } from '../../../package
 import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
-import { nativeA2aReceiptWaitSource, NATIVE_A2A_RECEIPT_WAIT } from '../../providers/native-a2a-receipt.mjs';
+import { nativeA2aReceiptWaitSource, NATIVE_A2A_RECEIPT_WAIT, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 
 export const STUDIO_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-native-recovery/v1';
 export const STUDIO_NATIVE_USAGE_CONTRACT = 'agentkit.studio-native-usage/v1';
@@ -101,7 +101,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       error: applicable?.error ?? null };
   };
   const status = async (request, signal) => summary(request, await inspect(request, signal));
-  const resume = (request, signal) => {
+  const resume = (request, signal, admit) => {
     invariant(text(request?.runId) && text(request.agentId) && text(request.sessionId), 'studio_native_recovery_request_invalid');
     lifetime.signal.throwIfAborted(); signal?.throwIfAborted();
     const key = controlKey(request.agentId, request.sessionId), previous = attempts.get(key);
@@ -129,6 +129,10 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
       return execute[inspected.background ? 'resumeBackground' : 'resume']({ agent: inspected.agent, signal: lifetime.signal,
         recoveryStarted: control => {
+          // Request/discovery retirement before admission grants no new driver.
+          // Once acknowledged, the owning Host lifetime controls the Run.
+          signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
+          admit?.();
           invariant(control.runId === request.runId, 'studio_native_recovery_identity_mismatch');
           acknowledgment.resolve({ ...summary(request, inspected), state: 'recovering', canResume: false });
         } });
@@ -182,5 +186,60 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     active.add(task); void task.finally(() => active.delete(task)).catch(() => {});
     return task;
   };
-  return { status, resume, reconcile };
+  // Called only by the Host startup owner, never by status/history reads. The
+  // ledger is discovery, not authority: resolve and recheck the live root,
+  // original external turn, current archive policy, lease and exact capsule.
+  const automatic = async (request, callerSignal) => {
+    const signal = callerSignal ? AbortSignal.any([callerSignal, lifetime.signal]) : lifetime.signal;
+    const archived = () => {
+      signal.throwIfAborted();
+      const ids = ctx.get('workspaceRegistry')?.archivedSessionIds;
+      invariant(Array.isArray(ids), 'studio_native_recovery_archive_policy_unavailable');
+      return ids.includes(request.sessionId);
+    };
+    if (archived()) return { status: 'deferred' };
+    const inspected = await inspect(request, signal), { record, agent, scope, admission } = inspected;
+    if (archived() || !record || controls.has(controlKey(request.agentId, request.sessionId))) return { status: 'deferred' };
+    if (agent.status !== 'idle') return { status: 'deferred' };
+    invariant(ctx.get('agents')?.get?.(agent.id) === agent
+      && ctx.get('agents')?.roots?.().includes(agent), 'studio_native_recovery_live_root_required');
+    if (record.configuration.childOwnerBinding || record.lease && record.lease.expiresAt > Date.now()) return { status: 'deferred' };
+    const identity = { agentId: request.agentId, sessionId: request.sessionId, runId: request.runId };
+    const capsule = readNativeRecoveryBinding(record, identity);
+    const admit = () => {
+      invariant(!archived() && ctx.get('agents')?.get?.(agent.id) === agent && ctx.get('agents')?.roots?.().includes(agent),
+        'studio_native_recovery_live_root_required');
+    };
+    if (nativeA2aReceiptWaitSource(record)) {
+      if (!admission || store.sessionHead(scope, request.sessionId)?.runId !== request.runId) return { status: 'deferred' };
+      // resume performs its own asynchronous inspection and full frozen
+      // configuration/preset/Build/prompt rebind before installing any port.
+      await resume(identity, signal, admit); return { status: 'restored' };
+    }
+    if (!terminal(record.snapshot.phase)) return { status: 'deferred' };
+    // Cleanup may have committed before a crash lost the DSH turn/end. Its
+    // cursor must never hide the still-open original owner.
+    if (admission && ended(record)) { await resume(identity, signal, admit); return { status: 'restored' }; }
+    if ((record.projections[NATIVE_A2A_QUESTION_CLEANUP] ?? 0) >= record.snapshot.eventSeq)
+      return { status: 'settled' };
+    // A closed DSH turn cannot be resumed merely to clear a local question.
+    // Use the current trusted preset's local-only cleanup port, retaining the
+    // original recorded capsule and the committed terminal checkpoint.
+    invariant(typeof agentEvents === 'function', 'studio_native_recovery_dispatch_unavailable');
+    const presetId = ctx.get('sessionProjections')?.stateOf?.(agent.session, 'agentPreset');
+    invariant(typeof presetId === 'string' && presetId, 'studio_native_recovery_preset_changed');
+    const binding = await live(() => agentEvents(ctx, agent).serial('agentkit/native-recovery-binding', {}), signal);
+    assertNativeRecoveryPreset(capsule, binding);
+    invariant(typeof binding.nativeTools?.settleA2aQuestions === 'function', 'studio_native_a2a_cleanup_unavailable');
+    if (archived()) return { status: 'deferred' };
+    invariant(ctx.get('agents')?.get?.(agent.id) === agent && ctx.get('agents')?.roots?.().includes(agent)
+      && ctx.get('sessionProjections')?.stateOf?.(agent.session, 'agentPreset') === presetId
+      && canonical(store.load(scope, request.runId).snapshot) === canonical(record.snapshot),
+    'studio_native_recovery_identity_mismatch');
+    await live(() => binding.nativeTools.settleA2aQuestions({ scope, sessionId: request.sessionId, runId: request.runId, store }), signal);
+    signal.throwIfAborted();
+    store.acknowledge(scope, request.runId, NATIVE_A2A_QUESTION_CLEANUP, record.snapshot.eventSeq);
+    return { status: 'cleaned' };
+  };
+  return { status, resume, reconcile, automatic };
 }

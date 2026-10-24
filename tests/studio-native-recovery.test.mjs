@@ -109,6 +109,18 @@ test('recovery keeps current prompt changes fenced before executing the original
   assert.equal(f.requests.length, 0); assert.ok(f.agent.externalTurns.pending());
 });
 
+test('retiring recovery discovery during full prompt rebinding cannot install a late driver', async t => {
+  const f = await fixture(t), entered = gate(), prompt = gate(), stop = new AbortController();
+  f.services.systemPrompt.assemble = async () => { entered.resolve(); return prompt.promise; };
+  const recovery = f.host.resumeTurn(f.request, stop.signal);
+  const rejected = assert.rejects(recovery, /discovery-retired/);
+  await entered.promise; stop.abort(Error('discovery-retired')); prompt.resolve(f.assembly);
+  await rejected; await tick();
+  assert.equal(f.requests.length, 0, 'late binding cannot call a model');
+  assert.ok(f.agent.externalTurns.pending(), 'the original owner remains recoverable');
+  assert.equal(f.events.filter(event => event.type === 'turn/end').length, 0);
+});
+
 for (const change of ['revision', 'profile', 'permission']) test(`production recovery refuses ${change} drift without model or Run creation`, async t => {
   const f = await fixture(t);
   if (change === 'revision') f.binding.agentRevision++;

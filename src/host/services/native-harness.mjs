@@ -29,6 +29,7 @@ import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../provid
 import { studioNativeComponentStatus } from '../../providers/native-component-status.mjs';
 import { nativeVisionProfileId } from '../../native-vision-model.mjs';
 import { createStudioNativeVisionBinding } from '../../providers/native-vision-binding.mjs';
+import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -68,6 +69,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
   let closed = false, closing;
   let backgroundRegistry, backgroundOwner, backgroundStart = Promise.resolve();
+  let waitRecoveryOwner, waitRecoveryStart = Promise.resolve();
   const workspaceId = hash(resolve(workspaceRoot));
   const controlKey = (agentId, sessionId) => canonical({ agentId, sessionId });
   const controlFor = request => {
@@ -306,7 +308,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // completed-Turn consumer have already finished before this runs.
           try {
             let questionError;
-            try { toolPorts.tools.settleQuestions?.(store.load(scope, request.runId).snapshot); }
+            try {
+              const snapshot = store.load(scope, request.runId).snapshot;
+              if (typeof toolPorts.tools.settleQuestions === 'function') {
+                toolPorts.tools.settleQuestions(snapshot);
+                if (['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase))
+                  store.acknowledge(scope, request.runId, NATIVE_A2A_QUESTION_CLEANUP, snapshot.eventSeq);
+              }
+            }
             catch (error) { if (error.code !== 'run_not_found') questionError = error; }
             await hooks?.close();
             if (ownedChildren) {
@@ -486,6 +495,67 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents });
   const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
   const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
+  const startWaitRecovery = ({ signal } = {}) => {
+    invariant(signal === undefined || signal instanceof AbortSignal, 'studio_native_recovery_signal_invalid');
+    const starting = waitRecoveryStart.then(async () => {
+      lifetime.signal.throwIfAborted(); signal?.throwIfAborted();
+      await waitRecoveryOwner?.close();
+      const { createNativeWaitRecoveryWorker } = await import('./native-wait-recovery-worker.mjs');
+      const controller = new AbortController();
+      const workerSignal = AbortSignal.any([lifetime.signal, controller.signal, ...(signal ? [signal] : [])]);
+      workerSignal.throwIfAborted();
+      // Terminal heads need one ownership inspection per dependency generation:
+      // the question cursor alone cannot prove the DSH turn/end was durable.
+      const settledHeads = new Set();
+      const checkpointKey = snapshot => canonical({ scope: snapshot.scope, runId: snapshot.runId, revision: snapshot.revision });
+      const worker = createNativeWaitRecoveryWorker({ signal: workerSignal,
+        listCandidates: async scanSignal => {
+          scanSignal.throwIfAborted();
+          const principal = { tenantId: 'local', workspaceId, userId: 'local-user' };
+          const scopes = typeof store.listScopes === 'function' ? store.listScopes(principal)
+            : (await agents.list({ includeTeamRoles: true })).filter(row => row.metadata?.local === true)
+              .map(row => ({ ...principal, agentId: row.metadata.id }));
+          scanSignal.throwIfAborted();
+          const candidates = [];
+          for (const scope of scopes) for (const snapshot of store.list(scope)) {
+            scanSignal.throwIfAborted();
+            if (!['awaiting_reconciliation', 'completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)) continue;
+            if (settledHeads.has(checkpointKey(snapshot))) continue;
+            const record = store.load(scope, snapshot.runId);
+            if (record.configuration.childOwnerBinding || record.lease && record.lease.expiresAt > Date.now()) continue;
+            const waiting = nativeA2aReceiptWaitSource(record);
+            const cleanup = !waiting && ['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)
+              && ((record.projections[NATIVE_A2A_QUESTION_CLEANUP] ?? 0) < snapshot.eventSeq
+                || snapshot.phase !== 'interrupted' && store.sessionHead(scope, snapshot.sessionId)?.runId === snapshot.runId)
+              && record.intents.some(intent => intent.kind === 'tool' && intent.payload.calls?.some(call => call.name === 'call_a2a_agent'));
+            if (waiting || cleanup) candidates.push({ scope, sessionId: snapshot.sessionId, runId: snapshot.runId });
+          }
+          return candidates;
+        },
+        restore: async (candidate, scanSignal) => {
+          const outcome = await recovery.automatic({ agentId: candidate.scope.agentId,
+            sessionId: candidate.sessionId, runId: candidate.runId }, scanSignal);
+          scanSignal.throwIfAborted();
+          if (['settled', 'cleaned'].includes(outcome.status))
+            settledHeads.add(checkpointKey(store.load(candidate.scope, candidate.runId).snapshot));
+          if (settledHeads.size > 4096) settledHeads.delete(settledHeads.values().next().value);
+          return outcome;
+        },
+        onError: error => console.error('[agentkit-studio] Native wait recovery:', error.code),
+      });
+      let stopped;
+      const owner = { status: () => worker.status(), close() {
+        if (stopped) return stopped;
+        controller.abort(new Error('Studio wait recovery discovery retired'));
+        return stopped = worker.close().finally(() => { if (waitRecoveryOwner === owner) waitRecoveryOwner = undefined; });
+      } };
+      waitRecoveryOwner = owner;
+      try { await worker.start(); workerSignal.throwIfAborted(); return owner; }
+      catch (error) { await owner.close(); throw error; }
+    });
+    waitRecoveryStart = starting.then(() => {}, () => {});
+    return starting;
+  };
   const startBackgroundWatcher = ({ signal } = {}) => {
     invariant(signal === undefined || signal instanceof AbortSignal, 'studio_native_background_signal_invalid');
     const starting = backgroundStart.then(async () => {
@@ -542,6 +612,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     return starting;
   };
   return {
+    startWaitRecovery,
+    waitRecoveryStatus: () => waitRecoveryOwner?.status() ?? { running: false, started: false },
     startBackgroundWatcher,
     backgroundStatus: () => backgroundOwner?.status() ?? { running: false, started: false },
     notifyBackgroundCompletion,
@@ -592,8 +664,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       if (closing) return closing;
       closed = true; lifetime.abort(new Error('Studio Native host closed'));
       return closing = (async () => {
-        await backgroundStart;
-        const background = await Promise.allSettled([backgroundOwner?.close()]);
+        await Promise.all([backgroundStart, waitRecoveryStart]);
+        const background = await Promise.allSettled([backgroundOwner?.close(), waitRecoveryOwner?.close()]);
         await Promise.allSettled([...active]);
         const children = await Promise.allSettled([...childOwners].flatMap(item => [...item.runIds]
           .map(runId => item.owner.releaseRun({ scope: item.scope, runId }))));

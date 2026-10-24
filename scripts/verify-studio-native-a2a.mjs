@@ -65,6 +65,7 @@ const { values } = parseArgs({
     keep: { type: 'boolean', default: false },
     'reconcile-cold': { type: 'boolean', default: false },
     'receipt-crash': { type: 'boolean', default: false },
+    'terminal-close-crash': { type: 'boolean', default: false },
     'busy-cancel': { type: 'boolean', default: false },
     'internal-control-plane': { type: 'boolean', default: false },
     'public-tool-activity': { type: 'boolean', default: false },
@@ -74,6 +75,7 @@ const { values } = parseArgs({
 assert.ok(values.source, 'Use --source <built DSH SDK checkout>');
 assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
 assert.ok(!values['receipt-crash'] || values['reconcile-cold'], '--receipt-crash requires --reconcile-cold');
+assert.ok(!values['terminal-close-crash'] || values['reconcile-cold'], '--terminal-close-crash requires --reconcile-cold');
 assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel and --reconcile-cold are separate scenarios');
 assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values['reconcile-cold'], 'internal mode currently proves the normal mounted turn/history scenario');
 assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], 'public tool activity requires the internal canonical path');
@@ -424,6 +426,7 @@ try {
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
     `        exportControl: ${values['reconcile-cold'] || values['busy-cancel']}`,
+    `        holdTerminalClose: ${values['terminal-close-crash']}`,
     ...(values['busy-cancel'] ? [`        approvalUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/approval`)}`] : []),
     '',
   ].join('\n'));
@@ -458,7 +461,7 @@ try {
   } else if (values['reconcile-cold']) {
     await verifyMountedA2aRecovery({ root, installed, repository, source, archive, archiveSha,
       harness, makeHarness: () => new DeepSeekHarness(options), recoveryPeer,
-      receiptCrash: values['receipt-crash'], nodeOnlyBin,
+      receiptCrash: values['receipt-crash'], terminalCloseCrash: values['terminal-close-crash'], nodeOnlyBin,
       counts: () => ({ model: modelCalls, discovery: discoveryCalls, send: a2aSends, get: a2aGets }),
       requests: { modelRequests, a2aPeerRequests, discoveryRequests, serverFailures }, a2aReply, remoteTaskId, remoteContextId });
   } else {

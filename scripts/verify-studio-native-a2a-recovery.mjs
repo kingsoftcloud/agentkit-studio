@@ -24,7 +24,7 @@ async function until(check, label, timeout = 45000) {
 
 export async function verifyMountedA2aRecovery(options) {
   const { root, installed, repository, source, archive, archiveSha, makeHarness, recoveryPeer,
-    receiptCrash, nodeOnlyBin, counts, requests, a2aReply, remoteTaskId, remoteContextId } = options;
+    receiptCrash, terminalCloseCrash, nodeOnlyBin, counts, requests, a2aReply, remoteTaskId, remoteContextId } = options;
   let harness = options.harness, store, running, runId, scope;
   const pids = [], kills = [], checkpoints = [];
   const save = async (name, value) => writeFile(join(root, name + '.json'), JSON.stringify(value, null, 2));
@@ -114,14 +114,24 @@ export async function verifyMountedA2aRecovery(options) {
     const beforeKill = await snapshot('mounted-run-before-kill');
     await kill('waiting-original-turn');
     await restart();
-    const cold = await accepted('sessions/native-recovery-status', identity());
-    assert.equal(cold.state, 'reconciliation_required'); assert.equal(cold.canReconcile, true); assert.equal(cold.canResume, true);
+    const cold = await until(async () => {
+      const status = await accepted('sessions/native-recovery-status', identity());
+      return status.state === 'recovering' && status.receiptWait ? status : null;
+    }, 'automatic original wait reattachment without a resume RPC');
+    assert.equal(cold.canReconcile, true); assert.equal(cold.canResume, false);
     assert.deepEqual(cold.receiptWait, { contract: 'agentkit.native-a2a-receipt-wait/v1', operationKey,
       callId: original.snapshot.toolReconciliation.callId });
     assert.equal(cold.runId, runId);
-    assert.equal(canonical(store.load(scope, runId)), canonical(beforeKill), 'history/status alone never drives or mutates Native');
-    const attached = await accepted('sessions/native-recovery-resume', identity());
-    assert.equal(attached.state, 'recovering'); assert.equal(attached.runId, runId);
+    await until(() => {
+      const current = store.load(scope, runId);
+      return current.fence > beforeKill.fence && current.lease === null;
+    }, 'reattached idle worker acquired and released its new execution fence');
+    const afterAttach = await snapshot('mounted-run-automatically-reattached');
+    assert.equal(canonical(afterAttach.snapshot), canonical(beforeKill.snapshot), 'startup keeps the original idle checkpoint');
+    assert.deepEqual(afterAttach.intents, beforeKill.intents);
+    assert.deepEqual(afterAttach.receipts, beforeKill.receipts);
+    await accepted('sessions/native-recovery-status', identity());
+    assert.equal(canonical(store.load(scope, runId)), canonical(afterAttach), 'status alone never drives or mutates Native');
     await delay(250);
     count({ model: 1, discovery: 1, send: 1, get: 1 });
     assert.equal(store.load(scope, runId).snapshot.phase, 'awaiting_reconciliation');
@@ -132,7 +142,8 @@ export async function verifyMountedA2aRecovery(options) {
     count({ model: 1, discovery: 1, send: 1, get: 1 });
     const forged = await rpc('sessions/native-recovery-reconcile', { ...request, operationKey: 'wrong-original', commandId: 'forged' });
     assert.equal(forged.ok, false); assert.equal(store.load(scope, runId).commands.some(row => row.command.commandId === 'forged'), false);
-    checkpoints.push({ name: 'cold-wait-no-replay', counts: counts(), status: cold });
+    checkpoints.push({ name: 'cold-wait-no-replay', counts: counts(), status: cold,
+      automaticReattachment: true, resumeRpcBeforeAttachment: false });
 
     if (receiptCrash) {
       recoveryPeer.holdNextGet = true;
@@ -169,6 +180,25 @@ export async function verifyMountedA2aRecovery(options) {
     assert.equal(toolMessage.tool_call_id, 'a2a-call-1'); assert.match(toolMessage.content, /The remote agent found 3 relevant documents/);
     const expected = { model: 2, discovery: 1, send: 1, get: receiptCrash ? 3 : 2 };
     count(expected);
+    if (terminalCloseCrash) {
+      const held = await until(async () => {
+        try { return JSON.parse(await readFile(join(root, 'held-terminal-close.json'), 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }, 'real DSH turn/end append fault boundary');
+      assert.equal(held.pid, harness.client.child.pid); assert.equal(held.turn, 1);
+      const gap = await snapshot('mounted-run-cleaned-before-turn-end');
+      assert.equal(gap.snapshot.phase, 'completed');
+      assert.equal(gap.projections['agentkit.native-a2a-question-cleanup/v1'], gap.snapshot.eventSeq);
+      await kill('terminal-cleanup-committed-before-turn-end');
+      await restart();
+      // No resume RPC: the question cleanup cursor must not hide an original
+      // DSH owner whose turn/end append never happened.
+      await until(async () => (await accepted('sessions/native-recovery-status', identity())).state === 'closed',
+        'automatic closure of the original terminal owner');
+      count(expected);
+      checkpoints.push({ name: 'terminal-cleanup-before-turn-end', counts: counts(), automaticReattachment: true,
+        record: await snapshot('mounted-run-terminal-owner-recovered') });
+    }
     await until(async () => {
       const base = join(root, 'sessions'), files = (await readdir(base, { recursive: true })).filter(path => path.endsWith('.jsonl'));
       assert.equal(files.length, 1);
@@ -195,7 +225,7 @@ export async function verifyMountedA2aRecovery(options) {
     assert.equal(beforeDuplicate.includes('a2a-fixture-token'), false);
     assert.equal(beforeDuplicate.includes('sk-studio-a2a-secret'), false);
     await save('mounted-a2a-recovery-evidence', { node: process.version, pids, kills, checkpoints, counts: counts(),
-      proofRoot: root, receiptCrash, runId, scope, remoteTaskId, remoteContextId,
+      proofRoot: root, receiptCrash, terminalCloseCrash, runId, scope, remoteTaskId, remoteContextId,
       archive: { path: archive, sha256: archiveSha }, sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
       fixtureSha256: sha(await readFile(join(repository, 'tests/fixtures/studio-native-a2a.mjs'))),
       verifierSha256: sha(await readFile(new URL(import.meta.url))), originalOperationKey: operationKey,
