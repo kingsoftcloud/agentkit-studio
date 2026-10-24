@@ -4,6 +4,14 @@ import { spec, scope } from './native-a2a-internal-peer.mjs';
 import { join } from 'node:path';
 process.once('message', async input => {
   const factory = prepareNativeA2AHost({ env: input.env, bindings: [spec] });
+  if (input.action === 'restore-events') {
+    try {
+      const restored = factory.restoreEvents({ stateRoot: join(input.root, 'state'), workspaceRoot: input.workspaceRoot });
+      await factory.close(); process.send({ type: 'restored-events', restored, pid: process.pid });
+    } catch (error) { process.send({ type: 'error', code: error.code }); process.exitCode = 1; }
+    finally { await factory.close(); process.disconnect(); }
+    return;
+  }
   const owner = factory.forSession({ scope, sessionId: 'session', workspaceRoot: input.workspaceRoot, stateRoot: join(input.root, 'state'),
     assertCurrent: () => true, assertControl: () => true, authorizeControl: async () => 'allow' });
   const signal = new AbortController().signal;

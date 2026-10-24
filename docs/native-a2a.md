@@ -5,7 +5,7 @@ Reference: read-only `ksadk-python`, branch `feat-ksadk-harness-2`, commit
 AgentCard-driven outgoing tool path and optional internal outgoing
 registry/permit/credential/task binding described in
 [internal A2A](native-a2a-internal.md). It does not yet complete the entire A2A
-product, canonical event outbox, subscriptions or inbound server migration.
+product, complete canonical content mapping, subscriptions or inbound server migration.
 
 ## Binding and execution
 

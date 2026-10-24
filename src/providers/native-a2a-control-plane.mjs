@@ -4,6 +4,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical, copy, invariant, parseNativeJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { hostFetch } from '../http-fetch.mjs';
+import { A2A_EVENT_PERMANENT_ERRORS } from './native-a2a-events.mjs';
 
 export const INTERNAL_A2A_CONTROL_PLANE = 'agentkit.a2a-internal-control-plane/v1';
 const prefix = '/agentengine/internal/v1/a2a/';
@@ -108,14 +109,19 @@ export function createInternalA2AControlPlane({ baseUrl, tokenProvider, fetchImp
       } finally { try { observe(reader.cancel()); } catch {} try { reader.releaseLock(); } catch {} }
       ctx.guard(); const envelope = parseNativeJson(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
       invariant(object(envelope) && Number.isSafeInteger(Number(envelope.Code ?? 0)), 'A2A_CONTROL_PLANE_INVALID_RESPONSE');
-      invariant(response.ok && Number(envelope.Code ?? 0) === 0, 'A2A_CONTROL_PLANE_ACTION_FAILED');
+      if (!response.ok || Number(envelope.Code ?? 0) !== 0) {
+        const code = action === 'AppendA2ATaskEvents' && A2A_EVENT_PERMANENT_ERRORS.includes(envelope.Data?.ErrorCode)
+          ? envelope.Data.ErrorCode : 'A2A_CONTROL_PLANE_ACTION_FAILED';
+        invariant(false, code);
+      }
       invariant(object(envelope.Data), 'A2A_CONTROL_PLANE_INVALID_RESPONSE'); ctx.guard(); return copy(envelope.Data);
     } catch (error) {
       discard(response); ctx.signal.throwIfAborted();
       // Never echo server messages, injected headers/query, JWTs or fetch causes.
       const safe = new Set(['A2A_CONTROL_PLANE_INVALID_RESPONSE', 'A2A_CONTROL_PLANE_ACTION_FAILED', 'A2A_CONTROL_PLANE_RESPONSE_LIMIT',
         'A2A_CONTROL_PLANE_REQUEST_CHANGED', 'A2A_CONTROL_PLANE_AUTHORITY_LOST']);
-      invariant(false, safe.has(error?.code) ? error.code : 'A2A_CONTROL_PLANE_UNAVAILABLE');
+      invariant(false, safe.has(error?.code) || action === 'AppendA2ATaskEvents' && A2A_EVENT_PERMANENT_ERRORS.includes(error?.code)
+        ? error.code : 'A2A_CONTROL_PLANE_UNAVAILABLE');
     }
   }
   async function listSpaceAgents(request) {

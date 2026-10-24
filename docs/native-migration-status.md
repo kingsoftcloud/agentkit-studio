@@ -19,7 +19,8 @@ E2B Skill 已增加可信宿主的可选输入文件通道，先固定工作区�
 A2A 可选内部控制面已接入原 Host 的发现、Prepare 许可、轮换 workload token、
 外部凭据注入及远端任务绑定，保留原任务查询/继续/取消和未知结果不重发。
 该路径已有两种 Node 版本的定向测试和真实打包 Host 整轮/历史恢复证据。
-canonical 事件 outbox、订阅、自动等待器、
+canonical 生命周期事件已接入原子日志、持久 outbox、后台重试和预设启动补投；
+完整内容/交互映射、Studio 统一事件消费、订阅、自动等待器、
 入站注册/服务及线上认证仍未闭环，见[内部 A2A](native-a2a-internal.md)。
 
 近期已接入 Node 的模型工具还包括 Browser、Skill 发现/安装/绑定，以及

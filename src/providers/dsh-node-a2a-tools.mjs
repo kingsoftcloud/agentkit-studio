@@ -31,6 +31,10 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
   const definitions = nativeA2aToolDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
   const lifetime = new AbortController(), ownerSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const state = commandStateRoot(join(stateDir, 'a2a'), workspaceRoot, agentId), sessions = new Map(), owners = new Set();
+  // Reopen committed projection delivery at preset startup. No session/model
+  // turn, approval, GetTask or SendMessage is created by this recovery path.
+  if (prepared) for (const name of readdirSync(state.root).filter(value => /^[a-f0-9]{64}$/u.test(value)).sort())
+    prepared.restoreEvents({ stateRoot: join(state.root, name, 'remote-calls'), workspaceRoot: state.workspace });
   const binding = Object.freeze({ contract: DSH_NODE_A2A_CONTRACT, agentId, agentRevision, buildId,
     host: prepared?.binding ?? null, digest: commandDigest({ agentId, agentRevision, buildId, host: prepared?.binding ?? null }) });
   const assertOpen = () => {

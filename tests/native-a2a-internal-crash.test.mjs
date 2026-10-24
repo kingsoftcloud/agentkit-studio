@@ -14,7 +14,17 @@ function worker(f, action, request) {
   child.send({ root: f.root, workspaceRoot: f.workspaceRoot, env: f.env, action, request });
   return { child, messages, exited };
 }
-for (const boundary of ['prepare', 'bind', 'send']) test(`actual SIGKILL after ${boundary} admission preserves intent and cold dispatch never repeats HTTP`, { timeout: 15000 }, async t => {
+const effects = calls => calls.filter(call => call.action !== 'AppendA2ATaskEvents');
+const executionFacts = record => {
+  const copy = structuredClone(record);
+  // Delivery may acknowledge the ORIGINAL immutable events on restart. It
+  // may not change any send/prepare/bind intent, remote binding or event log.
+  if (copy.managed.events) {
+    delete copy.managed.events.pending; delete copy.managed.events.delivered;
+  }
+  return copy;
+};
+for (const boundary of ['prepare', 'bind', 'send']) test(`actual SIGKILL after ${boundary} admission preserves intent and cold dispatch never repeats task HTTP`, { timeout: 15000 }, async t => {
   const f = await internalPeer(); t.after(() => f.close());
   let reached, resume; const paused = new Promise(resolve => { reached = resolve; });
   f.setHook(call => {
@@ -26,7 +36,7 @@ for (const boundary of ['prepare', 'bind', 'send']) test(`actual SIGKILL after $
   const first = worker(f, 'dispatch'); t.after(() => first.child.kill('SIGKILL'));
   await Promise.race([paused, first.exited.then(exit => assert.fail('Original exited before boundary: ' + JSON.stringify(exit)))]);
   const request = first.messages.find(value => value.type === 'request')?.request; assert.ok(request);
-  const original = JSON.stringify(f.record()), calls = f.calls.length;
+  const original = executionFacts(f.record()), calls = effects(f.calls).length;
   assert.ok(Object.values(f.record().managed.operations).some(value => value.phase === (boundary === 'prepare' ? 'preparing' : 'transport')));
   if (boundary === 'bind') assert.equal(f.record().managed.remote.phase, 'binding');
   first.child.kill('SIGKILL'); const killed = await first.exited; assert.equal(killed.signal, 'SIGKILL');
@@ -34,7 +44,8 @@ for (const boundary of ['prepare', 'bind', 'send']) test(`actual SIGKILL after $
   const cold = worker(f, 'dispatch', request); t.after(() => cold.child.kill('SIGKILL'));
   const reopened = await cold.exited; assert.equal(reopened.code, 0, reopened.stderr); assert.notEqual(reopened.pid, killed.pid);
   assert.equal(cold.messages.find(value => value.type === 'result')?.result.state, 'unknown');
-  assert.equal(f.calls.length, calls); assert.equal(JSON.stringify(f.record()), original);
+  assert.equal(effects(f.calls).length, calls); assert.deepEqual(executionFacts(f.record()), original);
+  assert.equal(f.record().managed.events?.pending.length ?? 0, 0);
   if (boundary === 'bind') {
     // The server applied Bind before SIGKILL. A separately approved Get can
     // reconcile that fact; it must not replay Bind or the original message.
@@ -45,5 +56,6 @@ for (const boundary of ['prepare', 'bind', 'send']) test(`actual SIGKILL after $
     assert.equal(f.calls.filter(value => value.action === 'BindA2ARemoteTask').length, 1);
     assert.equal(f.calls.filter(value => value.wireMethod === 'SendMessage').length, 1);
   }
-  t.diagnostic(JSON.stringify({ boundary, killedPid: killed.pid, coldPid: reopened.pid, signal: killed.signal, unchangedColdJournal: true, coldHttp: 0 }));
+  t.diagnostic(JSON.stringify({ boundary, killedPid: killed.pid, coldPid: reopened.pid, signal: killed.signal,
+    unchangedColdExecutionAndEventLog: true, coldTaskHttp: 0, projectionDeliveryMayAcknowledge: true }));
 });

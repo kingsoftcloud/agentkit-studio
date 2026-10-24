@@ -40,7 +40,7 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
     const call = { path: req.url, action, method: req.method, body, headers: { ...req.headers } }; calls.push(call);
     res.setHeader('Content-Type', 'application/json');
     if (url.pathname.startsWith('/agentengine/internal/v1/a2a/')) {
-      const audience = action === 'BindA2ARemoteTask' ? 'a2a-task-sink' : action === 'ResolveA2ACredential' ? 'credential-broker' : 'a2a-registry';
+      const audience = ['BindA2ARemoteTask', 'AppendA2ATaskEvents'].includes(action) ? 'a2a-task-sink' : action === 'ResolveA2ACredential' ? 'credential-broker' : 'a2a-registry';
       assert.equal(req.headers.authorization, 'Bearer ' + readFileSync(join(tokenDirectory, audience + '.jwt'), 'utf8'));
       let data = {};
       if (action === 'ListA2ASpaceAgents') {
@@ -69,6 +69,12 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
         assert.equal(record().managed.remote.phase, 'binding'); assert.equal(record().managed.remote.id, task.id);
         assert.equal(body.A2ATaskId, taskId); assert.equal(body.RemoteTaskId, task.id); bound = true;
         if (fault === 'bind-lost') { res.destroy(); return; }
+      } else if (action === 'AppendA2ATaskEvents') {
+        assert.equal(body.A2ATaskId, taskId); assert.ok(body.Events.length > 0 && body.Events.length <= 100);
+        for (const event of body.Events) {
+          assert.equal(event.schema_version, 2); assert.equal(event.source.framework, 'a2a');
+          assert.ok(record().managed.events.log.some(value => JSON.stringify(value) === JSON.stringify(event)), 'canonical log is durable before append');
+        }
       } else if (action === 'ResolveA2ACredential') {
         assert.ok(Object.values(record().managed.operations).some(value => value.credentialPhase === 'resolving'));
         assert.equal(body.CallPermit, 'private-permit'); assert.equal(body.CredentialHandle, 'private-handle');

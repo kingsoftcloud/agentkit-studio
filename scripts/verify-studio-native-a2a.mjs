@@ -107,6 +107,7 @@ const remoteTaskId = 'remote-task-a2a-proof-001';
 const remoteContextId = 'remote-context-a2a-proof-001';
 const platformTaskId = 'a2a-task-00000000000040008000000000000004';
 const internalActions = [];
+const internalEventBatches = [], acceptedInternalEvents = new Map();
 const workloadTokens = Object.fromEntries(['a2a-registry', 'a2a-task-sink', 'a2a-gateway'].map(aud => [aud,
   'e30.' + Buffer.from(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.c2ln']));
 
@@ -139,7 +140,7 @@ const server = createHttpServer(async (request, response) => {
     const body = raw ? JSON.parse(raw) : null;
     if (values['internal-control-plane'] && request.url.startsWith('/agentengine/internal/v1/a2a/')) {
       const action = request.url.split('/').at(-1); internalActions.push(action);
-      const audience = action === 'BindA2ARemoteTask' ? 'a2a-task-sink' : 'a2a-registry';
+      const audience = ['BindA2ARemoteTask', 'AppendA2ATaskEvents'].includes(action) ? 'a2a-task-sink' : 'a2a-registry';
       assert.equal(request.headers.authorization, 'Bearer ' + workloadTokens[audience]);
       if (action !== 'ListA2ASpaceAgents') {
         const original = JSON.parse((await managedRecords(root))[0].content); let data = {};
@@ -151,6 +152,18 @@ const server = createHttpServer(async (request, response) => {
             Route: { Kind: 'hosted_gateway', Interface: { Url: `http://127.0.0.1:${server.address().port}/rpc`,
               ProtocolVersion: '1.0', ProtocolBinding: 'JSONRPC' }, Capabilities: { Streaming: true } },
             CallPermit: 'mounted-private-permit', CallPermitExpiresAt: new Date(Date.now() + 60000).toISOString() };
+        } else if (action === 'AppendA2ATaskEvents') {
+          assert.equal(body.A2ATaskId, platformTaskId); assert.ok(body.Events.length > 0 && body.Events.length <= 100);
+          for (const event of body.Events) {
+            assert.equal(event.schema_version, 2); assert.equal(event.source.framework, 'a2a');
+            assert.equal(event.event_type.startsWith('run.'), false); assert.equal(event.run_id, original.request.native.runId);
+            assert.equal(event.parent_scope_id, original.request.native.runId); assert.equal(event.scope_id, original.request.scopeId);
+            assert.ok(original.managed.events.log.some(value => canonical(value) === canonical(event)), 'canonical log precedes append');
+            assert.ok(original.managed.events.pending.some(batch => batch.events.some(value => value.event_id === event.event_id)), 'unacknowledged outbox precedes append');
+            if (acceptedInternalEvents.has(event.event_id)) assert.equal(acceptedInternalEvents.get(event.event_id), canonical(event));
+            acceptedInternalEvents.set(event.event_id, canonical(event));
+          }
+          internalEventBatches.push(body); data = { AcceptedCount: body.Events.length };
         } else {
           assert.equal(action, 'BindA2ARemoteTask'); assert.equal(original.managed.remote.phase, 'binding');
           assert.equal(body.A2ATaskId, platformTaskId); assert.equal(body.RemoteTaskId, remoteTaskId);
@@ -487,7 +500,14 @@ try {
   const toolResults = toolReceipts[0].result.results;
   assert.equal(toolResults.length, 1); assert.equal(toolResults[0].status, 'ok');
   assert.equal(toolResults[0].content.reply, a2aReply);
-  const managedBefore = await managedRecords(root);
+  let managedBefore = await managedRecords(root);
+  if (values['internal-control-plane']) {
+    const deadline = Date.now() + 10000;
+    while (JSON.parse(managedBefore[0].content).managed.events.pending.length) {
+      assert.ok(Date.now() < deadline, 'Host outbox did not acknowledge canonical events');
+      await new Promise(resolve => setTimeout(resolve, 20)); managedBefore = await managedRecords(root);
+    }
+  }
   assert.equal(managedBefore.length, 1, 'the managed task record is mandatory');
   const managed = JSON.parse(managedBefore[0].content);
   assert.equal(managed.phase, 'terminal'); assert.equal(managed.projection.taskId, remoteTaskId);
@@ -591,7 +611,11 @@ try {
   const recordStr = canonical(coldRecord);
   assert.equal(recordStr.includes('a2a-fixture-token'), false, 'A2A service token not leaked into SQLite record');
   if (values['internal-control-plane']) {
-    assert.deepEqual(internalActions, ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask']);
+    assert.deepEqual(internalActions.filter(action => action !== 'AppendA2ATaskEvents'), ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask']);
+    assert.equal(internalEventBatches.length, 3); assert.equal(acceptedInternalEvents.size, 3);
+    assert.deepEqual(managed.managed.events.log.map(e => (e.initial ?? e.snapshot).parts[0].data.status), ['submitted', 'working', 'completed']);
+    assert.deepEqual(internalEventBatches.flatMap(batch => batch.Events), managed.managed.events.log);
+    assert.equal(managed.managed.events.pending.length, 0); assert.equal(managed.managed.events.delivered, 3);
     assert.equal(managed.managed.remote.phase, 'bound'); assert.equal(managed.platformTaskId, platformTaskId);
     for (const bytes of [recordStr, managedBefore[0].content]) {
       assert.equal(bytes.includes('mounted-private-permit'), false);
@@ -605,6 +629,8 @@ try {
     sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
     node: process.version,
     internalControlPlane: values['internal-control-plane'], internalActions,
+    internalEvents: values['internal-control-plane'] ? { batches: internalEventBatches.length, accepted: acceptedInternalEvents.size,
+      pending: managed.managed.events.pending.length, log: managed.managed.events.log } : null,
     proofRoot: root,
     originalPid, restartedPid,
     httpCalls: { model: modelCalls, discovery: discoveryCalls, a2aSend: a2aSends, a2aGet: a2aGets },

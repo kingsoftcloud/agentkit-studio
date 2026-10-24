@@ -1,0 +1,70 @@
+{
+  "reference": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+  "cases": [
+    {
+      "label": "NFC composed",
+      "kind": "item",
+      "framework": "a2a",
+      "components": [
+        "café",
+        "execution.scope"
+      ],
+      "expected": "item_11ca3c9ff6e96c49927581e6"
+    },
+    {
+      "label": "NFC decomposed",
+      "kind": "item",
+      "framework": "a2a",
+      "components": [
+        "café",
+        "execution.scope"
+      ],
+      "expected": "item_11ca3c9ff6e96c49927581e6"
+    },
+    {
+      "label": "unicode code points",
+      "kind": "part",
+      "framework": "a2a",
+      "components": [
+        "😀",
+        "描述"
+      ],
+      "expected": "part_aa66d1ba6d246b50e33d3312"
+    },
+    {
+      "label": "integer and boolean",
+      "kind": "scope",
+      "framework": "a2a",
+      "components": [
+        true,
+        12,
+        "task"
+      ],
+      "expected": "scope_1cafc33976563435e1945e7f"
+    },
+    {
+      "label": "original DSH identity",
+      "kind": "scope",
+      "framework": "dsh",
+      "components": [
+        "agent",
+        "session"
+      ],
+      "expected": "scope_493dd35538b4697e301293d3"
+    },
+    {
+      "label": "event position",
+      "kind": "event",
+      "framework": "a2a",
+      "components": [
+        "child",
+        "item",
+        "item.completed",
+        "descriptor",
+        "{}",
+        3
+      ],
+      "expected": "event_4d53f5da958c2dfa08762630"
+    }
+  ]
+}

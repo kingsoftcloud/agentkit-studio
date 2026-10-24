@@ -618,7 +618,10 @@ fixtures use actual reference protobuf normalization, including double-valued
 data numbers. Configuration, strict JWT validation and the no-openat residual
 filesystem limitation are explicit in [internal A2A](native-a2a-internal.md).
 
-This is not closure of canonical task-event outbox, subscriptions, automatic
+Canonical lifecycle descriptors now share an atomic journal/outbox with the
+original call state, and the actual task-sink consumer resumes pending delivery
+at preset startup. Full stateful content/interaction mapping and common Studio
+event consumption remain open. This is not closure of subscriptions, automatic
 waiters, inbound registry/server assembly or real online authentication.
 An `appendTaskEvents` transport primitive without its durable consumer does
 not count as migrated event delivery.

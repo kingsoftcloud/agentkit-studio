@@ -103,6 +103,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   }));
   const a2a = prepareNativeA2AHost({ env: commandEnvironmentSnapshot, bindings: config.a2aBindings ?? [],
     ...(a2aFetch ? { fetchImpl: a2aFetch } : {}) });
+  a2a?.restoreEvents({ stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace });
   const a2aNames = new Set(a2a ? nativeA2aToolDefinitions({ receiptObservation: true }).map(definition => {
     formal.set(definition.name, definition); return definition.name;
   }) : []);

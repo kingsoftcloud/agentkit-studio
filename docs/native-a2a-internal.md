@@ -4,7 +4,7 @@ Reference: `ksadk/a2a/control_plane.py` and `space_client.py`, read-only
 `ksadk-python` revision `355059d78e47ed764bbdb3606304cdf34e9838a3`.
 This is the outgoing registry/permit/credential/task-binding adapter used by
 the existing Native and independent DSH A2A Host. It is not completion of the
-inbound server, automatic waiters, subscriptions or canonical event outbox.
+inbound server, automatic waiters, subscriptions or full canonical content mapping.
 
 ## Configuration
 
@@ -96,12 +96,50 @@ SQLite locks, NativeKernel and the Studio gateway. Explicit doubles cover the
 remote services, issuer, DSH registry/consent and model responses. Process
 tests use actual SIGKILL at Prepare, peer-send and Bind acknowledgement
 boundaries, then open the original journal in a different PID and assert zero
-automatic HTTP replay. Mounted Host verification supports
+automatic task HTTP replay (immutable event delivery can resume). Mounted Host verification supports
 `scripts/verify-studio-native-a2a.mjs --internal-control-plane --source <built-host> --archive <tgz> --keep`,
 with the actual preset/ToolRegistry/SessionController and Node-only PATH.
 
-Canonical task-event delivery/outbox, subscriptions/automatic waiters and
-inbound registry/server assembly still need implementation and acceptance.
-The transport's `appendTaskEvents` primitive alone does not close that gap.
+## Canonical lifecycle journal and delivery
+
+Internal Native and independent DSH calls now produce canonical v2
+`execution.scope/v1` lifecycle item events. The original Native run remains
+the parent; DSH derives a DSH scope from its actual Agent/Session identities.
+The child never publishes `run.*` ownership events. Submitted, working,
+input-required and terminal descriptors are durable, with monotonic positions
+in the private child journal. A public terminal descriptor cannot reopen after
+a private inspection of an unknown remote result.
+
+The original private call record atomically includes execution state, the
+immutable event log and pending event batches (`agentkit.a2a-event-journal/v1`).
+Its existing short SQLite publication lock plus fsynced atomic replacement
+avoid a cross-file gap between advancing the local state and queuing delivery.
+This is a new Node storage format; it does not read Python outbox databases.
+Events are bounded to 8,192 / 8 MiB per call, and capacity failure is explicit.
+
+A separate cross-process SQLite delivery lock serializes each owner's worker.
+It posts the persisted bytes through actual `AppendA2ATaskEvents`, with fresh
+`a2a-task-sink` authentication on every attempt. Delivery has a 5-second attempt
+deadline and fixed 1-second retry interval. Only a successful response can
+remove the pending batch; the immutable log remains available for replay.
+After an uncertain acknowledgement the same event IDs and payloads are
+retried, relying on the server's event-id deduplication. This projection retry
+never retries Prepare, Bind, Send, Get or Cancel.
+
+The reference's six permanent task-event error codes move the original batch
+atomically into retained dead letters. Explicit `eventDelivery.flush/status`
+reports a permanent failure even if later batches succeed. Arbitrary remote
+messages, details and error codes do not enter the journal. Session closure
+does not cancel Host-owned projection delivery; Host shutdown attempts a
+bounded flush and retains unconfirmed batches. Native and DSH preset startup
+reopen pending delivery without starting a model turn or tool operation.
+
+The current producer covers lifecycle descriptors. The complete stateful
+remote artifact/message/tool-activity/interaction mapper, session-wide
+canonical event-store consumption, output references in these descriptors,
+delivery diagnostics in Studio UI, and custom Python outbox-path/backend
+configuration parity remain open. Do not infer complete canonical parity from
+this lifecycle stream. Subscriptions/automatic waiters and inbound registry/
+server assembly also still require implementation and acceptance.
 Online control-plane authentication and real human/browser acceptance are
 also unverified. See `native-migration-status.md` for the unchanged full goal.
