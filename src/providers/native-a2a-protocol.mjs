@@ -4,6 +4,8 @@
  * No transport, credentials, Host session, or effect admission lives here.
  */
 import { canonical, copy, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { createHash } from 'node:crypto';
+import { hasA2AActivityDeclaration } from './native-a2a-tool-activity.mjs';
 
 export const NATIVE_A2A_PROTOCOL = 'agentkit.native-a2a-wire/v1';
 export const a2aTerminal = new Set(['completed', 'failed', 'cancelled', 'rejected']);
@@ -65,13 +67,17 @@ export function createA2AProjection(scopeId, checkpoint = null, { deferTerminal 
   function task(value, authoritative = true) {
     invariant(object(value) && Array.isArray(value.artifacts ?? []) && Array.isArray(value.history ?? []), 'A2A_TASK_INVALID');
     bind(value.id, value.contextId);
-    const present = new Set((value.artifacts ?? []).map(artifact => `${scopeId}:${canonical(['artifact', artifact.artifactId])}`));
+    // Declared activity (including an unsafe/unknown extension) belongs to the
+    // canonical observation mapper. It must not displace the final answer or
+    // expose raw extension text through the legacy tool-result text selector.
+    const artifacts = (value.artifacts ?? []).filter(artifact => !hasA2AActivityDeclaration(artifact));
+    const present = new Set(artifacts.map(artifact => `${scopeId}:${canonical(['artifact', artifact.artifactId])}`));
     for (const key of Object.keys(state.artifacts)) if (!present.has(key)) {
       delete state.artifacts[key]; delete state.snapshots[key]; delete state.item_kinds[key];
       state.output_refs = state.output_refs.filter(ref => `${ref.scope_id}:${ref.item_id}` !== key);
     }
     // A GetTask snapshot authoritatively replaces every artifact's parts.
-    for (const artifact of value.artifacts ?? []) {
+    for (const artifact of artifacts) {
       const key = `${scopeId}:${canonical(['artifact', artifact.artifactId])}`;
       delete state.artifacts[key];
       item('artifact', artifact.artifactId, artifact.parts);
@@ -84,8 +90,14 @@ export function createA2AProjection(scopeId, checkpoint = null, { deferTerminal 
     invariant(object(payload), 'A2A_WIRE_PAYLOAD_INVALID');
     if (eventId) {
       invariant(eventId.length <= 1024, 'A2A_EVENT_ID_INVALID');
-      const key = canonical(eventId), digest = canonical(payload);
-      if (Object.hasOwn(state.seen, key)) { invariant(state.seen[key] === digest, 'A2A_EVENT_ID_CONFLICT'); return; }
+      const key = canonical(eventId), bytes = canonical(payload), digest = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+      // Keep new occurrence receipts opaque: rejected activity payloads must
+      // not survive through this legacy text projection's collision cache.
+      // Older v1 checkpoints stored canonical JSON strings; equality remains
+      // readable without rewriting their original task or replaying effects.
+      if (Object.hasOwn(state.seen, key)) {
+        invariant(state.seen[key] === digest || state.seen[key] === bytes, 'A2A_EVENT_ID_CONFLICT'); return;
+      }
       invariant(Object.keys(state.seen).length < 10000, 'A2A_EVENT_LIMIT');
       state.seen[key] = digest;
     }
@@ -101,7 +113,8 @@ export function createA2AProjection(scopeId, checkpoint = null, { deferTerminal 
     else {
       const update = payload.artifactUpdate; bind(update.taskId, update.contextId);
       invariant(object(update.artifact), 'A2A_ARTIFACT_REQUIRED');
-      item('artifact', update.artifact.artifactId, update.artifact.parts, update.append === true, !deferTerminal && update.lastChunk === true);
+      if (!hasA2AActivityDeclaration(update.artifact)) item('artifact', update.artifact.artifactId, update.artifact.parts,
+        update.append === true, !deferTerminal && update.lastChunk === true);
     }
     invariant(Buffer.byteLength(canonical(state)) <= 8 * 1024 * 1024, 'A2A_CHECKPOINT_LIMIT');
   }

@@ -67,6 +67,7 @@ const { values } = parseArgs({
     'receipt-crash': { type: 'boolean', default: false },
     'busy-cancel': { type: 'boolean', default: false },
     'internal-control-plane': { type: 'boolean', default: false },
+    'public-tool-activity': { type: 'boolean', default: false },
   },
 });
 
@@ -75,6 +76,7 @@ assert.ok(values.archive, 'Use --archive <packed studio .tgz>');
 assert.ok(!values['receipt-crash'] || values['reconcile-cold'], '--receipt-crash requires --reconcile-cold');
 assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel and --reconcile-cold are separate scenarios');
 assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values['reconcile-cold'], 'internal mode currently proves the normal mounted turn/history scenario');
+assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], 'public tool activity requires the internal canonical path');
 
 const source = resolve(values.source);
 const archive = resolve(values.archive);
@@ -105,6 +107,12 @@ const a2aSpec = {
 const a2aReply = 'The remote agent found 3 relevant documents.';
 const remoteTaskId = 'remote-task-a2a-proof-001';
 const remoteContextId = 'remote-context-a2a-proof-001';
+const publicToolArtifact = completed => ({ artifactId: 'remote-public-tool',
+  metadata: { extension_uri: 'urn:ksadk:a2a:tool-activity:v1' }, parts: [{ data: {
+    event_id: completed ? 'remote-completed' : 'remote-started', item_id: 'remote-public-item', call_id: 'remote-public-call',
+    item_kind: 'tool_call', operation: completed ? 'completed' : 'started', execution_status: completed ? 'completed' : 'running',
+    name: 'remote_search', arguments: { query: 'documents', apiKey: '[REDACTED]' },
+  } }] });
 const platformTaskId = 'a2a-task-00000000000040008000000000000004';
 const internalActions = [];
 const internalEventBatches = [], acceptedInternalEvents = new Map();
@@ -288,6 +296,11 @@ const server = createHttpServer(async (request, response) => {
         }
         response.write(event('2', { artifactUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
           artifact: { artifactId: 'result-docs', parts: [{ text: a2aReply }] } } }));
+        if (values['public-tool-activity']) {
+          const payload = { artifactUpdate: { taskId: remoteTaskId, contextId: remoteContextId, artifact: publicToolArtifact(false), lastChunk: true } };
+          response.write(event('tool-first', payload));
+          response.write(event('tool-duplicate', payload));
+        }
         response.write(event('3', { statusUpdate: { taskId: remoteTaskId, contextId: remoteContextId,
           status: { state: 'TASK_STATE_COMPLETED' } } }));
         response.end();
@@ -305,7 +318,7 @@ const server = createHttpServer(async (request, response) => {
           status: { state: values['busy-cancel'] ? recoveryPeer.cancelled ? 'TASK_STATE_CANCELED' : 'TASK_STATE_WORKING'
             : values['reconcile-cold'] && !recoveryPeer.complete ? 'TASK_STATE_INPUT_REQUIRED' : 'TASK_STATE_COMPLETED' },
           ...(values['busy-cancel'] || values['reconcile-cold'] && !recoveryPeer.complete ? {} : {
-            artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }],
+            artifacts: [{ artifactId: 'result-docs', parts: [{ text: a2aReply }] }, ...(values['public-tool-activity'] ? [publicToolArtifact(true)] : [])],
           }),
         })));
         return;
@@ -615,7 +628,8 @@ try {
   assert.equal(recordStr.includes('a2a-fixture-token'), false, 'A2A service token not leaked into SQLite record');
   if (values['internal-control-plane']) {
     assert.deepEqual(internalActions.filter(action => action !== 'AppendA2ATaskEvents'), ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask', 'PrepareA2ATaskOperation']);
-    assert.equal(internalEventBatches.length, 5); assert.equal(acceptedInternalEvents.size, 6);
+    assert.equal(internalEventBatches.length, values['public-tool-activity'] ? 6 : 5);
+    assert.equal(acceptedInternalEvents.size, values['public-tool-activity'] ? 9 : 6);
     const lifecycle = managed.managed.events.log.filter(e => e.item_kind === 'status');
     assert.deepEqual(lifecycle.map(e => (e.initial ?? e.snapshot).parts[0].data.status), ['submitted', 'working', 'completed']);
     const artifact = managed.managed.events.log.filter(e => e.item_kind === 'artifact');
@@ -624,7 +638,16 @@ try {
     assert.deepEqual(lifecycle.at(-1).snapshot.parts[0].data.output_refs, [{ scope_id: managed.request.scopeId,
       item_id: artifact.at(-1).item_id, part_id: artifact.at(-1).snapshot.parts[0].part_id }]);
     assert.deepEqual(internalEventBatches.flatMap(batch => batch.Events), managed.managed.events.log);
-    assert.equal(managed.managed.events.pending.length, 0); assert.equal(managed.managed.events.delivered, 5);
+    assert.equal(managed.managed.events.pending.length, 0);
+    assert.equal(managed.managed.events.delivered, values['public-tool-activity'] ? 6 : 5);
+    if (values['public-tool-activity']) {
+      const tools = managed.managed.events.log.filter(e => e.item_kind === 'tool_call');
+      assert.deepEqual(tools.map(e => e.event_type), ['item.started', 'item.updated', 'item.completed']);
+      assert.equal(tools[1].update.name, 'remote_search');
+      assert.deepEqual(tools[2].snapshot.parts, [tools[1].update]);
+      assert.ok(tools.every(e => e.source.metadata.remote_observation === true));
+      assert.ok(managed.managed.events.adapter.toolActivityBytes > 0);
+    }
     assert.equal(managed.managed.remote.phase, 'bound'); assert.equal(managed.platformTaskId, platformTaskId);
     for (const bytes of [recordStr, managedBefore[0].content]) {
       assert.equal(bytes.includes('mounted-private-permit'), false);
@@ -637,7 +660,7 @@ try {
     archive: { path: archive, sha256: archiveSha },
     sdk: { source, commit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() },
     node: process.version,
-    internalControlPlane: values['internal-control-plane'], internalActions,
+    internalControlPlane: values['internal-control-plane'], publicToolActivity: values['public-tool-activity'], internalActions,
     internalEvents: values['internal-control-plane'] ? { batches: internalEventBatches.length, accepted: acceptedInternalEvents.size,
       pending: managed.managed.events.pending.length, log: managed.managed.events.log } : null,
     proofRoot: root,

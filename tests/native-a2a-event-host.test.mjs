@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { prepareNativeA2AHost, prepareDshA2AHost } from '../src/providers/native-a2a-host.mjs';
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
+import { A2A_TOOL_ACTIVITY_URI } from '../src/providers/native-a2a-tool-activity.mjs';
 const signal = () => new AbortController().signal;
 const appends = f => f.calls.filter(call => call.action === 'AppendA2ATaskEvents');
 const taskCalls = f => f.calls.filter(call => call.action !== 'AppendA2ATaskEvents');
@@ -93,4 +94,34 @@ test('actual direct Message maps content without remote Task binding or fabricat
   const events = f.record().managed.events.log;
   assert.deepEqual(events.filter(event => event.item_kind === 'message').map(e => e.event_type), ['item.started', 'item.updated', 'item.completed']);
   assert.equal(f.record().managed.events.descriptor.output_refs.length, 1);
+});
+for (const dsh of [false, true]) test(`${dsh ? 'DSH' : 'Native'} public tool activity travels through actual SSE/GetTask and durable outbox without local execution`, async t => {
+  const remote = { taskId: 'original-remote', contextId: 'original-context' };
+  const value = { event_id: 'started', item_id: 'remote-item', call_id: 'remote-call', item_kind: 'tool_call', operation: 'started',
+    execution_status: 'running', name: 'remote_execute', arguments: { command: 'displayed only', apiKey: '[REDACTED]' } };
+  const activity = data => ({ artifactId: 'remote-tool', metadata: { extension_uri: A2A_TOOL_ACTIVITY_URI }, parts: [{ data }] });
+  const first = { artifactUpdate: { ...remote, artifact: activity(value), lastChunk: true } };
+  const f = await setup(t, dsh, { streaming: true,
+    streamUpdates: [first, first, { artifactUpdate: { ...remote, artifact: activity({ ...value, arguments: { apiKey: 'NEVER_ECHO' } }) } }],
+    initialTask: { id: remote.taskId, contextId: remote.contextId, status: { state: 'TASK_STATE_COMPLETED' },
+      artifacts: [activity({ ...value, event_id: 'completed', operation: 'completed', execution_status: 'completed' }),
+        { artifactId: 'result', parts: [{ text: 'actual final result' }] }] } });
+  assert.equal((await f.dispatch()).state, 'completed'); await f.owner.eventDelivery.flush();
+  assert.equal(f.calls.filter(call => call.wireMethod === 'SendStreamingMessage').length, 1);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'GetTask').length, 1);
+  const journal = f.record().managed.events, tools = journal.log.filter(event => event.item_kind === 'tool_call');
+  assert.deepEqual(tools.map(event => event.event_type), ['item.started', 'item.updated', 'item.completed']);
+  assert.equal(tools[1].update.name, 'remote_execute');
+  assert.deepEqual(tools[2].snapshot.parts, [tools[1].update]);
+  assert.ok(tools.every(event => event.source.metadata.remote_observation === true));
+  assert.doesNotMatch(JSON.stringify(journal), /NEVER_ECHO/);
+  assert.doesNotMatch(JSON.stringify(f.record().projection), /NEVER_ECHO/);
+  assert.equal(journal.descriptor.output_refs.length, 1);
+  assert.equal(journal.pending.length, 0);
+  assert.deepEqual(appends(f).flatMap(call => call.body.Events), journal.log);
+  assert.equal(f.record().projection.output_refs.length, 1);
+  assert.deepEqual(Object.values(f.record().projection.snapshots), [{ p0: 'actual final result' }]);
+  const bytes = JSON.stringify(f.record()), count = taskCalls(f).length;
+  assert.equal((await f.dispatch()).state, 'completed');
+  assert.equal(taskCalls(f).length, count); assert.equal(JSON.stringify(f.record()), bytes);
 });

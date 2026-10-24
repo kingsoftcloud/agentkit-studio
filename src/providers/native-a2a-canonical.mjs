@@ -8,6 +8,7 @@ import { a2aState, a2aTerminal } from './native-a2a-protocol.mjs';
 import { convertA2AContent, a2aMetadataString } from './native-a2a-content.mjs';
 import { normalizeA2AObservation } from './native-a2a-wire-value.mjs';
 import { parseA2AApproval } from './native-a2a-approval.mjs';
+import { mapA2AToolActivity } from './native-a2a-tool-activity.mjs';
 
 export const A2A_CANONICAL_ADAPTER = 'agentkit.a2a-canonical-adapter/v1';
 const key = value => canonical(value);
@@ -150,6 +151,7 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     if (state.terminalFingerprint) { invariant(state.terminalFingerprint === digest, 'A2A_TERMINAL_SNAPSHOT_CONFLICT'); return; }
     const occ = { identity: `get-task:${observationId}:${digest}` }, present = new Set();
     for (const raw of task.artifacts ?? []) {
+      if (mapA2AToolActivity({artifact:raw,state,scope,remoteId:remote.id,emit})) continue;
       present.add(key(raw.artifactId));
       artifact(raw, { snapshot: true, terminal, occ, src: source(raw.artifactId, occ,
         { provisional: false, consistent: true, reconciliation_reason: 'terminal', reconciliation_attempt_id: observationId, terminal }) });
@@ -179,7 +181,8 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     if (wrapped.message) message(wrapped.message, true, true);
     else if (wrapped.artifactUpdate) {
       const update = wrapped.artifactUpdate; identity(update.taskId, update.contextId);
-      const occ = occurrence(update.metadata, `artifact:${string(update.artifact?.artifactId)}`, update);
+      const publicActivity=mapA2AToolActivity({artifact:update.artifact,state,scope,remoteId:remote.id,emit});
+      const occ = publicActivity ? null : occurrence(update.metadata, `artifact:${string(update.artifact?.artifactId)}`, update);
       if (occ) artifact(update.artifact, { append: update.append === true, closed: update.lastChunk === true, occ,
         src: source(update.artifact.artifactId, occ, { provisional: occ.provisional, consistent: false,
           artifact_closed: update.lastChunk === true, artifact_name: update.artifact.name ?? '',

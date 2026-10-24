@@ -155,7 +155,19 @@ Typed approval declarations are validated and their previews bounded/redacted.
 Remote progress can resume a continuation but cannot decide an approval: that
 decision still belongs to the Host's durable interaction ledger.
 
-The public tool-activity extension, approval-decision event integration,
+Declared public tool-activity artifacts (`urn:ksadk:a2a:tool-activity:v1`) now map
+to remote tool-call/result observations in the same atomic journal and outbox.
+They preserve stable child identities across SSE, GetTask and cold recovery;
+duplicate frames/defaults produce no new facts. A changed valid closed item
+fails atomically. Malformed/unsafe first observations become a safe diagnostic,
+and malformed updates retain the last accepted observation without exposing raw
+input. Sensitive keys/values, internal URL literals, strict public schemas and
+the reference 16 KiB per-event / 1 MiB cumulative invocation limits are checked.
+These observations grant no local tool execution or approval authority and do
+not become text output references. This implements outgoing-call consumption;
+it does not implement an inbound server or a public-activity producer.
+
+Approval-decision event integration,
 session-wide canonical event-store consumption, delivery diagnostics in Studio
 UI, and custom outbox-path/backend configuration parity remain open. Do not infer
 complete canonical parity from the mapped subset. Subscriptions/automatic waiters and inbound registry/
