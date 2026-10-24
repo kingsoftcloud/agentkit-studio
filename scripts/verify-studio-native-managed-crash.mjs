@@ -127,14 +127,33 @@ export async function verifyMountedManagedCrash({ root, harness: initial, makeHa
     assert.equal(history.filter(event => event.type === 'assistant/message' && event.data.usage).length, isUnknown ? 1 : 2);
     const duplicate = await send('commands'); assert.equal(duplicate.status, 'duplicate');
     assert.equal(duplicate.run_id, receipt.run_id); assert.equal(duplicate.message_id, receipt.message_id);
+    const auth = await json(join(root, 'control-auth.json'));
+    const product = async method => {
+      const result = await fetch(auth.origin + '/agentkit', { method: 'POST',
+        headers: { origin: auth.origin, cookie: auth.cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ method, payload: { agentId: command.agent_instance_id,
+          sessionId: command.session_id, runId: receipt.run_id } }), signal: AbortSignal.timeout(5000) });
+      assert.equal(result.status, 200); const value = (await result.json()).result;
+      assert.equal(value.ok, true, JSON.stringify(value)); return value.value;
+    };
+    const productStatus = await product('sessions/native-recovery-status');
+    assert.equal(productStatus.runId, receipt.run_id); assert.equal(productStatus.phase, settled.snapshot.phase);
+    assert.equal(productStatus.state, isUnknown ? 'reconciliation_required' : 'closed');
+    assert.equal(productStatus.managed.owner, 'closed'); assert.equal(productStatus.managed.executionState, 'idle');
+    assert.equal(productStatus.canResume, false); assert.equal(productStatus.canReconcile, false);
+    assert.equal(productStatus.accounting.total.modelCalls, modelRequests.length);
+    assert.deepEqual(await product('sessions/native-recovery-resume'), productStatus,
+      'terminal confirmation cannot repeat an unknown write or start another SDK turn');
     await delay(100); assert.deepEqual(readNative(), settled);
+    assert.equal(modelRequests.length, isUnknown ? 1 : 2); assert.equal((await writes()).length, 1);
     assert.deepEqual(serverFailures, []);
     const processes = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
     assert.deepEqual(processes.map(row => row.pid), [originalPid, coldPid]);
     assert.ok(processes.every(row => row.path === nodeOnlyBin && row.node === process.version));
     const evidence = { archiveSha256: archiveSha, source, dependencies: dependencyEvidence ?? { kind: 'maintained-source', source },
       node: process.version, boundary, originalPid, coldPid, signal,
-      receipt, duplicate, checkpoint, coldStatus, before, final: settled, history, actualSdkOwnership: true, automaticRecovery: true,
+      receipt, duplicate, checkpoint, coldStatus, before, final: settled, history, productStatus,
+      productTerminalConfirmationNoEffects: true, actualSdkOwnership: true, automaticRecovery: true,
       modelHttp: modelRequests.length, fileDispatches: 1, coldFileDispatches: expectedModelsBefore ? 0 : 1,
       limitation: `Actual maintained SDK/packed Studio/formal preset/SQLite/Node workspace/SIGKILL/Node-only PATH; ${dependencyEvidence ? 'verified fresh installation' : 'linked dependencies'}. Controlled Server signing/model; not deployed Server, other resources or all product entries.` };
     await writeFile(join(root, 'managed-crash-evidence.json'), JSON.stringify(evidence, null, 2));

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createManagedNativeKernel, managedNativeRunId } from '../src/providers/native-managed-kernel.mjs';
 import { createA2aInboundTaskStore } from '../src/providers/native-a2a-inbound-task-store.mjs';
-import { permitIssuer, command, target, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
+import { permitIssuer, command, target, scope, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 
 function fixture(t, options = {}) {
@@ -29,6 +29,73 @@ function fixture(t, options = {}) {
     async reopen() { await runtime.close(); runtime = createManagedNativeKernel(config); return runtime; },
   };
 }
+
+test('trusted managed inspection is scoped, read-only and cannot resume paused or approval work', async t => {
+  let models = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => binding(command, {
+    model: { generate: async () => { models++; return response(); } }, tools: { execute: async () => assert.fail() },
+  }) });
+  const cmd = command(), receipt = await f.receive(cmd);
+  const query = { scope, sessionId: cmd.session_id, runId: receipt.run_id };
+  const bytes = () => ['commands.sqlite', 'commands.sqlite-wal', 'runs.sqlite', 'runs.sqlite-wal']
+    .map(name => readFileSync(join(f.directory, name)));
+  const before = bytes();
+  assert.equal(f.runtime.inspectSession(query).record, null);
+  assert.equal(f.runtime.inspectSession(query).retryable, true);
+  for (const change of [{ scope: { ...scope, userId: 'other' } }, { scope: { ...scope, workspaceId: 'other' } },
+    { scope: { ...scope, agentId: 'other' } }, { sessionId: 'other' }]) {
+    assert.throws(() => f.runtime.inspectSession({ ...query, ...change }), { code: 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH' });
+    assert.throws(() => f.runtime.retryAcceptedRun({ ...query, ...change }), { code: 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH' });
+  }
+  assert.deepEqual(bytes(), before, 'reads and rejected cross-scope controls cannot change either SQLite ledger');
+  assert.equal(models, 0);
+  await f.receive(command({ command_type: 'pause', payload: { run_id: receipt.run_id } }));
+  await f.runtime.drain(cmd.session_id);
+  assert.equal(f.runtime.inspectSession(query).record.snapshot.phase, 'paused');
+  const paused = bytes();
+  assert.throws(() => f.runtime.retryAcceptedRun(query), { code: 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED' });
+  assert.deepEqual(bytes(), paused); assert.equal(models, 0);
+  await f.receive(command({ command_type: 'resume', payload: { target: { kind: 'run', id: receipt.run_id } } }));
+  await f.runtime.drain(cmd.session_id); // Only the signed Server resume authorizes continuation.
+  assert.equal(models, 1); assert.equal(f.runtime.retryAcceptedRun(query).record.snapshot.phase, 'completed');
+  await f.reopen();
+  assert.equal(f.runtime.inspectSession(query).commandState, 'settled');
+  f.runtime.retryAcceptedRun(query); assert.equal(models, 1);
+});
+
+test('trusted retry never supplies an approval or re-executes the accepted command', async t => {
+  let writes = 0, models = 0;
+  const f = fixture(t, { authorizeInteraction: () => true, resolveBinding: ({ command }) => binding(command, {
+    model: { generate: async () => ++models === 1 ? response({ kind: 'tool_calls', text: '',
+      toolCalls: [{ callId: 'write', name: 'write', arguments: {} }] }) : response() },
+    tools: { execute: async request => { if (!request.interaction) return { status: 'approval_required', interactionId: 'approval', content: {} };
+      writes++; return { status: 'ok', content: 'written' }; } },
+  }, { tools: [tool()] }) });
+  const cmd = command(), receipt = await f.receive(cmd), query = { scope, sessionId: cmd.session_id, runId: receipt.run_id };
+  f.runtime.retryAcceptedRun(query); await f.runtime.drain(cmd.session_id);
+  assert.equal(f.runtime.inspectSession(query).record.snapshot.phase, 'awaiting_interaction');
+  assert.throws(() => f.runtime.retryAcceptedRun(query), { code: 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED' });
+  assert.equal(writes, 0); assert.equal(models, 1);
+  await f.reopen();
+  assert.throws(() => f.runtime.retryAcceptedRun(query), { code: 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED' });
+  assert.equal(writes, 0); assert.equal(models, 1);
+});
+
+test('managed status selects the oldest accepted command and a later queued Run cannot start another owner', async t => {
+  let models = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => binding(command, {
+    model: { generate: async () => { models++; return response(); } }, tools: { execute: () => assert.fail() },
+  }) });
+  const first = command(), a = await f.receive(first), b = await f.receive(command());
+  const query = { scope, sessionId: first.session_id };
+  assert.equal(f.runtime.inspectSession(query).runId, a.run_id);
+  assert.equal(f.runtime.inspectSession({ ...query, runId: b.run_id }).retryable, false);
+  assert.throws(() => f.runtime.retryAcceptedRun({ ...query, runId: b.run_id }), { code: 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED' });
+  assert.equal(models, 0);
+  const active = f.runtime.retryAcceptedRun({ ...query, runId: a.run_id }); assert.equal(active.active, true);
+  await f.runtime.drain(first.session_id); assert.equal(models, 2);
+  assert.equal(f.runtime.inspectSession(query).runId, b.run_id);
+});
 
 test('frozen real context counters and class-private model state survive managed ownership wrapping', async t => {
   let models = 0;

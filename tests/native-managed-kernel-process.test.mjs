@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { permitIssuer, command, target } from './fixtures/native-managed-kernel.mjs';
+import { permitIssuer, command, target, scope } from './fixtures/native-managed-kernel.mjs';
+import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 
 const lines = path => existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
@@ -118,6 +119,15 @@ for (const boundary of ['before-start', 'after-effect', 'before-projection']) {
     assert.deepEqual(result.facts.map(fact => fact.seq), result.facts.map((_, index) => index + 1));
     assert.equal(result.facts.at(-1).payload.state, boundary === 'after-effect' ? 'interrupted' : 'completed');
     assertManagedRuntimeFacts(result.facts);
+    const observer = createManagedNativeKernel({ directory, target, autoStart: false, assertCurrent: () => true,
+      permitVerifier: issuer.verifier, resolveBinding: () => assert.fail('Status and terminal confirmation cannot rebind execution') });
+    try {
+      const inspection = { scope, sessionId: cmd.session_id, runId: receipt.run_id };
+      assert.equal(observer.inspectSession(inspection).record.snapshot.phase, result.status.runs[0].phase);
+      assert.equal(observer.retryAcceptedRun(inspection).record.snapshot.phase, result.status.runs[0].phase);
+      assert.equal(lines(join(directory, 'effects.jsonl')).length, 1);
+      assert.equal(lines(join(directory, 'models.jsonl')).length, boundary === 'after-effect' ? 1 : 2);
+    } finally { await observer.close(); }
     t.diagnostic(JSON.stringify({ boundary, killedPid: killed.pid, coldPid: exit.pid, signal: killed.signal, nativeRunId: receipt.run_id,
       originalMessageId: receipt.message_id, fileWrites: 1, coldFileWrites: boundary === 'before-start' ? 1 : 0,
       coldModelCalls: boundary === 'before-start' ? 2 : 0, finalState: result.status.runs[0].phase }));

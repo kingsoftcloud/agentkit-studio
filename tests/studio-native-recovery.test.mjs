@@ -176,6 +176,20 @@ test('UI refresh never resumes; an unconfirmed recovery retries only the same Ru
   }
 });
 
+test('the recovery client rejects a managed response that claims local approval or a new control authority', async () => {
+  const identity = { agentId: 'a', sessionId: 's' };
+  const valid = { contract: 'agentkit.studio-native-recovery/v1', ...identity, runId: 'original', state: 'available', phase: 'paused',
+    canResume: false, canReconcile: false, managed: { contract: 'agentkit.studio-managed-native-recovery/v1',
+      commandId: 'original-command', commandState: 'accepted', controlAuthority: 'server', owner: 'open', executionState: 'running', retryAcceptedCommand: false } };
+  for (const changes of [{ controlAuthority: 'local' }, { contract: 'unknown/v1' }, { retryAcceptedCommand: 'yes' }]) {
+    const response = { ...valid, managed: { ...valid.managed, ...changes } };
+    const state = createNativeRecoveryState({ ...identity, hostRemote: {
+      nativeRecoveryStatus: async () => response, resumeNativeRun: async () => assert.fail('Status cannot execute'),
+    } });
+    await state.refresh(); assert.equal(state.getSnapshot().status, null); assert.ok(state.getSnapshot().error); state.dispose();
+  }
+});
+
 test('the recovery client retains valid usage and rejects unknown, inconsistent or foreign accounting without execution', async () => {
   const usage = { inputTokens: 7, outputTokens: 9, modelCalls: 1, toolCalls: 2, cost: .25 };
   const zero = { inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 };

@@ -45,7 +45,15 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
           h('p', null, `运行用量${accounting.incomplete ? '（统计不完整，显示已知用量）' : accounting.final ? '' : '（截至目前）'}：模型 ${accounting.total.modelCalls} 次 · 工具 ${accounting.total.toolCalls} 次 · 输入 ${accounting.total.inputTokens} / 输出 ${accounting.total.outputTokens} tokens。`),
           h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,
         recoveryState.status && recoveryState.status.state !== 'closed' ? h('section', { 'aria-label': '原运行恢复' },
-          h('p', null, recoveryState.status.state === 'recovering' ? '原运行已接管，正在继续。'
+          h('p', null, recoveryState.status.managed && recoveryState.status.phase === 'paused'
+            ? '原托管运行已暂停，请通过原控制端恢复。'
+            : recoveryState.status.managed && recoveryState.status.phase === 'awaiting_interaction'
+              ? '原托管运行正在等待审批，请通过原控制端答复。'
+            : recoveryState.status.managed && recoveryState.status.state === 'reconciliation_required'
+              ? '原托管运行有待核对的执行结果，请通过原控制端处理；不会自动重跑。'
+            : recoveryState.status.managed?.executionState === 'queued'
+              ? '原托管命令已接收，正在等待接回会话；尚未确认开始执行。'
+            : recoveryState.status.state === 'recovering' ? '原运行已接管，正在继续。'
             : recoveryState.status.receiptWait ? '原远端调用仍在等待。可接回原运行继续等待，或主动核对远端结果；不会重发原调用。'
               : recoveryState.status.state === 'reconciliation_required' ? '有执行结果未知的操作，需要核对；不会自动重跑。'
               : recoveryState.status.state === 'failed' ? '恢复未完成，请核对原配置后重试。' : '检测到尚未结束的原运行，可继续原任务。'),

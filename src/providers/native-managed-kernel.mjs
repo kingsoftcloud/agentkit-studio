@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { NativeKernel, canonical, configure, copy, invariant, parseNativeJson, terminal } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, canonical, configure, copy, invariant, parseNativeJson, scopeKey, terminal } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { privateDirectory, privateFile, createPrivate } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { nativeKernelFactId, projectNativeKernelEvent } from './native-kernel-events.mjs';
@@ -99,7 +99,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   let runStore;
   try { runStore = new SqliteRunStore(join(directory, 'runs.sqlite')); }
   catch (error) { db.close(); throw error; }
-  const lifetime = new AbortController(), active = new Map(), kernels = new Map(), failures = new Map(), wakeWaiters = new Set();
+  const lifetime = new AbortController(), active = new Map(), kernels = new Map(), failures = new Map(), wakeWaiters = new Set(), executing = new Set();
   let closed = false, closing, timer, retryTimer, generation = 0, schedulingEnabled = autoStart;
   const retryAfter = new Map();
   function guard() {
@@ -404,6 +404,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
             invariant(onStream === undefined || typeof onStream === 'function', 'NATIVE_KERNEL_EXECUTION_CALLBACK_INVALID');
             deliverCheckpoint = onCheckpoint;
             deliverStream = onStream;
+            executing.add(id);
             kernel.start(identity, parseNativeJson(run.config));
             const cancel = () => {
               if (closed || lifetime.signal.aborted) return;
@@ -433,7 +434,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           failures.delete(sessionId);
           if (!terminal(snapshot.phase)) return;
           transaction(() => db.prepare("UPDATE managed_commands SET state='settled' WHERE command_id=?").run(row.command_id));
-        } finally { if (kernels.get(id) === kernel) kernels.delete(id); }
+        } finally { executing.delete(id); if (kernels.get(id) === kernel) kernels.delete(id); }
       } finally { await resolved?.release?.({ scope: copy(scope), sessionId, runId: id, stage: 'execute', signal: lifetime.signal }); }
     }
   }
@@ -486,6 +487,48 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   }
   function wake() { generation++; for (const notify of [...wakeWaiters]) notify(); schedule(); }
   async function drain(sessionId) { guard(); return start(sessionId); }
+  // Trusted Host-only reads. Unlike getStatus this does not project events or
+  // consume a Server nonce, and it never starts an accepted command. The HTTP
+  // transport deliberately does not expose this composition port.
+  function inspectSession({ scope, sessionId, runId }) {
+    guard(); scopeKey(scope);
+    invariant(scope.tenantId === bindingTarget.tenantId && scope.agentId === bindingTarget.agentInstanceId
+      && text(sessionId) && (runId === undefined || text(runId)), 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    const firstAccepted = db.prepare("SELECT r.* FROM managed_runs r JOIN managed_commands c ON r.command_id=c.command_id WHERE r.session_id=? AND c.state='accepted' ORDER BY r.rowid LIMIT 1").get(sessionId);
+    const row = runId === undefined ? firstAccepted
+      ?? db.prepare('SELECT * FROM managed_runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1').get(sessionId) : runRow(runId);
+    if (!row) return null;
+    invariant(row.session_id === sessionId && row.scope === canonical(scope), 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    const command = commandRow(row.command_id), configuration = parseNativeJson(row.config);
+    invariant(command?.session_id === sessionId, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    let record = null;
+    try { record = runStore.load(scope, row.run_id); }
+    catch (error) { if (error.code !== 'run_not_found') throw error; }
+    invariant(!record || record.snapshot.sessionId === sessionId && record.snapshot.runId === row.run_id
+      && record.snapshot.turnId === row.command_id && record.snapshot.buildId === row.build_id
+      && record.snapshot.configDigest === hash(configuration) && canonical(record.configuration) === row.config,
+    'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    const phase = record?.snapshot.phase ?? 'admitted';
+    return { contract: MANAGED_NATIVE_KERNEL_CONTRACT, scope: copy(scope), sessionId, runId: row.run_id,
+      commandId: row.command_id, buildId: row.build_id, configDigest: hash(configuration),
+      commandState: command.state, record, active: active.has(sessionId) && firstAccepted?.run_id === row.run_id,
+      executing: executing.has(row.run_id),
+      workerError: failures.get(sessionId) ?? null,
+      retryable: command.state === 'accepted' && firstAccepted?.run_id === row.run_id && !active.has(sessionId)
+        && (!record?.lease || record.lease.expiresAt <= clock())
+        && !['paused', 'awaiting_interaction', 'awaiting_reconciliation', 'interrupted'].includes(phase) };
+  }
+  function retryAcceptedRun(query) {
+    // Re-drive only the original durable admission. This cannot enqueue a
+    // resume/approval/reconciliation command or override an unknown effect.
+    invariant(text(query?.runId), 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    const view = inspectSession(query);
+    invariant(view, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    if (view.commandState === 'settled' || view.active) return view;
+    invariant(view.retryable, 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED');
+    void start(query.sessionId).catch(() => {});
+    return inspectSession(query);
+  }
   function facts(sessionId, after = 0) {
     guard(); invariant(text(sessionId) && Number.isSafeInteger(after) && after >= 0, 'NATIVE_KERNEL_CURSOR_INVALID');
     projectAll(); return db.prepare('SELECT data FROM managed_events WHERE session_id=? AND seq>? ORDER BY seq').all(sessionId, after)
@@ -501,7 +544,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   } });
   try { guard(); projectAll(); wake(); }
   catch (error) { runStore.close(); db.close(); throw error; }
-  return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events,
+  return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun,
     startRecovery() { guard(); schedulingEnabled = true; schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),

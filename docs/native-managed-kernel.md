@@ -73,6 +73,29 @@ managed worker，不自动取得 Studio Session 的执行权。
 SDK 关闭回合后再落盘，接收器才结算命令。专用 Session projection 在重开时恢复最近的
 已关闭 owner：若 Session 终态已经落盘但接收器 ACK 丢失，只允许读取原 Native 终态，
 不能另开回合或重新执行。该 projection 仅恢复事实，不授予模型、工具或审批权限。
+
+### 现有 Studio 恢复面板
+
+正式 binding 会注册可信 `studioManagedNativeSessionControl`。既有
+`sessions/native-recovery-status` 识别托管 owner，并读取接收器的原账本，核对启动配置
+绑定的 tenant、principal、workspace、Agent、Session、Run、Build、命令及配置摘要。
+读取不推进 Native、不写事件投影、不消费 Server nonce，也不调用模型或工具。
+状态和用量仍使用 `agentkit.studio-native-recovery/v1` 与原用量契约，额外的 `managed`
+字段显式使用 `agentkit.studio-managed-native-recovery/v1`，报告原命令状态、SDK owner
+及 `controlAuthority: 'server'`。尚未领取 SDK owner 的已接收命令也可查询。
+`executionState` 区分本进程已排队、进入原执行边界和空闲。托管重试回包仅确认已安排
+原命令；面板刷新状态后才把真正进入执行边界的运行显示为正在继续，排队不代表已接管。
+后续普通对话不会被旧的托管 projection 遮盖；指定原 Run 时仍可读取其记录。
+
+本地“恢复原运行”只允许重新推进已经持久化准入的原命令，仍经过原资源重绑、SDK
+独占 owner、租约及 Native 恢复语义。重复确认已结算的终态只读原结果，不创建新命令
+或替代 Run。暂停、等待审批、待核对以及未知副作用不能由此按钮解除；必须通过原
+Server 控制端提交有效的签名命令。本地核对路由对托管运行明确返回
+`NATIVE_MANAGED_SERVER_CONTROL_REQUIRED`。面板为暂停、审批和核对显示对应说明。
+自定义 `resolveBinding` 不自动注册这个依赖正式 SDK Session 的产品端口。
+
+此接入覆盖状态、用量和原准入重试。托管子任务历史/控制、远端 A2A 操作以及完整的
+Server 交互控制产品接线仍需分别闭环，不能据此认为全部托管产品入口已经迁移完成。
 宿主关闭时先等待 managed runtime 退役，再关闭 execution adapter 及其 projection。
 
 正式 Host 先创建接收器，等完整控制面和 `presetRegistryStartup.ready` 完成后才调用

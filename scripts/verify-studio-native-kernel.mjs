@@ -10,6 +10,7 @@ import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/di
 import { ingressSigner, targetBinding, platformTaskId, targetVersionId } from '../tests/fixtures/native-a2a-inbound.mjs';
 import { permitIssuer, command } from '../tests/fixtures/native-managed-kernel.mjs';
 import { verifyMountedManagedCrash } from './verify-studio-native-managed-crash.mjs';
+import { managedNativeRunId } from '../src/providers/native-managed-kernel.mjs';
 
 export function createMountedNativeKernelProof(root, { formalBinding = false, structuredInput = false, crashBoundary = null } = {}) {
   const boundTarget = { ...targetBinding };
@@ -22,6 +23,20 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
   const frames = async () => (await readFile(join(root, 'assistant-stream.jsonl'), 'utf8').catch(error => {
     if (error.code === 'ENOENT') return ''; throw error;
   })).trim().split('\n').filter(Boolean).map(JSON.parse).filter(row => row.session === cmd.session_id).map(row => row.frame);
+  async function productRecovery(method, runId) {
+    const auth = JSON.parse(await readFile(join(root, 'control-auth.json'), 'utf8'));
+    const response = await fetch(auth.origin + '/agentkit', { method: 'POST', headers: {
+      origin: auth.origin, cookie: auth.cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ method, payload: { agentId: cmd.agent_instance_id, sessionId: cmd.session_id,
+        ...(runId === undefined ? {} : { runId }) } }), signal: AbortSignal.timeout(5000) });
+    assert.equal(response.status, 200);
+    const result = (await response.json()).result; assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.value.runId, accepted?.run_id ?? managedNativeRunId(cmd));
+    assert.equal(result.value.managed.contract, 'agentkit.studio-managed-native-recovery/v1');
+    assert.equal(result.value.managed.commandId, cmd.command_id);
+    assert.equal(result.value.managed.controlAuthority, 'server');
+    return result.value;
+  }
   async function waitForLivePrefix(index, prefix) {
     const deadline = Date.now() + 5000;
     for (;;) {
@@ -33,6 +48,12 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
           'the actual public prefix must arrive before provider completion');
         if (index === 1) await assert.rejects(stat(join(root, 'workspace/managed-proof.txt')), { code: 'ENOENT' },
           'partial tool arguments cannot dispatch a workspace write');
+        const status = await productRecovery('sessions/native-recovery-status');
+        assert.equal(status.phase, 'requesting_model'); assert.equal(status.state, 'recovering');
+        assert.equal(status.managed.owner, 'open'); assert.equal(status.canResume, false);
+        assert.equal(status.canReconcile, false); assert.equal(status.accounting.total.modelCalls, index);
+        assert.deepEqual(status.accounting.own, formalLedger().snapshot.usage,
+          'live accounting must match the actual in-flight ledger, including the dispatched model attempt');
         return;
       }
       assert.ok(Date.now() < deadline, 'managed public prefix did not arrive before model settlement');
@@ -42,7 +63,7 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
   function formalLedger() {
     const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/runs.sqlite'), { readOnly: true });
     try {
-      const row = db.prepare("SELECT key,data FROM native_runs WHERE json_extract(data,'$.snapshot.runId')=?").get(accepted.run_id);
+      const row = db.prepare("SELECT key,data FROM native_runs WHERE json_extract(data,'$.snapshot.runId')=?").get(accepted?.run_id ?? managedNativeRunId(cmd));
       assert.ok(row, 'formal binding must use the receiver ledger');
       const record = parseNativeJson(row.data);
       record.events = db.prepare('SELECT data FROM native_events WHERE run_key=? ORDER BY seq').all(row.key).map(row => parseNativeJson(row.data));
@@ -182,6 +203,13 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
         assert.equal(JSON.parse(originalOwner.lastClosed.binding).identity.runId, accepted.run_id);
         if (formalBinding) {
           originalLedger = formalLedger();
+          const status = await productRecovery('sessions/native-recovery-status');
+          assert.equal(status.state, 'closed'); assert.equal(status.phase, 'completed');
+          assert.equal(status.managed.owner, 'closed'); assert.equal(status.accounting.total.modelCalls, 2);
+          assert.equal(status.accounting.total.inputTokens, 28); assert.equal(status.accounting.total.outputTokens, 12);
+          assert.deepEqual(await productRecovery('sessions/native-recovery-resume', accepted.run_id), status,
+            'confirmation of the completed original command cannot dispatch another turn');
+          assert.deepEqual(formalLedger(), originalLedger, 'status and terminal retry must not write the managed ledger');
           const delivered = JSON.parse(await readFile(join(root, 'managed-session-history.json'), 'utf8'));
           originalHistory = delivered.history;
           originalFrames = await frames();
@@ -231,6 +259,10 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
         assert.equal(calls.length, count); assert.deepEqual(await records(), originalRecords);
         assert.equal(modelRequests.length, 2); assert.equal(calls.filter(call => call.action === 'SubmitA2AInboundMessage').length, 1);
         if (formalBinding) {
+          const status = await productRecovery('sessions/native-recovery-status');
+          assert.equal(status.state, 'closed'); assert.equal(status.phase, 'completed');
+          assert.equal(status.managed.owner, 'closed'); assert.equal(status.accounting.total.modelCalls, 2);
+          assert.deepEqual(await productRecovery('sessions/native-recovery-resume', accepted.run_id), status);
           assert.deepEqual(await frames(), originalFrames, 'cold replay must not republish old live streams');
           const coldHistory = JSON.parse(await readFile(join(root, 'managed-session-history-cold.json'), 'utf8'));
           assert.deepEqual(coldHistory.slice(0, originalHistory.length), originalHistory,
@@ -259,7 +291,8 @@ export function createMountedNativeKernelProof(root, { formalBinding = false, st
           actualNativeExecution: true, actualSessionOwnership: true, formalStudioBinding: formalBinding, ownerUnchangedAfterRestart: true,
           structuredInput, ...(formalBinding ? { publicLiveStream: { attempts: 2, prefixBeforeProviderCompletion: true,
             partialToolNotExecuted: true, durableStreamsMatch: true, coldUnchanged: true }, publicHistory: { user: 1, toolResults: 1, modelUsage: 2,
-            coldUnchanged: true, restoreBoundary: 'session/end-seed' } } : {}),
+            coldUnchanged: true, restoreBoundary: 'session/end-seed' }, productRecovery: { liveStatus: true,
+            closedStatus: true, coldStatus: true, exactUsage: true, terminalRetryNoEffects: true } } : {}),
           ...(structuredInput ? { input: { hostFileReceipt: true, actualImageAdmission: true, liveReceiptRetired: true,
             modelMedia: true, persistedInput: true, coldReceiptExpired: true,
             foreignSessionReceiptRejected: true, invalidImageRejected: true } } : {}),

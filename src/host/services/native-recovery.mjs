@@ -4,9 +4,12 @@ import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_RECEIPT_WAIT, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
+import { NATIVE_DSH_MANAGED_TURN_CONTRACT, readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
+import { STUDIO_MANAGED_NATIVE_OWNER_PROJECTION } from './native-managed-execution.mjs';
 
 export const STUDIO_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-native-recovery/v1';
 export const STUDIO_NATIVE_USAGE_CONTRACT = 'agentkit.studio-native-usage/v1';
+export const STUDIO_MANAGED_NATIVE_RECOVERY_CONTRACT = 'agentkit.studio-managed-native-recovery/v1';
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
 const ended = record => record && ['completed', 'failed', 'canceled'].includes(record.snapshot.phase);
 
@@ -34,6 +37,48 @@ async function live(operation, signal) {
 /** Authenticated product recovery. No queued prompt, replacement Run or defaults. */
 export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents }) {
   const attempts = new Map();
+  const inspectManaged = (request, agent, owner, localRecord) => {
+    const pending = owner?.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT;
+    const control = ctx.get('studioManagedNativeSessionControl');
+    if (!control || control.agentId !== request.agentId) {
+      invariant(!pending, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH'); return null;
+    }
+    const projection = ctx.get('sessionProjections')?.stateOf(agent.session, STUDIO_MANAGED_NATIVE_OWNER_PROJECTION);
+    const knownOwner = pending ? owner : projection?.lastClosed;
+    const admitted = knownOwner ? readNativeDshManagedOwnership(knownOwner, { sessionId: request.sessionId }) : null;
+    if (pending) invariant(!request.runId || admitted.identity.runId === request.runId,
+      'studio_native_recovery_identity_mismatch');
+    const query = { ...request, workspaceId,
+      ...(pending ? { runId: admitted.identity.runId } : {}) };
+    const managed = control.inspect(query);
+    invariant(!pending || managed, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    if (!managed) return null;
+    const matchingOwner = admitted?.identity.runId === managed.runId ? knownOwner : null;
+    // Background Native turn IDs are opaque wake IDs. Their committed public
+    // delivery cursor records the numeric SDK position independently.
+    const prefix = `dsh:${request.sessionId}:`;
+    const positions = Object.keys(localRecord?.projections ?? {}).flatMap(key => {
+      const match = key.startsWith(prefix) && /^([1-9][0-9]*):v1:[a-f0-9]{64}$/.exec(key.slice(prefix.length));
+      return match && Number.isSafeInteger(Number(match[1])) ? [Number(match[1])] : [];
+    });
+    const localTurn = positions.length ? Math.max(...positions) : Number(localRecord?.snapshot.turnId);
+    // A closed managed projection survives later ordinary turns. Prefer the
+    // newer ordinary head unless an accepted managed command is still pending
+    // or the caller explicitly asks for that historical managed Run.
+    if (!pending && !request.runId && localRecord
+      && !(managed.commandState === 'accepted' && !terminal(managed.record?.snapshot.phase))
+      && (!matchingOwner || !Number.isSafeInteger(localTurn) || localTurn < 1 || knownOwner.turn < localTurn)) return null;
+    if (matchingOwner) {
+      invariant(canonical(admitted.identity.scope) === canonical(managed.scope)
+        && admitted.identity.buildId === managed.buildId && admitted.identity.turnId === managed.commandId
+        && admitted.configDigest === managed.configDigest, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+      if (managed.record) invariant(['runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
+        .every(key => admitted.identity[key] === managed.record.snapshot[key]), 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    }
+    return { agent, scope: managed.scope, record: managed.record, admission: pending ? admitted : null,
+      turn: matchingOwner?.turn ?? null, managed, managedControl: control,
+      managedQuery: { ...query, runId: managed.runId }, owner: owner ?? null };
+  };
   const inspect = async (request, callerSignal) => {
     invariant(text(request?.agentId) && text(request.sessionId)
       && (request.runId === undefined || text(request.runId)), 'studio_native_recovery_request_invalid');
@@ -54,8 +99,9 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
         catch (error) { if (error.code !== 'run_not_found') throw error; }
         invariant(!record || record.snapshot.sessionId === request.sessionId, 'studio_native_recovery_identity_mismatch');
       }
-      return { agent, scope, admission: null, record };
+      return inspectManaged(request, agent, owner, record) ?? { agent, scope, admission: null, record };
     }
+    if (owner.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT) return inspectManaged(request, agent, owner);
     const background = owner.engine === NATIVE_DSH_BACKGROUND_TURN_CONTRACT;
     const verified = background ? await verifyNativeDshBackgroundOwnership(owner, { store, scope,
       sessionId: request.sessionId, turn: owner.turn, signal }) : null;
@@ -68,11 +114,11 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     return { agent, scope, admission, record, turn: owner.turn, background };
   };
   const summary = (request, inspected) => {
-    const { admission, record } = inspected;
-    const runId = admission?.identity.runId ?? record?.snapshot.runId ?? request.runId ?? null;
+    const { admission, record, managed } = inspected;
+    const runId = managed?.runId ?? admission?.identity.runId ?? record?.snapshot.runId ?? request.runId ?? null;
     const attempt = attempts.get(controlKey(request.agentId, request.sessionId));
     const applicable = attempt?.runId === runId ? attempt : null;
-    const driving = applicable?.running || Boolean(admission && controls.get(controlKey(request.agentId, request.sessionId))?.runId === admission.identity.runId);
+    const driving = managed ? managed.executing : applicable?.running || Boolean(admission && controls.get(controlKey(request.agentId, request.sessionId))?.runId === admission.identity.runId);
     const snapshot = record?.snapshot;
     const reconciliation = snapshot?.toolReconciliation;
     const waiting = snapshot?.phase === 'awaiting_reconciliation' && Boolean(reconciliation);
@@ -88,18 +134,29 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     const a2aTasks = record?.intents.filter(intent => intent.kind === 'tool').flatMap(intent =>
       (intent.payload.calls ?? []).filter(call => call.name === 'call_a2a_agent').map(call => ({ runId: snapshot.runId,
         operationKey: intent.operationKey, callId: call.callId }))) ?? [];
+    const managedWaiting = managed && ['paused', 'awaiting_interaction'].includes(snapshot?.phase);
     return { contract: STUDIO_NATIVE_RECOVERY_CONTRACT, agentId: request.agentId, sessionId: request.sessionId,
       runId, turn: admission ? inspected.turn : null, accounting,
+      ...(managed ? { managed: { contract: STUDIO_MANAGED_NATIVE_RECOVERY_CONTRACT,
+        commandId: managed.commandId, commandState: managed.commandState, controlAuthority: 'server',
+        executionState: managed.executing ? 'running' : managed.active ? 'queued' : 'idle',
+        owner: admission ? 'open' : inspected.turn ? 'closed' : 'pending',
+        retryAcceptedCommand: managed.retryable } } : {}),
       ...(a2aTasks.length ? { a2aTasks } : {}),
       ...(reconciliation ? { reconciliation: copy(reconciliation) } : {}),
       ...(receiptWait ? { receiptWait: { contract: NATIVE_A2A_RECEIPT_WAIT,
         operationKey: reconciliation.operationKey, callId: receiptWait.call.callId } } : {}),
-      state: !admission ? 'closed' : driving ? 'recovering' : waiting ? 'reconciliation_required'
+      state: managed ? waiting || snapshot?.phase === 'interrupted' ? 'reconciliation_required'
+        : terminal(snapshot?.phase) && !admission ? 'closed'
+          : managedWaiting ? 'available' : driving ? 'recovering' : managed.workerError || applicable?.error ? 'failed' : 'available'
+        : !admission ? 'closed' : driving ? 'recovering' : waiting ? 'reconciliation_required'
         : record?.snapshot.phase === 'interrupted' ? 'reconciliation_required' : applicable?.error ? 'failed' : 'available',
-      phase: record?.snapshot.phase ?? (admission ? 'admitted' : null),
-      canResume: Boolean(admission && !driving && (!waiting || receiptWait) && record?.snapshot.phase !== 'interrupted'),
-      canReconcile: Boolean(admission && waiting),
-      error: applicable?.error ?? null };
+      phase: record?.snapshot.phase ?? (admission || managed ? 'admitted' : null),
+      canResume: managed ? Boolean(managed.retryable && (admission || !terminal(snapshot?.phase)))
+        : Boolean(admission && !driving && (!waiting || receiptWait) && record?.snapshot.phase !== 'interrupted'),
+      canReconcile: !managed && Boolean(admission && waiting),
+      error: applicable?.error ?? (managed?.workerError ? { code: managed.workerError,
+        message: '原托管运行尚未恢复，请核对配置或恢复状态。' } : null) };
   };
   const status = async (request, signal) => summary(request, await inspect(request, signal));
   const resume = (request, signal, admit) => {
@@ -115,6 +172,14 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     attempts.set(key, attempt);
     const task = (async () => {
       const inspected = await inspect(request, signal);
+      if (inspected.managed) {
+        signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
+        invariant(canonical(inspected.agent.externalTurns?.pending() ?? null) === canonical(inspected.owner),
+          'studio_native_recovery_identity_mismatch');
+        const managed = inspected.managedControl.retry(inspected.managedQuery);
+        acknowledgment.resolve(summary(request, { ...inspected, managed, record: managed.record }));
+        return;
+      }
       if (!inspected.admission && ended(inspected.record)) {
         acknowledgment.resolve({ ...summary(request, inspected), state: 'closed', canResume: false });
         return;
@@ -152,6 +217,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     const signal = AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : [])]);
     const task = (async () => {
       const inspected = await inspect(original, signal), { agent, scope, record } = inspected;
+      invariant(!inspected.managed, 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED');
       const capsule = readNativeRecoveryBinding(record, original), session = agent.session;
       const preset = ctx.get('sessionProjections')?.stateOf?.(session, 'agentPreset');
       invariant(text(preset) && typeof agentEvents === 'function', 'studio_native_recovery_preset_unavailable');
@@ -209,6 +275,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     const liveRoot = roots.find(root => root.session?.id === request.sessionId && registry?.get?.(root.id) === root);
     if (!liveRoot || liveRoot.status !== 'idle') return { status: 'deferred' };
     const inspected = await inspect(request, signal), { record, agent, scope, admission } = inspected;
+    if (inspected.managed) return { status: 'deferred' }; // The managed receiver owns its startup/retry policy.
     if (archived() || !record || controls.has(controlKey(request.agentId, request.sessionId))) return { status: 'deferred' };
     if (agent.status !== 'idle') return { status: 'deferred' };
     invariant(agent === liveRoot && ctx.get('agents')?.get?.(agent.id) === agent

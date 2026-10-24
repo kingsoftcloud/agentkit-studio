@@ -17,6 +17,14 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
       && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
       && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
     const receiptWait = value.receiptWait;
+    if (value.managed !== undefined) check(value.managed?.contract === 'agentkit.studio-managed-native-recovery/v1'
+      && value.managed.controlAuthority === 'server' && ['open', 'closed', 'pending'].includes(value.managed.owner)
+      && ['accepted', 'settled'].includes(value.managed.commandState)
+      && ['queued', 'running', 'idle'].includes(value.managed.executionState)
+      && typeof value.managed.commandId === 'string' && value.managed.commandId.trim() && value.managed.commandId.length <= 256
+      && typeof value.managed.retryAcceptedCommand === 'boolean'
+      && (!value.canResume || value.managed.retryAcceptedCommand) && value.canReconcile === false,
+    '托管运行的控制权限与原记录不一致，请刷新核对。');
     if (receiptWait !== undefined) check(receiptWait?.contract === 'agentkit.native-a2a-receipt-wait/v1'
       && value.phase === 'awaiting_reconciliation'
       && ['operationKey', 'callId'].every(key => typeof receiptWait[key] === 'string' && receiptWait[key].trim()

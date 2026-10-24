@@ -30,9 +30,13 @@ import { createStudioManagedNativeBinding } from '../src/host/services/native-ma
 
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
-import { command as serverCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
+import { command as serverCommand, permitIssuer, configuration as serverConfiguration, response as serverResponse } from './fixtures/native-managed-kernel.mjs';
 import { NATIVE_DSH_MANAGED_TURN_CONTRACT } from '../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
+import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
+import { managedNativeOwnerProjection } from '../src/host/services/native-managed-execution.mjs';
+import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 
@@ -127,6 +131,76 @@ async function runManagedKernel({ binding, store, runId, sessionId, signal, turn
   kernel.start(identity, binding.configuration, { expectedParentRunId: parentRunId });
   return kernel.runUntilIdle(binding.scope, runId, { signal });
 }
+
+test('existing Studio recovery route reads and retries the original managed ledger, then prefers a newer ordinary turn', async t => {
+  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
+  const h = await setup(t, { respond: async () => { entered.resolve(); await finish.promise;
+    return { choices: [{ index: 0, delta: { content: 'Managed done' }, finish_reason: 'stop' }] }; } });
+  h.services.sessionProjections.register(managedNativeOwnerProjection());
+  h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
+  const execution = { run: async request => {
+    const turn = h.events.findLast(event => event.type === 'turn/start').data.turn;
+    const ownership = { contract: 'dsh.external-turn/v1', engine: NATIVE_DSH_MANAGED_TURN_CONTRACT, turn,
+      binding: canonical({ contract: NATIVE_DSH_MANAGED_TURN_CONTRACT, identity: request.identity, configDigest: hash(request.configuration) }) };
+    h.agent.externalTurns.claim(ownership);
+    const snapshot = await request.execute({ signal: request.signal, ownership, turn,
+      prepareInput: async () => ({ kind: 'enter', messages: [], assembly: h.assembly }) });
+    h.session.append('turn/end', { turn, reason: { kind: 'completed' } }); return snapshot;
+  } };
+  const issuer = permitIssuer({ target: h.target });
+  const runtime = createManagedNativeKernel({ directory: join(h.root, 'receiver'), target: h.target,
+    permitVerifier: issuer.verifier, assertCurrent: () => true, autoStart: false,
+    resolveBinding: createStudioManagedNativeBinding({ ctx: h.ctx, target: h.target, principal: h.principal,
+      execution, resolveHost: async () => h.host }) });
+  t.after(() => runtime.close()); t.after(() => finish.resolve());
+  h.services.studioManagedNativeSessionControl = createStudioManagedNativeSessionControl({ runtime, target: h.target, principal: h.principal });
+  const route = createSessionRoutes({ getNativeHost: async () => h.host });
+  const request = { agentId: h.target.agentInstanceId, sessionId: h.session.id };
+  const cmd = serverCommand({ ...h.makeCommand(), command_id: randomUUID() }), receipt = await runtime.receive(cmd, issuer.issue(cmd));
+  const pending = (await route('sessions/native-recovery-status', request)).value;
+  assert.equal(pending.runId, receipt.run_id); assert.equal(pending.phase, 'admitted'); assert.equal(pending.canResume, true);
+  assert.equal(pending.managed.owner, 'pending'); assert.equal(h.requests.length, 0);
+  const ack = (await route('sessions/native-recovery-resume', { ...request, runId: receipt.run_id })).value;
+  assert.equal(ack.state, 'available'); assert.equal(ack.managed.executionState, 'queued'); await entered.promise;
+  const live = (await route('sessions/native-recovery-status', request)).value;
+  assert.equal(live.phase, 'requesting_model'); assert.equal(live.managed.owner, 'open'); assert.equal(live.canResume, false);
+  assert.equal(live.managed.executionState, 'running'); assert.equal(live.state, 'recovering');
+  assert.equal(live.accounting.runId, receipt.run_id);
+  assert.equal(live.accounting.total.modelCalls, 1, 'the dispatched model attempt is already accounted while its response is pending');
+  await assert.rejects(route('sessions/native-recovery-status', { ...request, agentId: 'other' }), /IDENTITY_MISMATCH/);
+  await assert.rejects(route('sessions/native-recovery-status', { ...request, runId: 'other' }), /identity_mismatch/);
+  await assert.rejects(route('sessions/native-recovery-reconcile', { ...request, runId: receipt.run_id,
+    operationKey: 'not-a-grant', commandId: 'not-a-grant' }), { code: 'NATIVE_MANAGED_SERVER_CONTROL_REQUIRED' });
+  finish.resolve(); await runtime.drain(cmd.session_id);
+  const closed = (await route('sessions/native-recovery-status', request)).value;
+  assert.equal(closed.state, 'closed'); assert.equal(closed.phase, 'completed'); assert.equal(closed.managed.owner, 'closed');
+  assert.equal(closed.accounting.total.modelCalls, 1); assert.equal(closed.canReconcile, false);
+  const client = createNativeRecoveryState({ ...request, hostRemote: {
+    nativeRecoveryStatus: async () => closed, resumeNativeRun: async () => assert.fail('A read cannot retry a Run'),
+  } });
+  await client.refresh(); assert.deepEqual(client.getSnapshot().status, closed); client.dispose();
+  await route('sessions/native-recovery-resume', { ...request, runId: receipt.run_id });
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.localStore.sessionHead(h.expectedScope, h.session.id), null);
+  h.session.append('turn/start', { turn: 2 });
+  const next = h.makePayload({ turn: 2, binding: h.agentBinding }); next.input.assembly = h.assembly;
+  await h.host.executeTurn(next);
+  h.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } });
+  const ordinary = (await route('sessions/native-recovery-status', request)).value;
+  assert.equal(ordinary.managed, undefined); assert.equal(ordinary.turn, null); assert.equal(ordinary.phase, 'completed');
+  assert.notEqual(ordinary.runId, receipt.run_id);
+  assert.equal((await route('sessions/native-recovery-status', { ...request, runId: receipt.run_id })).value.runId, receipt.run_id);
+  assert.equal(h.requests.length, 2);
+  const ordinaryScope = { ...h.expectedScope, tenantId: 'local', userId: 'local-user' };
+  const background = new NativeKernel({ store: h.localStore, owner: 'opaque-turn-fixture', digest: hash,
+    ports: { model: { generate: async () => serverResponse() } } });
+  background.start({ scope: ordinaryScope, runId: 'opaque-background', sessionId: h.session.id,
+    turnId: 'wake_opaque', buildId: 'fixture', parentRunId: ordinary.runId, taskChainId: 'fixture' }, serverConfiguration(cmd));
+  assert.equal((await background.runUntilIdle(ordinaryScope, 'opaque-background')).phase, 'completed');
+  h.localStore.acknowledge(ordinaryScope, 'opaque-background', `dsh:${h.session.id}:3:v1:${'a'.repeat(64)}`, 0);
+  assert.equal((await route('sessions/native-recovery-status', request)).value.runId, 'opaque-background',
+    'opaque Native IDs use their persisted SDK delivery position rather than Number(turnId)');
+});
 
 // --- Part A: createStudioNativeHarness.resolveManagedBinding (real assembler + real NativeKernel + managed SQLite) ---
 
