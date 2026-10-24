@@ -116,7 +116,7 @@ async function applyProof(ctx, options) {
   }), { mode: 0o600 });
 
   const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');
-  let nativeA2aInbound;
+  let nativeA2aInbound, nativeManagedKernel;
   if (options.inboundProofPath) {
     const proof = JSON.parse(await readFile(options.inboundProofPath, 'utf8'));
     const { createA2aGatewayIdentityVerifier } = await import('../../src/providers/native-a2a-ingress-identity.mjs');
@@ -130,14 +130,40 @@ async function applyProof(ctx, options) {
     ctx.effect(() => () => client.close(), 'mounted inbound controlled registry transport');
     nativeA2aInbound = { card: { name: 'Mounted inbound', baseUrl: 'https://native.example' }, controlPlane: client,
       verifier: createA2aGatewayIdentityVerifier({ publicKeyPem: proof.publicKeyPem, targetBinding: proof.targetBinding }),
-      events: { async *subscribe(sessionId, cursor) {
+      ...(proof.executeNative ? {} : { events: { async *subscribe(sessionId, cursor) {
         await appendFile(join(options.directory, 'inbound-event-subscriptions.jsonl'), JSON.stringify({ pid: process.pid, sessionId, cursor }) + '\n');
         for (const row of proof.rows) if (row.seq > cursor) yield row;
-      } }, assertCurrent: () => ctx.fiber.uid !== null };
+      } } }), assertCurrent: () => ctx.fiber.uid !== null };
+    if (proof.executeNative) {
+      const { createNativeKernelPermitVerifier } = await import('../../src/providers/native-kernel-permit.mjs');
+      const { createNativeModelPort } = await import('../../packages/agentkit-harness/src/native/model-port.mjs');
+      const { configure } = await import('../../packages/agentkit-harness-core/dist/index.mjs');
+      const target = { tenantId: proof.targetBinding.tenantId, agentInstanceId: proof.targetBinding.agentId };
+      const model = createNativeModelPort({ resolveProfile: async () => ({ protocol: 'openai-chat',
+        baseUrl: options.a2aControlPlaneUrl + '/native-inbound-model', apiKey: 'controlled-inbound-model', model: 'inbound-model' }) });
+      nativeManagedKernel = { target, assertCurrent: () => ctx.fiber.uid !== null,
+        permitVerifier: createNativeKernelPermitVerifier({ target, verificationKeys: async () => ({ server: proof.kernelPublicKeyPem }) }),
+        resolveBinding: async ({ command }) => ({ scope: { tenantId: target.tenantId, agentId: target.agentInstanceId,
+          workspaceId: 'mounted-managed-workspace', userId: 'mounted-managed-user' }, buildId: 'mounted-managed-build',
+          configuration: configure({ profile: { profileId: 'inbound-model', profileVersion: '1', providerFamily: 'openai-compatible',
+            compatibilityDigest: 'mounted-inbound-model/v1' }, hostBindingDigest: 'mounted-inbound-host/v1',
+            contract: { objective: 'Complete the admitted inbound request' }, inputMessages: [{ role: 'user', content: command.payload.content }],
+            tools: [{ name: 'write_fixture', description: 'Write the proof file', parameters: { type: 'object', properties: {} },
+              readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 2000,
+              contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' }] }),
+          ports: { model, tools: { execute: async request => {
+            request.signal.throwIfAborted();
+            await appendFile(join(options.directory, 'inbound-native-effects.jsonl'), JSON.stringify({ pid: process.pid, callId: request.call.callId }) + '\n');
+            return { status: 'ok', content: 'Durable proof file written' };
+          } } },
+        }),
+      };
+    }
   }
   await mountStudioHost(ctx, {
     configurationHome: home,
     ...(nativeA2aInbound ? { nativeA2aInbound } : {}),
+    ...(nativeManagedKernel ? { nativeManagedKernel } : {}),
     nativeHookRegistrations: [],
     env: {
       AGENTKIT_HOME: home,

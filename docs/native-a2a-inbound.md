@@ -3,8 +3,10 @@
 实现包含 Gateway 身份验证、Server 接收/取消 Action、私有准入日志、Kernel 事实
 归属过滤，以及 AgentCard/JSON-RPC/REST/SSE、持久协议 Task 和 product 事实 outbox。
 Studio bootstrap 提供显式可信 `nativeA2aInbound` 组装参数并通过实际 DSH WebServer
-挂载协议路径。**Server 命令接收、Node Native 执行器和持久 Session 事件源的完整
-组装仍未完成。** 受控 Server/事实源通过验证不代表真实入站模型执行或完整迁移完成。
+挂载协议路径。现已增加[显式可信的 Server 命令接收与 Native 执行](native-managed-kernel.md)，
+连接真正的 TS NativeKernel 与私有持久 Session 事实源，并有实际打包 Host 的模型 HTTP、
+文件工具和冷重启证据。正式平台 Server 的部署适配、Agent/Build 生产 binding 和完整
+控制能力仍未闭环；受控端到端验证不能代替线上认证或完整迁移验收。
 
 行为依据为 Python `feat-ksadk-harness-2` 的
 `355059d78e47ed764bbdb3606304cdf34e9838a3`：`a2a/platform.py`、`identity.py`、
@@ -139,7 +141,8 @@ Server 端事实幂等是必要前提。共享 PostgreSQL、Server-owned recover
 Node 22 和真实 maintained DSH WebServer 挂载证据记录于对应 checkpoint。受控事实源
 不代替 Server-command-to-Node 执行验收。
 
-还需贯通：Server 命令接收及 Node Native/Session 事实存储；公共 tool activity producer；
+新增接收器已有真实 Native 执行和事实存储的单机器证明，详见[命令执行接线](native-managed-kernel.md)。
+还需贯通：正式 Server 互操作与 Agent/Build 生产 binding、完整控制能力；公共 tool activity producer；
 永久订阅/即时终态核对；共享 managed 存储、产品 recovery scanner 与全新部署。
 现有出站调用和显式订阅的验收见
 [内部 A2A](native-a2a-internal.md)；完整迁移门槛见[迁移状态](native-migration-status.md)。

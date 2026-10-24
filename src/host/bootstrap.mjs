@@ -29,7 +29,7 @@ import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/a
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
-  nativeA2aInbound } = {}) {
+  nativeA2aInbound, nativeManagedKernel } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
@@ -53,9 +53,15 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  let managedKernel;
+  if (nativeManagedKernel !== undefined) {
+    const { registerStudioManagedNativeKernel } = await import('./services/native-managed-kernel.mjs');
+    managedKernel = registerStudioManagedNativeKernel(ctx, { storeDir: studioStoreDir, configuration: nativeManagedKernel });
+  }
   if (nativeA2aInbound !== undefined) {
     const { registerStudioNativeA2aInbound } = await import('./services/native-a2a-inbound.mjs');
-    registerStudioNativeA2aInbound(ctx, { storeDir: studioStoreDir, configuration: nativeA2aInbound });
+    registerStudioNativeA2aInbound(ctx, { storeDir: studioStoreDir,
+      configuration: { ...nativeA2aInbound, events: nativeA2aInbound.events ?? managedKernel?.events } });
   }
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {

@@ -59,6 +59,7 @@ import { verifyMountedA2aRecovery } from './verify-studio-native-a2a-recovery.mj
 import { verifyMountedA2aBusyCancel } from './verify-studio-native-a2a-busy-cancel.mjs';
 import { verifyMountedChildA2aRecovery } from './verify-studio-native-child-a2a-recovery.mjs';
 import { createMountedInboundProof } from './verify-studio-native-a2a-inbound.mjs';
+import { createMountedNativeKernelProof } from './verify-studio-native-kernel.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -75,6 +76,7 @@ const { values } = parseArgs({
     'internal-control-plane': { type: 'boolean', default: false },
     'public-tool-activity': { type: 'boolean', default: false },
     'inbound-protocol': { type: 'boolean', default: false },
+    'inbound-execution': { type: 'boolean', default: false },
   },
 });
 
@@ -107,7 +109,9 @@ console.log(`Archive SHA256: ${archiveSha}`);
 // background_state_symlink. realpath resolves it to /private/var/folders/...
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-a2a-')));
 console.log(`A2A proof root: ${root}`);
-const inboundProof = values['inbound-protocol'] ? createMountedInboundProof(root) : null;
+assert.ok(!values['inbound-execution'] || values['inbound-protocol'], '--inbound-execution requires --inbound-protocol');
+const inboundProof = values['inbound-execution'] ? createMountedNativeKernelProof(root)
+  : values['inbound-protocol'] ? createMountedInboundProof(root) : null;
 const inboundProofPath = await inboundProof?.prepare();
 
 // A2A binding spec — the pinned remote target.
