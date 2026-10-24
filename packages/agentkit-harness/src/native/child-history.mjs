@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { addUsage, canonical, invariant, scopeKey, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+import { addUsage, canonical, copy, invariant, scopeKey, terminal, CHILD_OWNER_CONTRACT } from '../../../agentkit-harness-core/dist/index.mjs';
 import { accountedChildDelivery, loadOwnedDirectChild } from './owned-child.mjs';
 
 export const NATIVE_CHILD_HISTORY_CONTRACT = 'agentkit.studio-native-child-history/v1';
@@ -74,7 +74,11 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [] })
     const lastControl = command ? { commandId: command.command.commandId, action: command.command.kind,
       status: !command.consumed ? 'pending' : ['queued', 'applied'].includes(applied?.payload.reason) ? 'delivered' : 'rejected',
       reason: applied?.payload.reason ?? (command.consumed ? 'parent_run_ended' : null) } : null;
+    const a2aTasks = child.intents.filter(intent => intent.kind === 'tool').flatMap(intent => (intent.payload.calls ?? [])
+      .filter(call => call.name === 'call_a2a_agent').map(call => ({ runId: parent.snapshot.runId, childRunId: snapshot.runId,
+        childAgentId: snapshot.scope.agentId, childSessionId: snapshot.sessionId, operationKey: intent.operationKey, callId: call.callId })));
     return { childRunId: snapshot.runId, sessionId: snapshot.sessionId, parentRunId: parent.snapshot.runId,
+      ...(a2aTasks.length ? { a2aTasks } : {}),
       role: binding.role, phase: snapshot.phase, outcome: snapshot.outcome, reason: snapshot.reason,
       delivery: control?.delivery ?? (binding.deliveryMode === 'foreground'
         && !(parent.snapshot.promotedChildRunIds ?? []).includes(snapshot.runId) ? 'foreground' : 'background'),
@@ -88,6 +92,21 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [] })
       usageIncludedInParent: accounted, continuationOf: binding.continuationOf ?? null, buildId: snapshot.buildId };
   };
   return {
+    // Trusted Host fact lookup. Public list/result responses never expose the
+    // full record, and a current parent's lookup cannot select an ancestor's child.
+    record(request) {
+      invariant(id(request.childRunId), 'child_history_query_invalid');
+      const { head, records } = inventory(request);
+      const found = records.find(({ parent, child }) => parent.snapshot.runId === head?.runId && child.snapshot.runId === request.childRunId);
+      invariant(found, 'child_history_result_unavailable');
+      const binding = found.child.configuration.childOwnerBinding, parent = found.parent.snapshot;
+      invariant(binding?.contract === CHILD_OWNER_CONTRACT
+        && canonical(binding.parent) === canonical(Object.fromEntries(['scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
+          .map(key => [key, parent[key]])))
+        && canonical(found.child.snapshot.scope) === canonical({ ...scope, agentId: `${scope.agentId}:child:${binding.role}` }),
+      'child_history_ancestry_invalid');
+      return copy(found.child);
+    },
     list(request) {
       const offset = request.offset ?? 0, limit = request.limit ?? 16;
       invariant(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 64

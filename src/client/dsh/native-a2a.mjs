@@ -15,7 +15,8 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
     useEffect(() => {
       const next = createNativeA2aTaskState({ hostRemote, task }); setController(next); setState(next.getSnapshot());
       const stop = next.subscribe(setState); return () => { stop(); next.dispose(); };
-    }, [task.agentId, task.sessionId, task.runId, task.operationKey, task.callId, task.ownerKind, task.agentRevision, task.buildId]);
+    }, [task.agentId, task.sessionId, task.runId, task.childRunId, task.childAgentId, task.childSessionId,
+      task.operationKey, task.callId, task.ownerKind, task.agentRevision, task.buildId]);
     const send = () => {
       try {
         const structured = state.task?.input?.contract === 'agentkit.a2a-remote-input-control/v1';

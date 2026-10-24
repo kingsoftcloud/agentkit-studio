@@ -18,6 +18,7 @@ import { readNativeRecoveryBinding } from '../src/providers/native-recovery-bind
 import { previousChildPublication } from '../packages/agentkit-harness/src/native/child-publication.mjs';
 import { internalPeer, spec as a2aSpec } from './fixtures/native-a2a-internal-peer.mjs';
 import { hasUnsafeChildReceipt } from '../packages/agentkit-harness/src/native/owned-child.mjs';
+import { createNativeChildHistory } from '../packages/agentkit-harness/src/native/child-history.mjs';
 import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
 import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
@@ -69,7 +70,8 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
   let parentModels = 0, childModels = 0;
   const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, models, ledger,
-    ...(managed ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: () => ({ agent: payload.agent }) } : {}),
+    ...((managed || a2a) ? { agentEvents: () => ({ serial: async () => payload.binding }) } : {}),
+    ...(managed ? { assembleContextFor: () => ({ agent: payload.agent }) } : {}),
     renderPrompt: () => 'Delegate a bounded read; use its evidence without treating it as parent acceptance.',
     fetchImpl: async (url, options) => {
       const body = JSON.parse(options.body); requests.push({ url, body });
@@ -251,6 +253,7 @@ function installChildQuestionHost(f, answer) {
   const agent = f.payload.agent, handlers = new Set(), oldState = f.services.sessionProjections.stateOf;
   agent.id = 'live-parent';
   f.services.agents = { get: id => id === agent.id ? agent : undefined, roots: () => [agent] };
+  f.services.sessionController = { resolveAgent: async id => { assert.equal(id, agent.session.id); return { agent }; } };
   f.services.sessionProjections.stateOf = (session, key) => key === 'agentPreset' ? 'parent-preset'
     : key === 'turnBoundary' ? { lastTurn: 1, openTurnStartSeq: 1 } : oldState(session, key);
   f.ctx.on = (event, handler) => { assert.equal(event, 'session/event'); handlers.add(handler); return () => handlers.delete(handler); };
@@ -328,6 +331,44 @@ for (const managed of [false, true]) for (const foreground of [false, true]) for
   const parentRequests = f.requests.filter(row => row.body.model === 'parent-model');
   assert.equal(parentRequests.length, foreground ? 2 : 3);
   assert.ok(JSON.stringify(parentRequests.at(-1).body.messages).includes('Child consumed original remote result'));
+  const intent = child.intents.find(row => row.kind === 'tool'), call = intent.payload.calls[0];
+  const route = createSessionRoutes({ getNativeHost: async () => f.host });
+  const query = { agentId: f.record.metadata.id, sessionId: 'parent-session', runId: parent.runId,
+    childRunId: child.snapshot.runId, operationKey: intent.operationKey, callId: call.callId, kind: 'get', commandId: 'inspect-original-child-remote' };
+  const counts = { remote: peer.calls.length, models: f.requests.length, approvals: human.approved() };
+  const rootRecord = selectedStore.load(selectedScope, parent.runId);
+  const view = (await route('sessions/native-a2a-control', query)).value;
+  assert.equal(view.state, 'completed'); assert.equal(view.outcome, 'observed');
+  assert.equal(view.operation_locator.runId, child.snapshot.runId); assert.equal(view.operation_locator.sessionId, child.snapshot.sessionId);
+  assert.deepEqual(view.operation_locator.scope, child.snapshot.scope);
+  for (const changed of [{ childRunId: 'foreign-child' }, { callId: 'foreign-call' }, { sessionId: 'foreign-session' }])
+    await assert.rejects(route('sessions/native-a2a-control', { ...query, ...changed }));
+  assert.deepEqual(selectedStore.load(selectedScope, parent.runId), rootRecord);
+  assert.deepEqual(selectedStore.load(reservation.childScope, child.snapshot.runId), child);
+  assert.deepEqual({ remote: peer.calls.length, models: f.requests.length, approvals: human.approved() }, counts);
+  const lookup = { sessionId: 'parent-session', runId: parent.runId, childRunId: child.snapshot.runId };
+  const history = createNativeChildHistory({ scope: selectedScope, store: selectedStore });
+  const independent = history.record(lookup); assert.deepEqual(independent, child);
+  independent.snapshot.finalText = 'caller replacement';
+  assert.deepEqual(selectedStore.load(reservation.childScope, child.snapshot.runId), child);
+  await assert.rejects(route('sessions/native-a2a-control', { ...query, childRunId: '' }));
+  for (const field of ['configuration', 'binding', 'scope']) {
+    const altered = structuredClone(child);
+    if (field === 'configuration') altered.configuration.contract.objective = 'replacement task';
+    if (field === 'binding') altered.configuration.childOwnerBinding.parent.runId = 'foreign-parent';
+    if (field === 'scope') altered.snapshot.scope.userId = 'foreign-user';
+    const readOnlyCorruption = { sessionHead: (...args) => selectedStore.sessionHead(...args),
+      load: (scope, id) => id === child.snapshot.runId ? structuredClone(altered) : selectedStore.load(scope, id) };
+    assert.throws(() => createNativeChildHistory({ scope: selectedScope, store: readOnlyCorruption }).record(lookup),
+      /child_history|stored_configuration/);
+  }
+  if (managed) {
+    await f.reopenManaged();
+    assert.equal((await route('sessions/native-a2a-control', query)).value.state, 'completed');
+    assert.deepEqual(f.managedLedger.load(selectedScope, parent.runId), rootRecord);
+    assert.deepEqual(f.managedLedger.load(reservation.childScope, child.snapshot.runId), child);
+    assert.deepEqual({ remote: peer.calls.length, models: f.requests.length, approvals: human.approved() }, counts);
+  }
 });
 
 for (const approval of [false, true]) test(`managed root A2A ${approval ? 'approval' : 'input'} uses original Host question and separately fenced receipt read`, { timeout: 20000 }, async t => {

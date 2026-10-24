@@ -579,6 +579,17 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     const history = createNativeChildHistory({ scope: inspected.scope, store: runStore, liveTasks });
     return history[result ? 'result' : 'list'](query);
   }
+  function readChildRecord(query) {
+    const inspected = inspectSession(query);
+    invariant(inspected?.record, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
+    const history = createNativeChildHistory({ scope: inspected.scope, store: runStore,
+      liveTasks: id => {
+        const kernel = kernels.get(id);
+        return kernel && runStore.load(inspected.scope, id).configuration.childLifecyclePolicy === 'owned-background/v2'
+          ? kernel.childTasks(inspected.scope, id) : [];
+      } });
+    return history.record({ ...query, runId: inspected.runId });
+  }
   function facts(sessionId, after = 0) {
     guard(); invariant(text(sessionId) && Number.isSafeInteger(after) && after >= 0, 'NATIVE_KERNEL_CURSOR_INVALID');
     projectAll(); return db.prepare('SELECT data FROM managed_events WHERE session_id=? AND seq>? ORDER BY seq').all(sessionId, after)
@@ -594,7 +605,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   } });
   try { guard(); projectAll(); wake(); }
   catch (error) { runStore.close(); db.close(); throw error; }
-  return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory,
+  return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory, readChildRecord,
     startRecovery() { guard(); schedulingEnabled = true; schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),

@@ -294,6 +294,8 @@ node scripts/verify-studio-native-managed-a2a.mjs --source .artifacts/dsh-native
 # 可分别添加 --child、--approval，或 --interrupt 验证未回答时的签名取消。
 # --answer-crash 在回答落盘、远端继续操作的补充授权尚未决定时 SIGKILL 实际 SDK Host。
 # 可与 --child、--approval 组合；不与 --interrupt 组合。
+# --effect-crash 验证主任务的远端继续操作已生效、回复尚未收到时强杀。
+# 可添加 --child、--approval；不与 --answer-crash、--interrupt 组合。
 ```
 
 实际打包 Host 已证明：带签名的 Server HTTP 回调驱动 NativeKernel，经真实模型 HTTP
@@ -306,3 +308,22 @@ node scripts/verify-studio-native-managed-a2a.mjs --source .artifacts/dsh-native
 RPC，不重复提问、模型调用或远端发送。尚未完成的补充操作授权会重新请求，只有新
 宿主的真实授权通过后才继续。最终再换 PID，验证终态历史、账本和回执无新增副作用。
 此边界不等同于远端副作用已经发生、回执尚未落盘时的未知结果恢复。
+
+`--effect-crash` 将远端继续操作的回复停在受控 HTTP peer 上，再强杀真实 SDK Host。
+替换进程恢复原 owner 后保持原 uncertain 回执，不自动查询、重发或重新提问。
+经已认证的 `sessions/native-a2a-control` 对同一个 Run/operation/call 执行 `get`，
+确认原远端任务后，原 Native Kernel 才取得独立 fence 并读取回执，原 Run 随后完成。
+此路径只增加一次 GetTask（人工查询）；独立 fence 下的 Native 回执核对读取这份已持久化
+的终态确认，不再访问远端。SendMessage 总数保持
+初始发送和原继续操作各一次；第三个进程恢复终态不增加副作用。
+
+子任务人工控制使用父 Studio `agentId/sessionId/runId` 加 `childRunId`，由可信宿主从
+原账本及冻结角色授权解析子任务 scope、合成 Session 和操作定位。当前父 Run 的查询
+不能选择祖先 Run 的子任务；历史父 Run 必须显式选择原 runId。已提交启动凭证，或
+原活跃 Kernel 认证的尚未落盘启动回执，证明归属后才允许读取子任务记录。
+记录是独立只读副本，不授予执行租约。每次远端控制继续核对父配置、子任务身份、
+原预设及权限；原未知继续操作不能重发。子任务历史中的远端操作描述显示在既有
+“运行与子任务”面板，查询和控制沿用同一已认证入口。普通主任务字段及 DSH 控制不变。
+`agentkit.studio-native-child-history/v1` 的可选 `a2aTasks` 描述以 additive 字段公布这个
+入口；旧响应省略该字段时不显示子任务远端控制。描述中的子 Agent/Session 只用于
+核对回执，RPC 仅传父身份及 `childRunId`，不接受调用方指定 scope、角色或权限。

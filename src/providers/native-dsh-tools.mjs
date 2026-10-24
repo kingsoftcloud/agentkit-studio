@@ -533,8 +533,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       createNativeA2aQuestionTerminator({ a2a, scope, sessionId, store,
         stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed })(store.load(scope, runId).snapshot);
     },
-    async controlA2aTask({ scope, sessionId, ...request }, { assertControl, authorizeControl }) {
-      invariant(!closed && a2a && scope?.agentId === config.agentId, 'studio_native_a2a_control_unavailable');
+    async controlA2aTask({ scope, sessionId, ...request }, { assertControl, authorizeControl, parentScope }) {
+      const child = parentScope && parentScope.agentId === config.agentId
+        && ['tenantId', 'workspaceId', 'userId'].every(key => scope?.[key] === parentScope[key])
+        && typeof scope?.agentId === 'string' && scope.agentId.startsWith(`${config.agentId}:child:`);
+      invariant(!closed && a2a && (scope?.agentId === config.agentId || child), 'studio_native_a2a_control_unavailable');
       invariant(typeof assertControl === 'function' && typeof authorizeControl === 'function', 'A2A_CONTROL_AUTHORITY_REQUIRED');
       const owner = a2a.forSession({ scope, sessionId, stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace,
         // A product control owns new authority, never the retired tool fence.

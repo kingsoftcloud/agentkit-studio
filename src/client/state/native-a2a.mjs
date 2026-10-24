@@ -29,8 +29,9 @@ const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A
 export function createNativeA2aTaskState({ hostRemote, task, commandId = () => globalThis.crypto.randomUUID() }) {
   const dsh = task.ownerKind === 'dsh';
   const keys = dsh ? ['agentId', 'sessionId', 'agentRevision', 'buildId', 'operationKey', 'callId']
-    : ['agentId', 'sessionId', 'runId', 'operationKey', 'callId'];
+    : ['agentId', 'sessionId', 'runId', ...(task.childRunId === undefined ? [] : ['childRunId']), 'operationKey', 'callId'];
   const identity = Object.fromEntries(keys.map(key => [key, task[key]]));
+  const child = task.childRunId === undefined ? null : { agentId: task.childAgentId, sessionId: task.childSessionId };
   const control = dsh ? hostRemote.controlDshA2aTask : hostRemote.controlNativeA2aTask;
   const lifetime = new AbortController(), listeners = new Set(); let disposed = false, watch;
   let state = { task: null, loading: false, watching: false, sending: false, pending: null, outcome: '', error: '' };
@@ -39,7 +40,10 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
     const locator = value?.operation_locator;
     check(value?.contract === 'agentkit.studio-a2a-task-control/v1' && (dsh
       ? keys.every(key => locator?.[key] === identity[key]) && !['scope', 'runId', 'executionFence'].some(key => Object.hasOwn(locator, key))
-      : locator?.scope?.agentId === identity.agentId && ['sessionId', 'runId', 'operationKey', 'callId'].every(key => locator[key] === identity[key]))
+      : !child
+        ? locator?.scope?.agentId === identity.agentId && ['sessionId', 'runId', 'operationKey', 'callId'].every(key => locator[key] === identity[key])
+        : locator?.scope?.agentId === child.agentId && locator?.sessionId === child.sessionId && locator?.runId === identity.childRunId
+          && ['operationKey', 'callId'].every(key => locator[key] === identity[key]))
       && typeof value.bindingDigest === 'string' && /^[a-f0-9]{64}$/u.test(value.bindingDigest)
       && (!state.task || state.task.bindingDigest === value.bindingDigest)
       && typeof value.task_id === 'string' && value.task_id.length > 0

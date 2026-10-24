@@ -13,6 +13,28 @@ const response = (input, extra = {}) => ({ contract: 'agentkit.studio-a2a-task-c
   state: 'input_required', phase: 'paused', pauseDigest: 'a'.repeat(64), pause: { parts: [{ text: '请输入答案' }] },
   commandId: input.commandId, outcome: input.kind === 'get' ? 'observed' : 'unknown', ...extra });
 
+test('child remote controls retain the parent product identity and pin the exact original child locator across uncertain retries', async () => {
+  const childTask = { ...task, childRunId: 'child-run', childAgentId: 'agent:child:reader', childSessionId: 'child-session' };
+  const calls = []; let replace = value => value;
+  const client = createNativeA2aTaskState({ task: childTask, commandId: () => 'original-child-command', hostRemote: {
+    controlNativeA2aTask: async input => { calls.push(structuredClone(input)); return replace(response(input, {
+      operation_locator: { scope: { agentId: childTask.childAgentId }, sessionId: childTask.childSessionId,
+        runId: childTask.childRunId, operationKey: task.operationKey, callId: task.callId } })); },
+  } });
+  await client.refresh(); assert.equal(client.getSnapshot().error, '');
+  assert.deepEqual(calls[0], { ...task, childRunId: childTask.childRunId, kind: 'get', commandId: 'original-child-command' });
+  await client.continue([{ data: { answer: 1 } }]); const pending = structuredClone(client.getSnapshot().pending);
+  await client.retry(); assert.deepEqual(calls[1], calls[2]); assert.deepEqual(client.getSnapshot().pending, pending);
+  const accepted = client.getSnapshot().task;
+  for (const key of ['agentId', 'sessionId', 'runId', 'operationKey', 'callId']) {
+    replace = value => { if (key === 'agentId') value.operation_locator.scope.agentId = 'foreign';
+      else value.operation_locator[key] = 'foreign'; return value; };
+    await client.refresh(); assert.equal(client.getSnapshot().task, accepted); assert.deepEqual(client.getSnapshot().pending, pending);
+    assert.match(client.getSnapshot().error, /核对失败/);
+  }
+  client.dispose();
+});
+
 test('UI refresh is read-only and a lost continuation reply retains exactly the original input and command', async () => {
   const calls = []; let lost = true;
   const state = createNativeA2aTaskState({ task, commandId: () => 'fixed', hostRemote: {

@@ -15,10 +15,13 @@ import { command, permitIssuer } from '../tests/fixtures/native-managed-kernel.m
 import { internalPeer, spec, taskId } from '../tests/fixtures/native-a2a-internal-peer.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  child: { type: 'boolean' }, approval: { type: 'boolean' }, interrupt: { type: 'boolean' }, 'answer-crash': { type: 'boolean' } } });
+  child: { type: 'boolean' }, approval: { type: 'boolean' }, interrupt: { type: 'boolean' },
+  'answer-crash': { type: 'boolean' }, 'effect-crash': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 assert.ok(!values.interrupt || !values.approval, 'Interruption proves an unanswered input request');
 assert.ok(!values['answer-crash'] || !values.interrupt, 'Answer crash and interruption are separate boundaries');
+assert.ok(!values['effect-crash'] || !(values['answer-crash'] || values.interrupt),
+  'Effect crash, answer crash and interruption prove separate boundaries');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source), archive = resolve(values.archive);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-managed-a2a-')));
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
@@ -26,6 +29,7 @@ console.log(`Managed A2A evidence: ${root}`);
 const issuer = permitIssuer(), requests = [], questions = [], approvals = [], failures = [];
 const questionEntered = Promise.withResolvers(), releaseAnswer = Promise.withResolvers();
 const releasePermission = Promise.withResolvers(); let permissionsReleased = false, crashEvidence;
+const effectEntered = Promise.withResolvers(), releaseEffect = Promise.withResolvers();
 const peer = await internalPeer({ mode: 'pause', ...(values.approval ? { expectedContinuationParts: [{ data: 'approve' }],
   initialTask: { id: 'original-remote', contextId: 'original-context', status: { state: 'TASK_STATE_INPUT_REQUIRED', message: {
     messageId: 'managed-remote-approval', role: 'ROLE_AGENT', parts: [{ text: 'Approve remote operation?' }], metadata: {
@@ -35,6 +39,14 @@ const peer = await internalPeer({ mode: 'pause', ...(values.approval ? { expecte
     },
   } } },
 } : {}) });
+if (values['effect-crash']) peer.setHook(async (call, response) => {
+  if (call.wireMethod === 'SendMessage' && call.body?.params?.message?.taskId) {
+    // internalPeer has already applied the actual continuation to its remote
+    // task before this hook. Hold only the response, never the effect itself.
+    effectEntered.resolve(); await releaseEffect.promise;
+    if (!response.destroyed) response.destroy();
+  }
+});
 let harness, ledger, localLedger, identity, scope;
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
 const jsonl = async path => (await readFile(path, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
@@ -143,6 +155,63 @@ try {
   const cmd = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
     payload: { content: values.child ? 'Delegate original remote question' : 'Ask original remote question' } });
   const receipt = await send(cmd); assert.equal(receipt.status, 'accepted');
+  if (values['effect-crash']) {
+    await effectEntered.promise;
+    const original = ledger.load(scope, receipt.run_id);
+    const journal = await until(() => {
+      const current = peer.record(), questions = current.managed.questions;
+      return questions.sessionDelivery?.through === questions.nextSeq - 1 ? current : null;
+    }, 'original admitted-operation observation delivered to actual Session before crash');
+    const native = journal.request.native, effect = ledger.load(native.scope, native.runId);
+    const answered = Object.values(journal.managed.questions.entries), control = Object.values(journal.controls)
+      .find(row => row.command.kind === 'continue');
+    assert.equal(questions.length, 1); assert.equal(approvals.length, 1); assert.equal(requests.length, values.child ? 2 : 1);
+    assert.equal(effect.snapshot.phase, 'awaiting_reconciliation'); assert.equal(answered.length, 1);
+    assert.equal(answered[0].stage, 'operation_admitted'); assert.equal(control.phase, 'sending');
+    assert.equal(control.command.commandId, answered[0].effectCommandId);
+    const beforeCounts = { models: requests.length, peer: peer.calls.length, questions: questions.length, approvals: approvals.length };
+    const beforeReads = peer.calls.filter(row => row.wireMethod === 'GetTask').length;
+    assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, 2);
+    const dead = harness.client.child, exited = once(dead, 'exit');
+    assert.equal(dead.kill('SIGKILL'), true); const [code, signal] = await exited;
+    assert.equal(code, null); assert.equal(signal, 'SIGKILL'); assert.throws(() => process.kill(dead.pid, 0), { code: 'ESRCH' });
+    await harness.close(); releaseEffect.resolve();
+    harness = new DeepSeekHarness(options); await harness.resumeSession(identity.sessionId);
+    await until(async () => {
+      const status = await rpc('sessions/native-recovery-status', { ...identity, runId: receipt.run_id });
+      return status.managed.owner === 'open' && status.managed.executionState === 'running'
+        && ledger.load(native.scope, native.runId).fence > effect.fence;
+    }, 'replacement original owner reaches its reconciliation wait');
+    // Observe an actually running replacement, not an unstarted queue. Its
+    // idle waiter must not treat transport admission as a safe retry/read.
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.deepEqual({ models: requests.length, peer: peer.calls.length, questions: questions.length, approvals: approvals.length }, beforeCounts);
+    const restored = ledger.load(native.scope, native.runId);
+    assert.deepEqual(restored.snapshot, effect.snapshot); assert.deepEqual(restored.intents, effect.intents);
+    assert.deepEqual(restored.receipts, effect.receipts); assert.deepEqual(peer.record(), journal);
+    const intent = effect.intents.find(row => row.kind === 'tool'), call = intent.payload.calls[0];
+    const query = { ...identity, runId: receipt.run_id, operationKey: intent.operationKey, callId: call.callId,
+      ...(values.child ? { childRunId: effect.snapshot.runId } : {}),
+      kind: 'get', commandId: 'original-unknown-operation-observation' };
+    if (values.child) {
+      const history = await rpc('sessions/native-child-history', { ...identity, runId: receipt.run_id });
+      const task = history.tasks.find(row => row.childRunId === effect.snapshot.runId);
+      assert.deepEqual(task?.a2aTasks, [{ runId: receipt.run_id, childRunId: effect.snapshot.runId,
+        childAgentId: effect.snapshot.scope.agentId, childSessionId: effect.snapshot.sessionId, operationKey: intent.operationKey, callId: call.callId }]);
+      for (const changed of [{ childRunId: 'foreign-child' }, { callId: 'foreign-call' }, { sessionId: 'foreign-session' }])
+        await assert.rejects(rpc('sessions/native-a2a-control', { ...query, ...changed }));
+      assert.deepEqual({ models: requests.length, peer: peer.calls.length, questions: questions.length, approvals: approvals.length }, beforeCounts,
+        'foreign child/call/parent-session probes cannot observe or control a remote task');
+    }
+    const observation = await rpc('sessions/native-a2a-control', query);
+    assert.equal(observation.outcome, 'observed'); assert.equal(observation.state, 'completed');
+    assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, 2);
+    assert.equal(approvals.length, 1); assert.equal(questions.length, 1);
+    crashEvidence = { boundary: 'remote-continuation-effect-before-reply', signal, originalPid: dead.pid,
+      recoveredPid: harness.client.child.pid, original, effect, journal, answered, beforeCounts,
+      beforeReads, automaticRecovery: true, newNativeCommandOrRecoveryRpc: false, observation: { query, result: observation } };
+    await writeFile(join(root, 'managed-a2a-crash-checkpoint.json'), canonical(crashEvidence));
+  }
   if (values['answer-crash']) {
     await until(() => approvals.length === 1, 'first operation permission request after durable answer');
     const original = ledger.load(scope, receipt.run_id), journal = peer.record(), native = journal.request.native;
@@ -211,6 +280,8 @@ try {
   assert.equal(requests.length, values.interrupt ? (values.child ? 2 : 1) : (values.child ? 4 : 2));
   assert.equal(peer.calls.filter(row => row.wireMethod === 'SendMessage').length, values.interrupt ? 1 : 2);
   assert.equal(peer.calls.filter(row => row.wireMethod === 'CancelTask').length, 0);
+  if (values['effect-crash']) assert.equal(peer.calls.filter(row => row.wireMethod === 'GetTask').length, crashEvidence.beforeReads + 1,
+    'only authenticated human observation queries remotely; the separately fenced Native receipt read consumes that durable terminal confirmation');
   const journal = peer.record(); assert.equal(journal.request.native.runId, effectRecord.snapshot.runId);
   if (values.interrupt) assert.deepEqual(Object.values(journal.managed.questions.entries).map(row => row.stage), ['withdrawn']);
   const admissions = await jsonl(join(root, 'managed-tool-admissions.jsonl'));
@@ -234,16 +305,16 @@ try {
   const cold = await json(join(root, 'managed-session-history.json')); assert.deepEqual(cold.slice(0, warm.length), warm);
   assert.deepEqual(cold.slice(warm.length).map(({ type, seq, data }) => ({ type, seq, data })),
     [{ type: 'session/end-seed', seq: warm.at(-1).seq + 1, data: {} }]);
-  const processes = await jsonl(join(root, 'host-processes.jsonl')); assert.equal(processes.length, values['answer-crash'] ? 3 : 2);
+  const processes = await jsonl(join(root, 'host-processes.jsonl')); assert.equal(processes.length, crashEvidence ? 3 : 2);
   assert.equal(new Set(processes.map(row => row.pid)).size, processes.length); assert.ok(processes.every(row => row.path === nodeBin));
   await harness.close(); harness = null;
   await writeFile(join(root, 'managed-a2a-proof.json'), canonical({ contract: 'agentkit.managed-a2a-proof/v1', archiveSha256,
     mode: { child: Boolean(values.child), approval: Boolean(values.approval), interrupt: Boolean(values.interrupt) }, processes,
     receipt, scope, record, childRecord, journal, ...(crashEvidence ? { crashEvidence } : {}),
     counts: before, tools: admissions.length, publicEvents: warm.length, coldEffects: 0 }));
-  console.log(`Managed A2A PASS: signed original Server command, actual SDK owner, original managed ledger, real Host question/approval audit, separately fenced receipt read or interruption, ${crashEvidence ? 'actual SIGKILL after durable answer and automatic original-command recovery, ' : ''}distinct-PID cold replay with no effects, Node-only PATH.`);
+  console.log(`Managed A2A PASS: signed original Server command, actual SDK owner, original managed ledger, real Host question/approval audit, separately fenced receipt read or interruption, ${crashEvidence ? `actual SIGKILL at ${crashEvidence.boundary} and automatic original-command recovery, ` : ''}distinct-PID cold replay with no effects, Node-only PATH.`);
 } finally {
-  releaseAnswer.resolve(); releasePermission.resolve();
+  releaseAnswer.resolve(); releasePermission.resolve(); releaseEffect.resolve();
   await writeFile(join(root, 'controlled-peers.json'), canonical({ requests, questions, approvals, failures, a2a: peer.calls }));
   await harness?.close(); ledger?.close(); localLedger?.close(); await peer.close(); server.closeAllConnections();
   await new Promise(resolve => server.close(resolve)); if (!values.keep) await rm(root, { recursive: true, force: true });

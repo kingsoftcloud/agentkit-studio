@@ -10,7 +10,11 @@ export function createNativeChildrenState({ hostRemote, agentId, sessionId, comm
   const valid = value => check(value?.contract === contract && value.sessionId === sessionId, '子任务记录与当前会话不一致，请刷新。');
   const validTask = task => task && ['childRunId', 'sessionId', 'parentRunId', 'role', 'phase', 'goalPreview']
     .every(key => typeof task[key] === 'string') && typeof task.resultAvailable === 'boolean'
-    && task.usage && Number.isSafeInteger(task.usage.modelCalls) && Number.isSafeInteger(task.usage.toolCalls);
+    && task.usage && Number.isSafeInteger(task.usage.modelCalls) && Number.isSafeInteger(task.usage.toolCalls)
+    && (task.a2aTasks === undefined || Array.isArray(task.a2aTasks) && task.a2aTasks.length <= 10000
+      && task.a2aTasks.every(item => item?.runId === task.parentRunId && item.childRunId === task.childRunId
+        && item.childSessionId === task.sessionId && ['childAgentId', 'operationKey', 'callId']
+          .every(key => typeof item[key] === 'string' && item[key].trim() && item[key].length <= (key === 'operationKey' ? 4096 : 256))));
   async function load(next = false) {
     if (disposed || state.loading || next && (!state.page || state.page.complete)) return;
     const previous = state.page;

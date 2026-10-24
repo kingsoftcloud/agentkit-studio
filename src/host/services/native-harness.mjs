@@ -585,7 +585,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resolveBackgroundTurn: resolveBackgroundBinding,
   });
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents });
-  const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents });
+  const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents,
+    childRecord: request => childHistory(request).record(request) });
   const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
   const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
   const startWaitRecovery = ({ signal } = {}) => {

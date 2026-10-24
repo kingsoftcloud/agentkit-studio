@@ -14,6 +14,19 @@ const page = (extra = {}) => ({ contract, sessionId: 'session', runId: 'parent',
   offset: 0, nextOffset: 1, totalTasks: 1, complete: true, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('child remote-operation descriptors are read-only and must match their exact parent and child', async () => {
+  const descriptor = { runId: task.parentRunId, childRunId: task.childRunId, childAgentId: 'agent:child:reader',
+    childSessionId: task.sessionId, operationKey: 'original-operation', callId: 'original-call' };
+  let data = page({ tasks: [{ ...task, a2aTasks: [descriptor] }] });
+  const client = createNativeChildrenState({ agentId: 'agent', sessionId: 'session', hostRemote: { nativeChildHistory: async () => data } });
+  await client.refresh(); assert.equal(client.getSnapshot().error, ''); const accepted = client.getSnapshot().page;
+  for (const field of ['runId', 'childRunId', 'childSessionId']) {
+    data = page({ tasks: [{ ...task, a2aTasks: [{ ...descriptor, [field]: 'foreign' }] }] });
+    await client.refresh(); assert.equal(client.getSnapshot().page, accepted); assert.match(client.getSnapshot().error, /读取失败/);
+  }
+  client.dispose();
+});
+
 test('a lost promotion reply retains the exact original command across parent advancement and explicit retry', async () => {
   const commands = []; let current = page(), lost = true;
   const client = createNativeChildrenState({ agentId: 'agent', sessionId: 'session', commandId: () => 'one-command', hostRemote: {

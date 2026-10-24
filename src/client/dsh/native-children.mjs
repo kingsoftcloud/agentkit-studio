@@ -77,6 +77,8 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
               : `操作未投递：${task.lastControl.reason === 'stale_child_goal_revision' ? '子任务目标已变化，请刷新后核对指导。' : task.lastControl.reason}`) : null,
           h('p', { style: { whiteSpace: 'pre-wrap' } }, task.goalPreview, task.goalComplete ? '' : '…'),
           h('p', { style: { fontSize: '12px' } }, `子任务用量${task.usageComplete ? '' : '（可能未完整）'}：模型 ${task.usage.modelCalls} 次 · 工具 ${task.usage.toolCalls} 次 · 输入 ${task.usage.inputTokens} / 输出 ${task.usage.outputTokens} tokens；${task.usageIncludedInParent ? '已计入父任务' : '结算后计入父任务'}。`),
+          ...(task.a2aTasks ?? []).map(remote => h(A2aTask, { key: `${remote.childRunId}:${remote.operationKey}:${remote.callId}`,
+            task: { ...remote, agentId, sessionId } })),
           h('button', { type: 'button', disabled: state.reading, style: buttonStyle(), onClick: () => void controller.read(task) }, task.resultAvailable ? '查看结果' : '查看状态'),
           task.canPromote ? h('button', { type: 'button', disabled: Boolean(state.pending), style: buttonStyle(), onClick: () => void controller.promote(task) }, '转为后台') : null,
           task.canCancel ? h('button', { type: 'button', disabled: Boolean(state.pending), style: buttonStyle(), onClick: () => void controller.cancel(task) }, '停止子任务') : null,
