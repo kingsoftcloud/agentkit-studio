@@ -77,12 +77,13 @@ export function createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime
           // including under workspace-write. They do not inherit the original
           // model tool's policy result or a standing filesystem write grant.
           const outcome = await requestStudioA2aApproval({ ctx, agent, presetId, assertCurrent: assertControl,
-            requireReceipt: Boolean(task.approval && !task.approval.decision),
+            requireReceipt: Boolean(task.approval && !task.approval.decision || task.input && !task.input.decision),
             request: { agent, toolName: `a2a_${original.kind}_task`,
             callId: `a2a-control:${createHash('sha256').update(canonical({ locator, commandId: original.commandId })).digest('hex')}`, signal: consentSignal,
             reason: canonical({ action: original.kind, target: spec.local_name, targetAgentId: spec.target_agent_id,
               taskId: task.task_id, remoteTaskId: task.remote_task_id, commandId: original.commandId,
               ...(task.approval ? { approval: task.approval } : {}),
+              ...(task.input ? { input: task.input } : {}),
               parts: command.parts }) } });
           assertControl(); checkPolicy();
           invariant(typeof ctx.get('approval')?.request === 'function', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE');

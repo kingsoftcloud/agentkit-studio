@@ -77,11 +77,11 @@ export function createStudioDshA2aControls({ ctx, agentEvents, signal: hostSigna
             ctx.get('sandboxPolicy')?.resolve?.({ session })?.mode), 'STUDIO_DSH_A2A_PERMISSION_UNAVAILABLE');
           invariant(typeof approval?.request === 'function', 'STUDIO_DSH_A2A_PERMISSION_UNAVAILABLE'); checkPolicy();
           const outcome = await requestStudioA2aApproval({ ctx, agent, presetId, assertCurrent,
-            requireReceipt: Boolean(task.approval && !task.approval.decision), request: { agent, toolName: `a2a_${original.kind}_task`, signal: consentSignal,
+            requireReceipt: Boolean(task.approval && !task.approval.decision || task.input && !task.input.decision), request: { agent, toolName: `a2a_${original.kind}_task`, signal: consentSignal,
             callId: `dsh-a2a-control:${createHash('sha256').update(canonical({ locator: command.operation_locator, commandId: command.commandId })).digest('hex')}`,
             reason: canonical({ action: original.kind, target: spec.local_name, targetAgentId: spec.target_agent_id,
               taskId: task.task_id, remoteTaskId: task.remote_task_id, commandId: command.commandId,
-              ...(task.approval ? { approval: task.approval } : {}), parts: command.parts }) } });
+              ...(task.approval ? { approval: task.approval } : {}), ...(task.input ? { input: task.input } : {}), parts: command.parts }) } });
           assertCurrent(); checkPolicy();
           // Cordis returns context-bound service proxies; object equality is
           // not service identity. Recheck availability, policy and the exact

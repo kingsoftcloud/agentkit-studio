@@ -112,7 +112,7 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
   function resolveInteraction(taskState, src, occ, resume = false) {
     const active = state.activeInteraction;
     if (!active) return;
-    if (active.kind === 'structured_input') emit('interaction.resolved', active.id, null,
+    if (active.kind === 'structured_input' && !state.hostDecisions?.[active.id]) emit('interaction.resolved', active.id, null,
       { interaction_id: active.id, interaction_kind: active.kind, response: { response_type: active.kind, data: { state: taskState } } }, src, occ.identity);
     // Remote progress never supplies an approval decision. The Host's durable
     // decision ledger is the sole authority for approval resolution.
@@ -135,8 +135,7 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     state.interactionGenerations ??= {};
     let generation = state.interactionGenerations[baseLifecycle] ?? '';
     const previous = state.activeInteraction;
-    if (continuationCommandId && previous?.kind === 'approval'
-      && state.hostDecisions?.[previous.id]?.decision === 'approved') {
+    if (continuationCommandId && previous && ['approved', 'submitted'].includes(state.hostDecisions?.[previous.id]?.decision)) {
       generation = continuationCommandId; state.interactionGenerations[baseLifecycle] = generation;
     }
     const lifecycle = generation ? key([raw.state, id, generation]) : baseLifecycle;
@@ -147,7 +146,7 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     const metadata = message.metadata ?? {}, approval = parseA2AApproval(metadata, interaction);
     invariant(!approval || current === 'input_required', 'A2A_INTERACTION_DECLARATION_INVALID');
     resolveInteraction('SUPERSEDED_BY_NEW_A2A_INTERACTION', src, occ,
-      Boolean(previous && state.hostDecisions?.[previous.id]?.decision === 'approved'));
+      Boolean(previous && ['approved', 'submitted'].includes(state.hostDecisions?.[previous.id]?.decision)));
     const kind = approval ? 'approval' : 'structured_input';
     const prompt = (message.parts ?? []).map(part => part.text ?? '').join('') || null;
     const schema = object(metadata.input_schema) ? metadata.input_schema : { type: current === 'auth_required' ? 'object' : 'string' };
@@ -183,7 +182,7 @@ export function projectA2ACanonical(record, { payload, method, observationId, so
     const src = source(task.id, occ, { provisional: false, consistent: true, reconciliation_reason: 'terminal', terminal });
     if (paused || ['working', 'submitted'].includes(a2aState(task.status.state))) status(task.status, occ, src);
     if (terminal) resolveInteraction(task.status.state, src, occ,
-      state.hostDecisions?.[state.activeInteraction?.id]?.decision === 'approved');
+      ['approved', 'submitted'].includes(state.hostDecisions?.[state.activeInteraction?.id]?.decision));
     if (terminal) state.terminalFingerprint = digest;
   }
   if (method === 'GetTask') snapshot(wire);

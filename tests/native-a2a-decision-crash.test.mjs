@@ -17,15 +17,18 @@ function worker(f, input) {
   child.send({ root: f.root, workspaceRoot: f.workspaceRoot, env: f.env, ...input });
   return { child, messages, exit };
 }
-for (const dsh of [false, true]) for (const kind of ['continue', 'reject']) for (const boundary of ['before-transport', 'after-remote-apply'])
-  test(`SIGKILL ${dsh ? 'DSH' : 'Native'} ${kind} ${boundary}: decision survives without replaying the effect`, { timeout: 20000 }, async t => {
-    const metadata = { input_schema: { type: 'string', enum: ['approve', 'reject'] },
+for (const dsh of [false, true]) for (const [interaction, kind] of [['approval', 'continue'], ['approval', 'reject'], ['structured_input', 'continue']])
+  for (const boundary of ['before-transport', 'after-remote-apply'])
+  test(`SIGKILL ${dsh ? 'DSH' : 'Native'} ${interaction} ${kind} ${boundary}: decision survives without replaying the effect`, { timeout: 20000 }, async t => {
+    const input = interaction === 'structured_input', answer = input ? { city: 'Shanghai' } : 'approve';
+    const metadata = input ? { input_schema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] } }
+      : { input_schema: { type: 'string', enum: ['approve', 'reject'] },
       ksadk_interaction: { version: 1, kind: 'approval', allowed_decisions: ['approve', 'reject'],
         presentation: { title: 'remote-change', description: '{"arguments":{}}' } } };
     const initialTask = { id: 'original-remote', contextId: 'original-context',
       status: { state: 'TASK_STATE_INPUT_REQUIRED', message: { messageId: 'question', role: 'ROLE_AGENT',
         parts: [{ text: 'Approve remote change' }], metadata } } };
-    const f = await internalPeer({ initialTask, expectedContinuationParts: [{ data: 'approve' }] }); t.after(() => f.close());
+    const f = await internalPeer({ initialTask, expectedContinuationParts: [{ data: answer }] }); t.after(() => f.close());
     const factory = (dsh ? prepareDshA2AHost : prepareNativeA2AHost)({ env: f.env, bindings: [spec] });
     const fields = dsh ? { agentId: 'agent', agentRevision: 1, buildId: null } : { scope };
     const owner = factory.forSession({ ...fields, sessionId: 'session', stateRoot: join(f.root, 'state'), workspaceRoot: f.workspaceRoot,
@@ -38,7 +41,7 @@ for (const dsh of [false, true]) for (const kind of ['continue', 'reject']) for 
     const before = await owner.control.execute({ kind: 'get', commandId: 'inspect', operation_locator: request.identity, authority: {}, signal: signal() });
     await owner.eventDelivery.flush(); await factory.close();
     const command = { kind, commandId: 'crash-decision', operation_locator: request.identity, authority: {}, pauseDigest: before.pauseDigest,
-      ...(kind === 'continue' ? { parts: [{ data: 'approve' }] } : {}) };
+      ...(kind === 'continue' ? { parts: [{ data: answer }] } : {}) };
     let reached, release;
     const entered = new Promise(resolve => { reached = resolve; });
     if (boundary === 'after-remote-apply') f.setHook(call => {
@@ -50,7 +53,9 @@ for (const dsh of [false, true]) for (const kind of ['continue', 'reject']) for 
     if (boundary === 'before-transport') first.child.on('message', value => { if (value.type === 'boundary') reached(); });
     await Promise.race([entered, first.exit.then(result => assert.fail('ended before crash boundary: ' + JSON.stringify({ result, messages: first.messages })))]);
     const committed = f.record(), decisions = committed.managed.events.log.filter(event => event.event_type === 'interaction.resolved');
-    assert.equal(decisions.length, 1); assert.equal(decisions[0].response.decision, kind === 'continue' ? 'approved' : 'rejected');
+    assert.equal(decisions.length, 1);
+    assert.deepEqual(decisions[0].response, input ? { response_type: interaction, data: answer }
+      : { response_type: interaction, decision: kind === 'continue' ? 'approved' : 'rejected', data: null });
     assert.equal(Object.values(committed.controls).find(entry => entry.command.commandId === command.commandId).phase, 'sending');
     const tasks = f.calls.filter(call => call.wireMethod).length;
     first.child.kill('SIGKILL'); const killed = await first.exit; assert.equal(killed.signal, 'SIGKILL');
@@ -69,6 +74,6 @@ for (const dsh of [false, true]) for (const kind of ['continue', 'reject']) for 
     assert.deepEqual(f.record().managed.events.log.filter(event => event.event_type === 'interaction.resolved'), decisions);
     assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, kind === 'continue' && boundary === 'after-remote-apply' ? 2 : 1);
     assert.equal(f.calls.filter(call => call.wireMethod === 'CancelTask').length, kind === 'reject' && boundary === 'after-remote-apply' ? 1 : 0);
-    t.diagnostic(JSON.stringify({ dsh, kind, boundary, killedPid: killed.pid, coldPid: cold.pid, thirdPid: observed.pid,
+    t.diagnostic(JSON.stringify({ dsh, interaction, kind, boundary, killedPid: killed.pid, coldPid: cold.pid, thirdPid: observed.pid,
       immutableDecisions: decisions.length, coldTaskRequests: 0, explicitGetTask: 1 }));
   });

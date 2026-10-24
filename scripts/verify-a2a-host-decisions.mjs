@@ -31,8 +31,10 @@ const remoteTask = () => ({ id: 'original-remote', contextId: 'original-context'
   message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'Approve remote write' }],
     metadata: { input_schema: { type: 'string', enum: ['approve', 'reject'] }, ksadk_interaction: { version: 1,
       kind: 'approval', allowed_decisions: ['approve', 'reject'], presentation: { title: 'write', description: '{"arguments":{"path":"report"}}' } } } } } });
-async function harness(t, { dsh = false, outcome = 'allowed-once', failFlush = false, spoof = false } = {}) {
-  const f = await internalPeer({ initialTask: remoteTask(), expectedContinuationParts: [{ data: 'approve' }] });
+async function harness(t, { dsh = false, outcome = 'allowed-once', failFlush = false, spoof = false, input = false } = {}) {
+  const initialTask = remoteTask();
+  if (input) initialTask.status.message.metadata = { input_schema: { type: 'string' } };
+  const f = await internalPeer({ initialTask, expectedContinuationParts: [{ data: input ? 'Shanghai' : 'approve' }] });
   const ctx = new Context(); await ctx.plugin(SessionStore); await ctx.plugin(Projections); await ctx.plugin(ApprovalService);
   ctx.sessionProjections.register(turnBoundaryProjectionDefinition); ctx.sessionProjections.register(agentPresetProjectionDefinition);
   ctx.sessionProjections.register({ key: 'decisionVerificationLog', stateVersion: 1, init: () => [],
@@ -73,7 +75,7 @@ async function harness(t, { dsh = false, outcome = 'allowed-once', failFlush = f
   return { ...f, ctx, agent, owner, request, log, historyFile, before, presetId, assertCurrent,
     flushWorks() { failure = false; },
     execute(kind) { return owner.control.execute({ kind, commandId: 'actual-decision', authority: {}, operation_locator: request.identity,
-      ...(kind === 'continue' ? { parts: [{ data: 'approve' }], pauseDigest: before.pauseDigest }
+      ...(kind === 'continue' ? { parts: [{ data: input ? { result: 'Shanghai' } : 'approve' }], pauseDigest: before.pauseDigest }
         : kind === 'reject' ? { pauseDigest: before.pauseDigest } : {}), signal: signal() }); } };
 }
 for (const dsh of [false, true]) for (const kind of ['continue', 'cancel', 'reject']) await test(`${dsh ? 'DSH' : 'Native'} ${kind}: actual audit -> decision+intent -> remote effect -> actual persistent Session`, async t => {
@@ -110,5 +112,51 @@ await test('actual audit flush failure cannot admit a remote effect', async t =>
 await test('a bare allow without an actual audit is rejected despite valid remote approval hints', async t => {
   const f = await harness(t, { spoof: true }); await assert.rejects(f.execute('continue'), { code: 'A2A_HOST_DECISION_REQUIRED' });
   assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+});
+for (const dsh of [false, true]) for (const kind of ['continue', 'cancel']) await test(`${dsh ? 'DSH' : 'Native'} structured input ${kind}: actual durable audit binds normalized answer and effect`, async t => {
+  const f = await harness(t, { dsh, input: true }), originalMessages = f.agent.session.deriveMessages();
+  f.setHook(call => {
+    if (call.wireMethod !== (kind === 'continue' ? 'SendMessage' : 'CancelTask')) return;
+    const history = JSON.parse(readFileSync(f.historyFile, 'utf8'));
+    const asked = history.find(event => event.type === 'approval/asked'), decided = history.find(event => event.type === 'approval/decided');
+    assert.ok(asked); assert.ok(decided); assert.equal(decided.data.id, asked.data.id);
+    const [resolution] = f.record().managed.events.log.filter(event => event.event_type === 'interaction.resolved');
+    assert.ok(resolution); assert.equal(resolution.source.metadata.host_decision.requestId, asked.data.id);
+    const entry = Object.values(f.record().controls).find(entry => entry.command.commandId === 'actual-decision');
+    assert.equal(entry.phase, 'sending'); assert.equal(entry.digest, resolution.source.metadata.command_digest);
+    assert.deepEqual(entry.command.parts, kind === 'continue' ? [{ data: 'Shanghai' }] : null);
+  });
+  assert.equal((await f.execute(kind)).outcome, kind === 'continue' ? 'submitted' : 'remote_cancelled');
+  await f.owner.eventDelivery.flush(); await f.owner.eventDelivery.flushSession();
+  const history = JSON.parse(readFileSync(f.historyFile, 'utf8'));
+  const asked = history.filter(event => event.type === 'approval/asked'), decided = history.filter(event => event.type === 'approval/decided');
+  assert.equal(asked.length, 1); assert.equal(decided.length, 1);
+  const events = f.record().managed.events.log, resolutions = events.filter(event => event.event_type === 'interaction.resolved');
+  assert.equal(resolutions.length, 1); const [resolution] = resolutions, receipt = resolution.source.metadata.host_decision;
+  assert.equal(receipt.requestId, asked[0].data.id); assert.equal(receipt.askedSeq, asked[0].seq); assert.equal(receipt.decidedSeq, decided[0].seq);
+  assert.deepEqual(resolution.response, { response_type: 'structured_input', data: kind === 'continue' ? 'Shanghai' : null });
+  assert.equal(resolution.source.metadata.host_outcome, kind === 'continue' ? 'submitted' : 'canceled');
+  assert.deepEqual(history.filter(event => event.type === A2A_SESSION_EVENT).map(event => JSON.parse(event.data.eventJson)), events);
+  assert.deepEqual(f.agent.session.deriveMessages(), originalMessages);
+  const network = f.calls.filter(call => call.wireMethod).length; await f.execute(kind);
+  assert.equal(f.calls.filter(call => call.wireMethod).length, network); assert.equal(f.log().filter(event => event.type === 'approval/asked').length, 1);
+  evidence.cases.push({ dsh, kind, structuredInput: true, events, audit: { asked, decided }, sessionThrough: f.record().managed.events.sessionDelivery.through });
+});
+for (const outcome of ['rejected', 'unavailable', 'cancelled']) await test(`actual ${outcome} for structured input grants neither continuation nor cancellation`, async t => {
+  const f = await harness(t, { input: true, outcome });
+  await assert.rejects(f.execute('continue'), { code: 'A2A_CONTROL_PERMISSION_DENIED' });
+  assert.equal(f.log().filter(event => event.type === 'approval/decided')[0].data.outcome, outcome);
+  assert.equal(f.record().managed.events.log.filter(event => event.event_type === 'interaction.resolved').length, 0);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'CancelTask').length, 0);
+});
+await test('structured input without actual audit or durable audit cannot admit an answer', async t => {
+  for (const options of [{ spoof: true }, { failFlush: true }]) {
+    const f = await harness(t, { input: true, ...options });
+    await assert.rejects(f.execute('continue'), options.spoof ? { code: 'A2A_HOST_DECISION_REQUIRED' } : /intentional audit durability failure/);
+    assert.equal(f.record().managed.events.log.filter(event => event.event_type === 'interaction.resolved').length, 0);
+    assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+    f.flushWorks(); await f.owner.eventDelivery.flushSession();
+  }
 });
 if (values.evidence) writeFileSync(resolve(values.evidence), JSON.stringify(evidence, null, 2));

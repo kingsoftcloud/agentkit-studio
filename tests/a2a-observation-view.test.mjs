@@ -218,6 +218,16 @@ test('renderer displays scope descriptor status + agent name from data part', ()
   assert.ok(txt.includes('已完成'), 'status shown');
   assert.ok(txt.includes('helper'), 'agent name shown');
 });
+test('input resolution renders committed outcome separately from answer content', () => {
+  for (const [outcome, label] of [['submitted', '输入已提交'], ['canceled', '输入已取消']]) {
+    const c = { ...canon('interaction.resolved', { interaction_id: 'ix', interaction_kind: 'structured_input' }),
+      source: { metadata: { host_outcome: outcome } }, response: { response_type: 'structured_input', data: 'private-answer' } };
+    const tree = View({ node: { data: { owner: { agentId: 'a', sessionId: 's', kind: 'native' }, sourceSeq: 1,
+      anchorSeq: 4, entity: 'interaction', status: 'resolved', snapshot: { parts: [], texts: [], tools: [] }, lastCanonical: c } } });
+    assert.ok(texts(tree).includes(label)); assert.ok(!texts(tree).includes('private-answer'));
+    assert.ok(!tags(tree).includes('button'));
+  }
+});
 test('renderer returns null on a malformed node', () => {
   assert.equal(View({}), null);
   assert.equal(View({ node: { data: null } }), null);

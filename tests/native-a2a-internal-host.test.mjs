@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { prepareNativeA2AHost, prepareDshA2AHost } from '../src/providers/native-a2a-host.mjs';
 import { internalPeer, spec, scope, taskId } from './fixtures/native-a2a-internal-peer.mjs';
+import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
 const signal = () => new AbortController().signal;
 async function setup(t, options = {}) {
   const f = await internalPeer(options), factory = (options.dsh ? prepareDshA2AHost : prepareNativeA2AHost)({ env: f.env, bindings: [spec] });
@@ -12,7 +13,7 @@ async function setup(t, options = {}) {
   const ownerBinding = options.dsh ? { agentId: 'agent', agentRevision: 3, buildId: 'build' } : { scope };
   const owner = () => {
     const value = factory.forSession({ ...ownerBinding, sessionId: 'session', workspaceRoot: f.workspaceRoot, stateRoot: join(f.root, 'state'),
-      assertCurrent: () => current, assertControl: () => true, authorizeControl: async () => 'allow' }); f.owners.push(value); return value;
+      assertCurrent: () => current, assertControl: () => true, authorizeControl: controlConsent }); f.owners.push(value); return value;
   };
   const original = owner(), request = await original.invocation.resolve({ agent: 'research', message: 'Hello😀', signal: signal(),
     [options.dsh ? 'dshRequest' : 'nativeRequest']: { ...ownerBinding, sessionId: 'session', ...(options.dsh ? {} : { runId: 'run' }),

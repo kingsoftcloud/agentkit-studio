@@ -38,7 +38,8 @@ test('unknown control stays pending until a read confirms terminal or a differen
   nextPause = 'c'.repeat(64); await state.refresh(); assert.equal(state.getSnapshot().pending, null);
   assert.equal(state.getSnapshot().outcome, 'unknown', 'a new observation does not claim the previous delivery succeeded'); state.dispose();
 });
-for (const code of ['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A_CONTROL_PERMISSION_DENIED']) test(`UI ${code} releases a rejected command and leaves explicit remote cancellation available`, async () => {
+for (const code of ['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A_CONTROL_PERMISSION_DENIED',
+  'A2A_STRUCTURED_INPUT_REQUIRED', 'A2A_STRUCTURED_INPUT_INVALID', 'A2A_INPUT_SCHEMA_INVALID', 'A2A_INPUT_ALREADY_DECIDED']) test(`UI ${code} releases a rejected command and leaves explicit remote cancellation available`, async () => {
   const calls = [];
   const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {
     calls.push(input.kind); if (input.kind === 'continue') throw Object.assign(new Error('not dispatched'), { code });
@@ -168,3 +169,28 @@ for (const action of ['approve', 'reject']) test(`typed remote approval panel se
   assert.equal(calls[1].kind, action === 'approve' ? 'continue' : 'reject'); assert.equal(calls[1].pauseDigest, 'a'.repeat(64));
   assert.equal(calls[1].json, action === 'approve' ? '"approve"' : undefined); assert.equal(calls[1].parts, undefined);
 });
+for (const [type, text, json] of [['string', '', '""'], ['object', '{"city":"Shanghai"}', '{"city":"Shanghai"}']])
+  test(`managed ${type} input uses data JSON and hides the composer after a durable decision`, async () => {
+    const slots = [], effects = [], calls = []; let index = 0, dirty = false;
+    const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() }),
+      useState(initial) { const i = index++; if (!(i in slots)) slots[i] = initial;
+        return [slots[i], value => { slots[i] = value; dirty = true; }]; },
+      useEffect(effect, deps) { const i = index++; if (!slots[i] || deps.some((value, j) => value !== slots[i][j])) { slots[i] = deps; effects.push(effect); } } };
+    const Panel = createNativeA2aPanel({ React, buttonStyle: () => ({}), hostRemote: { controlNativeA2aTask: async input => {
+      calls.push(structuredClone(input)); return response(input, { input: { contract: 'agentkit.a2a-remote-input-control/v1',
+        interactionId: 'interaction', decision: input.kind === 'get' ? null : 'submitted', request: { schema: { type } } } });
+    } } });
+    const render = () => { let tree; do { dirty = false; index = 0; tree = Panel({ task }); for (const effect of effects.splice(0)) effect(); } while (dirty); return tree; };
+    const find = (tree, predicate) => { if (!tree || typeof tree !== 'object') return null;
+      if (predicate(tree)) return tree; for (const child of tree.children ?? []) { const found = find(child, predicate); if (found) return found; } return null; };
+    const button = (tree, label) => find(tree, node => node.type === 'button' && node.children.includes(label));
+    button(render(), '核对远端任务').props.onClick(); await new Promise(resolve => setImmediate(resolve));
+    let tree = render(); const checkbox = find(tree, node => node.type === 'input');
+    assert.equal(checkbox.props.checked, type !== 'string'); assert.equal(checkbox.props.disabled, type !== 'string');
+    find(tree, node => node.type === 'textarea').props.onChange({ target: { value: text } });
+    tree = render(); assert.equal(button(tree, '提交补充输入').props.disabled, false);
+    button(tree, '提交补充输入').props.onClick(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls[1].json, json); assert.equal(calls[1].parts, undefined);
+    tree = render(); assert.equal(find(tree, node => node.type === 'textarea'), null);
+    assert.equal(button(tree, '提交补充输入'), null); assert.ok(button(tree, '确认原操作回执'));
+  });

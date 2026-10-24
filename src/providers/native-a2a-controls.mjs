@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { a2aTerminal, createA2AProjection } from './native-a2a-protocol.mjs';
-import { a2aPendingApproval, validateA2aHostReceipt } from './native-a2a-decision.mjs';
+import { a2aPendingApproval, a2aPendingInput, normalizeA2aInputParts, validateA2aHostReceipt } from './native-a2a-decision.mjs';
 
 export const STUDIO_A2A_CONTROL_CONTRACT = 'agentkit.studio-a2a-task-control/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -36,6 +36,7 @@ export function a2aControlView(binding, record) {
     pause: paused(record.projection.state) ? copy(record.projection.pause ?? null) : null,
     pauseDigest: paused(record.projection.state) ? pauseDigest(record.projection) : null,
     ...(a2aPendingApproval(record) ? { approval: a2aPendingApproval(record) } : {}),
+    ...(a2aPendingInput(record) ? { input: a2aPendingInput(record) } : {}),
     output_refs: copy(record.projection.output_refs), snapshots: copy(record.projection.snapshots),
     item_kinds: copy(record.projection.item_kinds) };
 }
@@ -50,7 +51,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
     'A2A_CONTROL_REQUEST_INVALID');
     invariant(typeof assertControl === 'function' && typeof authorizeControl === 'function', 'A2A_CONTROL_AUTHORITY_REQUIRED');
     const { kind, commandId } = input, locator = copy(input.operation_locator), authority = copy(input.authority);
-    const parts = input.parts === undefined ? null : copy(input.parts);
+    let parts = input.parts === undefined ? null : copy(input.parts);
     if (kind === 'continue') {
       invariant(typeof input.pauseDigest === 'string' && /^[a-f0-9]{64}$/u.test(input.pauseDigest)
         && Array.isArray(parts) && parts.length > 0 && parts.length <= 64
@@ -60,8 +61,8 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         && Buffer.byteLength(canonical(parts)) <= 1024 * 1024, 'A2A_CONTROL_INPUT_INVALID');
     } else invariant(parts === null && (kind === 'reject' ? typeof input.pauseDigest === 'string'
       && /^[a-f0-9]{64}$/u.test(input.pauseDigest) : input.pauseDigest === undefined), 'A2A_CONTROL_REQUEST_INVALID');
-    const command = { kind, commandId, operation_locator: locator, parts, pauseDigest: input.pauseDigest ?? null };
-    const commandDigest = hash(command), key = hash(commandId);
+    let command, commandDigest;
+    const key = hash(commandId);
     const callerSignal = input.signal;
     let signal = AbortSignal.any([callerSignal, lifetime, AbortSignal.timeout(90000)]);
     const stableInput = canonical({ ...input, signal: null });
@@ -83,6 +84,9 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       invariant(record.request.spec && record.projection?.scopeId === record.request.scopeId, 'A2A_CONTROL_RECORD_INVALID');
       record.controls ??= {};
       entry = record.controls[key];
+      if (kind === 'continue') parts = normalizeA2aInputParts(record, parts, entry);
+      command = { kind, commandId, operation_locator: locator, parts, pauseDigest: input.pauseDigest ?? null };
+      commandDigest = hash(command);
       if (entry) invariant(entry.contract === STUDIO_A2A_CONTROL_CONTRACT && entry.digest === commandDigest
         && canonical(entry.command) === canonical(command), 'A2A_CONTROL_IDEMPOTENCY_CONFLICT');
       if (kind === 'continue' && !entry && !a2aTerminal.has(record.projection.state)) {
@@ -190,18 +194,23 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       const message = kind === 'continue' ? { messageId: hash({ identity: locator, commandId }), role: 'ROLE_USER',
         taskId: record.projection.taskId, ...(record.projection.contextId ? { contextId: record.projection.contextId } : {}), parts } : null;
       if (message) invariant(Buffer.byteLength(canonical(message)) <= 1024 * 1024, 'A2A_CONTROL_INPUT_INVALID');
-      const approval = a2aPendingApproval(record);
-      invariant(kind !== 'continue' || !record.managed || !record.projection.pause?.metadata?.ksadk_interaction || approval,
-        'A2A_APPROVAL_REQUEST_MISSING');
-      if (kind === 'reject') invariant(approval && !approval.decision && pauseDigest(record.projection) === command.pauseDigest,
+      const remoteApproval = a2aPendingApproval(record);
+      const approval = remoteApproval ?? a2aPendingInput(record);
+      invariant(kind !== 'continue' || !record.managed || approval,
+        record.projection.pause?.metadata?.ksadk_interaction ? 'A2A_APPROVAL_REQUEST_MISSING' : 'A2A_INPUT_REQUEST_MISSING');
+      if (kind === 'reject') invariant(remoteApproval && !approval.decision && pauseDigest(record.projection) === command.pauseDigest,
         'A2A_APPROVAL_REJECTION_NOT_ALLOWED');
       let hostDecision;
       if (approval && !approval.decision) {
         invariant(consent?.commandDigest === commandDigest, 'A2A_HOST_DECISION_REQUIRED');
         validateA2aHostReceipt(consent.receipt, record.sessionDestination ?? owner.sessionId);
-        if (kind === 'continue') invariant(canonical(parts) === canonical([{ data: 'approve' }]), 'A2A_APPROVAL_RESPONSE_INVALID');
-        hostDecision = { commandDigest, interactionId: approval.interactionId, receipt: copy(consent.receipt) };
-      } else if (approval) invariant(kind === 'cancel', 'A2A_APPROVAL_ALREADY_DECIDED');
+        if (kind === 'continue') {
+          if (remoteApproval) invariant(canonical(parts) === canonical([{ data: 'approve' }]), 'A2A_APPROVAL_RESPONSE_INVALID');
+          else normalizeA2aInputParts(record, parts, undefined, false);
+        }
+        hostDecision = { commandDigest, interactionId: approval.interactionId,
+          kind: approval.request.request_type, receipt: copy(consent.receipt) };
+      } else if (approval) invariant(kind === 'cancel', remoteApproval ? 'A2A_APPROVAL_ALREADY_DECIDED' : 'A2A_INPUT_ALREADY_DECIDED');
       entry = { contract: STUDIO_A2A_CONTROL_CONTRACT, digest: commandDigest, command, message,
         ...(hostDecision ? { hostDecision } : {}),
         phase: 'sending', createdAt: entry?.createdAt ?? Date.now() };

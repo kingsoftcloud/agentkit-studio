@@ -60,6 +60,10 @@ Actual remote progress may close a continuation, but never supplies an approval
 decision. Studio's task panel offers explicit approve/reject controls; the common
 observation renderer displays committed decisions without action controls.
 
+Managed structured input now also records the actual normalized answer with
+the effect intent and real Host audit; see [input decisions](native-a2a-input-decisions.md).
+This does not implement the separate automatic managed question waiter.
+
 Verification commands (run against the package being evaluated):
 
 ```sh

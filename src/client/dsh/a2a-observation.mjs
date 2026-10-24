@@ -154,6 +154,8 @@ export function createA2aObservationView({ React } = {}) {
         h('p', { style: muted }, `远端${kind === 'approval' ? '审批' : '补充输入'}提示（仅展示，不代为决定）`),
         prompt ? h('p', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, redact(prompt)) : null,
         detail ? h('p', { style: muted }, redact(detail)) : null,
+        kind === 'structured_input' && canonical.source?.metadata?.host_outcome
+          ? h('p', null, canonical.source.metadata.host_outcome === 'submitted' ? '主机已记录：输入已提交' : '主机已记录：输入已取消') : null,
         decision ? h('p', null, `主机已记录：${({ approved: '批准', rejected: '拒绝', canceled: '取消' })[decision] || redact(decision)}`) : null);
     }
     if (entity === 'scope') {

@@ -21,7 +21,7 @@ import { createFileWorkloadTokenProvider } from './native-a2a-workload-token.mjs
 import { checkpointA2ADescriptor } from './native-a2a-events.mjs';
 import { createA2AEventDispatcher } from './native-a2a-event-dispatcher.mjs';
 import { projectA2ACanonical } from './native-a2a-canonical.mjs';
-import { checkpointA2aHostDecision } from './native-a2a-decision.mjs';
+import { checkpointA2aHostDecision, A2A_HOST_INPUT_DECISION } from './native-a2a-decision.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
@@ -104,7 +104,9 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
   invariant(base.protocol === 'https:' || isKop || ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname), 'A2A_SERVICE_HTTP_FORBIDDEN');
   const planDigest = hash(specs), sourceDigest = hash({ source: 'ksadk-python', revision: '355059d78e47ed764bbdb3606304cdf34e9838a3' });
   const binding = Object.freeze({ contract, protocol: NATIVE_A2A_PROTOCOL, spaceId,
-    bindingDigest: hash(internal ? { spaceId, specs, allowPrivate, publicEgressEnabled, controlPlane: internal.binding }
+    ...(internal ? { inputDecisionContract: A2A_HOST_INPUT_DECISION } : {}),
+    bindingDigest: hash(internal ? { spaceId, specs, allowPrivate, publicEgressEnabled, controlPlane: internal.binding,
+      inputDecisionContract: A2A_HOST_INPUT_DECISION }
       : { base: base.href, spaceId, specs, allowPrivate, region, source, accountId,
         credentialFingerprint: hash({ token, ak, sk, sessionToken }) }), planDigest });
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });

@@ -18,13 +18,17 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
     }, [task.agentId, task.sessionId, task.runId, task.operationKey, task.callId, task.ownerKind, task.agentRevision, task.buildId]);
     const send = () => {
       try {
-        if (json) JSON.parse(text); // Syntax only; the original bytes go to the Host's exact JSON parser.
+        const structured = state.task?.input?.contract === 'agentkit.a2a-remote-input-control/v1';
+        const asJson = json || structured && state.task.input.request?.schema?.type !== 'string';
+        if (asJson) JSON.parse(text); // Syntax only; the original bytes go to the Host's exact JSON parser.
         setInputError('');
-        if (json) void controller.continueJson(text);
+        if (asJson) void controller.continueJson(text);
+        else if (structured) void controller.continueJson(JSON.stringify(text));
         else void controller.continue([{ text }]);
       } catch { setInputError('请输入有效的 JSON 值。'); }
     };
     const value = state.task, busy = state.sending || state.loading;
+    const forcedJson = Boolean(value?.input && value.input.request?.schema?.type !== 'string');
     const outcomeText = outcomes[value?.outcome === 'remote_task_not_bound' ? value.outcome : state.outcome];
     const waiting = value && ['input_required', 'auth_required'].includes(value.state);
     return h('article', { 'aria-label': 'A2A 远端任务', style: { borderTop: '1px solid var(--border, #ddd)', padding: '14px 0' } },
@@ -45,13 +49,16 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
       waiting && !value.approval ? h('section', { 'aria-label': '远端补充输入' },
         ...(value.pause?.parts ?? []).filter(part => typeof part.text === 'string').map((part, index) => h('p', { key: index, style: { whiteSpace: 'pre-wrap' } }, part.text)),
         value.pause ? h('details', null, h('summary', null, '远端输入要求'), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, JSON.stringify(value.pause, null, 2))) : null,
-        h('label', null, h('input', { type: 'checkbox', checked: json, onChange: event => setJson(event.target.checked) }), '按远端要求提供 JSON 值'),
-        h('textarea', { 'aria-label': '补充输入内容', value: text, onChange: event => setText(event.target.value), disabled: busy || Boolean(state.pending) }),
-        h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending) || !text.trim(), onClick: send }, '提交补充输入'),
+        value.input?.decision ? h('p', { role: 'status' }, '此输入已有决定，可核对原任务或请求取消。') : null,
+        !value.input?.decision ? h('label', null, h('input', { type: 'checkbox', checked: json || forcedJson, disabled: forcedJson,
+          onChange: event => setJson(event.target.checked) }), '按远端要求提供 JSON 值') : null,
+        !value.input?.decision ? h('textarea', { 'aria-label': '补充输入内容', value: text, onChange: event => setText(event.target.value), disabled: busy || Boolean(state.pending) }) : null,
+        !value.input?.decision ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending)
+          || (!text.trim() && !(value.input?.request?.schema?.type === 'string' && !json)), onClick: send }, '提交补充输入') : null,
         inputError ? h('p', { role: 'alert' }, inputError) : null) : null,
       h('p', { style: { fontSize: '12px' } }, task.ownerKind === 'dsh'
         ? '此处操作原远端任务，不会重新发送模型提示，也不会改写已封存的工具回执。'
-        : '此处操作原远端任务。任务结束后，可在原运行恢复区点击“核对结果并继续原运行”。'),
+        : '此处操作原远端任务。当前会话等待期间，任务结束后会继续原运行；重启后可在原运行恢复区核对结果并继续。'),
       value?.output_refs?.length ? h('details', null, h('summary', null, '远端任务输出'),
         ...value.output_refs.map(ref => h('pre', { key: `${ref.scope_id}:${ref.item_id}`, style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } },
           Object.values(value.snapshots?.[`${ref.scope_id}:${ref.item_id}`] ?? {}).join('\n')))) : null,

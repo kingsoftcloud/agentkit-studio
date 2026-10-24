@@ -13,6 +13,7 @@ import { prepareNativeA2AHost } from '../src/providers/native-a2a-host.mjs';
 import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
 import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter } from '../src/providers/native-a2a-receipt.mjs';
 import { internalPeer, scope, spec } from './fixtures/native-a2a-internal-peer.mjs';
+import { controlConsent } from './fixtures/native-a2a-control-consent.mjs';
 
 async function setup(t, mode = 'pause') {
   const f = await internalPeer({ mode });
@@ -21,7 +22,7 @@ async function setup(t, mode = 'pause') {
   const fields = { a2a, scope, sessionId: 'session', stateRoot: join(f.root, 'state'), workspaceRoot: f.workspaceRoot,
     isClosed: () => closed };
   const authority = createNativeToolAuthority({ scope, sessionId: 'session', store });
-  const owner = a2a.forSession({ ...fields, assertCurrent: authority, assertControl: () => true, authorizeControl: () => 'allow' });
+  const owner = a2a.forSession({ ...fields, assertCurrent: authority, assertControl: () => true, authorizeControl: controlConsent });
   f.owners.push(owner);
   t.after(async () => { closed = true; await a2a.close(); store.close(); await f.close(); });
   const port = createNativeA2aToolPort({ ...owner, scope, sessionId: 'session', spaceId: spec.space_id,

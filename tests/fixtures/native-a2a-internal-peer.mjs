@@ -27,7 +27,8 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
   let bound = initialExisting, fault = mode, hook, finishStream;
   let task = { id: 'original-remote', contextId: 'original-context', status: { state: mode === 'pause' ? 'TASK_STATE_INPUT_REQUIRED'
     : mode === 'hold-stream' ? 'TASK_STATE_WORKING' : 'TASK_STATE_COMPLETED',
-    ...(mode === 'pause' ? { message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'Please answer' }] } } : {}) } };
+    ...(mode === 'pause' ? { message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'Please answer' }],
+      metadata: { input_schema: { type: 'object', properties: { answer: { type: 'number' } }, required: ['answer'], additionalProperties: false } } } } : {}) } };
   if (initialTask) task = structuredClone(initialTask);
   const pendingContinuationTasks = structuredClone(continuationTasks);
   let recordDirectory = join(root, 'state');
