@@ -179,6 +179,13 @@ export function createInternalA2AControlPlane({ baseUrl, tokenProvider, fetchImp
     },
     async appendTaskEvents(request) { invariant(Array.isArray(request.events) && request.events.length <= 100, 'A2A_CONTROL_PLANE_EVENTS_INVALID');
       return post('AppendA2ATaskEvents', { A2ATaskId: a2aResourceId(request.taskId, 'task'), Events: copy(request.events) }, request); },
+    async appendProductKernelFacts(request) {
+      invariant(Array.isArray(request.events) && request.events.length > 0 && request.events.length <= 100,
+        'A2A_CONTROL_PLANE_EVENTS_INVALID');
+      return post('AppendA2AProductKernelFacts', { A2ATaskId: a2aResourceId(request.platformTaskId, 'task'),
+        TargetVersionId: a2aResourceId(request.targetVersionId, 'version'), RemoteTaskId: string(request.remoteTaskId),
+        RemoteContextId: string(request.remoteContextId), Events: copy(request.events) }, request);
+    },
     async resolveCredential(request) {
       const raw = await post('ResolveA2ACredential', { A2ATaskId: a2aResourceId(request.taskId, 'task'),
         CredentialHandle: request.credentialHandle ?? null, CallPermit: string(request.permit, 64 * 1024) }, request);

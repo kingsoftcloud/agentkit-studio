@@ -18,12 +18,13 @@ const b64 = value => Buffer.from(value).toString('base64url');
 export function ingressSigner() {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
-  return { publicKeyPem, request(operation, { messageId = 'original-message', product = false, claims: changes = {}, body, query = '' } = {}) {
+  return { publicKeyPem, request(operation, { messageId = 'original-message', product = false, claims: changes = {}, body, query = '',
+    httpMethod = 'POST', path = '/a2a/jsonrpc' } = {}) {
     const method = { send_message: 'SendMessage', get_task: 'GetTask', subscribe_to_task: 'SubscribeToTask', cancel_task: 'CancelTask' }[operation];
     body ??= canonical({ jsonrpc: '2.0', id: 'request', method, params: operation === 'send_message'
       ? { message: { message_id: messageId, parts: [{ text: '原始消息😀' }], metadata: { integer: 9007199254740993n }, extra: 'preserved' } }
       : { id: 'remote-original' } });
-    const bytes = Buffer.from(body), path = '/a2a/jsonrpc';
+    const bytes = Buffer.from(body);
     const claims = { iss: 'agentengine-a2a-gateway', aud: 'a2a-runtime', exp: Date.now() / 1000 + 120,
       iat: Date.now() / 1000 - 1, jti: randomUUID(), account_id: targetBinding.accountId, tenant_id: targetBinding.tenantId,
       target_agent_id: targetBinding.agentId, target_runtime_id: targetBinding.runtimeId, target_a2a_agent_id: targetBinding.a2aAgentId,
@@ -31,10 +32,10 @@ export function ingressSigner() {
         ? { schema: 'a2a-forward-identity/v2', caller_principal_type: 'user', authn_mode: 'platform_api_key', sub: 'user', sub_account_id: 'sub', key_id: 'key' }
         : { schema: 'a2a-forward-identity/v1', caller_runtime_id: 'runtime-caller' }),
       platform_task_id: platformTaskId, target_version_id: targetVersionId, operation,
-      body_sha256: sha(bytes), query_sha256: sha(query), http_method: 'POST', path, ...changes };
+      body_sha256: sha(bytes), query_sha256: sha(query), http_method: httpMethod, path, ...changes };
     const first = b64(JSON.stringify({ alg: 'RS256' })) + '.' + b64(JSON.stringify(claims));
     const token = first + '.' + sign('RSA-SHA256', Buffer.from(first), privateKey).toString('base64url');
-    return { method: 'POST', path, query, body: bytes,
+    return { method: httpMethod, path, query, body: bytes,
       headers: { 'x-agentengine-a2a-assertion': token, 'x-agentengine-route-target': targetBinding.agentId } };
   } };
 }
@@ -52,7 +53,11 @@ export async function inboundFixture(t, { eventRows = [], respond, assertCurrent
     try {
       let raw = ''; for await (const chunk of request) raw += chunk;
       const call = { action: request.url.split('/').at(-1), authorization: request.headers.authorization, body: parseNativeJson(raw) };
-      calls.push(call); assert.equal(call.authorization, 'Bearer registry-workload');
+      calls.push(call); assert.equal(call.authorization, call.action === 'AppendA2AProductKernelFacts' ? 'Bearer task-sink-workload' : 'Bearer registry-workload');
+      if (call.action === 'AppendA2AProductKernelFacts') {
+        await hook?.(call, null); await respond?.(call, null, response);
+        if (!response.writableEnded && !response.destroyed) response.end(canonical({ Code: 0, Data: {} })); return;
+      }
       if (await beforeAdmit?.(call) === false) { response.destroy(); return; }
       const id = `${call.action}:${call.body.A2ATaskId}:${call.body.Message?.message_id ?? call.body.Message?.messageId ?? call.body.RunId}`;
       let original = admitted.get(id), duplicate = Boolean(original);
@@ -67,7 +72,7 @@ export async function inboundFixture(t, { eventRows = [], respond, assertCurrent
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const client = createInternalA2AControlPlane({ baseUrl, tokenProvider: { getToken({ audience, assertCurrent }) {
-    assertCurrent(); assert.equal(audience, 'a2a-registry'); return 'registry-workload'; } } });
+    assertCurrent(); assert.ok(['a2a-registry', 'a2a-task-sink'].includes(audience)); return audience === 'a2a-registry' ? 'registry-workload' : 'task-sink-workload'; } } });
   const verifier = createA2aGatewayIdentityVerifier({ publicKeyPem: signer.publicKeyPem, targetBinding });
   const eventCalls = [], events = { async *subscribe(sessionId, cursor) {
     eventCalls.push({ sessionId, cursor }); for (const fact of eventRows) yield structuredClone(fact);

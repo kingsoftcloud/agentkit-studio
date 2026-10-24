@@ -46,8 +46,15 @@ SIGKILL 后不自动重连；长期自动订阅的全部消费者、入站注册
 
 入站现已补充 Gateway RS256 请求/目标绑定、Server 接收与取消 Action、原消息持久准入
 日志和 Session/command/Run 事实归属过滤，并有真实签名、HTTP、SQLite 和独立进程
-SIGKILL 专项证据。尚未挂载完整协议路由，也未把 Server 命令接收和 Session 事件存储
-接到 Node Native 执行器；这部分仍有实际组装工作，见[入站基础层](native-a2a-inbound.md)。
+SIGKILL 专项证据。Server 命令接收和 Session 事件存储尚未接到 Node Native 执行器；
+这部分仍有实际组装工作，见[入站协议与恢复](native-a2a-inbound.md)。
+
+后续实现已将 AgentCard、JSON-RPC/REST/SSE、owner/context-scoped 私有持久 TaskStore
+和 product Kernel fact outbox 组合成可调用 HTTP 服务，并通过 bootstrap 的显式可信
+`nativeA2aInbound` 参数挂载到 DSH WebServer。UUID 投影与 outbox 先提交再 ACK；
+完成需 runtime 完成事实和 canonical control 边界，EOF 不生成成功。Task/准入仍为
+单 Host 私有存储，未接通实际 Server 命令接收与 Node Native Session 事件源；
+永久订阅、同步终态核对、公共 tool producer、共享 managed SQL 和产品恢复扫描仍待补齐。
 
 近期已接入 Node 的模型工具还包括 Browser、Skill 发现/安装/绑定，以及
 `search_knowledge_base`。知识库保留完整查询、来源与答案，Native 使用实际意图和

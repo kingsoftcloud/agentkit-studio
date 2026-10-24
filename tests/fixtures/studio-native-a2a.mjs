@@ -116,8 +116,28 @@ async function applyProof(ctx, options) {
   }), { mode: 0o600 });
 
   const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');
+  let nativeA2aInbound;
+  if (options.inboundProofPath) {
+    const proof = JSON.parse(await readFile(options.inboundProofPath, 'utf8'));
+    const { createA2aGatewayIdentityVerifier } = await import('../../src/providers/native-a2a-ingress-identity.mjs');
+    const { createInternalA2AControlPlane } = await import('../../src/providers/native-a2a-control-plane.mjs');
+    const client = createInternalA2AControlPlane({ baseUrl: options.a2aControlPlaneUrl, tokenProvider: {
+      getToken({ audience, assertCurrent }) { assertCurrent(); return requireToken(audience); },
+    } });
+    const tokens = {};
+    for (const audience of ['a2a-registry', 'a2a-task-sink']) tokens[audience] = (await readFile(join(options.a2aTokenDirectory, audience + '.jwt'), 'utf8')).trim();
+    function requireToken(audience) { if (!tokens[audience]) throw Error('Fixture token audience mismatch'); return tokens[audience]; }
+    ctx.effect(() => () => client.close(), 'mounted inbound controlled registry transport');
+    nativeA2aInbound = { card: { name: 'Mounted inbound', baseUrl: 'https://native.example' }, controlPlane: client,
+      verifier: createA2aGatewayIdentityVerifier({ publicKeyPem: proof.publicKeyPem, targetBinding: proof.targetBinding }),
+      events: { async *subscribe(sessionId, cursor) {
+        await appendFile(join(options.directory, 'inbound-event-subscriptions.jsonl'), JSON.stringify({ pid: process.pid, sessionId, cursor }) + '\n');
+        for (const row of proof.rows) if (row.seq > cursor) yield row;
+      } }, assertCurrent: () => ctx.fiber.uid !== null };
+  }
   await mountStudioHost(ctx, {
     configurationHome: home,
+    ...(nativeA2aInbound ? { nativeA2aInbound } : {}),
     nativeHookRegistrations: [],
     env: {
       AGENTKIT_HOME: home,
@@ -156,6 +176,7 @@ async function applyProof(ctx, options) {
   ctx.on('agent/created', async ({ agent, source }) => {
     if (agent.session.id !== 'a2a-session') return;
     const origin = ctx.webServer.getOrigin();
+    if (nativeA2aInbound) await appendFile(join(options.directory, 'mounted-inbound-host.jsonl'), JSON.stringify({ pid: process.pid, origin }) + '\n');
     const unauthorized = await fetch(origin + '/agentkit', { method: 'POST',
       headers: { origin, 'content-type': 'application/json' },
       body: JSON.stringify({ method: 'host/compatibility', payload: {} }), signal: AbortSignal.timeout(5000) });

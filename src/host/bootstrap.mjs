@@ -28,7 +28,8 @@ import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
-  nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch } = {}) {
+  nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
+  nativeA2aInbound } = {}) {
   const hostCompatibility = await loadHostCompatibility(ctx);
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
@@ -52,6 +53,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  if (nativeA2aInbound !== undefined) {
+    const { registerStudioNativeA2aInbound } = await import('./services/native-a2a-inbound.mjs');
+    registerStudioNativeA2aInbound(ctx, { storeDir: studioStoreDir, configuration: nativeA2aInbound });
+  }
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
     env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,

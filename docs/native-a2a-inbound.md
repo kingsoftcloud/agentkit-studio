@@ -1,9 +1,10 @@
-# A2A 入站签名与持久准入基础层
+# A2A 入站协议、持久任务与恢复边界
 
-这批实现包含 Gateway 身份验证、Server 接收/取消 Action、私有准入日志和 Kernel
-事实归属过滤。**尚未把完整 A2A 协议服务挂载到 Studio，也没有把 Server 的命令
-接收和 Session 事件存储接到当前 Node Native 执行器。** 模块通过不代表入站已经可用，
-更不代表完整迁移已经完成。
+实现包含 Gateway 身份验证、Server 接收/取消 Action、私有准入日志、Kernel 事实
+归属过滤，以及 AgentCard/JSON-RPC/REST/SSE、持久协议 Task 和 product 事实 outbox。
+Studio bootstrap 提供显式可信 `nativeA2aInbound` 组装参数并通过实际 DSH WebServer
+挂载协议路径。**Server 命令接收、Node Native 执行器和持久 Session 事件源的完整
+组装仍未完成。** 受控 Server/事实源通过验证不代表真实入站模型执行或完整迁移完成。
 
 行为依据为 Python `feat-ksadk-harness-2` 的
 `355059d78e47ed764bbdb3606304cdf34e9838a3`：`a2a/platform.py`、`identity.py`、
@@ -74,7 +75,71 @@ Node 进程。SIGKILL 覆盖 Server 接收前与已接收但回执丢失，检�
 密钥签发者和事件源是声明的受控测试端，不能据此声称真实线上认证、产品端到端或
 完整 Native 生命周期已验收。
 
-还需实现并贯通：AgentCard/JSON-RPC/REST/SSE 协议挂载；owner/context-scoped
-TaskStore 与协议投影；Server 命令接收及 Node Session 事实存储；产品 Kernel fact
-outbox；共享 managed 存储与全新部署。现有出站调用和显式订阅的验收见
+## 协议服务与宿主组装
+
+`createA2aInboundServer` 组合上述准入层与 `createA2aInboundTaskStore`，提供 Node HTTP
+handler。路径为 `/.well-known/agent-card.json`、`/a2a/jsonrpc` 和 `/a2a/v1`。
+支持 wire 1.0 的 SendMessage、SendStreamingMessage、GetTask、CancelTask、SubscribeToTask，
+也接受已有 message/send、message/stream、tasks/get、tasks/cancel、tasks/resubscribe 名称。
+REST 使用 `/message:send`、`/message:stream`、`/tasks/{id}` 和 POST `:cancel`/`:subscribe`。
+不支持的操作明确返回协议错误，不回退到 Send；关闭 streaming 时在准入前拒绝流式请求。
+
+每个 HTTP 请求重新校验 Gateway 签名、原始 path/query/body 与精确 operation。
+AgentCard 探针同样验签。普通 DSH Cookie 和身份请求头不能替代 Gateway 签名。
+JSON-RPC、REST 和 SSE 共用持久 owner/platformTask/version 绑定；错误仅输出固定协议
+分类，不回显请求、JWT、Server 原错误或未知结果的细节。HTTP body 限 2 MiB。
+
+Host 的 `mountStudioHost(ctx, { nativeA2aInbound })` 是可信代码组装接口，参数包含
+`card`、真实 `verifier`、workload-authenticated `controlPlane`、持久 `events.subscribe`
+和同步 `assertCurrent`。宿主强制把两类日志放入自己的私有状态区，记录
+`agentkit.a2a-inbound-server/v1` 与 `agentkit.a2a-inbound-task-store/v1` 契约。
+不从工作区、消息 metadata 或出站 A2A binding 建立入站权限；未传参数时不注册入站路由。
+注册和请求受 Host fiber 生命周期约束，卸载后终止观察和 outbox 发送。
+
+AgentCard 使用 `supportedInterfaces`、`defaultInputModes` 等 camelCase wire 字段；
+支持字符串 Skill 以及保留完整 JSON 字段的对象 Skill。仅显式的公共工具 producer
+才能声明 tool-activity extension；当前入站组装拒绝非空 `publicToolNames`，对应 producer
+还未接入。配置中的凭证 URL、query/hash、非法 JSON 值、循环引用与访问器被明确拒绝。
+接口 URL 由可信外部 baseUrl 构造，不从 HTTP Host 请求头推导。
+
+## 协议 Task、事件提交与产品事实
+
+生成的 remote Task/context 在 Server 准入前原子持久化。相同 Message ID 的重复输入
+保持原地址、原回执和单份历史；不同正文拒绝。继续输入从私有持久 pending interaction
+取得原 Run/revision/kind，而不是从远端 metadata 获取恢复权限。该 continuation 随消息
+意图固定，丢失响应后再次提交不会取错下一道问题。
+
+Task、event UUID 摘要、文本快照、投影游标和 product 生命周期 outbox 在同一次私有
+文件提交中更新，随后才 ACK 准入层的事实游标。崩溃允许重放；UUID 相同而内容不同、
+序号倒退、Session/Run 漂移和终态冲突拒绝。runtime 完成事实与 canonical control
+完成边界必须同时存在，才能标记 TASK_STATE_COMPLETED。EOF 或订阅异常保留已有状态，
+返回结果未确认；接收取消回执也不能直接标为 CANCELED。
+
+文本支持 append/replace、完整有序多 part 快照和 output_refs 的选择顺序。默认不公开
+reasoning；可信 Host 可显式开启。input-required 只发布 schema/公共 presentation，
+保留 ADK v2 集成、输出快照和 thought Part 标记；空 output_refs 按参考行为回退到
+按创建顺序收集的消息文本。终态前关闭尚未结束的 artifact chunk。
+私有 interaction/revision/permit 不写进公开 Task。SSE event ID 基于持久事实 UUID；
+断开 SSE 只停止观察，不发取消或新消息。新订阅先返回当前 Task，再读取原 Run 事实。
+终态订阅按参考实现返回 unsupported；等待输入是当前流的边界。
+
+`returnImmediately` 会启动该 Host 生命周期内的原事实观察。冷 GetTask 返回已持久投影，
+对非终态尝试启动原事实观察，不重新准入；观察失败不会伪造完成。GetTask 尚不保证在
+返回前同步核对最新 Kernel 终态，也没有跨 Host 的永久订阅消费者。这些仍是待补的差异。
+
+product 调用者的 running/waiting/completed/failed/interrupted/cancelled control facts 与
+Task 同事务入 outbox。已有共享 dispatcher 使用新的 `a2a-task-sink` workload token
+调用 `AppendA2AProductKernelFacts`，保留平台 Task/version 和 remote Task/context。
+丢失 ACK 仅重送相同事实 UUID；冷启动重送已有 outbox，不重新调用模型或准入。
+Server 端事实幂等是必要前提。共享 PostgreSQL、Server-owned recovery cursor 扫描和
+已确认 outbox 的安全整理尚未实现；每个私有 Task/准入日志仍限 8 MiB。
+
+验证包含实际本地 HTTP 的两种协议、SSE、继续/取消、签名探针、owner 隔离、product
+丢失 ACK，以及实际独立进程在投影前和投影后/ACK 前被 SIGKILL 后的重放。完整打包、
+Node 22 和真实 maintained DSH WebServer 挂载证据记录于对应 checkpoint。受控事实源
+不代替 Server-command-to-Node 执行验收。
+
+还需贯通：Server 命令接收及 Node Native/Session 事实存储；公共 tool activity producer；
+永久订阅/即时终态核对；共享 managed 存储、产品 recovery scanner 与全新部署。
+现有出站调用和显式订阅的验收见
 [内部 A2A](native-a2a-internal.md)；完整迁移门槛见[迁移状态](native-migration-status.md)。

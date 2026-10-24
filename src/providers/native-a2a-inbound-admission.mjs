@@ -170,14 +170,12 @@ export function createA2aInboundAdmission({ directory, verifier, controlPlane, e
       return copy(submission);
     } finally { release(); }
   }
-  return Object.freeze({ contract: A2A_INBOUND_ADMISSION,
-    submit: input => execute(input, 'send'), cancel: input => execute(input, 'cancel'),
-    inspect(input) {
-      const ctx = authorize(input, ['get_task', 'subscribe_to_task']), record = read(ctx);
-      invariant(record, 'A2A_INBOUND_TASK_NOT_FOUND'); return view(record);
-    },
-    async *facts(input) {
-      const ctx = authorize(input, ['get_task', 'subscribe_to_task']), record = read(ctx), operationKey = record?.latestAdmission;
+  function snapshot(input, operations) {
+    const ctx = authorize(input, operations), record = read(ctx);
+    invariant(record, 'A2A_INBOUND_TASK_NOT_FOUND'); return view(record);
+  }
+  async function* facts(input, operations) {
+      const ctx = authorize(input, operations), record = read(ctx), operationKey = record?.latestAdmission;
       invariant(operationKey && accepted(record.operations[operationKey]?.submission), 'A2A_INBOUND_COMMAND_NOT_ACCEPTED');
       const operation = record.operations[operationKey];
       for await (const fact of streamA2aInboundKernelFacts(operation.submission, events, {
@@ -208,7 +206,15 @@ export function createA2aInboundAdmission({ directory, verifier, controlPlane, e
         // early return replays the last fact; its UUID permits idempotent use.
         update(ctx, latest => { const op = latest.operations[operationKey]; if (fact.seq > op.cursor) op.cursor = fact.seq; });
       }
-    },
+  }
+  const observations = ['send_message', 'cancel_task', 'get_task', 'subscribe_to_task'];
+  return Object.freeze({ contract: A2A_INBOUND_ADMISSION,
+    submit: input => execute(input, 'send'), cancel: input => execute(input, 'cancel'),
+    inspect: input => snapshot(input, ['get_task', 'subscribe_to_task']),
+    facts: input => facts(input, ['get_task', 'subscribe_to_task']),
+    // A response to an authenticated mutation may observe that same owned
+    // Task. Do not forge a read assertion or bypass original-body validation.
+    snapshot: input => snapshot(input, observations), observe: input => facts(input, observations),
     close() { lifetime.abort(); },
   });
 }

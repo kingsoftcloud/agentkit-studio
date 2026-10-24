@@ -58,6 +58,7 @@ import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/
 import { verifyMountedA2aRecovery } from './verify-studio-native-a2a-recovery.mjs';
 import { verifyMountedA2aBusyCancel } from './verify-studio-native-a2a-busy-cancel.mjs';
 import { verifyMountedChildA2aRecovery } from './verify-studio-native-child-a2a-recovery.mjs';
+import { createMountedInboundProof } from './verify-studio-native-a2a-inbound.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -73,6 +74,7 @@ const { values } = parseArgs({
     'child-answer-crash': { type: 'boolean', default: false },
     'internal-control-plane': { type: 'boolean', default: false },
     'public-tool-activity': { type: 'boolean', default: false },
+    'inbound-protocol': { type: 'boolean', default: false },
   },
 });
 
@@ -83,6 +85,7 @@ assert.ok(!values['terminal-close-crash'] || values['reconcile-cold'], '--termin
 assert.ok(!values['busy-cancel'] || !values['reconcile-cold'], '--busy-cancel and --reconcile-cold are separate scenarios');
 assert.ok(!values['internal-control-plane'] || !values['busy-cancel'] && !values['reconcile-cold'], 'internal mode currently proves the normal mounted turn/history scenario');
 assert.ok(!values['public-tool-activity'] || values['internal-control-plane'], 'public tool activity requires the internal canonical path');
+assert.ok(!values['inbound-protocol'] || values['internal-control-plane'], 'inbound protocol proof requires the internal mounted regression');
 assert.ok(!values['child-question-cold'] || !values['busy-cancel'] && !values['reconcile-cold'] && !values['internal-control-plane'], 'child question recovery is a separate mounted scenario');
 assert.ok(!values['child-question-approval'] || values['child-question-cold'], 'child remote approval requires --child-question-cold');
 assert.ok(!values['child-answer-crash'] || values['child-question-cold'], 'child answer crash requires --child-question-cold');
@@ -104,6 +107,8 @@ console.log(`Archive SHA256: ${archiveSha}`);
 // background_state_symlink. realpath resolves it to /private/var/folders/...
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-a2a-')));
 console.log(`A2A proof root: ${root}`);
+const inboundProof = values['inbound-protocol'] ? createMountedInboundProof(root) : null;
+const inboundProofPath = await inboundProof?.prepare();
 
 // A2A binding spec — the pinned remote target.
 const a2aSpec = {
@@ -167,6 +172,7 @@ const server = createHttpServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += chunk;
     const body = raw ? JSON.parse(raw) : null;
+    if (inboundProof && await inboundProof.handle(request, response, body, workloadTokens)) return;
     if (managedMode && request.url.startsWith('/agentengine/internal/v1/a2a/')) {
       const action = request.url.split('/').at(-1); internalActions.push(action);
       const audience = ['BindA2ARemoteTask', 'AppendA2ATaskEvents'].includes(action) ? 'a2a-task-sink' : 'a2a-registry';
@@ -498,6 +504,7 @@ try {
       `        a2aTokenDirectory: ${JSON.stringify(tokenDirectory)}`] : []),
     `        a2aBindings: ${JSON.stringify(JSON.stringify([a2aSpec]))}`,
     `        mountHost: true`,
+    ...(inboundProofPath ? [`        inboundProofPath: ${JSON.stringify(inboundProofPath)}`] : []),
     `        exportControl: ${values['reconcile-cold'] || values['busy-cancel'] || values['child-question-cold']}`,
     `        holdTerminalClose: ${values['terminal-close-crash']}`,
     ...(values['busy-cancel'] ? [`        approvalUrl: ${JSON.stringify(`http://127.0.0.1:${serverPort}/approval`)}`] : []),
@@ -668,6 +675,7 @@ try {
   store.close();
 
   // === Real Host/SDK process restart ===
+  await inboundProof?.probe('before');
   await harness.close();
   assert.throws(() => process.kill(originalPid, 0), { code: 'ESRCH' }, 'old actual Host process exited');
   harness = new DeepSeekHarness(options);
@@ -695,6 +703,7 @@ try {
   assert.equal(resumeProbe.pid, restartedPid);
   const processesAfter = await jsonl(processPath); assert.equal(processesAfter.length, 2);
   assert.equal(processesAfter[1].pid, restartedPid); assert.equal(processesAfter[1].node, process.version);
+  await inboundProof?.probe('after');
   assert.equal(processesAfter[1].path, nodeOnlyBin);
   assert.equal(await readFile(admissionPath, 'utf8'), admissionsBefore);
   assert.deepEqual(await managedRecords(root), managedBefore, 'complete original managed call bytes unchanged');
