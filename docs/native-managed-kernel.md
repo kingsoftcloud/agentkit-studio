@@ -219,10 +219,11 @@ node scripts/verify-studio-native-a2a.mjs --source <维护版 SDK> --archive <�
 按既有事件投影中的稳定 atom 身份去重。完整执行循环仍由 Native 驱动。后续托管 Run 的
 owner 固定真实 Native parent，SDK numeric turn 与 Server command-id 始终分别保存。
 
-`capabilities.enqueueContentFormats` 暴露这个输入版本；原 `structuredInput: false` 保留，
-表示下述结构化交互/恢复输入回复仍不支持，不应解释为拒绝此版本的 enqueue。
+`capabilities.enqueueContentFormats` 暴露这个输入版本。`structuredInput` 在安装可信
+`authorizeInteraction` 时为 true，表示下述托管 A2A 交互回复；它与 enqueue 的多部分输入
+以及 resume.input 是分别校验的能力。
 未知格式仍返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化降级。
-inject、scoped interrupt、checkpoint/continuation resume、结构化输入回复、
+inject、scoped interrupt、checkpoint/continuation resume、resume.input、
 execution-grants/Teams 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
 
 ## 托管子任务的现有产品入口
@@ -327,3 +328,36 @@ RPC，不重复提问、模型调用或远端发送。尚未完成的补充操�
 `agentkit.studio-native-child-history/v1` 的可选 `a2aTasks` 描述以 additive 字段公布这个
 入口；旧响应省略该字段时不显示子任务远端控制。描述中的子 Agent/Session 只用于
 核对回执，RPC 仅传父身份及 `childRunId`，不接受调用方指定 scope、角色或权限。
+
+## Server 结构化交互回复
+
+正式托管 owner 的 A2A 输入/远端审批现在通过独立的
+`agentkit.managed-native-a2a-interaction/v1` 通道发布和恢复。它沿用已签名的
+`submit_interaction` Server 入口及现有 interaction/v1 事件，Native 核心的工具审批仍是
+二元决策；结构化答案不进入该审批命令。主任务、前台子任务和后台子任务由可信宿主
+从原账本、冻结角色和实际 SDK Session owner 解析，公有命令不能指定子任务 scope。
+
+宿主登记原 Native 检查点及原远端问题摘要，持久化 `interaction.requested`，再发布
+`waiting`。Server 使用事件中的稳定 interaction_id、父 Studio session/run、revision=1
+及独立 token_ref 答复；原始 JSON response 完整保存，structured_input 允许 submit/reject，
+远端 approval 允许 approve/reject。Server 签名与 `authorizeInteraction` 都必须通过。
+schema 在进入原 A2A 问题日志前校验；非 object schema 的单字段 result 包装仅用于
+校验和原续执行层解包，Server 审计保留原始值。该提前校验比 Python Kernel 更早拒绝
+无效输入，保持原 A2A 续执行的数据约束，避免已确认却无法消费的答案。
+
+答案、接收命令、接收回执、resolved 及 running 事件在同一个 SQLite 事务中提交后才
+ACK；命令准入事件先于 resolved。版本 CAS 和首个答案决定胜者。Studio 本地问题界面
+与 Server 共用同一答案记录；迟到或取消的界面答复不能覆盖它。已投递命令的重复确认
+不再唤醒 owner，从而不会撤销后续的独立操作审批。答案持久化后、原问题日志消费前
+重启，原 owner 从相同记录恢复完整答案，不再询问或执行原工具。
+
+活跃登记每 100ms 续期、有效期 2s，独立本地接收进程只能对仍有效且与原检查点一致的
+登记准入；过期或撤销不能借事件记录恢复权限。暂停撤销活跃登记，恢复后复用原交互；
+普通宿主关闭只撤销活跃登记，不伪造交互取消。原 Native 终态投影在同一事务中关闭尚未
+回答的交互，产生 cancelled/expired。此租约是单机持久化边界，不承诺跨数据库瞬时取消。
+回答远端问题始终不等于允许远端副作用：原工具仍需独立的确切操作授权和回执核对。
+
+复验既有正常安装包 SDK 脚本可添加 `--server-input`，并组合 `--child`、`--approval`。
+该模式挂起本地答案，通过真实签名 HTTP 命令答复，同时核验错误 token/版本/身份/类型
+无效、原问题和远端操作不重复、原账本及不同 PID 的终态冷恢复。独立进程故障测试另行
+验证签名答案提交后、原交互消费前 SIGKILL；该测试不替代实际 SDK 集成证明。

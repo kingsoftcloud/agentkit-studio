@@ -5,12 +5,62 @@ import { mkdtempSync, realpathSync, readFileSync, existsSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { permitIssuer, command, target, scope } from './fixtures/native-managed-kernel.mjs';
 import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 
 const lines = path => existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+
+test('SIGKILL after signed structured answer commit restores the original answer before delivery without repeating its tool or question', { timeout: 20000 }, async t => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-input-crash-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const issuer = permitIssuer(), cmd = command();
+  const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
+  const subscription = { ...query, authorization_ref: randomUUID(), after_seq: 0 };
+  const common = { directory, publicKeyPem: issuer.publicKeyPem, sessionId: cmd.session_id, query, readPermit: issuer.issue(query, 'get_status'),
+    subscription, subscribePermit: issuer.issue(subscription, 'subscribe_events'), structuredInput: true, interactionDeadline: Date.now() + 60000 };
+  const original = worker(t, { ...common, command: cmd, permit: issuer.issue(cmd), boundary: 'structured-after-answer' });
+  let db, pending;
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    assert.ok(Date.now() < deadline, JSON.stringify(original.messages));
+    if (existsSync(join(directory, 'commands.sqlite'))) {
+      db ??= new DatabaseSync(join(directory, 'commands.sqlite'));
+      const table = db.prepare("SELECT name FROM sqlite_master WHERE name='managed_interactions'").get();
+      if (table) pending = db.prepare('SELECT * FROM managed_interactions WHERE owner_until>?').get(Date.now());
+      if (pending) break;
+    }
+    await delay(10);
+  }
+  try {
+    const answer = command({ command_type: 'submit_interaction', payload: { run_id: pending.run_id, interaction_id: pending.interaction_id,
+      token_ref: 'original-token', expected_revision: 1, action: 'submit', response: { answer: 37 } } });
+    const receiver = worker(t, { ...common, command: answer, permit: issuer.issue(answer), receiveOnly: true });
+    assert.equal((await receiver.exited).code, 0, JSON.stringify(receiver.messages));
+    assert.equal(receiver.messages.find(row => row.type === 'receipt').receipt.status, 'accepted');
+    await Promise.race([original.boundary, original.exited.then(exit => assert.fail(JSON.stringify({ exit, messages: original.messages })))]);
+    const stored = db.prepare('SELECT * FROM managed_interactions').get(); assert.equal(stored.command_id, answer.command_id);
+    assert.equal(lines(join(directory, 'delivered-answers.jsonl')).length, 0);
+    original.child.kill('SIGKILL'); assert.equal((await original.exited).signal, 'SIGKILL');
+    assert.throws(() => process.kill(original.child.pid, 0), { code: 'ESRCH' });
+    const cold = worker(t, { ...common, autoStart: true, observeAutomatic: true }), coldExit = await cold.exited;
+    assert.equal(coldExit.code, 0, JSON.stringify(cold.messages));
+    const result = cold.messages.find(row => row.type === 'result'); assert.equal(result.status.runs[0].phase, 'completed');
+    assert.equal(result.status.runs[0].runId, pending.run_id);
+    assert.deepEqual(lines(join(directory, 'delivered-answers.jsonl')), [{ pid: cold.child.pid,
+      answer: { action: 'submit', parts: [{ data: { answer: 37 } }] } }]);
+    assert.equal(lines(join(directory, 'effects.jsonl')).length, 1); assert.equal(lines(join(directory, 'models.jsonl')).length, 2);
+    const reader = worker(t, { ...common, autoStart: true, observeAutomatic: true }), readExit = await reader.exited;
+    assert.equal(readExit.code, 0, JSON.stringify(reader.messages));
+    assert.deepEqual(reader.messages.find(row => row.type === 'result').facts, result.facts);
+    assert.equal(lines(join(directory, 'delivered-answers.jsonl')).length, 1); assert.equal(lines(join(directory, 'effects.jsonl')).length, 1);
+    assert.equal(new Set([original.child.pid, receiver.child.pid, cold.child.pid, reader.child.pid]).size, 4);
+    t.diagnostic(JSON.stringify({ boundary: 'signed-answer-before-original-delivery', killedPid: original.child.pid,
+      receiverPid: receiver.child.pid, coldPid: cold.child.pid, readerPid: reader.child.pid,
+      runId: pending.run_id, interactionId: pending.interaction_id, models: 2, originalTools: 1, answerDeliveries: 1, coldEffects: 0 }));
+  } finally { db?.close(); }
+});
 function worker(t, message) {
   const child = fork(new URL('./fixtures/native-managed-kernel-worker.mjs', import.meta.url), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     serialization: 'advanced', env: { ...process.env, PATH: '/unavailable/bin', AGENTKIT_KSADK_PYTHON: '/unavailable/python' } });

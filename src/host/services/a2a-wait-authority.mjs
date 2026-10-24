@@ -69,7 +69,15 @@ export function createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, sign
     'A2A_QUESTION_AUTHORITY_LOST');
     return true;
   };
-  const present = createStudioA2aQuestionPresenter({ ctx, agent, assertCurrent });
+  const localPresent = createStudioA2aQuestionPresenter({ ctx, agent, assertCurrent });
+  const managed = managedOwner?.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT
+    ? readNativeDshManagedOwnership(managedOwner, { sessionId: session.id }) : null;
+  const runtime = managed && ctx.get('studioManagedNativeKernel');
+  const present = runtime?.presentA2aInteraction ? ({ wait, signal }) => {
+    assertCurrent();
+    return runtime.presentA2aInteraction({ query: { scope: managed.identity.scope, sessionId: session.id,
+      runId: managed.identity.runId, sourceRunId: snapshot.runId }, snapshot, wait, signal, assertCurrent, presentLocal: localPresent });
+  } : localPresent;
   // A child observer needs continuous parent authority even for local peeks.
   // A root's non-question local receipt wait uses its existing turn owner;
   // optional question services are checked only when actually presenting or

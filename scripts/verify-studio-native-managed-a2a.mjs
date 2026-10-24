@@ -11,17 +11,20 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { DatabaseSync } from 'node:sqlite';
 import { command, permitIssuer } from '../tests/fixtures/native-managed-kernel.mjs';
 import { internalPeer, spec, taskId } from '../tests/fixtures/native-a2a-internal-peer.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   child: { type: 'boolean' }, approval: { type: 'boolean' }, interrupt: { type: 'boolean' },
-  'answer-crash': { type: 'boolean' }, 'effect-crash': { type: 'boolean' } } });
+  'answer-crash': { type: 'boolean' }, 'effect-crash': { type: 'boolean' }, 'server-input': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 assert.ok(!values.interrupt || !values.approval, 'Interruption proves an unanswered input request');
 assert.ok(!values['answer-crash'] || !values.interrupt, 'Answer crash and interruption are separate boundaries');
 assert.ok(!values['effect-crash'] || !(values['answer-crash'] || values.interrupt),
   'Effect crash, answer crash and interruption prove separate boundaries');
+assert.ok(!values['server-input'] || !(values['answer-crash'] || values['effect-crash'] || values.interrupt),
+  'Server input is a separate original structured interaction proof');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source), archive = resolve(values.archive);
 const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-managed-a2a-')));
 const archiveSha256 = createHash('sha256').update(await readFile(archive)).digest('hex');
@@ -62,18 +65,18 @@ async function rpc(method, payload = identity) {
   assert.equal(response.status, 200); const result = (await response.json()).result;
   assert.equal(result?.ok, true, canonical(result)); return result.value;
 }
-async function send(cmd) {
+async function send(cmd, statuses = [200, 202]) {
   const { origin } = await json(join(root, 'control-auth.json'));
   const response = await fetch(origin + '/_agentkit/native-kernel/v1/commands', { method: 'POST', headers: { 'content-type': 'application/json' },
     body: canonical({ command: cmd, permit: issuer.issue(cmd) }), signal: AbortSignal.timeout(10000) });
-  assert.ok([200, 202].includes(response.status)); return response.json();
+  assert.ok(statuses.includes(response.status), `Unexpected command HTTP status: ${response.status}`); return response.json();
 }
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const part of request) raw += part; const body = JSON.parse(raw);
     if (request.url === '/question') {
       questions.push(body); assert.equal(body.sessionId, identity.sessionId); assert.equal(body.questions.length, 1);
-      questionEntered.resolve(); if (values.interrupt) await releaseAnswer.promise;
+      questionEntered.resolve(); if (values.interrupt || values['server-input']) await releaseAnswer.promise;
       const answer = { id: body.questions[0].id, ...(values.approval ? { selected: ['批准远端操作'] }
         : { selected: [], custom: '{"answer":1}' }) };
       if (!response.destroyed) response.end(canonical({ answers: [answer] })); return;
@@ -123,7 +126,7 @@ try {
   const nodeBin = join(root, 'node-only-bin'); await mkdir(nodeBin); await symlink(process.execPath, join(nodeBin, 'node'));
   const proofPath = join(root, 'managed-proof.json'); await writeFile(proofPath, canonical({ publicKeyPem: issuer.publicKeyPem }));
   const a2aPath = join(root, 'managed-a2a.json'); await writeFile(a2aPath, canonical({ bindings: [spec], env: peer.env,
-    questionUrl: origin + '/question', approvalUrl: origin + '/approval' }));
+    questionUrl: origin + '/question', approvalUrl: origin + '/approval', serverInput: Boolean(values['server-input']) }));
   const patch = join(root, 'managed-a2a.patch.yml');
   await writeFile(patch, [
     '- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none',
@@ -155,6 +158,35 @@ try {
   const cmd = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
     payload: { content: values.child ? 'Delegate original remote question' : 'Ask original remote question' } });
   const receipt = await send(cmd); assert.equal(receipt.status, 'accepted');
+  let serverInputEvidence;
+  if (values['server-input']) {
+    await questionEntered.promise;
+    const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/commands.sqlite'));
+    try {
+      const pending = await until(() => db.prepare('SELECT * FROM managed_interactions WHERE answer IS NULL').get(), 'original Server interaction');
+      const effects = () => peer.calls.filter(row => row.wireMethod).map(row => row.wireMethod);
+      const descriptor = JSON.parse(pending.data), before = { models: requests.length, remote: effects(), approvals: approvals.length };
+      assert.equal(pending.run_id, receipt.run_id); assert.equal(pending.session_id, identity.sessionId);
+      assert.equal(descriptor.pending.kind, values.approval ? 'approval' : 'structured_input');
+      const reply = command({ tenant_id: scope.tenantId, agent_instance_id: agentId, session_id: identity.sessionId,
+        command_type: 'submit_interaction', payload: { run_id: receipt.run_id, interaction_id: pending.interaction_id,
+          token_ref: 'managed-input-token', expected_revision: 1, action: values.approval ? 'approve' : 'submit',
+          response: values.approval ? {} : { answer: 1 } } });
+      for (const fields of [{ token_ref: 'wrong' }, { expected_revision: 2 }, { run_id: 'foreign' }, { interaction_id: 'foreign' },
+        { a2a_interaction_kind: values.approval ? 'structured_input' : 'approval' }]) {
+        assert.equal((await send({ ...reply, command_id: command().command_id, idempotency_key: command().idempotency_key,
+          payload: { ...reply.payload, ...fields } }, [400])).status, 'rejected');
+        assert.equal(db.prepare('SELECT answer FROM managed_interactions WHERE interaction_id=?').get(pending.interaction_id).answer, null);
+      }
+      assert.deepEqual({ models: requests.length, remote: effects(), approvals: approvals.length }, before,
+        'invalid submissions cannot execute remote operations; original committed event delivery may finish independently');
+      assert.equal((await send(reply)).status, 'accepted');
+      const answered = db.prepare('SELECT * FROM managed_interactions WHERE interaction_id=?').get(pending.interaction_id);
+      assert.equal(answered.command_id, reply.command_id); assert.notEqual(answered.answer, null);
+      assert.equal((await send(reply)).status, 'duplicate');
+      serverInputEvidence = { pending: descriptor, command: reply, answer: JSON.parse(answered.answer) };
+    } finally { db.close(); }
+  }
   if (values['effect-crash']) {
     await effectEntered.promise;
     const original = ledger.load(scope, receipt.run_id);
@@ -294,6 +326,20 @@ try {
   assert.equal(warm.filter(row => row.type === 'approval/decided').length, values.interrupt ? 0 : 1);
   assert.equal((await send(cmd)).status, 'duplicate'); assert.deepEqual(ledger.load(scope, receipt.run_id), record);
   const before = { models: requests.length, peer: peer.calls.length, questions: questions.length, approvals: approvals.length };
+  const interactionRecords = () => {
+    const db = new DatabaseSync(join(root, 'studio/native-harness/managed-kernel/commands.sqlite'), { readOnly: true });
+    try { return db.prepare('SELECT * FROM managed_interactions ORDER BY interaction_id').all()
+      .map(row => ({ ...row, data: JSON.parse(row.data), answer: row.answer === null ? null : JSON.parse(row.answer) })); }
+    finally { db.close(); }
+  };
+  const managedInteractions = interactionRecords(); assert.equal(managedInteractions.length, 1);
+  if (values.interrupt) assert.equal(managedInteractions[0].data.closed, true);
+  else {
+    assert.equal(managedInteractions[0].data.pending.kind, values.approval ? 'approval' : 'structured_input');
+    assert.equal(managedInteractions[0].answer.action, values.approval ? 'approve' : 'submit');
+    if (!values.approval) assert.deepEqual(managedInteractions[0].answer.parts, [{ data: { answer: 1 } }]);
+    if (serverInputEvidence) assert.equal(managedInteractions[0].command_id, serverInputEvidence.command.command_id);
+  }
   await writeFile(join(root, 'managed-session-history-warm.json'), canonical(warm));
   await harness.close(); harness = new DeepSeekHarness(options); await harness.resumeSession(identity.sessionId);
   const coldStatus = await rpc('sessions/native-recovery-status', { ...identity, runId: receipt.run_id });
@@ -302,6 +348,7 @@ try {
   if (childRecord) assert.deepEqual(ledger.load(childReservation.childScope, childReservation.childRunId), childRecord);
   assert.deepEqual(peer.record(), journal); assert.deepEqual({ models: requests.length, peer: peer.calls.length,
     questions: questions.length, approvals: approvals.length }, before);
+  assert.deepEqual(interactionRecords(), managedInteractions, 'cold replay preserves the exact original Server interaction ledger');
   const cold = await json(join(root, 'managed-session-history.json')); assert.deepEqual(cold.slice(0, warm.length), warm);
   assert.deepEqual(cold.slice(warm.length).map(({ type, seq, data }) => ({ type, seq, data })),
     [{ type: 'session/end-seed', seq: warm.at(-1).seq + 1, data: {} }]);
@@ -309,8 +356,9 @@ try {
   assert.equal(new Set(processes.map(row => row.pid)).size, processes.length); assert.ok(processes.every(row => row.path === nodeBin));
   await harness.close(); harness = null;
   await writeFile(join(root, 'managed-a2a-proof.json'), canonical({ contract: 'agentkit.managed-a2a-proof/v1', archiveSha256,
-    mode: { child: Boolean(values.child), approval: Boolean(values.approval), interrupt: Boolean(values.interrupt) }, processes,
-    receipt, scope, record, childRecord, journal, ...(crashEvidence ? { crashEvidence } : {}),
+    mode: { child: Boolean(values.child), approval: Boolean(values.approval), interrupt: Boolean(values.interrupt), serverInput: Boolean(values['server-input']) }, processes,
+    receipt, scope, record, childRecord, journal, managedInteractions, ...(crashEvidence ? { crashEvidence } : {}),
+    ...(serverInputEvidence ? { serverInputEvidence } : {}),
     counts: before, tools: admissions.length, publicEvents: warm.length, coldEffects: 0 }));
   console.log(`Managed A2A PASS: signed original Server command, actual SDK owner, original managed ledger, real Host question/approval audit, separately fenced receipt read or interruption, ${crashEvidence ? `actual SIGKILL at ${crashEvidence.boundary} and automatic original-command recovery, ` : ''}distinct-PID cold replay with no effects, Node-only PATH.`);
 } finally {
