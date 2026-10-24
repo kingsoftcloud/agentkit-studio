@@ -29,6 +29,7 @@ export async function awaitA2aControl(work, signal) {
 }
 
 export function a2aControlView(binding, record) {
+  const question = record.managed?.questions?.entries[record.managed.events?.adapter?.activeInteraction?.id];
   return { contract: STUDIO_A2A_CONTROL_CONTRACT, bindingDigest: binding.bindingDigest,
     operation_locator: copy(record.request.identity), task_id: record.platformTaskId,
     remote_task_id: record.projection.taskId, remote_context_id: record.projection.contextId,
@@ -37,6 +38,8 @@ export function a2aControlView(binding, record) {
     pauseDigest: paused(record.projection.state) ? pauseDigest(record.projection) : null,
     ...(a2aPendingApproval(record) ? { approval: a2aPendingApproval(record) } : {}),
     ...(a2aPendingInput(record) ? { input: a2aPendingInput(record) } : {}),
+    ...(question ? { question: { contract: record.managed.questions.contract, interactionId: question.interactionId,
+      status: question.status, stage: question.stage, deadlineAt: question.wait.deadlineAt } } : {}),
     output_refs: copy(record.projection.output_refs), snapshots: copy(record.projection.snapshots),
     item_kinds: copy(record.projection.item_kinds) };
 }

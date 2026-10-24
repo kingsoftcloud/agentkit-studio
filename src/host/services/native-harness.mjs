@@ -305,6 +305,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // leak the Memory provider. The committed terminal and the
           // completed-Turn consumer have already finished before this runs.
           try {
+            let questionError;
+            try { toolPorts.tools.settleQuestions?.(store.load(scope, request.runId).snapshot); }
+            catch (error) { if (error.code !== 'run_not_found') questionError = error; }
             await hooks?.close();
             if (ownedChildren) {
               ownedChildren.runIds.add(request.runId);
@@ -316,6 +319,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
               }
             }
             await binding.nativeTools.releaseSession?.(request);
+            if (questionError) throw questionError;
           } finally {
             vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close();
           }

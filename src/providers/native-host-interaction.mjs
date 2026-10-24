@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonical, CHILD_OWNER_CONTRACT, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { createStudioA2aWaitAuthority } from '../host/services/a2a-wait-authority.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const same = (left, right) => canonical(left) === canonical(right);
@@ -16,7 +17,8 @@ export function createNativeHostInteraction({ ctx, store }) {
     invariant(same(record.snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
     if (snapshot.phase === 'awaiting_reconciliation' && snapshot.toolReconciliation) {
       if (typeof waitForToolReceipt === 'function') {
-        const command = await waitForToolReceipt({ snapshot: structuredClone(snapshot), signal });
+        const command = await waitForToolReceipt({ snapshot: structuredClone(snapshot), signal,
+          questionHost: createStudioA2aWaitAuthority({ ctx, agent, store, snapshot, signal }) });
         signal.throwIfAborted();
         invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
         if (command) return command;

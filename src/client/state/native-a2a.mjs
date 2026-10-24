@@ -8,7 +8,8 @@ const rejectedBeforeEffect = new Set(['A2A_CONTINUATION_DEADLINE_EXCEEDED', 'A2A
   'A2A_CONTROL_PERMISSION_DENIED', 'A2A_CONTROL_INPUT_INVALID', 'STUDIO_NATIVE_A2A_PERMISSION_UNAVAILABLE',
   'A2A_HOST_DECISION_REQUIRED', 'A2A_HOST_DECISION_RECEIPT_INVALID', 'A2A_APPROVAL_RESPONSE_INVALID', 'A2A_APPROVAL_ALREADY_DECIDED',
   'A2A_APPROVAL_REJECTION_NOT_ALLOWED', 'A2A_APPROVAL_REQUEST_MISSING', 'A2A_INPUT_REQUEST_MISSING',
-  'A2A_INPUT_ALREADY_DECIDED', 'A2A_STRUCTURED_INPUT_REQUIRED', 'A2A_STRUCTURED_INPUT_INVALID', 'A2A_INPUT_SCHEMA_INVALID']);
+  'A2A_INPUT_ALREADY_DECIDED', 'A2A_STRUCTURED_INPUT_REQUIRED', 'A2A_STRUCTURED_INPUT_INVALID', 'A2A_INPUT_SCHEMA_INVALID',
+  'A2A_QUESTION_ANSWER_CONFLICT', 'A2A_QUESTION_EFFECT_ALREADY_ADMITTED']);
 
 /** An uncertain response retains the exact command. Refresh is read-only;
  * sending a fresh prompt is never a recovery operation. */
@@ -67,6 +68,8 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
   };
   const prepare = (kind, parts, json) => {
     if (disposed || state.pending || state.loading || state.sending || !state.task || ended.has(state.task.state)) return;
+    if (['continue', 'reject'].includes(kind) && state.task.question?.contract === 'agentkit.a2a-question-ledger/v1'
+      && state.task.question.status !== 'pending') return;
     if (kind === 'continue' && !paused(state.task.state)) return;
     if (kind === 'reject' && (!paused(state.task.state) || state.task.approval?.contract !== 'agentkit.a2a-remote-approval-control/v1'
       || state.task.approval.decision)) return;

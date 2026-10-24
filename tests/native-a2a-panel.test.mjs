@@ -60,6 +60,16 @@ test('a foreign task, changed binding or command cannot replace the accepted rem
   }
   state.dispose();
 });
+test('an independently saved question answer cannot be replaced by a second UI submission', async () => {
+  const calls = [];
+  const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {
+    calls.push(input.kind); return response(input, { question: { contract: 'agentkit.a2a-question-ledger/v1',
+      interactionId: 'original-question', status: 'submitted', stage: 'awaiting_permission', deadlineAt: 1000 } });
+  } } });
+  await state.refresh(); await state.continueJson('"replacement"'); await state.reject();
+  assert.deepEqual(calls, ['get']); assert.equal(state.getSnapshot().pending, null);
+  await state.cancel(); assert.deepEqual(calls, ['get', 'cancel']); state.dispose();
+});
 test('denied queued cancellation keeps the original command ID for a freshly approved retry', async () => {
   let denied = true; const calls = [];
   const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {

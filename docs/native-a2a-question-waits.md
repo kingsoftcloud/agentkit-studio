@@ -1,0 +1,78 @@
+# Native managed A2A question waits
+
+The Native Host presents a managed remote input/approval through the maintained
+`userQuestions.ask` service while the original Kernel Run waits for its tool
+receipt. This upgrades the AgentKit Harness entry; DSH does not take over the
+Native execution loop. The product path uses Node only.
+
+The binding advertises `agentkit.a2a-question-ledger/v1`. Builds include this
+contract in their binding digest. Records from a different binding are not
+silently adopted.
+
+## Answer and operation permission
+
+1. The original admitted call, task, scope, question generation and absolute
+   deadline identify the wait. A cross-process question lock permits one
+   presenter without holding the execution lease or state publication lock.
+2. A validated answer is written to the private call journal under the original
+   publication lock and fsynced **before** asking for operation permission.
+   String values include the empty string. Other types use exact JSON parsing
+   and the original schema. Normalization follows the reference envelope rule.
+3. Sending that answer (or cancelling after rejecting a remote approval) requires
+   a separate, live Host approval and actual durable Session audit receipt.
+   A question answer is never an operation grant. Task and pause identity are
+   rechecked after permission. Admission commits the decision and effect intent
+   before network transport.
+4. A confirmed receipt wakes one deterministic `reconcile_tool` command. The
+   Kernel reads the receipt under a new ledger-owned claim and continues the
+   original Run. The initial tool intent/uncertain receipt stay immutable.
+
+Ordinary input rejection ends the original call locally with
+`A2A_INPUT_REJECTED`; it sends no remote cancellation. Rejecting a remote
+approval requests independent permission for `CancelTask`, never a supplemental
+`reject` message. A denied operation preserves the answer and ends the original
+tool locally with `A2A_APPROVAL_DENIED` without changing remote state.
+
+Both question presentation and operation permission retain the original absolute
+deadline. An uncooperative service cannot extend it or use a late reply to admit
+an effect. A local timeout produces `A2A_OVERALL_TIMEOUT`, not a fabricated remote
+terminal. A committed owning-Run terminal withdraws outstanding local questions
+(or expires them if due), without remote side effects. A stale checkpoint cannot
+perform that cleanup; abandoned presentation alone leaves its question recoverable.
+
+## Recovery
+
+After a crash before answering, a newly authorized Host can present the unresolved
+original question. After answering but before operation permission, it reuses the
+durable answer and asks fresh permission; it does not ask for the answer again.
+
+An admitted operation with an unknown result is never automatically resent or
+queried by the idle waiter. Its deadline does not turn uncertainty into a local
+failure claiming the operation did not happen. Use the existing explicit task
+inspection/reconciliation controls. The fresh task read immediately **before**
+admitting a permitted operation remains part of its normal identity check.
+
+Question lifecycle facts use canonical v2 **status items** in an independent
+local observation stream with its own source key and durable Session cursor.
+They are not remote interaction answers, model messages, or new tool executions,
+and never go to remote `AppendA2ATaskEvents`. The stream contains status, target
+and deadline, without answer content. The task panel prevents replacing a saved
+answer and keeps explicit remote inspection/cancellation available.
+
+## Verification scope and remaining migration work
+
+`tests/native-a2a-question-wait.test.mjs` exercises real Kernel/SQLite/journals and
+controlled HTTP, including SIGKILL after answer persistence, cold process reuse,
+late replies, two-stage permission, deadlines, concurrent waiters and terminal
+cleanup. Question presenters and consent receipts in those tests are declared
+doubles. `scripts/verify-a2a-question-wait.mjs --source <built DSH checkout>` adds
+the actual maintained question, approval, Session and projection services through
+the production Host idle adapter. Its answerers, minimal live-root registry,
+sandbox-policy lookup and fsynced persistence carrier remain declared fixtures.
+
+These checks do not establish the full migration's completion. Fully automatic
+cold Host turn reattachment and crash-time terminal cleanup replay, child-managed
+waiters, subscriptions/inbound assembly, mounted Studio/browser flows, fresh
+installation/Electron, online providers and the broader capability/configuration
+and execution-entry audit remain separate gates. Explicit DSH/Codex task control
+remains available; this automatic waiter belongs to the Native owning Run.

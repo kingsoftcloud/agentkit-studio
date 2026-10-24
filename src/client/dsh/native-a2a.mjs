@@ -31,6 +31,8 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
     const forcedJson = Boolean(value?.input && value.input.request?.schema?.type !== 'string');
     const outcomeText = outcomes[value?.outcome === 'remote_task_not_bound' ? value.outcome : state.outcome];
     const waiting = value && ['input_required', 'auth_required'].includes(value.state);
+    const recorded = value?.question?.contract === 'agentkit.a2a-question-ledger/v1' && value.question.status !== 'pending';
+    const decided = recorded || value?.input?.decision || value?.approval?.decision;
     return h('article', { 'aria-label': 'A2A 远端任务', style: { borderTop: '1px solid var(--border, #ddd)', padding: '14px 0' } },
       h('strong', null, 'A2A 远端任务'), h('p', null, value ? states[value.state] : '尚未核对远端状态'),
       h('button', { type: 'button', style: buttonStyle(), disabled: !controller || busy, onClick: () => void controller.refresh() }, '核对远端任务'),
@@ -39,21 +41,27 @@ export function createNativeA2aPanel({ React: { createElement: h, useEffect, use
       outcomeText ? h('p', { role: 'status' }, outcomeText) : null,
       state.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: busy, onClick: () => void controller.retry() }, '确认原操作回执') : null,
       state.error ? h('p', { role: 'alert' }, state.error) : null,
+      recorded ? h('p', { role: 'status' }, ({ awaiting_permission: '回答已保存，正在等待本次远端操作的权限确认。',
+        operation_denied: '回答已保存，本次远端操作未获授权；原工具调用已在本地结束，远端状态保持可核对。',
+        expired: '等待已超时；原工具调用已在本地结束，远端状态保持可核对。',
+        rejected: '已拒绝补充输入；原工具调用已在本地结束，未请求远端取消。',
+        operation_admitted: '回答已保存，操作已登记；可核对原远端任务的结果。',
+      })[value.question.stage] || '回答已保存。') : null,
       waiting && value.approval ? h('section', { 'aria-label': '远端审批' },
         h('p', null, value.approval.request?.detail?.name || '远端任务请求审批'),
-        h('p', null, value.approval.decision ? '此审批已有决定，可核对原任务或请求取消。' : '批准后将请求本地主机确认，再继续原远端任务。'),
-        !value.approval.decision ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending),
+        h('p', null, decided ? '此审批已有决定，可核对原任务或请求取消。' : '批准后将请求本地主机确认，再继续原远端任务。'),
+        !decided ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending),
           onClick: () => void controller.continueJson('"approve"') }, '批准并继续原任务') : null,
-        !value.approval.decision ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending),
+        !decided ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending),
           onClick: () => void controller.reject() }, '拒绝并请求远端取消') : null) : null,
       waiting && !value.approval ? h('section', { 'aria-label': '远端补充输入' },
         ...(value.pause?.parts ?? []).filter(part => typeof part.text === 'string').map((part, index) => h('p', { key: index, style: { whiteSpace: 'pre-wrap' } }, part.text)),
         value.pause ? h('details', null, h('summary', null, '远端输入要求'), h('pre', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, JSON.stringify(value.pause, null, 2))) : null,
-        value.input?.decision ? h('p', { role: 'status' }, '此输入已有决定，可核对原任务或请求取消。') : null,
-        !value.input?.decision ? h('label', null, h('input', { type: 'checkbox', checked: json || forcedJson, disabled: forcedJson,
+        decided ? h('p', { role: 'status' }, '此输入已有决定，可核对原任务或请求取消。') : null,
+        !decided ? h('label', null, h('input', { type: 'checkbox', checked: json || forcedJson, disabled: forcedJson,
           onChange: event => setJson(event.target.checked) }), '按远端要求提供 JSON 值') : null,
-        !value.input?.decision ? h('textarea', { 'aria-label': '补充输入内容', value: text, onChange: event => setText(event.target.value), disabled: busy || Boolean(state.pending) }) : null,
-        !value.input?.decision ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending)
+        !decided ? h('textarea', { 'aria-label': '补充输入内容', value: text, onChange: event => setText(event.target.value), disabled: busy || Boolean(state.pending) }) : null,
+        !decided ? h('button', { type: 'button', style: buttonStyle(), disabled: busy || Boolean(state.pending)
           || (!text.trim() && !(value.input?.request?.schema?.type === 'string' && !json)), onClick: send }, '提交补充输入') : null,
         inputError ? h('p', { role: 'alert' }, inputError) : null) : null,
       h('p', { style: { fontSize: '12px' } }, task.ownerKind === 'dsh'

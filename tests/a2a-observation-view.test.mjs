@@ -28,6 +28,20 @@ const ctx = (state, { key = 'k', id = 'id', location = { kind: 'session' }, curr
   ({ key, id, state, current, start: { location } });
 const match = (c, seq) => ({ event: ev(c, seq), role: 'start', location: { kind: 'session' } });
 
+test('local question lifecycle remains an inert status with no answer or remote-success claim', () => {
+  for (const status of ['pending', 'awaiting_permission', 'operation_admitted', 'operation_denied', 'expired', 'withdrawn', 'rejected']) {
+    const c = canon('item.completed', { seq: 1, item_id: 'local-question', item_kind: 'status', snapshot: { parts: [
+      { content_type: 'data', part_id: 'status', data: { schema: 'agentkit.a2a-question-ledger/v1', status,
+        interaction_id: 'interaction', target: 'research', deadline_at: 1000, answer: 'MUST_NOT_RENDER' } }] } });
+    const state = def.start(ctx(undefined), match(c, 5));
+    const node = def.buildViewNode(ctx(state));
+    assert.equal(node.data.entity, 'question'); assert.equal(node.data.status, status);
+    const tree = View({ node }), text = texts(tree);
+    assert.match(text, /远端任务状态需单独核对/); assert.ok(!text.includes('MUST_NOT_RENDER'));
+    assert.ok(!tags(tree).some(tag => ['button', 'textarea', 'input', 'a'].includes(tag)));
+  }
+});
+
 // ---- match: envelope + canonical validation, safe ignore ---------------
 
 test('match groups artifact lifecycle by sourceKey+item_id (source seq from 1)', () => {

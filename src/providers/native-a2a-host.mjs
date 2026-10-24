@@ -8,7 +8,7 @@ import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { isIP } from 'node:net';
 import aws4 from 'aws4';
-import { canonical, copy, invariant, scopeKey, parseNativeJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, scopeKey, parseNativeJson, terminal } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { atomicPrivate, privateDirectory, readAll, tryLock } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { isBlockedAddress } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
 import { hostFetch } from '../http-fetch.mjs';
@@ -22,6 +22,8 @@ import { checkpointA2ADescriptor } from './native-a2a-events.mjs';
 import { createA2AEventDispatcher } from './native-a2a-event-dispatcher.mjs';
 import { projectA2ACanonical } from './native-a2a-canonical.mjs';
 import { checkpointA2aHostDecision, A2A_HOST_INPUT_DECISION } from './native-a2a-decision.mjs';
+import { A2A_QUESTION_LEDGER, a2aQuestionView, beginA2aQuestion, answerA2aQuestion,
+  closeA2aQuestion, admitA2aQuestionEffect, retireA2aQuestions, settleA2aQuestions } from './native-a2a-question.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
@@ -104,9 +106,9 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
   invariant(base.protocol === 'https:' || isKop || ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname), 'A2A_SERVICE_HTTP_FORBIDDEN');
   const planDigest = hash(specs), sourceDigest = hash({ source: 'ksadk-python', revision: '355059d78e47ed764bbdb3606304cdf34e9838a3' });
   const binding = Object.freeze({ contract, protocol: NATIVE_A2A_PROTOCOL, spaceId,
-    ...(internal ? { inputDecisionContract: A2A_HOST_INPUT_DECISION } : {}),
+    ...(internal ? { inputDecisionContract: A2A_HOST_INPUT_DECISION, questionContract: A2A_QUESTION_LEDGER } : {}),
     bindingDigest: hash(internal ? { spaceId, specs, allowPrivate, publicEgressEnabled, controlPlane: internal.binding,
-      inputDecisionContract: A2A_HOST_INPUT_DECISION }
+      inputDecisionContract: A2A_HOST_INPUT_DECISION, questionContract: A2A_QUESTION_LEDGER }
       : { base: base.href, spaceId, specs, allowPrivate, region, source, accountId,
         credentialFingerprint: hash({ token, ak, sk, sessionToken }) }), planDigest });
   const pinned = createSsrfPinnedFetch({ fetchImpl, ssrfBlockCheck: allowPrivate ? null : isBlockedAddress });
@@ -160,7 +162,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         source: String(item.Source ?? 'hosted'), url: String(item.AgentCard?.supportedInterfaces?.[0]?.url ?? ''), card: copy(item.AgentCard ?? {}) }));
   }
   function forSession({ scope, agentId, agentRevision, buildId = null, sessionId, stateRoot, workspaceRoot, assertCurrent,
-    assertControl, authorizeControl, assertReceipt, assertReceiptWait, destinationSessionId }) {
+    assertControl, authorizeControl, assertReceipt, assertReceiptWait, assertQuestion, assertQuestionTerminal, destinationSessionId }) {
     invariant(destinationSessionId === undefined || typeof destinationSessionId === 'string' && destinationSessionId.length > 0
       && destinationSessionId.length <= 4096, 'A2A_SESSION_DESTINATION_INVALID');
     if (dsh) invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
@@ -230,9 +232,11 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
             deliveryLock: () => tryLock(join(directory, 'events.session-delivery.sqlite')),
             pending() {
               for (const record of sessionRecords()) {
-                const journal = record.managed?.events;
+                for (const channel of ['events', 'questions']) {
+                const journal = record.managed?.[channel];
                 if (!journal) continue;
-                const sourceKey = hash({ contract: 'agentkit.a2a-session-event/v1', owner, identity: record.request.identity });
+                const sourceKey = hash({ contract: 'agentkit.a2a-session-event/v1', owner, identity: record.request.identity,
+                  ...(channel === 'questions' ? { channel: A2A_QUESTION_LEDGER } : {}) });
                 const cursor = journal.sessionDelivery, through = cursor?.through ?? 0;
                 invariant(!cursor || cursor.contract === 'agentkit.a2a-session-event/v1' && cursor.sourceKey === sourceKey,
                   'A2A_SESSION_CURSOR_INVALID');
@@ -242,7 +246,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
                 const events = journal.log.filter(event => event.seq > through).slice(0, 100);
                 if (events.length) return { events, request: record.request, taskId: record.managed.taskId,
                   destinationSessionId: record.sessionDestination ?? record.owner.sessionId,
-                  sourceKey };
+                  sourceKey, channel };
+                }
               }
               return null;
             },
@@ -257,7 +262,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
               // dead-letters the execution log or changes remote delivery.
               if (action !== 'acknowledge') return;
               commitManaged(batch.request, managed => {
-                const journal = managed.events, through = journal.sessionDelivery?.through ?? 0;
+                const journal = managed[batch.channel], through = journal.sessionDelivery?.through ?? 0;
                 invariant(batch.events[0].seq === through + 1 && canonical(journal.log.slice(through, through + batch.events.length))
                   === canonical(batch.events), 'A2A_SESSION_BATCH_CONFLICT');
                 journal.sessionDelivery = { contract: 'agentkit.a2a-session-event/v1', through: batch.events.at(-1).seq, sourceKey: batch.sourceKey };
@@ -396,7 +401,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
               && admission.command.pauseDigest === hash({ state: previous.state, pause: previous.pause ?? null,
                 generation: previous.pauseGeneration ?? 0 }), 'A2A_APPROVAL_REJECTION_NOT_ALLOWED');
           }
-          if (admitting && internal) checkpointA2aHostDecision(record, admission);
+          if (admitting && internal) { admitA2aQuestionEffect(record, admission); checkpointA2aHostDecision(record, admission); }
           // A stream never owns control entries. Each control publishes only
           // its own command; stale snapshots cannot erase a concurrent intent.
           record.controls = { ...(current.controls ?? {}), ...(controlKey && Object.hasOwn(record.controls ?? {}, controlKey)
@@ -417,7 +422,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
               output_refs: record.projection.output_refs, snapshots: record.projection.snapshots, item_kinds: record.projection.item_kinds };
           }
         }
-        if (internal) checkpointA2ADescriptor(record);
+        if (internal) { retireA2aQuestions(record); checkpointA2ADescriptor(record); }
         const bytes = canonical(record) + '\n';
         invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
         atomicPrivate(file(request), bytes);
@@ -441,6 +446,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
             && current.projection.contextId === remote.contextId, 'A2A_REMOTE_BINDING_CONFLICT');
           current.projection.taskId = remote.id; current.projection.contextId = remote.contextId;
         }
+        retireA2aQuestions(current);
         if (publish) checkpointA2ADescriptor(current);
         const bytes = canonical(current) + '\n'; invariant(Buffer.byteLength(bytes) <= 64 * 1024 * 1024, 'A2A_RECORD_LIMIT');
         atomicPrivate(file(request), bytes);
@@ -548,6 +554,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
       invariant(current === true, 'A2A_RECEIPT_WAIT_AUTHORITY_LOST');
       const source = receiptSource(query);
+      if (source?.record.managed?.questionOutcome) return { token: hash({ requestDigest: source.record.requestDigest,
+        localOutcome: source.record.managed.questionOutcome }) };
       if (!source || !a2aTerminal.has(source.record.projection.state) || source.record.phase !== 'terminal') return null;
       const { record } = source;
       return { token: hash({ requestDigest: record.requestDigest, projection: record.projection }) };
@@ -564,6 +572,8 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       const source = receiptSource(query);
       if (!source) return null;
       const { identity, record } = source;
+      if (record.managed?.questionOutcome) return { localOutcome: copy(record.managed.questionOutcome),
+        state: record.projection.state, task_id: record.platformTaskId, agent: record.request.spec.target_agent_id };
       if (!record.projection.taskId && !a2aTerminal.has(record.projection.state)) return null;
       const observed = await control.execute({ kind: 'get', commandId: `receipt:${hash(query.operationKey)}`,
         operation_locator: identity, authority: { contract: 'agentkit.native-a2a-receipt-read/v1',
@@ -571,6 +581,61 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       checkReceipt();
       return { ...observed, agent: record.request.spec.target_agent_id };
     }
+    function checkQuestion(query) {
+      invariant(!dsh && internal && typeof assertQuestion === 'function', 'A2A_QUESTION_AUTHORITY_REQUIRED');
+      checkOwner(query.signal); const verdict = assertQuestion(query);
+      if (verdict && typeof verdict.then === 'function') void Promise.resolve(verdict).catch(() => {});
+      invariant(verdict === true, 'A2A_QUESTION_AUTHORITY_LOST'); query.signal.throwIfAborted();
+    }
+    function questionSource(query) { checkQuestion(query); return receiptSource(query); }
+    function questionMutation(query, digest, mutate) {
+      const source = questionSource(query); invariant(source, 'A2A_QUESTION_SOURCE_MISSING'); let result;
+      commitManaged(source.record.request, (_state, current) => {
+        checkQuestion(query); const wait = a2aQuestionView(current);
+        invariant(wait?.questionDigest === digest, 'A2A_QUESTION_STALE');
+        result = mutate(current, wait);
+      });
+      return copy(result);
+    }
+    const questions = internal && !dsh ? Object.freeze({
+      settle(snapshot) {
+        const checkTerminal = () => {
+          deliveryGuard();
+          invariant(typeof assertQuestionTerminal === 'function' && terminal(snapshot.phase)
+            && canonical(snapshot.scope) === canonical(fixedScope) && snapshot.sessionId === sessionId,
+          'A2A_QUESTION_TERMINAL_AUTHORITY_REQUIRED');
+          const verdict = assertQuestionTerminal(snapshot);
+          if (verdict && typeof verdict.then === 'function') void Promise.resolve(verdict).catch(() => {});
+          invariant(verdict === true, 'A2A_QUESTION_TERMINAL_AUTHORITY_LOST');
+        };
+        checkTerminal();
+        for (const record of sessionRecords()) {
+          const original = record.request.native;
+          if (!original || !record.managed?.questions || !['runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
+            .every(key => original[key] === snapshot[key]) || canonical(original.scope) !== canonical(snapshot.scope)) continue;
+          commitManaged(record.request, (_state, current) => { checkTerminal(); settleA2aQuestions(current); });
+        }
+      },
+      inspect(query) {
+        const source = questionSource(query); if (!source) return null;
+        const wait = a2aQuestionView(source.record); if (!wait) return null;
+        return { wait, entry: copy(source.record.managed.questions?.entries[wait.interactionId] ?? null) };
+      },
+      claim(query, digest) {
+        const source = questionSource(query); invariant(source && a2aQuestionView(source.record)?.questionDigest === digest, 'A2A_QUESTION_STALE');
+        return tryLock(join(directory, `${hash(source.identity)}.${digest}.question.sqlite`));
+      },
+      begin(query, digest) { return questionMutation(query, digest, current => beginA2aQuestion(current, digest)); },
+      answer(query, digest, answer) { return questionMutation(query, digest, current => answerA2aQuestion(current, digest, answer)); },
+      close(query, digest, outcome) { return questionMutation(query, digest, current => {
+        const entry = current.managed.questions?.entries[a2aQuestionView(current).interactionId];
+        invariant(entry, 'A2A_QUESTION_SOURCE_MISSING');
+        const codes = { expired: 'A2A_OVERALL_TIMEOUT', rejected: 'A2A_INPUT_REJECTED',
+          operation_denied: 'A2A_APPROVAL_DENIED', withdrawn: 'A2A_INPUT_WITHDRAWN' };
+        invariant(Object.hasOwn(codes, outcome), 'A2A_QUESTION_OUTCOME_INVALID');
+        return closeA2aQuestion(current, entry, outcome, codes[outcome]);
+      }); },
+    }) : undefined;
     async function dispatch({ request, signal }) {
       check(request[dsh ? 'dsh' : 'native'], signal);
       const release = tryLock(join(directory, `${hash(request.identity)}.sqlite`));
@@ -635,6 +700,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]),
       assertCurrent: () => { checkOwner(input.signal); return true; } }) },
       invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, peekReceipt, exposurePlan,
+      ...(questions ? { questions } : {}),
       ...(internal ? { eventDelivery: {
         flush: options => eventDispatcher.flush(options),
         status() { const records = sessionRecords(); return { pending: records.reduce((n, r) => n + (r.managed?.events?.pending.length ?? 0), 0),
@@ -660,7 +726,9 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         const record = parseNativeJson(readAll(path));
         if (record.contract !== contract || record.owner?.bindingDigest !== binding.bindingDigest
           || !(record.managed?.events?.pending?.length || sessionEvents && record.managed?.events
-            && (record.managed.events.sessionDelivery?.through ?? 0) < record.managed.events.nextSeq - 1)) continue;
+            && (record.managed.events.sessionDelivery?.through ?? 0) < record.managed.events.nextSeq - 1
+            || sessionEvents && record.managed?.questions
+            && (record.managed.questions.sessionDelivery?.through ?? 0) < record.managed.questions.nextSeq - 1)) continue;
         invariant(record.requestDigest === hash(record.request) && hash(record.request.identity) + '.json' === entry
           && canonical(record.request.identity.sessionId) === canonical(record.owner.sessionId)
           && specs.some(spec => canonical(spec) === canonical(record.request.spec)), 'A2A_CALL_IDENTITY_CONFLICT');

@@ -58,11 +58,15 @@ const entityLabel = {
   tool_result: '远端工具结果', interaction: '远端交互提示', data: '远端数据',
   item: '远端条目', scope: '调用作用域',
   continuation: '远端任务继续状态',
+  question: '问答等待状态',
 };
 const stateLabel = {
   working: '处理中', completed: '已完成', failed: '失败', interrupted: '已中断',
   submitted: '已提交', input_required: '等待补充输入', cancelled: '已取消', requested: '等待回复', resolved: '已回复',
   created: '等待继续', resumed: '已继续',
+  pending: '等待回答', awaiting_permission: '回答已保存，等待操作授权',
+  operation_admitted: '操作已登记', operation_denied: '操作未获授权',
+  expired: '等待已超时', withdrawn: '等待已撤回', rejected: '已拒绝', observed: '等待已结束',
 };
 
 /** Build/merge a per-item accumulated snapshot from started/updated/replaced/
@@ -102,7 +106,7 @@ function extract(into, parts) {
 
 function classifyStatus(canonical, snapshot) {
   const type = canonical.event_type;
-  const descriptor = snapshot?.parts.find(part => part?.data?.schema === 'execution.scope/v1')?.data;
+  const descriptor = snapshot?.parts.find(part => ['execution.scope/v1', 'agentkit.a2a-question-ledger/v1'].includes(part?.data?.schema))?.data;
   if (descriptor && typeof descriptor.status === 'string') return descriptor.status;
   if (type === 'item.completed') return 'completed';
   if (type === 'item.failed') return 'failed';
@@ -144,6 +148,13 @@ export function createA2aObservationView({ React } = {}) {
   const box = { border: '1px solid var(--border, #ddd)', borderRadius: '8px', padding: '10px 12px', marginTop: '8px' };
 
   function renderContent(canonical, snapshot, entity) {
+    if (entity === 'question') {
+      const desc = snapshot?.parts.find(part => part?.data?.schema === 'agentkit.a2a-question-ledger/v1')?.data;
+      return desc ? h(Fragment, null,
+        h('p', null, stateLabel[desc.status] || redact(desc.status)),
+        h('p', { style: muted }, `目标：${redact(desc.target)}`),
+        h('p', { style: muted }, '此记录仅表示问答等待状态，远端任务状态需单独核对。')) : null;
+    }
     if (entity === 'interaction') {
       const req = canonical.request || {};
       const kind = canonical.interaction_kind || req.request_type || 'structured_input';
@@ -250,7 +261,8 @@ export const a2aObservationDefinition = {
     if (!envelope || !lastCanonical) return null;
     const location = context.start?.location || first.location;
     const status = classifyStatus(lastCanonical, snapshot) || null;
-    const entity = lastCanonical.item_kind === 'status' && snapshot?.parts.some(part => part?.data?.schema === 'execution.scope/v1') ? 'scope' : lastCanonical.item_kind
+    const entity = lastCanonical.item_kind === 'status' && snapshot?.parts.some(part => part?.data?.schema === 'agentkit.a2a-question-ledger/v1') ? 'question'
+      : lastCanonical.item_kind === 'status' && snapshot?.parts.some(part => part?.data?.schema === 'execution.scope/v1') ? 'scope' : lastCanonical.item_kind
       || (lastCanonical.event_type?.startsWith('interaction.') ? 'interaction' : lastCanonical.event_type?.startsWith('continuation.') ? 'continuation' : 'item');
     const eventsLen = context.state.events?.length ?? 0;
     const current = context.current.get('chat');
