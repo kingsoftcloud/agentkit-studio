@@ -9,11 +9,14 @@ export const A2A_EVENT_PERMANENT_ERRORS = Object.freeze(['A2A_EVENT_BATCH_TOO_LA
   'A2A_EVENT_REF_CAPACITY', 'A2A_EVENT_REF_CONFLICT', 'A2A_EVENT_REF_INVALID', 'A2A_TASK_NOT_FOUND']);
 const terminal = new Set(['completed', 'failed', 'cancelled']);
 const hash = value => createHash('sha256').update(value).digest('hex');
+const blank = value => /^[\x09-\x0d\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u.test(value);
 export function a2aIdentity(kind, framework, ...components) {
   const normalized = [framework, ...components].map(value => {
     invariant(typeof value === 'string' || typeof value === 'boolean' || typeof value === 'bigint'
       || Number.isSafeInteger(value), 'A2A_EVENT_IDENTITY_INVALID');
-    const text = String(value).normalize('NFC'); invariant(text.trim(), 'A2A_EVENT_IDENTITY_INVALID'); return text;
+    const text = String(value).normalize('NFC'); invariant(!blank(text), 'A2A_EVENT_IDENTITY_INVALID');
+    for (const char of text) { const cp = char.codePointAt(0); invariant(cp < 0xd800 || cp > 0xdfff, 'A2A_EVENT_IDENTITY_INVALID'); }
+    return text;
   });
   invariant(components.length > 0 && ['scope', 'item', 'part', 'event'].includes(kind), 'A2A_EVENT_IDENTITY_INVALID');
   return `${kind}_${hash(canonical({ components: normalized, kind })).slice(0, 24)}`;
@@ -65,14 +68,15 @@ export function checkpointA2ADescriptor(record) {
   const statuses = state.descriptor ? [status] : status === 'submitted' ? ['submitted'] : ['submitted', status];
   let changed = false;
   for (status of statuses) {
-    if (state.descriptor?.status === status) continue;
+    const refs = state.adapter?.refs ?? [];
+    if (state.descriptor?.status === status && canonical(state.descriptor.output_refs) === canonical(refs)) continue;
     invariant(['submitted', 'working', 'input_required', ...terminal].includes(status), 'A2A_EVENT_STATUS_INVALID');
     const endedAt = terminal.has(status) ? Math.max(Date.now(), record.createdAt) / 1000 : null;
     const descriptor = { schema: 'execution.scope/v1', scope_id: scope, parent_scope_id: parent,
       trigger_ref: { ...copy(request.trigger), scope_id: parent }, binding_id: request.spec.binding_id,
       agent: { id: request.spec.target_agent_id, name: request.spec.local_name, version_id: request.spec.expected_version_id, protocol: 'a2a/1.0' },
       status, started_at: record.createdAt / 1000, ended_at: endedAt,
-      output_refs: [], cancel: { capability: status === 'cancelled' && !record.localCancel ? 'supported' : 'unknown',
+      output_refs: copy(refs), cancel: { capability: status === 'cancelled' && !record.localCancel ? 'supported' : 'unknown',
         request_state: status === 'cancelled' ? record.localCancel ? 'local_confirmed' : 'confirmed' : 'none' } };
     const initial = !state.descriptor, type = initial ? 'item.started' : terminal.has(status) ? 'item.completed' : 'item.snapshot_replaced';
     const snapshot = { parts: [{ content_type: 'data', part_id: a2aIdentity('part', 'a2a', item, 'descriptor'), data: descriptor }] };

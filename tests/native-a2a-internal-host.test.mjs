@@ -39,7 +39,7 @@ for (const dsh of [false, true]) for (const protocol of ['JSONRPC', 'HTTP+JSON']
 }
 for (const protocol of ['JSONRPC', 'HTTP+JSON']) test(`${protocol}: external broker injects credentials and quoted cookies only into prepared route`, async t => {
   const f = await setup(t, { protocol, kind: 'external_vpc' }); assert.equal((await f.dispatch()).state, 'completed');
-  assert.equal(f.calls.filter(value => value.action === 'ResolveA2ACredential').length, 1);
+  assert.equal(f.calls.filter(value => value.action === 'ResolveA2ACredential').length, 2);
   assert.doesNotMatch(JSON.stringify(f.record()), /external-key|external-query|two words/u);
 });
 test('explicit public egress gating and credential collision stop before remote dispatch', async t => {
@@ -51,7 +51,7 @@ test('explicit public egress gating and credential collision stop before remote 
 test('explicitly enabled public egress uses broker credentials and prepared non-streaming capability', async t => {
   const f = await setup(t, { kind: 'external_public', publicEgress: true, streaming: true, preparedStreaming: false });
   assert.equal((await f.dispatch()).state, 'completed');
-  assert.deepEqual(f.calls.filter(value => value.wireMethod).map(value => value.wireMethod), ['SendMessage']);
+  assert.deepEqual(f.calls.filter(value => value.wireMethod).map(value => value.wireMethod), ['SendMessage', 'GetTask']);
 });
 test('expired permits and authority loss after Prepare cannot admit peer HTTP', async t => {
   const expired = await setup(t, { mode: 'expired-permit' }); assert.equal((await expired.dispatch()).state, 'unknown');
@@ -76,8 +76,8 @@ test('prepared target/version drift refuses the peer and never falls back to pub
   assert.equal(f.calls.filter(value => value.wireMethod).length, 0);
   assert.equal(f.calls.some(value => value.path.includes('ListAToASpaceAgents')), false);
 });
-test('an already bound initial idempotency result reads the original Task without another initial send', async t => {
-  const f = await setup(t, { initialExisting: true, streaming: true }); assert.equal((await f.dispatch()).state, 'completed');
+for (const streaming of [false, true]) test(`already bound initial idempotency result (${streaming ? 'SSE' : 'JSON'}) reads the original Task without another initial send`, async t => {
+  const f = await setup(t, { initialExisting: true, streaming }); assert.equal((await f.dispatch()).state, 'completed');
   assert.deepEqual(f.calls.filter(value => value.wireMethod).map(value => value.wireMethod), ['GetTask']);
   assert.equal(f.calls.filter(value => value.action === 'BindA2ARemoteTask').length, 0);
 });

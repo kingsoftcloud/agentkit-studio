@@ -44,7 +44,7 @@ function credentials(route, injection) {
   }
   return { url, headers };
 }
-export function createInternalA2AWire({ controlPlane, readRecord, commit, validateRoute, publicEgressEnabled = false }) {
+export function createInternalA2AWire({ controlPlane, readRecord, commit, validateRoute, publicEgressEnabled = false, observe }) {
   return Object.freeze({
     async prepare(request, method, params, signal, assertCurrent, commandId) {
       invariant(assertCurrent() === true, 'A2A_CONTROL_PLANE_AUTHORITY_LOST'); signal.throwIfAborted();
@@ -118,18 +118,19 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
         admit() { assertCurrent(); invariant(Date.parse(prepared.expiresAt) > Date.now(), 'A2A_INTERNAL_PERMIT_EXPIRED');
           invariant(credentialExpiresAt === null || Date.parse(credentialExpiresAt) > Date.now(), 'A2A_INTERNAL_CREDENTIAL_EXPIRED');
           commit(request, state => { state.operations[operationId].phase = 'transport'; }); assertCurrent(); },
-        async observe(payload) {
-          assertCurrent(); const current = readRecord(request), validation = createA2AProjection(request.scopeId, current.projection);
+        async observe(payload, sourceEventId = '') {
+          assertCurrent(); const current = readRecord(request), validation = createA2AProjection(request.scopeId, current.projection, { deferTerminal: true });
           if (actualMethod === 'GetTask' || actualMethod === 'CancelTask') validation.task(payload); else validation.apply(payload);
           const candidate = actualMethod === 'GetTask' || actualMethod === 'CancelTask' ? payload
             : payload.task ?? payload.statusUpdate ?? payload.artifactUpdate;
-          if (!candidate) return;
+          if (!candidate) { observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId }); return; }
           const remote = { id: candidate.id ?? candidate.taskId, contextId: candidate.contextId || null };
           invariant(typeof remote.id === 'string' && remote.id && remote.id.length <= 4096
             && (remote.contextId === null || typeof remote.contextId === 'string' && remote.contextId.length <= 4096), 'A2A_REMOTE_BINDING_CONFLICT');
           if (current.managed.remote) {
             invariant(current.managed.remote.id === remote.id && current.managed.remote.contextId === remote.contextId, 'A2A_REMOTE_BINDING_CONFLICT');
-            invariant(current.managed.remote.phase === 'bound', 'A2A_INTERNAL_BIND_OUTCOME_UNKNOWN'); return;
+            invariant(current.managed.remote.phase === 'bound', 'A2A_INTERNAL_BIND_OUTCOME_UNKNOWN');
+            observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId }); return;
           }
           const observedAt = new Date().toISOString();
           commit(request, state => { invariant(!state.remote, 'A2A_REMOTE_BINDING_CONFLICT');
@@ -138,6 +139,7 @@ export function createInternalA2AWire({ controlPlane, readRecord, commit, valida
           assertCurrent(); commit(request, state => {
             invariant(state.remote?.id === remote.id && state.remote.contextId === remote.contextId, 'A2A_REMOTE_BINDING_CONFLICT'); state.remote.phase = 'bound';
           });
+          observe?.(request, { payload, method: actualMethod, observationId: operationId, sourceEventId });
         },
       };
     },

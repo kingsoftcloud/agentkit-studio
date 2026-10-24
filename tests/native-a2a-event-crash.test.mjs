@@ -17,7 +17,9 @@ function worker(f, action) {
   return { child, messages, exit };
 }
 for (const boundary of ['before-response', 'after-remote-apply']) test(`SIGKILL ${boundary}: startup replays immutable event batches, with no model turn or task HTTP`, { timeout: 15000 }, async t => {
-  const f = await internalPeer(); t.after(() => f.close());
+  const f = await internalPeer({ initialTask: { id: 'original-remote', contextId: 'original-context', status: { state: 'TASK_STATE_COMPLETED' },
+    artifacts: [{ artifactId: 'retained-result', name: 'report', parts: [{ text: 'durable result' }, { raw: 'AAEC/w==', mediaType: 'application/octet-stream' }] }] } });
+  t.after(() => f.close());
   const accepted = new Map(), observed = [];
   let reached, resume, pause = true;
   const entered = new Promise(resolve => { reached = resolve; });
@@ -37,6 +39,9 @@ for (const boundary of ['before-response', 'after-remote-apply']) test(`SIGKILL 
   const deadline = Date.now() + 4000;
   while (f.record().phase !== 'terminal') { assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 5)); }
   const original = facts(f.record()), originalLog = structuredClone(f.record().managed.events.log), initialBatch = observed[0];
+  assert.ok(originalLog.some(event => event.item_kind === 'artifact' && event.event_type === 'item.completed'
+    && event.snapshot.parts[1].data.base64 === 'AAEC/w=='));
+  assert.equal(f.calls.filter(call => call.wireMethod === 'GetTask').length, 1);
   assert.ok(f.record().managed.events.pending.length > 0);
   const taskRequests = f.calls.filter(call => call.action !== 'AppendA2ATaskEvents').length;
   initial.child.kill('SIGKILL'); const killed = await initial.exit; assert.equal(killed.signal, 'SIGKILL');

@@ -1,0 +1,1718 @@
+{
+  "reference": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+  "cases": [
+    {
+      "label": "provisional lastChunk, append and authoritative replacement",
+      "steps": [
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "artifactUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "artifact": {
+                "artifactId": "report",
+                "parts": [
+                  {
+                    "text": "first"
+                  }
+                ]
+              },
+              "lastChunk": true
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "artifactUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "artifact": {
+                "artifactId": "report",
+                "parts": [
+                  {
+                    "text": "second"
+                  }
+                ]
+              },
+              "append": true
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_COMPLETED"
+              }
+            }
+          }
+        },
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED"
+            },
+            "artifacts": [
+              {
+                "artifactId": "report",
+                "parts": [
+                  {
+                    "text": "authoritative"
+                  },
+                  {
+                    "data": {
+                      "number": 1
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_96e2c0521b307cc0aee0fb1d",
+          "seq": 0,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": true,
+              "consistent": false,
+              "artifact_closed": true,
+              "artifact_name": "",
+              "artifact_description": "",
+              "artifact_extensions": []
+            }
+          },
+          "event_type": "item.started",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "phase": "final_answer",
+          "initial": null
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_8446db5e239c53019a3a155c",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": true,
+              "consistent": false,
+              "artifact_closed": true,
+              "artifact_name": "",
+              "artifact_description": "",
+              "artifact_extensions": []
+            }
+          },
+          "event_type": "item.snapshot_replaced",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "snapshot": {
+            "parts": [
+              {
+                "content_type": "text",
+                "part_id": "part_77c89763a80ab395e3f250a7",
+                "text": "first"
+              }
+            ]
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_7e3d147726d2f91882e93529",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": true,
+              "consistent": false,
+              "artifact_closed": false,
+              "artifact_name": "",
+              "artifact_description": "",
+              "artifact_extensions": []
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "op": "append",
+          "update": {
+            "content_type": "text",
+            "part_id": "part_027c9a181123ecdd4b47f5c4",
+            "text": "second"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_985b7422482dd4ef8a6a1f11",
+          "seq": 5,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "reconciliation_reason": "terminal",
+              "reconciliation_attempt_id": "operation-3",
+              "terminal": true
+            }
+          },
+          "event_type": "item.completed",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "snapshot": {
+            "parts": [
+              {
+                "content_type": "text",
+                "part_id": "part_77c89763a80ab395e3f250a7",
+                "text": "authoritative"
+              },
+              {
+                "content_type": "data",
+                "part_id": "part_b781cb7d737e32849d4f34e1",
+                "data": {
+                  "number": 1.0
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "authoritative artifact removal",
+      "steps": [
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "artifactUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "artifact": {
+                "artifactId": "report",
+                "parts": [
+                  {
+                    "text": "gone"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_96e2c0521b307cc0aee0fb1d",
+          "seq": 0,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": true,
+              "consistent": false,
+              "artifact_closed": false,
+              "artifact_name": "",
+              "artifact_description": "",
+              "artifact_extensions": []
+            }
+          },
+          "event_type": "item.started",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "phase": "final_answer",
+          "initial": null
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_8446db5e239c53019a3a155c",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": true,
+              "consistent": false,
+              "artifact_closed": false,
+              "artifact_name": "",
+              "artifact_description": "",
+              "artifact_extensions": []
+            }
+          },
+          "event_type": "item.snapshot_replaced",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "snapshot": {
+            "parts": [
+              {
+                "content_type": "text",
+                "part_id": "part_77c89763a80ab395e3f250a7",
+                "text": "gone"
+              }
+            ]
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_1176e5b185bfbb325b34d829",
+          "seq": 3,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "report",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "reconciliation_reason": "terminal",
+              "reconciliation_attempt_id": "operation-1",
+              "terminal": true
+            }
+          },
+          "event_type": "item.failed",
+          "item_id": "item_a4107592d002d73a039cff55",
+          "item_kind": "artifact",
+          "error": {
+            "code": "a2a_artifact_removed_by_snapshot",
+            "message": "provisional artifact absent from authoritative GetTask snapshot",
+            "source": "a2a",
+            "scope_id": "child",
+            "item_id": "item_a4107592d002d73a039cff55",
+            "source_ref": {
+              "framework": "a2a",
+              "protocol": null,
+              "native_event_id": null,
+              "native_cursor": null,
+              "native_run_id": "remote",
+              "native_item_id": "report",
+              "metadata": {
+                "provisional": false,
+                "consistent": true,
+                "reconciliation_reason": "terminal",
+                "reconciliation_attempt_id": "operation-1",
+                "terminal": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "nested agent history and status message",
+      "steps": [
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED",
+              "message": {
+                "messageId": "final",
+                "role": "ROLE_AGENT",
+                "parts": [
+                  {
+                    "text": "done"
+                  }
+                ]
+              }
+            },
+            "history": [
+              {
+                "messageId": "user",
+                "role": "ROLE_USER",
+                "parts": [
+                  {
+                    "text": "skip"
+                  }
+                ]
+              },
+              {
+                "messageId": "agent",
+                "role": "ROLE_AGENT",
+                "parts": [
+                  {
+                    "text": "answer"
+                  },
+                  {
+                    "data": {
+                      "ok": true
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_9aa2ee0090d940fa52b48434",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "agent",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "agent",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.started",
+          "item_id": "item_5fa5a9a2d11776eeae35a9aa",
+          "item_kind": "message",
+          "phase": "final_answer",
+          "initial": null
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_2a9f897806b389289e1f5f11",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "agent",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "agent",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_5fa5a9a2d11776eeae35a9aa",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "text",
+            "part_id": "part_65a6e00364f3ffc79a3495aa",
+            "text": "answer"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_42e17c3fb75cb4660a88ee4c",
+          "seq": 3,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "agent",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "agent",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_5fa5a9a2d11776eeae35a9aa",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "data",
+            "part_id": "part_2d120ccfac89ed46ff12e02b",
+            "data": {
+              "ok": true
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_844cb57d394ae6fbbaf5fb5a",
+          "seq": 4,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "agent",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "agent",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.completed",
+          "item_id": "item_5fa5a9a2d11776eeae35a9aa",
+          "item_kind": "message",
+          "snapshot": {
+            "parts": [
+              {
+                "content_type": "text",
+                "part_id": "part_65a6e00364f3ffc79a3495aa",
+                "text": "answer"
+              },
+              {
+                "content_type": "data",
+                "part_id": "part_2d120ccfac89ed46ff12e02b",
+                "data": {
+                  "ok": true
+                }
+              }
+            ]
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_d203a2126af8a5ab582e64c8",
+          "seq": 5,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "final",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "final",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.started",
+          "item_id": "item_43ffe8a2d374257e1c37b00b",
+          "item_kind": "message",
+          "phase": "final_answer",
+          "initial": null
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_84f491893a02d116a4f674ef",
+          "seq": 6,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "final",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "final",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_43ffe8a2d374257e1c37b00b",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "text",
+            "part_id": "part_43070e2cafc20dd5fc586fec",
+            "text": "done"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_efb2e40484f44a1b8e6c37ac",
+          "seq": 7,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "final",
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "final",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.completed",
+          "item_id": "item_43ffe8a2d374257e1c37b00b",
+          "item_kind": "message",
+          "snapshot": {
+            "parts": [
+              {
+                "content_type": "text",
+                "part_id": "part_43070e2cafc20dd5fc586fec",
+                "text": "done"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "structured request deduplication and active resume",
+      "steps": [
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_INPUT_REQUIRED",
+                "message": {
+                  "messageId": "question",
+                  "role": "ROLE_AGENT",
+                  "parts": [
+                    {
+                      "text": "Your choice?"
+                    }
+                  ],
+                  "metadata": {
+                    "input_schema": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_INPUT_REQUIRED",
+                "message": {
+                  "messageId": "question",
+                  "role": "ROLE_AGENT",
+                  "parts": [
+                    {
+                      "text": "Your choice?"
+                    }
+                  ],
+                  "metadata": {
+                    "input_schema": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_WORKING"
+              }
+            }
+          }
+        },
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_67bad8b935220f614eaab827",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "question",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "interaction.requested",
+          "interaction_id": "item_90ac207823c57079005b2927",
+          "interaction_kind": "structured_input",
+          "request": {
+            "request_type": "structured_input",
+            "prompt": "Your choice?",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_231f7fc3d082df1718e16db9",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "question",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "continuation.created",
+          "continuation_id": "item_ff61ccdd1916575781e4ff75",
+          "continuation_kind": "task_resume",
+          "resumable": true,
+          "ref": {
+            "context_id": "context",
+            "task_id": "remote"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_a72e349bf336c5ef9de9d49a",
+          "seq": 4,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": null,
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "interaction.resolved",
+          "interaction_id": "item_90ac207823c57079005b2927",
+          "interaction_kind": "structured_input",
+          "response": {
+            "response_type": "structured_input",
+            "data": {
+              "state": "TASK_STATE_WORKING"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_d6ef4f15b15319472a80364f",
+          "seq": 5,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": null,
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "continuation.resumed",
+          "continuation_id": "item_ff61ccdd1916575781e4ff75",
+          "continuation_kind": "task_resume",
+          "resume_attempt_id": "item_f71ba6e07bba7c4d511923d1"
+        }
+      ]
+    },
+    {
+      "label": "structured request supersession and terminal resolution",
+      "steps": [
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_INPUT_REQUIRED",
+                "message": {
+                  "messageId": "question",
+                  "role": "ROLE_AGENT",
+                  "parts": [
+                    {
+                      "text": "Your choice?"
+                    }
+                  ],
+                  "metadata": {
+                    "input_schema": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_AUTH_REQUIRED",
+                "message": {
+                  "messageId": "auth",
+                  "role": "ROLE_AGENT",
+                  "parts": [
+                    {
+                      "text": "Authenticate"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_67bad8b935220f614eaab827",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "question",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "interaction.requested",
+          "interaction_id": "item_90ac207823c57079005b2927",
+          "interaction_kind": "structured_input",
+          "request": {
+            "request_type": "structured_input",
+            "prompt": "Your choice?",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_231f7fc3d082df1718e16db9",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "question",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "continuation.created",
+          "continuation_id": "item_ff61ccdd1916575781e4ff75",
+          "continuation_kind": "task_resume",
+          "resumable": true,
+          "ref": {
+            "context_id": "context",
+            "task_id": "remote"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_c30bc99f632e9a909ddd554e",
+          "seq": 4,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "auth",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "interaction.resolved",
+          "interaction_id": "item_90ac207823c57079005b2927",
+          "interaction_kind": "structured_input",
+          "response": {
+            "response_type": "structured_input",
+            "data": {
+              "state": "SUPERSEDED_BY_NEW_A2A_INTERACTION"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_f9d7addba49ca36f39ac5bf0",
+          "seq": 5,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "auth",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "interaction.requested",
+          "interaction_id": "item_f2d0c5d598d7c1bcd7344ed2",
+          "interaction_kind": "structured_input",
+          "request": {
+            "request_type": "structured_input",
+            "prompt": "Authenticate",
+            "schema": {
+              "type": "object"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_0cd24a640e8c2a464840dbc1",
+          "seq": 6,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "auth",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "continuation.created",
+          "continuation_id": "item_26743ec7825d06632e3feaf3",
+          "continuation_kind": "task_resume",
+          "resumable": true,
+          "ref": {
+            "context_id": "context",
+            "task_id": "remote"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_808fd987d5b1c31295918103",
+          "seq": 7,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "remote",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "reconciliation_reason": "terminal",
+              "reconciliation_attempt_id": "operation-2",
+              "terminal": true
+            }
+          },
+          "event_type": "interaction.resolved",
+          "interaction_id": "item_f2d0c5d598d7c1bcd7344ed2",
+          "interaction_kind": "structured_input",
+          "response": {
+            "response_type": "structured_input",
+            "data": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "GetTask input request, terminal stream defers resolution until GetTask",
+      "steps": [
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_INPUT_REQUIRED",
+              "message": {
+                "messageId": "question",
+                "role": "ROLE_AGENT",
+                "parts": [
+                  {
+                    "text": "Your choice?"
+                  }
+                ],
+                "metadata": {
+                  "input_schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_COMPLETED"
+              }
+            }
+          }
+        },
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_4e2b87e479228b763b7134cc",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "remote",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "reconciliation_reason": "terminal",
+              "reconciliation_attempt_id": "operation-0",
+              "terminal": false
+            }
+          },
+          "event_type": "interaction.requested",
+          "interaction_id": "item_90ac207823c57079005b2927",
+          "interaction_kind": "structured_input",
+          "request": {
+            "request_type": "structured_input",
+            "prompt": "Your choice?",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_7b4d0d34cfa86817e2915a1e",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "remote",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "reconciliation_reason": "terminal",
+              "reconciliation_attempt_id": "operation-0",
+              "terminal": false
+            }
+          },
+          "event_type": "continuation.created",
+          "continuation_id": "item_ff61ccdd1916575781e4ff75",
+          "continuation_kind": "task_resume",
+          "resumable": true,
+          "ref": {
+            "context_id": "context",
+            "task_id": "remote"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_47beaab89ce76b8e204ada2c",
+          "seq": 5,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "remote",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "reconciliation_reason": "terminal",
+              "reconciliation_attempt_id": "operation-2",
+              "terminal": true
+            }
+          },
+          "event_type": "interaction.resolved",
+          "interaction_id": "item_90ac207823c57079005b2927",
+          "interaction_kind": "structured_input",
+          "response": {
+            "response_type": "structured_input",
+            "data": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "typed approval public redaction, remote progress never decides approval",
+      "steps": [
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_INPUT_REQUIRED",
+                "message": {
+                  "messageId": "approve",
+                  "role": "ROLE_AGENT",
+                  "parts": [
+                    {
+                      "text": "Approve?"
+                    }
+                  ],
+                  "metadata": {
+                    "input_schema": {
+                      "type": "string",
+                      "enum": [
+                        "approve",
+                        "reject"
+                      ]
+                    },
+                    "ksadk_interaction": {
+                      "version": 1,
+                      "kind": "approval",
+                      "allowed_decisions": [
+                        "approve",
+                        "reject"
+                      ],
+                      "presentation": {
+                        "title": "execute",
+                        "description": "{\"arguments\": {\"command\": \"echo ok\", \"api_key\": \"secret\"}, \"risk\": \"high\"}"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "statusUpdate": {
+              "taskId": "remote",
+              "contextId": "context",
+              "status": {
+                "state": "TASK_STATE_WORKING"
+              }
+            }
+          }
+        },
+        {
+          "method": "GetTask",
+          "payload": {
+            "id": "remote",
+            "contextId": "context",
+            "status": {
+              "state": "TASK_STATE_COMPLETED"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_7c0da080f45ecf6318e50d24",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "approve",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "interaction.requested",
+          "interaction_id": "item_bcfdc159e89cd99d894657ee",
+          "interaction_kind": "approval",
+          "request": {
+            "request_type": "approval",
+            "call_id": "item_bcfdc159e89cd99d894657ee",
+            "kind": "tool",
+            "detail": {
+              "name": "execute",
+              "args": {
+                "command": "echo ok",
+                "api_key": "[REDACTED]"
+              },
+              "prompt": "{\"arguments\":{\"command\":\"echo ok\",\"api_key\":\"[REDACTED]\"},\"risk\":\"high\"}",
+              "risk": "high"
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_17a3ead101e4455238acf9c0",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": "approve",
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "continuation.created",
+          "continuation_id": "item_e196cd720bcb0a7e1f3244f3",
+          "continuation_kind": "task_resume",
+          "resumable": true,
+          "ref": {
+            "context_id": "context",
+            "task_id": "remote"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_7cda576a66ee903e644c409d",
+          "seq": 4,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": null,
+            "native_cursor": null,
+            "native_run_id": "remote",
+            "native_item_id": null,
+            "metadata": {
+              "provisional": true,
+              "consistent": false
+            }
+          },
+          "event_type": "continuation.resumed",
+          "continuation_id": "item_e196cd720bcb0a7e1f3244f3",
+          "continuation_kind": "task_resume",
+          "resume_attempt_id": "item_4692d96027def90de2ceadd7"
+        }
+      ]
+    },
+    {
+      "label": "direct agent message typed content and attachments",
+      "direct": true,
+      "steps": [
+        {
+          "method": "SendStreamingMessage",
+          "payload": {
+            "message": {
+              "messageId": "direct",
+              "contextId": "child",
+              "role": "ROLE_AGENT",
+              "parts": [
+                {
+                  "text": "answer"
+                },
+                {
+                  "data": {
+                    "x": 1
+                  },
+                  "metadata": {
+                    "kind": "tool_call",
+                    "call_id": "tool",
+                    "name": "execute"
+                  }
+                },
+                {
+                  "data": [],
+                  "metadata": {
+                    "kind": "tool_result",
+                    "call_id": "tool",
+                    "is_error": {}
+                  }
+                },
+                {
+                  "raw": "AAEC/w==",
+                  "filename": "result.bin",
+                  "mediaType": "application/octet-stream"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "schema_version": 2,
+          "event_id": "event_9138a7ac6e9ed04841ec71fb",
+          "seq": 1,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "direct",
+            "native_cursor": null,
+            "native_run_id": "child",
+            "native_item_id": "direct",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.started",
+          "item_id": "item_db0ef570d00294c28f3cb926",
+          "item_kind": "message",
+          "phase": "final_answer",
+          "initial": null
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_cd5f7ac5d8a6087161e6db55",
+          "seq": 2,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "direct",
+            "native_cursor": null,
+            "native_run_id": "child",
+            "native_item_id": "direct",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_db0ef570d00294c28f3cb926",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "text",
+            "part_id": "part_8a914dcca0e61e4cc04923f4",
+            "text": "answer"
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_3c840b7e5cca286471af249d",
+          "seq": 3,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "direct",
+            "native_cursor": null,
+            "native_run_id": "child",
+            "native_item_id": "direct",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_db0ef570d00294c28f3cb926",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "tool_call",
+            "part_id": "part_f6f3b0bb10744349de57fe51",
+            "call_id": "tool",
+            "name": "execute",
+            "arguments": {
+              "x": 1.0
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_c5c6c7b42a8d53bbcc142509",
+          "seq": 4,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "direct",
+            "native_cursor": null,
+            "native_run_id": "child",
+            "native_item_id": "direct",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_db0ef570d00294c28f3cb926",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "tool_result",
+            "part_id": "part_2785f097492ebf45db89952a",
+            "call_id": "tool",
+            "result": [],
+            "is_error": false
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_3ac2df86aec5d0a36cdd542d",
+          "seq": 5,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "direct",
+            "native_cursor": null,
+            "native_run_id": "child",
+            "native_item_id": "direct",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.updated",
+          "item_id": "item_db0ef570d00294c28f3cb926",
+          "item_kind": "message",
+          "op": "replace",
+          "update": {
+            "content_type": "artifact",
+            "part_id": "part_0538bdd9d0f49f2a262a5e7d",
+            "artifact_id": "message:direct:part:3",
+            "name": "result.bin",
+            "mime_type": "application/octet-stream",
+            "uri": null,
+            "data": {
+              "base64": "AAEC/w=="
+            }
+          }
+        },
+        {
+          "schema_version": 2,
+          "event_id": "event_c91685f23cf4862146daf03d",
+          "seq": 6,
+          "timestamp": 1792790000.0,
+          "run_id": "root",
+          "run_seq": null,
+          "scope_id": "child",
+          "parent_scope_id": "root",
+          "source": {
+            "framework": "a2a",
+            "protocol": null,
+            "native_event_id": "direct",
+            "native_cursor": null,
+            "native_run_id": "child",
+            "native_item_id": "direct",
+            "metadata": {
+              "provisional": false,
+              "consistent": true,
+              "role": "ROLE_AGENT"
+            }
+          },
+          "event_type": "item.completed",
+          "item_id": "item_db0ef570d00294c28f3cb926",
+          "item_kind": "message",
+          "snapshot": {
+            "parts": [
+              {
+                "content_type": "text",
+                "part_id": "part_8a914dcca0e61e4cc04923f4",
+                "text": "answer"
+              },
+              {
+                "content_type": "tool_call",
+                "part_id": "part_f6f3b0bb10744349de57fe51",
+                "call_id": "tool",
+                "name": "execute",
+                "arguments": {
+                  "x": 1.0
+                }
+              },
+              {
+                "content_type": "tool_result",
+                "part_id": "part_2785f097492ebf45db89952a",
+                "call_id": "tool",
+                "result": [],
+                "is_error": false
+              },
+              {
+                "content_type": "artifact",
+                "part_id": "part_0538bdd9d0f49f2a262a5e7d",
+                "artifact_id": "message:direct:part:3",
+                "name": "result.bin",
+                "mime_type": "application/octet-stream",
+                "uri": null,
+                "data": {
+                  "base64": "AAEC/w=="
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -144,14 +144,17 @@ const server = createHttpServer(async (request, response) => {
       assert.equal(request.headers.authorization, 'Bearer ' + workloadTokens[audience]);
       if (action !== 'ListA2ASpaceAgents') {
         const original = JSON.parse((await managedRecords(root))[0].content); let data = {};
-        if (action === 'PrepareA2ACall') {
+        if (action === 'PrepareA2ACall' || action === 'PrepareA2ATaskOperation') {
           assert.equal(original.phase, 'sending'); assert.ok(Object.values(original.managed.operations).some(value => value.phase === 'preparing'));
-          assert.equal(body.MessageId, original.request.message.messageId); assert.equal(body.ExpectedVersionId, a2aSpec.expected_version_id);
+          if (action === 'PrepareA2ACall') {
+            assert.equal(body.MessageId, original.request.message.messageId); assert.equal(body.ExpectedVersionId, a2aSpec.expected_version_id);
+          } else { assert.equal(body.A2ATaskId, platformTaskId); assert.equal(body.Operation, 'get_task'); }
           data = { A2ATaskId: platformTaskId, Target: { A2AAgentId: a2aSpec.target_agent_id,
             VersionId: a2aSpec.expected_version_id, CardSha256: 'c'.repeat(64) },
             Route: { Kind: 'hosted_gateway', Interface: { Url: `http://127.0.0.1:${server.address().port}/rpc`,
               ProtocolVersion: '1.0', ProtocolBinding: 'JSONRPC' }, Capabilities: { Streaming: true } },
-            CallPermit: 'mounted-private-permit', CallPermitExpiresAt: new Date(Date.now() + 60000).toISOString() };
+            CallPermit: 'mounted-private-permit', CallPermitExpiresAt: new Date(Date.now() + 60000).toISOString(),
+            ...(action === 'PrepareA2ATaskOperation' ? { RemoteTask: { RemoteTaskId: remoteTaskId, RemoteContextId: remoteContextId } } : {}) };
         } else if (action === 'AppendA2ATaskEvents') {
           assert.equal(body.A2ATaskId, platformTaskId); assert.ok(body.Events.length > 0 && body.Events.length <= 100);
           for (const event of body.Events) {
@@ -455,12 +458,12 @@ try {
   console.log(`HTTP calls: model=${modelCalls}, discovery=${discoveryCalls}, a2aSend=${a2aSends}, a2aGet=${a2aGets}`);
 
   // === Exact HTTP call counts ===
-  // GetTask may be 0 (stream delivered the full terminal lifecycle) or 1
-  // (stream ended non-terminal and GetTask reconciled). Exactly 0 or 1, never >1.
+  // Internal Native mirrors the managed reference: terminal notifications
+  // require one original GetTask. The existing public path keeps its behavior.
   assert.equal(modelCalls, 2, `model HTTP calls: expected exactly 2, got ${modelCalls}`);
   assert.equal(discoveryCalls, 1, `discovery HTTP calls: expected exactly 1, got ${discoveryCalls}`);
   assert.equal(a2aSends, 1, `A2A peer Send calls: expected exactly 1, got ${a2aSends}`);
-  assert.equal(a2aGets, 0, 'the fixed SSE fixture delivers the full terminal lifecycle');
+  assert.equal(a2aGets, values['internal-control-plane'] ? 1 : 0, 'exact authoritative reads for the selected transport');
   assert.deepEqual(serverFailures, []);
 
   // === Verify the tool result contains the A2A reply ===
@@ -611,11 +614,17 @@ try {
   const recordStr = canonical(coldRecord);
   assert.equal(recordStr.includes('a2a-fixture-token'), false, 'A2A service token not leaked into SQLite record');
   if (values['internal-control-plane']) {
-    assert.deepEqual(internalActions.filter(action => action !== 'AppendA2ATaskEvents'), ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask']);
-    assert.equal(internalEventBatches.length, 3); assert.equal(acceptedInternalEvents.size, 3);
-    assert.deepEqual(managed.managed.events.log.map(e => (e.initial ?? e.snapshot).parts[0].data.status), ['submitted', 'working', 'completed']);
+    assert.deepEqual(internalActions.filter(action => action !== 'AppendA2ATaskEvents'), ['ListA2ASpaceAgents', 'PrepareA2ACall', 'BindA2ARemoteTask', 'PrepareA2ATaskOperation']);
+    assert.equal(internalEventBatches.length, 5); assert.equal(acceptedInternalEvents.size, 6);
+    const lifecycle = managed.managed.events.log.filter(e => e.item_kind === 'status');
+    assert.deepEqual(lifecycle.map(e => (e.initial ?? e.snapshot).parts[0].data.status), ['submitted', 'working', 'completed']);
+    const artifact = managed.managed.events.log.filter(e => e.item_kind === 'artifact');
+    assert.deepEqual(artifact.map(e => e.event_type), ['item.started', 'item.snapshot_replaced', 'item.completed']);
+    assert.equal(artifact.at(-1).snapshot.parts[0].text, a2aReply);
+    assert.deepEqual(lifecycle.at(-1).snapshot.parts[0].data.output_refs, [{ scope_id: managed.request.scopeId,
+      item_id: artifact.at(-1).item_id, part_id: artifact.at(-1).snapshot.parts[0].part_id }]);
     assert.deepEqual(internalEventBatches.flatMap(batch => batch.Events), managed.managed.events.log);
-    assert.equal(managed.managed.events.pending.length, 0); assert.equal(managed.managed.events.delivered, 3);
+    assert.equal(managed.managed.events.pending.length, 0); assert.equal(managed.managed.events.delivered, 5);
     assert.equal(managed.managed.remote.phase, 'bound'); assert.equal(managed.platformTaskId, platformTaskId);
     for (const bytes of [recordStr, managedBefore[0].content]) {
       assert.equal(bytes.includes('mounted-private-permit'), false);
@@ -653,7 +662,7 @@ try {
 
   process.stdout.write('\nPASS: real A2A discovery + JSONRPC/SSE peer, deterministic model, '
     + 'model calls call_a2a_agent with real reply, '
-    + 'exactly 2 model + 1 discovery + 1 send + 0 get HTTP calls, '
+    + `exactly 2 model + 1 discovery + 1 send + ${a2aGets} get HTTP calls, `
     + 'real Host restart + SessionController history replay with no new calls, '
     + 'entire store.load record canonical unchanged, '
     + 'A2A call identity record terminal, no credential leak\n');

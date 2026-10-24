@@ -20,6 +20,7 @@ import { createInternalA2AWire, A2A_INTERNAL_WIRE } from './native-a2a-internal-
 import { createFileWorkloadTokenProvider } from './native-a2a-workload-token.mjs';
 import { checkpointA2ADescriptor } from './native-a2a-events.mjs';
 import { createA2AEventDispatcher } from './native-a2a-event-dispatcher.mjs';
+import { projectA2ACanonical } from './native-a2a-canonical.mjs';
 
 export const STUDIO_NATIVE_A2A_HOST = 'agentkit.studio-native-a2a-host/v1';
 export const STUDIO_DSH_A2A_HOST = 'agentkit.studio-dsh-a2a-host/v1';
@@ -370,7 +371,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       try {
         const current = readRecord(request);
         invariant(current?.managed?.contract === A2A_INTERNAL_WIRE, 'A2A_INTERNAL_RECORD_REQUIRED');
-        mutate(current.managed);
+        mutate(current.managed, current);
         if (current.managed.taskId) current.platformTaskId = current.managed.taskId;
         const remote = current.managed.remote;
         if (remote?.phase === 'bound') {
@@ -385,7 +386,15 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       } finally { release(); }
     }
     const internalWire = internal ? createInternalA2AWire({ controlPlane: internal, readRecord, commit: commitManaged,
-      validateRoute: url => endpoint(url, allowPrivate, true), publicEgressEnabled }) : null;
+      validateRoute: url => endpoint(url, allowPrivate, true), publicEgressEnabled,
+      observe(request, observation) {
+        commitManaged(request, (_state, current) => {
+          const projection = createA2AProjection(request.scopeId, current.projection, { deferTerminal: true });
+          if (observation.method === 'GetTask') projection.task(observation.payload);
+          else projection.apply(observation.method === 'CancelTask' ? { task: observation.payload } : observation.payload, observation.sourceEventId);
+          projectA2ACanonical(current, observation); current.projection = projection.snapshot();
+        });
+      } }) : null;
     function privateWireError(error) {
       const safe = new Set(['A2A_CANCEL_UNSUPPORTED', 'A2A_REMOTE_BINDING_CONFLICT', 'A2A_INTERNAL_BIND_OUTCOME_UNKNOWN',
         'A2A_CONTROL_PLANE_AUTHORITY_LOST', 'A2A_CONTROL_AUTHORITY_LOST', 'A2A_OWNER_CLOSED', 'A2A_OWNER_CHANGED',
@@ -439,13 +448,14 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         const stream = a2aSse(response.body, signal);
         if (!prepared) return { stream, unwrap };
         return { stream: (async function* () { try { for await (const event of stream) {
-          const payload = unwrap(event.payload); await prepared.observe(payload); yield { ...event, payload };
+          const payload = unwrap(event.payload); await prepared.observe(payload, event.id); yield { ...event, payload };
         } } catch (error) { privateWireError(error); } })(), unwrap: payload => payload };
       }
       const payload = unwrap(await jsonBody(response)); authority(); await prepared?.observe(payload);
       if (streaming) return { stream: (async function* () {
         yield { id: '', payload: prepared?.existingInitialTask ? { task: payload } : payload };
       })(), unwrap: value => value };
+      if (prepared?.existingInitialTask) return { task: payload };
       return payload;
     }
     const control = createA2ATaskControl({ binding, owner, checkOwner, assertControl, authorizeControl,
@@ -492,7 +502,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
         check(request[dsh ? 'dsh' : 'native'], signal);
         if (!save(request, record, undefined, 'admit')) return record.result ?? { state: 'unknown', task_id: record.platformTaskId,
           operation_locator: request.identity, error_type: 'A2A_SEND_OUTCOME_UNKNOWN' };
-        const projection = createA2AProjection(request.scopeId, record.projection);
+        const projection = createA2AProjection(request.scopeId, record.projection, { deferTerminal: Boolean(internal) });
         // Once this fsynced marker exists, no replacement may send again,
         // including a crash between intent commit and entering fetch().
         const timeout = record.deadlineAt - Date.now();

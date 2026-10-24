@@ -75,6 +75,9 @@ the wire. A stable duplicate SSE ID is idempotent; conflicting reuse fails.
 Terminal reply selection preserves the reference's last-artifact preference,
 then last-agent-message fallback. Stream EOF with an unfinished known task
 polls that original task with `GetTask` until terminal or input pause.
+The optional internal control-plane path additionally confirms a terminal
+notification with the original `GetTask` before declaring its artifacts complete;
+see [canonical content and delivery](native-a2a-internal.md#canonical-lifecycle-journal-and-delivery).
 
 An approved cancel that wins the same short state lock before send admission
 commits a local terminal and the command receipt together. Its outcome is

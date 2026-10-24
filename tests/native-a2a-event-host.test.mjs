@@ -56,3 +56,41 @@ test('permanent delivery failure is durable and visible after all later batches 
     workspaceRoot: f.workspaceRoot, assertCurrent: () => false }); f.owners.push(replacement);
   await assert.rejects(replacement.eventDelivery.flush(), { code: 'A2A_EVENT_REF_INVALID' });
 });
+for (const dsh of [false, true]) test(`${dsh ? 'DSH' : 'Native'} actual SSE content and final GetTask checkpoint commit with the outbox`, async t => {
+  const remote = { taskId: 'original-remote', contextId: 'original-context' };
+  const f = await setup(t, dsh, { streaming: true,
+    initialTask: { id: remote.taskId, contextId: remote.contextId, status: { state: 'TASK_STATE_COMPLETED' },
+      artifacts: [{ artifactId: 'report', name: 'report', parts: [{ text: 'authoritative result' }, { raw: 'AAEC/w==', mediaType: 'application/octet-stream' },
+        { data: { ok: true }, metadata: { kind: 'tool_result', call_id: 'remote-tool', is_error: {} } }] }],
+      history: [{ messageId: 'answer', role: 'ROLE_AGENT', parts: [{ text: 'final message' }] }] },
+    streamUpdates: [{ artifactUpdate: { ...remote, artifact: { artifactId: 'report', parts: [{ text: 'provisional' }] }, lastChunk: true, metadata: { event_id: 'first', seq: 1 } } },
+      { statusUpdate: { ...remote, status: { state: 'TASK_STATE_COMPLETED' } } }] });
+  assert.equal((await f.dispatch()).state, 'completed'); await f.owner.eventDelivery.flush();
+  assert.equal(f.calls.filter(call => call.wireMethod === 'GetTask').length, 1);
+  const journal = f.record().managed.events, completed = journal.log.find(e => e.item_kind === 'artifact' && e.event_type === 'item.completed');
+  assert.deepEqual(completed.snapshot.parts.map(part => part.content_type), ['text', 'artifact', 'tool_result']);
+  assert.equal(completed.snapshot.parts[0].text, 'authoritative result'); assert.equal(completed.snapshot.parts[1].data.base64, 'AAEC/w==');
+  assert.equal(completed.snapshot.parts[2].is_error, false); assert.equal(journal.descriptor.output_refs.length, 2);
+  assert.equal(journal.adapter.terminalFingerprint.length, 64); assert.equal(journal.pending.length, 0);
+  assert.deepEqual(appends(f).flatMap(call => call.body.Events), journal.log);
+  const before = JSON.stringify(f.record()), effects = taskCalls(f).length;
+  assert.equal((await f.dispatch()).state, 'completed'); assert.equal(taskCalls(f).length, effects); assert.equal(JSON.stringify(f.record()), before);
+});
+test('lost authoritative GetTask receipt leaves send unknown and cold dispatch cannot send or read again', async t => {
+  const f = await setup(t, false, { mode: 'get-lost' }); assert.equal((await f.dispatch()).state, 'unknown');
+  await f.owner.eventDelivery.flush(); const original = f.record();
+  assert.equal(original.projection.state, 'working'); assert.equal(original.projection.pendingTerminal, 'completed');
+  assert.equal(original.managed.events.adapter.terminalFingerprint, undefined);
+  const before = taskCalls(f).length; assert.equal((await f.dispatch()).state, 'unknown'); assert.equal(taskCalls(f).length, before);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'SendMessage').length, 1);
+  assert.equal(f.calls.filter(call => call.wireMethod === 'GetTask').length, 1);
+});
+test('actual direct Message maps content without remote Task binding or fabricated GetTask', async t => {
+  const f = await setup(t, false, { directMessage: { messageId: 'direct', role: 'ROLE_AGENT', parts: [{ text: 'answer' }] } });
+  assert.equal((await f.dispatch()).state, 'completed'); await f.owner.eventDelivery.flush();
+  assert.deepEqual(f.calls.filter(call => call.wireMethod).map(call => call.wireMethod), ['SendMessage']);
+  assert.equal(f.record().managed.remote, undefined);
+  const events = f.record().managed.events.log;
+  assert.deepEqual(events.filter(event => event.item_kind === 'message').map(e => e.event_type), ['item.started', 'item.updated', 'item.completed']);
+  assert.equal(f.record().managed.events.descriptor.output_refs.length, 1);
+});

@@ -20,7 +20,7 @@ function textParts(parts) {
   // Retain the wire order, including positions occupied by non-text parts.
   return parts.map(part => own(part, 'text') && typeof part.text === 'string' ? part.text : null);
 }
-export function createA2AProjection(scopeId, checkpoint = null) {
+export function createA2AProjection(scopeId, checkpoint = null, { deferTerminal = false } = {}) {
   const state = checkpoint ? copy(checkpoint) : { scopeId, taskId: null, contextId: null, state: 'submitted',
     output_refs: [], snapshots: {}, item_kinds: {}, artifacts: {}, seen: {}, directMessage: false };
   invariant(state.scopeId === scopeId, 'A2A_CHECKPOINT_SCOPE_CONFLICT');
@@ -51,16 +51,18 @@ export function createA2AProjection(scopeId, checkpoint = null) {
     if (value.role !== undefined && value.role !== 'ROLE_AGENT') return;
     item('message', value.messageId, value.parts);
   }
-  function status(value) {
+  function status(value, authoritative = true) {
     invariant(object(value), 'A2A_STATUS_REQUIRED');
-    const next = a2aState(value.state);
+    let next = a2aState(value.state);
+    if (!authoritative && a2aTerminal.has(next) && !a2aTerminal.has(state.state)) { state.pendingTerminal = next; next = 'working'; }
+    else if (authoritative) delete state.pendingTerminal;
     invariant(!a2aTerminal.has(state.state) || state.state === next, 'A2A_TERMINAL_STATE_CONFLICT');
     state.state = next;
     if (['input_required', 'auth_required'].includes(next)) state.pause = value.message ? copy(value.message) : null;
     else delete state.pause;
     if (value.message) message(value.message);
   }
-  function task(value) {
+  function task(value, authoritative = true) {
     invariant(object(value) && Array.isArray(value.artifacts ?? []) && Array.isArray(value.history ?? []), 'A2A_TASK_INVALID');
     bind(value.id, value.contextId);
     const present = new Set((value.artifacts ?? []).map(artifact => `${scopeId}:${canonical(['artifact', artifact.artifactId])}`));
@@ -75,7 +77,7 @@ export function createA2AProjection(scopeId, checkpoint = null) {
       item('artifact', artifact.artifactId, artifact.parts);
     }
     for (const entry of value.history ?? []) message(entry);
-    status(value.status);
+    status(value.status, authoritative);
     invariant(Buffer.byteLength(canonical(state)) <= 8 * 1024 * 1024, 'A2A_CHECKPOINT_LIMIT');
   }
   function apply(payload, eventId = '') {
@@ -89,17 +91,17 @@ export function createA2AProjection(scopeId, checkpoint = null) {
     }
     const fields = ['task', 'message', 'statusUpdate', 'artifactUpdate'].filter(key => own(payload, key));
     invariant(fields.length === 1, 'A2A_WIRE_PAYLOAD_AMBIGUOUS');
-    if (fields[0] === 'task') task(payload.task);
+    if (fields[0] === 'task') task(payload.task, !deferTerminal);
     else if (fields[0] === 'message') {
       invariant(state.taskId === null && object(payload.message) && payload.message.role === 'ROLE_AGENT', 'A2A_DIRECT_MESSAGE_INVALID');
       invariant(!a2aTerminal.has(state.state) || state.state === 'completed', 'A2A_TERMINAL_STATE_CONFLICT');
       message(payload.message); state.directMessage = true; state.state = 'completed';
     }
-    else if (fields[0] === 'statusUpdate') { const update = payload.statusUpdate; bind(update.taskId, update.contextId); status(update.status); }
+    else if (fields[0] === 'statusUpdate') { const update = payload.statusUpdate; bind(update.taskId, update.contextId); status(update.status, !deferTerminal); }
     else {
       const update = payload.artifactUpdate; bind(update.taskId, update.contextId);
       invariant(object(update.artifact), 'A2A_ARTIFACT_REQUIRED');
-      item('artifact', update.artifact.artifactId, update.artifact.parts, update.append === true, update.lastChunk === true);
+      item('artifact', update.artifact.artifactId, update.artifact.parts, update.append === true, !deferTerminal && update.lastChunk === true);
     }
     invariant(Buffer.byteLength(canonical(state)) <= 8 * 1024 * 1024, 'A2A_CHECKPOINT_LIMIT');
   }

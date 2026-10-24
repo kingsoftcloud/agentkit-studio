@@ -144,7 +144,7 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
       invariant(record.projection.taskId || kind === 'get' && record.managed?.taskId, 'A2A_REMOTE_TASK_NOT_KNOWN');
       const cancelObservation = Object.values(record.controls).find(value => value.cancelReply
         && a2aTerminal.has(value.cancelReply.state))?.cancelReply;
-      let projection = createA2AProjection(record.request.scopeId, cancelObservation ?? record.projection);
+      let projection = createA2AProjection(record.request.scopeId, cancelObservation ?? record.projection, { deferTerminal: Boolean(record.managed) });
       const publish = () => {
         check(); record.projection = projection.snapshot();
         record.phase = a2aTerminal.has(record.projection.state) ? 'terminal' : paused(record.projection.state) ? 'paused' : 'unknown';
@@ -198,7 +198,8 @@ export function createA2ATaskControl({ binding, owner, checkOwner, assertControl
         // failed), without a distinct message ID. It is a new input opportunity.
         // Unknown sends never advance this generation and cannot be retried.
         const next = projection.snapshot(); next.pauseGeneration = (record.projection.pauseGeneration ?? 0) + 1;
-        projection = createA2AProjection(record.request.scopeId, next); publish();
+        projection = createA2AProjection(record.request.scopeId, next, { deferTerminal: Boolean(record.managed) }); publish();
+        if (record.managed && record.projection.taskId && !paused(record.projection.state)) await observe();
       } else {
         // A CancelTask reply alone is insufficient: confirm with GetTask.
         const task = await wire(record.request, 'CancelTask', { id: record.projection.taskId }, signal, false, check, commandId);

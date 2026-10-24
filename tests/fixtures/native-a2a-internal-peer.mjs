@@ -14,7 +14,8 @@ export const scope = { tenantId: 'local', workspaceId: 'workspace', userId: 'use
 export const token = (aud, serial) => [Buffer.from('{"alg":"fixture"}').toString('base64url'),
   Buffer.from(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 3600, serial })).toString('base64url'), 'c2ln'].join('.');
 export async function internalPeer({ protocol = 'JSONRPC', streaming = false, kind = 'hosted_gateway', mode = 'complete',
-  preparedStreaming = streaming, initialExisting = false, publicEgress = false, dsh = false } = {}) {
+  preparedStreaming = streaming, initialExisting = false, publicEgress = false, dsh = false,
+  initialTask, streamUpdates, directMessage } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-internal-'))), workspaceRoot = join(root, 'workspace'), tokenDirectory = join(root, 'tokens');
   mkdirSync(workspaceRoot); mkdirSync(tokenDirectory);
   const rotate = (aud, serial) => {
@@ -27,6 +28,7 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
   let task = { id: 'original-remote', contextId: 'original-context', status: { state: mode === 'pause' ? 'TASK_STATE_INPUT_REQUIRED'
     : mode === 'hold-stream' ? 'TASK_STATE_WORKING' : 'TASK_STATE_COMPLETED',
     ...(mode === 'pause' ? { message: { messageId: 'question', role: 'ROLE_AGENT', parts: [{ text: 'Please answer' }] } } : {}) } };
+  if (initialTask) task = structuredClone(initialTask);
   let recordDirectory = join(root, 'state');
   const records = () => {
     const directory = recordDirectory;
@@ -106,6 +108,7 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
       assert.equal(protocol === 'JSONRPC' ? params.id : decodeURIComponent(url.pathname.split('/').at(-1).replace(/:cancel$/u, '')), task.id);
       if (method === 'CancelTask') task = { ...task, status: { state: 'TASK_STATE_CANCELED' } };
       if (fault === 'malformed-get') { res.end('private-permit external-key external-query malformed JSON'); return; }
+      if (fault === 'get-lost') { res.destroy(); return; }
       if (hook) await hook(call, res);
       if (!res.destroyed && !res.writableEnded) res.end(JSON.stringify(wrap(task))); return;
     }
@@ -119,8 +122,13 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
     if (res.destroyed || res.writableEnded) return;
     if (fault === 'send-lost') { res.destroy(); return; }
     if (fault === 'invalid-task') task = { ...task, status: { state: 'INVALID_STATE' } };
+    if (directMessage) { res.end(JSON.stringify(wrap({ message: directMessage }))); return; }
     if (method === 'SendStreamingMessage') {
       res.setHeader('Content-Type', 'text/event-stream');
+      if (streamUpdates) {
+        for (const [index, payload] of streamUpdates.entries()) res.write(`id: frame-${index}\ndata: ${JSON.stringify(wrap(payload))}\n\n`);
+        res.end(); return;
+      }
       res.write('id: first\ndata: ' + JSON.stringify(wrap({ task: { ...task, status: { state: 'TASK_STATE_WORKING' } } })) + '\n\n');
       if (fault === 'hold-stream') {
         finishStream = () => res.end('id: late\ndata: ' + JSON.stringify(wrap({ statusUpdate: { taskId: task.id,
@@ -138,6 +146,7 @@ export async function internalPeer({ protocol = 'JSONRPC', streaming = false, ki
     finishStream: () => finishStream?.(),
     setRecordDirectory: value => { recordDirectory = value; },
     setMode: value => { fault = value; }, setHook: value => { hook = value; },
+    setTask: value => { task = structuredClone(value); },
     async close() { for (const owner of owners) owner.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
       rmSync(root, { recursive: true, force: true }); assert.deepEqual(errors, []); } };
 }

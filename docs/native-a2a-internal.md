@@ -134,12 +134,31 @@ does not cancel Host-owned projection delivery; Host shutdown attempts a
 bounded flush and retains unconfirmed batches. Native and DSH preset startup
 reopen pending delivery without starting a model turn or tool operation.
 
-The current producer covers lifecycle descriptors. The complete stateful
-remote artifact/message/tool-activity/interaction mapper, session-wide
-canonical event-store consumption, output references in these descriptors,
-delivery diagnostics in Studio UI, and custom Python outbox-path/backend
-configuration parity remain open. Do not infer complete canonical parity from
-this lifecycle stream. Subscriptions/automatic waiters and inbound registry/
+The producer also checkpoints ordinary remote messages and artifacts, including
+text, JSON values, typed tool calls/results, URL attachments and raw base64 files.
+Part identities survive append and cold restore. Producer event IDs and SSE IDs
+deduplicate identical facts and reject conflicting reuse; completed messages are
+immutable. Proto3 empty scalar/list defaults normalize before fingerprinting,
+while explicit empty messages, null Value contents and signed zero survive.
+
+An internal terminal notification and `lastChunk` remain provisional. Only an
+actual original `GetTask` observation authoritatively replaces/completes artifacts,
+removes stale provisional artifacts and closes the canonical content checkpoint.
+It also supplies completed text-part references to the lifecycle descriptor.
+A failed confirmation leaves the original effect unknown; cold dispatch never
+re-sends it or silently repeats the read. An explicitly authorized original-task
+inspection remains available. Direct Message responses need no invented task.
+
+Input/auth requests publish typed interaction/continuation facts, deduplicate
+their original message identity and resolve superseded structured requests.
+Typed approval declarations are validated and their previews bounded/redacted.
+Remote progress can resume a continuation but cannot decide an approval: that
+decision still belongs to the Host's durable interaction ledger.
+
+The public tool-activity extension, approval-decision event integration,
+session-wide canonical event-store consumption, delivery diagnostics in Studio
+UI, and custom outbox-path/backend configuration parity remain open. Do not infer
+complete canonical parity from the mapped subset. Subscriptions/automatic waiters and inbound registry/
 server assembly also still require implementation and acceptance.
 Online control-plane authentication and real human/browser acceptance are
 also unverified. See `native-migration-status.md` for the unchanged full goal.
