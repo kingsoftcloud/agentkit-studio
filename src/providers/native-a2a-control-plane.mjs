@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { canonical, copy, invariant, parseNativeJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { hostFetch } from '../http-fetch.mjs';
 import { A2A_EVENT_PERMANENT_ERRORS } from './native-a2a-events.mjs';
+import { parseA2aInboundSubmission } from './native-a2a-inbound-kernel.mjs';
 
 export const INTERNAL_A2A_CONTROL_PLANE = 'agentkit.a2a-internal-control-plane/v1';
 const prefix = '/agentengine/internal/v1/a2a/';
@@ -161,6 +162,21 @@ export function createInternalA2AControlPlane({ baseUrl, tokenProvider, fetchImp
     async bindRemoteTask(request) { return post('BindA2ARemoteTask', { A2ATaskId: a2aResourceId(request.taskId, 'task'),
       RemoteTaskId: string(request.remoteTaskId), ...(request.remoteContextId ? { RemoteContextId: string(request.remoteContextId) } : {}),
       ObservedAt: string(request.observedAt) }, request); },
+    async submitInboundMessage(request) {
+      invariant(object(request.message) && (request.continuation === undefined || object(request.continuation)),
+        'A2A_CONTROL_PLANE_INBOUND_INVALID');
+      return parseA2aInboundSubmission(await post('SubmitA2AInboundMessage', {
+        A2ATaskId: a2aResourceId(request.platformTaskId, 'task'), TargetVersionId: a2aResourceId(request.targetVersionId, 'version'),
+        RemoteTaskId: string(request.remoteTaskId), RemoteContextId: string(request.remoteContextId), Message: copy(request.message),
+        ...(request.continuation === undefined ? {} : { Continuation: copy(request.continuation) }),
+      }, request));
+    },
+    async cancelInboundTask(request) {
+      return parseA2aInboundSubmission(await post('CancelA2AInboundTask', {
+        A2ATaskId: a2aResourceId(request.platformTaskId, 'task'), TargetVersionId: a2aResourceId(request.targetVersionId, 'version'),
+        RemoteTaskId: string(request.remoteTaskId), RemoteContextId: string(request.remoteContextId), RunId: string(request.runId),
+      }, request));
+    },
     async appendTaskEvents(request) { invariant(Array.isArray(request.events) && request.events.length <= 100, 'A2A_CONTROL_PLANE_EVENTS_INVALID');
       return post('AppendA2ATaskEvents', { A2ATaskId: a2aResourceId(request.taskId, 'task'), Events: copy(request.events) }, request); },
     async resolveCredential(request) {

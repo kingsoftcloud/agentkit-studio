@@ -44,6 +44,11 @@ canonical 生命周期、普通消息/文件/数据/类型化工具内容和输�
 SIGKILL 后不自动重连；长期自动订阅的全部消费者、入站注册/服务及线上认证仍未闭环，见
 [内部 A2A](native-a2a-internal.md)和[自动问答](native-a2a-question-waits.md)。
 
+入站现已补充 Gateway RS256 请求/目标绑定、Server 接收与取消 Action、原消息持久准入
+日志和 Session/command/Run 事实归属过滤，并有真实签名、HTTP、SQLite 和独立进程
+SIGKILL 专项证据。尚未挂载完整协议路由，也未把 Server 命令接收和 Session 事件存储
+接到 Node Native 执行器；这部分仍有实际组装工作，见[入站基础层](native-a2a-inbound.md)。
+
 近期已接入 Node 的模型工具还包括 Browser、Skill 发现/安装/绑定，以及
 `search_knowledge_base`。知识库保留完整查询、来源与答案，Native 使用实际意图和
 执行 fence，DSH/Codex 使用原 Agent/Session/call 的独立持久记录。定向测试和真实

@@ -179,7 +179,10 @@ for the contract, SIGKILL boundaries and actual renderer evidence.
 
 Approval-decision event integration, dedicated delivery-failure diagnostics in
 Studio UI, and custom outbox-path/backend configuration parity remain open. Do not infer
-complete canonical parity from the mapped subset. Subscriptions/automatic waiters and inbound registry/
-server assembly also still require implementation and acceptance.
+complete canonical parity from the mapped subset. Indefinite/persisted subscription consumers and inbound registry/
+server assembly still require implementation and acceptance. The inbound signature, durable Server
+admission and Session-fact ownership foundations now exist; they do not mount a complete
+inbound protocol server or substitute a local Run for a Server command. See
+[inbound boundaries](native-a2a-inbound.md) for their contracts and remaining composition work.
 Online control-plane authentication and real human/browser acceptance are
 also unverified. See `native-migration-status.md` for the unchanged full goal.
