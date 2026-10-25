@@ -446,7 +446,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     if (result.status === 'ok' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
       const prior = updated.context.observedSourceDigests;
       const observed: ObjectValue = prior && typeof prior === 'object' && !Array.isArray(prior) ? copy(prior) : {};
-      const key = digest({ name: call.name, arguments: call.arguments }), value = digest({ content: result.content, artifacts: result.artifactRefs ?? [] });
+      const key = digest({ name: call.name, arguments: call.arguments }), value = config.artifactPolicy === 'runtime-artifacts/v1'
+        && result.artifactObservationDigest ? result.artifactObservationDigest : digest({ content: result.content, artifacts: result.artifactRefs ?? [] });
       if (observed[key] !== value) {
         observed[key] = value;
         if (Object.keys(observed).length > 128) delete observed[Object.keys(observed)[0]!];

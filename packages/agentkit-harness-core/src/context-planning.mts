@@ -5,6 +5,7 @@ import { contextSourceDigest, validateContextMessages } from './context-view.mjs
 import { assertHookFeedbackRetained } from './hook-runtime.mjs';
 import { retryDelay } from './retry.mjs';
 import { deliveryReviewMessages, reviewPending } from './delivery-review.mjs';
+import { artifactProgressIdentity } from './artifact-runtime.mjs';
 
 export interface ContextCounters {
   countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number): Promise<number>;
@@ -34,7 +35,11 @@ export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguratio
   return copy({ schemaVersion: 'agentkit.native-context-continuity/v1', authority: 'host_record', goal: snapshot.goal,
     goalRevision: snapshot.goalRevision, contract: config.contract, usage: snapshot.usage, descendantUsage: snapshot.descendantUsage,
     limits: config.limits, workspaceRevision: snapshot.workspaceRevision, workspaceModifiedPaths: snapshot.workspaceModifiedPaths,
-    artifactRefs: snapshot.artifactRefs, pendingInteraction: snapshot.pendingInteraction,
+    artifactRefs: config.artifactPolicy === 'runtime-artifacts/v1' ? snapshot.artifactRefs.slice(-8)
+      .map(({ uri, digest, mediaType, sizeBytes }) => ({ uri, digest, mediaType, sizeBytes })) : snapshot.artifactRefs,
+    ...(config.artifactPolicy === 'runtime-artifacts/v1' ? { artifactCatalog: { total: snapshot.artifactRefs.length,
+      omitted: Math.max(0, snapshot.artifactRefs.length - 8), tool: 'ArtifactList' } } : {}),
+    pendingInteraction: snapshot.pendingInteraction,
     childBudgetReservations: snapshot.childBudgetReservations ?? [], childRunIds: snapshot.childRunIds ?? [],
     childApproval: snapshot.childApproval ?? null,
     children: snapshot.children.map(child => ({ runId: child.runId, state: child.state, notified: child.notified })),
@@ -220,7 +225,8 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   const result = (action: ContextPlanningResult['action'], reason: string, messages: Message[] = [], admission: ContextAdmission | null = null): ContextPlanningResult =>
     copy({ action, reason, state, messages, admission });
   const progress = digest({ goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision,
-    workspaceModifiedPaths: snapshot.workspaceModifiedPaths, artifactRefs: snapshot.artifactRefs,
+    workspaceModifiedPaths: snapshot.workspaceModifiedPaths,
+    artifactRefs: config.artifactPolicy === 'runtime-artifacts/v1' ? artifactProgressIdentity(snapshot.artifactRefs) : snapshot.artifactRefs,
     observedSourceRevision: snapshot.context.observedSourceRevision ?? 0 });
   if (progress !== state.progressDigest) { state.progressDigest = progress; state.compactionsWithoutProgress = 0; }
   let compaction = state.compaction;

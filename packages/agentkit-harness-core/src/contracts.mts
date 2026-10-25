@@ -52,6 +52,8 @@ export interface ToolDefinition {
   delegatedReadOnly?: boolean; deliveryWrite?: boolean;
   deliveryArtifactRole?: 'none' | 'read' | 'write';
   exactContentPolicy?: 'current-goal-utf8/v1' | 'complete-write-only/v1';
+  /** Archive the model-visible observation even when it fits inline. */
+  resultArchivePolicy?: 'archived-model-view/v4';
   /** safe-read permits a fresh repeatable read; receipt-observation waits for a
    * separately persisted lookup of the original effect and never re-executes it. */
   recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1';
@@ -160,6 +162,7 @@ export interface ContextSourceDefinition {
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
 }
 export interface RunConfiguration {
+  artifactPolicy?: 'runtime-artifacts/v1' | null;
   wallDeliveryPolicy?: 'deadline-delivery/v1' | 'deadline-delivery/v2' | 'deadline-delivery/v3'
     | 'deadline-delivery/v4' | 'deadline-delivery/v5' | 'deadline-delivery/v6' | 'deadline-delivery/v7' | null;
   engine: typeof NATIVE_ENGINE; profile: ModelProfile; limits: RunLimits; tools: ToolDefinition[];
@@ -211,6 +214,8 @@ export interface ToolResult {
   /** Deferred until every call in the model's tool batch has a result. */
   additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
+  /** Kernel-derived observation identity excludes freshly minted archive locators. */
+  artifactObservationDigest?: string;
   resourceUsage?: Usage; childRunIds?: string[]; metadata?: ObjectValue;
   /** Paired with resourceUsage. False means these are only the known counters;
    * zero never implies that an unreported nested model request was free. */

@@ -3,6 +3,7 @@ import type { CommitBatch, EffectIntent, EffectReceipt, Lease, Message, ModelReq
   RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
   HookInvocation, HookInvocationResult, ContextPlanningResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
+import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
@@ -770,7 +771,9 @@ export class NativeKernel {
       case 'tool_receipt': {
         invariant(this.ports.tools.observeReceipt, 'tool_receipt_port_missing');
         const request = toolReceiptRequest(context, this.store.load(snapshot.scope, snapshot.runId), intent);
-        return this.ports.tools.observeReceipt(request);
+        const observation = await this.ports.tools.observeReceipt(request);
+        return observation.result === null ? observation : { ...observation, result: await governArtifactResult({ ...context,
+          operationKey: request.originalOperationKey }, request.definition, observation.result, configuration, this.ports.artifacts) };
       }
       case 'child': {
         invariant(this.ports.children, 'child_owner_unavailable');
@@ -830,13 +833,16 @@ export class NativeKernel {
           });
           try {
             toolSignal.throwIfAborted();
-            const result = await Promise.race([this.ports.tools.execute({ ...context, signal: toolSignal,
+            const request = { ...context, signal: toolSignal,
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
-              interaction: intent.payload.interaction as ObjectValue | null }), aborted]);
+              interaction: intent.payload.interaction as ObjectValue | null };
+            const result = await Promise.race([configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
+              ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts)
+              : this.ports.tools.execute(request), aborted]);
             toolSignal.throwIfAborted();
             invariant(this.monotonicNow() - started < definition.timeoutMs, 'tool_timeout');
-            return result;
+            return await governArtifactResult(request, definition, result, configuration, this.ports.artifacts);
           } catch {
             // A thrown/late tool result cannot establish whether its external mutation happened.
             return { status: 'uncertain' as const, content: { code: 'tool_outcome_unknown' } };

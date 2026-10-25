@@ -6,6 +6,7 @@ import { compileToolInput } from './tool-input.mjs';
 import { validateHookDefinition } from './hook-contract.mjs';
 import { validateContextSource } from './context-contributions.mjs';
 import { normalizeDeliveryReviewPolicy, REVIEW_SUBMISSION_TOOL } from './delivery-review.mjs';
+import { validateArtifactConfiguration } from './artifact-runtime.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -16,6 +17,7 @@ export interface ConfigurationInput {
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   guidancePolicy?: RunConfiguration['guidancePolicy'];
   wallDeliveryPolicy?: RunConfiguration['wallDeliveryPolicy'];
+  artifactPolicy?: RunConfiguration['artifactPolicy'];
   outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
@@ -53,6 +55,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     inputMessages: input.inputMessages ?? null,
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
     ...(input.wallDeliveryPolicy === undefined ? {} : { wallDeliveryPolicy: input.wallDeliveryPolicy }),
+    ...(input.artifactPolicy === undefined ? {} : { artifactPolicy: input.artifactPolicy }),
     ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
@@ -73,6 +76,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       finalSubmissionSchema: null, finalSubmissionPayloadKey: null, finalOutputFormat: 'text', ...input.contract },
   };
   canonical(config);
+  validateArtifactConfiguration(config);
   invariant(config.hostRecoveryBinding === undefined || config.hostRecoveryBinding !== null
     && typeof config.hostRecoveryBinding === 'object' && !Array.isArray(config.hostRecoveryBinding), 'invalid_host_recovery_binding');
   invariant(config.guidancePolicy == null || config.guidancePolicy === 'boundary-guide/v1', 'invalid_guidance_policy');
@@ -152,6 +156,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
     invariant(tool.deliveryWrite === undefined || typeof tool.deliveryWrite === 'boolean', 'invalid_delivery_writer');
     invariant(tool.deliveryArtifactRole === undefined || ['none', 'read', 'write'].includes(tool.deliveryArtifactRole), 'invalid_delivery_artifact_role');
+    invariant(tool.resultArchivePolicy === undefined || tool.resultArchivePolicy === 'archived-model-view/v4', 'invalid_result_archive_policy');
     invariant(tool.childBudgetPolicy === undefined || ['start/v1', 'settle/v1', 'delegate/v1'].includes(tool.childBudgetPolicy), 'invalid_child_budget_policy');
     invariant(!tool.childBudgetPolicy || !tool.concurrentSafe, 'invalid_child_budget_concurrency');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');
