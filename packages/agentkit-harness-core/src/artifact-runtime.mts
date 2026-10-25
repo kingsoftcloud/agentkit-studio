@@ -6,6 +6,7 @@ import { artifactSearchSource } from './artifact-search-source.mjs';
 import { CAPTURED_SOURCE_MEDIA_TYPE, encodeCapturedSource } from './captured-source.mjs';
 import { workspaceSourceModelReply, archivedSourceObservation } from './workspace-source-model.mjs';
 import { parseNativeJson } from './model-json.mjs';
+import { scopedArtifactSearch } from './scoped-artifact-search.mjs';
 
 export const RUNTIME_ARTIFACT_POLICY = 'runtime-artifacts/v1' as const;
 export const ARTIFACT_RESULT_MEDIA_TYPE = 'application/vnd.agentkit.tool-result+json';
@@ -185,9 +186,15 @@ async function readPage(port: ArtifactPort, context: PortContext, ref: ArtifactR
 }
 
 /** Inventory authority comes solely from the committed snapshot; a storage search cannot grant references. */
+export interface ArtifactToolCapacity {
+  budget?: SourceReadBudget;
+  countText(text: string): Promise<number>;
+  resultMessageUnits?: number;
+  countResult?(result: ToolResult): Promise<number>;
+}
 export async function executeArtifactTool(context: PortContext, call: ToolCall, snapshot: RunSnapshot,
   config: RunConfiguration, artifacts?: ArtifactPort,
-  capacity?: { budget: SourceReadBudget; countText(text: string): Promise<number> }): Promise<ToolResult> {
+  capacity?: ArtifactToolCapacity): Promise<ToolResult> {
   invariant(config.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name), 'artifact_tool_not_bound');
   const maximum = config.limits.maxToolResultBytes, args = call.arguments;
   if (call.name === 'ArtifactList') {
@@ -208,16 +215,18 @@ export async function executeArtifactTool(context: PortContext, call: ToolCall, 
   try {
     if (call.name === 'ArtifactRead') {
       const ref = refs[0]!, offset = numberArg(args, 'offset_chars', 0), limit = numberArg(args, 'limit_chars', 16000);
-      if (config.sourceReadPolicy === 'studio-source-read/v1' && (!capacity
+      if (config.sourceReadPolicy === 'studio-source-read/v1' && (!capacity?.budget
         || capacity.budget.counterId !== config.contextPolicy?.tokenizerId
         || capacity.budget.tokenizerDigest !== config.contextPolicy.tokenizerDigest
         || capacity.budget.maxResultBytes !== maximum)) return failure('artifact_page_budget_unavailable');
       const fits = async (result: ToolResult, text: string): Promise<boolean> => {
         if (encodedSize(result) > maximum) return false;
-        if (!capacity) return true;
+        if (!capacity?.budget) return true;
         const sourceUnits = await capacity.countText(text), resultUnits = await capacity.countText(canonical(canonical(result.content)));
         invariant([sourceUnits, resultUnits].every(value => Number.isSafeInteger(value) && value > 0), 'artifact_page_counter_invalid');
-        return sourceUnits <= capacity.budget.maxSourceUnits && resultUnits <= capacity.budget.maxResultUnits;
+        if (sourceUnits > capacity.budget.maxSourceUnits || resultUnits > capacity.budget.maxResultUnits) return false;
+        return capacity.resultMessageUnits === undefined || !!capacity.countResult
+          && await capacity.countResult(result) <= capacity.resultMessageUnits;
       };
       if (!await fits(ok({ uri: ref.uri, offset_chars: offset, returned_chars: 0, content: '', next_offset: offset,
         result_truncated: false }), '')) return failure('artifact_page_budget_unavailable');
@@ -235,6 +244,12 @@ export async function executeArtifactTool(context: PortContext, call: ToolCall, 
       }
       if (chars.length && !low) return failure('artifact_page_budget_unavailable');
       return build(low);
+    }
+    if (config.sourceReadPolicy === 'studio-source-read/v1') {
+      if (!capacity?.countResult || !Number.isSafeInteger(capacity.resultMessageUnits) || capacity.resultMessageUnits! <= 0)
+        return failure('artifact_search_capacity_unavailable');
+      return scopedArtifactSearch(args, refs as ArtifactRef[], (ref, offset, limit) => readPage(artifacts, context, ref, offset, limit),
+        sha256, async result => encodedSize(result) <= maximum && await capacity.countResult!(result) <= capacity.resultMessageUnits!, context.signal);
     }
     const query = String(args.query), maxMatches = numberArg(args, 'max_matches', 8), margin = numberArg(args, 'context_chars', 80);
     const matches: Json[] = []; let complete = true, scanned = 0;

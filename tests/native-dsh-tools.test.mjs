@@ -245,13 +245,16 @@ for (const redact of [false, true]) test(`${protocol}: source capture uses alrea
     }
     const search = parseNativeJson(request.messages.find(message => message.name === 'ArtifactSearch').content);
     assert.equal(search.complete, true);
-    if (redact) assert.deepEqual(search.matches, []);
-    else { assert.equal(search.matches[0].source_line, 60); assert.equal(search.matches[0].source_path, 'source.txt'); }
+    assert.equal(search.observation_type, 'scoped-artifact-search/v1'); assert.equal(search.results.length, 1);
+    assert.equal(search.results[0].uri, visible.artifact_uri);
+    if (redact) assert.deepEqual(search.results[0].matches, []);
+    else { assert.equal(search.results[0].matches[0].source_line, 60); assert.equal(search.results[0].source_path, 'source.txt'); }
     const page = parseNativeJson(request.messages.find(message => message.name === 'ArtifactRead').content);
     assert.equal(page.uri, visible.artifact_uri); assert.ok(page.returned_chars > 0); assert.ok(page.next_offset > 0);
     return { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() };
   } } } });
-  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run'); assert.equal(end.phase, 'completed');
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run'); assert.equal(end.phase, 'completed',
+    canonical({ reason: end.reason, artifacts: end.messages.filter(message => ['ArtifactSearch', 'ArtifactRead'].includes(message.name)) }));
   assert.equal(h.calls.length, 1, 'reserved tools bypass DSH registry and source is not read again');
   assert.equal(end.artifactRefs.length, 1); const ref = end.artifactRefs[0];
   const archived = await artifacts.read({ ...h.request(), ref, offset: 0, limit: 32000 });

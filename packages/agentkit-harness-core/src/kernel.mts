@@ -11,6 +11,7 @@ import { addUsage, advertisedTools, modelRoom, objectValue, plan, reduceModel, r
 import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { prepareSourceReadQuote, sourceReadBudgetFor, SOURCE_READ_POLICY } from './source-read-budget.mjs';
+import { quoteArtifactRequestCapacity, selectArtifactRequestResults } from './artifact-request-capacity.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { effectiveRunConfiguration } from './task-contract.mjs';
 import { prepareToolReceipt, reduceToolReceipt, toolReceiptRequest, waitingToolReceipt } from './tool-receipt.mjs';
@@ -827,6 +828,8 @@ export class NativeKernel {
       }
       case 'tool': {
         const calls = intent.payload.calls as unknown as ToolCall[];
+        const artifactCapacity = calls.every(call => call.name === 'ArtifactRead' || call.name === 'ArtifactSearch')
+          ? await quoteArtifactRequestCapacity(context, snapshot, configuration, intent, this.ports.context?.tokens, this.digest) : null;
         const results = await Promise.all(calls.map(async call => {
           const definition = configuration.tools.find(tool => tool.name === call.name);
           invariant(definition, 'unbound_tool');
@@ -855,10 +858,13 @@ export class NativeKernel {
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
             const result = await Promise.race([configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
-              ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts, sourceReadBudget && this.ports.context?.tokens
-                && this.ports.context.tokens.tokenizerId === sourceReadBudget.counterId
-                && this.ports.context.tokens.tokenizerDigest === sourceReadBudget.tokenizerDigest
-                ? { budget: sourceReadBudget, countText: text => this.ports.context!.tokens!.countText({ ...request, text }) } : undefined)
+              ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts, this.ports.context?.tokens
+                && (!sourceReadBudget || this.ports.context.tokens.tokenizerId === sourceReadBudget.counterId
+                  && this.ports.context.tokens.tokenizerDigest === sourceReadBudget.tokenizerDigest)
+                ? { ...(sourceReadBudget ? { budget: sourceReadBudget } : {}),
+                  countText: text => this.ports.context!.tokens!.countText({ ...request, text }),
+                  ...(artifactCapacity ? { resultMessageUnits: artifactCapacity.resultMessageUnits,
+                    countResult: result => artifactCapacity.countResult(call, result) } : {}) } : undefined)
               : this.ports.tools.execute(request), aborted]);
             toolSignal.throwIfAborted();
             invariant(this.monotonicNow() - started < definition.timeoutMs, 'tool_timeout');
@@ -868,7 +874,12 @@ export class NativeKernel {
             return { status: 'uncertain' as const, content: { code: 'tool_outcome_unknown' } };
           } finally { clearTimeout(timer); toolSignal.removeEventListener('abort', onAbort); }
         }));
-        return { results };
+        if (!artifactCapacity) return { results };
+        const selected = await selectArtifactRequestResults(artifactCapacity, calls, results, this.digest);
+        if (selected === results) return { results };
+        return { results: await Promise.all(selected.map((result, index) => result === results[index] ? result
+          : governArtifactResult(context, configuration.tools.find(tool => tool.name === calls[index]!.name)!, result,
+            configuration, this.ports.artifacts))) };
       }
       case 'input':
         invariant(this.ports.input && Number.isSafeInteger(intent.payload.step) && Number(intent.payload.step) > 1, 'input_port_missing');
