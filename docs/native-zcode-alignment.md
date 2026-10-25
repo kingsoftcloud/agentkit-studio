@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **24/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **26/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,7 +53,10 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5–M6 have no earned points yet. The denominator is unchanged; remaining session
+M5 2/15 covers durable file preimages on the admitted writer path (one point)
+and receipt-backed preview/authorized file-only rewind across a cold Studio Host
+(one point). This does not certify full recovery/undo, conversation branching or
+cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
 
@@ -71,7 +74,7 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | core `edit-matchers.mts`, `patch-{parser,apply}.mts`, Node workspace ports/workers, Host source/directory projections and mutation lock | Reference matching and structured patches pass actual packed Studio continuation, Native-local catalog authoring and frozen-Build admission. Native read-state, individual-file publication and unknown-effect guards remain. Creation-via-Edit, large/legacy-encoded files, undo, hook aliases and remaining read/write policy comparisons are pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Creation-via-Edit, large/legacy-encoded files, conversation rewind/fork, partial-restore reconciliation, hook aliases and remaining read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
@@ -1040,9 +1043,116 @@ successful isolated patch results. The verifier's previous no-Build assertion
 was updated to compare the actual frozen Build ID rather than removing the
 recovery check. No full repository suite ran.
 
+### Durable file-only rewind through the actual Studio Host
+
+Reference review covers `src/runtime/helpers/rewind.ts` and
+`methods/{tools,file-rewind,workspace-checkpoint-persistence,workspace-fork,rewind}.ts`.
+The file-summary path builds a reverse plan, checks hashes and compensates partial
+restore errors. Legacy checkpoint restore does not have the same hash guard.
+The automatic scalar `filePath/originalFile/structuredPatch` candidate does not
+accept aggregate ApplyPatch output. Native's journal/ledger adapter is an
+independent implementation with behavioral source attribution.
+
+Admitted Native writers freeze `workspaceCheckpointPolicy: file-preimages/v1`.
+Before publication, a private SQLite journal durably records original bytes,
+absence or an empty directory, planned afterimages, canonical paths and original
+execution bindings. Success verifies actual bytes/modes and returns a checkpoint
+ID. Existing Runs without this policy retain their frozen absence on restore;
+the legacy DSH Native workspace inventory is unchanged.
+
+The explicitly bound Native tools `list_workspace_checkpoints`,
+`preview_workspace_rewind` and `rewind_workspace_files` enter the local catalog,
+authenticated Agent creation, frozen Build, child workspace and portable paths.
+List returns metadata, not saved contents. Preview joins target/subsequent active
+checkpoints with original Native intents and committed results at the matching
+call index. A local journal or model claim alone cannot authorize restoration.
+It simulates reverse changes and checks current bytes, mode and canonical paths.
+Apply requires the exact preview token, passes ordinary write/delete approval
+and Plan restrictions, recomputes under the existing mutation lock, and retains
+cancel/fence checks around journal I/O and publication. Original tools are never
+rerun. Portable bundles binding a rewind tool use v4; v1/v2/v3 inventories remain
+frozen, including refusal of recomputed downgraded manifests.
+
+Supported cases include move endpoints, deleted binary preimages, CRLF/mode
+preservation and empty-directory/file transitions. A successful rewind has its
+own reversible checkpoint. Prepared/uncommitted effects block rewind. Known
+no-effect failures can retry; any post-publication failure remains uncertain and
+retains changed paths. An external edit, including during approval, invalidates
+the preview. These behaviors do not create another execution loop.
+
+Remaining differences stay in the original objective:
+
+- This is file-only rewind. Conversation branch cuts/fork, user-facing rewind
+  controls and combined conversation/workspace restore remain pending.
+  Shell/external effects and implicit parent-directory creation are not covered.
+- Checkpoints accept regular files up to 2 MiB, empty directories and absence,
+  at most 100 paths/16 MiB of before/after bytes per operation. Oversized outputs
+  are refused before writing. Large/legacy-encoded file parity remains pending.
+  List returns the latest 50 metadata rows; the initial journal still loads
+  session history for admission/planning. Large-history memory/latency needs
+  optimization and acceptance.
+- Native does not write automatic compensation after losing execution ownership
+  or cancellation authority. Partial-restore reconciliation and compensation
+  while authority remains valid are unfinished; uncertain-effect blocking is
+  not their replacement. No cross-file atomicity or OS-level compare-and-swap
+  against external editors is claimed.
+- No runtime dependency, Python process or extra model call was added. An
+  eight-sample local 1-KiB fresh-file writer microbenchmark on Node v26.5.0
+  measured median 6.566 ms without checkpoints and 12.029 ms with checkpoints.
+  This approximate local-port overhead excludes model/network and proves no
+  whole-task speed or Token saving. Report: `/tmp/native-rewind-cost.json`.
+
+The final rewind group passes eleven cases: cold committed restoration, external
+conflicts, directory/file transitions and inverse, uncommitted-receipt refusal,
+legacy frozen absence, real post-publication persistence failure, approval-time
+conflict, Plan refusal, oversized output refusal, original-operation replay
+refusal across fence transfer and mode drift before checkpoint completion. The preceding affected
+workspace/DSH regression passed 141 cases with one optional Node-22-binary case
+skipped because that binary is absent. After the final guard/type-transition
+changes the eleven-case rewind group passed again. Portable checks passed 19 cases,
+the affected Host child-read/instruction group three cases, and contracts passed.
+No full repository suite ran.
+
+```sh
+node --test packages/agentkit-harness/test/native-workspace-rewind.test.mjs
+node --test packages/agentkit-harness/test/native-workspace*.test.mjs tests/dsh-node-workspace-tools.test.mjs
+node --test tests/portable-bundle.test.mjs tests/native-tool-catalog.test.mjs
+node --test --test-name-pattern='child reads|structured patch receipts|scoped instructions' tests/native-dsh-tools.test.mjs
+pnpm check:contracts
+node scripts/check-portability.mjs
+pnpm pack --pack-destination /tmp/agentkit-native-rewind-final-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-rewind-final-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --continue-child --history --structured-patch --workspace-rewind --keep
+```
+
+Final pack log: `/tmp/native-rewind-final-pack.log`; Host proof:
+`/tmp/native-rewind-final-sdk.log`; evidence directory:
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-jwZhIe`.
+`structured-patch-proof.json` records two real Host PIDs (58385/58421), eight
+parent/seven child model requests, two patches/six file changes, two reads, one
+actual rewind across two cold-Host checkpoints, original child bytes restored
+and parent workspace unchanged. The authored Build survives both recovery
+bindings. Preview/read run concurrently so the second child stays within the
+existing four-model/four-tool budget. Node-only PATH excludes Python. Controlled
+model responses prove execution behavior, not live-model coding quality parity.
+
+A real Claude Code read-only review reached its initial invocation budget;
+resuming the same session without tools produced a report with explicitly
+incomplete coverage. Main-agent verification rejected its deletion-tracking
+finding: `remove()` already stages and tracks each deletion. The mode-completion
+finding was addressed by validating intended restore/preserved modes. Intent
+keys are unique in the Native store, so a hypothetical duplicate-intent finding
+does not establish a bug. The verifier now also checks the original intent's
+claimed fence and frozen turn, while operation deduplication deliberately ignores
+fence transfer. Prepared/orphaned effects and partial-restore recovery remain
+real unfinished scope; changing their label is not recovery. Review outputs:
+`/tmp/native-rewind-claude-review.json` and `/tmp/native-rewind-claude-report.json`.
+This is supporting review, not a complete independent certification.
+
+Portability passed for 1,625 tracked files (`/tmp/native-rewind-final-portability.log`).
+
 ## Local evidence and comparison protocol
 
-Next source audit: file rewind. A real Claude Code read-only invocation reached
+The initial file-rewind audit used a real Claude Code read-only invocation that reached
 its six-turn limit; resuming it with tools disabled produced a report explicitly
 marking incomplete Native coverage. The main-agent cross-check read
 `runtime/helpers/rewind.ts`, `methods/{tools,file-rewind,workspace-fork,rewind,workspace-checkpoints}.ts`
@@ -1055,9 +1165,10 @@ The reviewed automatic checkpoint candidate accepts a scalar `filePath`,
 `originalFile` and `structuredPatch`; the aggregate ApplyPatch output does not
 meet that shape. Full reference undo coverage must not be inferred from an
 interface or handler name. Native's read-state hashes and child publication
-receipts alone do not establish a parent file-undo feature. The next integrated
-batch must join durable preimages, preview/conflict checks, authorized apply and
-cold recovery; an unused snapshot module alone will not certify rewind parity.
+receipts alone do not establish a parent file-undo feature. The integrated batch
+above joins durable preimages, preview/conflict checks, authorized apply and cold
+recovery. Full rewind parity remains unfinished; an unused snapshot module alone
+would not certify it.
 Audit logs: `/tmp/agentkit-native-zcode-undo-claude.json` and
 `/tmp/agentkit-native-zcode-undo-claude-report.json`. This research adds no earned
 milestone point and is not runtime acceptance evidence.

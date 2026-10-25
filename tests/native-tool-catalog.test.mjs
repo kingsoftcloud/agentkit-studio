@@ -14,9 +14,9 @@ test('Native catalog merges all legacy pages before paging and keeps the local w
   const query = { kind: 'tool', runtimeType: 'harness', limit: 1 };
   const rows = []; let cursor;
   do { const page = await listStudioTools({ query: { ...query, cursor }, serverClient });
-    assert.equal(page.items.length, 1); assert.equal(page.total, 3); rows.push(...page.items); cursor = page.nextCursor;
+    assert.equal(page.items.length, 1); assert.equal(page.total, 6); rows.push(...page.items); cursor = page.nextCursor;
   } while (cursor);
-  assert.deepEqual(rows.map(row => row.resourceId), ['apply_workspace_patch', 'first', 'second']);
+  assert.deepEqual(rows.map(row => row.resourceId), ['apply_workspace_patch', 'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files', 'first', 'second']);
   assert.equal(rows[0].contract.executor, 'builtin');
   assert.deepEqual(rows[0].contract.inputSchema, workspacePatchDefinition().parameters);
   assert.ok(calls.every(call => call.limit === 200));

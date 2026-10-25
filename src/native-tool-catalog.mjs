@@ -1,23 +1,23 @@
 /** Native-owned additions to the legacy tool catalog. Catalog rows describe
  * capabilities; execution still requires an explicitly bound Native Build. */
-import { workspacePatchDefinition } from '../packages/agentkit-harness/src/native/workspace-tools.mjs';
+import { workspacePatchDefinition, workspaceRewindDefinitions } from '../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { paginateResources } from './resource-catalog.mjs';
 
 export function nativeLocalToolContract(name) {
-  const definition = workspacePatchDefinition();
-  if (name !== definition.name) return undefined;
+  const definition = [workspacePatchDefinition(), ...workspaceRewindDefinitions()].find(tool => tool.name === name);
+  if (!definition) return undefined;
   return { resourceId: name, name, description: definition.description,
     parameters: definition.parameters, executor: 'builtin', enabled: true,
-    timeoutSeconds: definition.timeoutMs / 1000, sideEffect: 'workspace', permissions: definition.permissions };
+    timeoutSeconds: definition.timeoutMs / 1000, sideEffect: definition.readOnly ? 'none' : 'workspace', permissions: definition.permissions };
 }
 
 export function nativeLocalToolResources() {
-  const contract = nativeLocalToolContract('apply_workspace_patch');
-  const { parameters, ...metadata } = contract;
-  return [{ resourceId: contract.resourceId, name: contract.name,
-    displayName: '结构化文件补丁 · Native', description: contract.description,
-    kind: 'tool', source: 'studio-native', status: 'available',
-    contract: { ...metadata, inputSchema: parameters } }];
+  return [workspacePatchDefinition(), ...workspaceRewindDefinitions()].map(tool => {
+    const contract = nativeLocalToolContract(tool.name), { parameters, ...metadata } = contract;
+    return { resourceId: contract.resourceId, name: contract.name,
+      displayName: tool.name === 'apply_workspace_patch' ? '结构化文件补丁 · Native' : `${tool.name} · Native`, description: contract.description,
+      kind: 'tool', source: 'studio-native', status: 'available', contract: { ...metadata, inputSchema: parameters } };
+  });
 }
 
 /** Merge before pagination, as for the other Studio local/cloud catalogs.

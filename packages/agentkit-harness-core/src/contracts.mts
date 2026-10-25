@@ -65,6 +65,7 @@ export interface ToolDefinition {
   planModeCommandPolicy?: 'zcode-posix-readonly/v1';
   workspaceEditPolicy?: 'zcode-match/v1';
   workspacePatchPolicy?: 'zcode-patch/v1';
+  workspaceCheckpointPolicy?: 'file-preimages/v1';
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';

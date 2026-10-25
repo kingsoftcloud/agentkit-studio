@@ -17,6 +17,8 @@ import { NATIVE_NODE_BUILTIN_NAMES } from './providers/dsh-node-builtin-catalog.
 export const PORTABLE_NATIVE_BUILTIN_CONTRACT = 'agentkit.portable-native-builtin/v1';
 export const PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT = 'agentkit.portable-native-builtin/v2';
 export const PORTABLE_NATIVE_PATCH_CONTRACT = 'agentkit.portable-native-builtin/v3';
+export const PORTABLE_NATIVE_REWIND_CONTRACT = 'agentkit.portable-native-builtin/v4';
+const rewindTools = ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'];
 
 // Keep v1 immutable: old importers cannot mistake new tool families for a
 // capability they understand. Workspace-only exports retain their v1 bytes.
@@ -34,12 +36,14 @@ export const PORTABLE_NATIVE_WORKSPACE_TOOLS = Object.freeze([
 ]);
 // Preserve the v2 migrated catalog. A patch-capable Build requires v3 so an
 // older importer cannot mistake the new writer for a known capability.
-export const PORTABLE_NATIVE_BUILTIN_TOOLS = Object.freeze(NATIVE_NODE_BUILTIN_NAMES.filter(name => name !== 'apply_workspace_patch').sort());
-export const PORTABLE_NATIVE_PATCH_TOOLS = Object.freeze([...NATIVE_NODE_BUILTIN_NAMES].sort());
+export const PORTABLE_NATIVE_BUILTIN_TOOLS = Object.freeze(NATIVE_NODE_BUILTIN_NAMES.filter(name => name !== 'apply_workspace_patch' && !rewindTools.includes(name)).sort());
+export const PORTABLE_NATIVE_PATCH_TOOLS = Object.freeze(NATIVE_NODE_BUILTIN_NAMES.filter(name => !rewindTools.includes(name)).sort());
+export const PORTABLE_NATIVE_REWIND_TOOLS = Object.freeze([...NATIVE_NODE_BUILTIN_NAMES].sort());
 const contracts = new Map([
   [PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_WORKSPACE_TOOLS],
   [PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT, PORTABLE_NATIVE_BUILTIN_TOOLS],
   [PORTABLE_NATIVE_PATCH_CONTRACT, PORTABLE_NATIVE_PATCH_TOOLS],
+  [PORTABLE_NATIVE_REWIND_CONTRACT, PORTABLE_NATIVE_REWIND_TOOLS],
 ]);
 
 // Identity fields a tool binding object may carry, matching the formal catalog
@@ -125,9 +129,10 @@ export function resolvePortableNativeBuiltins(build) {
     spec: build?.spec, executionEngine: build?.executionEngine, buildId: build?.buildId,
   });
   if (native !== NATIVE_DSH_TURN_CONTRACT) return { kind: 'unsupported', names };
-  const unknown = names.filter(name => !PORTABLE_NATIVE_PATCH_TOOLS.includes(name));
+  const unknown = names.filter(name => !PORTABLE_NATIVE_REWIND_TOOLS.includes(name));
   if (unknown.length) return { kind: 'unsupported', names, unknown };
-  const contract = names.includes('apply_workspace_patch') ? PORTABLE_NATIVE_PATCH_CONTRACT
+  const contract = names.some(name => rewindTools.includes(name)) ? PORTABLE_NATIVE_REWIND_CONTRACT
+    : names.includes('apply_workspace_patch') ? PORTABLE_NATIVE_PATCH_CONTRACT
     : names.every(name => PORTABLE_NATIVE_WORKSPACE_TOOLS.includes(name)) ? PORTABLE_NATIVE_BUILTIN_CONTRACT : PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT;
   return { kind: 'native', manifest: { contract, engine: NATIVE_DSH_TURN_CONTRACT, tools: [...names].sort() } };
 }

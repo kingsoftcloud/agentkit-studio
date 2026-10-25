@@ -37,8 +37,10 @@ export async function apply(ctx, options) {
         : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
           tools: ['read_workspace_file', ...(options.childPlanMode ? ['write_workspace_file'] : []),
             ...(options.editMatching ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []),
-            ...(options.structuredPatch ? ['apply_workspace_patch'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls ? 5 : 3, maxToolCalls: options.taskControls ? 4 : 2 }],
-      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.structuredPatch ? ['read_workspace_file', 'apply_workspace_patch']
+            ...(options.structuredPatch ? ['apply_workspace_patch'] : []),
+            ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls || options.workspaceRewind ? 5 : 3, maxToolCalls: options.taskControls || options.workspaceRewind ? 4 : 2 }],
+      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.structuredPatch ? ['read_workspace_file', 'apply_workspace_patch',
+        ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : [])]
         : options.editMatching ? ['read_workspace_file', 'edit_workspace_file', 'multi_edit_workspace_file']
         : options.writingRecovery || options.childPlanMode ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
         ...(a2aProof ? { a2a: a2aProof.bindings } : {}),
@@ -152,7 +154,8 @@ export async function apply(ctx, options) {
       // Exercise the ordinary Agent form's authenticated create/build routes,
       // using the discovered ID rather than a test-only tool registration.
       record = await rpc('agents/create-local', { name: 'Native catalog patch agent', runtimeType: 'harness', spec: {
-        ...record.spec, bindings: { ...record.spec.bindings, tools: [{ resourceId: 'read_workspace_file' }, { resourceId: patch.resourceId }] },
+        ...record.spec, bindings: { ...record.spec.bindings, tools: [{ resourceId: 'read_workspace_file' }, { resourceId: patch.resourceId },
+          ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'].map(resourceId => ({ resourceId })) : [])] },
       } });
       await writeFile(join(home, 'identity.json'), JSON.stringify({ agentId: record.metadata.id }));
       await rpc('builds/create', { agentId: record.metadata.id, revision: record.metadata.revision });

@@ -15,7 +15,8 @@ export const STUDIO_NATIVE_CHILD_CONTRACT = 'agentkit.studio-native-children/v2'
 export const STUDIO_NATIVE_CHILD_SKILLS_CONTRACT = 'agentkit.studio-child-borrowed-skills/v1';
 const workspaceTools = new Set(['workspace_status', 'list_workspace_files', 'read_workspace_file', 'lint_workspace_file',
   'search_workspace_files', 'write_workspace_file', 'write_workspace_files', 'edit_workspace_file',
-  'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch']);
+  'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch',
+  'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files']);
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const isDiscoveryControl = name => name === TOOL_SEARCH || name === DEFERRED_TOOL_CALL;
 const gatewayToolNames = (tools, artifactPolicy, toolDiscoveryPolicy, childTaskPolicy) => tools.filter(tool => (!artifactPolicy || !isArtifactTool(tool.name))

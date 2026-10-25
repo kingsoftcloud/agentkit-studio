@@ -29,7 +29,8 @@ const families = new Map(Object.entries(groups).flatMap(([family, names]) =>
 // Native's model-facing names precede the DSH registry alias. In particular,
 // run_code must not be exported as DSH's sandbox_run_code transport name.
 // Native's structured patch port does not change DSH Native's ten-tool workspace contract.
-export const NATIVE_NODE_BUILTIN_NAMES = Object.freeze([...Object.values(groups).flat(), 'apply_workspace_patch']);
+export const NATIVE_NODE_BUILTIN_NAMES = Object.freeze([...Object.values(groups).flat(), 'apply_workspace_patch',
+  'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files']);
 export const DSH_NODE_BUILTIN_NAMES = Object.freeze([...families.keys()]);
 const meta = new Set(['tool_search', 'tool_dispatcher', 'agentengine_tool_dispatcher']);
 

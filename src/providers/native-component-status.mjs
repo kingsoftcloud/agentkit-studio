@@ -17,7 +17,8 @@ export function studioNativeComponentStatus({ record, modelName, workspaceRoot, 
     ...(remoteSkills?.userSpaceIds ?? []), ...(remoteSkills?.publicSpaceIds ?? [])])].sort();
   const workspaceNames = ['workspace_status', 'list_workspace_files', 'read_workspace_file', 'write_workspace_file',
     'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file', 'lint_workspace_file',
-    'search_workspace_files', 'delete_workspace_file', 'apply_workspace_patch'].filter(name => names.has(name));
+    'search_workspace_files', 'delete_workspace_file', 'apply_workspace_patch',
+    'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'].filter(name => names.has(name));
   const codeEnabled = names.has('run_code') && codeBinding?.contract === E2B_CODE_TOOLS_CONTRACT && codeBinding.backend === 'e2b'
     && codeBinding.host?.contract === STUDIO_NATIVE_E2B_HOST && /^[a-f0-9]{64}$/u.test(codeBinding.host.bindingDigest ?? '') && Boolean(codeBinding.host.template);
   const commandNames = ['sandbox_status', 'run_command', 'read_command_output', 'stop_command']

@@ -27,6 +27,7 @@ import { acquireWorkspaceMutationLock, workspaceMutationGuard } from './workspac
 import { budgetWorkspaceSourcePage, validateSourcePageBudget } from './source-page.mjs';
 import { prepareWorkspaceEdits } from './workspace-edit-match.mjs';
 import { prepareWorkspacePatch } from './workspace-patch.mjs';
+import { createWorkspaceCheckpointJournal, captureCheckpointFile, checkpointStatesEqual, WORKSPACE_CHECKPOINT_POLICY } from './workspace-checkpoints.mjs';
 import { parseStructuredPatch } from '../../../agentkit-harness-core/dist/patch-parser.mjs';
 
 import {
@@ -43,7 +44,7 @@ import {
 
 const MUTATING = new Set([
   'write_workspace_file', 'write_workspace_files', 'edit_workspace_file',
-  'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch',
+  'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch', 'rewind_workspace_files',
 ]);
 
 const READ_ONLY = new Set([
@@ -69,7 +70,7 @@ class RootBoundaryError extends Error {
 }
 
 export function createNativeWorkspaceTools({
-  workspaceRoot, stateDir, sessionId, authorize, enablePatches = false,
+  workspaceRoot, stateDir, sessionId, authorize, enablePatches = false, enableRewind = false,
 } = {}) {
   if (!workspaceRoot) throw new TypeError('createNativeWorkspaceTools requires workspaceRoot');
   if (!stateDir) throw new TypeError('createNativeWorkspaceTools requires stateDir');
@@ -79,8 +80,11 @@ export function createNativeWorkspaceTools({
   // Mutating implementations below are synchronous. Track publications within the
   // current invocation so a later state-write failure cannot masquerade as a
   // definite failure before execution. No tracking state crosses an await.
-  let activeMutations = null, activeGuard = null;
+  let activeMutations = null, activeGuard = null, activeCheckpoint = null;
   function publish(target, bytes, options) {
+    activeGuard?.();
+    activeCheckpoint?.stage(relativeOf(target), { kind: 'file', bytes: bytes.toString('base64'), sha256: sha256(bytes),
+      ...(options?.checkpointMode !== undefined ? { mode: options.checkpointMode } : {}) });
     activeGuard?.();
     publishWorkspaceBytes(target, bytes, options);
     activeMutations?.add(relativeOf(target));
@@ -93,6 +97,14 @@ export function createNativeWorkspaceTools({
   // cannot widen the boundary mid-life: execute and observe compare the live
   // realpath against this pinned value and refuse on mismatch.
   const pinnedRootReal = resolvePinnedRoot(root);
+  const checkpoints = createWorkspaceCheckpointJournal({ stateDir, sessionId: store.sessionId, workspaceRoot: pinnedRootReal,
+    resolvePath: path => resolvePath(path) });
+  function remove(target, directory = false) {
+    activeGuard?.(); activeCheckpoint?.stage(relativeOf(target), { kind: 'absent' });
+    activeGuard?.();
+    if (directory) rmdirSync(target); else unlinkSync(target);
+    activeMutations?.add(relativeOf(target));
+  }
 
   function resolvePinnedRoot(r) {
     // If the root exists, lock its realpath. If not yet created, lock the
@@ -404,7 +416,7 @@ export function createNativeWorkspaceTools({
       if (e.code === 'EEXIST') {
         return { ok: false, path: rel, error_type: 'file_exists', error_message: 'workspace file was created before publication', suggested_action: 'Read the new file before proposing an overwrite.' };
       }
-      return { ok: false, path: rel, error_type: 'publish_failed', error_message: e.message };
+      return { ok: false, path: rel, error_type: e.code?.startsWith('checkpoint_') ? e.code : 'publish_failed', error_message: e.message };
     }
     const stat = statSync(t, { bigint: true });
     refreshReadState(rel, stat, content, t);
@@ -647,11 +659,11 @@ export function createNativeWorkspaceTools({
         return stale;
       }
       const type = change.moveTarget ? 'move' : change.section.type;
-      if (type === 'delete') { unlinkSync(change.target); activeMutations.add(change.rel); }
+      if (type === 'delete') { remove(change.target); }
       else {
         const target = change.moveTarget ?? change.target;
         publish(target, Buffer.from(change.updated), { createOnly: type === 'add' || type === 'move' });
-        if (type === 'move') { chmodSync(target, change.mode); activeGuard?.(); unlinkSync(change.target); activeMutations.add(change.rel); }
+        if (type === 'move') { chmodSync(target, change.mode); remove(change.target); }
         refreshReadState(relativeOf(target), statSync(target, { bigint: true }), change.updated, target);
       }
       const path = change.moveTarget ? relativeOf(change.moveTarget) : change.rel;
@@ -671,7 +683,7 @@ export function createNativeWorkspaceTools({
     try {
       publish(target, Buffer.from(updated, 'utf-8'));
     } catch (e) {
-      return { stat: null, error: { ok: false, path: rel, error_type: 'publish_failed', error_message: e.message } };
+      return { stat: null, error: { ok: false, path: rel, error_type: e.code?.startsWith('checkpoint_') ? e.code : 'publish_failed', error_message: e.message } };
     }
     const stat = statSync(target, { bigint: true });
     refreshReadState(rel, stat, updated, target);
@@ -858,9 +870,9 @@ export function createNativeWorkspaceTools({
     try {
       activeGuard?.();
       if (info.isDirectory()) {
-        rmdirSync(target);
+        remove(target, true);
       } else {
-        unlinkSync(target);
+        remove(target);
       }
       activeMutations?.add(relativeOf(target));
     } catch (e) {
@@ -873,6 +885,10 @@ export function createNativeWorkspaceTools({
 
   const definitions = buildDefinitions();
   if (enablePatches) definitions.push(workspacePatchDefinition());
+  if (enableRewind) {
+    for (const definition of definitions) if (MUTATING.has(definition.name)) definition.workspaceCheckpointPolicy = WORKSPACE_CHECKPOINT_POLICY;
+    definitions.push(...workspaceRewindDefinitions());
+  }
 
   const impls = {
     workspace_status: workspaceStatus,
@@ -886,11 +902,37 @@ export function createNativeWorkspaceTools({
     search_workspace_files: searchWorkspaceFiles,
     delete_workspace_file: deleteWorkspaceFile,
     ...(enablePatches ? { apply_workspace_patch: applyWorkspacePatch } : {}),
+    ...(enableRewind ? {
+      list_workspace_checkpoints: () => ({ ok: true, checkpoints: checkpoints.list() }),
+      preview_workspace_rewind: (args, { checkpointCommitted }) => checkpoints.preview(args.checkpoint_id, checkpointCommitted).content,
+      rewind_workspace_files: (_args, { preparedRewind }) => {
+        for (const file of preparedRewind.files) {
+          activeGuard?.(); const target = resolvePath(file.path);
+          if (!checkpointStatesEqual(captureCheckpointFile(target), file.current)) throw Object.assign(Error('checkpoint_external_modified'), { code: 'checkpoint_external_modified' });
+          if (file.desired.kind === 'absent') {
+            if (existsSync(target)) remove(target, lstatSync(target).isDirectory());
+          } else if (file.desired.kind === 'directory') {
+            if (file.current.kind === 'file') remove(target);
+            activeCheckpoint?.stage(file.path, file.desired); activeGuard?.(); mkdirSync(target, { recursive: true, mode: file.desired.mode });
+            activeMutations.add(file.path); chmodSync(target, file.desired.mode);
+          } else {
+            if (file.current.kind === 'directory') remove(target, true);
+            const bytes = Buffer.from(file.desired.bytes, 'base64'); publish(target, bytes, { checkpointMode: file.desired.mode });
+            chmodSync(target, file.desired.mode);
+            try {
+              const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+              refreshReadState(file.path, statSync(target, { bigint: true }), text, target);
+            } catch (error) { if (!(error instanceof TypeError)) throw error; }
+          }
+        }
+        return { ok: true, rewound_checkpoint_ids: preparedRewind.ids, changed_paths: [...activeMutations] };
+      },
+    } : {}),
   };
 
   // ---- execute --------------------------------------------------------------
 
-  async function execute(request, { assertCurrent } = {}) {
+  async function execute(request, { assertCurrent, checkpointCommitted } = {}) {
     if (!request || typeof request !== 'object') {
       return { status: 'error', content: { code: 'invalid_request', message: 'request object required' } };
     }
@@ -989,15 +1031,30 @@ export function createNativeWorkspaceTools({
           error_message: error.message, executed: false } };
       }
     }
-    const mutations = new Set(), previousMutations = activeMutations, previousGuard = activeGuard;
-    let release;
+    const mutations = new Set(), previousMutations = activeMutations, previousGuard = activeGuard, previousCheckpoint = activeCheckpoint;
+    let release, checkpoint, preparedRewind;
     try {
       if (mutating) release = acquireWorkspaceMutationLock(pinnedRootReal);
       guard();
       activeMutations = mutations; activeGuard = guard;
-      result = impl(call.arguments ?? {}, { signal, request, preparedEdit, preparedPatch });
+      if (name === 'rewind_workspace_files') {
+        if (request.definition?.workspaceCheckpointPolicy !== WORKSPACE_CHECKPOINT_POLICY) throw Object.assign(Error('checkpoint_policy_missing'), { code: 'checkpoint_policy_missing' });
+        preparedRewind = checkpoints.preview(call.arguments?.checkpoint_id, checkpointCommitted);
+        if (!preparedRewind.content.can_apply || preparedRewind.content.preview_token !== call.arguments?.preview_token)
+          return { status: 'error', content: { ...preparedRewind.content, ok: false, error_type: 'checkpoint_rewind_conflict', executed: false } };
+      }
+      if (mutating && enableRewind && request.definition?.workspaceCheckpointPolicy === WORKSPACE_CHECKPOINT_POLICY)
+        activeCheckpoint = checkpoint = checkpoints.begin(request, preparedRewind?.ids);
+      result = impl(call.arguments ?? {}, { signal, request, preparedEdit, preparedPatch, preparedRewind, checkpointCommitted });
       guard();
+      if (checkpoint) {
+        if (result?.ok !== true && mutations.size) throw Object.assign(Error('checkpoint_partial_effect'), { code: 'checkpoint_partial_effect' });
+        checkpoint.finish(mutations);
+        if (mutations.size) result.checkpoint_id = checkpoint.id;
+        guard();
+      }
     } catch (e) {
+      if (checkpoint && !mutations.size) { try { checkpoint.fail(); } catch {} }
       if (signal?.aborted && !mutations.size) return canceled();
       if (e instanceof WorkspacePathError) {
         return { status: 'error', content: { ok: false, error_type: 'path_escape', error_message: e.message } };
@@ -1005,7 +1062,7 @@ export function createNativeWorkspaceTools({
       if (mutations.size) return { status: 'uncertain', workspaceChangedPaths: [...mutations],
         content: { ok: false, error_type: name === 'apply_workspace_patch' ? 'patch_publication_incomplete' : 'state_persist_failed', executed: true, paths: [...mutations] } };
       return { status: 'error', content: { ok: false, error_type: e.code || 'internal_error', error_message: e.message } };
-    } finally { activeMutations = previousMutations; activeGuard = previousGuard; release?.(); }
+    } finally { activeMutations = previousMutations; activeGuard = previousGuard; activeCheckpoint = previousCheckpoint; release?.(); }
     // The only asynchronous implementation parses captured read-only bytes.
     // Restore mutation tracking before any await so concurrent writers cannot
     // attribute their publications to this invocation.
@@ -1336,6 +1393,21 @@ function buildDefinitions() {
       properties: { path: { type: 'string' } },
       required: ['path'], additionalProperties: false,
     }, { readOnly: false, concurrentSafe: false, contextRole: 'none', permissions: ['workspace:delete'], timeoutMs: 30000 }),
+  ];
+}
+
+/** Shared by Native execution and its local Studio catalog; no workspace access. */
+export function workspaceRewindDefinitions() {
+  const checkpoint = { type: 'string', pattern: '^[0-9a-f-]{36}$' };
+  const read = { readOnly: true, concurrentSafe: true, permissions: ['workspace:read'] };
+  return [
+    def('list_workspace_checkpoints', 'List this Native Session\'s durable file checkpoints. Prepared/unknown or already rewound records are not permission to replay effects. Checkpoint contents are private and are not returned.',
+      { type: 'object', additionalProperties: false, properties: {} }, read),
+    def('preview_workspace_rewind', 'Preview file-only rewind from a checkpoint, including later committed changes in this Session. Refuses external modifications and uncommitted effects. Does not rewind conversation or execute files. Use the returned preview_token for an approved rewind.',
+      { type: 'object', additionalProperties: false, required: ['checkpoint_id'], properties: { checkpoint_id: checkpoint } }, read),
+    { ...def('rewind_workspace_files', 'Restore files from an exact successful preview. This changes workspace files, requires normal write/delete permission and is forbidden in Plan mode. It never reruns the original tools. A changed preview or unknown effect blocks the whole rewind; partial publication is uncertain and must be reconciled.',
+      { type: 'object', additionalProperties: false, required: ['checkpoint_id', 'preview_token'], properties: { checkpoint_id: checkpoint, preview_token: { type: 'string', pattern: '^[0-9a-f]{64}$' } } },
+      { readOnly: false, concurrentSafe: false, permissions: ['workspace:write', 'workspace:delete'] }), workspaceCheckpointPolicy: WORKSPACE_CHECKPOINT_POLICY },
   ];
 }
 

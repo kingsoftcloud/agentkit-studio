@@ -3,6 +3,7 @@ import { resolve, join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { canonical, invariant, parseNativeJson, requiresExactJsonWire, stringifyModelJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeWorkspaceTools } from '../../packages/agentkit-harness/src/native/workspace-tools.mjs';
+import { committedWorkspaceCheckpoint } from '../../packages/agentkit-harness/src/native/workspace-checkpoints.mjs';
 import { NATIVE_PYTHON_SYNTAX } from '../../packages/agentkit-harness/src/native/python-syntax.mjs';
 import { createNativeLocalCommandTools, localCommandToolDefinitions, LOCAL_COMMAND_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/local-command-tools.mjs';
 import { createOwnedCommandResolver } from '../../packages/agentkit-harness/src/native/owned-command.mjs';
@@ -69,10 +70,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     if (!states.has(agent)) states.set(agent, new Map());
     const sessions = states.get(agent);
     if (!sessions.has(sessionId)) sessions.set(sessionId, createNativeWorkspaceTools({ workspaceRoot: workspace,
-      stateDir, sessionId, authorize: async () => 'allow', enablePatches: true }));
+      stateDir, sessionId, authorize: async () => 'allow', enablePatches: true, enableRewind: true }));
     return sessions.get(sessionId);
   };
-  const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions', enablePatches: true });
+  const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions', enablePatches: true, enableRewind: true });
   const workspaceToolNames = new Set(template.definitions.map(definition => definition.name));
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
   const managementDefinitions = skillManagementDefinitions();
@@ -334,7 +335,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             outcome = await invocation.disclosure.execute({ ...invocation.request, signal: exec.signal });
           } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
             : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal },
-              { assertCurrent: invocation.assertCurrent })
+              { assertCurrent: invocation.assertCurrent, checkpointCommitted: invocation.checkpointCommitted })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };
           invocation.outcome = structuredClone(outcome);
           return nativeDshBuiltinOutput(mcpContracts.has(name) ? { ...outcome, content: outcome.context.content } : outcome,
@@ -601,7 +602,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     childMcpBinding: structuredClone(childMcpBinding),
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
     workspaceMutationContract: [...builtinNames].some(name => ['write_workspace_file', 'write_workspace_files',
-      'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
+      'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch', 'rewind_workspace_files'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
     webBinding: webTemplate ? { contract: webTemplate.contract, bindingDigest: webTemplate.bindingDigest } : null,
     codeBinding: [...codeNames].some(name => builtinNames.has(name))
       ? { contract: E2B_CODE_TOOLS_CONTRACT, backend: commandBackend, registryNameContract: SANDBOX_CODE_NAME_CONTRACT,
@@ -781,7 +782,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         if (typeof value.content?.path === 'string') touched.add(value.content.path);
         if (value.name === 'write_workspace_files') for (const item of value.content?.written ?? [])
           if (typeof item?.path === 'string') touched.add(item.path);
-        if (value.name === 'apply_workspace_patch') for (const path of value.content?.changed_paths ?? [])
+        if (['apply_workspace_patch', 'rewind_workspace_files'].includes(value.name)) for (const path of value.content?.changed_paths ?? [])
           if (typeof path === 'string') touched.add(path);
       }
       return [...touched].map(path => resolve(workspace, path));
@@ -820,7 +821,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const sessionId = commandAuthority?.childSessionId ?? String(agent.session.id);
       const workspaceTools = commandAuthority?.childSessionId && commandAuthority.workspaceRoot
         ? createNativeWorkspaceTools({ workspaceRoot: commandAuthority.workspaceRoot,
-          stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId), enablePatches: true,
+          stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId), enablePatches: true, enableRewind: true,
           sessionId, authorize: async () => 'allow' }) : state(agent, sessionId);
       const ledgerAuthority = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
@@ -951,7 +952,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } };
         const callId = `ak-native-${hash({ scope: request.scope, runId: request.runId, operationKey: request.operationKey, callId: request.call.callId })}`;
         invariant(!calls.has(callId), 'studio_native_tool_already_executing');
-        const invocation = { agent, request, workspaceTools, assertCurrent, components, disclosure, a2a: a2aPort, remoteSkills: remoteSkillPort, children: commandAuthority?.children,
+        const checkpointCommitted = commandAuthority?.store && commandAuthority.scope
+          ? row => committedWorkspaceCheckpoint(row, { store: commandAuthority.store, scope: commandAuthority.scope, sessionId }) : undefined;
+        const invocation = { agent, request, workspaceTools, assertCurrent, checkpointCommitted, components, disclosure, a2a: a2aPort, remoteSkills: remoteSkillPort, children: commandAuthority?.children,
           argumentEncoding: exactNumbers ? argumentEncoding : null, commands, code, web, assertMcpCurrent };
         calls.set(callId, invocation);
         try {

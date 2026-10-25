@@ -13,7 +13,7 @@ import { createZip, readZipFiles, buildIdFor } from '../src/zip.mjs';
 import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
 import { selectedNativeBuildContract } from '../src/build-engine.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
-import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT, PORTABLE_NATIVE_PATCH_CONTRACT,
+import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT, PORTABLE_NATIVE_PATCH_CONTRACT, PORTABLE_NATIVE_REWIND_CONTRACT,
   PORTABLE_NATIVE_BUILTIN_TOOLS, PORTABLE_NATIVE_WORKSPACE_TOOLS } from '../src/portable-native-tools.mjs';
 
 const NATIVE_DSH_TURN = 'agentkit.native-dsh-turn/v1';
@@ -269,18 +269,20 @@ test('the complete reference Node builtin inventory survives a v2 Frozen export/
   }
 });
 
-test('Native patch builds export a distinct v3 capability and reject a recomputed v2 downgrade', async t => {
-  const names = ['apply_workspace_patch', 'read_workspace_file'];
+for (const [label, names, expectedContract, oldContract] of [
+  ['patch v3', ['apply_workspace_patch', 'read_workspace_file'], PORTABLE_NATIVE_PATCH_CONTRACT, PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT],
+  ['rewind v4', ['apply_workspace_patch', 'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'], PORTABLE_NATIVE_REWIND_CONTRACT, PORTABLE_NATIVE_PATCH_CONTRACT],
+]) test(`Native ${label} builds export a distinct capability and reject a recomputed downgrade`, async t => {
   const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: names } });
   const prepared = await f.portable.prepare(f.agentId, f.record.id);
   const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
   const { manifest } = verifyPortableBundle(zip);
-  assert.deepEqual(manifest.nativeBuiltin, { contract: PORTABLE_NATIVE_PATCH_CONTRACT, engine: NATIVE_DSH_TURN, tools: names });
+  assert.deepEqual(manifest.nativeBuiltin, { contract: expectedContract, engine: NATIVE_DSH_TURN, tools: names });
   const target = join(f.root, 'patch-target'); const imported = await importPortableBundle(zip, target);
   const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
   assert.deepEqual(restored.bindings.tools, names); assert.equal(restored.spec.executionPolicy, undefined);
   const files = readZipFiles(zip), portable = files.find(file => file.name === 'portable.json');
-  const { bundleId, createdAt, ...identity } = { ...manifest, nativeBuiltin: { ...manifest.nativeBuiltin, contract: PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT } };
+  const { bundleId, createdAt, ...identity } = { ...manifest, nativeBuiltin: { ...manifest.nativeBuiltin, contract: oldContract } };
   portable.data = Buffer.from(JSON.stringify({ ...identity, createdAt, bundleId: `bundle_${sha256(JSON.stringify(identity))}` }));
   assert.throws(() => verifyPortableBundle(createZip(files)), { code: 'PORTABLE_BUNDLE_INVALID' });
 });
