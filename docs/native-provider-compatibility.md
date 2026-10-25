@@ -42,9 +42,46 @@ node --test --test-name-pattern 'PreCompact binds actual admitted original sourc
 类型注解不受支持，改用已有 Python 3.12 后成功；未安装依赖或修改参考代码。
 本轮未重跑全仓、安装或打包。
 
-## 仍需收尾的模型语义
+## Anthropic 指令位置和签名回放
 
 长流 `idle/v1`、独立 thinking 显示和 disclosed `delegate_task` controller 默认
 effort 现已实现并接入冻结配置，具体行为和新增证据见[流式等待](native-stream-timeouts.md)。
-高级 Anthropic block-binding / 中途 system 投影尚未逐项闭环；不能从普通请求及
-上述定向结果推定这些投影已经完成。
+
+Anthropic 新准入保存 `anthropic-wire/v1`。参考目录中的精确模型名
+`claude-fable-5-1`、`claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5`
+启用 mid-system 和 `drop_block`；未知别名、未来版本名保持旧投影，不靠前缀猜测。
+这些策略和模型说明一起进入兼容摘要。恢复保留原 Run 的策略及字段缺省，不能
+因为更新了宿主而给旧 Run 自动开启它们。
+
+- 初始 system 保留在顶层；会话中途的系统指令保留原位置，且只能位于完整 user/
+  工具结果之后、assistant 之前或输入末尾。未完成的工具批次不能插入系统指令。
+- thinking 默认按适用档位使用 adaptive block binding，并加入
+  `thinking-binding-controls-2026-08-01` beta；保留宿主其他 beta token。Haiku 的
+  disabled effort 仍生效，显式 thinking block 的预算参数不丢失。
+- `journaled-system/v1` 把预算、工具准入和上下文连续性控制写入不可改写的回合记录，
+  在上下文计数和模型意图之前提交；新控制不重写已经发送过的前缀。未回答的控制
+  可绑定到真正准入的 guide/steer 输入，在请求视图中作为历史数据引用。
+- `stable-task/v1` 稳定模型看到的工具声明。实际执行仍由每轮准入、权限和预算决定，
+  最终收尾时不能因目录里还有工具就继续执行。
+- `anthropic-client-compaction/v1` 把原始私有回放绑定到输入前缀和模型可见工具头。
+  压缩/输入编辑或声明变化时，只在请求视图中移除失效 thinking；原签名、tool_use
+  和工具结果保持原件。放弃记录在模型调度前持久化，重新规划不能恢复已经放弃的
+  thinking。工具 ID 的宿主别名在 wire 上还原为原始 provider ID。
+
+输入摘要用于识别 Native 选择的请求视图，不代表宿主能验证供应商签名。
+没有原始输入绑定的私有回放在此新策略下保守放弃 thinking；没有启用新策略的
+旧 Run 仍按旧行为运行。
+
+本轮编译通过，7 项协议/核心检查及 3 项 Studio 配置恢复检查通过。包括真实本地
+HTTP 连续三轮、启用上下文规划、ID 冲突、稳定目录和最终收尾不执行工具，以及
+输入/工具头变化后的单调放弃。命令如下：
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness/test/native-anthropic-context.test.mjs
+node --test --test-name-pattern 'Studio Anthropic policy admission|managed binding reuses real Studio assembly' tests/studio-native-harness.test.mjs
+```
+
+日志位于 `.artifacts/native-migration/anthropic-projection-{build,tests,host}.log`。
+本轮未重跑全仓、双 Node、安装、打包或完整压缩故障矩阵；未调用真实供应商服务。
+这些本地结果不能代替正式 Gateway 的线上互操作和能力主表中其他未验收事项。

@@ -21,6 +21,7 @@ export * from './model-json.mjs';
 export * from './recovery.mjs';
 export * from './tool-input.mjs';
 export * from './context-view.mjs';
+export * from './anthropic-context.mjs';
 export * from './context-contributions.mjs';
 export * from './hook-contract.mjs';
 export * from './hook-runtime.mjs';

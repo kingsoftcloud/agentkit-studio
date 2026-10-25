@@ -5,6 +5,7 @@ import { admitSteering } from './task-contract.mjs';
 import type { SteeringBindings } from './task-contract.mjs';
 import { admitChildPromotion, unsettledChildren } from './child-runtime.mjs';
 import { guidanceReason } from './guidance.mjs';
+import { bindOperatorInput } from './anthropic-context.mjs';
 
 export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>, facts: { kind: string; payload: ObjectValue }[] = [],
   options: { intents?: EffectIntent[]; receipts?: EffectReceipt[]; commandId?: string; requireNoPendingCommands?: boolean } = {}): CommitBatch {
@@ -59,8 +60,8 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
     const hookState = copy(snapshot.hookState);
     if (hookState) { hookState.stop = null; delete hookState.precompact; }
     return transition(snapshot, reason === 'applied' ? {
-      phase: 'preparing_context', messages: [...snapshot.messages, { role: 'user', kind: 'guidance',
-        content: command.payload.text as string, inputId: command.commandId, inputGoalRevision: snapshot.goalRevision }],
+      phase: 'preparing_context', messages: [...snapshot.messages, bindOperatorInput(snapshot.messages, { role: 'user', kind: 'guidance',
+        content: command.payload.text as string, inputId: command.commandId, inputGoalRevision: snapshot.goalRevision }, bindings.configuration.profile)],
       pendingGuidanceIds: [command.commandId], preparedContext: null,
       context: { ...snapshot.context, preparedCursor: null },
       contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null } : null,
@@ -159,7 +160,9 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
           pendingTools: [], pendingInteraction: null, interaction: null, candidate: null, verification: null,
           messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,
             content: canonical({ status: 'not_dispatched', reason: 'goal_steered', executed: false }) })),
-          ...snapshot.queuedGuidance, { role: 'user', content: command.payload.text, kind: 'steering', persistent: true }],
+          ...snapshot.queuedGuidance, ...(bindings.configuration ? [bindOperatorInput(snapshot.messages,
+            { role: 'user', content: command.payload.text, kind: 'steering', persistent: true }, bindings.configuration.profile)]
+            : [{ role: 'user' as const, content: command.payload.text, kind: 'steering', persistent: true }])],
           context: { ...snapshot.context, preparedCursor: null } };
         for (const call of snapshot.pendingTools) facts.push({ kind: 'tool.not_dispatched', payload: {
           callId: call.callId, name: call.name, reason: 'goal_steered' } });

@@ -37,6 +37,7 @@ function checkedCount(value: number): number {
 /** Host facts remain separate from low-trust prose, including summaries and hook proposals. */
 export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguration): ObjectValue {
   return copy({ schemaVersion: 'agentkit.native-context-continuity/v1', authority: 'host_record', goal: snapshot.goal,
+    ...(config.profile.operatorGuidancePolicy ? { operatorGuidancePolicy: config.profile.operatorGuidancePolicy } : {}),
     goalRevision: snapshot.goalRevision, contract: config.contract, usage: snapshot.usage, descendantUsage: snapshot.descendantUsage,
     limits: config.limits, workspaceRevision: snapshot.workspaceRevision, workspaceModifiedPaths: snapshot.workspaceModifiedPaths,
     artifactRefs: config.artifactPolicy === 'runtime-artifacts/v1' ? snapshot.artifactRefs.slice(-8)
@@ -69,7 +70,8 @@ function withSummary(messages: Message[], summary: string, continuity: ObjectVal
   const host: Message = { role: 'system', kind: 'execution_continuity', content: canonical(continuity) };
   const historical: Message[] = summary ? [contextSummaryMessage(summary)] : [];
   const split = messages.findIndex(message => message.role !== 'system');
-  return [...messages.slice(0, split < 0 ? messages.length : split), host, ...contributions, ...historical,
+  return [...messages.slice(0, split < 0 ? messages.length : split),
+    ...(continuity.operatorGuidancePolicy === 'journaled-system/v1' ? [] : [host]), ...contributions, ...historical,
     ...messages.slice(split < 0 ? messages.length : split)];
 }
 function activeIndexes(snapshot: RunSnapshot, state: ContextPlanningState, config: RunConfiguration, digest: (value: unknown) => string): number[] {
@@ -100,10 +102,15 @@ function groupsOf(messages: Message[], indexes: number[]): number[][] {
 function mandatoryIndexes(snapshot: RunSnapshot, groups: number[][], config: RunConfiguration): Set<number> {
   const mandatory = new Set<number>(), messages = snapshot.messages;
   const pendingGuidance = new Set(snapshot.pendingGuidanceIds ?? []);
+  const journal = config.profile.operatorGuidancePolicy === 'journaled-system/v1';
+  const frameOffset = [...messages].reverse().findIndex(message => message.kind === 'host_request_guidance');
+  const latestFrame = journal && frameOffset >= 0 ? messages.length - 1 - frameOffset : -1;
   const pendingFeedback = new Set((snapshot.hookState?.goalRevision === snapshot.goalRevision ? snapshot.hookState.feedback : []).map(canonical));
   for (const group of groups) if (group.some(index => {
     const message = messages[index]!;
-    return message.role === 'system' || message.persistent || pendingFeedback.has(canonical(message))
+    return message.role === 'system' && (!journal || message.kind !== 'host_request_guidance')
+      || index === latestFrame || latestFrame > 0 && group.includes(latestFrame - 1)
+      || message.persistent || pendingFeedback.has(canonical(message))
       || message.kind === 'guidance' && !message.history && message.inputId !== undefined && pendingGuidance.has(message.inputId)
       || message.role === 'user' && !message.kind;
   })) for (const index of group) mandatory.add(index);

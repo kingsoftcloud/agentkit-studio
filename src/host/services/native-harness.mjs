@@ -38,7 +38,7 @@ import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../p
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 import { readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 import { admitInlineReasoningPolicy } from '../../../packages/agentkit-harness/src/native/model-inline-reasoning.mjs';
-import { admitProviderCompatibilityPolicy, resolveProviderCompatibility } from '../../../packages/agentkit-harness/src/native/model-provider-compat.mjs';
+import { admitAnthropicPolicies, admitProviderCompatibilityPolicy, resolveProviderCompatibility } from '../../../packages/agentkit-harness/src/native/model-provider-compat.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -361,7 +361,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // The wrapper is always present for a local-default Build (fail-closed for
       // explicit Memory tasks) and delegates to the baseline otherwise.
       const memoryVerification = memoryHost ? memoryHost.wrapVerification(verification) : null;
-      const modelBinding = (profile, id, boundContext) => {
+      const modelBinding = (profile, id, boundContext, primary = false) => {
         const desc = profileDescription(profile), digest = hash(desc);
         const inlineReasoningPolicy = original ? original.configuration.profile.inlineReasoningPolicy
           : admitInlineReasoningPolicy(modelCompatibilityRule);
@@ -376,10 +376,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         // without activating them, and let each child use its own parameters.
         const runtimePolicy = !original || Object.hasOwn(original.configuration.profile, 'providerThinkingDisplay');
         const controllerReasoningPolicy = original ? original.configuration.profile.controllerReasoningPolicy : 'disclosed-delegate/v1';
+        const anthropicKeys = ['anthropicPolicy', 'operatorGuidancePolicy', 'toolCatalogPolicy', 'providerReplayProjectionPolicy'];
+        const anthropicPolicies = original && primary
+          ? Object.fromEntries(anthropicKeys.filter(key => original.configuration.profile[key] !== undefined)
+            .map(key => [key, original.configuration.profile[key]]))
+          : !original || original.configuration.profile.anthropicPolicy ? admitAnthropicPolicies(desc.protocol, desc.modelName) : {};
         const modelRuntimeOptions = runtimePolicy ? {
           providerThinkingDisplay: desc.parameters.provider_thinking_display ?? false,
           ...(modelOptions.streaming !== false ? { streamTimeoutPolicy: 'idle/v1' } : {}),
           ...(controllerReasoningPolicy ? { controllerReasoningPolicy } : {}),
+          ...anthropicPolicies,
         } : {};
         const compat = providerCompatibilityPolicy && resolveProviderCompatibility(providerCompatibilityPolicy,
           { model: desc.modelName, baseUrl: desc.baseUrl });
@@ -407,7 +413,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
               model: profile.modelName, parameters: desc.parameters };
           } }) };
       };
-      const parentModel = modelBinding(selected, selectedId, context), roles = nativeChildRoles(record.spec);
+      const parentModel = modelBinding(selected, selectedId, context, true), roles = nativeChildRoles(record.spec);
       if (visionProfile) {
         const observer = modelBinding(visionProfile, visionId);
         vision = createStudioNativeVisionBinding({ scope, sessionId, store, model: observer.model,

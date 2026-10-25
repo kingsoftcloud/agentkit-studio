@@ -7,7 +7,8 @@ import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTI
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
-import { addUsage, advertisedTools, modelRoom, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
+import { addUsage, modelToolCatalog, modelRoom, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
+import { anthropicTaskFeedback, bindAnthropicReplayInput, operatorInputView, projectAnthropicReplay } from './anthropic-context.mjs';
 import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { prepareSourceReadQuote, sourceReadBudgetFor, SOURCE_READ_POLICY } from './source-read-budget.mjs';
@@ -572,7 +573,9 @@ export class NativeKernel {
               proposalAvailable: !!changes.contextState?.compaction?.proposal } });
             break;
           }
-          const result = normalizeToolIdentities(snapshot, raw as unknown as ModelResult, this.digest);
+          const request = this.taskModelRequest(context, snapshot, configuration, intent);
+          const result = normalizeToolIdentities(snapshot, bindAnthropicReplayInput(raw as unknown as ModelResult,
+            request.messages, request.tools, request.profile, this.digest), this.digest);
           changes = reduceModel(snapshot, result, configuration, this.now(), this.random(), this.digest, intent.operationKey);
           if (configuration.sourceReadPolicy === SOURCE_READ_POLICY) {
             // Counting cannot discard a known model result or trigger a second
@@ -804,8 +807,9 @@ export class NativeKernel {
     const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
     return { ...context, profile: copy(configuration.profile), ...(review ? { purpose: 'delivery_review' as const } : {}),
       messages: review ? snapshot.preparedContext ? modelContextMessages(snapshot, this.digest) : deliveryReviewMessages(snapshot)
-        : deliveryTaskMessages(beforeCall, configuration, browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest))),
-      tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
+        : configuration.profile.operatorGuidancePolicy === 'journaled-system/v1' ? modelContextMessages(snapshot, this.digest)
+          : deliveryTaskMessages(beforeCall, configuration, browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest))),
+      tools: copy(modelToolCatalog(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
       maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
   }
   private async dispatch(context: PortContext, snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent,
@@ -845,7 +849,7 @@ export class NativeKernel {
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
         if (configuration.contextPolicy) {
           const admission = snapshot.preparedContext?.admission;
-          invariant(admission && admission.toolsDigest === this.digest(advertisedTools(beforeCall, configuration))
+          invariant(admission && admission.toolsDigest === this.digest(modelToolCatalog(beforeCall, configuration))
             && admission.tokenizerDigest === configuration.contextPolicy.tokenizerDigest
             && admission.maxOutputTokens === configuration.profile.maxOutputTokens
             && admission.countedInputTokens + admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
@@ -931,7 +935,10 @@ export class NativeKernel {
             countRequest: async (messages, tools, purpose, maxOutputTokens) => {
               context.signal.throwIfAborted(); assertBinding();
               const count = await counter.countRequest({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens },
-                messages: purpose === 'task' ? deliveryTaskMessages(snapshot, configuration, browserTaskMessages(snapshot, configuration, messages)) : messages, tools, purpose, maxOutputTokens,
+                messages: purpose === 'task' ? configuration.profile.operatorGuidancePolicy === 'journaled-system/v1'
+                  ? projectAnthropicReplay(operatorInputView(anthropicTaskFeedback(snapshot, configuration, messages), configuration.profile, this.digest), tools,
+                    configuration.profile, snapshot.abandonedReplayDigests ?? [], this.digest).messages
+                  : deliveryTaskMessages(snapshot, configuration, browserTaskMessages(snapshot, configuration, messages)) : messages, tools, purpose, maxOutputTokens,
                 maxInlineImageBytes: configuration.limits.maxInlineImageBytes });
               context.signal.throwIfAborted(); assertBinding(); return count;
             },
@@ -940,10 +947,10 @@ export class NativeKernel {
           };
           const collected = await collectContextContributions(context, snapshot, configuration, this.ports.context,
             messages => counters.countRequest(messages, [], 'task', configuration.profile.maxOutputTokens));
-          let planned = await planNativeContext(snapshot, configuration, advertisedTools(snapshot, configuration), counters,
+          let planned = await planNativeContext(snapshot, configuration, modelToolCatalog(snapshot, configuration), counters,
             this.digest, intent.payload.forceCompaction === true, intent.payload.allowCompaction !== false, collected.messages);
           if (planned.action === 'blocked' && planned.reason === 'context_finalization_budget_unavailable' && deliverySummaryAllowed(snapshot, configuration))
-            planned = await planNativeContext(snapshot, configuration, advertisedTools(snapshot, configuration), counters,
+            planned = await planNativeContext(snapshot, configuration, modelToolCatalog(snapshot, configuration), counters,
               this.digest, intent.payload.forceCompaction === true, true, collected.messages);
           return configuration.contextSources.length ? { ...planned, contributions: { sources: collected.diagnostics.map(source => ({
             ...source, budgeted: source.admitted ?? 0, admitted: planned.messages.filter(message => message.kind === 'context_contribution'

@@ -35,6 +35,11 @@ export interface Message extends ToolContextMessage {
   history?: { sourceRunId: string; sourceIndex: number };
   /** Original protocol call id -> canonical historical/current call id. */
   replayToolIds?: Record<string, string>;
+  /** Host journal and admitted-input bindings; neither grants execution authority. */
+  operatorGuidance?: { key: string; profileDigest: string; contentDigest: string };
+  operatorInputHistory?: { profileDigest: string; frames: { key: string; contentDigest: string }[] };
+  providerReplayProjection?: { version: 'anthropic-client-compaction/v1'; profileDigest: string;
+    originalContentDigest: string; prefixDigest: string };
   /** Durable inline input identity; carries no tool or Host authority. */
   inputId?: string; inputGoalRevision?: number;
   /** Host-sealed output fragments; model prose cannot authorize assembly. */
@@ -76,6 +81,10 @@ export interface ModelProfile {
   streaming?: boolean; outputTokenParameter?: 'max_tokens' | 'max_completion_tokens';
   streamTimeoutPolicy?: 'idle/v1'; providerThinkingDisplay?: boolean;
   controllerReasoningPolicy?: 'disclosed-delegate/v1';
+  anthropicPolicy?: { contract: 'anthropic-wire/v1'; midSystem: boolean; blockBinding: 'drop_block' | 'disabled' };
+  operatorGuidancePolicy?: 'journaled-system/v1';
+  toolCatalogPolicy?: 'stable-task/v1';
+  providerReplayProjectionPolicy?: 'anthropic-client-compaction/v1';
   reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   thinkingMode?: 'enabled' | 'disabled'; parallelToolCalls?: boolean;
   temperature?: number; topP?: number;
@@ -333,6 +342,8 @@ export interface RunSnapshot extends RunIdentity {
   taskContract: TaskContract | null; taskContractDigest: string | null;
   messages: Message[]; preparedContext: PreparedContext | null; queuedGuidance: Message[];
   pendingGuidanceIds?: string[];
+  /** Monotonic private replay abandonment, committed before model dispatch. */
+  abandonedReplayDigests?: string[];
   pendingTools: ToolCall[]; pendingIntent: string | null;
   /** An uncertain receipt remains immutable; only a new read-only observation can resolve it. */
   toolReconciliation?: { contract: 'agentkit.tool-receipt-observation/v1'; operationKey: string; callId: string } | null;

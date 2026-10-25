@@ -22,7 +22,7 @@ import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-m
 // keys and non-finite numbers); using it keeps provider-envelope and tool-input
 // decoding consistent with the kernel's own validation.
 import { parseModelJson, stringifyModelJson, parseNativeJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
-import { projectProviderToolChoice, resolveProviderCompatibility } from './model-provider-compat.mjs';
+import { applyAnthropicThinking, projectProviderToolChoice, resolveProviderCompatibility } from './model-provider-compat.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -103,7 +103,7 @@ export function buildAnthropicRequest(binding, request) {
   // keeps the internal submit_final_output tool so the model can submit its
   // final answer. Normal tools are never sent during finalization.
   const tools = request.tools || [];
-  const advertised = request.finalizationOnly
+  const advertised = request.finalizationOnly && profile.toolCatalogPolicy !== 'stable-task/v1'
     ? tools.filter((tool) => tool.name === FINAL_SUBMISSION_TOOL)
     : tools;
   if (advertised.length) {
@@ -113,6 +113,7 @@ export function buildAnthropicRequest(binding, request) {
       input_schema: tool.parameters || { type: 'object', properties: {} },
     }));
     const choice = projectProviderToolChoice(request.toolChoice ?? (profile.providerCompatibilityPolicy && request.finalizationOnly
+      && advertised.some(tool => tool.name === FINAL_SUBMISSION_TOOL)
       ? { type: 'function', function: { name: FINAL_SUBMISSION_TOOL } } : 'auto'),
     resolveProviderCompatibility(profile.providerCompatibilityPolicy, binding));
     payload.tool_choice = typeof choice === 'string' ? { type: choice === 'required' ? 'any' : choice }
@@ -122,7 +123,15 @@ export function buildAnthropicRequest(binding, request) {
   if (profile.topP !== undefined) payload.top_p = profile.topP;
   if (profile.parallelToolCalls !== undefined && payload.tool_choice) payload.tool_choice.disable_parallel_tool_use = !profile.parallelToolCalls;
 
-  return { url, headers, body: stringifyModelJson(payload) };
+  const projected = applyAnthropicThinking(payload, profile, binding);
+  if (projected.thinking?.block_binding) {
+    const keys = Object.keys(headers).filter(key => key.toLowerCase() === 'anthropic-beta');
+    const betas = new Set(keys.flatMap(key => headers[key].split(',').map(value => value.trim()).filter(Boolean)));
+    keys.forEach(key => delete headers[key]);
+    betas.add('thinking-binding-controls-2026-08-01');
+    headers['anthropic-beta'] = [...betas].join(',');
+  }
+  return { url, headers, body: stringifyModelJson(projected) };
 }
 
 // Project host messages onto the Anthropic Messages wire. System messages are
@@ -135,6 +144,8 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
   const systemParts = [];
   const items = [];
   const pending = new Set();
+  const wireIds = new Map();
+  const midSystem = profile.anthropicPolicy?.midSystem === true;
   for (const message of request.messages || []) {
     const role = message.role;
     if (role !== 'tool' && pending.size) throw new ProtocolError('incomplete assistant tool batch before next message');
@@ -146,7 +157,8 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
       if (!pending.delete(message.callId)) throw new ProtocolError('tool receipt does not match the pending assistant batch');
     }
     if (role === 'system' || role === 'developer') {
-      systemParts.push(message.content || '');
+      if (midSystem && items.length) items.push({ role: 'system', content: message.content || '' });
+      else systemParts.push(message.content || '');
       continue;
     }
     let item;
@@ -159,7 +171,7 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
         role: 'user',
         content: [{
           type: 'tool_result',
-          tool_use_id: String(message.callId ?? ''),
+          tool_use_id: wireIds.get(message.callId) ?? String(message.callId ?? ''),
           content,
         }],
       };
@@ -170,7 +182,13 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
       const replayContent = anthropicReplayContent(message, profile);
       let blocks;
       if (replayContent) {
-        blocks = replayContent;
+        // Bound replay keeps original provider ids, including signed tool_use blocks.
+        if (profile.providerReplayProjectionPolicy === 'anthropic-client-compaction/v1') {
+          const originals = message.providerReplay.anthropicContent.filter(block => block?.type === 'tool_use');
+          for (const [index, block] of originals.entries()) wireIds.set(message.toolCalls[index].callId, block.id);
+          const inverse = new Map([...wireIds].map(([canonical, original]) => [canonical, original]));
+          blocks = replayContent.map(block => block?.type === 'tool_use' ? { ...block, id: inverse.get(block.id) ?? block.id } : block);
+        } else blocks = replayContent;
       } else {
         blocks = [];
         const media = message.media ? message.media.map((b) => validateMediaBlock(b, maxInlineImageBytes)) : null;
@@ -197,6 +215,12 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
     }
   }
   if (pending.size) throw new ProtocolError('assistant tool batch is missing receipts');
+  if (midSystem) for (let index = 0; index < items.length; index++) {
+    if (items[index].role !== 'system') continue;
+    if (items[index - 1]?.role !== 'user') throw new ProtocolError('mid-conversation system section must follow user or tool results');
+    while (items[index + 1]?.role === 'system') index++;
+    if (items[index + 1] && items[index + 1].role !== 'assistant') throw new ProtocolError('mid-conversation system section must precede assistant or end of input');
+  }
   return { system: systemParts.join('\n\n'), items };
 }
 

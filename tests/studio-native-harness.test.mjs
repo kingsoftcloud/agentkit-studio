@@ -272,6 +272,29 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(
       { code: 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED' });
 });
 
+test('Studio Anthropic policy admission freezes journal and replay configuration across managed restoration', async t => {
+  const f = await setup(t, { recovery: true, profile: { provider: 'anthropic', modelName: 'claude-fable-5-1' } });
+  f.payload.agent.options.model = 'claude-fable-5-1';
+  const store = new MemoryRunStore(), runId = 'anthropic-admission';
+  const args = { store, admission: null, runId,
+    target: { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id }, principal: { userId: 'managed-user' } };
+  const bound = await f.host.resolveManagedBinding(f.payload, args);
+  assert.deepEqual(bound.configuration.profile.anthropicPolicy,
+    { contract: 'anthropic-wire/v1', midSystem: true, blockBinding: 'drop_block' });
+  assert.equal(bound.configuration.profile.operatorGuidancePolicy, 'journaled-system/v1');
+  assert.equal(bound.configuration.profile.toolCatalogPolicy, 'stable-task/v1');
+  assert.equal(bound.configuration.profile.providerReplayProjectionPolicy, 'anthropic-client-compaction/v1');
+  const kernel = new NativeKernel({ store, ports: bound.ports, digest, owner: 'admission-owner' });
+  kernel.start({ scope: bound.scope, runId, sessionId: f.payload.agent.session.id, turnId: 'admission',
+    buildId: bound.buildId, parentRunId: null, taskChainId: runId }, bound.configuration);
+  await bound.releaseResources?.({ scope: bound.scope, runId, sessionId: f.payload.agent.session.id });
+  const restored = await f.host.resolveManagedBinding(f.payload, { ...args,
+    admission: { scope: bound.scope, buildId: bound.buildId, configuration: bound.configuration } });
+  assert.deepEqual(restored.configuration, bound.configuration);
+  assert.equal(f.requests.length, 0);
+  await restored.releaseResources?.({ scope: bound.scope, runId, sessionId: f.payload.agent.session.id });
+});
+
 for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} delivers after a real model output restart`, async t => {
   const f = await setup(t, { sqlite: true, respond: count => ({ choices: [{ index: 0,
     delta: { content: count <= 4 ? '{"unfinished":' : 'Complete delivered answer.' }, finish_reason: count <= 4 ? 'length' : 'stop' }] }) });

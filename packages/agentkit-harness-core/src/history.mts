@@ -26,10 +26,14 @@ export function projectSessionHistory(parent: StoredRun | null, configuration: R
   for (const [index, original] of [...snapshot.messages, ...snapshot.queuedGuidance].entries()) {
     if (original.role === 'system' || original.kind && !inheritedKinds.has(original.kind) && original.role !== 'tool') continue;
     const message = copy(original);
+    // Journal sections belong to the old Run and are not imported as system authority.
+    delete message.operatorInputHistory;
     const source = message.history ?? { sourceRunId: snapshot.runId, sourceIndex: index };
     invariant(source.sourceRunId.trim() && Number.isSafeInteger(source.sourceIndex) && source.sourceIndex >= 0, 'invalid_historical_source');
     message.history = source;
-    if (!replayAllowed || original.kind === 'delivery_review_source') { delete message.providerReplay; delete message.replayToolIds; }
+    if (!replayAllowed || original.kind === 'delivery_review_source') {
+      delete message.providerReplay; delete message.replayToolIds; delete message.providerReplayProjection;
+    }
     if (message.role === 'tool') {
       const pair = message.callId ? pending.get(message.callId) : undefined;
       if (pair) {

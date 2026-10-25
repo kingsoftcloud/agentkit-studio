@@ -54,7 +54,9 @@ OpenAI Chat 的内嵌推理过滤已按参考实现补齐：GLM/Z.AI 和 KSPMAS
 厂商 thinking/effort、压缩专用策略、required tool choice、usage 和私有回放清洗
 已进入实际请求及冻结配置，25 项定向检查通过，见[模型请求兼容](native-provider-compatibility.md)。
 长流 idle 续期、独立 thinking 显示及 controller 默认档位也已补齐，见
-[流式等待](native-stream-timeouts.md)；其余高级 Anthropic 投影仍需收尾，不能宣称逐项无损。
+[流式等待](native-stream-timeouts.md)。Anthropic mid-system、block binding、持久化控制、
+稳定工具目录及编辑后的私有回放投影已接入；新增 10 项定向检查通过，详见
+[模型请求兼容](native-provider-compatibility.md)。真实供应商互操作仍需线上证据，不能宣称逐项无损。
 
 1. **Studio 浏览器流程**：普通对话、允许/拒绝、历史重开、刷新活动流、取消和原运行
    收尾已有[真实浏览器证据](native-web-session.md)。远端问答、子任务控制和其他错误

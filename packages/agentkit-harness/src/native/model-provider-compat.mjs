@@ -10,6 +10,32 @@ const ranks = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 
 const normalized = model => String(model ?? '').trim().toLowerCase().replaceAll('_', '-');
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 
+// Exact pinned catalog entries. Aliases and future names retain legacy wire behavior.
+export function admitAnthropicPolicies(protocol, model) {
+  if (protocol !== 'anthropic-messages') return {};
+  const known = [...mandatory, 'claude-haiku-5-5'].includes(String(model).trim().toLowerCase());
+  return { anthropicPolicy: { contract: 'anthropic-wire/v1', midSystem: known, blockBinding: known ? 'drop_block' : 'disabled' },
+    ...(known ? { operatorGuidancePolicy: 'journaled-system/v1', toolCatalogPolicy: 'stable-task/v1',
+      providerReplayProjectionPolicy: 'anthropic-client-compaction/v1' } : {}) };
+}
+
+export function applyAnthropicThinking(payload, profile, binding) {
+  if (!profile.anthropicPolicy) return payload;
+  const compat = resolveProviderCompatibility(profile.providerCompatibilityPolicy, binding);
+  const effort = profile.reasoningEffort ?? payload.reasoning_effort ?? null;
+  const mode = profile.thinkingMode ?? payload.thinking?.type;
+  if (profile.thinkingMode === 'enabled') throw new ProtocolError('model_thinking_mode_unsupported');
+  const disable = compat?.supportsThinking && (compat.disabledEfforts === null || compat.disabledEfforts.includes(effort))
+    && (mode === 'disabled' || compat.disabledEfforts?.includes(effort)
+      || compat.toolThinkingOff && !!payload.tools?.length
+      || compat.thinkingBudget !== null && payload.max_tokens <= compat.thinkingBudget);
+  if (disable) return { ...payload, thinking: { type: 'disabled' } };
+  if (profile.anthropicPolicy.blockBinding !== 'drop_block') return payload;
+  const thinking = { ...(payload.thinking ?? { type: 'adaptive' }) };
+  if (['adaptive', 'enabled'].includes(thinking.type)) thinking.block_binding = { prefix_mismatch_behavior: 'drop_block' };
+  return { ...payload, thinking };
+}
+
 export function admitProviderCompatibilityPolicy(override) {
   return { contract: 'provider-compat/v1', rule: admitInlineReasoningPolicy(override).rule };
 }

@@ -1,6 +1,7 @@
 import type { ContextPort, EffectIntent, Message, ObjectValue, PortContext, RunConfiguration, RunSnapshot, ToolCall, ToolResult } from './contracts.mjs';
 import { copy, canonical, invariant } from './values.mjs';
-import { advertisedTools, finalizationOnly, modelRoom, plan, reduceTools, settle, objectValue } from './machine.mjs';
+import { modelToolCatalog, finalizationOnly, modelRoom, plan, reduceTools, settle, objectValue } from './machine.mjs';
+import { anthropicTaskFeedback, operatorInputView, projectAnthropicReplay } from './anthropic-context.mjs';
 import { planNativeContext } from './context-planning.mjs';
 import { browserTaskMessages } from './task-policy.mjs';
 import { deliveryTaskMessages, wallDeliveryOnly } from './deadline-delivery.mjs';
@@ -12,12 +13,15 @@ import type { ContextCounters } from './context-planning.mjs';
 type Digest = (value: unknown) => string;
 type Tokens = NonNullable<ContextPort['tokens']>;
 const count = (value: number) => { invariant(Number.isSafeInteger(value) && value > 0, 'artifact_capacity_counter_invalid'); return value; };
-function requestCounters(context: PortContext, config: RunConfiguration, tokens: Tokens, future: RunSnapshot): ContextCounters {
+function requestCounters(context: PortContext, config: RunConfiguration, tokens: Tokens, future: RunSnapshot, digest: Digest): ContextCounters {
   return {
     countRequest: async (messages, tools, purpose, maxOutputTokens) => {
       context.signal.throwIfAborted();
       return count(await tokens.countRequest({ ...context, profile: { ...config.profile, maxOutputTokens },
-        messages: purpose === 'task' ? deliveryTaskMessages(future, config, browserTaskMessages(future, config, messages)) : messages,
+        messages: purpose === 'task' ? config.profile.operatorGuidancePolicy === 'journaled-system/v1'
+          ? projectAnthropicReplay(operatorInputView(anthropicTaskFeedback(future, config, messages), config.profile, digest), tools, config.profile,
+            future.abandonedReplayDigests ?? [], digest).messages
+          : deliveryTaskMessages(future, config, browserTaskMessages(future, config, messages)) : messages,
         tools, purpose, maxOutputTokens, maxInlineImageBytes: config.limits.maxInlineImageBytes }));
     }, countText: async text => count(await tokens.countText({ ...context, text })),
     ...(tokens.countMessage ? { countMessage: async (message: Message) => count(await tokens.countMessage!({ ...context,
@@ -44,8 +48,8 @@ export function quoteSingleArtifactReadAdmission(context: PortContext, snapshot:
       const future = projectArtifactRequest(snapshot, config, intent, new Map([[call.callId, result]]), digest);
       if (!future) return false;
       const allow = !finalizationOnly(future, config) && !wallDeliveryOnly(future, config);
-      const planned = await planNativeContext(future, config, advertisedTools(future, config),
-        requestCounters(context, config, tokens, future), digest, false, allow);
+      const planned = await planNativeContext(future, config, modelToolCatalog(future, config),
+        requestCounters(context, config, tokens, future, digest), digest, false, allow);
       if (planned.action === 'ready') return !!planned.admission
         && planned.admission.countedInputTokens + config.profile.maxOutputTokens <= config.profile.contextWindow;
       const compaction = planned.state.compaction, chunk = compaction?.chunk;
@@ -145,7 +149,7 @@ export async function quoteArtifactRequestCapacity(context: PortContext, snapsho
   const project = async (results: Map<string, ToolResult>) => {
     const future = projectArtifactRequest(snapshot, config, intent, results, digest);
     if (!future) return null;
-    return planNativeContext(future, config, advertisedTools(future, config), requestCounters(context, config, tokens, future), digest, false, false);
+    return planNativeContext(future, config, modelToolCatalog(future, config), requestCounters(context, config, tokens, future, digest), digest, false, false);
   };
   try {
     const projected = await project(new Map());

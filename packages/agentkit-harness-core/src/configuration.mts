@@ -172,6 +172,19 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     'invalid_stream_timeout_policy');
   invariant(profile.controllerReasoningPolicy === undefined || profile.controllerReasoningPolicy === 'disclosed-delegate/v1',
     'invalid_controller_reasoning_policy');
+  if (profile.anthropicPolicy !== undefined) {
+    const policy = profile.anthropicPolicy;
+    invariant(policy && profile.providerFamily === 'anthropic-messages'
+      && Object.keys(policy).every(key => ['contract', 'midSystem', 'blockBinding'].includes(key))
+      && policy.contract === 'anthropic-wire/v1' && typeof policy.midSystem === 'boolean'
+      && ['drop_block', 'disabled'].includes(policy.blockBinding), 'invalid_anthropic_policy');
+  }
+  invariant(profile.operatorGuidancePolicy === undefined || profile.operatorGuidancePolicy === 'journaled-system/v1'
+    && profile.anthropicPolicy?.midSystem === true, 'invalid_operator_guidance_policy');
+  invariant(profile.toolCatalogPolicy === undefined || profile.toolCatalogPolicy === 'stable-task/v1'
+    && profile.operatorGuidancePolicy === 'journaled-system/v1', 'invalid_tool_catalog_policy');
+  invariant(profile.providerReplayProjectionPolicy === undefined || profile.providerReplayProjectionPolicy === 'anthropic-client-compaction/v1'
+    && profile.anthropicPolicy?.blockBinding === 'drop_block', 'invalid_replay_projection_policy');
   invariant(profile.outputTokenParameter === undefined || ['max_tokens', 'max_completion_tokens'].includes(profile.outputTokenParameter), 'invalid_output_token_parameter');
   invariant(profile.reasoningEffort === undefined || ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(profile.reasoningEffort), 'invalid_reasoning_effort');
   invariant(profile.thinkingMode === undefined || ['enabled', 'disabled'].includes(profile.thinkingMode), 'invalid_thinking_mode');

@@ -8,7 +8,7 @@ import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normali
 import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
 import { toolContext, deferredToolContexts } from './tool-context.mjs';
 import { reduceBrowserReceipt } from './browser-runtime.mjs';
-import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation, webObservationDue, webVerificationOnly } from './task-policy.mjs';
+import { advanceInteractionObservation, browserTaskMessages, browserTaskTools, invalidatesBrowserObservation, webObservationDue, webVerificationOnly } from './task-policy.mjs';
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
 import { effectiveGuidanceResponse } from './guidance.mjs';
 import { rememberCommand } from './background-runtime.mjs';
@@ -20,7 +20,9 @@ import { advanceDiagnosticRecovery, advanceObservedProgress, advanceToolErrorStr
   refuseUndiagnosedToolAction, reserveDiagnosticTrial, toolErrorRecoveryBoundary, toolErrorRecoveryEnabled,
   toolErrorStreakExhausted } from './tool-error-recovery.mjs';
 import { deliveryReviewReaders, deliveryReviewTools, reduceDeliveryReview, reviewPending, scheduleDeliveryReview, unavailableReview } from './delivery-review.mjs';
-import { deliveryReadOutsidePaths, deliverySummaryAllowed, observeExecutionBudget, rememberDeliveryWrite, scopedDeliveryReader, wallDeliveryOnly } from './deadline-delivery.mjs';
+import { deliveryReadOutsidePaths, deliverySummaryAllowed, deliveryTaskMessages, observeExecutionBudget, rememberDeliveryWrite, scopedDeliveryReader, wallDeliveryOnly } from './deadline-delivery.mjs';
+import { captureAnthropicContext, stageOperatorGuidance } from './anthropic-context.mjs';
+import { contextContinuity } from './context-planning.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -68,6 +70,13 @@ export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration)
   return [...tools, ...(submission ? [submission] : [])];
 }
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean; input?: boolean }
+/** Stable declaration is distinct from the per-turn execution admission above. */
+export function modelToolCatalog(snapshot: RunSnapshot, config: RunConfiguration) {
+  if (config.profile.toolCatalogPolicy !== 'stable-task/v1' || reviewPending(snapshot)) return advertisedTools(snapshot, config);
+  const submission = finalSubmissionTool(config);
+  return [...config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name)),
+    ...(submission ? [submission] : [])];
+}
 /** Pure next action. Dispatch is impossible until its intent has been committed and claimed. */
 export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities,
   digest: (value: unknown) => string = canonical): CommitBatch | null {
@@ -139,6 +148,15 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     if (observation) return observation;
     const recovery = toolErrorRecoveryBoundary(snapshot, config, modelRoom(snapshot, config));
     if (recovery) return recovery;
+    if (config.profile.operatorGuidancePolicy === 'journaled-system/v1'
+      && snapshot.phase === 'preparing_context' && !reviewPending(snapshot) && modelRoom(snapshot, config) > 0) {
+      const controls = [{ role: 'system' as const, content: canonical(contextContinuity(snapshot, config)) },
+        ...deliveryTaskMessages(snapshot, config, browserTaskMessages(snapshot, config, []))];
+      const messages = stageOperatorGuidance(snapshot, config, advertisedTools(snapshot, config), controls,
+        finalizationOnly(snapshot, config), digest);
+      if (messages) return transition(snapshot, { messages, preparedContext: null }, [{ kind: 'model.guidance_staged', payload: {
+        modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision } }]);
+    }
     if (config.contextPolicy && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_port_missing');
     if (snapshot.phase === 'compacting' && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_compaction_unavailable');
     const compaction = config.contextPolicy ? snapshot.contextState?.compaction : null;
@@ -167,7 +185,8 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
         [{ kind: 'verification.checkpoint_started', payload: { workspaceRevision: snapshot.workspaceRevision } }]);
     }
     return prepareEffect(snapshot, 'model', 'requesting_model', reviewPending(snapshot)
-      ? { purpose: 'delivery_review', finalizationOnly: false } : { finalizationOnly: finalizationOnly(snapshot, config) });
+      ? { purpose: 'delivery_review', finalizationOnly: false } : { finalizationOnly: finalizationOnly(snapshot, config) },
+      reviewPending(snapshot) ? {} : captureAnthropicContext(snapshot, config, modelToolCatalog(snapshot, config), digest));
   }
   if (snapshot.phase === 'executing_tools') {
     const post = planHook(snapshot, config, 'PostToolUse', digest);

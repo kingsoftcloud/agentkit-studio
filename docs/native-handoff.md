@@ -68,7 +68,8 @@ MCP、Skills 和工作区后开始对话。无需 Native 启用开关。凭据�
 4. 完整 Electron、其他 OS 和共享 Server 部署能力尚未闭环；Server/AgentKernel
    扩展不能直接算作 Native 核心缺失，也不能宣称当前实现已经提供它们。
 5. 内嵌推理、OpenAI 请求兼容、长流 idle 续期和独立 thinking 显示已补齐并冻结
-   到 Run 配置；高级 Anthropic 投影仍需收尾，见[模型请求兼容](native-provider-compatibility.md)
+   到 Run 配置；高级 Anthropic 指令/回放投影已接入并通过 10 项本地定向检查，
+   正式供应商互操作仍待线上证据，见[模型请求兼容](native-provider-compatibility.md)
    和[流式等待](native-stream-timeouts.md)。
 
 剩余事项不作为继续扩大本地回归轮次的理由；后续只处理具体能力缺口及对应证据。

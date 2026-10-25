@@ -14,6 +14,10 @@
 // re-projection the adapter re-checks the full fingerprint so cross-profile
 // private material is dropped, never leaked onto another model's wire.
 
+import { createHash } from 'node:crypto';
+import { canonical } from '../../../agentkit-harness-core/dist/index.mjs';
+import { ProtocolError } from './model-normalize.mjs';
+
 const SEALED_KINDS = new Set(['tool_calls', 'final_candidate', 'output_limit']);
 
 export function profileFingerprint(profile) {
@@ -85,7 +89,7 @@ export function anthropicReplayContent(message, profile) {
   if (replay.profileFingerprint !== profileFingerprint(profile)) return null;
   if (!Array.isArray(replay.anthropicContent)) return null;
   const idMap = message.replayToolIds || {};
-  const blocks = replay.anthropicContent.map((block) => {
+  let blocks = structuredClone(replay.anthropicContent).map((block) => {
     if (block && block.type === 'tool_use') {
       const mappedId = Object.prototype.hasOwnProperty.call(idMap, block.id) ? idMap[block.id] : block.id;
       return { ...block, id: mappedId };
@@ -93,6 +97,15 @@ export function anthropicReplayContent(message, profile) {
     return block == null ? block : { ...block };
   });
   if (!validateReplayPairing(blocks, message)) return null;
+  const view = message.providerReplayProjection;
+  if (view) {
+    const contentDigest = createHash('sha256').update(canonical(replay.anthropicContent)).digest('hex');
+    if (profile.providerReplayProjectionPolicy !== 'anthropic-client-compaction/v1'
+      || view.version !== 'anthropic-client-compaction/v1' || view.profileDigest !== profile.compatibilityDigest
+      || view.originalContentDigest !== contentDigest || !/^[0-9a-f]{64}$/.test(view.prefixDigest))
+      throw new ProtocolError('anthropic_replay_projection_mismatch');
+    blocks = blocks.filter(block => !['thinking', 'redacted_thinking'].includes(block?.type));
+  }
   return blocks;
 }
 
