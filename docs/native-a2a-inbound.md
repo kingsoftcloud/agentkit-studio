@@ -171,7 +171,15 @@ Node 22 和真实 maintained DSH WebServer 挂载证据记录于对应 checkpoin
 不代替 Server-command-to-Node 执行验收。
 
 新增接收器已有真实 Native 执行和事实存储的单机器证明，详见[命令执行接线](native-managed-kernel.md)。
-还需贯通：正式 Server 互操作与 Agent/Build 生产 binding、完整控制能力；公共 tool activity producer；
+还需贯通：正式 Server 互操作与 Agent/Build 生产 binding、完整控制能力；
 永久订阅/即时终态核对；共享 managed 存储、产品 recovery scanner 与全新部署。
+公共 tool activity producer 已由 `native-a2a-public-tool-producer.mjs` 接入实际 Task
+投影和协议服务；对应可信字段白名单、持久重开及认证 wire 用例已存在，不再列为缺失实现。
+
+入站消息 artifact 仅发布文本，以及显式启用的推理文本。这与固定参考提交的
+`ksadk/a2a/executor.py` 中 `ItemUpdated` / `ItemCompleted` / `ItemSnapshotReplaced`
+分支一致：仅处理 `TextContent`，不把其他内容转换为出站附件。不能把另一方向的
+`events/adapters/_a2a_snapshot.py`（远端文件到本地 canonical 内容）误算为此入口的
+媒体发布要求。Node 的远端文件消费仍属于独立出站调用路径。
 现有出站调用和显式订阅的验收见
 [内部 A2A](native-a2a-internal.md)；完整迁移门槛见[迁移状态](native-migration-status.md)。

@@ -324,7 +324,9 @@ node scripts/verify-studio-native-managed-children.mjs --source <维护版 SDK> 
 终态、每次模型用量增量、已提交的工具调用/结果、已提交 thinking 捕获以及暂停/恢复。
 未知工具结果投影为失败条目，保留 interrupted 终态，不能伪造成功结果；A2A Task 消费者
 等待匹配的 control 终态后关闭任务。标准 Studio 公共实时流已接线并验证；Server 的
-runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有诊断尚未全部闭环。
+runtime/v2 事实投影与完整诊断尚未全部闭环。入站公共工具活动发布已有可信白名单
+producer；文本及可选推理文本已接入 Task。参考 `ksadk/a2a/executor.py` 本身也只发布
+这些文本内容，未将非文本消息转换为出站媒体；不要把这一参考边界列为待迁移功能。
 共用 Agent/Build binding 的全部资源组合与并发边界、
 审批资源的产品流程、部署中的 Server 传输适配与线上认证仍需补齐。此模块不能替代这些验收。
 

@@ -12,7 +12,8 @@
 新 Revision / 新 Harness Build 已默认 Native，原 Frozen pin 保留；无启用开关的
 Revision（Trace）和 Frozen（MCP 精确 Schema）两条完整 Host 路径均通过执行及
 跨进程恢复。配置与回退见[默认引擎说明](native-default-runtime.md)。完整能力差异
-结论、浏览器产品流程及可选服务线上验收仍未闭环。以下阶段记录保留各自当时的范围；
+结论及可选服务线上验收仍未闭环。浏览器对话、审批、取消、历史、子任务控制与远端问答
+的当前结果见 [Web 会话记录](native-web-session.md)。以下阶段记录保留各自当时的范围；
 默认策略以本段及默认引擎说明为准。
 
 云记忆原提交状态已接入现有 `sessions/native-recovery-status` 和“运行与子任务”面板：
