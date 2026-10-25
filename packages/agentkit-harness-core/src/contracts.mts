@@ -212,8 +212,9 @@ export interface RunConfiguration {
   childTaskPolicy?: 'session-controls/v1';
   coordinatorResponsePolicy?: 'owned-parent-response/v1';
   todoPolicy?: 'session-todos/v1';
-  planModePolicy?: 'session-plan/v1';
+  planModePolicy?: 'session-plan/v1' | 'inherited-child-plan/v1';
   planModeInitialActive?: boolean;
+  childPlanPolicy?: 'inherit-plan/v1';
   toolDiscoveryPolicy?: 'local-tool-search/v1';
   artifactPolicy?: 'runtime-artifacts/v1' | null;
   sourceReadPolicy?: 'studio-source-read/v1' | null;

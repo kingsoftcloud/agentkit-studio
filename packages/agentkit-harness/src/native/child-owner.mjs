@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeKernel, NativeError, CHILD_OWNER_CONTRACT, canonical, copy, configure,
   addUsage, admittedToolBudget, childLifecycleRequest, childReadyProbe, scopeKey, terminal,
-  CHILD_TASK_POLICY, COORDINATOR_RESPONSE_POLICY } from '../../../agentkit-harness-core/dist/index.mjs';
+  CHILD_TASK_POLICY, COORDINATOR_RESPONSE_POLICY, activePlanMode, isPlanChildCall, planModeWriteDenial,
+  CHILD_PLAN_POLICY, CHILD_PLAN_MODE_POLICY } from '../../../agentkit-harness-core/dist/index.mjs';
 import { loadSessionChild, accountedChildDelivery, hasUnsafeChildReceipt } from './owned-child.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -235,6 +236,19 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
 
   return Object.freeze({
     contract: CHILD_OWNER_CONTRACT,
+    async admitPlan(request) {
+      try {
+        request.signal.throwIfAborted();
+        const parent = toolInvocation(request);
+        if (!activePlanMode(parent.snapshot, effective(parent)) || !isPlanChildCall(effective(parent), request.call, request.definition)) return false;
+        if (request.definition.childBudgetPolicy === 'settle/v1') {
+          const reservation = parent.snapshot.childBudgetReservations.find(item => item.childRunId === request.call.arguments.child_run_id);
+          if (!reservation) return false;
+          ownedChild(request, reservation);
+        }
+        return true;
+      } catch { return false; }
+    },
     tasks(request) {
       const parent = parentRecord(request), snapshot = parent.snapshot;
       const rows = [];
@@ -297,7 +311,9 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     },
     async start(request) {
       try {
-        request.signal.throwIfAborted(); toolInvocation(request);
+        request.signal.throwIfAborted();
+        const parent = toolInvocation(request), inheritedPlan = effective(parent).childPlanPolicy === CHILD_PLAN_POLICY;
+        if (activePlanMode(parent.snapshot, effective(parent)) && !isPlanChildCall(effective(parent), request.call, request.definition)) return planModeWriteDenial();
         check(['start/v1', 'delegate/v1'].includes(request.definition.childBudgetPolicy), 'child_start_not_admitted');
         const args = request.call.arguments;
         check(typeof args.role === 'string' && args.role.trim() && typeof args.task === 'string' && args.task.trim()
@@ -316,6 +332,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         const requestDigest = hash({ parent: identity(request), operationKey: request.operationKey, call: request.call, budget: request.budget });
         const binding = { contract: CHILD_OWNER_CONTRACT, parent: identity(request), parentOperationKey: request.operationKey,
           parentToolCallId: request.call.callId, parentExecutionFence: request.executionFence, childRequestDigest: requestDigest,
+          ...(inheritedPlan ? { planMode: activePlanMode(parent.snapshot, effective(parent)) } : {}),
           role: args.role, maxModelCalls, maxToolCalls, ...(foreground ? { deliveryMode: 'foreground' } : {}) };
         const runId = locator(request);
         const existing = scopes.flatMap(childScope => store.list(childScope)).find(snapshot => snapshot.runId === runId);
@@ -349,6 +366,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         binding.maxToolCalls = Math.min(maxToolCalls, bound.configuration.limits.maxToolCalls ?? maxToolCalls);
         check(binding.maxModelCalls >= 1 && binding.maxToolCalls >= 0, 'child_budget_exhausted');
         const configuration = configure({ ...copy(bound.configuration), delegationDepth: request.budget.depth + 1,
+          ...(inheritedPlan ? { planModePolicy: CHILD_PLAN_MODE_POLICY, planModeInitialActive: binding.planMode } : {}),
           limits: { ...bound.configuration.limits, maxModelCalls: binding.maxModelCalls, maxToolCalls: binding.maxToolCalls }, childOwnerBinding: binding });
         const childIdentity = { scope: copy(bound.scope), runId, sessionId: childSessionId,
           turnId: '1', buildId: request.buildId, parentRunId: null, taskChainId: source ? runId : request.taskChainId };
@@ -375,6 +393,7 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     async control(request) {
       request.signal.throwIfAborted();
       let parent = toolInvocation(request);
+      if (activePlanMode(parent.snapshot, effective(parent)) && !isPlanChildCall(effective(parent), request.call, request.definition)) return planModeWriteDenial();
       check(request.definition.childBudgetPolicy === 'settle/v1', 'child_control_not_admitted');
       const args = request.call.arguments, waitSeconds = args.wait_seconds ?? 15;
       check(typeof args.child_run_id === 'string' && ['wait', 'send', 'stop'].includes(args.action)

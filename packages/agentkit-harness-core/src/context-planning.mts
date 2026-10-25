@@ -39,7 +39,7 @@ function checkedCount(value: number): number {
 export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguration): ObjectValue {
   return copy({ schemaVersion: 'agentkit.native-context-continuity/v1', authority: 'host_record', goal: snapshot.goal,
     ...(snapshot.todos ? { todos: snapshot.todos.items, todoRevision: snapshot.todos.revision } : {}),
-    ...(snapshot.planMode ? { planMode: snapshot.planMode, planModeGuidance: planModeGuidance(snapshot) } : {}),
+    ...(snapshot.planMode ? { planMode: snapshot.planMode, planModeGuidance: planModeGuidance(snapshot, config) } : {}),
     ...(config.profile.operatorGuidancePolicy ? { operatorGuidancePolicy: config.profile.operatorGuidancePolicy } : {}),
     goalRevision: snapshot.goalRevision, contract: config.contract, usage: snapshot.usage, descendantUsage: snapshot.descendantUsage,
     limits: config.limits, workspaceRevision: snapshot.workspaceRevision, workspaceModifiedPaths: snapshot.workspaceModifiedPaths,

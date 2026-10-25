@@ -35,8 +35,8 @@ export async function apply(ctx, options) {
           tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile',
           inheritMcp: Boolean(options.mcpUrl), maxTurns: options.mcpUrl ? 5 : 4, maxToolCalls: options.mcpUrl ? 3 : 2 }
         : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
-          tools: ['read_workspace_file'], modelProfileId: 'child-profile', maxTurns: options.taskControls ? 5 : 3, maxToolCalls: options.taskControls ? 4 : 2 }],
-      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.writingRecovery ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
+          tools: ['read_workspace_file', ...(options.childPlanMode ? ['write_workspace_file'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls ? 5 : 3, maxToolCalls: options.taskControls ? 4 : 2 }],
+      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.writingRecovery || options.childPlanMode ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
         ...(a2aProof ? { a2a: a2aProof.bindings } : {}),
         ...(options.mcpUrl ? { mcpServers: ['child-proof-mcp'] } : {}),
         modelProfileIds: ['parent-profile', 'child-profile'] },
@@ -151,6 +151,9 @@ export async function apply(ctx, options) {
       if (ctx.sessionProjections.stateOf(agent.session, 'agentPreset') !== presetId) throw Error('Child proof persisted preset changed');
       await ctx.agentPresets.recompose(agent.ctx, presetId);
     } else await ctx.agentPresets.select(agent, presetId);
+    // A trusted idle-boundary mode selection using the actual Host controller.
+    // Exact model-requested approval is covered separately by the Plan tests.
+    if (options.childPlanMode) ctx.get('planMode').set(agent, source !== 'resume');
     if (options.managedProofPath) await writeFile(join(home, 'managed-session-history.json'), JSON.stringify(agent.session.snapshotEvents()));
   });
   if (options.managedProofPath) {

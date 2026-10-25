@@ -31,6 +31,7 @@ export interface ConfigurationInput {
   coordinatorResponsePolicy?: RunConfiguration['coordinatorResponsePolicy'];
   planModePolicy?: RunConfiguration['planModePolicy'];
   planModeInitialActive?: boolean;
+  childPlanPolicy?: RunConfiguration['childPlanPolicy'];
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
   deliveryReviewPolicy?: (Partial<DeliveryReviewPolicy> & Pick<DeliveryReviewPolicy, 'pathSuffixes'>) | null;
   hostRecoveryBinding?: RunConfiguration['hostRecoveryBinding'];
@@ -76,6 +77,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.coordinatorResponsePolicy === undefined ? {} : { coordinatorResponsePolicy: input.coordinatorResponsePolicy }),
     ...(input.planModePolicy === undefined ? {} : { planModePolicy: input.planModePolicy }),
     ...(input.planModeInitialActive === undefined ? {} : { planModeInitialActive: input.planModeInitialActive }),
+    ...(input.childPlanPolicy === undefined ? {} : { childPlanPolicy: input.childPlanPolicy }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
     ...(input.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: input.deliveryReviewPolicy === null ? null : normalizeDeliveryReviewPolicy(input.deliveryReviewPolicy) }),
     ...(input.hostRecoveryBinding === undefined ? {} : { hostRecoveryBinding: input.hostRecoveryBinding }),

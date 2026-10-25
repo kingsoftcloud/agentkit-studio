@@ -7,7 +7,8 @@ import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
 import { executeTodo, isTodoCall, todoUpdateFact, TODO_WRITE } from './todos.mjs';
 import { coordinatorResponseFacts, executeCoordinatorResponse, isCoordinatorResponse, COORDINATOR_RESPONSE_POLICY } from './coordinator-response.mjs';
-import { executePlanMode, isPlanModeCall, planModeDenial, planModeFact, planModeGuidance, planModeWriteDenial, PLAN_MODE_POLICY } from './plan-mode.mjs';
+import { executePlanMode, isPlanModeCall, planModeDenial, planModeFact, planModeGuidance, planModeWriteDenial, PLAN_MODE_POLICY,
+  activePlanMode, isPlanChildCall } from './plan-mode.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
@@ -99,7 +100,7 @@ export class NativeKernel {
     if (initial.planMode && parent?.snapshot.planMode) initial.planMode = { ...copy(parent.snapshot.planMode),
       active: initial.planMode.active, revision: parent.snapshot.planMode.revision + (initial.planMode.active === parent.snapshot.planMode.active ? 0 : 1) };
     if (initial.planMode && !configuration.contextPolicy) initial.messages.push({ role: 'user', kind: 'plan_mode',
-      content: canonical({ authority: 'host_record', planMode: initial.planMode, instructions: planModeGuidance(initial) }) });
+      content: canonical({ authority: 'host_record', planMode: initial.planMode, instructions: planModeGuidance(initial, configuration) }) });
     if (initial.todos && parent?.snapshot.todos) {
       initial.todos = copy(parent.snapshot.todos);
       if (initial.todos.revision > 0 && !configuration.contextPolicy) initial.messages.splice(1, 0, { role: 'user', kind: 'todo_state',
@@ -655,7 +656,7 @@ export class NativeKernel {
           break;
         }
         case 'input':
-          changes = reduceTurnInput(snapshot, raw);
+          changes = reduceTurnInput(snapshot, raw, configuration);
           if (changes.planMode) facts.push({ kind: 'plan.mode_changed', payload: planModeFact({ ...snapshot, ...changes }, changes.messages?.length ?? snapshot.messages.length) });
           facts.push({ kind: 'input.completed', payload: { step: intent.payload.step!, status: raw.status!,
             messageCursor: changes.messages?.length ?? snapshot.messages.length } });
@@ -947,7 +948,7 @@ export class NativeKernel {
           try {
             toolSignal.throwIfAborted();
             const request = { ...context, signal: toolSignal,
-              ...(snapshot.planMode?.active && configuration.planModePolicy === PLAN_MODE_POLICY
+              ...(activePlanMode(snapshot, configuration)
                 && definition.planModeCommandPolicy ? { planMode: 'session-plan/v1' as const } : {}),
               ...(configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY ? { resultGovernance: RUNTIME_ARTIFACT_POLICY } : {}),
               ...(sourceReadBudget ? { sourceReadBudget } : {}),
@@ -955,8 +956,11 @@ export class NativeKernel {
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
             const execute = async (): Promise<ToolResult> => {
+              if (activePlanMode(snapshot, configuration) && isPlanChildCall(configuration, call, definition)
+                && (!this.ports.children?.admitPlan || await this.ports.children.admitPlan(request) !== true))
+                return planModeWriteDenial(configuration);
               if (request.planMode && (!this.ports.tools.checkPlanMode || await this.ports.tools.checkPlanMode(request) !== true))
-                return planModeWriteDenial();
+                return planModeWriteDenial(configuration);
               toolSignal.throwIfAborted();
               return isPlanModeCall(configuration, call)
               ? Promise.resolve(executePlanMode(snapshot, configuration, call, (intent.payload.interaction ?? null) as ObjectValue | null))

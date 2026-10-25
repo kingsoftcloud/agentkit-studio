@@ -5,6 +5,8 @@ import { isTodoCall } from './todos.mjs';
 import { isCoordinatorResponse } from './coordinator-response.mjs';
 
 export const PLAN_MODE_POLICY = 'session-plan/v1';
+export const CHILD_PLAN_MODE_POLICY = 'inherited-child-plan/v1';
+export const CHILD_PLAN_POLICY = 'inherit-plan/v1';
 export const ENTER_PLAN_MODE = 'EnterPlanMode';
 export const EXIT_PLAN_MODE = 'ExitPlanMode';
 
@@ -31,24 +33,43 @@ export function isPlanModeCall(config: RunConfiguration, call: Pick<ToolCall, 'n
 }
 
 export function validatePlanModeConfiguration(config: RunConfiguration): void {
-  invariant(config.planModePolicy === undefined || config.planModePolicy === PLAN_MODE_POLICY, 'invalid_plan_mode_policy');
+  invariant(config.planModePolicy === undefined || [PLAN_MODE_POLICY, CHILD_PLAN_MODE_POLICY].includes(config.planModePolicy), 'invalid_plan_mode_policy');
+  invariant(config.childPlanPolicy === undefined || config.childPlanPolicy === CHILD_PLAN_POLICY
+    && config.planModePolicy === PLAN_MODE_POLICY && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_plan_policy');
   invariant(config.planModePolicy ? typeof config.planModeInitialActive === 'boolean'
     : config.planModeInitialActive === undefined, 'invalid_plan_mode_initial_state');
+  if (config.planModePolicy === CHILD_PLAN_MODE_POLICY) {
+    invariant(config.childOwnerBinding && config.childOwnerBinding.planMode === config.planModeInitialActive
+      && !config.tools.some(tool => [ENTER_PLAN_MODE, EXIT_PLAN_MODE].includes(tool.name)), 'invalid_child_plan_binding');
+    return;
+  }
+  invariant(config.childOwnerBinding?.planMode === undefined, 'invalid_child_plan_binding');
   if (!config.planModePolicy) return;
   for (const definition of planModeToolDefinitions(!!config.toolDiscoveryPolicy))
     invariant(config.tools.some(tool => canonical(tool) === canonical(definition)), 'plan_mode_tool_binding_invalid');
 }
 
 export function planModeDenial(snapshot: RunSnapshot, config: RunConfiguration, call: ToolCall, definition: ToolDefinition): ToolResult | null {
-  if (!snapshot.planMode?.active || config.planModePolicy !== PLAN_MODE_POLICY || isPlanModeCall(config, call)
+  if (!activePlanMode(snapshot, config) || isPlanModeCall(config, call) || isPlanChildCall(config, call, definition)
     || isTodoCall(config, call) || isCoordinatorResponse(config, call) || definition.readOnly || definition.planModeCommandPolicy === 'zcode-posix-readonly/v1'
     || definition.planModeAccess?.contract === 'zcode-mcp-plan/v1' && !definition.planModeAccess.destructive) return null;
-  return planModeWriteDenial();
+  return planModeWriteDenial(config);
 }
 
-export function planModeWriteDenial(): ToolResult {
+export function activePlanMode(snapshot: RunSnapshot, config: RunConfiguration): boolean {
+  return !!snapshot.planMode?.active && [PLAN_MODE_POLICY, CHILD_PLAN_MODE_POLICY].includes(config.planModePolicy!);
+}
+
+export function isPlanChildCall(config: RunConfiguration, call: ToolCall, definition: ToolDefinition): boolean {
+  return config.childPlanPolicy === CHILD_PLAN_POLICY && (['start/v1', 'delegate/v1'].includes(definition.childBudgetPolicy ?? '')
+    || definition.childBudgetPolicy === 'settle/v1' && call.arguments.action === 'wait');
+}
+
+export function planModeWriteDenial(config?: RunConfiguration): ToolResult {
   return { status: 'error', content: { code: 'plan_mode_write_denied', executed: false,
-    message: 'Planning mode allows read-only exploration, non-destructive MCP tools and session planning controls. Present the plan with ExitPlanMode and obtain user approval before implementation.' } };
+    message: config?.planModePolicy === CHILD_PLAN_MODE_POLICY
+      ? 'This child inherited Plan mode. Read-only exploration, non-destructive MCP tools and session planning controls are allowed. Report implementation proposals to the coordinator; only a new admitted child Run can change this mode.'
+      : 'Planning mode allows read-only exploration, non-destructive MCP tools and session planning controls. Present the plan with ExitPlanMode and obtain user approval before implementation.' } };
 }
 
 export function planReviewInteractionId(call: ToolCall): string { return `native-plan-review:${call.callId}`; }
@@ -94,8 +115,15 @@ export function planModeFact(snapshot: RunSnapshot, messageCursor: number): Obje
   return { active: snapshot.planMode.active, revision: snapshot.planMode.revision, messageCursor };
 }
 
-export function planModeGuidance(snapshot: RunSnapshot): string {
+export function planModeGuidance(snapshot: RunSnapshot, config?: RunConfiguration): string {
+  // Children deliberately have no independent Plan transition/review tools.
+  // Keep the restriction useful without instructing them to call an absent tool.
+  if (config?.planModePolicy === CHILD_PLAN_MODE_POLICY) return snapshot.planMode?.active
+    ? 'This child inherited active Plan mode from its coordinator. Explore and report findings with read/search tools, session Todo controls and RespondToCoordinator. Workspace writes and destructive tools are forbidden. You cannot enter or exit Plan mode or request independent plan approval. Report a proposed implementation to the coordinator and continue the assigned exploration; only a new admitted child Run can change this inherited mode.'
+    : 'This child inherited inactive Plan mode. Continue its assigned task under the admitted tools, permissions and budget. Plan transition tools are unavailable in child sessions.';
   return snapshot.planMode?.active
-    ? 'Plan mode is active. Explore with read/search tools, clarify requirements, and prepare a concrete implementation plan. Do not modify the workspace or start mutating commands/children. Local commands with the admitted read-only command policy are checked against their syntax, options and runtime directory before execution. Session Todo updates and MCP tools admitted as non-destructive by the frozen tool catalog are allowed, subject to normal tool permissions. Use ExitPlanMode to present the full plan for user approval before implementation.'
+    ? 'Plan mode is active. Explore with read/search tools, clarify requirements, and prepare a concrete implementation plan. Do not modify the workspace or start mutating commands/children. Local commands with the admitted read-only command policy are checked against their syntax, options and runtime directory before execution. Session Todo updates and MCP tools admitted as non-destructive by the frozen tool catalog are allowed, subject to normal tool permissions. '
+      + (config?.childPlanPolicy === CHILD_PLAN_POLICY ? 'An admitted Native child owner may launch children with inherited Plan restrictions or wait for owned results; sending instructions and stopping tasks remain subject to the normal Plan restrictions. ' : '')
+      + 'Use ExitPlanMode to present the full plan for user approval before implementation.'
     : 'Plan mode is inactive. Continue the user task subject to the existing tool permissions and execution budget. An approved plan is progress context, not a blanket permission grant.';
 }

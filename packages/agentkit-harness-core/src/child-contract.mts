@@ -7,6 +7,7 @@ export interface ChildOwnerBinding {
   parentOperationKey: string; parentToolCallId: string; parentExecutionFence: number; childRequestDigest: string; role: string;
   maxModelCalls: number; maxToolCalls: number;
   deliveryMode?: 'foreground' | 'background';
+  planMode?: boolean;
   continuationOf?: string;
   continuationParentRunId?: string;
 }
@@ -44,6 +45,8 @@ export interface ChildControlTarget {
 }
 export interface ChildControlDelivery { target: ChildControlTarget; command: RunCommand }
 export interface ChildLifecyclePort {
+  /** Validate the actual owned start/result-wait before dispatch in Plan mode. */
+  admitPlan?(request: import('./contracts.mjs').ToolRequest): Promise<boolean>;
   /** Scope-bound control metadata, including an owned start whose receipt is still in flight. */
   tasks?(request: RunIdentity): ChildTaskControlState[];
   /** Read-only locator. The Store revalidates both ledgers in the delivery transaction. */

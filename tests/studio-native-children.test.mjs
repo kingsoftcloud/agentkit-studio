@@ -191,6 +191,60 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
 
+function enableParentPlan(f) {
+  f.payload.input.assembly.sections = [];
+  f.services.sessionProjections.register({ key: 'plan', init: () => ({ active: true }),
+    apply: (state, event) => event.type === 'plan/mode' ? { active: event.data.active } : state });
+  f.services.planMode = { get: () => ({ active: true }) };
+}
+
+for (const childTool of ['native_start_child', 'native_delegate']) test(`Studio Plan ${childTool}: inherited child permissions block isolated writes and retain reporting`, async t => {
+  const f = await setup(t, { sqlite: true, childTool, boundTools: ['read_workspace_file', 'write_workspace_file'],
+    role: { tools: ['read_workspace_file', 'write_workspace_file'], maxTurns: 5, maxToolCalls: 4 },
+    childPlan: (body, index) => {
+      assert.match(JSON.stringify(body.messages), /inherited active Plan mode/);
+      if (index === 1) return { call: { name: 'write_workspace_file', arguments: { path: 'forbidden.txt', content: 'Must not write' } } };
+      if (index === 2) {
+        assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /plan_mode_write_denied/);
+        return { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } };
+      }
+      if (index === 3) return { call: { name: 'RespondToCoordinator', arguments: { summary: 'Explored', message: 'Write stayed forbidden in the child.' } } };
+      return { text: 'Read-only child findings' };
+    } });
+  enableParentPlan(f);
+  const execution = await f.host.executeTurn(f.payload); assert.equal(execution.reason.kind, 'completed', JSON.stringify(execution));
+  const parent = f.ledger.list(f.scope, 'parent-session')[0], reservation = parent.childBudgetReservations[0];
+  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(parent.planMode.active, true); assert.equal(child.snapshot.planMode.active, true);
+  assert.equal(child.configuration.childOwnerBinding.planMode, true);
+  assert.equal(f.ledger.load(f.scope, parent.runId).configuration.childPlanPolicy, 'inherit-plan/v1');
+  assert.equal(child.configuration.planModePolicy, 'inherited-child-plan/v1');
+  assert.deepEqual(child.snapshot.workspaceModifiedPaths, []);
+  assert.equal(f.dispatches.some(item => item.name === 'write_workspace_file'), false);
+  assert.equal(f.dispatches.filter(item => item.name === 'read_workspace_file').length, 1);
+  assert.equal(parent.messages.filter(message => message.kind === 'child_response').length, 1);
+  assert.equal(child.configuration.tools.some(tool => ['EnterPlanMode', 'ExitPlanMode'].includes(tool.name)), false);
+});
+
+for (const destructive of [false, true]) test(`Studio child Plan keeps frozen MCP destructive=${destructive} permission distinct from replay`, async t => {
+  let effects = 0;
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', boundTools: [], role: { tools: [], inheritMcp: true },
+    mcp: { contracts: [{ ...childMcpContract, nativeMcpPlanAccess: { contract: 'zcode-mcp-plan/v1', destructive } }],
+      execute: async input => { input.assertCurrent(); effects++; return { content: [{ type: 'text', text: 'Actual child MCP reply' }] }; } },
+    childPlan: (body, index) => {
+      if (index === 1) return { call: { name: 'remote_lookup', arguments: { id: 1 } } };
+      assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content,
+        destructive ? /plan_mode_write_denied/ : /Actual child MCP reply/);
+      return { text: 'Child permission result' };
+    } });
+  enableParentPlan(f); assert.equal((await f.host.executeTurn(f.payload)).reason.kind, 'completed');
+  assert.equal(effects, destructive ? 0 : 1);
+  const parent = f.ledger.list(f.scope, 'parent-session')[0], reservation = parent.childBudgetReservations[0];
+  const definition = f.ledger.load(reservation.childScope, reservation.childRunId).configuration.tools.find(tool => tool.name === 'remote_lookup');
+  assert.deepEqual(definition.planModeAccess, { contract: 'zcode-mcp-plan/v1', destructive });
+  assert.equal(definition.readOnly, false); assert.equal(definition.concurrentSafe, false);
+});
+
 for (const childTool of ['native_start_child', 'native_delegate']) test(`Studio ${childTool}: child Todo and coordinator reply stay on the owned execution chain`, async t => {
   const f = await setup(t, { sqlite: true, childTool, role: { maxTurns: 5, maxToolCalls: 4 },
     childPlan: (_body, index) => {

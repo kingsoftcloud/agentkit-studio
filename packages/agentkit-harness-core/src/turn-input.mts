@@ -1,11 +1,12 @@
-import type { Message, ObjectValue, RunSnapshot, TurnInputMessage } from './contracts.mjs';
+import type { Message, ObjectValue, RunSnapshot, RunConfiguration, TurnInputMessage } from './contracts.mjs';
 import { invariant } from './values.mjs';
 import { toolContext } from './tool-context.mjs';
-import { planModeGuidance } from './plan-mode.mjs';
+import { planModeGuidance, CHILD_PLAN_MODE_POLICY } from './plan-mode.mjs';
 
 /** Host receipts cannot grant tools or per-call permission. The optional,
  * versioned plan control adopts the user's mode at an accepted boundary. */
-export function reduceTurnInput(snapshot: RunSnapshot, result: ObjectValue): Partial<RunSnapshot> {
+export function reduceTurnInput(snapshot: RunSnapshot, result: ObjectValue, config?: RunConfiguration): Partial<RunSnapshot> {
+  invariant(config?.planModePolicy !== CHILD_PLAN_MODE_POLICY || result.planMode === undefined, 'child_plan_mode_is_immutable');
   invariant(Object.keys(result).every(key => ['status', 'messages', ...(snapshot.planMode ? ['planMode'] : [])].includes(key))
     && ['admitted', 'rejected'].includes(String(result.status)) && Array.isArray(result.messages), 'invalid_turn_input');
   invariant(result.planMode === undefined || typeof result.planMode === 'boolean' && result.status === 'admitted', 'invalid_turn_input');
@@ -19,7 +20,7 @@ export function reduceTurnInput(snapshot: RunSnapshot, result: ObjectValue): Par
       ...(retention === 'normal' ? {} : { persistent: true }) };
   });
   if (modeChanged) messages.push({ role: 'user', kind: 'plan_mode', content: planModeGuidance({ ...snapshot,
-    planMode: { ...snapshot.planMode!, active: result.planMode as boolean } }) });
+    planMode: { ...snapshot.planMode!, active: result.planMode as boolean } }, config) });
   return { pendingIntent: null, context: { ...snapshot.context, inputModelCursor: snapshot.usage.modelCalls,
     ...(messages.length || modeChanged ? { preparedCursor: null } : {}) },
   ...(modeChanged ? { planMode: { ...snapshot.planMode!, active: result.planMode as boolean, revision: snapshot.planMode!.revision + 1 } } : {}),

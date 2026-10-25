@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { canonical, configure, invariant, submissionOutputFormat, artifactToolDefinitions, isArtifactTool, toolDiscoveryDefinitions,
   TOOL_SEARCH, DEFERRED_TOOL_CALL, TODO_READ, TODO_WRITE, RESPOND_TO_COORDINATOR, CHILD_TASK_POLICY,
-  COORDINATOR_RESPONSE_POLICY, todoToolDefinitions, coordinatorResponseDefinition } from '../../packages/agentkit-harness-core/dist/index.mjs';
+  COORDINATOR_RESPONSE_POLICY, todoToolDefinitions, coordinatorResponseDefinition,
+  CHILD_PLAN_POLICY, CHILD_PLAN_MODE_POLICY } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeChildOwner } from '../../packages/agentkit-harness/src/native/child-owner.mjs';
 import { createNativeChildResultTools } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeGoalContract } from './native-verification.mjs';
@@ -80,9 +81,10 @@ export function nativeChildRoles(spec = {}) {
 
 /** Bind every child to a declared role and its own scoped tool state. */
 export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp, mcpBinding, skillBinding, skillInstructions,
-  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory, sourceReadPolicy, childTaskPolicy }) {
+  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory, sourceReadPolicy, childTaskPolicy, childPlanPolicy }) {
   if (!roles.length) return null;
   invariant(childTaskPolicy === undefined || childTaskPolicy === CHILD_TASK_POLICY, 'studio_native_child_task_policy_invalid');
+  invariant(childPlanPolicy === undefined || childPlanPolicy === CHILD_PLAN_POLICY, 'studio_native_child_plan_policy_invalid');
   invariant(artifactPolicy == null || artifactPolicy === 'runtime-artifacts/v1' && typeof artifactFactory === 'function',
     'studio_native_child_artifact_binding_invalid');
   invariant(sourceReadPolicy == null || sourceReadPolicy === 'studio-source-read/v1' && artifactPolicy === 'runtime-artifacts/v1',
@@ -187,6 +189,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
           ...(isolated ? { childWorkspace: isolated.binding } : {}), ...(childSkills ? { childSkills } : {}),
         } } : {}),
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
+          ...(childPlanPolicy ? { childPlanPolicy } : {}),
           ...(childTaskPolicy ? { childTaskPolicy } : {}),
           ...(artifactPolicy ? { artifactPolicy } : {}),
           ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
@@ -222,6 +225,8 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       const profile = bound && configure({ profile: bound.model.profile, contract: configuration.contract,
         hostBindingDigest: configuration.hostBindingDigest }).profile;
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
+        && configuration.planModePolicy === (childPlanPolicy ? CHILD_PLAN_MODE_POLICY : undefined)
+        && configuration.planModeInitialActive === (childPlanPolicy ? binding.planMode : undefined)
         && configuration.todoPolicy === (childTaskPolicy ? 'session-todos/v1' : undefined)
         && configuration.coordinatorResponsePolicy === (childTaskPolicy ? COORDINATOR_RESPONSE_POLICY : undefined)
         && configuration.toolDiscoveryPolicy === bound.toolDiscoveryPolicy
@@ -231,6 +236,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         && configuration.modelRecoveryPolicy === (bound.model.modelRecoveryPolicy ?? 'manual')
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
           profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
+          ...(childPlanPolicy ? { childPlanPolicy } : {}),
           ...(childTaskPolicy ? { childTaskPolicy } : {}),
           ...(artifactPolicy ? { artifactPolicy } : {}),
           ...(sourceReadPolicy ? { sourceReadPolicy } : {}),

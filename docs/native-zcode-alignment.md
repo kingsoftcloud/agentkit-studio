@@ -36,20 +36,21 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **20/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **21/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting), M4 8/20
+(successful context-window truncation and durable cache usage accounting), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
 local POSIX command Plan permission through the actual Host execution path,
 plus child-local Todo continuity and durable coordinator responses through the
-actual packed Studio Host). The two new M4 points cover those two integrated
-behaviors, not the whole child control or planning capability group.
-M5–M6 have no earned points yet. The denominator is unchanged; session/child Plan
-exceptions and the remaining M4 controls are not
+actual packed Studio Host, plus owned Plan delegation/wait with immutable child
+mode inheritance and fresh continuation rebinding). The latest M4 point covers
+that integrated child Plan behavior, not the whole child control or planning group.
+M5–M6 have no earned points yet. The denominator is unchanged; remaining session
+exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
 
 ## Source and implementation map
@@ -68,9 +69,9 @@ audited and integrated.
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | Node `workspace-{tools,editing}.mjs`, Host source/directory projections and mutation lock | Audit actual registration, edit preconditions, result bounds and reversible changes; do not substitute broad Git reset for undo. Pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
-| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, detailed review, cold-turn continuity, MCP and local POSIX command exceptions are integrated. Session-control exceptions, child planning and full reminder/control comparisons remain pending. |
+| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
-| Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo and coordinator progress are integrated with receipt-backed facts, post-batch data delivery and cold cursors. Child Plan tools are deliberately absent as in reference. Parent Plan delegation/permission inheritance and remaining background, cancellation/workspace/restart comparison are pending. |
+| Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
 | Recovery / runtime boundaries | runtime persistence and session fork implementation | core store/recovery, Node SQLite, `src/runtime-contract.mjs`, Host recovery | Keep engine/build pin, single effective executor, private checkpoint boundaries. Audit neutral handoff and execution placement separately; no cloud scheduler in this phase. Pending. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
@@ -723,6 +724,92 @@ acceptance, and Todo revision continuity in the same child session after a cold
 Host restart. Each parent receives exactly one report and one descendant usage
 settlement. PATH contains Node only and Python paths are deliberately unusable.
 These controlled requests prove execution behavior, not live-model coding parity.
+
+### Plan delegation and inherited child permissions
+
+Reference behavior at the same pinned ZCode commit:
+
+- `src/tool/handlers/agent.ts` marks Agent read-only/non-destructive because the
+  child runtime checks its own tools. `src/runtime/methods/subagent.ts` derives
+  the default custom-profile child permission mode from the parent's effective
+  Plan state; `tests/subagent-effective-execution.test.ts` exercises a real child
+  with inherited `planEnabled` separately from the underlying execution mode.
+- `src/tool/handlers/task-output.ts` permits result waiting in Plan.
+  `send-message.ts` and `task-stop.ts` are not read-only and have no explicit
+  Plan exception; `src/permission/service.ts` therefore denies those model calls.
+  This is distinct from trusted user cancellation.
+- `src/subagent/tool-policy.ts` excludes child EnterPlanMode/ExitPlanMode. The
+  built-in Explore profile is different: its default mode resolves to `yolo`
+  with restricted tools/instructions. Explicit profile permission modes can
+  override the default (`resolveSubagentPermissionMode` and the contracts
+  `inheritPermissionMode` helper). Those cases must not be described as universal
+  Plan inheritance and are not implemented by this default-role batch.
+
+New Studio parent Runs with Plan and child roles freeze
+`childPlanPolicy: inherit-plan/v1`. Native permits owned start/delegate and wait
+through an actual child owner's admission port, while send/stop remain denied.
+The owner validates the live parent tool intent, fence, budget and definition;
+wait additionally verifies the owned reservation. A missing port fails closed.
+Launch remains effectful, serialized and subject to the existing durable
+reconciliation rules, unlike the reference's read-only/concurrent metadata.
+
+The owner freezes the parent's effective mode into `childOwnerBinding.planMode`
+and `planModePolicy: inherited-child-plan/v1`. The child checks every effect
+using its own frozen tool/MCP/command policy, retains Todo/report controls, and
+cannot call independent Plan transitions or accept an input mode override.
+Denied writes tell the child to report to its coordinator rather than call an
+unavailable ExitPlanMode. A continued Session gets a fresh child Run and budget
+with the current parent mode; original Runs remain unchanged. Parent approval
+does not retroactively rewrite a running child's admitted mode.
+
+Acceptance and deliberate differences:
+
+- Memory/SQLite, foreground/background, active/inactive Plan, owned controls,
+  missing-port denial, and exact parent approval followed by child continuation
+  pass. Cold owner reconstruction covers legacy absence, task-only controls and
+  inherited Plan configurations without upgrading original digests.
+- Actual Studio tests cover isolated workspace write denial/read/report and
+  frozen destructive/non-destructive MCP descriptors. MCP permission does not
+  grant read replay or concurrency. The Plan child still uses normal Host
+  permissions for otherwise admitted tools.
+- The packed SDK proof uses two real Host processes and the actual Plan
+  controller at idle boundaries: first Plan, then build after cold restart.
+  The original child Run stays Plan; a fresh Run in the same Session writes only
+  its isolated workspace. Parent files remain unchanged, each report is delivered
+  once and each child budget settles once. Controller selection is not presented
+  as model-requested approval; the separate exact-approval test covers that path.
+- This batch adds no model round trip, tool definition or runtime dependency for
+  mode inheritance. Existing tool/model budgets charge all actual child work.
+  Inherited-mode guidance adds prompt bytes; full task Token/latency comparison
+  remains in M6. Native retains stronger durable ownership instead of making
+  child starts replayable reads. Explicit per-profile overrides and built-in
+  Explore policy remain tracked gaps, not silently omitted capabilities.
+
+Commands and evidence:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness/test/native-child-plan.test.mjs tests/native-child-task-policy.test.mjs
+node --test --test-name-pattern='Studio Plan|Studio child Plan' tests/studio-native-children.test.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs packages/agentkit-harness-core/test/child-budget-kernel.test.mjs packages/agentkit-harness-core/test/coordinator-response.test.mjs packages/agentkit-harness/test/native-child-owner.test.mjs packages/agentkit-harness/test/native-child-continuation.test.mjs packages/agentkit-harness/test/native-coordinator-response.test.mjs tests/native-host-child-approval.test.mjs tests/native-plan-interaction.test.mjs
+pnpm check:contracts
+node scripts/check-portability.mjs
+pnpm pack --pack-destination /tmp/agentkit-child-plan-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-child-plan-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --task-controls --continue-child --history --child-plan --keep
+```
+
+The focused inheritance/restore group passed 14 cases, Studio Plan child group
+4 cases, and affected control/recovery group 117 cases. No full repository suite
+ran. Packed proof records eight parent and eight child model requests, two actual
+reads, one denied Plan write and one isolated build write, with Node-only PATH
+and unusable Python paths. These are controlled protocol requests, not live-model
+coding-quality or performance parity.
+
+Final archive proof: `/tmp/agentkit-child-plan-sdk-final.log`, evidence directory
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-adxhEj`
+and its `task-controls-proof.json`. The final child-denial feedback refinement was
+rebuilt, repacked and rechecked with 26 related Plan/inheritance/restore cases.
+Contracts and portability checks also passed.
 
 ## Local evidence and comparison protocol
 

@@ -11,11 +11,12 @@ import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' },
-  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' } } });
+  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 if (values['child-controls']) assert.ok(values.promote && values.history && values['continue-child'], '--child-controls requires --promote --history --continue-child');
 if (values['guidance-fifo']) assert.ok(values['child-controls'], '--guidance-fifo requires --child-controls');
 if (values['task-controls']) assert.ok(!values.promote && !values['child-controls'], '--task-controls runs its own bounded child workflow');
+if (values['child-plan']) assert.ok(values['task-controls'] && values['continue-child'], '--child-plan requires --task-controls --continue-child');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
 console.log(`Studio child evidence: ${root}`);
@@ -43,7 +44,7 @@ const server = createServer(async (request, response) => {
     if (child) {
       const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3;
       assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? []
-        : ['read_workspace_file', 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
+        : ['read_workspace_file', ...(values['child-plan'] ? ['write_workspace_file'] : []), 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       const results = body.messages.filter(message => message.role === 'tool');
       if (values['child-controls'] && childStep > 0 && turn === 1) assert.match(JSON.stringify(body.messages), /SDK child guidance/);
@@ -107,8 +108,19 @@ const server = createServer(async (request, response) => {
           await parentContinued;
         }
         call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
+        if (values['child-plan']) {
+          calls = [{ name: 'write_workspace_file', arguments: { path: 'plan-child.txt', content: `Child implementation ${turn}` } }, call];
+          call = undefined;
+        }
       }
       else { assert.match(results.at(-1).content, /Evidence from the actual child workspace/);
+        if (values['child-plan']) {
+          const writeCall = body.messages.flatMap(message => message.tool_calls ?? []).findLast(item => item.function.name === 'write_workspace_file');
+          const written = results.findLast(message => message.tool_call_id === writeCall?.id);
+          assert.ok(written, 'child receives its own write outcome');
+          if (turn === 1) assert.match(written.content, /plan_mode_write_denied/);
+          else { assert.doesNotMatch(written.content, /plan_mode_write_denied/); assert.match(written.content, /"ok":true/); }
+        }
         text = values['guidance-fifo'] && turn === 1 && childStep === 2 ? 'First guided draft' : turn === 2 ? '{"count":2}' : `Child evidence ${turn}`; }
     } else {
       assert.ok(body.tools.some(tool => tool.function.name === 'native_start_child'));
@@ -174,6 +186,7 @@ try {
     '    - id: child-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-native-children.mjs')).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...(values['task-controls'] ? ['        taskControls: true'] : []), '',
+    ...(values['child-plan'] ? ['        childPlanMode: true'] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -241,7 +254,7 @@ try {
       const canceled = values['child-controls'] && !parent.childRunIds.includes(firstChildId);
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
       assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['task-controls'] ? 4 : values['guidance-fifo'] ? 3 : 2);
-      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['task-controls'] ? 3 : 1);
+      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : 1);
       const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
       if (reservation.deliveryMode === 'foreground') {
         assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
@@ -250,6 +263,18 @@ try {
       const child = store.load(reservation.childScope, reservation.childRunId);
       assert.equal(child.snapshot.phase, canceled ? 'canceled' : 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId);
+      if (values['child-plan']) {
+        const active = parent.turnId === '1';
+        assert.equal(record.configuration.childPlanPolicy, 'inherit-plan/v1');
+        assert.equal(child.configuration.planModePolicy, 'inherited-child-plan/v1');
+        assert.equal(child.configuration.childOwnerBinding.planMode, active); assert.equal(child.snapshot.planMode.active, active);
+        assert.equal(parent.planMode.active, active);
+        const childWorkspace = child.configuration.hostRecoveryBinding.childWorkspace;
+        assert.ok(childWorkspace?.isolationId);
+        // The first Run never creates a file. The fresh second Run continues the
+        // same isolated workspace without publishing changes into the parent.
+        if (!active) assert.equal(await readFile(join(root, 'studio/native-harness/child-workspaces', childWorkspace.isolationId, 'work/plan-child.txt'), 'utf8'), 'Child implementation 2');
+      }
       if (values['task-controls']) {
         assert.equal(record.configuration.childTaskPolicy, 'session-controls/v1');
         assert.equal(child.configuration.coordinatorResponsePolicy, 'owned-parent-response/v1');
@@ -269,10 +294,11 @@ try {
         assert.equal(child.configuration.childOwnerBinding.continuationOf, firstChildId);
         assert.equal(child.configuration.childOwnerBinding.continuationParentRunId, firstParent.runId);
         assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['task-controls'] ? 4 : values['guidance-fifo'] ? 3 : 2);
-        assert.equal(original.snapshot.usage.toolCalls, values['task-controls'] ? 3 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
+        assert.equal(original.snapshot.usage.toolCalls, values['child-plan'] ? 4 : values['task-controls'] ? 3 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
+        if (values['child-plan']) assert.equal(original.snapshot.planMode.active, true);
         assert.equal(store.sessionHead(reservation.childScope, original.snapshot.sessionId).runId, child.snapshot.runId);
       } else assert.equal(child.snapshot.parentRunId, null);
-      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['task-controls'] ? 3 : 1);
+      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : 1);
       if (values['child-controls']) {
         const commandKind = canceled ? 'cancel' : 'guide';
         const count = !canceled && values['guidance-fifo'] ? 2 : 1;
@@ -307,6 +333,7 @@ try {
     }
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
+  if (values['child-plan']) await assert.rejects(readFile(join(root, 'workspace/plan-child.txt')), { code: 'ENOENT' });
   if (values['task-controls']) {
     const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.equal(new Set(hosts.map(host => host.pid)).size, 2);
@@ -314,7 +341,9 @@ try {
       hostProcesses: hosts, parentModelRequests: requests.filter(body => body.model === 'parent-proof').length,
       childModelRequests: requests.filter(body => body.model === 'child-proof').length,
       parentTurns: 2, queuedResponses: 2, deliveredResponses: 2, actualWorkspaceReads: 2,
-      continuedChildSession: Boolean(values['continue-child']), noPython: true }, null, 2));
+      continuedChildSession: Boolean(values['continue-child']), noPython: true,
+      ...(values['child-plan'] ? { childPlanModes: [true, false], originalRunModePreserved: true, deniedPlanWrites: 1,
+        actualIsolatedWrites: 1, parentWorkspaceUnchanged: true } : {}) }, null, 2));
   }
   const controlsProof = values['child-controls'] ? `authenticated same-ID guidance and child cancellation, no tool after cancellation, ${values['guidance-fifo'] ? 'two FIFO guidance commands consumed by distinct model receipts' : 'one original child inbox command'}, ` : '';
   console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${controlsProof}${values['task-controls'] ? 'child-local Todo continuity and exactly-once coordinator reports across two Host PIDs, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
