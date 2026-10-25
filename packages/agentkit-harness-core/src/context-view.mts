@@ -4,6 +4,7 @@ import { canonical, copy, invariant } from './values.mjs';
 export function contextSourceDigest(snapshot: RunSnapshot, digest: (value: unknown) => string): string {
   return digest({ messages: snapshot.messages, goalRevision: snapshot.goalRevision,
     workspaceRevision: snapshot.workspaceRevision, configDigest: snapshot.configDigest,
+    ...(snapshot.executionBudgetObservation ? { executionBudgetObservation: snapshot.executionBudgetObservation } : {}),
     ...(snapshot.deliveryReview?.status === 'pending' ? { deliveryReview: snapshot.deliveryReview } : {}) });
 }
 

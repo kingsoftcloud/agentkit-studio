@@ -1056,6 +1056,60 @@ test('Studio Native executes Web through its ledger, replays its result and reje
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), run);
 });
 
+for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} pins deadline tools and delivers through the actual Node gateway`, async t => {
+  const path = 'report.md', text = 'Observed evidence; independent acceptance is missing.';
+  const registry = new Map(), effects = []; let modelFailure;
+  const responseCalls = (...calls) => ({ choices: [{ index: 0, delta: { tool_calls: calls.map((call, index) => ({
+    index, id: `deadline-${index}-${call.name}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) },
+  })) }, finish_reason: 'tool_calls' }] });
+  const f = await setup(t, { sqlite: true, spec: { execution: { nativeLimits: {
+    maxWallMs: 20000, finalizationReserveWallMs: 20000, deliveryContextRecoveryPolicy: 'delivery-window-summary/v2',
+  } } }, respond: (count, body) => { try {
+    const definitions = body.tools.map(tool => tool.function);
+    assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('prepared-execution-budget/v1')));
+    assert.equal(definitions.some(tool => tool.name === 'search_workspace_files'), false);
+    if (count <= 2) assert.deepEqual(definitions.map(tool => tool.name).sort(), ['edit_workspace_file', 'write_workspace_file']);
+    if (count === 1) return responseCalls({ name: 'read_workspace_file', args: { path: 'source.py' } },
+      { name: 'write_workspace_file', args: { path: 'must-not-write.md', content: 'forbidden mixed batch' } });
+    if (count === 2) {
+      assert.equal(effects.length, 0, 'invalid scoped read rejects the entire mixed batch before any effect');
+      assert.equal(body.messages.filter(message => message.role === 'tool').length, 2);
+      return responseCalls({ name: 'write_workspace_file', args: { path, content: text } });
+    }
+    assert.deepEqual(definitions.find(tool => tool.name === 'read_workspace_file').parameters.properties.path.enum, [path]);
+    if (count === 3) return responseCalls({ name: 'read_workspace_file', args: { path } });
+    assert.equal(count, 4); assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /independent acceptance/);
+    return { choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] };
+  } catch (error) { modelFailure ??= error; throw error; } } });
+  const gateway = createNativeDshTools({ ctx: { effect: install => install(),
+    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+      register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
+      async execute(input) {
+        effects.push(input.name);
+        const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
+        return { isError: false, value, content: tool.output.render(input.arguments, value) };
+      },
+    } }, config: { toolBindings: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'] },
+    workspaceRoot: join(f.root, 'workspace'), stateDir: join(f.root, 'deadline-state') });
+  t.after(() => gateway.close()); f.payload.binding.nativeTools = gateway;
+  f.payload.input.assembly.tools = [...registry.values()];
+  if (frozen) f.payload.binding.buildId = 'deadline-frozen-build';
+  await f.host.executeTurn(f.payload).catch(error => {
+    throw modelFailure ?? error;
+  });
+  if (modelFailure) throw modelFailure;
+  const head = f.head(), record = f.ledger.load(head.scope, head.runId);
+  assert.equal(head.phase, 'completed'); assert.equal(record.snapshot.outcome, 'unverified');
+  assert.equal(f.requests.length, 4); assert.deepEqual(effects, ['write_workspace_file', 'read_workspace_file']);
+  assert.deepEqual(record.snapshot.deliveryArtifacts.paths, [path]);
+  assert.equal(await readFile(join(f.root, 'workspace', path), 'utf8'), text);
+  assert.equal(record.configuration.limits.deliveryContextRecoveryPolicy, 'delivery-window-summary/v2');
+  assert.equal(record.configuration.tools.find(tool => tool.name === 'read_workspace_file').deliveryArtifactRole, 'read');
+  const before = structuredClone(record); await f.host.executeTurn(f.payload);
+  assert.deepEqual(f.ledger.load(head.scope, head.runId), before, 'restoration keeps original admission without more effects');
+  if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'deadline-frozen-build'));
+});
+
 test('Studio Native pins the snippet registry name contract and rejects a changed transport on an existing Run', async t => {
   const fixture = await setup(t), binding = { contract: 'agentkit.native-e2b-code-tools/v1', backend: 'e2b',
     registryNameContract: 'agentkit.sandbox-code-registry-name/v1', registryName: 'sandbox_run_code',

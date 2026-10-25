@@ -88,6 +88,17 @@ Evidence: `tests/harness/native/test_kernel.py`,
 
 ## 2. Context, compaction, protocol replay, and media
 
+Deadline delivery now maps `tool_budget.py`, `execution_budget.py`,
+`delivery_artifacts.py`, `delivery_context.py`, `delivery_feedback.py`,
+`run_clock.py` and `effect_control.py` to `deadline-delivery.mts`, the Kernel,
+and trusted Node gateway roles. Successful current-goal writes scope subsequent
+reads; browser observation retains priority; optional summary recovery spends
+the original budget. Monotonic active time and in-flight hard deadlines survive
+through committed consumption, without reconstructing uncommitted crash time.
+Host configuration currently uses explicit milliseconds; the Python Studio
+v1–v7 product-policy calculation remains unmapped. See [configuration and
+evidence boundaries](native-deadline-delivery.md).
+
 - **formal** — Host-owned request planning and compaction sealing:
   `ContextPlanner` / `ContextDriver` (`context_runtime.py`,
   `context_driver.py`). The caller owns model I/O; the kernel only plans and
@@ -218,6 +229,19 @@ Evidence: `tests/harness/native/test_live_short_tasks.py`,
 `tests/harness/native/test_final_shape.py`.
 
 ## 5. Subtasks, messages, promotion, background, and recovery
+
+The current TS Studio binding folds ready-before-model and Host release into
+`childLifecyclePolicy: owned-background/v2` and its Host owner. Reference
+`studio/native_product.py` likewise enables lifecycle, release and notification
+together whenever delegation is present. TS `childReadyProbe` retires only an
+unclaimed model and excludes private review; compaction already uses the
+`compacting` phase, outside the requesting-model gate. The additional compaction
+purpose exclusion does not remove an ordinary reachable boundary. Shared Host
+teardown releases locally owned children on abort/terminal or Host close, without
+claiming a replacement parent's lease. Independent core policy toggles and
+init-time optional-port validation differ from Python; this is a configuration
+shape difference, not evidence that the whole notification/release behavior is
+absent. These observations do not close every child cancellation/wait combination.
 
 - **optional** — Child lifecycle policy `owned-background/v1`/`v2` with a
   `ChildLifecyclePort` (`child_lifecycle.py`,

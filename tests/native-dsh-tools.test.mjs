@@ -188,6 +188,22 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
 
+test('deadline tools are pinned only from trusted builtins and never granted by an external name', t => {
+  const names = ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'];
+  const h = setup(t, names), original = h.gateway.definitions(h.agent, []);
+  assert.ok(original.every(tool => tool.deliveryWrite === undefined && tool.deliveryArtifactRole === undefined));
+  const defs = h.gateway.definitions(h.agent, [], { deadlineDelivery: true });
+  assert.equal(defs.find(tool => tool.name === 'read_workspace_file').deliveryArtifactRole, 'read');
+  for (const name of ['write_workspace_file', 'edit_workspace_file']) {
+    const tool = defs.find(tool => tool.name === name); assert.equal(tool.deliveryArtifactRole, 'write'); assert.equal(tool.deliveryWrite, true);
+  }
+  assert.equal(defs.find(tool => tool.name === 'search_workspace_files').deliveryArtifactRole, undefined);
+  const external = setup(t, ['write_workspace_file'], [{ name: 'write_workspace_file', executor: 'mcp' }]);
+  const schema = [{ name: 'write_workspace_file', parameters: { type: 'object', properties: {} } }];
+  const untrusted = external.gateway.definitions(external.agent, schema, { deadlineDelivery: true })[0];
+  assert.equal(untrusted.deliveryWrite, undefined); assert.equal(untrusted.deliveryArtifactRole, undefined);
+});
+
 test('separate vision deadlines are Session-owned formal definitions and dispose independently', async t => {
   const h = setup(t, ['browser_inspect_workspace']);
   const before = h.gateway.definitions(h.agent, []);

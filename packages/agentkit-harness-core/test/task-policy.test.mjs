@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { NativeKernel, MemoryRunStore, advertisedTools, advanceInteractionObservation, browserTaskMessages,
-  emptyUsage, invalidatesBrowserObservation, reduceCommand, reduceModel, reduceTools,
+  deliveryTaskMessages, emptyUsage, invalidatesBrowserObservation, reduceCommand, reduceModel, reduceTools,
   webObservationDue, webVerificationOnly, validateBrowserObservation, validateBrowserSessionRef } from '../dist/index.mjs';
 import { SqliteRunStore } from '../../agentkit-harness/src/native/sqlite-store.mjs';
 import { canonical } from '../dist/index.mjs';
@@ -99,13 +99,22 @@ test('structured final submission remains available during observation and final
   assert.deepEqual(names(state(snapshot, { lastWebMutationToolCall: 2 }, 9), config), ['submit_final_output']);
 });
 
-test('exhausted tool and wall budgets take priority over browser observation instructions', () => {
+test('exhausted tool budget takes priority; a deadline quote preserves due browser observation', () => {
   const { config, snapshot } = configured(), current = state(snapshot, { lastWebMutationToolCall: 2 }, 5);
-  for (const limits of [{ maxToolCalls: 0 }, { maxWallMs: 100, finalizationReserveWallMs: 100 }]) {
+  for (const limits of [{ maxToolCalls: 0 }]) {
     const exhausted = { ...config, limits: { ...config.limits, ...limits } };
     assert.deepEqual(names(current, exhausted), []);
     assert.deepEqual(browserTaskMessages(current, exhausted, []), []);
   }
+  // Python tool_budget.model_tool_surface prioritizes an observation already
+  // due over wall delivery. The old TS assertion incorrectly treated the wall
+  // reserve as unconditional tool exhaustion; hard expiry is tested in Kernel.
+  const wall = { ...config, limits: { ...config.limits, maxWallMs: 100, finalizationReserveWallMs: 100 } };
+  const quoted = { ...current, executionBudgetObservation: { policy: 'prepared-execution-budget/v1', runId: current.runId,
+    goalRevision: current.goalRevision, sourceRevision: current.revision, modelCallsClaimed: 0, toolCallsClaimed: 0, wallMsRemaining: 50 } };
+  assert.deepEqual(names(quoted, wall), ['browser']);
+  assert.equal(browserTaskMessages(quoted, wall, [])[0].kind, 'browser_task_policy');
+  assert.deepEqual(deliveryTaskMessages(quoted, wall, []), []);
 });
 
 test('model admission uses the pre-call reserve; a mixed batch with a withheld tool dispatches nothing', () => {

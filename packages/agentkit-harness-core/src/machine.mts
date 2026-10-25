@@ -7,7 +7,7 @@ import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normali
 import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
 import { toolContext, deferredToolContexts } from './tool-context.mjs';
 import { reduceBrowserReceipt } from './browser-runtime.mjs';
-import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation } from './task-policy.mjs';
+import { advanceInteractionObservation, browserTaskTools, invalidatesBrowserObservation, webObservationDue, webVerificationOnly } from './task-policy.mjs';
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
 import { effectiveGuidanceResponse } from './guidance.mjs';
 import { rememberCommand } from './background-runtime.mjs';
@@ -19,6 +19,7 @@ import { advanceDiagnosticRecovery, advanceObservedProgress, advanceToolErrorStr
   refuseUndiagnosedToolAction, reserveDiagnosticTrial, toolErrorRecoveryBoundary, toolErrorRecoveryEnabled,
   toolErrorStreakExhausted } from './tool-error-recovery.mjs';
 import { deliveryReviewReaders, deliveryReviewTools, reduceDeliveryReview, reviewPending, scheduleDeliveryReview, unavailableReview } from './delivery-review.mjs';
+import { deliveryReadOutsidePaths, deliverySummaryAllowed, observeExecutionBudget, rememberDeliveryWrite, scopedDeliveryReader, wallDeliveryOnly } from './deadline-delivery.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -54,14 +55,14 @@ function finalizing(snapshot: RunSnapshot, outcome: RunSnapshot['outcome'], reas
 }
 export function finalizationOnly(snapshot: RunSnapshot, config: RunConfiguration): boolean {
   const calls = modelRoom(snapshot, config);
-  return calls <= config.limits.finalizationReserveModelCalls
-    || config.limits.maxWallMs !== null && config.limits.maxWallMs - snapshot.activeElapsedMs <= config.limits.finalizationReserveWallMs;
+  return calls <= config.limits.finalizationReserveModelCalls;
 }
 export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration) {
   if (reviewPending(snapshot)) return deliveryReviewTools(snapshot, config);
   const submission = finalSubmissionTool(config);
   const tools = finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0 ? []
-    : browserTaskTools(snapshot, config, config.tools).filter(tool => config.contract.allowedToolNames === null
+    : browserTaskTools(snapshot, config, wallDeliveryOnly(snapshot, config) && !webObservationDue(snapshot, config) && !webVerificationOnly(snapshot, config)
+      ? config.tools.flatMap(tool => { const reader = scopedDeliveryReader(tool, snapshot); return reader ? [reader] : tool.deliveryWrite ? [tool] : []; }) : config.tools).filter(tool => config.contract.allowedToolNames === null
       || config.contract.allowedToolNames.includes(tool.name));
   return [...tools, ...(submission ? [submission] : [])];
 }
@@ -83,7 +84,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     messages: [...snapshot.messages, ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
   });
   if (snapshot.phase === 'finalizing') {
-    if (snapshot.candidate && snapshot.verification
+    if (snapshot.outcome !== 'budget_exhausted' && snapshot.candidate && snapshot.verification
       && (snapshot.candidate.purpose === 'checkpoint' || snapshot.verification.workspaceDependency !== 'none')
       && capabilities.workspace && snapshot.context.terminalWorkspaceCursor !== snapshot.candidate.candidateId) {
       return prepareEffect(snapshot, 'workspace', 'finalizing', { cursor: snapshot.candidate.candidateId, purpose: 'terminal' });
@@ -133,6 +134,8 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return prepareEffect(snapshot, 'workspace', snapshot.phase, { cursor });
   }
   if (snapshot.phase === 'preparing_context' || snapshot.phase === 'compacting') {
+    const observation = observeExecutionBudget(snapshot, config);
+    if (observation) return observation;
     const recovery = toolErrorRecoveryBoundary(snapshot, config, modelRoom(snapshot, config));
     if (recovery) return recovery;
     if (config.contextPolicy && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_port_missing');
@@ -141,16 +144,17 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     if (snapshot.phase === 'compacting' && compaction) {
       const hook = planHook(snapshot, config, 'PreCompact', digest);
       if (hook) return hook;
-      if (compaction.proposal !== null || !compaction.chunk || finalizationOnly(snapshot, config)) {
+      if (compaction.proposal !== null || !compaction.chunk || finalizationOnly(snapshot, config)
+        || wallDeliveryOnly(snapshot, config) && !deliverySummaryAllowed(snapshot, config)) {
         return prepareEffect(snapshot, 'context', 'compacting', { cursor, forceCompaction: false,
-          allowCompaction: !finalizationOnly(snapshot, config) });
+          allowCompaction: !finalizationOnly(snapshot, config) && (!wallDeliveryOnly(snapshot, config) || deliverySummaryAllowed(snapshot, config)) });
       }
       if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
       return prepareEffect(snapshot, 'model', 'compacting', { purpose: 'compaction', finalizationOnly: false });
     }
     if (capabilities.context && (snapshot.preparedContext === null || snapshot.context.preparedCursor !== cursor)) {
       return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting',
-        allowCompaction: !finalizationOnly(snapshot, config) });
+        allowCompaction: !finalizationOnly(snapshot, config) && !wallDeliveryOnly(snapshot, config) });
     }
     if (toolErrorStreakExhausted(snapshot) && !snapshot.toolErrorRecovery) {
       return finalizing(snapshot, 'blocked', 'repeated_tool_error_no_progress');
@@ -266,6 +270,9 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
   switch (result.kind) {
     case 'tool_calls':
+      if (deliveryReadOutsidePaths(snapshot, config, result.toolCalls)) return { ...base, phase: 'preparing_context', pendingTools: [],
+        messages: [...snapshot.messages, { ...message, toolCalls: result.toolCalls }, ...result.toolCalls.map(call => ({ role: 'tool' as const,
+          callId: call.callId, name: call.name, content: canonical({ status: 'error', content: { reason: 'delivery_read_path_not_written', executed: false } }) }))] };
       if (config.contract.finalSubmissionSchema && result.toolCalls.some(call => call.name === FINAL_SUBMISSION_TOOL)) {
         const text = result.toolCalls.length === 1 ? submittedFinalText(result.toolCalls[0]!, config) : null;
         const messages: Message[] = [...snapshot.messages, { ...message, toolCalls: result.toolCalls },
@@ -398,6 +405,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
     }
     const definition = config.tools.find(tool => tool.name === call.name);
+    Object.assign(updated, rememberDeliveryWrite(updated, call, result, definition));
     const childBudget = reduceChildBudget(updated, result, definition, intent.operationKey, call,
       admittedToolBudget(snapshot, config, calls.length), digest);
     updated.childBudgetReservations = childBudget.childBudgetReservations;
@@ -429,6 +437,11 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
+    if (definition?.deliveryWrite && !definition.readOnly && result.status === 'ok' && result.content && typeof result.content === 'object'
+      && !Array.isArray(result.content) && result.content.ok === true && result.content.path === call.arguments.path
+      && result.workspaceChangedPaths?.includes(String(call.arguments.path)))
+      updated.context.lastDeliveryWriteReceipt = { runId: updated.runId, goalRevision: updated.goalRevision,
+        toolCalls: updated.usage.toolCalls, callId: call.callId, receiptDigest: canonical(updated.messages.at(-1)) };
     updated.queuedGuidance.push(...deferredToolContexts(result.additionalContexts));
     if (result.status === 'ok' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
       const prior = updated.context.observedSourceDigests;
@@ -450,6 +463,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   }
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     context: updated.context,
+    ...(updated.deliveryArtifacts ? { deliveryArtifacts: updated.deliveryArtifacts } : {}),
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,
     childBudgetReservations: updated.childBudgetReservations, childRunIds: updated.childRunIds,
     diagnostics: updated.diagnostics,

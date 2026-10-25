@@ -9,6 +9,7 @@ import { validateChildControlDelivery } from './child-control.mjs';
 import { guidanceRunnable } from './guidance.mjs';
 import { isContextSourceRefreshBatch } from './context-source-refresh.mjs';
 import { isOutputRestartBatch } from './output-recovery.mjs';
+import { isWallBudgetStopBatch } from './deadline-delivery.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -191,9 +192,11 @@ export class TransactionalRunStore implements RunStore {
           && receipt.result.executed === false;
         const sourceRefreshed = intent?.kind === 'model' && receipt.result.code === 'context_source_refresh_required'
           && isContextSourceRefreshBatch(previous, record.configuration, intent, lease.fence, batch);
+        const deadlineRetired = intent && receipt.result.reason === 'wall_time_hard_limit' && receipt.result.executed === false
+          && isWallBudgetStopBatch(previous, record.configuration, intent, batch);
         const undispatched = receipt.status === 'not_dispatched' && intent?.status === 'prepared'
           && previous.pendingIntent === receipt.operationKey && next.pendingIntent === null
-          && (steeringRetired || browserRetired || backgroundRetired || childRetired || childCancelRetired || sourceRefreshed);
+          && (steeringRetired || browserRetired || backgroundRetired || childRetired || childCancelRetired || sourceRefreshed || deadlineRetired);
         invariant((receipt.status === 'not_dispatched' ? undispatched : intent?.status === 'running')
           && !record.receipts.some(item => item.operationKey === receipt.operationKey), 'receipt_without_claim');
       }

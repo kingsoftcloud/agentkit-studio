@@ -47,3 +47,13 @@ test('vision reserves one observation and one final model call within the explic
   }
   assert.throws(() => bindNativeTaskPolicy({ tools: [], vision: 'yes' }), /vision_invalid/);
 });
+
+test('deadline policy pins exact original wall allowance and versioned context repair; omission stays omitted', () => {
+  const nativeLimits = { maxWallMs: 600000, finalizationReserveWallMs: 60000, deliveryContextRecoveryPolicy: 'delivery-window-summary/v2' };
+  const policy = bindNativeTaskPolicy({ tools: [], nativeLimits });
+  for (const [key, value] of Object.entries(nativeLimits)) assert.equal(policy.limits[key], value);
+  assert.equal(Object.hasOwn(bindNativeTaskPolicy({ tools: [] }).limits, 'maxWallMs'), false);
+  for (const change of [{ maxWallMs: 0 }, { maxWallMs: '60' }, { maxWallMs: 86400001 }, { finalizationReserveWallMs: 240001 },
+    { finalizationReserveWallMs: -1 }, { deliveryContextRecoveryPolicy: 'claims-pass' }])
+    assert.throws(() => bindNativeTaskPolicy({ tools: [], nativeLimits: { ...nativeLimits, ...change } }), /studio_native_execution_limits_invalid/);
+});

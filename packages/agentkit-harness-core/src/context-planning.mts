@@ -40,6 +40,8 @@ export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguratio
     children: snapshot.children.map(child => ({ runId: child.runId, state: child.state, notified: child.notified })),
     backgroundCommands: snapshot.backgroundCommands.map(command => ({ ...command.ref, notified: command.notified })),
     verification: snapshot.verification, hostBindingDigest: config.hostBindingDigest,
+    ...(snapshot.executionBudgetObservation ? { executionBudget: snapshot.executionBudgetObservation } : {}),
+    ...(snapshot.deliveryArtifacts ? { deliveryArtifacts: snapshot.deliveryArtifacts } : {}),
     ...(snapshot.toolErrorRecovery ? { toolErrorRecovery: snapshot.toolErrorRecovery,
       toolErrorRecoveryModelCalls: config.toolErrorRecoveryModelCalls ?? null,
       toolErrorRecoveryInstruction: 'The repeated-error guard remains active across compaction. '

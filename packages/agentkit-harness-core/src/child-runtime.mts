@@ -183,6 +183,9 @@ export function isChildReadyBatch(snapshot: RunSnapshot, config: RunConfiguratio
     const request = childReadyProbe(snapshot, effective, intent);
     const ids = batch.receipts[0]?.result.childRunIds;
     if (!request || !Array.isArray(ids) || !ids.length) return false;
-    return canonical(stageChildReady(snapshot, effective, intent, request, ids as string[])) === canonical(batch);
+    const expected = stageChildReady(snapshot, effective, intent, request, ids as string[]);
+    // Driver activity may advance time before commit; Store checks its monotonicity.
+    return expected !== null && canonical({ ...expected, snapshot: { ...expected.snapshot,
+      activeElapsedMs: batch.snapshot.activeElapsedMs } }) === canonical(batch);
   } catch { return false; }
 }

@@ -20,5 +20,8 @@ export function refreshContextSources(snapshot: RunSnapshot, config: RunConfigur
 export function isContextSourceRefreshBatch(snapshot: RunSnapshot, config: RunConfiguration, pending: EffectIntent,
   executionFence: number, batch: CommitBatch): boolean {
   const expected = refreshContextSources(snapshot, config, pending, executionFence);
-  return expected !== null && canonical(expected) === canonical(batch);
+  // Store separately checks the clock cannot decrease; all refresh authority,
+  // events and receipt fields must still equal the original pure transition.
+  return expected !== null && canonical({ ...expected, snapshot: { ...expected.snapshot,
+    activeElapsedMs: batch.snapshot.activeElapsedMs } }) === canonical(batch);
 }

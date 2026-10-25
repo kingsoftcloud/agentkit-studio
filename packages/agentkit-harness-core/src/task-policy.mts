@@ -50,8 +50,7 @@ export function browserTaskTools(snapshot: RunSnapshot, config: RunConfiguration
 export function browserTaskMessages(snapshot: RunSnapshot, config: RunConfiguration, messages: Message[]): Message[] {
   const limits = config.limits;
   if (limits.maxToolCalls !== null && snapshot.usage.toolCalls + snapshot.descendantUsage.toolCalls + outstandingChildCalls(snapshot, 'tool') >= limits.maxToolCalls
-    || remainingCalls(snapshot, config) <= limits.finalizationReserveModelCalls
-    || limits.maxWallMs !== null && limits.maxWallMs - snapshot.activeElapsedMs <= limits.finalizationReserveWallMs) return messages;
+    || remainingCalls(snapshot, config) <= limits.finalizationReserveModelCalls) return messages;
   const content = webObservationDue(snapshot, config)
     ? 'OBSERVATION_DUE: The current web revision needs a browser observation before more workspace work. Only browser observation tools are available on this turn. Inspect the current page; the next turn can use the resulting evidence to repair any observed problem.'
     : webVerificationOnly(snapshot, config)

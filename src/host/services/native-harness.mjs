@@ -310,7 +310,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           memoryDispose = binding.nativeTools.bindMemory(memoryHost);
       } catch (error) { visionDispose?.(); memoryHost?.close(); throw error; }
       try {
-      const tools = binding.nativeTools.definitions(agent, input.assembly.tools);
+      const toolOptions = { deadlineDelivery: original
+        ? original.configuration.limits.finalizationReserveWallMs > 0 : (record.spec.execution?.nativeLimits?.finalizationReserveWallMs ?? 0) > 0 };
+      const tools = binding.nativeTools.definitions(agent, input.assembly.tools, toolOptions);
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: scope.userId, resourceMode: 'context-only' });
@@ -527,7 +529,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             'studio_native_input_model_binding_changed');
           invariant(renderPrompt(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly) === systemPrompt,
             'studio_native_input_prompt_binding_changed');
-          invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools)) === canonical(tools),
+          invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools, toolOptions)) === canonical(tools),
             'studio_native_input_tool_binding_changed');
           invariant(Array.isArray(next.messages), 'studio_native_prepared_input_invalid');
           // The post-candidate drain must still catch real queued work. SDK

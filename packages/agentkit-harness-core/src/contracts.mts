@@ -50,6 +50,7 @@ export interface ToolDefinition {
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
   delegatedReadOnly?: boolean; deliveryWrite?: boolean;
+  deliveryArtifactRole?: 'none' | 'read' | 'write';
   /** safe-read permits a fresh repeatable read; receipt-observation waits for a
    * separately persisted lookup of the original effect and never re-executes it. */
   recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1';
@@ -71,6 +72,7 @@ export interface RunLimits {
   effectTimeoutMs: number; leaseMs: number; maxSubagentDepth: number;
   maxToolResultBytes: number; maxInlineImageBytes: number; maxModelStreamBytes: number;
   maxRecoveryRetries: number;
+  deliveryContextRecoveryPolicy?: 'committed-write-summary/v1' | 'delivery-window-summary/v2' | null;
 }
 export type VerificationMethod = 'deterministic' | 'human' | 'model_assisted';
 export interface AcceptanceItem {
@@ -316,6 +318,9 @@ export interface RunSnapshot extends RunIdentity {
   toolErrorStreak: ToolErrorStreak | null;
   toolErrorRecovery?: ToolErrorRecovery | null;
   deliveryReview?: DeliveryReviewState | null;
+  executionBudgetObservation?: { policy: 'prepared-execution-budget/v1'; runId: string; sourceRevision: number;
+    goalRevision: number; modelCallsClaimed: number; toolCallsClaimed: number; wallMsRemaining: number | null };
+  deliveryArtifacts?: { goalRevision: number; paths: string[] };
   workspaceObservationStatus?: 'captured' | 'unavailable';
   observedProgressRevision?: number; observedProgressFingerprints?: string[];
   browserSessionRefs: BrowserSessionRef[]; browserReobservationRefs: BrowserSessionRef[];

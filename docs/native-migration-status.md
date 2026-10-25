@@ -8,6 +8,11 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 本页含不同阶段的验收记录，后续完成项应以对应专项记录和当前源码为准；
 它不是完整逐项能力审计已经结束的声明。
 
+截止交付窗口已补入核心及共用 Host：实际成功写入的当前目标路径才可回读，混合越界
+批次不执行；保留浏览器观察优先级，并支持受原预算约束的交付上下文压缩。运行时间
+使用持久消耗与本地单调时钟，运行中的效果也受硬时限约束。Python 产品策略到预留
+时间的自动映射尚未完成；当前显式配置及验证边界见[截止交付](native-deadline-delivery.md)。
+
 本轮重新核对了原引擎范围：原 Native 不支持 generic inject、checkpoint/time-travel
 或任意 resume.input；Teams execution-policy 由 ManagedLangGraph 入口消费，
 `max_total_tokens` / `max_artifacts` 也不是原 Native RunLimits。这些不再算作 Native

@@ -117,8 +117,11 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && config.inputMessages.some(message => message.content.trim() || message.media?.length), 'invalid_task_input_messages');
   }
   for (const [key, value] of Object.entries(limits)) {
+    if (key === 'deliveryContextRecoveryPolicy') continue;
     invariant(value === null || Number.isSafeInteger(value) && value >= 0, `invalid_limit:${key}`);
   }
+  invariant(limits.deliveryContextRecoveryPolicy == null || ['committed-write-summary/v1', 'delivery-window-summary/v2']
+    .includes(limits.deliveryContextRecoveryPolicy), 'invalid_delivery_context_policy');
   invariant(Number.isSafeInteger(limits.maxModelStreamBytes) && limits.maxModelStreamBytes >= 0, 'invalid_limit:maxModelStreamBytes');
   invariant(Number.isSafeInteger(limits.verificationIdleToolCalls) && limits.verificationIdleToolCalls >= 0, 'invalid_limit:verificationIdleToolCalls');
   invariant(limits.maxModelCalls === null || limits.maxModelCalls > 0, 'invalid_model_budget');
@@ -141,6 +144,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(Number.isFinite(tool.timeoutMs) && tool.timeoutMs > 0 && tool.timeoutMs < limits.effectTimeoutMs, 'invalid_tool_timeout');
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
+    invariant(tool.deliveryWrite === undefined || typeof tool.deliveryWrite === 'boolean', 'invalid_delivery_writer');
+    invariant(tool.deliveryArtifactRole === undefined || ['none', 'read', 'write'].includes(tool.deliveryArtifactRole), 'invalid_delivery_artifact_role');
     invariant(tool.childBudgetPolicy === undefined || ['start/v1', 'settle/v1', 'delegate/v1'].includes(tool.childBudgetPolicy), 'invalid_child_budget_policy');
     invariant(!tool.childBudgetPolicy || !tool.concurrentSafe, 'invalid_child_budget_concurrency');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');

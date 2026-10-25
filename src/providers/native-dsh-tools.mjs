@@ -670,7 +670,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } finally { calls.delete(callId); }
       } });
     },
-    definitions(agent, assemblyTools) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false } = {}) {
       const schemas = new Map((assemblyTools ?? []).map(schema => [schema.name, schema]));
       // Resolve THIS agent's session Memory owner so the caller-session's LOCKED
       // Memory formal is selected — not a global/last-bound one. The preset
@@ -695,7 +695,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           if (memDef) return structuredClone(memDef);
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
-        if (exact) return { ...structuredClone(exact), ...(name === browserName && visionTimeouts.has(String(agent?.session?.id))
+        if (exact) return { ...structuredClone(exact), ...(deadlineDelivery && formal.has(name)
+          ? name === 'read_workspace_file' && exact.readOnly && exact.contextRole === 'workspace_read' ? { deliveryArtifactRole: 'read' }
+            : ['write_workspace_file', 'edit_workspace_file'].includes(name) && !exact.readOnly ? { deliveryWrite: true, deliveryArtifactRole: 'write' } : {} : {}),
+          ...(name === browserName && visionTimeouts.has(String(agent?.session?.id))
           ? { timeoutMs: visionTimeouts.get(String(agent.session.id)).timeoutMs } : {}) };
         const schema = schemas.get(name);
         invariant(schema, `studio_native_tool_schema_missing:${name}`);
