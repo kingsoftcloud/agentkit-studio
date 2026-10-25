@@ -19,6 +19,9 @@ import { createGithubArchiveSkillSource } from '../src/skill-github-archive-sour
 import { createZip } from '../src/zip.mjs';
 import { createStudioKnowledgeTools, createKnowledgeConnection, knowledgeBindings } from '../src/knowledge-tools.mjs';
 import { createLegacyMemoryTools, createLegacyMemoryConnection } from '../src/legacy-memory-tools.mjs';
+import { createNativeContextPort } from '../packages/agentkit-harness/src/native/context-counter.mjs';
+import { createNativeToolAuthority } from '../src/providers/native-tool-authority.mjs';
+import { decodeCapturedSource, CAPTURED_SOURCE_MEDIA_TYPE } from '../packages/agentkit-harness-core/dist/index.mjs';
 
 // Real signed Node HTTP transport and SQLite/Kernel; HTTP peer and model are
 // controlled. The registry/Agent in setup below remain explicit test doubles.
@@ -189,6 +192,104 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   return { gateway, agent, request, registry, workspaceRoot, calls, ctx,
     deny: () => { deny = true; }, postFailure: () => { postFailure = true; } };
 }
+
+async function sourceRuntime(t, h, artifactFailure = false, protocol = 'openai-chat') {
+  const root = join(h.workspaceRoot, '..'), store = new SqliteRunStore(join(root, 'source.sqlite')); t.after(() => store.close());
+  const artifacts = await createNativeArtifactStore({ directory: join(root, 'source-artifacts'), scope });
+  const context = createNativeContextPort({ protocol, model: 'source-model' });
+  const tools = [...h.gateway.definitions(h.agent, [...h.registry.values()], { sourceObservationPolicy: 'workspace-source-model/v1' }), ...artifactToolDefinitions()];
+  const data = fixture({ sourceReadPolicy: 'studio-source-read/v1', artifactPolicy: 'runtime-artifacts/v1', tools,
+    profile: { ...fixture().config.profile, contextWindow: 64000, maxOutputTokens: 1000 },
+    contextPolicy: { tokenizerId: context.tokens.tokenizerId, tokenizerDigest: context.tokens.tokenizerDigest, enabled: true,
+      triggerRatio: 0.9, targetRatio: 0.6, summaryMaxTokens: 400, maxCompactions: 10,
+      maxCompactionsWithoutProgress: 3, minModelTurnsBetween: 0, maxSummaryRetries: 1 },
+    limits: { maxToolResultBytes: 1400, effectTimeoutMs: 200000 } });
+  const authority = createNativeToolAuthority({ scope, sessionId: 'session', store });
+  const bound = h.gateway.forAgent(h.agent, { scope, store });
+  const ports = { ...bound, context, artifacts: artifactFailure ? { ...artifacts, write: async () => { throw Error('archive unavailable'); } } : artifacts,
+    tools: { ...bound.tools, execute: async request => {
+      assert.equal(authority(request), true);
+      if (request.sourceReadBudget) {
+        assert.equal(authority({ ...request, sourceReadBudget: { ...request.sourceReadBudget, maxSourceUnits: request.sourceReadBudget.maxSourceUnits + 1 } }), false);
+        const missing = { ...request }; delete missing.sourceReadBudget; assert.equal(authority(missing), false);
+      }
+      return bound.tools.execute(request);
+    } } };
+  return { ...data, store, artifacts, ports };
+}
+
+for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages'])
+for (const redact of [false, true]) test(`${protocol}: source capture uses already-read authorized bytes, and real scoped search/read preserve coordinates (redacted: ${redact})`, async t => {
+  const h = setup(t, ['read_workspace_file']);
+  const lines = Array.from({ length: 80 }, (_, index) => `row-${index + 1} ${'中文😀'.repeat(20)}${index === 59 ? ' state=confirmed' : ''}`);
+  writeFileSync(join(h.workspaceRoot, 'source.txt'), lines.join('\n'));
+  const original = h.ctx.tools.execute;
+  h.ctx.tools.execute = async request => {
+    const result = await original(request), raw = parseNativeJson(result.content[0].text);
+    if (redact) delete raw.requested_source;
+    writeFileSync(join(h.workspaceRoot, 'source.txt'), 'CURRENT FILE WAS REPLACED AFTER THE READ');
+    return { ...result, content: [{ type: 'text', text: canonical(raw) }] };
+  };
+  const { config, snapshot, store, artifacts, ports } = await sourceRuntime(t, h, false, protocol); let turns = 0, visible;
+  const kernel = new NativeKernel({ store, digest, owner: 'source-capture', ports: { ...ports, model: { generate: async request => {
+    if (++turns === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'source', name: 'read_workspace_file',
+      arguments: { path: 'source.txt', start_line: 31, end_line: 60, include_line_numbers: false, max_chars: 1000 } }] };
+    if (turns === 2) {
+      visible = parseNativeJson(request.messages.find(message => message.role === 'tool').content);
+      assert.equal(visible.status, 'ok'); assert.equal(visible.artifact_state, 'available');
+      assert.equal(visible.content.path, 'source.txt'); assert.ok(visible.content.line_count > 0); assert.ok(visible.content.end_line < 60);
+      assert.equal(visible.content.requested_source, undefined); assert.equal(visible.content.mtime_ns, undefined);
+      return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [
+        { callId: 'search', name: 'ArtifactSearch', arguments: { uris: [visible.artifact_uri], query: 'state=confirmed' } },
+        { callId: 'page', name: 'ArtifactRead', arguments: { uri: visible.artifact_uri, limit_chars: 32000 } }] };
+    }
+    const search = parseNativeJson(request.messages.find(message => message.name === 'ArtifactSearch').content);
+    assert.equal(search.complete, true);
+    if (redact) assert.deepEqual(search.matches, []);
+    else { assert.equal(search.matches[0].source_line, 60); assert.equal(search.matches[0].source_path, 'source.txt'); }
+    const page = parseNativeJson(request.messages.find(message => message.name === 'ArtifactRead').content);
+    assert.equal(page.uri, visible.artifact_uri); assert.ok(page.returned_chars > 0); assert.ok(page.next_offset > 0);
+    return { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() };
+  } } } });
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run'); assert.equal(end.phase, 'completed');
+  assert.equal(h.calls.length, 1, 'reserved tools bypass DSH registry and source is not read again');
+  assert.equal(end.artifactRefs.length, 1); const ref = end.artifactRefs[0];
+  const archived = await artifacts.read({ ...h.request(), ref, offset: 0, limit: 32000 });
+  const receipt = store.load(scope, 'run').receipts.find(receipt => receipt.result.results)?.result.results[0];
+  assert.equal(receipt.content.requested_source.content, lines.slice(30, 60).join('\n'));
+  if (redact) { assert.notEqual(ref.mediaType, CAPTURED_SOURCE_MEDIA_TYPE); assert.ok(!archived.content.includes('state=confirmed')); }
+  else {
+    assert.equal(ref.mediaType, CAPTURED_SOURCE_MEDIA_TYPE); const captured = decodeCapturedSource(archived.content);
+    assert.equal(captured.content, lines.slice(30, 60).join('\n')); assert.deepEqual(captured.read_range, { start: 31, end: 60 });
+  }
+  assert.equal(readFileSync(join(h.workspaceRoot, 'source.txt'), 'utf8'), 'CURRENT FILE WAS REPLACED AFTER THE READ');
+});
+
+for (const artifactFailure of [false, true]) test(`saving an unread source cannot satisfy edit preconditions or create source progress (archive failure: ${artifactFailure})`, async t => {
+  const h = setup(t, ['read_workspace_file', 'edit_workspace_file']), original = 'a'.repeat(6000);
+  writeFileSync(join(h.workspaceRoot, 'unread.txt'), original);
+  const { config, snapshot, store, ports } = await sourceRuntime(t, h, artifactFailure); let turns = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'source-unread', ports: { ...ports, model: { generate: async request => {
+    if (++turns === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'source', name: 'read_workspace_file',
+      arguments: { path: 'unread.txt', max_chars: 1000 } }] };
+    if (turns === 2) {
+      const unread = parseNativeJson(request.messages.find(message => message.role === 'tool').content);
+      assert.equal(unread.content.source_state, 'unread'); assert.equal(unread.content.content, undefined);
+      assert.equal(unread.artifact_state, artifactFailure ? 'unavailable' : 'available');
+      assert.equal(unread.artifact_uri === undefined, artifactFailure);
+      return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'edit', name: 'edit_workspace_file',
+        arguments: { path: 'unread.txt', old_text: 'aaa', new_text: 'bbb' } }] };
+    }
+    const edited = parseNativeJson(request.messages.find(message => message.name === 'edit_workspace_file').content);
+    assert.equal(edited.ok, false); assert.match(edited.error_message, /read/i);
+    return { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() };
+  } } } });
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run'); assert.equal(end.phase, 'completed');
+  assert.equal(readFileSync(join(h.workspaceRoot, 'unread.txt'), 'utf8'), original);
+  assert.equal(end.context.observedSourceRevision ?? 0, 0);
+  const result = store.load(scope, 'run').receipts.find(receipt => receipt.result.results)?.result.results[0];
+  assert.equal(result.sourceObservationState, 'unread'); assert.equal(result.content.requested_source.content, `1 | ${original}`);
+});
 
 test('deadline tools are pinned only from trusted builtins and never granted by an external name', t => {
   const names = ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'];

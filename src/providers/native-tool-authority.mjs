@@ -1,4 +1,6 @@
-import { canonical, copy, invariant, scopeKey } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { createHash } from 'node:crypto';
+import { canonical, copy, invariant, scopeKey, sourceReadBudgetFor } from '../../packages/agentkit-harness-core/dist/index.mjs';
+const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 
 /** A DSH registration/permission decision alone cannot authorize a later
  * publication after waiting for a workspace lock. Re-read the Native ledger. */
@@ -26,6 +28,7 @@ export function createNativeToolAuthority({ scope, sessionId, store, isClosed = 
       if (index < 0 || request.operationKey !== (intent.payload.calls.length === 1
         ? intent.operationKey : `${intent.operationKey}:call:${index + 1}`)) return false;
       const definition = current.configuration.tools.find(tool => tool.name === request.call.name);
+      if (canonical(request.sourceReadBudget ?? null) !== canonical(sourceReadBudgetFor(snapshot, current.configuration, request.call, hash) ?? null)) return false;
       return !!definition && canonical(definition) === canonical(request.definition);
     } catch { return false; }
   };

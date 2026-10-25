@@ -432,7 +432,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     if (result.status === 'uncertain') return { ...browserFields, pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
     updated.toolErrorStreak = advanceToolErrorStreak(updated, call, result, definition, config, digest);
     if (toolErrorRecoveryEnabled(config)) {
-      Object.assign(updated, advanceObservedProgress(updated, result, definition, digest));
+      if (result.sourceObservationState !== 'unread') Object.assign(updated, advanceObservedProgress(updated, result, definition, digest));
       Object.assign(updated, advanceDiagnosticRecovery(updated, updated, call, result, definition, digest));
     }
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
@@ -446,7 +446,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     updated.queuedGuidance.push(...deferredToolContexts(result.additionalContexts));
     const directoryProgress = advanceDirectoryProgress(updated, call, result, definition, intent);
     if (directoryProgress) updated.context = { ...updated.context, directoryProgress };
-    if (result.status === 'ok' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
+    if (result.status === 'ok' && result.sourceObservationState !== 'unread' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
       const prior = updated.context.observedSourceDigests;
       const observed: ObjectValue = prior && typeof prior === 'object' && !Array.isArray(prior) ? copy(prior) : {};
       const key = digest({ name: call.name, arguments: call.arguments }), value = config.artifactPolicy === 'runtime-artifacts/v1'

@@ -74,10 +74,12 @@ export function nativeChildRoles(spec = {}) {
 
 /** Bind every child to a declared role and its own scoped tool state. */
 export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp, mcpBinding, skillBinding, skillInstructions,
-  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory }) {
+  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory, sourceReadPolicy }) {
   if (!roles.length) return null;
   invariant(artifactPolicy == null || artifactPolicy === 'runtime-artifacts/v1' && typeof artifactFactory === 'function',
     'studio_native_child_artifact_binding_invalid');
+  invariant(sourceReadPolicy == null || sourceReadPolicy === 'studio-source-read/v1' && artifactPolicy === 'runtime-artifacts/v1',
+    'studio_native_child_source_binding_invalid');
   const byName = new Map(roles.map(role => [role.name, role]));
   const bindings = new Map();
   for (const role of roles) {
@@ -161,6 +163,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
         ...(artifactPolicy ? { artifactPolicy } : {}),
+        ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
         guidancePolicy: 'boundary-guide/v1',
         ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),
         instructions: [role.instructions, ...(childSkills ? [skillInstructions] : [])].filter(Boolean).join('\n\n'), contract, tools: bound.tools,
@@ -170,6 +173,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         } } : {}),
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
           ...(artifactPolicy ? { artifactPolicy } : {}),
+          ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
           ...(bound.a2aBinding ? { inheritedA2a: bound.a2aBinding } : {}),
           ...(childSkills ? { inheritedSkills: childSkills } : {}),
@@ -203,11 +207,13 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         hostBindingDigest: configuration.hostBindingDigest }).profile;
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
         && (configuration.artifactPolicy ?? null) === (artifactPolicy ?? null)
+        && (configuration.sourceReadPolicy ?? null) === (sourceReadPolicy ?? null)
         && canonical(configuration.profile) === canonical(profile)
         && configuration.modelRecoveryPolicy === (bound.model.modelRecoveryPolicy ?? 'manual')
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
           profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
           ...(artifactPolicy ? { artifactPolicy } : {}),
+          ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
           ...(bound.a2aBinding ? { inheritedA2a: bound.a2aBinding } : {}),
           ...(childSkills ? { inheritedSkills: childSkills } : {}),

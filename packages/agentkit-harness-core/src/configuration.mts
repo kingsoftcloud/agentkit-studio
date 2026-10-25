@@ -18,6 +18,7 @@ export interface ConfigurationInput {
   guidancePolicy?: RunConfiguration['guidancePolicy'];
   wallDeliveryPolicy?: RunConfiguration['wallDeliveryPolicy'];
   artifactPolicy?: RunConfiguration['artifactPolicy'];
+  sourceReadPolicy?: RunConfiguration['sourceReadPolicy'];
   outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
@@ -56,6 +57,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
     ...(input.wallDeliveryPolicy === undefined ? {} : { wallDeliveryPolicy: input.wallDeliveryPolicy }),
     ...(input.artifactPolicy === undefined ? {} : { artifactPolicy: input.artifactPolicy }),
+    ...(input.sourceReadPolicy === undefined ? {} : { sourceReadPolicy: input.sourceReadPolicy }),
     ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
@@ -77,6 +79,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   };
   canonical(config);
   validateArtifactConfiguration(config);
+  invariant(config.sourceReadPolicy == null || config.sourceReadPolicy === 'studio-source-read/v1'
+    && config.artifactPolicy === 'runtime-artifacts/v1' && config.contextPolicy !== null, 'invalid_source_read_policy');
   invariant(config.hostRecoveryBinding === undefined || config.hostRecoveryBinding !== null
     && typeof config.hostRecoveryBinding === 'object' && !Array.isArray(config.hostRecoveryBinding), 'invalid_host_recovery_binding');
   invariant(config.guidancePolicy == null || config.guidancePolicy === 'boundary-guide/v1', 'invalid_guidance_policy');
@@ -156,7 +160,12 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(!tool.delegatedReadOnly || tool.concurrentSafe, 'invalid_delegated_reader');
     invariant(tool.deliveryWrite === undefined || typeof tool.deliveryWrite === 'boolean', 'invalid_delivery_writer');
     invariant(tool.deliveryArtifactRole === undefined || ['none', 'read', 'write'].includes(tool.deliveryArtifactRole), 'invalid_delivery_artifact_role');
-    invariant(tool.resultArchivePolicy === undefined || tool.resultArchivePolicy === 'archived-model-view/v4', 'invalid_result_archive_policy');
+    invariant(tool.resultArchivePolicy === undefined || ['archived-model-view/v4', 'archived-model-view/v5'].includes(tool.resultArchivePolicy), 'invalid_result_archive_policy');
+    invariant(tool.sourceObservationPolicy === undefined || tool.sourceObservationPolicy === 'workspace-source-model/v1'
+      && config.sourceReadPolicy === 'studio-source-read/v1' && tool.readOnly && tool.contextRole === 'workspace_read'
+      && tool.resultArchivePolicy === 'archived-model-view/v5', 'invalid_source_observation_policy');
+    invariant(tool.resultArchivePolicy !== 'archived-model-view/v5' || tool.sourceObservationPolicy === 'workspace-source-model/v1',
+      'invalid_source_archive_policy');
     invariant(tool.directoryObservationPolicy === undefined || /^studio-directory-observation\/v[1-3]$/.test(tool.directoryObservationPolicy)
       && config.artifactPolicy === 'runtime-artifacts/v1' && tool.resultArchivePolicy === 'archived-model-view/v4'
       && tool.readOnly && tool.contextRole === 'workspace_list', 'invalid_directory_observation_policy');

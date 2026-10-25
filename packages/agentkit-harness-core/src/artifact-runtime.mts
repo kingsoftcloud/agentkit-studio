@@ -1,8 +1,11 @@
 import type { ArtifactPort, ArtifactRef, Json, ObjectValue, PortContext, RunConfiguration, RunSnapshot,
-  ToolCall, ToolDefinition, ToolResult } from './contracts.mjs';
+  ToolCall, ToolDefinition, ToolResult, SourceReadBudget } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { toolContext } from './tool-context.mjs';
 import { artifactSearchSource } from './artifact-search-source.mjs';
+import { CAPTURED_SOURCE_MEDIA_TYPE, encodeCapturedSource } from './captured-source.mjs';
+import { workspaceSourceModelReply, archivedSourceObservation } from './workspace-source-model.mjs';
+import { parseNativeJson } from './model-json.mjs';
 
 export const RUNTIME_ARTIFACT_POLICY = 'runtime-artifacts/v1' as const;
 export const ARTIFACT_RESULT_MEDIA_TYPE = 'application/vnd.agentkit.tool-result+json';
@@ -49,9 +52,9 @@ async function sha256(text: string): Promise<string> {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return `sha256:${Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
-function validRef(ref: ArtifactRef, content: string, digest: string): boolean {
+function validRef(ref: ArtifactRef, content: string, digest: string, mediaType = ARTIFACT_RESULT_MEDIA_TYPE): boolean {
   return typeof ref?.uri === 'string' && /^artifact:\/\/[A-Za-z0-9._~%/-]+$/.test(ref.uri) && bytes(ref.uri) <= 256
-    && ref.digest === digest && ref.sizeBytes === bytes(content) && ref.mediaType === ARTIFACT_RESULT_MEDIA_TYPE
+    && ref.digest === digest && ref.sizeBytes === bytes(content) && ref.mediaType === mediaType
     && object(ref.metadata);
 }
 /** Repeated captures with identical bytes do not create source progress merely by receiving a new URI. */
@@ -94,34 +97,59 @@ export async function governArtifactResult(context: PortContext, definition: Too
   if (config.artifactPolicy !== RUNTIME_ARTIFACT_POLICY) return input;
   const result = copy(input);
   // Tool payloads and callback-provided locators cannot mint capabilities. Only the runtime's write return is admitted.
-  delete result.artifactRefs; delete result.artifactObservationDigest;
-  if (definition.resultArchivePolicy === 'archived-model-view/v4' && result.archiveContext)
+  delete result.artifactRefs; delete result.artifactObservationDigest; delete result.sourceObservationState;
+  const source = definition.sourceObservationPolicy === 'workspace-source-model/v1'
+    && definition.resultArchivePolicy === 'archived-model-view/v5' && result.status === 'ok';
+  if (['archived-model-view/v4', 'archived-model-view/v5'].includes(definition.resultArchivePolicy ?? '') && result.archiveContext)
     result.archiveContext = toolContext(result.archiveContext);
   else delete result.archiveContext;
   if (definition.directoryObservationPolicy && !input.context && !result.archiveContext)
     result.archiveContext = { content: canonical(result.content) };
+  let sourceView: string | null = null, captured: string | null = null;
+  if (source) {
+    // Only the authorized post-policy observation can be captured. Hidden raw
+    // receipt data must never become readable through an overflow locator.
+    const authorized = result.archiveContext ?? result.context;
+    let value: Json | null = null;
+    try { value = authorized ? !authorized.media?.length ? parseNativeJson(authorized.content) : null : result.content; } catch { /* generic archive */ }
+    sourceView = workspaceSourceModelReply(value);
+    captured = encodeCapturedSource(value);
+    if (sourceView) {
+      const projected = parseNativeJson(sourceView) as ObjectValue;
+      if (object(projected.content) && projected.content.source_state === 'unread') result.sourceObservationState = 'unread';
+      result.archiveContext ??= authorized ?? { content: canonical(result.content) };
+      result.context = { ...result.context, content: sourceView };
+    }
+  }
   result.artifactObservationDigest = await sha256(canonical({ status: result.status, content: result.content,
     context: result.context ?? null, additionalContexts: result.additionalContexts ?? [] }));
   if (isArtifactTool(definition.name)) return result;
   const tooLarge = modelSize(result) > config.limits.maxToolResultBytes;
-  const force = definition.resultArchivePolicy === 'archived-model-view/v4' && result.status === 'ok';
+  const force = ['archived-model-view/v4', 'archived-model-view/v5'].includes(definition.resultArchivePolicy ?? '') && result.status === 'ok';
   if (!tooLarge && !force) return result;
   // Preserve the canonical receipt in SQLite. The readable archive follows the actual post-policy model view;
   // hidden/raw Host facts must not become visible merely by asking ArtifactRead for the overflow.
   const observation = result.archiveContext ?? result.context;
-  const content = canonical({ status: result.status,
+  const content = captured ?? canonical({ status: result.status,
     content: observation ? { model_content: observation.content, media: observation.media ?? [] } : result.content,
     additional_contexts: result.additionalContexts ?? [] });
+  const mediaType = captured === null ? ARTIFACT_RESULT_MEDIA_TYPE : CAPTURED_SOURCE_MEDIA_TYPE;
   let ref: ArtifactRef | null = null;
   try {
     if (artifacts && result.status !== 'approval_required' && result.status !== 'uncertain') {
       const issued = await artifacts.write({ ...context, operationKey: `${context.operationKey}:result-archive`, content,
-        mediaType: ARTIFACT_RESULT_MEDIA_TYPE, metadata: { policy: RUNTIME_ARTIFACT_POLICY, toolName: definition.name } });
-      invariant(validRef(issued, content, await sha256(content)), 'artifact_write_reference_invalid');
+        mediaType, metadata: { policy: RUNTIME_ARTIFACT_POLICY, toolName: definition.name } });
+      invariant(validRef(issued, content, await sha256(content), mediaType), 'artifact_write_reference_invalid');
       ref = copy(issued);
     }
   } catch { /* The original tool outcome remains authoritative even when storage fails. */ }
   if (ref) result.artifactRefs = [ref];
+  if (sourceView && !result.context?.media?.length && !result.additionalContexts?.length) {
+    const content = archivedSourceObservation(sourceView, ref?.uri ?? null);
+    if (modelSize({ ...result, context: { content } }) <= config.limits.maxToolResultBytes) {
+      result.context = { ...result.context, content }; return result;
+    }
+  }
   // A forced, small archive can retain the observed text if its locator annotation still fits.
   if (!tooLarge && ref && !result.context?.media?.length && !result.additionalContexts?.length) {
     const content = canonical({ observed_content: result.context?.content ?? canonical(result.content),
@@ -158,7 +186,8 @@ async function readPage(port: ArtifactPort, context: PortContext, ref: ArtifactR
 
 /** Inventory authority comes solely from the committed snapshot; a storage search cannot grant references. */
 export async function executeArtifactTool(context: PortContext, call: ToolCall, snapshot: RunSnapshot,
-  config: RunConfiguration, artifacts?: ArtifactPort): Promise<ToolResult> {
+  config: RunConfiguration, artifacts?: ArtifactPort,
+  capacity?: { budget: SourceReadBudget; countText(text: string): Promise<number> }): Promise<ToolResult> {
   invariant(config.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name), 'artifact_tool_not_bound');
   const maximum = config.limits.maxToolResultBytes, args = call.arguments;
   if (call.name === 'ArtifactList') {
@@ -179,17 +208,30 @@ export async function executeArtifactTool(context: PortContext, call: ToolCall, 
   try {
     if (call.name === 'ArtifactRead') {
       const ref = refs[0]!, offset = numberArg(args, 'offset_chars', 0), limit = numberArg(args, 'limit_chars', 16000);
+      if (config.sourceReadPolicy === 'studio-source-read/v1' && (!capacity
+        || capacity.budget.counterId !== config.contextPolicy?.tokenizerId
+        || capacity.budget.tokenizerDigest !== config.contextPolicy.tokenizerDigest
+        || capacity.budget.maxResultBytes !== maximum)) return failure('artifact_page_budget_unavailable');
+      const fits = async (result: ToolResult, text: string): Promise<boolean> => {
+        if (encodedSize(result) > maximum) return false;
+        if (!capacity) return true;
+        const sourceUnits = await capacity.countText(text), resultUnits = await capacity.countText(canonical(canonical(result.content)));
+        invariant([sourceUnits, resultUnits].every(value => Number.isSafeInteger(value) && value > 0), 'artifact_page_counter_invalid');
+        return sourceUnits <= capacity.budget.maxSourceUnits && resultUnits <= capacity.budget.maxResultUnits;
+      };
+      if (!await fits(ok({ uri: ref.uri, offset_chars: offset, returned_chars: 0, content: '', next_offset: offset,
+        result_truncated: false }), '')) return failure('artifact_page_budget_unavailable');
       const page = await readPage(artifacts, context, ref, offset, limit), chars = Array.from(page.content);
       const build = (count: number) => ok({ uri: ref.uri, offset_chars: offset, returned_chars: count,
         content: chars.slice(0, count).join(''),
         next_offset: count < chars.length ? offset + count : page.nextOffset,
         result_truncated: count < chars.length });
-      if (encodedSize(build(chars.length)) <= maximum) return build(chars.length);
+      if (await fits(build(chars.length), page.content)) return build(chars.length);
       let low = 0, high = chars.length;
-      if (encodedSize(build(0)) > maximum) return failure('artifact_page_budget_unavailable');
+      if (!await fits(build(0), '')) return failure('artifact_page_budget_unavailable');
       while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        if (encodedSize(build(mid)) <= maximum) low = mid; else high = mid - 1;
+        if (await fits(build(mid), chars.slice(0, mid).join(''))) low = mid; else high = mid - 1;
       }
       if (chars.length && !low) return failure('artifact_page_budget_unavailable');
       return build(low);

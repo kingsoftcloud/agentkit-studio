@@ -74,6 +74,31 @@ test('image-shaped schemas and tool arguments are priced as text, not interprete
   const body = { messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'read', input: image }] }], tools: [{ input_schema: image }] };
   assert.equal(estimateNativeWireInput(body), estimateNativeText(JSON.stringify(body)));
 });
+for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages']) {
+  test(`${protocol}: source capacity prices logical messages through actual wire fields without synthetic partner costs`, async () => {
+    const input = request(protocol), port = createNativeContextPort({ protocol, model: 'pinned' });
+    const assistant = { role: 'assistant', content: 'Inspect', toolCalls: [{ name: 'read', callId: 'original', arguments: { path: '原文/😀.txt' } }] };
+    const original = structuredClone(assistant);
+    const count = await port.tokens.countMessage({ ...input, purpose: 'task', message: assistant });
+    assistant.presentation = { format: 'private', content: ['Private '.repeat(3000)] };
+    assert.equal(await port.tokens.countMessage({ ...input, purpose: 'task', message: assistant }), count);
+    assert.deepEqual({ ...assistant, presentation: undefined }, { ...original, presentation: undefined });
+    assistant.toolCalls.push({ name: 'read', callId: 'next', arguments: { path: 'Second '.repeat(200) } });
+    assert.ok(await port.tokens.countMessage({ ...input, purpose: 'task', message: assistant }) > count + 100);
+    const receipt = { role: 'tool', name: 'read', callId: 'original', content: 'actual source' };
+    const receiptCount = await port.tokens.countMessage({ ...input, purpose: 'task', message: receipt });
+    receipt.name = 'Synthetic-name-must-not-be-priced-'.repeat(1000);
+    assert.equal(await port.tokens.countMessage({ ...input, purpose: 'task', message: receipt }), receiptCount);
+    for (const message of input.messages) assert.ok(await port.tokens.countMessage({ ...input, purpose: 'task', message }) > 0);
+  });
+  test(`${protocol}: individual tool observations keep the actual image byte reserve`, async () => {
+    const input = request(protocol), port = createNativeContextPort({ protocol, model: 'pinned' });
+    const message = { role: 'tool', name: 'read', callId: 'original', content: 'observed', media: [media('data:image/png;base64,AQ==')] };
+    const small = await port.tokens.countMessage({ ...input, purpose: 'task', message });
+    message.media = [media('https://images.invalid/source.png')];
+    assert.equal(await port.tokens.countMessage({ ...input, purpose: 'task', message }) - small, 8192 - 2048);
+  });
+}
 for (const protocol of ['openai-chat', 'anthropic-messages']) test(`${protocol}: private replay is counted only when enabled by the current profile`, async () => {
   const input = request(protocol), port = createNativeContextPort({ protocol, model: 'pinned' });
   const assistant = { role: 'assistant', content: 'Answer' };

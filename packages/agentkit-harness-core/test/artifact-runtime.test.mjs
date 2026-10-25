@@ -25,6 +25,53 @@ const parseMessage = message => JSON.parse(message.content);
 const modelBytes = result => Buffer.byteLength(canonical({ content: result.context?.content ?? canonical(result.content),
   media: result.context?.media ?? [], additionalContexts: result.additionalContexts ?? [] }));
 
+function sourceCapacityFixture() {
+  return fixture({ ...policy, sourceReadPolicy: 'studio-source-read/v1', contextPolicy: {
+    tokenizerId: 'page-counter', tokenizerDigest: 'page-counter/v1', enabled: true,
+    triggerRatio: .9, targetRatio: .6, summaryMaxTokens: 400, maxCompactions: 10,
+    maxCompactionsWithoutProgress: 3, minModelTurnsBetween: 0, maxSummaryRetries: 1,
+  } });
+}
+const pageBudget = { policy: 'agentkit.source-page-budget/v1', quoteDigest: 'original-quote',
+  counterId: 'page-counter', tokenizerDigest: 'page-counter/v1', sourceGroupSize: 3,
+  maxSourceUnits: 40, maxResultUnits: 650, maxResultBytes: 1400 };
+const pageCount = async text => Math.max(1, Buffer.byteLength(text));
+
+test('ArtifactRead applies source and quoted-result shares to continuous Unicode pages', async t => {
+  const { artifacts } = await storage(t), { config, snapshot } = sourceCapacityFixture();
+  const text = '😀"\\\n汉'.repeat(8), ref = await artifacts.write({ ...context, content: text, mediaType: 'text/plain', metadata: {} });
+  snapshot.artifactRefs = [ref];
+  let offset = 0, joined = '', pages = 0;
+  do {
+    const result = await executeArtifactTool(context, call('ArtifactRead', { uri: ref.uri, offset_chars: offset, limit_chars: 32000 }),
+      snapshot, config, artifacts, { budget: pageBudget, countText: pageCount });
+    assert.equal(result.status, 'ok'); assert.equal(result.content.offset_chars, offset);
+    assert.ok(await pageCount(result.content.content) <= pageBudget.maxSourceUnits);
+    assert.ok(await pageCount(canonical(canonical(result.content))) <= pageBudget.maxResultUnits);
+    assert.ok(modelBytes(result) <= pageBudget.maxResultBytes);
+    assert.equal(Array.from(result.content.content).length, result.content.returned_chars);
+    joined += result.content.content; offset = result.content.next_offset; pages++;
+    assert.ok(pages < 30);
+  } while (offset !== null);
+  assert.equal(joined, text); assert.ok(pages > 1);
+});
+
+test('ArtifactRead refuses missing, stale, undersized or invalid capacity before storage I/O', async t => {
+  const { artifacts } = await storage(t), { config, snapshot } = sourceCapacityFixture();
+  const ref = await artifacts.write({ ...context, content: 'Do not read', mediaType: 'text/plain', metadata: {} });
+  snapshot.artifactRefs = [ref]; let reads = 0;
+  const guarded = { ...artifacts, read: async () => { reads++; throw Error('unexpected read'); } };
+  for (const capacity of [undefined,
+    { budget: { ...pageBudget, tokenizerDigest: 'changed' }, countText: pageCount },
+    { budget: { ...pageBudget, maxResultUnits: 1 }, countText: pageCount },
+    { budget: pageBudget, countText: async () => -1 },
+  ]) {
+    const result = await executeArtifactTool(context, call('ArtifactRead', { uri: ref.uri }), snapshot, config, guarded, capacity);
+    assert.equal(result.status, 'error');
+  }
+  assert.equal(reads, 0);
+});
+
 test('artifact policy is sealed, reserved definitions cannot be changed, and legacy configuration stays unmarked', () => {
   const legacy = fixture().config;
   assert.equal(Object.hasOwn(legacy, 'artifactPolicy'), false);

@@ -10,6 +10,7 @@ import { reduceCommand, transition } from './transitions.mjs';
 import { addUsage, advertisedTools, modelRoom, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
 import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
+import { prepareSourceReadQuote, sourceReadBudgetFor, SOURCE_READ_POLICY } from './source-read-budget.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { effectiveRunConfiguration } from './task-contract.mjs';
 import { prepareToolReceipt, reduceToolReceipt, toolReceiptRequest, waitingToolReceipt } from './tool-receipt.mjs';
@@ -549,6 +550,12 @@ export class NativeKernel {
           }
           const result = normalizeToolIdentities(snapshot, raw as unknown as ModelResult, this.digest);
           changes = reduceModel(snapshot, result, configuration, this.now(), this.random(), this.digest, intent.operationKey);
+          if (configuration.sourceReadPolicy === SOURCE_READ_POLICY) {
+            // Counting cannot discard a known model result or trigger a second
+            // generation. Cancellation/timeout closes this read-only quote only.
+            changes.sourceReadQuote = await Promise.race([prepareSourceReadQuote(snapshot, { ...snapshot, ...changes }, configuration,
+              this.taskModelRequest(context, snapshot, configuration, intent), this.ports.context?.tokens, this.digest), aborted]).catch(() => null);
+          }
           if (intent.payload.purpose === 'delivery_review') {
             const offset = changes.messages?.slice(snapshot.messages.length).findIndex(message => message.kind === 'delivery_review_source') ?? -1;
             facts.push({ kind: 'completion.delivery_review_completed', payload: { kind: result.kind,
@@ -764,6 +771,15 @@ export class NativeKernel {
     return { ...settle(snapshot, intent, { operationKey: intent.operationKey, status, result: raw }, changes, Math.max(0, this.monotonicNow() - started), facts),
       consumedCommandId };
   }
+  private taskModelRequest(context: PortContext, snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent): ModelRequest {
+    const review = intent.payload.purpose === 'delivery_review';
+    const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
+    return { ...context, profile: copy(configuration.profile), ...(review ? { purpose: 'delivery_review' as const } : {}),
+      messages: review ? snapshot.preparedContext ? modelContextMessages(snapshot, this.digest) : deliveryReviewMessages(snapshot)
+        : deliveryTaskMessages(beforeCall, configuration, browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest))),
+      tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
+      maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
+  }
   private async dispatch(context: PortContext, snapshot: RunSnapshot, configuration: RunConfiguration, intent: EffectIntent,
     emit: (event: ModelStreamEvent) => void): Promise<unknown> {
     context.signal.throwIfAborted();
@@ -806,12 +822,7 @@ export class NativeKernel {
             && admission.maxOutputTokens === configuration.profile.maxOutputTokens
             && admission.countedInputTokens + admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
         }
-        const request: ModelRequest = { ...context, profile: copy(configuration.profile),
-          ...(review ? { purpose: 'delivery_review' as const } : {}),
-          messages: review ? snapshot.preparedContext ? modelContextMessages(snapshot, this.digest) : deliveryReviewMessages(snapshot)
-            : deliveryTaskMessages(beforeCall, configuration, browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest))),
-          tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
-          maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
+        const request = this.taskModelRequest(context, snapshot, configuration, intent);
         return this.ports.model.generate(request, emit);
       }
       case 'tool': {
@@ -823,6 +834,10 @@ export class NativeKernel {
           if (rejection) return { status: 'error' as const, content: rejection };
           if (deniedByHook(snapshot, call)) return { status: 'error' as const,
             content: { code: 'pre_tool_hook_denied', executed: false } };
+          const sourceReadBudget = sourceReadBudgetFor(snapshot, configuration, call, this.digest);
+          if (configuration.sourceReadPolicy === SOURCE_READ_POLICY && (definition.sourceObservationPolicy || call.name === 'ArtifactRead')
+            && !sourceReadBudget) return { status: 'error' as const, content: { code: call.name === 'ArtifactRead'
+              ? 'artifact_page_budget_unavailable' : 'source_read_budget_unavailable' } };
           const deadline = new AbortController(), started = this.monotonicNow();
           const toolSignal = AbortSignal.any([context.signal, deadline.signal]);
           const timer = setTimeout(() => deadline.abort(new NativeError('tool_timeout')), definition.timeoutMs);
@@ -835,11 +850,15 @@ export class NativeKernel {
             toolSignal.throwIfAborted();
             const request = { ...context, signal: toolSignal,
               ...(configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY ? { resultGovernance: RUNTIME_ARTIFACT_POLICY } : {}),
+              ...(sourceReadBudget ? { sourceReadBudget } : {}),
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
             const result = await Promise.race([configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
-              ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts)
+              ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts, sourceReadBudget && this.ports.context?.tokens
+                && this.ports.context.tokens.tokenizerId === sourceReadBudget.counterId
+                && this.ports.context.tokens.tokenizerDigest === sourceReadBudget.tokenizerDigest
+                ? { budget: sourceReadBudget, countText: text => this.ports.context!.tokens!.countText({ ...request, text }) } : undefined)
               : this.ports.tools.execute(request), aborted]);
             toolSignal.throwIfAborted();
             invariant(this.monotonicNow() - started < definition.timeoutMs, 'tool_timeout');

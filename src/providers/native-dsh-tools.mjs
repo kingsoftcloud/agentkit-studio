@@ -13,6 +13,7 @@ import { LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from '../../packages/ag
 import { projectNativeDshContent } from './native-input.mjs';
 import { requestedExactWorkspaceFile, exactByteDifference } from './native-final-shape.mjs';
 import { directoryModelReply, DIRECTORY_MODEL_DESCRIPTION, DIRECTORY_SCOPE_MODEL_DESCRIPTION } from './native-directory-observation.mjs';
+import { workspaceSourceModelReply } from './native-source-observation.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { createNativeDshWebTools } from './native-dsh-web.mjs';
@@ -684,7 +685,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
       } };
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy } = {}) {
+      invariant(sourceObservationPolicy === undefined || sourceObservationPolicy === 'workspace-source-model/v1', 'studio_native_source_policy_invalid');
       invariant(directoryObservationPolicy === undefined || /^studio-directory-observation\/v[1-3]$/.test(directoryObservationPolicy),
         'studio_native_directory_policy_invalid');
       invariant(wallDeliveryPolicy === undefined || typeof wallDeliveryPolicy === 'string'
@@ -718,6 +720,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
         if (exact) return { ...structuredClone(exact),
+          ...(sourceObservationPolicy && exact.readOnly && exact.contextRole === 'workspace_read'
+            ? { sourceObservationPolicy, resultArchivePolicy: 'archived-model-view/v5' } : {}),
           ...(directoryObservationPolicy && exact.readOnly && exact.contextRole === 'workspace_list' ? {
             directoryObservationPolicy, resultArchivePolicy: 'archived-model-view/v4',
             description: exact.description + (directoryObservationPolicy.endsWith('/v3') ? DIRECTORY_SCOPE_MODEL_DESCRIPTION : DIRECTORY_MODEL_DESCRIPTION),
@@ -957,6 +961,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
                 resultBytes: commandAuthority.store.load(request.scope, request.runId).configuration.limits.maxToolResultBytes,
               });
             } catch { /* Unfamiliar post-policy output keeps normal result governance. */ }
+            if (projected !== null) { archiveContext = context; context = { ...context, content: projected }; }
+          }
+          if (status === 'ok' && request.definition.sourceObservationPolicy && builtinNames.has(request.call.name)
+            && formal.get(request.call.name)?.contextRole === 'workspace_read' && !context.media?.length) {
+            let projected = null;
+            try { projected = workspaceSourceModelReply(parseNativeJson(context.content)); } catch { /* retain actual post-policy view */ }
             if (projected !== null) { archiveContext = context; context = { ...context, content: projected }; }
           }
           for (const message of result.additionalContexts ?? []) {

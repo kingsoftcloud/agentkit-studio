@@ -53,7 +53,8 @@ export interface ToolDefinition {
   deliveryArtifactRole?: 'none' | 'read' | 'write';
   exactContentPolicy?: 'current-goal-utf8/v1' | 'complete-write-only/v1';
   /** Archive the model-visible observation even when it fits inline. */
-  resultArchivePolicy?: 'archived-model-view/v4';
+  resultArchivePolicy?: 'archived-model-view/v4' | 'archived-model-view/v5';
+  sourceObservationPolicy?: 'workspace-source-model/v1';
   directoryObservationPolicy?: 'studio-directory-observation/v1' | 'studio-directory-observation/v2' | 'studio-directory-observation/v3';
   /** safe-read permits a fresh repeatable read; receipt-observation waits for a
    * separately persisted lookup of the original effect and never re-executes it. */
@@ -164,6 +165,7 @@ export interface ContextSourceDefinition {
 }
 export interface RunConfiguration {
   artifactPolicy?: 'runtime-artifacts/v1' | null;
+  sourceReadPolicy?: 'studio-source-read/v1' | null;
   wallDeliveryPolicy?: 'deadline-delivery/v1' | 'deadline-delivery/v2' | 'deadline-delivery/v3'
     | 'deadline-delivery/v4' | 'deadline-delivery/v5' | 'deadline-delivery/v6' | 'deadline-delivery/v7' | null;
   engine: typeof NATIVE_ENGINE; profile: ModelProfile; limits: RunLimits; tools: ToolDefinition[];
@@ -209,6 +211,8 @@ export interface ToolBudget {
 }
 export interface ArtifactRef { uri: string; digest: string; mediaType: string; sizeBytes: number; metadata: ObjectValue }
 export interface ToolResult {
+  /** Computed by pinned source governance, never accepted from a callback. */
+  sourceObservationState?: 'unread';
   status: 'ok' | 'error' | 'approval_required' | 'uncertain'; content: Json;
   /** Explicit model view of the committed receipt; absent keeps legacy JSON encoding. */
   context?: ToolContextMessage;
@@ -295,6 +299,8 @@ export interface PreparedContext {
   sourceFence?: number;
 }
 export interface RunSnapshot extends RunIdentity {
+  /** Runtime-owned capacity for the complete original assistant batch, never a dispatched subset. */
+  sourceReadQuote?: SourceReadQuote | null;
   /** Immutable controlled admission of an owned command's completion. */
   backgroundNotification?: { contract: 'agentkit.background-notification-admission/v1'; sourceRunId: string;
     taskId: string; requestDigest: string; sourceConfigDigest: string; admissionElapsedMs: number };
@@ -402,6 +408,7 @@ export interface ModelStreamRecord { time: number; event: ModelStreamEvent }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }
 export interface ToolRequest extends PortContext {
   resultGovernance?: 'runtime-artifacts/v1';
+  sourceReadBudget?: SourceReadBudget;
   call: ToolCall; definition: ToolDefinition; interaction: ObjectValue | null;
   /** Host-derived allowance after the invoking call and parent finalization reserve. */
   budget: ToolBudget;
@@ -443,7 +450,22 @@ export interface ContextPort {
     countRequest(request: PortContext & { profile: ModelProfile; messages: Message[]; tools: ToolDefinition[];
       purpose: 'task' | 'compaction' | 'delivery_review'; maxOutputTokens: number; maxInlineImageBytes: number }): Promise<number>;
     countText(request: PortContext & { text: string }): Promise<number>;
+    countMessage?(request: PortContext & { profile: ModelProfile; message: Message;
+      purpose: 'task' | 'delivery_review'; maxInlineImageBytes: number }): Promise<number>;
   };
+}
+export interface SourceReadQuote {
+  policy: 'studio-source-read/v1'; status: 'ready' | 'unavailable'; reason: string | null;
+  configDigest: string; goalRevision: number; batchDigest: string;
+  tokenizerId: string; tokenizerDigest: string; readerCallIds: string[];
+  countedInputTokens: number; fixedUnits: number; mandatoryUnits: number;
+  prospectiveRefUnits: number; summaryUnits: number; availableUnits: number;
+  maxSourceUnits: number; maxResultUnits: number;
+}
+export interface SourceReadBudget {
+  policy: 'agentkit.source-page-budget/v1'; quoteDigest: string;
+  counterId: string; tokenizerDigest: string; sourceGroupSize: number;
+  maxSourceUnits: number; maxResultUnits: number; maxResultBytes: number;
 }
 export interface VerificationPort {
   verify(request: PortContext & { candidate: CompletionCandidate; contract: TaskContract; snapshot: RunSnapshot }): Promise<VerificationReport>;

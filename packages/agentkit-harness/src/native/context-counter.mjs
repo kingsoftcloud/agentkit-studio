@@ -22,6 +22,9 @@ export function estimateNativeText(text) {
 export function estimateNativeWireInput(body, protocol = Array.isArray(body.input) && !body.messages ? 'openai-responses' : 'openai-chat') {
   const wire = structuredClone(body);
   for (const key of ['model', 'stream', 'stream_options', 'max_tokens', 'max_completion_tokens', 'max_output_tokens']) delete wire[key];
+  return priceWireSurface(wire, protocol === 'openai-responses' ? wire.input : wire.messages);
+}
+function priceWireSurface(surface, messages = []) {
   let images = 0;
   const reserve = url => {
     invariant(typeof url === 'string' && url, 'context_counter_image_invalid');
@@ -46,13 +49,41 @@ export function estimateNativeWireInput(body, protocol = Array.isArray(body.inpu
   };
   // Only provider message slots contain image blocks. Tool schemas and text
   // may describe image-shaped data; that data must be priced as ordinary JSON.
-  for (const message of (protocol === 'openai-responses' ? wire.input : wire.messages) ?? []) {
+  for (const message of messages ?? []) {
     if (Array.isArray(message.content)) message.content.forEach(visit);
     if (message.type === 'function_call_output' && Array.isArray(message.output)) message.output.forEach(visit);
   }
-  const count = estimateNativeText(canonical(wire)) + images;
+  const count = estimateNativeText(canonical(surface)) + images;
   invariant(Number.isSafeInteger(count) && count >= 0, 'context_counter_overflow');
   return count;
+}
+
+/** Price actual provider fields for one logical message, including replay/media.
+ * Synthetic protocol partners only make the normal wire builder callable; their
+ * fields are excluded from the returned cost. No model or tool is executed. */
+export function estimateNativeMessage(binding, request) {
+  const message = structuredClone(request.message), messages = [message];
+  if (message.role === 'assistant' && message.toolCalls?.length) {
+    messages.push(...message.toolCalls.map(call => ({ role: 'tool', name: call.name, callId: call.callId, content: '' })));
+  } else if (message.role === 'tool') {
+    messages.unshift({ role: 'assistant', content: '', toolCalls: [{ callId: message.callId,
+      name: message.name || 'source', arguments: {} }] });
+  }
+  const built = buildNativeModelRequest(binding, { ...request, messages, tools: [], finalizationOnly: false });
+  const body = JSON.parse(built.body);
+  let projected;
+  if (binding.protocol === 'openai-responses') {
+    if (message.role === 'system') return priceWireSurface({ instructions: body.instructions ?? '' });
+    projected = body.input.filter(item => message.role === 'tool' ? item.type !== 'function_call'
+      : message.role === 'assistant' ? item.type !== 'function_call_output' : true);
+  } else if (binding.protocol === 'anthropic-messages' && message.role === 'system') {
+    return priceWireSurface(body.system ?? '');
+  } else {
+    projected = body.messages.filter(item => message.role === 'tool' ? item.role !== 'assistant'
+      : message.role === 'assistant' ? item.role === 'assistant' : true);
+  }
+  invariant(projected.length > 0, 'context_counter_message_invalid');
+  return priceWireSurface(projected.length === 1 ? projected[0] : projected, projected);
 }
 
 export function createNativeContextPort({ protocol, model, parameters = {} } = {}) {
@@ -64,6 +95,10 @@ export function createNativeContextPort({ protocol, model, parameters = {} } = {
     protocol, model, parameters: binding.parameters })).digest('hex');
   return { tokens: Object.freeze({ tokenizerId: NATIVE_CONTEXT_COUNTER_ID, tokenizerDigest,
     async countText(request) { request.signal.throwIfAborted(); return estimateNativeText(request.text); },
+    async countMessage(request) {
+      request.signal.throwIfAborted(); const count = estimateNativeMessage(binding, request);
+      request.signal.throwIfAborted(); return count;
+    },
     async countRequest(request) {
       request.signal.throwIfAborted();
       const built = buildNativeModelRequest(binding, { ...request, finalizationOnly: false });

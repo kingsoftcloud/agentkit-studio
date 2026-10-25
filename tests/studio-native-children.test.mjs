@@ -186,6 +186,34 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
 
+test('shared Host child captures its complete source with an independently bound page budget and scoped reference', async t => {
+  let childUri;
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', childPlan: (body, index) => {
+    if (index === 1) return { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt', max_chars: 1000 } } };
+    const view = JSON.parse(body.messages.filter(message => message.role === 'tool').at(-1).content);
+    assert.equal(view.artifact_state, 'available'); assert.ok(view.content.line_count > 0);
+    assert.ok(view.content.end_line < 50); assert.equal(view.content.requested_source, undefined);
+    childUri = view.artifact_uri; return { text: 'Child inspected its bounded source page.' };
+  } });
+  const text = Array.from({ length: 50 }, (_, i) => `row-${i + 1} ${'中文😀'.repeat(20)}`).join('\n');
+  await writeFile(join(f.workspaceRoot, 'proof.txt'), text);
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` }, child = f.ledger.list(childScope)[0];
+  const record = f.ledger.load(childScope, child.runId);
+  assert.equal(child.phase, 'completed'); assert.equal(record.configuration.sourceReadPolicy, 'studio-source-read/v1');
+  const readTool = record.configuration.tools.find(tool => tool.name === 'read_workspace_file');
+  assert.equal(readTool.sourceObservationPolicy, 'workspace-source-model/v1'); assert.equal(readTool.resultArchivePolicy, 'archived-model-view/v5');
+  const receipt = record.receipts.find(receipt => receipt.result.results?.some(result => result.content.requested_source));
+  assert.ok(receipt); const captured = receipt.result.results.find(result => result.content.requested_source);
+  assert.equal(captured.content.requested_source.content, text.split('\n').map((line, i) => `${i + 1} | ${line}`).join('\n'));
+  assert.equal(captured.artifactRefs[0].uri, childUri);
+  const parent = f.ledger.load(f.scope, f.ledger.sessionHead(f.scope, 'parent-session').runId);
+  assert.ok(!parent.snapshot.artifactRefs.some(ref => ref.uri === childUri));
+  const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
+  try { assert.deepEqual(reopened.load(childScope, child.runId).configuration, record.configuration); }
+  finally { reopened.close(); }
+});
+
 for (const firstManaged of [false, true]) test(`mixed history: alternating ${firstManaged ? 'managed' : 'ordinary'} first roots preserve both owners, paging and cold results`, { timeout: 30000 }, async t => {
   const f = await setup(t, { sqlite: true, managed: true,
     parentPlan: (_body, index) => index % 2 ? { call: { name: 'native_delegate', arguments: { role: 'reader', task: `Read ${index}` } } }

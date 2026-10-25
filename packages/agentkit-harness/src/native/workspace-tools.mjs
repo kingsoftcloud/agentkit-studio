@@ -24,6 +24,7 @@ import {
 import { join } from 'node:path';
 import { checkPythonSyntax, NATIVE_PYTHON_SYNTAX } from './python-syntax.mjs';
 import { acquireWorkspaceMutationLock, workspaceMutationGuard } from './workspace-mutation-lock.mjs';
+import { budgetWorkspaceSourcePage, validateSourcePageBudget } from './source-page.mjs';
 
 import {
   WorkspacePathError, escapeRegex, fnmatch, publishWorkspaceBytes, sha256,
@@ -248,7 +249,8 @@ export function createNativeWorkspaceTools({
     }
   }
 
-  function readWorkspaceFile(args) {
+  function readWorkspaceFile(args, { request } = {}) {
+    const sourceBudget = request?.definition?.sourceObservationPolicy ? validateSourcePageBudget(request.sourceReadBudget) : null;
     const path = String(args.path ?? '');
     const includeLineNumbers = args.include_line_numbers !== false;
     const target = resolvePath(path);
@@ -277,6 +279,17 @@ export function createNativeWorkspaceTools({
     }
     const selected = totalLines ? lines.slice(start - 1, end) : [];
     const content = selected.map((line, i) => includeLineNumbers ? `${start + i} | ${line}` : line).join('\n');
+    if (sourceBudget) {
+      const rel = relativeOf(target);
+      const result = budgetWorkspaceSourcePage({ ok: true, path: rel, size: Number(stat.size), size_bytes: Number(stat.size),
+        mtime_ns: stat.mtimeNs, start_line: start, end_line: end, line_count: selected.length,
+        read_range: { start, end }, total_lines: totalLines, partial: start !== 1 || end !== totalLines, suggested_action: '' },
+      content, args.max_chars, sourceBudget);
+      if (result.ok && !result.artifact_only) store.recordReadState(makeReadState({ path: rel, mtimeNs: stat.mtimeNs,
+        sizeBytes: Number(stat.size), startLine: start, endLine: result.end_line ?? start, totalLines, partial: result.partial,
+        canonicalPath: target, contentSha256: sha256(Buffer.from(text, 'utf-8')) }));
+      return result;
+    }
     const limit = Math.max(1000, Math.min(Number(args.max_chars ?? 20000), 100000));
     let returnedEnd = end;
     let returnedCount = selected.length;

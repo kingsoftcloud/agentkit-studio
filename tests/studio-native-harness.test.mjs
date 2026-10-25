@@ -1399,6 +1399,8 @@ test('Studio Native binds context/output budgets and the production counter from
   assert.equal(configuration.profile.contextWindow, 4000); assert.equal(configuration.profile.maxOutputTokens, 1000);
   assert.equal(configuration.contextPolicy.enabled, false); assert.equal(configuration.contextPolicy.triggerRatio, .6);
   assert.match(configuration.contextPolicy.tokenizerId, /cjk-ascii-estimate-125-wire-image/);
+  assert.equal(configuration.sourceReadPolicy, 'studio-source-read/v1');
+  assert.equal(configuration.artifactPolicy, 'runtime-artifacts/v1');
   assert.equal(JSON.parse(fixture.requests[0].options.body).max_tokens, 1000);
   assert.ok(fixture.ledger.load(run.scope, run.runId).receipts.some(receipt => receipt.result.admission?.countedInputTokens > 0));
 });

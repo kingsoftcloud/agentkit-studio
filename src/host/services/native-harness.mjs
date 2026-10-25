@@ -293,9 +293,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
-        : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1',
+        : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
           ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
           ...(record.spec.execution?.toolErrorRecoveryModelCalls === undefined ? {}
             : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
@@ -320,6 +320,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ? original.configuration.limits.finalizationReserveWallMs > 0 || !!original.configuration.wallDeliveryPolicy
         : (record.spec.execution?.nativeLimits?.finalizationReserveWallMs ?? 0) > 0 || !!deadline.wallDeliveryPolicy,
       exactContentPolicy: original ? original.configuration.tools.some(tool => tool.exactContentPolicy) : true,
+      ...((original ? original.configuration.tools.find(tool => tool.sourceObservationPolicy)?.sourceObservationPolicy : 'workspace-source-model/v1')
+        ? { sourceObservationPolicy: original ? original.configuration.tools.find(tool => tool.sourceObservationPolicy).sourceObservationPolicy
+          : 'workspace-source-model/v1' } : {}),
       ...((original ? original.configuration.tools.find(tool => tool.directoryObservationPolicy)?.directoryObservationPolicy : 'studio-directory-observation/v3')
         ? { directoryObservationPolicy: original ? original.configuration.tools.find(tool => tool.directoryObservationPolicy).directoryObservationPolicy
           : 'studio-directory-observation/v3' } : {}),
@@ -394,6 +397,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         },
         bindTools: authority => binding.nativeTools.forChild(agent, authority),
         ...(recoveryPolicies.artifactPolicy ? { artifactPolicy: recoveryPolicies.artifactPolicy, artifactFactory } : {}),
+        ...(recoveryPolicies.sourceReadPolicy ? { sourceReadPolicy: recoveryPolicies.sourceReadPolicy } : {}),
         verificationFactory: child => createNativeVerification({ ...child, workspaceRoot: child.workspaceRoot ?? workspaceRoot,
           evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence') }),
       });
