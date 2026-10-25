@@ -475,6 +475,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         resumeNativeRun: (payload, signal) => studioBridgeOperation('sessions/native-recovery-resume', payload, signal),
         reconcileNativeTool: (payload, signal) => studioBridgeOperation('sessions/native-recovery-reconcile', payload, signal),
         repairNativeWorkspace: (payload, signal) => studioBridgeOperation('sessions/native-workspace-repair', payload, signal),
+        nativeConversationStatus: (payload, signal) => studioBridgeOperation('sessions/native-conversation-status', payload, signal),
+        rewindNativeConversation: (payload, signal) => studioBridgeOperation('sessions/native-conversation-rewind', payload, signal),
         controlNativeA2aTask: (payload, signal) => studioBridgeOperation('sessions/native-a2a-control', payload, signal),
         dshA2aTaskHistory: (payload, signal) => studioBridgeOperation('sessions/dsh-a2a-history', payload, signal),
         controlDshA2aTask: (payload, signal) => studioBridgeOperation('sessions/dsh-a2a-control', payload, signal),

@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
-import { NativeKernel, MemoryRunStore, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, MemoryRunStore, configure, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
 import { snapshotNativeMcpPlanAccess } from '../src/providers/native-mcp-schema.mjs';
 import { planModeToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
@@ -361,6 +361,46 @@ for (const artifactFailure of [false, true]) test(`saving an unread source canno
   assert.equal(result.sourceObservationState, 'unread'); assert.equal(result.content.requested_source.content, `1 | ${original}`);
 });
 
+for (const firstAction of ['read', 'edit']) test(`rewind adopts workspace branch before the first ${firstAction} captures read state`, async t => {
+  const h = setup(t, ['read_workspace_file', 'edit_workspace_file']);
+  writeFileSync(join(h.workspaceRoot, 'branch.txt'), 'original');
+  const store = new MemoryRunStore(), tools = h.gateway.definitions(h.agent, [...h.registry.values()]);
+  const { config, snapshot } = fixture({ tools });
+  let calls = 0;
+  const read = { callId: 'fresh-read', name: 'read_workspace_file', arguments: { path: 'branch.txt' } };
+  const edit = { callId: 'fresh-edit', name: 'edit_workspace_file', arguments: { path: 'branch.txt', old_text: 'original', new_text: 'fresh' } };
+  const reply = toolCall => ({ kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [toolCall] });
+  const final = () => ({ kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] });
+  const kernel = new NativeKernel({ store, digest, owner: 'branch-reader', ports: { ...h.gateway.forAgent(h.agent, { scope, store }),
+    model: { generate: async request => {
+      ++calls;
+      if (calls === 1) return reply(read);
+      if (calls === 2) return final();
+      if (calls === 3) return reply(firstAction === 'edit' ? { ...edit, callId: 'removed-read-edit' } : read);
+      if (calls === 4 && firstAction === 'edit') {
+        const blocked = parseNativeJson(request.messages.filter(message => message.role === 'tool').at(-1).content);
+        assert.equal(blocked.ok, false); assert.equal(blocked.error_type, 'file_not_read');
+        assert.equal(readFileSync(join(h.workspaceRoot, 'branch.txt'), 'utf8'), 'original');
+        return reply(read);
+      }
+      if (calls === (firstAction === 'edit' ? 5 : 4)) return reply(edit);
+      const edited = parseNativeJson(request.messages.filter(message => message.role === 'tool').at(-1).content);
+      assert.equal(edited.ok, true); assert.equal(edited.replacements, 1);
+      return final();
+    } } } });
+  kernel.start(snapshot, config); assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  const before = store.load(scope, 'run');
+  const rewindConfig = configure({ ...config, conversationSeed: { contract: 'native-conversation-fork/v1', source: {
+    parentSessionId: 'session', sessionId: 'session', runId: 'run', turnId: snapshot.turnId, boundarySeq: 0,
+    snapshotRevision: before.snapshot.revision, configDigest: before.snapshot.configDigest,
+    snapshotDigest: digest(before.snapshot), transcriptDigest: 'before-first-input' }, messages: [] },
+  conversationRewind: { contract: 'native-conversation-rewind/v1', commandId: 'rewind', expectedHeadRunId: 'run', generation: 1, markerDigest: 'marker' } });
+  kernel.start({ ...snapshot, runId: 'rewound', turnId: '2' }, rewindConfig);
+  assert.equal((await kernel.runUntilIdle(scope, 'rewound')).phase, 'completed');
+  assert.equal(readFileSync(join(h.workspaceRoot, 'branch.txt'), 'utf8'), 'fresh');
+  assert.deepEqual(store.load(scope, 'run'), before);
+});
+
 test('deadline tools are pinned only from trusted builtins and never granted by an external name', t => {
   const names = ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'];
   const h = setup(t, names), original = h.gateway.definitions(h.agent, []);
@@ -478,12 +518,22 @@ test('readonly completion gateway reconnects to a real local command using the o
 test('child reads use independent workspace state and cannot grant writes to either child or parent', async t => {
   const host = setup(t, ['read_workspace_file', 'write_workspace_file']);
   writeFileSync(join(host.workspaceRoot, 'proof.txt'), 'Original');
-  const childScope = { ...scope, agentId: 'child' };
-  const child = host.gateway.forChild(host.agent, { scope: childScope, store: new MemoryRunStore(),
+  const childScope = { ...scope, agentId: 'child' }, store = new MemoryRunStore();
+  const child = host.gateway.forChild(host.agent, { scope: childScope, store,
     sessionId: 'child-session', toolNames: ['read_workspace_file'] });
   assert.deepEqual(Object.keys(child).sort(), ['tools', 'workspace']);
   const request = { ...host.request({ path: 'proof.txt' }, 'read_workspace_file'), scope: childScope, sessionId: 'child-session' };
-  assert.equal((await child.tools.execute(request)).status, 'ok');
+  const { config, snapshot } = fixture({ tools: host.gateway.definitions(host.agent, [...host.registry.values()])
+    .filter(tool => tool.name === 'read_workspace_file') });
+  let calls = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'child-reader', ports: { ...child, model: { generate: async input => {
+    if (++calls === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'read-child',
+      name: 'read_workspace_file', arguments: { path: 'proof.txt' } }] };
+    assert.equal(parseNativeJson(input.messages.filter(message => message.role === 'tool').at(-1).content).ok, true);
+    return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+  } } } });
+  kernel.start({ ...snapshot, scope: childScope, sessionId: 'child-session' }, config);
+  assert.equal((await kernel.runUntilIdle(childScope, 'run')).phase, 'completed');
   const before = host.calls.length;
   await assert.rejects(child.tools.execute({ ...request, scope: { ...childScope, workspaceId: 'foreign' } }), /child_tool_not_bound/);
   await assert.rejects(child.tools.execute({ ...request, call: { ...request.call, name: 'write_workspace_file', arguments: { path: 'proof.txt', content: 'Forged' } } }), /child_tool_not_bound/);

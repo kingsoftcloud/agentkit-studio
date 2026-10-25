@@ -40,6 +40,7 @@ export interface ConfigurationInput {
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
   inputMessages?: Message[] | null;
   conversationSeed?: RunConfiguration['conversationSeed'];
+  conversationRewind?: RunConfiguration['conversationRewind'];
   backgroundNotificationPolicy?: RunConfiguration['backgroundNotificationPolicy'];
   childLifecyclePolicy?: RunConfiguration['childLifecyclePolicy'];
   childApprovalPolicy?: RunConfiguration['childApprovalPolicy'];
@@ -68,6 +69,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
     ...(input.conversationSeed === undefined ? {} : { conversationSeed: input.conversationSeed }),
+    ...(input.conversationRewind === undefined ? {} : { conversationRewind: input.conversationRewind }),
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
     ...(input.wallDeliveryPolicy === undefined ? {} : { wallDeliveryPolicy: input.wallDeliveryPolicy }),
     ...(input.artifactPolicy === undefined ? {} : { artifactPolicy: input.artifactPolicy }),

@@ -59,6 +59,47 @@ test('without persisted state a restart rejects edits as unread', async () => {
   } finally { cleanup(); }
 });
 
+test('conversation rewind drops removed-branch read authority, but keeps fresh reads across cold continuation', async () => {
+  const { workspaceRoot, stateDir, cleanup } = baseSetup();
+  try {
+    writeFileSync(join(workspaceRoot, 'a.txt'), 'original\n');
+    const options = { workspaceRoot, stateDir, sessionId: 'rewind', authorize: async () => 'allow' };
+    const before = createNativeWorkspaceTools(options);
+    assert.equal((await makeCall(before, 'rewind')('read_workspace_file', { path: 'a.txt' })).status, 'ok');
+    const branch = { commandId: 'first-rewind', generation: 1 };
+    const after = createNativeWorkspaceTools(options), call = makeCall(after, 'rewind');
+    after.adoptConversationBranch(branch);
+    const removedRead = await call('edit_workspace_file', { path: 'a.txt', old_text: 'original', new_text: 'wrong' });
+    assert.equal(removedRead.status, 'error'); assert.equal(removedRead.content.error_type, 'file_not_read');
+    assert.equal(readFileSync(join(workspaceRoot, 'a.txt'), 'utf8'), 'original\n');
+    assert.equal((await call('read_workspace_file', { path: 'a.txt' })).status, 'ok');
+    const cold = createNativeWorkspaceTools(options), coldCall = makeCall(cold, 'rewind');
+    cold.adoptConversationBranch(branch);
+    assert.equal((await coldCall('edit_workspace_file', { path: 'a.txt', old_text: 'original', new_text: 'fresh' })).status, 'ok');
+    cold.adoptConversationBranch({ commandId: 'root-rewind', generation: 2 });
+    const rooted = await coldCall('edit_workspace_file', { path: 'a.txt', old_text: 'fresh', new_text: 'wrong' });
+    assert.equal(rooted.content.error_type, 'file_not_read');
+    assert.equal(readFileSync(join(workspaceRoot, 'a.txt'), 'utf8'), 'fresh\n');
+  } finally { cleanup(); }
+});
+
+test('conversation read state fences stale and competing generations without clearing current reads', async () => {
+  const { workspaceRoot, stateDir, cleanup } = baseSetup();
+  try {
+    writeFileSync(join(workspaceRoot, 'a.txt'), 'original');
+    const options = { workspaceRoot, stateDir, sessionId: 'rewind', authorize: async () => 'allow' };
+    const tools = createNativeWorkspaceTools(options), call = makeCall(tools, 'rewind');
+    tools.adoptConversationBranch({ commandId: 'current', generation: 2 });
+    await call('read_workspace_file', { path: 'a.txt' });
+    for (const branch of [{ commandId: 'old', generation: 1 }, { commandId: 'different', generation: 2 }])
+      assert.throws(() => tools.adoptConversationBranch(branch), { code: 'workspace_read_branch_conflict' });
+    assert.throws(() => tools.adoptConversationBranch({ commandId: 'invalid', generation: 0 }), { code: 'workspace_read_branch_invalid' });
+    assert.equal((await call('edit_workspace_file', { path: 'a.txt', old_text: 'original', new_text: 'current' })).status, 'ok');
+    assert.deepEqual(JSON.parse(readFileSync(join(stateDir, sessionKeyFor('rewind'), 'read-state.json'), 'utf8')).conversationBranch,
+      { commandId: 'current', generation: 2 });
+  } finally { cleanup(); }
+});
+
 test('read state is isolated per session', async () => {
   const { workspaceRoot, stateDir, cleanup } = baseSetup();
   try {

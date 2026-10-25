@@ -70,7 +70,7 @@ async function applyProof(ctx, options) {
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
-          : options.workspaceRepair ? ['apply_workspace_patch'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
+          : options.workspaceRepair ? ['apply_workspace_patch'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
@@ -169,7 +169,7 @@ async function applyProof(ctx, options) {
         const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });
         if (login.status !== 302) throw Error('Mounted Host connection authentication failed');
         const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
-        if (options.automation || options.recovery || options.trace || options.workspaceRepair) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
+        if (options.automation || options.recovery || options.trace || options.workspaceRepair || options.conversationRewind) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
         const rpc = async (method, payload = {}) => {
           const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
             body: JSON.stringify({ method, payload, rpcId: method }), signal: AbortSignal.timeout(10000) });

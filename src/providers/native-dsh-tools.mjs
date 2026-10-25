@@ -861,9 +861,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const ledgerAuthority = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
       const childSkills = commandAuthority?.childSkills ? structuredClone(commandAuthority.childSkills) : null;
-      const assertCurrent = ledgerAuthority ? request => ledgerAuthority(request) && (!childSkills
-        || request.buildId === childSkills.buildId && canonical(commandAuthority.store.load(commandAuthority.scope, request.runId)
-          .configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills)) : undefined;
+      const assertCurrent = ledgerAuthority ? request => {
+        const allowed = ledgerAuthority(request);
+        const record = commandAuthority.store.load(commandAuthority.scope, request.runId);
+        invariant(!childSkills || request.buildId === childSkills.buildId
+          && canonical(record.configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills), 'studio_native_child_skill_binding_changed');
+        workspaceTools.adoptConversationBranch(record.snapshot.conversationBranch);
+        return allowed;
+      } : undefined;
       const assertReceiptCurrent = commandAuthority?.store ? createNativeToolReceiptAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
       const assertRepairCurrent = commandAuthority?.store ? createNativeWorkspaceRepairAuthority({ ...commandAuthority, sessionId,
@@ -1003,6 +1008,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         if (commandAuthority?.childSessionId) invariant(canonical(request.scope) === canonical(commandAuthority.scope)
           && commandAuthority.toolNames.includes(request.call.name), 'studio_native_child_tool_not_bound');
         request.signal.throwIfAborted();
+        // Adopt the conversation branch before a workspace tool snapshots read
+        // preconditions. Edit matching may capture them before its first await;
+        // adopting only from the later publication guard is too late.
+        if (assertCurrent && builtinNames.has(request.call.name) && workspaceToolNames.has(request.call.name))
+          invariant(assertCurrent(request), 'studio_native_tool_authority_stale');
         if (builtinNames.has(request.call.name) && request.definition.exactContentPolicy && commandAuthority?.store) {
           invariant(assertCurrent?.(request), 'studio_native_tool_authority_stale');
           const goal = commandAuthority.store.load(request.scope, request.runId).snapshot.goal;

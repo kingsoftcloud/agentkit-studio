@@ -25,6 +25,7 @@ import { createTodosProof } from './native-todos-proof.mjs';
 import { createPlanModeProof } from './native-plan-mode-proof.mjs';
 import { createWorkspaceRepairProof } from './native-workspace-repair-proof.mjs';
 import { createConversationForkProof } from './native-conversation-fork-proof.mjs';
+import { createConversationRewindProof } from './native-conversation-rewind-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -32,6 +33,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
   'workspace-repair': { type: 'boolean', default: false },
   'conversation-fork': { type: 'boolean', default: false },
+  'conversation-rewind': { type: 'boolean', default: false },
   hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
@@ -99,6 +101,9 @@ const workspaceRepairProof = values['workspace-repair'] ? createWorkspaceRepairP
 assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;
+assert.ok(!values['conversation-rewind'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
+  && !['conversation-rewind', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-rewind is a separate mounted Host proof');
+const conversationRewindProof = values['conversation-rewind'] ? createConversationRewindProof() : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
@@ -136,6 +141,7 @@ const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
     if (conversationForkProof) { await conversationForkProof.respond({ request, response, raw, requests }); return; }
+    if (conversationRewindProof) { await conversationRewindProof.respond({ request, response, raw, requests }); return; }
     if (workspaceRepairProof) { await workspaceRepairProof.respond({ request, response, raw, requests }); return; }
     if (todosProof) { await todosProof.respond({ request, response, raw, requests }); return; }
     if (planModeProof) { await planModeProof.respond({ request, response, raw, requests }); return; }
@@ -219,6 +225,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (conversationRewindProof) await writeFile(join(root, 'conversation-rewind-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (planModeProof) await writeFile(join(root, 'plan-mode-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (todosProof) await writeFile(join(root, 'todos-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (toolSearchProof) await writeFile(join(root, 'tool-search-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
@@ -282,7 +289,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...values.automation || values.recovery || workspaceRepairProof || conversationForkProof ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+    ...values.automation || values.recovery || workspaceRepairProof || conversationForkProof || conversationRewindProof ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : [],
   ] : [];
@@ -301,7 +308,8 @@ try {
     `        automation: ${values.automation}`,
     `        recovery: ${values.recovery}`,
     `        workspaceRepair: ${Boolean(workspaceRepairProof)}`,
-    `        conversationFork: ${Boolean(conversationForkProof)}`,
+    `        conversationFork: ${Boolean(conversationForkProof || conversationRewindProof)}`,
+    `        conversationRewind: ${Boolean(conversationRewindProof)}`,
     `        trace: ${values.trace}`,
     `        hooks: ${values.hooks}`,
     `        memory: ${values.memory || Boolean(managedMemory || parallelMemory)}`,
@@ -329,7 +337,10 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (conversationForkProof) {
+  if (conversationRewindProof) {
+    await conversationRewindProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
+    harness = null;
+  } else if (conversationForkProof) {
     await conversationForkProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
     harness = null;
   } else if (workspaceRepairProof) {

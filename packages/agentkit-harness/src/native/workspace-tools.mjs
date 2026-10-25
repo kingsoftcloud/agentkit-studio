@@ -1390,6 +1390,7 @@ export function createNativeWorkspaceTools({
     guard(); checkpoints.recordRepairReceipt(request, result); guard();
   }
   return { definitions, execute, observe, recordReceipt, observeReceipt, repairWorkspace, recordRepairReceipt,
+    adoptConversationBranch: branch => store.adoptConversationBranch(branch),
     // Host-only change capture for a governed command. It shares the bounded,
     // stable observer; paths remain structured even when names contain tabs.
     capture(request) {

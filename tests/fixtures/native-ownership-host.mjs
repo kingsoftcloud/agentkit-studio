@@ -5,6 +5,10 @@ import assert from 'node:assert/strict';
  * boundaries are verified separately with actual maintained DSH Agents.
  */
 export function nativeOwnershipHost(session, events) {
+  // Expose the actual Session read contract on the deliberately narrow unit
+  // double. Rewind admission must read the log even on ordinary non-fork turns.
+  session.snapshotEvents ??= () => structuredClone(events);
+  session.isOwnSeq ??= seq => events.some(event => event.seq === seq);
   return { contract: 'dsh.external-turn-host/v1',
     pending() {
       const start = events.findLastIndex(event => event.type === 'turn/start');

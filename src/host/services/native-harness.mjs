@@ -26,6 +26,8 @@ import { createStudioNativeChildWorkspaces } from '../../providers/native-child-
 import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
+import { createStudioNativeConversation } from './native-conversation.mjs';
+import { nativeConversationRewindAdmission } from '../../providers/native-conversation-rewind.mjs';
 import { createStudioNativeA2aControl } from './native-a2a-control.mjs';
 import { createStudioNativeManagedScopeControl } from './native-managed-scope-control.mjs';
 import { createStudioNativeBackgroundAdmission, createStudioNativeBackgroundDispatcher } from './native-background-admission.mjs';
@@ -459,9 +461,18 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const parentModel = modelBinding(selected, selectedId, context, true), roles = nativeChildRoles(record.spec);
       invariant(original || !execution || !agent.session.header?.isSeeded || !agent.session.header.parentSession
         || store.sessionHead(scope, sessionId), 'native_conversation_fork_managed_not_supported');
-      const conversationSeed = original ? original.configuration.conversationSeed : execution ? undefined
+      const branchHead = !original && !execution ? store.sessionHead(scope, sessionId) : null;
+      const branchAdmission = original ? { conversationRewind: original.configuration.conversationRewind }
+        : execution ? {} : nativeConversationRewindAdmission({ session: agent.session,
+          head: branchHead, turn, sameTurnConfiguration: branchHead?.turnId === String(turn)
+            ? store.load(scope, branchHead.runId).configuration : undefined });
+      // Only a new rewind admission adds this durability barrier. Ordinary
+      // turns retain their existing delivery/flush path and cost.
+      if (!original && branchAdmission.conversationRewind)
+        invariant(await sessions.flush(agent.session) === true, 'native_conversation_rewind_not_durable');
+      const conversationSeed = original ? original.configuration.conversationSeed : branchAdmission.conversationSeed ?? (execution ? undefined
         : await nativeConversationForkSeed({ ctx, agent, store, scope, turn, profile: parentModel.profile,
-          tools, policies: recoveryPolicies, signal });
+          tools, policies: recoveryPolicies, signal }));
       signal.throwIfAborted();
       if (visionProfile) {
         const observer = modelBinding(visionProfile, visionId);
@@ -588,6 +599,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           { providerRef: memoryProviderRef }),
         configuration: { profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy, ...recoveryPolicies,
         ...(conversationSeed === undefined ? {} : { conversationSeed }),
+        ...(branchAdmission.conversationRewind === undefined ? {} : { conversationRewind: branchAdmission.conversationRewind }),
         ...(contextSources.length ? { contextSources } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: sealedCapsule,
@@ -763,6 +775,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   });
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents,
     cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, storeDir }) });
+  const conversation = createStudioNativeConversation({ ctx, store, workspaceId, lifetime, agentEvents });
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents,
     childRecord: request => childHistory(request).record(request) });
   const managedScopeControl = createStudioNativeManagedScopeControl({ ctx, workspaceId, lifetime, active, agentEvents, readChildren });
@@ -964,6 +977,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resumeTurn: recovery.resume,
     reconcileTool: recovery.reconcile,
     repairWorkspace: recovery.repairWorkspace,
+    conversationStatus: conversation.status,
+    rewindConversation: conversation.rewind,
     controlA2aTask,
     managedScopeControl,
     childHistory(request, signal) { return readChildren(request, signal); },

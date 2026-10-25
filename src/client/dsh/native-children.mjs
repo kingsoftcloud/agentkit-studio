@@ -3,6 +3,7 @@ import { createNativeChildrenState } from '../state/native-children.mjs';
 import { createNativeRecoveryState } from '../state/native-recovery.mjs';
 import { createNativeA2aPanel } from './native-a2a.mjs';
 import { createDshA2aPanel } from './dsh-a2a.mjs';
+import { createNativeConversationPanel } from './native-conversation.mjs';
 
 const phases = { created: '已准备', preparing: '准备中', requesting_model: '推理中', requesting_context: '整理上下文',
   requesting_input: '读取输入', executing_tools: '执行工具', awaiting_interaction: '等待审批', paused: '已暂停',
@@ -12,6 +13,7 @@ const phases = { created: '已准备', preparing: '准备中', requesting_model:
 export function createNativeChildPanel({ ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle },
   hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
   const A2aTask = createNativeA2aPanel({ React: { createElement: h, useEffect, useState }, hostRemote, buttonStyle });
+  const ConversationPanel = createNativeConversationPanel({ React: { createElement: h, useEffect, useState, Fragment }, hostRemote, buttonStyle });
   const DshA2aPanel = createDshA2aPanel({ ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle }, hostRemote });
   function TaskPanel({ agentId, sessionId }) {
     const [controller, setController] = useState(null), [state, setState] = useState({ page: null, detail: null }), [open, setOpen] = useState(false);
@@ -137,7 +139,9 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
       return () => { active = false; };
     }, [sessionId, presetId]);
     return agent?.sessionId === sessionId && agent?.presetId === presetId
-      ? h(Fragment, null, agent.runtime === 'harness' ? h(TaskPanel, { key: `${agent.id}:${sessionId}`, agentId: agent.id, sessionId }) : null,
+      ? h(Fragment, null, agent.runtime === 'harness' ? h(Fragment, null,
+        h(TaskPanel, { key: `${agent.id}:${sessionId}`, agentId: agent.id, sessionId }),
+        h(ConversationPanel, { key: `conversation:${agent.id}:${sessionId}`, agentId: agent.id, sessionId })) : null,
         h(DshA2aPanel, { key: `a2a:${agent.id}:${sessionId}`, agentId: agent.id, sessionId })) : null;
   };
 }

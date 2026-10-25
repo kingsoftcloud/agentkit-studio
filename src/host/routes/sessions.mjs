@@ -1,9 +1,16 @@
 import { validateNativeA2aControlRequest } from '../services/native-a2a-control.mjs';
 import { validateNativeReconciliationRequest } from '../services/native-recovery.mjs';
 import { validateDshA2aRequest } from '../services/dsh-a2a-control.mjs';
+import { validateNativeConversationRequest } from '../services/native-conversation.mjs';
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost, getDshA2aControls }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-conversation-status' || endpoint === 'sessions/native-conversation-rewind') {
+            const rewind = endpoint === 'sessions/native-conversation-rewind';
+            validateNativeConversationRequest(payload, rewind);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await (rewind ? host.rewindConversation(payload, signal) : host.conversationStatus(payload, signal)) };
+        }
         if (endpoint === 'sessions/dsh-a2a-history' || endpoint === 'sessions/dsh-a2a-control') {
             const control = endpoint === 'sessions/dsh-a2a-control'; validateDshA2aRequest(payload, control);
             if (typeof getDshA2aControls !== 'function')

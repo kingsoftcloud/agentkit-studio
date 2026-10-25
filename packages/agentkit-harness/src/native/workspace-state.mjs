@@ -105,6 +105,7 @@ export class WorkspaceStateStore {
       const raw = JSON.parse(readFileSync(this._readStatePath, 'utf-8'));
       if (raw && raw.version === READ_STATE_VERSION && raw.sessionId === this.sessionId
         && raw.entries && typeof raw.entries === 'object' && !Array.isArray(raw.entries)) {
+        this._conversationBranch = raw.conversationBranch;
         const map = new Map();
         for (const [key, value] of Object.entries(raw.entries)) {
           const state = deserializeReadState(value);
@@ -141,6 +142,7 @@ export class WorkspaceStateStore {
     const payload = {
       version: READ_STATE_VERSION,
       sessionId: this.sessionId,
+      ...(this._conversationBranch ? { conversationBranch: this._conversationBranch } : {}),
       entries: Object.fromEntries(
         [...this._readState.values()].map(serializeReadState).map((s) => [s.path, s]),
       ),
@@ -177,6 +179,19 @@ export class WorkspaceStateStore {
     this._ensureLoaded();
     this._readState.clear();
     this._persistReadState();
+  }
+
+  adoptConversationBranch(branch) {
+    if (!branch) return;
+    if (!Number.isSafeInteger(branch.generation) || branch.generation < 1 || typeof branch.commandId !== 'string' || !branch.commandId.trim())
+      throw Object.assign(Error('workspace_read_branch_invalid'), { code: 'workspace_read_branch_invalid' });
+    this._ensureLoaded();
+    if (this._conversationBranch?.generation === branch.generation && this._conversationBranch.commandId === branch.commandId) return;
+    if (this._conversationBranch?.generation >= branch.generation)
+      throw Object.assign(Error('workspace_read_branch_conflict'), { code: 'workspace_read_branch_conflict' });
+    // Never let a read on the removed branch authorize an edit after rewind.
+    // Fresh reads in this generation remain valid across later turns/restarts.
+    this._readState.clear(); this._conversationBranch = { ...branch }; this._persistReadState();
   }
 
   addPending({ callId, name, argumentsDigest, ttlMs = PENDING_TTL_MS }) {

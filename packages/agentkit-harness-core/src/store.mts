@@ -35,6 +35,7 @@ function unique<T>(items: T[], key: (item: T) => string): void {
   invariant(new Set(items.map(key)).size === items.length, 'duplicate_batch_key');
 }
 function immutableIdentity(previous: RunSnapshot, next: RunSnapshot): void {
+  invariant(canonical(previous.conversationBranch ?? null) === canonical(next.conversationBranch ?? null), 'run_identity_changed');
   invariant(canonical(previous.backgroundNotification ?? null) === canonical(next.backgroundNotification ?? null), 'run_identity_changed');
   for (const field of ['schemaVersion', 'scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId', 'configDigest'] as const) {
     invariant(canonical(previous[field]) === canonical(next[field]), 'run_identity_changed');
@@ -77,6 +78,11 @@ export class TransactionalRunStore implements RunStore {
       const parent = sessionHead(initial.scope, initial.sessionId);
       invariant((parent?.runId ?? null) === initial.parentRunId, 'session_head_conflict');
       invariant(!parent || terminal(parent.phase), 'session_already_active');
+      const rewind = config.conversationRewind;
+      invariant(rewind ? config.conversationSeed && parent && rewind.expectedHeadRunId === parent.runId
+        && rewind.generation > (parent.conversationBranch?.generation ?? 0)
+        && canonical(initial.conversationBranch) === canonical({ commandId: rewind.commandId, generation: rewind.generation })
+        : canonical(initial.conversationBranch ?? null) === canonical(parent?.conversationBranch ?? null), 'conversation_rewind_head_conflict');
       return { record: { configuration: config, snapshot: initial, lease: null, fence: 0,
         events: [], intents: [], receipts: [], commands: [], commits: [], projections: {} }, value: { snapshot: copy(initial), created: true } };
     });

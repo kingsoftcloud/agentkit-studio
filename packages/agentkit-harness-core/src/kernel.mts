@@ -97,29 +97,35 @@ export class NativeKernel {
     invariant(!head || terminal(head.phase), 'session_already_active');
     invariant(identity.parentRunId === null || identity.parentRunId === head?.runId, 'session_head_conflict');
     const parent = head ? this.store.load(identity.scope, head.runId) : null;
-    invariant(!parent || configuration.conversationSeed === undefined, 'conversation_seed_requires_new_session');
+    const rewind = configuration.conversationRewind;
+    invariant(!rewind || head && rewind.expectedHeadRunId === head.runId
+      && rewind.generation > (head.conversationBranch?.generation ?? 0), 'conversation_rewind_head_conflict');
+    invariant(!parent || configuration.conversationSeed === undefined || rewind, 'conversation_seed_requires_new_session');
     const initial = initialSnapshot({ ...identity, parentRunId: head?.runId ?? null }, configuration, configDigest);
-    if (initial.planMode && parent?.snapshot.planMode) initial.planMode = { ...copy(parent.snapshot.planMode),
-      active: initial.planMode.active, revision: parent.snapshot.planMode.revision + (initial.planMode.active === parent.snapshot.planMode.active ? 0 : 1) };
+    const inherited = rewind ? null : parent;
+    const branch = rewind ? { commandId: rewind.commandId, generation: rewind.generation } : head?.conversationBranch;
+    if (branch) initial.conversationBranch = copy(branch);
+    if (initial.planMode && inherited?.snapshot.planMode) initial.planMode = { ...copy(inherited.snapshot.planMode),
+      active: initial.planMode.active, revision: inherited.snapshot.planMode.revision + (initial.planMode.active === inherited.snapshot.planMode.active ? 0 : 1) };
     if (initial.planMode && !configuration.contextPolicy) initial.messages.push({ role: 'user', kind: 'plan_mode',
       content: canonical({ authority: 'host_record', planMode: initial.planMode, instructions: planModeGuidance(initial, configuration) }) });
-    if (initial.todos && parent?.snapshot.todos) {
-      initial.todos = copy(parent.snapshot.todos);
+    if (initial.todos && inherited?.snapshot.todos) {
+      initial.todos = copy(inherited.snapshot.todos);
       if (initial.todos.revision > 0 && !configuration.contextPolicy) initial.messages.splice(1, 0, { role: 'user', kind: 'todo_state',
         content: canonical({ authority: 'session_task_state', todos: initial.todos.items, revision: initial.todos.revision }) });
     }
-    if (initial.toolDiscovery && parent?.snapshot.toolDiscovery) {
-      const inherited = parent.snapshot.toolDiscovery.discovered.filter(name => configuration.tools.some(tool => tool.name === name && tool.discovery)
+    if (initial.toolDiscovery && inherited?.snapshot.toolDiscovery) {
+      const names = inherited.snapshot.toolDiscovery.discovered.filter(name => configuration.tools.some(tool => tool.name === name && tool.discovery)
         && (configuration.contract.allowedToolNames === null || configuration.contract.allowedToolNames.includes(name)));
-      initial.toolDiscovery = { discovered: inherited, promoted: [...inherited] };
+      initial.toolDiscovery = { discovered: names, promoted: [...names] };
     }
-    const history = projectSessionHistory(parent, configuration, this.digest);
+    const history = projectSessionHistory(inherited, configuration, this.digest);
     const snapshot: RunSnapshot = { ...initial,
       messages: [...initial.messages.filter(message => message.role === 'system'), ...history,
         ...initial.messages.filter(message => message.role !== 'system')],
       workspaceRevision: head?.workspaceRevision ?? null,
-      workspaceModifiedPaths: copy(head?.workspaceModifiedPaths ?? []), artifactRefs: copy(head?.artifactRefs ?? []),
-      backgroundCommands: copy(head?.backgroundCommands ?? []),
+      workspaceModifiedPaths: copy(head?.workspaceModifiedPaths ?? []), artifactRefs: copy(inherited?.snapshot.artifactRefs ?? []),
+      backgroundCommands: copy(inherited?.snapshot.backgroundCommands ?? []),
     };
     return this.store.create(configuration, snapshot);
   }

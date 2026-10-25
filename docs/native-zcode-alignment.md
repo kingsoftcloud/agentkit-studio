@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **31/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **32/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,7 +53,7 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 7/15 covers durable file preimages on the admitted writer path (one point)
+M5 8/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
@@ -62,7 +62,9 @@ second process death during compensation and its product recovery entry (one poi
 and exact closed-turn Native conversation fork admission, cold first-use/follow-up,
 and fork-of-fork with independent Run/budget and paired historical tools (one point),
 and exact ordinary Native before-input/root and in-turn message cuts with
-cutoff-local Todo/discovery through cold packed Studio first use (one point).
+cutoff-local Todo/discovery through cold packed Studio first use (one point),
+and authenticated idle same-Session conversation rewind with cold rebased
+continuation, repeated root rewind and branch-fenced workspace reads (one point).
 This does not certify full recovery/undo, full conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
@@ -82,13 +84,13 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Creation-via-Edit, large/legacy-encoded files, conversation rewind/fork, partial-restore reconciliation, hook aliases and remaining read/write policy comparisons are pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Creation-via-Edit, large/legacy-encoded files, combined file/conversation rewind, retained-read hydration, full historical selection, partial-restore reconciliation, hook aliases and remaining read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
-| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
+| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut,rewind}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Authenticated idle same-Session rewind rebuilds model history/Todo/discovery without changing source Runs or files, including repeated root cuts and cold continuation. Active task cancellation, retained-read hydration, combined file/conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
 
 ## Deliberate architecture constraints
@@ -1699,3 +1701,79 @@ Run targeted checks per integrated change; perform broader necessary checks at
 milestone closure. Local-only acceptance does not require cloud credentials.
 Final completion requires every original requirement, the matrix, comparison
 evidence and all intentional differences to be accounted for.
+
+## Idle same-Session conversation rewind (32/100)
+
+Pinned ZCode `src/runtime/methods/rewind-message.ts:440` builds a cut before
+an active user input; `:542` commits the branch and cancels removed tasks;
+`:675` resets and hydrates provider history, read-file state and context prefix.
+This batch implements the ordinary **idle conversation-only** branch operation.
+It does not claim the active-task or combined file/conversation behavior.
+
+Native uses the existing append-only DSH Session surface replacement as the
+branch authority. The authenticated `sessions/native-conversation-{status,rewind}`
+Host routes resolve the live Agent and frozen Native preset, validate the current
+head/generation and select a real active human input. They freeze a data-only
+prefix seed before that input and append one replacement notice. A successful
+response requires Session persistence. Retrying the same command/payload reuses
+that marker; changing its payload conflicts. Existing Runs are never rewritten.
+
+The next Run remains a child of the actual execution head for audit purposes,
+but rebuilds its model history/Todo/discovery from the selected seed. A branch
+identity is immutable within a Run and inherited by ordinary follow-up Runs.
+Cold restore and same-turn redelivery keep their admitted configuration. An
+inherited parent Session marker cannot issue a rewind in a fork child.
+
+Workspace files and checkpoints remain at their current state. Branch adoption
+clears removed-branch read authority **before** an editor snapshots its read
+preconditions. This order matters: the first packed attempt exposed an edit
+capturing the old read state before the later publication guard. The gateway
+now adopts before both reads and edits; adapter regressions cover both first
+operations. Fresh reads survive a cold ordinary continuation in the same
+branch. Hydrating still-valid reads from the retained prefix is pending, so
+this conservative implementation can require an extra reread compared to ZCode.
+
+The Studio panel selects active inputs and describes the file-preserving
+operation. Unknown responses retain the exact original request for retry;
+known pre-append conflicts refresh and allow a new selection. Older in-flight
+status responses cannot resurrect a removed branch in the panel. This is
+state/build verification, not an actual browser-click acceptance claim.
+
+Acceptance:
+
+- Final packed command:
+  `node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-conversation-rewind-pack-final/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --conversation-rewind --frozen --keep`.
+- Archive SHA-256: `202ad20847118b1f08286b403ddc143012b3ef278fb87d6bd00fecce3efccc11`.
+  Evidence: `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-UwUbu3`,
+  Host PIDs 97429/97454/97466/97478; log
+  `/tmp/native-conversation-rewind-proof-final.log`.
+- Actual SDK Session, authenticated HTTP controls, SessionController and SQLite:
+  first cut/replacement, duplicate/conflicting commands, removed target refusal,
+  repeated cut to the original first input, cold root and ordinary follow-up;
+  old text/Todo/discovery does not return, file bytes persist, stale reads fail,
+  fresh cold reads authorize editing, and original Run records remain identical.
+  Thirteen controlled HTTP model calls; no original write replay or model summary.
+- Related regression remainder: 164 pass
+  (`/tmp/native-rewind-regression-rest.log`). Host/gateway/legacy-route group:
+  327 pass, two unrelated fixed legacy `resources/list` recordings fail
+  (`/tmp/native-rewind-regression-repair.log`). The original HEAD resource route
+  independently reproduces `INVALID_RESOURCE_SOURCE` for both recordings;
+  its source, resource catalog and recording are unchanged. The fixed operation
+  inventory excludes the new Native controls and the previously omitted separate
+  workspace-repair control; legacy response recordings are not rewritten.
+- Final UI/Host guard group: 26 pass (`/tmp/native-rewind-ui-final.log`), including
+  live-Agent replacement, request mutation, lease/running refusal, uncertain
+  per-tool effects, failed flush retry and the two UI races. Marker admission:
+  ten pass (`/tmp/native-rewind-markers.log`). Counts overlap earlier runs.
+- Core/client/MCP builds and contracts compilation pass. No full suite was run.
+  Actual Claude Code contributed the initial panel/state tests and the marker
+  admission test file; the main agent reviewed and corrected the contribution,
+  implemented core/Host/gateway integration and performed packed acceptance.
+
+No Token saving or speed parity is claimed. The operation avoids an extra model
+summary; Session snapshots, branch validation and read-state persistence have
+unmeasured local cost. M6 remains **0/15**. Earned progress is **32/100**,
+M5 **8/15**, with the same denominator. Active cancellation and removed tasks,
+retained-read hydration, combined rewind, historical/media/compaction variants,
+managed/background/child semantics, neutral handoff, remaining M1–M4 gaps and
+the fixed before/reference/after comparison still require work.

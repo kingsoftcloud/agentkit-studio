@@ -223,6 +223,8 @@ export interface ConversationSeed {
   discoveredToolNames?: string[];
 }
 export interface RunConfiguration {
+  conversationRewind?: { contract: 'native-conversation-rewind/v1'; commandId: string;
+    expectedHeadRunId: string; generation: number; markerDigest: string };
   childTaskPolicy?: 'session-controls/v1';
   coordinatorResponsePolicy?: 'owned-parent-response/v1';
   todoPolicy?: 'session-todos/v1';
@@ -370,6 +372,7 @@ export interface PreparedContext {
 }
 export type TodoItem = { content: string; status: 'pending' | 'in_progress' | 'completed'; priority: 'high' | 'medium' | 'low' };
 export interface RunSnapshot extends RunIdentity {
+  conversationBranch?: { commandId: string; generation: number };
   planMode?: { active: boolean; revision: number; approvedPlan?: { plan: string; allowedPrompts?: Json } };
   todos?: { items: TodoItem[]; revision: number; assistantTurns: number; lastWriteAssistantTurn: number; lastReminderAssistantTurn: number };
   toolDiscovery?: { discovered: string[]; promoted: string[] };
