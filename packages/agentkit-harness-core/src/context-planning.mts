@@ -2,6 +2,7 @@ import type { ContextAdmission, ContextCompaction, ContextPlanningResult, Contex
   ObjectValue, RunConfiguration, RunSnapshot, ToolDefinition, Usage } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { directoryProgressQuote } from './directory-progress.mjs';
+import { planModeGuidance } from './plan-mode.mjs';
 import { contextSourceDigest, validateContextMessages } from './context-view.mjs';
 import { assertHookFeedbackRetained } from './hook-runtime.mjs';
 import { retryDelay } from './retry.mjs';
@@ -38,6 +39,7 @@ function checkedCount(value: number): number {
 export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguration): ObjectValue {
   return copy({ schemaVersion: 'agentkit.native-context-continuity/v1', authority: 'host_record', goal: snapshot.goal,
     ...(snapshot.todos ? { todos: snapshot.todos.items, todoRevision: snapshot.todos.revision } : {}),
+    ...(snapshot.planMode ? { planMode: snapshot.planMode, planModeGuidance: planModeGuidance(snapshot) } : {}),
     ...(config.profile.operatorGuidancePolicy ? { operatorGuidancePolicy: config.profile.operatorGuidancePolicy } : {}),
     goalRevision: snapshot.goalRevision, contract: config.contract, usage: snapshot.usage, descendantUsage: snapshot.descendantUsage,
     limits: config.limits, workspaceRevision: snapshot.workspaceRevision, workspaceModifiedPaths: snapshot.workspaceModifiedPaths,

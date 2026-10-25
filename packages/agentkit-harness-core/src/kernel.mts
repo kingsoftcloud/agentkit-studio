@@ -6,6 +6,7 @@ import { initialSnapshot } from './configuration.mjs';
 import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL_CALL } from './tool-discovery.mjs';
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
 import { executeTodo, isTodoCall, todoUpdateFact, TODO_WRITE } from './todos.mjs';
+import { executePlanMode, isPlanModeCall, planModeDenial, planModeFact, planModeGuidance, PLAN_MODE_POLICY } from './plan-mode.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
@@ -93,6 +94,10 @@ export class NativeKernel {
     invariant(identity.parentRunId === null || identity.parentRunId === head?.runId, 'session_head_conflict');
     const parent = head ? this.store.load(identity.scope, head.runId) : null;
     const initial = initialSnapshot({ ...identity, parentRunId: head?.runId ?? null }, configuration, configDigest);
+    if (initial.planMode && parent?.snapshot.planMode) initial.planMode = { ...copy(parent.snapshot.planMode),
+      active: initial.planMode.active, revision: parent.snapshot.planMode.revision + (initial.planMode.active === parent.snapshot.planMode.active ? 0 : 1) };
+    if (initial.planMode && !configuration.contextPolicy) initial.messages.push({ role: 'user', kind: 'plan_mode',
+      content: canonical({ authority: 'host_record', planMode: initial.planMode, instructions: planModeGuidance(initial) }) });
     if (initial.todos && parent?.snapshot.todos) {
       initial.todos = copy(parent.snapshot.todos);
       if (initial.todos.revision > 0 && !configuration.contextPolicy) initial.messages.splice(1, 0, { role: 'user', kind: 'todo_state',
@@ -450,16 +455,23 @@ export class NativeKernel {
   }
   private async recoverEffect(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent, elapsedMs = 0): Promise<CommitBatch> {
     const stagedCalls = intent.payload.calls as unknown as ToolCall[] | undefined;
-    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => isTodoCall(config, call))) {
+    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => isTodoCall(config, call) || isPlanModeCall(config, call))) {
       // These controls stage pure values. The fenced receipt commit is the only
       // state mutation, so a lost claim cannot have changed external state.
-      const results = stagedCalls.map(call => executeTodo(snapshot, config, call));
+      const results = stagedCalls.map(call => deniedByHook(snapshot, call)
+        ? { status: 'error' as const, content: { code: 'pre_tool_hook_denied', executed: false } }
+        : isPlanModeCall(config, call)
+          ? executePlanMode(snapshot, config, call, (intent.payload.interaction ?? null) as ObjectValue | null) : executeTodo(snapshot, config, call));
       const changes = stagePostHooks(snapshot, reduceTools(snapshot, results, stagedCalls, intent, config, this.digest), config, stagedCalls, results);
+      const recoveryPolicy = stagedCalls.some(call => isPlanModeCall(config, call)) ? PLAN_MODE_POLICY : 'session-todos/v1';
       return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed',
-        result: { results: results as never, recoveryPolicy: 'session-todos/v1' } }, changes, elapsedMs,
-      [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'session-todos/v1' } },
-        ...stagedCalls.map((call, index) => ({ kind: 'tool.completed', payload: { callId: call.callId,
-          name: call.name, status: results[index]!.status, content: results[index]!.content } })),
+        result: { results: results as never, recoveryPolicy } }, changes, elapsedMs,
+      [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: recoveryPolicy } },
+        ...stagedCalls.map((call, index) => ({ kind: results[index]!.status === 'approval_required' ? 'approval.requested' : 'tool.completed', payload: { callId: call.callId,
+          name: call.name, status: results[index]!.status, content: results[index]!.content,
+          ...(results[index]!.status === 'approval_required' ? { interactionId: `${intent.operationKey}:approval` } : {}) } })),
+        ...(changes.planMode && changes.planMode.revision !== snapshot.planMode?.revision
+          ? [{ kind: 'plan.mode_changed', payload: planModeFact({ ...snapshot, ...changes }, changes.messages!.length) }] : []),
         ...(changes.todos && changes.todos.revision !== snapshot.todos?.revision
           ? [{ kind: 'todo.updated', payload: todoUpdateFact({ ...snapshot, ...changes }, changes.messages!.length) }] : [])]);
     }
@@ -639,6 +651,7 @@ export class NativeKernel {
         }
         case 'input':
           changes = reduceTurnInput(snapshot, raw);
+          if (changes.planMode) facts.push({ kind: 'plan.mode_changed', payload: planModeFact({ ...snapshot, ...changes }, changes.messages?.length ?? snapshot.messages.length) });
           facts.push({ kind: 'input.completed', payload: { step: intent.payload.step!, status: raw.status!,
             messageCursor: changes.messages?.length ?? snapshot.messages.length } });
           break;
@@ -661,6 +674,8 @@ export class NativeKernel {
           changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, configuration, this.digest), configuration, calls, results);
           if (changes.todos && changes.todos.revision !== snapshot.todos?.revision)
             facts.push({ kind: 'todo.updated', payload: todoUpdateFact({ ...snapshot, ...changes }, changes.messages!.length) });
+          if (changes.planMode && changes.planMode.revision !== snapshot.planMode?.revision)
+            facts.push({ kind: 'plan.mode_changed', payload: planModeFact({ ...snapshot, ...changes }, changes.messages!.length) });
           const promotion = this.startupPromotion(snapshot, configuration, results, changes);
           if (promotion) {
             Object.assign(changes, promotion.changes); consumedCommandId = promotion.commandId;
@@ -909,6 +924,8 @@ export class NativeKernel {
           if (rejection) return { status: 'error' as const, content: rejection };
           if (deniedByHook(snapshot, call)) return { status: 'error' as const,
             content: { code: 'pre_tool_hook_denied', executed: false } };
+          const planDenied = planModeDenial(snapshot, configuration, call, definition);
+          if (planDenied) return planDenied;
           const sourceReadBudget = sourceReadBudgetFor(snapshot, configuration, call, this.digest);
           if (configuration.sourceReadPolicy === SOURCE_READ_POLICY && (definition.sourceObservationPolicy || call.name === 'ArtifactRead')
             && !sourceReadBudget) return { status: 'error' as const, content: { code: call.name === 'ArtifactRead'
@@ -929,7 +946,9 @@ export class NativeKernel {
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
-            const result = await Promise.race([isTodoCall(configuration, call)
+            const result = await Promise.race([isPlanModeCall(configuration, call)
+              ? Promise.resolve(executePlanMode(snapshot, configuration, call, (intent.payload.interaction ?? null) as ObjectValue | null))
+              : isTodoCall(configuration, call)
               ? Promise.resolve(executeTodo(snapshot, configuration, call))
               : configuration.toolDiscoveryPolicy && [TOOL_SEARCH, DEFERRED_TOOL_CALL].includes(call.name)
               ? Promise.resolve(executeToolDiscovery(snapshot, configuration, call))

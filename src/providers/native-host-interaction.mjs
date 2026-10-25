@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonical, CHILD_OWNER_CONTRACT, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, CHILD_OWNER_CONTRACT, invariant, isPlanModeCall, EXIT_PLAN_MODE } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createStudioA2aWaitAuthority } from '../host/services/a2a-wait-authority.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -70,12 +70,38 @@ export function createNativeHostInteraction({ ctx, store }) {
         && result.interactionId === pending.hostInteractionId, 'studio_native_approval_not_owned');
     }
     const approval = ctx.get?.('approval') ?? ctx.approval;
-    if (typeof approval?.request !== 'function') return null;
     // Ordinary calls share the ID already displayed by session-delivery. A
     // child's call lives in its own run; use the parent bridge's opaque ID.
     const callId = childRunId ? pending.hostInteractionId : `ak-native-${hash({
       identity: hash({ scope: snapshot.scope, runId: snapshot.runId }), key: `call:${call.callId}`,
     })}`;
+    if (!childRunId && isPlanModeCall(record.configuration, call) && call.name === EXIT_PLAN_MODE) {
+      const questions = ctx.get?.('userQuestions');
+      if (typeof questions?.ask !== 'function') return null;
+      let answer;
+      try {
+        answer = await questions.ask({ agent, signal, questions: [{ id: 'plan-review', header: 'Plan review',
+          question: 'Approve this plan and leave plan mode?', detail: call.arguments.plan,
+          options: [{ label: 'Approve', description: 'Leave plan mode and begin implementation subject to normal permissions.' },
+            { label: 'Keep planning', description: 'Keep plan mode active and return feedback to the model.' }],
+          intent: { kind: 'plan-review', approve: 'Approve', callId } }] });
+      } catch (error) {
+        signal.throwIfAborted();
+        if (error?.code !== 'ASK_CANCELLED') throw error;
+        invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
+        return { commandId: `native-plan-dismiss-${hash({ scope: snapshot.scope, runId: snapshot.runId, pending })}`,
+          kind: 'cancel', payload: { reason: 'plan_review_dismissed', dshCancelReason: { kind: 'user' } } };
+      }
+      signal.throwIfAborted(); assertCurrent?.();
+      invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
+      const reviews = answer?.answers?.filter(item => item.id === 'plan-review') ?? [];
+      const review = reviews.length === 1 ? reviews[0] : undefined;
+      const decision = review?.selected?.length === 1 && review.selected[0] === 'Approve' && review.custom === undefined ? 'allow' : 'deny';
+      const feedback = typeof review?.custom === 'string' ? review.custom : '';
+      return { commandId: `native-plan-review-${hash({ scope: snapshot.scope, runId: snapshot.runId, pending, decision, feedback })}`,
+        kind: 'submit_interaction', payload: { interactionId: pending.interactionId, decision, feedback } };
+    }
+    if (typeof approval?.request !== 'function') return null;
     const outcome = await approval.request({ agent, signal, callId, toolName: call.name,
       reason: childRunId ? `Native child ${childRunId} requests approval for ${call.name}.`
         : `Native tool ${call.name} requires approval.` });

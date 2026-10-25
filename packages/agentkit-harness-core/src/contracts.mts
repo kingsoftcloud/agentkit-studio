@@ -206,6 +206,8 @@ export interface ContextSourceDefinition {
 }
 export interface RunConfiguration {
   todoPolicy?: 'session-todos/v1';
+  planModePolicy?: 'session-plan/v1';
+  planModeInitialActive?: boolean;
   toolDiscoveryPolicy?: 'local-tool-search/v1';
   artifactPolicy?: 'runtime-artifacts/v1' | null;
   sourceReadPolicy?: 'studio-source-read/v1' | null;
@@ -345,6 +347,7 @@ export interface PreparedContext {
 }
 export type TodoItem = { content: string; status: 'pending' | 'in_progress' | 'completed'; priority: 'high' | 'medium' | 'low' };
 export interface RunSnapshot extends RunIdentity {
+  planMode?: { active: boolean; revision: number; approvedPlan?: { plan: string; allowedPrompts?: Json } };
   todos?: { items: TodoItem[]; revision: number; assistantTurns: number; lastWriteAssistantTurn: number; lastReminderAssistantTurn: number };
   toolDiscovery?: { discovered: string[]; promoted: string[] };
   /** Runtime-owned capacity for the complete original assistant batch, never a dispatched subset. */
@@ -484,7 +487,7 @@ export interface WorkspacePort { observe(request: PortContext): Promise<Workspac
 export interface TurnInputMessage extends ToolContextMessage { retention?: 'persistent' | 'normal' }
 export interface TurnInputPort {
   prepare(request: PortContext & { step: number }): Promise<{
-    status: 'admitted' | 'rejected'; messages: TurnInputMessage[];
+    status: 'admitted' | 'rejected'; messages: TurnInputMessage[]; planMode?: boolean;
   }>;
 }
 export interface ContextPort {

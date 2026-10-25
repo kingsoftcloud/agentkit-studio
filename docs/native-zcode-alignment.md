@@ -36,14 +36,15 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **14/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **16/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting), M4 2/20
+(successful context-window truncation and durable cache usage accounting), M4 4/20
 (durable session Todo controls, compaction continuity and actual Studio projection
-across cold Host turns). M5–M6 have no earned points yet. The denominator is unchanged;
-Plan mode and the remaining M4 controls are not certified complete.
+across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
+actual Studio plan review). M5–M6 have no earned points yet. The denominator is unchanged;
+Plan exceptions and the remaining M4 controls are not certified completely aligned.
 
 ## Source and implementation map
 
@@ -61,7 +62,7 @@ audited and integrated.
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | Node `workspace-{tools,editing}.mjs`, Host source/directory projections and mutation lock | Audit actual registration, edit preconditions, result bounds and reversible changes; do not substitute broad Git reset for undo. Pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
-| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/todo.ts`, `src/runtime/helpers/runtime-reminders.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition | Session Todo controls now use durable receipt commits, real Studio todos projection and cold-turn inheritance. Plan permission/mode transitions, child Todo behavior and full reminder/control comparisons remain pending. |
+| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo and Plan controls now use durable receipt commits, real Studio projections, detailed plan review and cold-turn continuity. Command/MCP/session-control exceptions, child planning and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/runtime/methods/turn-loop.ts`, background tests | core child/background modules, Node owned child/command, Host watcher | Native implementations exist. Audit completed-batch delivery, budgets, cancellation, workspaces and restart behavior. Pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
@@ -373,7 +374,7 @@ their original digest. Unlike ZCode's session-scoped `readOnly: true` metadata,
 Native marks TodoWrite non-read-only and non-concurrent: Native's read-only flag
 also governs scheduling and external replay authority. Its kernel-owned receipt
 mutation does not enter workspace-write approval. Plan-mode permission integration
-remains a separate required batch; so do child-local Todo exposure and mixed
+is documented below; child-local Todo exposure and mixed
 external-read recovery comparisons.
 
 Targeted local checks:
@@ -396,8 +397,106 @@ model HTTP requests, two actual Host processes, two Native receipt-backed update
 and three persisted Session Todo events (including next-turn initialization).
 It verifies actual default discovery, priorities, standard todos projection and
 cold Host inheritance. It does not prove live-model task quality or Token savings.
-Plan mode and complete M4 acceptance remain pending. Whole-repository tests were
+Full Plan exceptions and complete M4 acceptance remain pending. Whole-repository tests were
 not run for these incremental changes.
+
+## Integrated Plan mode and review
+
+The pinned source audit also followed `core/src/tool/handlers/plan-mode.ts`,
+`contracts/src/tools/plan-mode.ts`, `core/src/permission/plan-mode-policy.ts`,
+`core/src/permission/service.ts` and
+`core/src/runtime/helpers/plan-file-continuity.ts`. A real Claude Code read-only
+audit of the permission service, handler and plan-file helper was cross-checked
+with the source. The reference enters planning without approval, requires approval
+before exiting, preserves the raw nonblank plan (at most 20,000 JS UTF-16 units),
+and attempts an atomic `.zcode/plans/plan-<session>.md` write before mode exit.
+The helper propagates cancellation but swallows other write failures. The source
+has no general exemption allowing model tools to edit that file during planning;
+the approved handler writes through its own filesystem port.
+
+`session-plan/v1` now admits immutable `EnterPlanMode`/`ExitPlanMode` controls.
+Entering changes durable Native mode immediately for subsequent calls, including
+the rest of the same model batch. The dispatch gate checks effective calls after
+schema validation and PreToolUse hooks: while active it permits read-only tools,
+owned Plan controls and owned session Todo controls, and refuses workspace writes
+before invoking an external tool. One-call permission grants cannot bypass this
+gate. Mode changes and approved raw plans are committed atomically with their
+tool receipts. Pure-control takeover preserves hook denials and never invokes an
+external write. An already-admitted approved exit can finish once after process
+loss; unknown external effects keep the existing reconciliation rules.
+
+The actual Studio `userQuestions` service receives the full exact plan and the
+existing `plan-review` intent, keyed to the same opaque Native tool-call ID shown
+in the Session. Generic tool approval is not a substitute. Only one unambiguous
+Approve answer without custom text produces a durable allow command. Rejection
+returns feedback and retains mode; malformed answers deny; stale checkpoints
+invalidate answers. Dismissal cancels the Native Run without another model call
+and keeps planning active (DSH's own exit tool instead concludes its current turn).
+
+Native mode facts project into the existing `plan/mode` Session state with stable
+IDs, so lost flushes and cold delivery do not duplicate transitions. Accepted
+Host pre-step receipts can adopt the user's `/plan` selection through a versioned
+boolean control; prose cannot change mode. This invalidates and recounts prepared
+context before another model call. The frozen base prompt removes only DSH's named
+`plan:policy` section for newly admitted Plan-policy Runs, because that guidance
+conflicts with Native's permitted Todo updates. All other sections and tools remain
+frozen and checked; old Runs retain their original policy absence and full prompt.
+Native context supplies the current mode/guidance and approved plan instead.
+Runs without context planning receive a private durable mode notice.
+
+The standard Host enables Plan controls by default when its Plan service/projection
+is installed and external names do not collide. `execution.nativePlanMode: off`
+opts out for new Runs. Explicitly disabling local tool search leaves both Plan and
+Todo controls resident; it does not disable their functionality. A new Native turn
+inherits the approved plan while the accepted Host mode remains authoritative,
+so a user can re-enter planning after an earlier approval. Normal workspace and
+tool permissions still apply after approval; `allowedPrompts` is preserved as
+plan data and does not mint a blanket shell grant. The pinned core also only
+returns that field from the handler; no use granting permissions was found there.
+
+Deliberate differences and remaining comparisons:
+
+- The approved plan is stored in Native's durable ledger and request continuity,
+  rather than relying on a best-effort `.zcode` workspace write. Mode exit and plan
+  persistence are atomic. Filesystem export and neutral runtime handoff remain
+  part of the later artifact/runtime audit.
+- Native `build` in tool results denotes its ordinary execution policy; it does
+  not add ZCode's separate `auto/yolo/guarded/edit` permission-mode system.
+- ZCode permits non-destructive MCP capabilities even when not read-only, and
+  explicitly allowed non-destructive session controls. Native currently requires
+  its existing read-only contract for external tools and denies potentially
+  mutating child/command tools in plan mode. This preserves Native effect/child
+  authority while command classifications, MCP annotations and other session
+  exceptions are compared. These gaps are not certified complete alignment.
+- Full ZCode Plan reminder cadence/workflow text, child-local planning and every
+  user steering/permission interaction still need comparison. Mode guidance is
+  integrated now; it does not establish equivalent task quality.
+
+Scoped checks for this batch:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs tests/native-plan-interaction.test.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs packages/agentkit-harness-core/test/turn-input.test.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs packages/agentkit-harness-core/test/todos.test.mjs tests/native-plan-interaction.test.mjs tests/native-session-delivery.test.mjs
+node --test packages/agentkit-harness-core/test/recovery.test.mjs packages/agentkit-harness-core/test/context-planning.test.mjs packages/agentkit-harness-core/test/hooks.test.mjs tests/native-host-child-approval.test.mjs tests/native-tool-receipt-authority.test.mjs tests/native-dsh-turn-runtime.test.mjs
+node --test tests/studio-native-harness.test.mjs
+node --test --test-name-pattern='session planning controls remain resident' tests/studio-native-harness.test.mjs
+node node_modules/typescript/bin/tsc -p tsconfig.contracts.json
+node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --mount-host --plan-mode --keep
+```
+
+The checks passed the Plan/interaction controls, 26 Plan/input cases, an overlapping
+47-case Plan/Todo/interaction/delivery group, 135 focused recovery/context/hook/child/
+turn cases, 95 existing Host cases and the additional search-disabled composition
+case. The packed proof used eleven controlled model HTTP requests, three actual
+structured plan reviews (reject, approve, approve), two real Host processes and two
+approved workspace effects. Both forbidden files remain absent. It verified actual
+Todo updates in planning, persisted mode projection, cold Host user re-entry and
+approved-plan continuity. These groups overlap; counts are not progress weights.
+There is no extra planning model, but approved-plan text can add up to 20,000 UTF-16
+units to dynamic context; task-level Token/latency comparisons are still pending.
+No full repository test suite or live-model performance claim was made.
 
 ## Local evidence and comparison protocol
 

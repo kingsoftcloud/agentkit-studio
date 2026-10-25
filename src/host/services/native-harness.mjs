@@ -3,7 +3,7 @@ import { createNativeTraceProjection } from '../../providers/native-trace-projec
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeArtifactStore } from '../../../packages/agentkit-harness/src/native/artifact-store.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
@@ -64,6 +64,10 @@ const admittedModelSelection = (agent, assembly) => {
 // retaining every current prompt/tool contribution and checking later changes.
 const recoveredPromptAssembly = (assembly, source) => ({ ...assembly,
   variables: { ...assembly.variables, provider: source.provider, model: source.model } });
+// Plan is an admitted dynamic control under the Native policy. Every other
+// prompt section remains frozen, including across recovery and mode changes.
+const nativePlanAssembly = (assembly, policy) => policy
+  ? { ...assembly, sections: assembly.sections.filter(section => section.name !== 'plan:policy') } : assembly;
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
@@ -282,6 +286,17 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // Memory locked digest can bind it without a circular dependency. The
       // profile/plugin digests pin the Build's model and non-hook bindings.
       const baseTools = binding.nativeTools.definitions(agent, input.assembly.tools);
+      invariant(record.spec.execution?.nativePlanMode === undefined || ['auto', 'off'].includes(record.spec.execution.nativePlanMode),
+        'studio_native_plan_mode_invalid');
+      const planModePolicy = original ? original.configuration.planModePolicy
+        : record.spec.execution?.nativePlanMode !== 'off' && ctx.get('planMode')
+          && projections?.stateOf?.(agent.session, 'plan') !== undefined
+          && !baseTools.some(tool => ['EnterPlanMode', 'ExitPlanMode', 'exit_plan_mode'].includes(tool.name)) ? 'session-plan/v1' : undefined;
+      const currentPlanActive = () => {
+        const state = ctx.get('planMode')?.get(agent);
+        invariant(typeof state?.active === 'boolean', 'studio_native_plan_state_unavailable');
+        return state.active;
+      };
       const bundleDigest = hash(baseTools);
       const profileDigest = hash(description);
       const pluginLockDigest = hash({ mcpBindingDigest: binding.nativeTools.mcpBindingDigest ?? null,
@@ -302,18 +317,19 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // a non-local provider so the cloud Memory path stays unchanged. The
       // verification wrapper is always produced for local-default so an explicit
       // Memory task fails closed when the owner is not installed.
-      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
+      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(nativePlanAssembly(input.assembly, planModePolicy));
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
         : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
+          ...(planModePolicy ? { planModePolicy, planModeInitialActive: currentPlanActive() } : {}),
           ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
           ...(record.spec.execution?.toolErrorRecoveryModelCalls === undefined ? {}
             : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
           ...(record.spec.execution?.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: record.spec.execution.deliveryReviewPolicy === null
             ? null : normalizeDeliveryReviewPolicy(record.spec.execution.deliveryReviewPolicy) }) };
-      if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
+      if (original) invariant(renderPrompt(nativePlanAssembly(recoveredPromptAssembly(input.assembly, source), planModePolicy)) === systemPrompt,
         'studio_native_recovery_prompt_changed');
       // Seal the Host recovery capsule once per Build. The Memory owner guard
       // compares the CURRENT configuration's capsule to THIS sealed identity
@@ -352,9 +368,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       ...((original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy)
         ? { wallDeliveryPolicy: original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy } : {}) };
       const boundToolDefinitions = binding.nativeTools.definitions(agent, input.assembly.tools, toolOptions);
-      if (!original && (boundToolDefinitions.some(tool => tool.discovery) || recoveryPolicies.todoPolicy)) recoveryPolicies.toolDiscoveryPolicy = toolDiscoveryPolicy;
+      if (!original && toolDiscoveryPolicy && (boundToolDefinitions.some(tool => tool.discovery) || recoveryPolicies.todoPolicy || planModePolicy))
+        recoveryPolicies.toolDiscoveryPolicy = toolDiscoveryPolicy;
       const tools = [...boundToolDefinitions, ...(recoveryPolicies.toolDiscoveryPolicy ? toolDiscoveryDefinitions() : []),
         ...(recoveryPolicies.todoPolicy ? todoToolDefinitions(!!recoveryPolicies.toolDiscoveryPolicy) : []),
+        ...(planModePolicy ? planModeToolDefinitions(!!recoveryPolicies.toolDiscoveryPolicy) : []),
         ...(recoveryPolicies.artifactPolicy ? artifactToolDefinitions() : [])];
       const artifactFactory = childScope => typeof binding.nativeTools.artifactsFor === 'function'
         ? binding.nativeTools.artifactsFor(childScope) : createNativeArtifactStore({ directory: join(storeDir, 'native-harness', 'result-artifacts'), scope: childScope });
@@ -617,7 +635,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           const nextSelection = admittedModelSelection({ options: inputSelection }, next.assembly);
           invariant(nextSelection.provider === inputSelection.provider && nextSelection.model === inputSelection.model,
             'studio_native_input_model_binding_changed');
-          invariant(renderPrompt(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly) === systemPrompt,
+          invariant(renderPrompt(nativePlanAssembly(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly, planModePolicy)) === systemPrompt,
             'studio_native_input_prompt_binding_changed');
           invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools, toolOptions)) === canonical(boundToolDefinitions),
             'studio_native_input_tool_binding_changed');
@@ -627,8 +645,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // no work arrived; treating those refreshers as new work would
           // discard every final answer and loop until the model budget ends.
           const candidate = store.load(scope, request.runId).snapshot.candidate;
+          const modeInput = planModePolicy ? { planMode: currentPlanActive() } : {};
           if (candidate && next.messages.every(message => ['runtime-context', 'time-context'].includes(message?.source?.kind)))
-            return { status: 'admitted', messages: [] };
+            return { status: 'admitted', messages: [], ...modeInput };
           const messages = [], images = new Map();
           for (const message of next.messages) {
             invariant(message?.role === 'user' && Array.isArray(message.content), 'studio_native_prepared_input_invalid');
@@ -637,7 +656,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             messages.push({ ...context, retention: !message.source || ['user', 'schedule'].includes(message.source.kind) ? 'persistent' : 'normal' });
           }
           request.signal.throwIfAborted();
-          return { status: 'admitted', messages };
+          return { status: 'admitted', messages, ...modeInput };
         } }, model: parentModel.model },
       };
       if (cloudMemory) {

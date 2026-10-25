@@ -56,7 +56,8 @@ async function applyProof(ctx, options) {
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
-        execution: { ...(options.todos ? {} : { nativeTodoMode: 'off' }),
+        execution: { ...(options.todos || options.planMode ? {} : { nativeTodoMode: 'off' }),
+          ...(options.planMode ? {} : { nativePlanMode: 'off' }),
           ...(options.mcpUrl && !options.toolSearch ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.deliveryReview ? { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } : {}),
           ...(options.deadlinePolicy ? { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } : {}) },
@@ -201,13 +202,15 @@ async function applyProof(ctx, options) {
         if (ctx.sessionProjections.stateOf(agent.session, 'agentPreset') !== presetId) throw Error('Native preset identity was not persisted');
         await ctx.agentPresets.recompose(agent.ctx, presetId);
       } else await ctx.agentPresets.select(agent, presetId);
+      if (options.planMode && source === 'resume') ctx.get('planMode').set(agent, true);
     }
   });
   ctx.on('agent/execute-turn', async (payload, next) => {
     if (payload.agent.session.id === 'default-session') delegate = true;
     const result = await next();
-    if (options.todos) await appendFile(join(options.directory, 'todos-projections.jsonl'), JSON.stringify({
-      todos: ctx.sessionProjections.stateOf(payload.agent.session, 'todos'), hostPid: process.pid }) + '\n');
+    if (options.todos || options.planMode) await appendFile(join(options.directory, 'todos-projections.jsonl'), JSON.stringify({
+      todos: ctx.sessionProjections.stateOf(payload.agent.session, 'todos'),
+      plan: ctx.sessionProjections.stateOf(payload.agent.session, 'plan'), hostPid: process.pid }) + '\n');
     return result;
   });
   ctx.on('tools/pre-execute', async (exec, next) => {
@@ -222,7 +225,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
@@ -232,6 +235,17 @@ async function applyProof(ctx, options) {
       additionalContexts: [{ id: `context-${exec.callId}`, role: 'user', source: { kind: 'tool', callId: exec.callId },
         content: [{ type: 'text', text: `Loaded context for ${path}` }] }] };
   });
+  if (options.planMode) ctx.on('user-questions/request', async (request, next) => {
+    const review = request.questions.find(question => question.intent?.kind === 'plan-review');
+    if (!review || request.agent?.session.id !== 'native-studio-session') return next();
+    const filename = join(options.directory, 'plan-reviews.jsonl');
+    let prior = []; try { prior = (await readFile(filename, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const approved = prior.length > 0;
+    await appendFile(filename, JSON.stringify({ question: review, approved, hostPid: process.pid }) + '\n');
+    return { answers: [{ id: review.id, selected: [approved ? 'Approve' : 'Keep planning'],
+      ...(approved ? {} : { custom: 'Include rollback steps.' }) }] };
+  }, { prepend: true });
   if (options.memoryManaged) ctx.on('approval/request', async request => {
     if (request.agent.session.id !== 'native-studio-session' || request.toolName !== 'manage_memory') return;
     if (options.memoryParallel) {

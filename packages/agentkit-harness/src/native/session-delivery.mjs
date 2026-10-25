@@ -27,6 +27,7 @@ function sessionUsage(usage) {
 }
 
 function atomKey(event) {
+  if (event.type === 'plan/mode' && /^ak-native-[a-f0-9]{64}$/.test(event.data.nativeId ?? '')) return `plan:${event.data.nativeId}`;
   if (event.type === 'todo/write' && /^ak-native-[a-f0-9]{64}$/.test(event.data.nativeId ?? '')) return `todo:${event.data.nativeId}`;
   if (['system/message', 'user/message', 'assistant/message', 'tool/result'].includes(event.type)) {
     const message = event.type === 'user/message' ? event.data : event.data.message;
@@ -260,6 +261,11 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       }
     };
     for (const event of events) {
+      if (['plan.initialized', 'plan.mode_changed'].includes(event.kind)) {
+        drain(event.payload.messageCursor);
+        append('plan/mode', { active: event.payload.active, nativeId: id(`plan:${event.eventId}`) });
+        continue;
+      }
       if (['todo.initialized', 'todo.updated'].includes(event.kind)) {
         drain(event.payload.messageCursor);
         append('todo/write', { todos: structuredClone(event.payload.todos), nativeId: id(`todo:${event.eventId}`) });

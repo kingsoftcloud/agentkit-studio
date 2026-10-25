@@ -5,6 +5,7 @@ export function contextSourceDigest(snapshot: RunSnapshot, digest: (value: unkno
   return digest({ messages: snapshot.messages, goalRevision: snapshot.goalRevision,
     workspaceRevision: snapshot.workspaceRevision, configDigest: snapshot.configDigest,
     ...(snapshot.todos ? { todos: snapshot.todos.items, todoRevision: snapshot.todos.revision } : {}),
+    ...(snapshot.planMode ? { planMode: snapshot.planMode } : {}),
     ...(snapshot.executionBudgetObservation ? { executionBudgetObservation: snapshot.executionBudgetObservation } : {}),
     ...(snapshot.deliveryReview?.status === 'pending' ? { deliveryReview: snapshot.deliveryReview } : {}) });
 }

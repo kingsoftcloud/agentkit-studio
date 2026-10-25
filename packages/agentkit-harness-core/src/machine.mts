@@ -25,6 +25,7 @@ import { captureAnthropicContext, stageOperatorGuidance } from './anthropic-cont
 import { contextContinuity } from './context-planning.mjs';
 import { discoveryModelTools, resolveDiscoveredCalls, discoveredCallExposed, TOOL_SEARCH } from './tool-discovery.mjs';
 import { reduceTodo, todoReminder, todoUpdateFact } from './todos.mjs';
+import { reducePlanMode, planModeFact } from './plan-mode.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -119,6 +120,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   }
   if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [
     { kind: 'run.started', payload: { buildId: snapshot.buildId } },
+    ...(snapshot.planMode ? [{ kind: 'plan.initialized', payload: planModeFact(snapshot, snapshot.messages.length) }] : []),
     ...(snapshot.todos && snapshot.todos.revision > 0 ? [{ kind: 'todo.initialized', payload: todoUpdateFact(snapshot, snapshot.messages.length) }] : []),
     ...(snapshot.backgroundNotification ? [{ kind: 'background.notification_admitted', payload: { ...snapshot.backgroundNotification } }] : []),
   ]);
@@ -436,6 +438,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     updated.usage.toolCalls += 1;
     const todos = reduceTodo(updated, config, call, result);
     if (todos) updated.todos = todos;
+    const planMode = reducePlanMode(updated, config, call, result);
+    if (planMode) updated.planMode = planMode;
     if (result.workspaceChangedPaths?.length) {
       updated.workspaceDirtySinceCheckpoint = true;
       updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
@@ -513,6 +517,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     ...(updated.toolDiscovery ? { toolDiscovery: updated.toolDiscovery } : {}),
     ...(updated.todos ? { todos: updated.todos } : {}),
+    ...(updated.planMode ? { planMode: updated.planMode } : {}),
     context: updated.context,
     ...(updated.deliveryArtifacts ? { deliveryArtifacts: updated.deliveryArtifacts } : {}),
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,

@@ -9,6 +9,7 @@ import { normalizeDeliveryReviewPolicy, REVIEW_SUBMISSION_TOOL } from './deliver
 import { validateArtifactConfiguration } from './artifact-runtime.mjs';
 import { validateToolDiscovery } from './tool-discovery.mjs';
 import { validateTodoConfiguration } from './todos.mjs';
+import { validatePlanModeConfiguration } from './plan-mode.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -25,6 +26,8 @@ export interface ConfigurationInput {
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolDiscoveryPolicy?: RunConfiguration['toolDiscoveryPolicy'];
   todoPolicy?: RunConfiguration['todoPolicy'];
+  planModePolicy?: RunConfiguration['planModePolicy'];
+  planModeInitialActive?: boolean;
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
   deliveryReviewPolicy?: (Partial<DeliveryReviewPolicy> & Pick<DeliveryReviewPolicy, 'pathSuffixes'>) | null;
   hostRecoveryBinding?: RunConfiguration['hostRecoveryBinding'];
@@ -66,6 +69,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolDiscoveryPolicy === undefined ? {} : { toolDiscoveryPolicy: input.toolDiscoveryPolicy }),
     ...(input.todoPolicy === undefined ? {} : { todoPolicy: input.todoPolicy }),
+    ...(input.planModePolicy === undefined ? {} : { planModePolicy: input.planModePolicy }),
+    ...(input.planModeInitialActive === undefined ? {} : { planModeInitialActive: input.planModeInitialActive }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
     ...(input.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: input.deliveryReviewPolicy === null ? null : normalizeDeliveryReviewPolicy(input.deliveryReviewPolicy) }),
     ...(input.hostRecoveryBinding === undefined ? {} : { hostRecoveryBinding: input.hostRecoveryBinding }),
@@ -200,6 +205,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(profile.topP === undefined || Number.isFinite(profile.topP) && profile.topP > 0 && profile.topP <= 1, 'invalid_top_p');
   validateToolDiscovery(config);
   validateTodoConfiguration(config);
+  validatePlanModeConfiguration(config);
   const names = new Set<string>();
   for (const tool of config.tools) {
     invariant(tool.name.trim() && !names.has(tool.name), 'duplicate_or_invalid_tool');
@@ -296,6 +302,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     ], preparedContext: null, queuedGuidance: [],
     ...(configuration.toolDiscoveryPolicy ? { toolDiscovery: { discovered: [], promoted: [] } } : {}),
     ...(configuration.todoPolicy ? { todos: { items: [], revision: 0, assistantTurns: 0, lastWriteAssistantTurn: 0, lastReminderAssistantTurn: 0 } } : {}),
+    ...(configuration.planModePolicy ? { planMode: { active: configuration.planModeInitialActive!, revision: 0 } } : {}),
     ...(configuration.guidancePolicy === 'boundary-guide/v1' ? { pendingGuidanceIds: [] } : {}),
     ...(configuration.toolErrorRecoveryPolicy != null || configuration.toolErrorRecoveryModelCalls != null
       ? { toolErrorRecovery: null, observedProgressRevision: 0, observedProgressFingerprints: [] } : {}),

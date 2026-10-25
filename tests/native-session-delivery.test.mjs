@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NativeKernel, canonical, emptyUsage, todoToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, canonical, emptyUsage, todoToolDefinitions, planModeToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeSessionDelivery, nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
@@ -28,6 +28,22 @@ function consumer(seed = [{ type: 'turn/start', data: { turn: 1 }, seq: 1 }]) {
 const source = { provider: 'fixture', model: 'native-model' };
 const inputMessages = [{ id: 'user-input', role: 'user', content: [{ type: 'text', text: 'Complete the task' }] }];
 const final = () => ({ kind: 'final_candidate', text: 'Delivered', toolCalls: [], usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4 } });
+
+test('immutable Plan mode facts survive append-before-flush failure and cold replay without duplicate state events', async t => {
+  const f = setup(t, undefined, { planModePolicy: 'session-plan/v1', planModeInitialActive: false, tools: planModeToolDefinitions() });
+  let models = 0;
+  const kernel = new NativeKernel({ store: f.store, digest, owner: 'plan-delivery', ports: {
+    model: { generate: async () => ++models === 1 ? { ...final(), kind: 'tool_calls', text: '',
+      toolCalls: [{ callId: 'enter', name: 'EnterPlanMode', arguments: {} }] } : final() },
+    tools: { execute: async () => assert.fail('No external Plan effects') } } });
+  const done = await kernel.runUntilIdle(scope, 'run'), sink = consumer();
+  await assert.rejects(delivery(f.store, sink, { flush: async () => { throw Error('Flush lost'); } })(done), /Flush lost/);
+  await delivery(f.store, sink)(done);
+  assert.deepEqual(sink.events.filter(event => event.type === 'plan/mode').map(event => event.data.active), [false, true]);
+  const before = structuredClone(sink.events); f.reopen();
+  await delivery(f.store, sink)(f.store.load(scope, 'run').snapshot); assert.deepEqual(sink.events, before);
+  const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot); assert.deepEqual(cold.events, before);
+});
 
 test('Todo projection replays immutable writes once after append-before-flush failure and cold reopen', async t => {
   const f = setup(t, undefined, { todoPolicy: 'session-todos/v1', tools: todoToolDefinitions() });

@@ -133,7 +133,8 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
       else {
         changes = { phase: snapshot.childApproval ? snapshot.resumePhase ?? 'preparing_context' : 'executing_tools',
           ...(snapshot.childApproval ? { resumePhase: null, childLifecycleCursor: null } : {}), pendingInteraction: null,
-          interaction: { interactionId: pending.hostInteractionId, callId: pending.callId, decision: command.payload.decision } };
+          interaction: { interactionId: pending.hostInteractionId, callId: pending.callId, decision: command.payload.decision,
+            ...(snapshot.planMode && typeof command.payload.feedback === 'string' ? { feedback: command.payload.feedback } : {}) } };
         facts.push({ kind: 'approval.resolved', payload: { interactionId: pending.interactionId, callId: pending.callId, decision: command.payload.decision } });
       }
       break;

@@ -96,6 +96,25 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
 
+test('Native session planning controls remain resident when local tool search is explicitly disabled', async t => {
+  const f = await setup(t, { spec: { execution: { nativeToolSearchMode: 'off' } } });
+  f.payload.input.assembly.sections = [];
+  f.services.sessionProjections.register({ key: 'plan', init: () => ({ active: false }),
+    apply: (state, event) => event.type === 'plan/mode' ? { active: event.data.active } : state });
+  f.services.sessionProjections.register({ key: 'todos', init: () => null,
+    apply: (state, event) => event.type === 'todo/write' ? event.data.todos : state });
+  f.services.planMode = { get: () => ({ active: false }) };
+  await f.host.executeTurn(f.payload);
+  const { configuration, snapshot } = f.ledger.load(f.head().scope, f.head().runId);
+  assert.equal(configuration.planModePolicy, 'session-plan/v1'); assert.equal(configuration.todoPolicy, 'session-todos/v1');
+  assert.equal(Object.hasOwn(configuration, 'toolDiscoveryPolicy'), false);
+  for (const name of ['EnterPlanMode', 'ExitPlanMode', 'TodoRead', 'TodoWrite']) {
+    assert.ok(configuration.tools.some(tool => tool.name === name));
+    assert.ok(JSON.parse(f.requests[0].options.body).tools.some(tool => tool.function.name === name));
+  }
+  assert.equal(configuration.tools.some(tool => tool.name === 'ToolSearch'), false); assert.equal(snapshot.phase, 'completed');
+});
+
 for (const frozen of [false, true]) test(`cloud Memory completion saves its exact prepared DTO once and cold replay reads the receipt (${frozen ? 'Frozen' : 'Revision'})`, async t => {
   const requests = []; let beforeWrite;
   const server = createServer(async (req, res) => {
