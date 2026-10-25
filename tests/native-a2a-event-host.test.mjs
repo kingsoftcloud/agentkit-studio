@@ -53,9 +53,18 @@ test('permanent delivery failure is durable and visible after all later batches 
   const status = f.owner.eventDelivery.status(); assert.equal(status.pending, 0); assert.equal(status.deadLetters, 1);
   assert.equal(status.error, 'A2A_EVENT_REF_INVALID'); assert.equal(f.record().managed.events.deadLetters[0].lastError, 'A2A_EVENT_REF_INVALID');
   assert.doesNotMatch(JSON.stringify(f.record().managed.events), /private-permit|secret|Bearer/);
+  const inspect = owner => owner.control.execute({ kind: 'get', commandId: 'inspect-delivery',
+    operation_locator: f.request.identity, authority: { user: 'approved' }, signal: signal() });
+  const before = taskCalls(f).length, view = await inspect(f.owner);
+  assert.equal(view.state, 'completed');
+  assert.deepEqual(view.eventDelivery, { contract: 'agentkit.a2a-event-delivery-status/v1', state: 'failed',
+    pendingBatches: 0, acknowledgedBatches: f.record().managed.events.delivered, failedBatches: 1, errorCode: 'A2A_EVENT_REF_INVALID' });
+  assert.equal(taskCalls(f).length, before, 'reading delivery status never re-executes the completed task or GetTask');
   f.owner.close(); const replacement = f.factory.forSession({ ...f.ownerFields, sessionId: 'session', stateRoot: join(f.root, 'state'),
-    workspaceRoot: f.workspaceRoot, assertCurrent: () => false }); f.owners.push(replacement);
+    workspaceRoot: f.workspaceRoot, assertCurrent: () => true, assertControl: () => true, authorizeControl: async () => 'allow' }); f.owners.push(replacement);
   await assert.rejects(replacement.eventDelivery.flush(), { code: 'A2A_EVENT_REF_INVALID' });
+  assert.deepEqual((await inspect(replacement)).eventDelivery, view.eventDelivery);
+  assert.equal(taskCalls(f).length, before);
 });
 for (const dsh of [false, true]) test(`${dsh ? 'DSH' : 'Native'} actual SSE content and final GetTask checkpoint commit with the outbox`, async t => {
   const remote = { taskId: 'original-remote', contextId: 'original-context' };

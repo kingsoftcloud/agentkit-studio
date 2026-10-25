@@ -7,6 +7,7 @@ import { canonical, copy, invariant } from '../../packages/agentkit-harness-core
 import { a2aTerminal, a2aSubscriptionEventId, createA2AProjection } from './native-a2a-protocol.mjs';
 import { a2aPendingApproval, a2aPendingInput, normalizeA2aInputParts, validateA2aHostReceipt } from './native-a2a-decision.mjs';
 import { validateA2aScopeCancellation } from './native-a2a-scope-cancellation.mjs';
+import { a2aEventDeliveryView } from './native-a2a-events.mjs';
 
 export const STUDIO_A2A_CONTROL_CONTRACT = 'agentkit.studio-a2a-task-control/v1';
 export const STUDIO_A2A_SUBSCRIPTION_CONTRACT = 'agentkit.studio-a2a-task-subscription/v1';
@@ -32,11 +33,13 @@ export async function awaitA2aControl(work, signal) {
 
 export function a2aControlView(binding, record) {
   const question = record.managed?.questions?.entries[record.managed.events?.adapter?.activeInteraction?.id];
+  const eventDelivery = a2aEventDeliveryView(record);
   return { contract: STUDIO_A2A_CONTROL_CONTRACT, bindingDigest: binding.bindingDigest,
     subscriptionContract: STUDIO_A2A_SUBSCRIPTION_CONTRACT,
     operation_locator: copy(record.request.identity), task_id: record.platformTaskId,
     remote_task_id: record.projection.taskId, remote_context_id: record.projection.contextId,
     state: record.projection.state, phase: record.phase,
+    ...(eventDelivery ? { eventDelivery } : {}),
     pause: paused(record.projection.state) ? copy(record.projection.pause ?? null) : null,
     pauseDigest: paused(record.projection.state) ? pauseDigest(record.projection) : null,
     ...(a2aPendingApproval(record) ? { approval: a2aPendingApproval(record) } : {}),

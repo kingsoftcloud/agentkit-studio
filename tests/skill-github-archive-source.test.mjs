@@ -1,11 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createZip } from '../src/zip.mjs';
 import { createGithubArchiveSkillSource } from '../src/skill-github-archive-source.mjs';
 
 const commit = 'a'.repeat(40), options = () => ({ signal: new AbortController().signal, assertCurrent: () => true });
 const manifest = name => `---\nname: ${name}\ndescription: Unicode 技能 😀\nversion: 1.2.3\n---\nInstructions`;
 const zip = files => createZip(files.map(([path, data]) => ({ name: `repo-${commit}/${path}`, data })));
+
+test('production Skill inspection accepts a Python ZIP64 archive and retains manifest and binary files', async () => {
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/skill-zip64-reference.json', import.meta.url), 'utf8'))
+    .cases.find(row => row.name === 'central-and-end-deflated');
+  const source = createGithubArchiveSkillSource({ fetchImpl: async () => new Response(Buffer.from(fixture.archiveBase64, 'base64')) });
+  const result = await source.inspect('https://github.com/o/r', { ...options(), ref: commit });
+  assert.equal(result.candidates.length, 1); assert.equal(result.candidates[0].status, undefined);
+  assert.equal(result.candidates[0].name, 'zip64');
+  assert.equal(result.candidates[0].description, 'Reference archive');
+  assert.deepEqual(result.candidates[0].files.map(file => ({ path: file.path, base64: Buffer.from(file.bytes).toString('base64') })), fixture.expected);
+});
 
 test('production inspection follows GitHub repository moves and orders Unicode candidates and files like Python', async () => {
   const first = '\ue000', last = '\u{10000}', archive = zip([

@@ -7,6 +7,22 @@ import { canonical, copy, invariant } from '../../packages/agentkit-harness-core
 export const A2A_EVENT_JOURNAL = 'agentkit.a2a-event-journal/v1';
 export const A2A_EVENT_PERMANENT_ERRORS = Object.freeze(['A2A_EVENT_BATCH_TOO_LARGE', 'A2A_KERNEL_FACT_INVALID',
   'A2A_EVENT_REF_CAPACITY', 'A2A_EVENT_REF_CONFLICT', 'A2A_EVENT_REF_INVALID', 'A2A_TASK_NOT_FOUND']);
+/** Read-only, per-call delivery projection. Never expose event payloads or
+ * server errors, and never let projection status change task execution state. */
+export function a2aEventDeliveryView(record) {
+  const journal = record.managed?.events;
+  if (!journal) return undefined;
+  invariant(journal.contract === A2A_EVENT_JOURNAL && Array.isArray(journal.pending)
+    && Array.isArray(journal.deadLetters) && Number.isSafeInteger(journal.delivered)
+    && journal.delivered >= 0 && journal.delivered + journal.pending.length + journal.deadLetters.length <= 8192,
+  'A2A_EVENT_JOURNAL_INVALID');
+  const error = journal.permanentError ?? journal.pending.find(batch => batch.lastError)?.lastError;
+  const errorCode = error ? A2A_EVENT_PERMANENT_ERRORS.includes(error) ? error : 'A2A_EVENT_DELIVERY_UNAVAILABLE' : null;
+  return { contract: 'agentkit.a2a-event-delivery-status/v1',
+    state: journal.deadLetters.length ? 'failed' : errorCode ? 'retrying' : journal.pending.length ? 'pending' : 'delivered',
+    pendingBatches: journal.pending.length, acknowledgedBatches: journal.delivered,
+    failedBatches: journal.deadLetters.length, errorCode };
+}
 const terminal = new Set(['completed', 'failed', 'cancelled']);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const blank = value => /^[\x09-\x0d\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u.test(value);

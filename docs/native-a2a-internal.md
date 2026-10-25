@@ -177,8 +177,10 @@ Chat and the Studio Assistant render these as read-only business nodes rather
 than model messages or local tools. See [Session observations](native-a2a-session-events.md)
 for the contract, SIGKILL boundaries and actual renderer evidence.
 
-Approval-decision event integration, dedicated delivery-failure diagnostics in
-Studio UI, and custom outbox-path/backend configuration parity remain open. Do not infer
+Approval-decision events and dedicated per-call delivery-failure diagnostics now
+have Host/UI consumers; see [Host decisions](native-a2a-host-decisions.md) and
+[Session diagnostics](native-a2a-session-events.md). Custom outbox-path/backend
+configuration parity remains open. Do not infer
 complete canonical parity from the mapped subset. Indefinite/persisted subscription consumers and inbound registry/
 server assembly still require implementation and acceptance. The inbound signature, durable Server
 admission and Session-fact ownership foundations now exist; they do not mount a complete

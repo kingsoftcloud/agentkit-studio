@@ -160,8 +160,9 @@ These differences remain mandatory audit items before lossless parity:
 - Python follows redirects to arbitrary destinations; Node follows the public
   GitHub HTTPS origins above. Node additionally rejects malformed packet
   framing, duplicate refs, conflicting archive paths and some
-  unsafe entries. ZIP64 is unsupported, and YAML alias expansion is bounded to
-  100; Python's parser accepts additional scalar coercions. These format and
+  unsafe entries. ZIP64 local/central extra fields, end records and streamed
+  entries are now supported within the same archive budgets. YAML alias expansion is bounded to
+  100; Python's parser accepts additional scalar coercions. These remaining format and
   transport differences still require a final compatibility decision.
 - Candidate names, paths and package file lists use Unicode code-point order,
   matching Python string ordering without the machine's locale. Local
@@ -175,6 +176,16 @@ These differences remain mandatory audit items before lossless parity:
   the explicit `ref` argument with a plain repository URL.
 - Resource IDs and inspection serialization use new Node formats. Historical
   Python database compatibility was excluded by the user.
+
+ZIP64 decoding follows [PKWARE APPNOTE](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT)
+sections 4.3.14–16 and 4.5.3. Five committed binary fixtures were generated and read back
+with CPython 3.12.13 `zipfile`, using `force_zip64=True` and, for full records,
+`ZIP64_LIMIT=1`. They cover stored, deflated, streamed, local-only and classic-sentinel
+forms, Unicode names and binary bytes. Node tests consume only
+`tests/fixtures/skill-zip64-reference.json`; installation and execution do not invoke Python.
+Invalid record bounds, split disks, missing/truncated extra fields, inconsistent sizes
+and unsafe 64-bit values fail before decompression. The parser retains the existing
+compressed/unpacked/file-count/CRC/path/overlap/authority checks.
 
 ## Evidence scope
 

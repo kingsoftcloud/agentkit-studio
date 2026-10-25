@@ -13,6 +13,24 @@ const response = (input, extra = {}) => ({ contract: 'agentkit.studio-a2a-task-c
   state: 'input_required', phase: 'paused', pauseDigest: 'a'.repeat(64), pause: { parts: [{ text: '请输入答案' }] },
   commandId: input.commandId, outcome: input.kind === 'get' ? 'observed' : 'unknown', ...extra });
 
+test('delivery diagnostics are bounded and cannot change terminal state or authorize task replay', async () => {
+  const delivery = { contract: 'agentkit.a2a-event-delivery-status/v1', state: 'failed',
+    pendingBatches: 0, acknowledgedBatches: 2, failedBatches: 1, errorCode: 'A2A_EVENT_REF_INVALID' };
+  const calls = []; let diagnostic = delivery;
+  const state = createNativeA2aTaskState({ task, hostRemote: { controlNativeA2aTask: async input => {
+    calls.push(input.kind); return response(input, { state: 'completed', pauseDigest: null, eventDelivery: diagnostic });
+  } } });
+  await state.refresh(); const accepted = state.getSnapshot().task;
+  assert.equal(accepted.state, 'completed'); assert.deepEqual(accepted.eventDelivery, delivery);
+  await state.cancel(); await state.continue([{ text: 'retry task' }]); assert.deepEqual(calls, ['get']);
+  for (const patch of [{ contract: 'future/v2' }, { errorCode: 'private-server-message' }, { failedBatches: -1 },
+    { pendingBatches: 9000 }, { state: 'delivered' }, { events: [{ secret: 'private' }] }, { acknowledgedBatches: 0.5 }]) {
+    diagnostic = { ...delivery, ...patch }; await state.refresh();
+    assert.equal(state.getSnapshot().task, accepted); assert.match(state.getSnapshot().error, /核对失败/);
+  }
+  state.dispose();
+});
+
 test('child remote controls retain the parent product identity and pin the exact original child locator across uncertain retries', async () => {
   const childTask = { ...task, childRunId: 'child-run', childAgentId: 'agent:child:reader', childSessionId: 'child-session' };
   const calls = []; let replace = value => value;
@@ -195,7 +213,9 @@ test('rendered task panel offers explicit inspection, structured input and origi
       return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; dirty = true; }]; },
     useEffect(effect, deps) { const i = index++; if (!slots[i] || deps.some((value, j) => value !== slots[i][j])) { slots[i] = deps; effects.push(effect); } } };
   const Panel = createNativeA2aPanel({ React, buttonStyle: () => ({}), hostRemote: { controlNativeA2aTask: async input => {
-    calls.push(structuredClone(input)); return response(input);
+    calls.push(structuredClone(input)); return response(input, { eventDelivery: {
+      contract: 'agentkit.a2a-event-delivery-status/v1', state: 'failed', pendingBatches: 0,
+      acknowledgedBatches: 2, failedBatches: 1, errorCode: 'A2A_EVENT_REF_INVALID' } });
   } } });
   const render = () => { let tree; do { dirty = false; index = 0; tree = Panel({ task }); for (const effect of effects.splice(0)) effect(); } while (dirty); return tree; };
   const find = (tree, predicate) => { if (!tree || typeof tree !== 'object') return null;
@@ -203,6 +223,8 @@ test('rendered task panel offers explicit inspection, structured input and origi
   const button = (tree, label) => find(tree, node => node.type === 'button' && node.children.includes(label));
   let tree = render(); assert.equal(calls.length, 0); button(tree, '核对远端任务').props.onClick(); await new Promise(resolve => setImmediate(resolve));
   tree = render(); assert.ok(button(tree, '提交补充输入')); assert.ok(button(tree, '请求远端取消'));
+  assert.ok(find(tree, node => node.props['aria-label'] === '任务事件同步'));
+  assert.ok(find(tree, node => node.props.role === 'alert' && node.children.includes('部分任务事件投递失败，原记录已保留。')));
   find(tree, node => node.type === 'input').props.onChange({ target: { checked: true } });
   find(tree, node => node.type === 'textarea').props.onChange({ target: { value: '{"answer":42}' } });
   tree = render(); button(tree, '提交补充输入').props.onClick(); await new Promise(resolve => setImmediate(resolve));

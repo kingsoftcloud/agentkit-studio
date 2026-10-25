@@ -81,3 +81,19 @@ node --test --test-concurrency=4 tests/*.test.mjs packages/agentkit-harness/test
 汇总证据为 `default-host/reviewed-evidence.json`，Trace 路由证据为
 `default-host/native-trace-route-proof.json`。这是实际打包 Host 的默认入口证明，
 不等同于真实云模型、全部可选线上服务或浏览器渲染验收。
+
+## 后续两处明确缺口的收尾
+
+- A2A 事件投递状态现从原调用 journal 投影到任务控制回执及现有面板。真实 HTTP
+  Host 检查永久失败、其他批次成功后失败仍保留、重新打开和终态读取不触发任务效果；
+  客户端拒绝越界计数、未知代码、额外原文和不一致状态。两个相关测试文件 38 项通过，
+  浏览器包构建成功。记录为 `a2a-delivery-view.log`、`a2a-delivery-client.log`。
+- Skill GitHub ZIP64 已实现：本地/中央扩展字段、完整结束记录及 streamed archive；
+  保留既有归档预算、路径、CRC 和执行 authority。五个 CPython 生成并回读的固定
+  fixture 与 Node 字节一致。两个相关文件首轮 29 项通过 28 项；新增生产检查测试
+  将底层 source 错写为上层 catalog 的 `ready` 状态，修正为真实 manifest 和文件
+  字节断言后，仅重跑该项通过。普通 ZIP 的恰好 65,535 项目录边界另行定向通过。
+  记录为 `skill-zip64.log`、`skill-zip64-inspection.log`、`skill-zip64-classic-limit.log`。
+
+这些为当前缺口的定向证据，未再次全仓回归、双 Node 验证、安装或打包。
+当前逐组实现、验证与剩余差异见[能力对照](native-capability-status.md)。

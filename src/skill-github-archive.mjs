@@ -9,6 +9,54 @@ const check = (value, code = 'skill_github_archive_invalid') => { if (!value) th
 const decodeName = (bytes, flags) => flags & 0x0800 ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
   : Array.from(bytes, byte => byte < 128 ? String.fromCharCode(byte) : CP437[byte - 128]).join('');
 
+// PKWARE APPNOTE 4.3.14–16 / 4.5.3. ZIP64 can be used for small files too;
+// decode exact integers before applying the existing in-memory archive limits.
+function uint64(bytes, offset) {
+  check(offset >= 0 && offset + 8 <= bytes.length);
+  const value = bytes.readBigUInt64LE(offset);
+  check(value <= BigInt(Number.MAX_SAFE_INTEGER), 'skill_github_archive_limit');
+  return Number(value);
+}
+function extendedFields(bytes, start, length, fields) {
+  const end = start + length; check(end <= bytes.length);
+  let extra, cursor = start;
+  while (cursor < end) {
+    check(cursor + 4 <= end);
+    const tag = bytes.readUInt16LE(cursor), size = bytes.readUInt16LE(cursor + 2);
+    check(cursor + 4 + size <= end);
+    if (tag === 1) { check(extra === undefined); extra = bytes.subarray(cursor + 4, cursor + 4 + size); }
+    cursor += 4 + size;
+  }
+  let offset = 0;
+  return fields.map(([value, width = 8]) => {
+    if (value !== (width === 4 ? 0xffff : 0xffffffff)) return value;
+    check(extra !== undefined && offset + width <= extra.length);
+    const resolved = width === 8 ? uint64(extra, offset) : extra.readUInt32LE(offset);
+    offset += width; return resolved;
+  });
+}
+function directoryLocation(bytes, end) {
+  const count = bytes.readUInt16LE(end + 10), size = bytes.readUInt32LE(end + 12), start = bytes.readUInt32LE(end + 16);
+  const locator = end - 20;
+  if (locator < 0 || bytes.readUInt32LE(locator) !== 0x07064b50) {
+    // CPython emits an ordinary EOCD for exactly 65,535 entries; absent a
+    // locator, the count is still bounded by the actual central directory.
+    check(size !== 0xffffffff && start !== 0xffffffff && start + size === end);
+    return { count, start, end };
+  }
+  check(bytes.readUInt32LE(locator + 4) === 0 && bytes.readUInt32LE(locator + 16) === 1);
+  const record = uint64(bytes, locator + 8);
+  check(record + 56 <= locator && bytes.readUInt32LE(record) === 0x06064b50);
+  const recordSize = uint64(bytes, record + 4);
+  check(recordSize >= 44 && record + 12 + recordSize === locator
+    && bytes.readUInt32LE(record + 16) === 0 && bytes.readUInt32LE(record + 20) === 0);
+  const fullCount = uint64(bytes, record + 32), fullSize = uint64(bytes, record + 40), fullStart = uint64(bytes, record + 48);
+  check(uint64(bytes, record + 24) === fullCount && (count === 0xffff || count === fullCount)
+    && (size === 0xffffffff || size === fullSize) && (start === 0xffffffff || start === fullStart)
+    && fullStart + fullSize === record);
+  return { count: fullCount, start: fullStart, end: record };
+}
+
 export function readGithubSkillArchive(buffer, { assertCurrent = () => {} } = {}) {
   assertCurrent();
   check(Buffer.isBuffer(buffer) && buffer.length <= 50 * 1024 * 1024, 'skill_github_archive_limit');
@@ -16,19 +64,23 @@ export function readGithubSkillArchive(buffer, { assertCurrent = () => {} } = {}
   check(end >= 0 && end + 22 <= buffer.length && end + 22 + buffer.readUInt16LE(end + 20) === buffer.length);
   check(buffer.readUInt16LE(end + 4) === 0 && buffer.readUInt16LE(end + 6) === 0
     && buffer.readUInt16LE(end + 8) === buffer.readUInt16LE(end + 10));
-  const count = buffer.readUInt16LE(end + 10), central = buffer.readUInt32LE(end + 16);
-  check(central + buffer.readUInt32LE(end + 12) === end);
+  const directory = directoryLocation(buffer, end), count = directory.count, central = directory.start, centralEnd = directory.end;
+  check(central >= 0 && central <= centralEnd && count <= Math.floor((centralEnd - central) / 46));
   let cursor = central, totalBytes = 0, fileCount = 0;
   const entries = [], paths = new Map(), roots = new Set(), ranges = [];
   for (let index = 0; index < count; index++) {
     assertCurrent();
-    check(cursor + 46 <= end && buffer.readUInt32LE(cursor) === 0x02014b50);
+    check(cursor + 46 <= centralEnd && buffer.readUInt32LE(cursor) === 0x02014b50);
     const flags = buffer.readUInt16LE(cursor + 8), method = buffer.readUInt16LE(cursor + 10);
-    const checksum = buffer.readUInt32LE(cursor + 16), compressed = buffer.readUInt32LE(cursor + 20), size = buffer.readUInt32LE(cursor + 24);
+    const checksum = buffer.readUInt32LE(cursor + 16);
     const nameLength = buffer.readUInt16LE(cursor + 28), next = cursor + 46 + nameLength
       + buffer.readUInt16LE(cursor + 30) + buffer.readUInt16LE(cursor + 32);
-    const mode = buffer.readUInt32LE(cursor + 38) >>> 16, offset = buffer.readUInt32LE(cursor + 42);
-    check(next <= end && buffer.readUInt16LE(cursor + 34) === 0 && (flags & ~0x080e) === 0 && (method === 0 || method === 8));
+    const mode = buffer.readUInt32LE(cursor + 38) >>> 16;
+    check(next <= centralEnd && (flags & ~0x080e) === 0 && (method === 0 || method === 8));
+    const [size, compressed, offset, disk] = extendedFields(buffer, cursor + 46 + nameLength, buffer.readUInt16LE(cursor + 30),
+      [[buffer.readUInt32LE(cursor + 24)], [buffer.readUInt32LE(cursor + 20)],
+        [buffer.readUInt32LE(cursor + 42)], [buffer.readUInt16LE(cursor + 34), 4]]);
+    check(disk === 0);
     const nameBytes = buffer.subarray(cursor + 46, cursor + 46 + nameLength);
     let name;
     try { name = decodeName(nameBytes, flags); } catch { throw fail('skill_github_archive_unsafe'); }
@@ -42,8 +94,9 @@ export function readGithubSkillArchive(buffer, { assertCurrent = () => {} } = {}
     const localNameLength = buffer.readUInt16LE(offset + 26), start = offset + 30 + localNameLength + buffer.readUInt16LE(offset + 28);
     check(start + compressed <= central && buffer.readUInt16LE(offset + 6) === flags && buffer.readUInt16LE(offset + 8) === method
       && nameBytes.equals(buffer.subarray(offset + 30, offset + 30 + localNameLength)));
-    if (!(flags & 8)) check(buffer.readUInt32LE(offset + 14) === checksum
-      && buffer.readUInt32LE(offset + 18) === compressed && buffer.readUInt32LE(offset + 22) === size);
+    const [localSize, localCompressed] = extendedFields(buffer, offset + 30 + localNameLength, buffer.readUInt16LE(offset + 28),
+      [[buffer.readUInt32LE(offset + 22)], [buffer.readUInt32LE(offset + 18)]]);
+    if (!(flags & 8)) check(buffer.readUInt32LE(offset + 14) === checksum && localCompressed === compressed && localSize === size);
     ranges.push([offset, start + compressed]);
     if (directory) check(size === 0);
     else {
@@ -55,7 +108,7 @@ export function readGithubSkillArchive(buffer, { assertCurrent = () => {} } = {}
     entries.push({ path, relative: parts.slice(1).join('/'), directory, start, compressed, size, checksum, method });
     cursor = next;
   }
-  check(cursor === end && fileCount > 0); check(roots.size === 1, 'skill_github_archive_unsafe');
+  check(cursor === centralEnd && fileCount > 0); check(roots.size === 1, 'skill_github_archive_unsafe');
   ranges.sort((a, b) => a[0] - b[0]);
   check(ranges.every(([start], index) => index === 0 || start >= ranges[index - 1][1]), 'skill_github_archive_unsafe');
   for (const path of paths.keys()) {

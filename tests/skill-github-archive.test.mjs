@@ -1,12 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
+import { readFileSync } from 'node:fs';
 import { createZip } from '../src/zip.mjs';
 import { readGithubSkillArchive } from '../src/skill-github-archive.mjs';
 
 const archive = entries => createZip(entries.map(([name, data = 'text']) => ({ name, data })));
 const endOf = bytes => bytes.length - 22;
 const centralOf = bytes => bytes.readUInt32LE(endOf(bytes) + 16);
+const zip64Reference = JSON.parse(readFileSync(new URL('./fixtures/skill-zip64-reference.json', import.meta.url), 'utf8'));
+for (const fixture of zip64Reference.cases) test(`Python ZIP64 reference: ${fixture.name}`, () => {
+  assert.equal(zip64Reference.contract, 'agentkit.python-zip64-reference/v1');
+  const actual = readGithubSkillArchive(Buffer.from(fixture.archiveBase64, 'base64'));
+  assert.deepEqual(actual.map(file => ({ path: file.path, base64: Buffer.from(file.bytes).toString('base64') })), fixture.expected);
+});
+
+test('ZIP64 malformed metadata and unbounded integers fail before expansion', () => {
+  const original = Buffer.from(zip64Reference.cases.find(row => row.name === 'classic-end-sentinels').archiveBase64, 'base64');
+  const end = endOf(original), locator = end - 20, record = Number(original.readBigUInt64LE(locator + 8));
+  const central = Number(original.readBigUInt64LE(record + 48));
+  for (const mutate of [bytes => bytes.writeUInt32LE(1, locator + 4), bytes => bytes.writeUInt32LE(2, locator + 16),
+    bytes => bytes.writeUInt32LE(0, record), bytes => bytes.writeBigUInt64LE(43n, record + 4),
+    bytes => bytes.writeBigUInt64LE(3n, record + 24), bytes => bytes.writeBigUInt64LE(1n, record + 48),
+    bytes => bytes.writeUInt16LE(0xffff, central + 34),
+    bytes => bytes.writeUInt16LE(8, 30 + bytes.readUInt16LE(26) + 2),
+    bytes => bytes.writeBigUInt64LE(1n, 30 + bytes.readUInt16LE(26) + 4)]) {
+    const bytes = Buffer.from(original); mutate(bytes);
+    assert.throws(() => readGithubSkillArchive(bytes), { code: 'skill_github_archive_invalid' });
+  }
+  const unsafe = Buffer.from(original); unsafe.writeBigUInt64LE(2n ** 63n, record + 48);
+  assert.throws(() => readGithubSkillArchive(unsafe), { code: 'skill_github_archive_limit' });
+});
 function deflated(name, data) {
   const original = archive([[name, data]]), start = 30 + original.readUInt16LE(26), central = centralOf(original);
   const packed = deflateRawSync(data), local = Buffer.from(original.subarray(0, start));
@@ -36,7 +60,7 @@ test('deflated content and CP437 names follow ZIP semantics', () => {
 });
 
 test('directory entries do not consume the 5000 regular-file allowance', () => {
-  const entries = Array.from({ length: 5001 }, (_, i) => [`root/dir-${i}/`, '']);
+  const entries = Array.from({ length: 65534 }, (_, i) => [`root/dir-${i}/`, '']);
   entries.push(['root/SKILL.md', 'manifest']);
   assert.equal(readGithubSkillArchive(archive(entries)).length, 1);
   assert.throws(() => readGithubSkillArchive(archive(Array.from({ length: 5001 }, (_, i) => [`root/file-${i}`, '']))),

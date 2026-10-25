@@ -55,6 +55,19 @@ export function createNativeA2aTaskState({ hostRemote, task, commandId = () => g
       && (value.subscription === undefined || value.subscription?.contract === 'agentkit.studio-a2a-task-subscription/v1'
         && Number.isSafeInteger(value.subscription.events) && value.subscription.events >= 0 && ['eof', 'boundary'].includes(value.subscription.ended)),
     '远端任务回执与原调用不一致。');
+    const delivery = value.eventDelivery;
+    if (delivery !== undefined) {
+      const permanent = ['A2A_EVENT_BATCH_TOO_LARGE', 'A2A_KERNEL_FACT_INVALID', 'A2A_EVENT_REF_CAPACITY',
+        'A2A_EVENT_REF_CONFLICT', 'A2A_EVENT_REF_INVALID', 'A2A_TASK_NOT_FOUND'];
+      const fields = ['contract', 'state', 'pendingBatches', 'acknowledgedBatches', 'failedBatches', 'errorCode'];
+      check(delivery && delivery.contract === 'agentkit.a2a-event-delivery-status/v1'
+        && Object.keys(delivery).length === fields.length && Object.keys(delivery).every(key => fields.includes(key))
+        && ['pendingBatches', 'acknowledgedBatches', 'failedBatches'].every(key => Number.isSafeInteger(delivery[key]) && delivery[key] >= 0)
+        && delivery.pendingBatches + delivery.acknowledgedBatches + delivery.failedBatches <= 8192
+        && (delivery.errorCode === null || [...permanent, 'A2A_EVENT_DELIVERY_UNAVAILABLE'].includes(delivery.errorCode))
+        && delivery.state === (delivery.failedBatches ? 'failed' : delivery.errorCode ? 'retrying' : delivery.pendingBatches ? 'pending' : 'delivered')
+        && (delivery.state !== 'retrying' || delivery.pendingBatches > 0), '任务事件投递记录无效，请重新核对。');
+    }
     return value;
   };
   const send = async () => {

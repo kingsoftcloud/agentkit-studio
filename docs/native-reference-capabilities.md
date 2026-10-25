@@ -9,6 +9,10 @@ particular item. The implemented TS core contracts are in
 to differ in serialized field names, so the mapping is organized by **key
 semantics and user-visible behavior**, not by field spelling.
 
+The current grouped implementation/evidence mapping and remaining differences
+are maintained in [capability status](native-capability-status.md). Historical
+progress notes below do not override that current implementation record.
+
 Each capability is classified:
 
 - **formal** — part of the locked contract every host must satisfy; enforced by
@@ -697,9 +701,11 @@ filesystem limitation are explicit in [internal A2A](native-a2a-internal.md).
 
 Canonical lifecycle descriptors now share an atomic journal/outbox with the
 original call state, and the actual task-sink consumer resumes pending delivery
-at preset startup. Full stateful content/interaction mapping and common Studio
-event consumption remain open. This is not closure of subscriptions, automatic
-waiters, inbound registry/server assembly or real online authentication.
+at preset startup. Stateful content/interaction mapping, persistent Studio event
+consumption, explicit subscriptions, Native automatic waiters and inbound server
+assembly now have implementations and scoped evidence; see [Session events](native-a2a-session-events.md),
+[question waits](native-a2a-question-waits.md) and [inbound](native-a2a-inbound.md).
+These do not prove shared multi-Host deployment or real online authentication.
 An `appendTaskEvents` transport primitive without its durable consumer does
 not count as migrated event delivery.
 
