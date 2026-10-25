@@ -253,6 +253,36 @@ Teams execution-policy/context 扩展及 legacy-history 导入会明确拒绝，
 读记录、ensure 已有记录、查询或重放旧续期回执均不能恢复资格，必须由可信 Host 重新授权一次
 新的续期。另一个连接续期也不会偷偷给当前进程重建锚。期限精度为 JavaScript 毫秒。
 
+### Teams 原上下文与回调授权
+
+`runtime.teamsContexts` 提供可信 Host 专用的
+`agentkit.managed-native-teams-context/v1` 记录端口。上下文、原命令、会话 owner 摘要、
+数据库 incarnation、扩展身份、nonce 归属和分 revision 的短期 callback 均保存在原
+`commands.sqlite`。`put/get` 等方法必须传入原 `expectedIncarnation`；重开同一个库保留身份，
+替换数据库不能解释为上下文不存在。会话 owner 与上下文唯一约束在同一个事务提交，
+冲突或中断会一同回滚。已接收普通托管命令的会话不能改为 Teams 会话，Teams 已预留会话
+也不能通过普通 Server 命令接管；异步 admission binding 返回后会在提交事务内再次检查。
+
+记录校验完整原 enqueue、执行目标、grant/attempt、context/policy 引用与摘要。
+Teams 使用独立 RFC8785 JSON 编码；不复用 Native 日志对 BigInt、负零和大整数的编码。
+callback 记录只验证形状和原上下文归属，不验证签名，不创建 grant，也不构成执行许可。
+同一 grant revision 仅较晚到期的 callback 能替换旧值，其他 revision 分开保存。
+
+可信 Host 可配置 `teamsCallbackVerifier`，由固定 issuer 与可信公钥源创建
+`createNativeTeamsCallbackPermitVerifier`，再使用 `runtime.teamsCallbacks.authorize(contextRef, operation)`。
+每次使用都检查原 grant 的当前有效期、attempt 和 revision，验证 Ed25519 服务端签名、
+原命令/会话/策略/leader/成员声明及具体操作。取公钥期间发生的撤销、暂停、续期或数据库
+身份变化会使本次授权失败。重启后的 callback 和上下文记录不会恢复 grant 的单调时钟锚。
+callback 最长 30 秒且不能超出 grant 期限；recovery evidence permit 不能用于执行。
+这里不生成生产签名密钥，也不接受请求携带公钥。
+
+这两个端口不通过公共 HTTP 暴露。`teamsContextRegistry: true` 表示记录端口已安装，
+`teamsCallbackAuthorization` 仅在配置上述验证器时为 true。
+正式 Studio 尚未组装 Teams execution-policy、专用 ingress、材料、工具和模型调用链路；
+因此 `teamsContext` 与 `executionPolicy` 仍为 false，普通入口继续明确拒绝不支持的
+`teams_context_ref` / `execution_policy_ref`，不会接收后忽略它们。SQLite 的
+`sharedAcrossHosts: false` 也不代表已支持原共享 Postgres/cloud bootstrap。
+
 本层负责接收和取得执行资格；`require` 是供可信执行策略在每次模型/工具使用前检查的端口。
 Teams 的实时策略、物料与回调授权仍需单独接入，不能把本层队列授权当成完整的 Teams 能力。
 现有 `sessions/native-recovery-status` 和运行面板保留原控制端权限，显示等待授权或已丢弃状态；

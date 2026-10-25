@@ -13,6 +13,8 @@ import { nativeKernelFactId, projectNativeKernelEvent } from './native-kernel-ev
 import { createManagedNativeInteractions } from './native-managed-interaction.mjs';
 import { createManagedNativeScopedControls } from './native-managed-scoped-control.mjs';
 import { createManagedNativeExecutionGrants, managedExecutionGrantId } from './native-managed-execution-grants.mjs';
+import { createManagedNativeTeamsContexts } from './native-managed-teams-context.mjs';
+import { createNativeTeamsCallbackAuthority } from './native-teams-callback-authority.mjs';
 
 export const MANAGED_NATIVE_KERNEL_CONTRACT = 'agentkit.managed-native-kernel/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -61,13 +63,14 @@ export function managedNativeRunId(command) {
 const rejection = (command, code, status = 'rejected') => ({ schema_version: 1, command_id: command.command_id,
   status, error: { code, message: code, retryable: status === 'queue_full', details: {} } });
 
-export function createManagedNativeKernel({ directory, target, permitVerifier, resolveBinding, authorizeInteraction, scopedControl, assertCurrent,
+export function createManagedNativeKernel({ directory, target, permitVerifier, resolveBinding, authorizeInteraction, scopedControl, teamsCallbackVerifier, assertCurrent,
   queueLimit = 100, clock = Date.now, monotonic, autoStart = true, beforeCommit, beforeProjection, onWorkerError } = {}) {
   invariant(text(directory) && object(target) && text(target.tenantId) && text(target.agentInstanceId)
     && typeof permitVerifier?.verify === 'function' && typeof resolveBinding === 'function' && typeof assertCurrent === 'function'
     && Number.isSafeInteger(queueLimit) && queueLimit > 0 && typeof autoStart === 'boolean'
     && (onWorkerError === undefined || typeof onWorkerError === 'function')
     && (monotonic === undefined || typeof monotonic === 'function')
+    && (teamsCallbackVerifier === undefined || typeof teamsCallbackVerifier?.verify === 'function')
     && (scopedControl === undefined || typeof scopedControl?.prepare === 'function' && typeof scopedControl?.execute === 'function'),
   'NATIVE_KERNEL_CONFIGURATION_INVALID');
   const bindingTarget = copy(target), verifyPermit = permitVerifier.verify, owner = `native-server-${randomUUID()}`;
@@ -130,6 +133,13 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       try { return runStore.load(parseNativeJson(row.scope), id); }
       catch (error) { if (error.code === 'run_not_found') return null; throw error; }
     } });
+  let teamsContexts, teamsCallbacks;
+  try {
+    teamsContexts = createManagedNativeTeamsContexts({ db, guard, transaction, target: bindingTarget, validateCommand: commandView });
+    teamsCallbacks = teamsCallbackVerifier ? createNativeTeamsCallbackAuthority({ contexts: teamsContexts.api,
+      executionGrants: grants.api, verifier: teamsCallbackVerifier, expectedIncarnation: teamsContexts.api.incarnation() }) : null;
+  }
+  catch (error) { runStore.close(); db.close(); throw error; }
   function append(sessionId, facts, command) {
     let seq = db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM managed_events WHERE session_id=?').get(sessionId).seq;
     for (const fact of facts) {
@@ -275,6 +285,9 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       if (prior.status === 'duplicate' && queued?.state === 'accepted') wake();
       return prior;
     }
+    // Reserving Teams facts does not authorize ordinary Server traffic into
+    // that Session. The dedicated trusted Teams ingress/policy is still needed.
+    if (teamsContexts.reserved(command.session_id)) return rejection(command, 'native_teams_ingress_required');
     const scoped = command.command_type === 'interrupt' && command.payload.scope_id != null;
     if (!supported.has(command.command_type) || command.payload.scope_id != null && (!scoped || !scopedControls.supported)
       || command.command_type === 'resume' && (command.payload.target.kind !== 'run' || command.payload.input != null)
@@ -316,6 +329,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       await authenticate(command, attempt, command.command_type);
       const accepted = transaction(() => {
         consumeNonce(authorization, command); const duplicate = existing(command, authorization); if (duplicate) return duplicate;
+        if (teamsContexts.reserved(command.session_id)) return rejection(command, 'native_teams_ingress_required');
         let runId;
         if (binding) {
           const grantError = grants.commandError(command); if (grantError) return rejection(command, grantError);
@@ -691,12 +705,15 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   catch (error) { clearInterval(scopedTimer); runStore.close(); db.close(); throw error; }
   return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory, readChildRecord,
     executionGrants: grants.api,
+    teamsContexts: teamsContexts.api,
+    teamsCallbacks,
     presentA2aInteraction: request => interactions.present(request),
     startRecovery() { guard(); schedulingEnabled = true; scopedControls.drain(); schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),
       inject: false, scopedInterrupt: scopedControls.supported, resumeTargets: Object.freeze(['run']), structuredInput: typeof authorizeInteraction === 'function',
-      approval: typeof authorizeInteraction === 'function', executionGrants: true, teamsContext: false, executionPolicy: false }),
+      approval: typeof authorizeInteraction === 'function', executionGrants: true,
+      teamsContextRegistry: true, teamsCallbackAuthorization: teamsCallbacks !== null, teamsContext: false, executionPolicy: false }),
     async getStatus(query, permit) {
       const { request } = await authenticate(query, permit, 'get_status');
       check(text(request.session_id)); projectAll();
