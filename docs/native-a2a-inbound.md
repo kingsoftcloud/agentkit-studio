@@ -99,10 +99,19 @@ Host 的 `mountStudioHost(ctx, { nativeA2aInbound })` 是可信代码组装接�
 注册和请求受 Host fiber 生命周期约束，卸载后终止观察和 outbox 发送。
 
 AgentCard 使用 `supportedInterfaces`、`defaultInputModes` 等 camelCase wire 字段；
-支持字符串 Skill 以及保留完整 JSON 字段的对象 Skill。仅显式的公共工具 producer
-才能声明 tool-activity extension；当前入站组装拒绝非空 `publicToolNames`，对应 producer
-还未接入。配置中的凭证 URL、query/hash、非法 JSON 值、循环引用与访问器被明确拒绝。
+支持字符串 Skill 以及保留完整 JSON 字段的对象 Skill。可信 Host 可传
+`publicToolPolicy: { tools: { private_name: { name: "public_label", arguments: ["query"], results: ["answer"] } } }`。
+只披露对应工具的顶层白名单字段，并递归清理凭证、堆栈和内部 URL；未知工具和无原调用
+关联的结果不产生公开活动。producer 从持久 runtime v2 的 tool_call/tool_result 事实生成
+已有 tool-activity extension，保持 opaque call/item/event 身份，并随 Task/游标同事务提交。
+冷恢复继续使用原调用关联和预算；披露规则摘要漂移拒绝读取原 Task。AgentCard 根据实际
+规则自动声明 extension，显式 `publicToolNames` 必须与规则的公共 label 一致。
+配置中的凭证 URL、query/hash、非法 JSON 值、循环引用与访问器被明确拒绝。
 接口 URL 由可信外部 baseUrl 构造，不从 HTTP Host 请求头推导。
+
+公开观察仍受 4096 字符、128 集合成员、16 KiB 单事件及 1 MiB 单调用的原策略约束。
+单事件超限使用明确省略说明；累计预算预留一个截断观察后停止披露。原 Kernel 事实和
+执行回执不变；公开活动不授予远端工具调用、审批或结果确认权限。
 
 ## 协议 Task、事件提交与产品事实
 
@@ -125,9 +134,22 @@ reasoning；可信 Host 可显式开启。input-required 只发布 schema/公共
 断开 SSE 只停止观察，不发取消或新消息。新订阅先返回当前 Task，再读取原 Run 事实。
 终态订阅按参考实现返回 unsupported；等待输入是当前流的边界。
 
-`returnImmediately` 会启动该 Host 生命周期内的原事实观察。冷 GetTask 返回已持久投影，
-对非终态尝试启动原事实观察，不重新准入；观察失败不会伪造完成。GetTask 尚不保证在
-返回前同步核对最新 Kernel 终态，也没有跨 Host 的永久订阅消费者。这些仍是待补的差异。
+`returnImmediately` 会启动该 Host 生命周期内的原事实观察。可信事件端口提供
+`read(sessionId, afterSeq, limit, { signal })` 时，GetTask 和 SubscribeToTask 在返回或
+检查终态前同步读取原 Run 的有序持久日志。每页最多 100 条、单次最多 100 页；复用
+订阅的身份/Run/事实校验及原 Task 同事务投影，原消息和命令不重新准入。空页只代表
+当前日志末尾，不代表任务完成；中断、取消等状态必须来自真实 control 事实，completed
+仍须对应 runtime 完成事实。读取失败或超过限额明确失败，不回退为伪造完成。
+只有 subscribe 的旧可信端口仍返回持久缓存并启动原观察；它不具备同步冷查询保证。
+跨 Host 的永久订阅消费者仍未组装，不能用单 Host 冷恢复证明该能力。
+
+此批对照参考 `355059d` 的 `a2a/tool_activity.py`、`presentation.py` 和
+`kernel_task_adapter.py` / `protocol_errors.py`。只运行直接受影响的
+`native-a2a-inbound-{kernel,task-store,server}.test.mjs`、`native-a2a-tool-activity.test.mjs`，
+共 165 个用例初次通过 164 个；新增 emoji fixture 因实际单事件省略策略修正后，仅重跑
+6 个新增用例，全部通过。检查覆盖真实鉴权 HTTP、冷重开、有限分页、白名单脱敏、
+旧 consumer 及累计截断。日志位于 `.artifacts/native-migration/a2a-ingress-{final,targeted}.log`。
+未重复全仓回归、Node 双版本、打包安装或线上部署。
 
 product 调用者的 running/waiting/completed/failed/interrupted/cancelled control facts 与
 Task 同事务入 outbox。已有共享 dispatcher 使用新的 `a2a-task-sink` workload token

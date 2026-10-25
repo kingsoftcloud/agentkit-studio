@@ -110,6 +110,43 @@ function activity(raw) {
     && (!value.is_error || value.execution_status==='failed') && (value.operation!=='failed' || value.execution_status==='failed'),code);
   invariant(Buffer.byteLength(a2aActivityJson(value,{pydantic:true}))<=eventLimit,code); return value;
 }
+/** Callee-side public disclosure. The same scanners validate outbound observations. */
+export function buildA2aPublicToolActivity(payload) {
+  let truncated = payload.truncated === true;
+  function sanitize(value, depth = 0) {
+    if (depth > 64) { truncated = true; return '[truncated]'; }
+    if (Array.isArray(value)) {
+      if (value.length > 128) truncated = true;
+      return value.slice(0, 128).map(child => sanitize(child, depth + 1));
+    }
+    if (object(value)) {
+      const entries = Object.entries(value), clean = {};
+      if (entries.length > 128) truncated = true;
+      for (const [raw, child] of entries.slice(0, 128)) {
+        const key = Array.from(raw).slice(0, 256).join('');
+        const normalized = key.replace(/([A-Z]+)([A-Z][a-z])/gu, '$1_$2').replace(/([a-z0-9])([A-Z])/gu, '$1_$2');
+        const sensitive = sensitiveKey.test(caseVariants(normalized));
+        if (sensitive) truncated = true;
+        Object.defineProperty(clean, key, { value: sensitive ? '[REDACTED]' : sanitize(child, depth + 1), enumerable: true, configurable: true });
+      }
+      return clean;
+    }
+    if (typeof value === 'string') {
+      if (internalUrl(value)) { truncated = true; return '[REDACTED_INTERNAL_URL]'; }
+      if (sensitiveValue.test(caseVariants(value))) { truncated = true; return '[REDACTED]'; }
+      if (Array.from(value).length > 4096) { truncated = true; return Array.from(value).slice(0, 4096).join('') + '…[truncated]'; }
+    }
+    return value;
+  }
+  const result = { ...payload, arguments: sanitize(payload.arguments ?? null), result: sanitize(payload.result ?? null) };
+  result.truncated = truncated;
+  if (Buffer.byteLength(a2aActivityJson(result, { pydantic: true })) > eventLimit) {
+    for (const field of ['arguments', 'result']) if (result[field] !== null)
+      result[field] = { summary: 'public tool payload omitted by size policy' };
+    result.truncated = true;
+  }
+  return activity(result);
+}
 /** Returns false only for ordinary artifacts. `state` belongs to an unpublished
  * checkpoint shadow; caller commits it and emitted facts in one transaction. */
 export function mapA2AToolActivity({ artifact, state, scope, remoteId, emit }) {

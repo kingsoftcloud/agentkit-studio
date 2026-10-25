@@ -3,12 +3,37 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { copy, canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { projectA2ACanonical } from '../src/providers/native-a2a-canonical.mjs';
-import { a2aNonGlobalAddress, A2A_TOOL_ACTIVITY_URI } from '../src/providers/native-a2a-tool-activity.mjs';
+import { a2aNonGlobalAddress, A2A_TOOL_ACTIVITY_URI, buildA2aPublicToolActivity } from '../src/providers/native-a2a-tool-activity.mjs';
+import { compileA2aPublicToolPolicy, projectA2aPublicTools } from '../src/providers/native-a2a-public-tool-producer.mjs';
 import { a2aIdentity, checkpointA2ADescriptor } from '../src/providers/native-a2a-events.mjs';
 import { spec, taskId } from './fixtures/native-a2a-internal-peer.mjs';
 import { createA2AProjection } from '../src/providers/native-a2a-protocol.mjs';
 
 const oracle = JSON.parse(readFileSync(new URL('./fixtures/a2a-tool-activity-reference.json', import.meta.url)));
+
+test('callee disclosure redacts nested secrets and internal URLs and emits an explicit bounded invocation truncation', () => {
+  const activity = buildA2aPublicToolActivity({ event_id: 'event', item_id: 'item', call_id: 'call', item_kind: 'tool_call',
+    operation: 'updated', execution_status: 'running', name: 'lookup', arguments: {
+      filter: { apiKey: 'never public', url: 'http://127.0.0.1/private' },
+      text: '😀' + 'q'.repeat(5000), values: Array.from({ length: 150 }, (_, index) => index),
+    } });
+  assert.equal(activity.arguments.filter.apiKey, '[REDACTED]');
+  assert.equal(activity.arguments.filter.url, '[REDACTED_INTERNAL_URL]');
+  assert.equal(activity.arguments.values.length, 128); assert.equal(activity.truncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(activity)) <= 16 * 1024);
+  const oversized = buildA2aPublicToolActivity({ ...activity, arguments: { text: '😀'.repeat(5000) } });
+  assert.deepEqual(oversized.arguments, { summary: 'public tool payload omitted by size policy' });
+  const policy = compileA2aPublicToolPolicy({ tools: { lookup: { name: 'lookup', arguments: ['query'] } } });
+  const record = { task: { id: 'task', contextId: 'context', artifacts: [] } }, updates = [];
+  for (let index = 0; index < 150; index++) projectA2aPublicTools(record, {
+    family: 'runtime', event_id: `fact-${index}`, payload: { event_type: 'item.completed', item_kind: 'tool_call',
+      scope_id: 'scope', item_id: `private-item-${index}`, snapshot: { parts: [{ content_type: 'tool_call', part_id: 'part',
+        call_id: `private-call-${index}`, name: 'lookup', arguments: { query: 'q'.repeat(4096) } }] } },
+  }, updates, policy);
+  assert.equal(record.publicToolActivity.exhausted, true); assert.ok(record.publicToolActivity.bytes <= 1024 * 1024);
+  assert.equal(updates.at(-1).artifactUpdate.artifact.parts[0].data.truncated, true);
+  assert.equal(updates.at(-1).artifactUpdate.artifact.parts[0].data.arguments, null);
+});
 const record = () => ({ managed: { taskId, remote: { id: 'remote', contextId: 'context', phase: 'bound' } },
   request: { spec, scopeId: 'child', trigger: { scope_id: 'root', item_id: 'call', call_id: 'call' }, native: { runId: 'root' } },
   createdAt: 1792790000000, phase: 'sending', projection: { state: 'working' } });

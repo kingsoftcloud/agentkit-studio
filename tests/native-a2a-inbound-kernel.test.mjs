@@ -19,6 +19,19 @@ const options = fields => ({ signal: new AbortController().signal, assertCurrent
 const events = (rows, calls = []) => ({ async *subscribe(id, cursor) { calls.push({ id, cursor }); yield* rows; } });
 const collect = async iterator => { const result = []; for await (const row of iterator) result.push(row); return result; };
 
+test('finite reconciliation drains validated read pages without opening a live subscription or treating EOF as completion', async () => {
+  const rows = [fact(1, 'running'), fact(2, 'running')], calls = [];
+  const source = { subscribe() { assert.fail('A finite query must not open a live stream'); },
+    async read(id, cursor, limit, { signal }) { calls.push({ id, cursor, limit }); signal.throwIfAborted();
+      return rows.filter(row => row.seq > cursor).slice(0, limit); } };
+  assert.deepEqual(await collect(streamA2aInboundKernelFacts(parseA2aInboundSubmission(wire()), source,
+    options({ snapshotOnly: true }))), rows);
+  assert.deepEqual(calls.map(call => call.cursor), [0, 2]);
+  assert.equal(calls[0].limit, 100);
+  await assert.rejects(collect(streamA2aInboundKernelFacts(parseA2aInboundSubmission(wire()),
+    { read: async () => [rows[1], rows[0]] }, options({ snapshotOnly: true }))), { code: 'A2A_INBOUND_EVENT_SOURCE_INVALID' });
+});
+
 test('Server receipt enforces durable acceptance, command identity and errors while preserving optional fields/lossless sequence', () => {
   const raw = wire(); raw.Receipt.accepted_seq = 9007199254740993n; raw.Receipt.future = { keep: true };
   const parsed = parseA2aInboundSubmission(raw); assert.equal(parsed.receipt.accepted_seq, 9007199254740993n);

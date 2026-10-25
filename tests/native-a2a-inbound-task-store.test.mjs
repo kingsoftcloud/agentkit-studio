@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createA2aInboundTaskStore } from '../src/providers/native-a2a-inbound-task-store.mjs';
+import { mapA2AToolActivity } from '../src/providers/native-a2a-tool-activity.mjs';
 import { kernelFact, targetBinding, platformTaskId, targetVersionId } from './fixtures/native-a2a-inbound.mjs';
 
 const identity = { ...targetBinding, callerPrincipalType: 'runtime', callerPrincipalId: 'caller', callerRuntimeId: 'runtime-caller',
@@ -28,6 +29,45 @@ function fixture(t, options = {}) {
 const update = (seq, text, extra = {}) => runtime(seq, { event_type: 'item.updated', item_id: 'answer', item_kind: 'message', op: 'append',
   update: { content_type: 'text', part_id: 'p1', text }, ...extra });
 const completion = seq => runtime(seq, { event_type: 'run.completed', status: 'completed', output_refs: [{ scope_id: 'scope', item_id: 'answer', part_id: null }] });
+
+test('trusted public disclosure survives reopen, selects only allowed fields, and feeds the existing activity consumer', t => {
+  const publicToolPolicy = { tools: { private_lookup: { name: 'lookup', arguments: ['query', 'filter'], results: ['answer', 'details'] } } };
+  const { store, config } = fixture(t, { publicToolPolicy });
+  const call = runtime(1, { event_type: 'item.completed', item_id: 'private-call-item', item_kind: 'tool_call', snapshot: { parts: [{
+    content_type: 'tool_call', part_id: 'part', call_id: 'private-call-id', name: 'private_lookup',
+    arguments: { query: 'visible', secretField: 'never public', filter: { accessToken: 'private token', url: 'http://127.0.0.1/private' } },
+  }] } });
+  const first = store.apply(identity, ids, call), cold = createA2aInboundTaskStore(config);
+  assert.equal(first.updates.length, 2);
+  assert.deepEqual(cold.apply(identity, ids, call).updates, first.updates);
+  const result = runtime(2, { event_type: 'item.completed', item_id: 'private-result-item', item_kind: 'tool_result', snapshot: { parts: [{
+    content_type: 'tool_result', part_id: 'result', call_id: 'private-call-id', is_error: false,
+    result: { answer: 'found', details: { stackTrace: 'private trace', safe: true }, privateField: 'not disclosed' },
+  }] } });
+  const second = cold.apply(identity, ids, result), artifact = second.updates[0].artifactUpdate.artifact, data = artifact.parts[0].data;
+  assert.equal(data.call_id, first.updates[0].artifactUpdate.artifact.parts[0].data.call_id);
+  assert.deepEqual(data.result, { answer: 'found', details: { stackTrace: '[REDACTED]', safe: true } });
+  assert.equal(data.truncated, true);
+  const wire = JSON.stringify(cold.get(identity, ids).task);
+  assert.doesNotMatch(wire, /private-call|private_lookup|private token|private trace|not disclosed|never public|127\.0\.0\.1/u);
+  const state = {}, emitted = [];
+  for (const update of [...first.updates, ...second.updates]) assert.equal(mapA2AToolActivity({ artifact: update.artifactUpdate.artifact,
+    state, scope: 'consumer', remoteId: ids.taskId, emit: (...args) => emitted.push(args) }), true);
+  assert.ok(emitted.some(event => event[0] === 'item.completed' && event[2] === 'tool_result'));
+  assert.doesNotMatch(JSON.stringify(emitted), /A2A_TOOL_ACTIVITY_UNAVAILABLE/u);
+  assert.throws(() => createA2aInboundTaskStore({ ...config, publicToolPolicy: { tools: {} } }).get(identity, ids),
+    { code: 'A2A_INBOUND_PUBLIC_POLICY_CONFLICT' });
+});
+
+test('undeclared tool calls and uncorrelated results never produce public activities', t => {
+  const { store } = fixture(t, { publicToolPolicy: { tools: { allowed: { name: 'public_name' } } } });
+  for (const [index, part] of [
+    { content_type: 'tool_call', part_id: 'p', call_id: 'secret-call', name: 'private_tool', arguments: { password: 'secret' } },
+    { content_type: 'tool_result', part_id: 'p', call_id: 'secret-call', result: { private: 'value' }, is_error: false },
+  ].entries()) assert.deepEqual(store.apply(identity, ids, runtime(index + 1, { event_type: 'item.completed', item_id: `private-${index}`,
+    item_kind: part.content_type, snapshot: { parts: [part] } })).updates, []);
+  assert.deepEqual(store.get(identity, ids).task.artifacts, []);
+});
 
 test('Task and UUID projection receipts survive cold reopen; replay does not duplicate streamed parts', t => {
   const { store, config } = fixture(t), fact = update(1, 'Hello😀');

@@ -21,9 +21,9 @@ async function fixture(t, options = {}) {
     eventCalls.push({ sessionId, cursor }); for (const row of rows) if (row.seq > cursor) yield row;
   } };
   let app, server;
-  const config = { card: { name: 'Native', baseUrl: 'http://127.0.0.1', streaming: options.streaming ?? true },
+  const config = { card: { name: 'Native', baseUrl: 'http://127.0.0.1', streaming: options.streaming ?? true, ...options.card },
     admissionDirectory: join(f.root, 'admission'), taskDirectory: join(f.root, 'tasks'), verifier: f.verifier,
-    controlPlane: f.client, events, assertCurrent: options.assertCurrent ?? (() => true) };
+    controlPlane: f.client, events, publicToolPolicy: options.publicToolPolicy, assertCurrent: options.assertCurrent ?? (() => true) };
   const mount = async () => {
     app = createA2aInboundServer(config); server = createServer(app.handle);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -235,4 +235,43 @@ test('Host close destroys an open SSE response even when its fact iterator ignor
   await assert.rejects(Promise.race([pending, new Promise((_, reject) => setTimeout(() => reject(new Error('Host socket remained open')), 1000))]),
     failure => failure.message !== 'Host socket remained open');
   assert.equal(f.calls.length, 1); assert.equal(f.calls[0].action, 'SubmitA2AInboundMessage');
+});
+
+test('cold GetTask reconciles original durable interruption before replying without submitting a new command', async t => {
+  const rows = [transition(1, 'running')], reads = [];
+  let entered; const started = new Promise(resolve => { entered = resolve; });
+  const f = await fixture(t, { events: {
+    async *subscribe() { yield rows[0]; entered(); await new Promise(() => {}); },
+    async read(sessionId, cursor, limit) { reads.push({ sessionId, cursor }); return rows.filter(row => row.seq > cursor).slice(0, limit); },
+  } });
+  const first = await rpc(f, 'send_message', 'SendMessage', { message: message(), configuration: { returnImmediately: true } });
+  await started; await f.restart(); rows.push(transition(2, 'interrupted'));
+  const current = await rpc(f, 'get_task', 'GetTask', { id: first.result.task.id });
+  assert.equal(current.result.status.state, 'TASK_STATE_FAILED');
+  assert.equal(current.result.id, first.result.task.id); assert.equal(reads[0].cursor, 1);
+  assert.equal(f.calls.length, 1); assert.equal(f.admitted.size, 1);
+  const repeated = await rpc(f, 'get_task', 'GetTask', { id: first.result.task.id });
+  assert.deepEqual(repeated.result, current.result); assert.equal(reads.length, 1);
+});
+
+test('authenticated wire publishes only trusted public tool fields and advertises its real producer', async t => {
+  const call = runtime(2, { event_type: 'item.completed', item_kind: 'tool_call', item_id: 'private-tool-item', snapshot: { parts: [{
+    content_type: 'tool_call', part_id: 'call', call_id: 'private-call', name: 'private_lookup',
+    arguments: { query: 'hello', private: 'never-public' },
+  }] } });
+  const result = runtime(3, { event_type: 'item.completed', item_kind: 'tool_result', item_id: 'private-result-item', snapshot: { parts: [{
+    content_type: 'tool_result', part_id: 'result', call_id: 'private-call', result: { answer: 'found', password: 'never-public' }, is_error: false,
+  }] } });
+  const f = await fixture(t, { publicToolPolicy: { tools: { private_lookup: { name: 'lookup', arguments: ['query'], results: ['answer'] } } },
+    rows: [transition(1, 'running'), call, result, runtime(4, { event_type: 'run.completed', output_refs: [] }), transition(5, 'completed')] });
+  const task = (await rpc(f, 'send_message', 'SendMessage', { message: message() })).result.task;
+  assert.equal(task.status.state, 'TASK_STATE_COMPLETED'); assert.equal(task.artifacts.length, 2);
+  assert.deepEqual(task.artifacts[0].parts[0].data.arguments, { query: 'hello' });
+  assert.deepEqual(task.artifacts[1].parts[0].data.result, { answer: 'found' });
+  assert.doesNotMatch(JSON.stringify(task), /private_lookup|private-call|private-tool|never-public|password/u);
+  const probe = await f.send('get_task', '', { path: '/.well-known/agent-card.json', httpMethod: 'GET' });
+  const card = await json(probe);
+  assert.equal(card.capabilities.extensions[0].uri, 'urn:ksadk:a2a:tool-activity:v1');
+  await f.restart();
+  assert.deepEqual((await rpc(f, 'get_task', 'GetTask', { id: task.id })).result.artifacts, task.artifacts);
 });

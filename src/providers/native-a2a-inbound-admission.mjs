@@ -174,12 +174,12 @@ export function createA2aInboundAdmission({ directory, verifier, controlPlane, e
     const ctx = authorize(input, operations), record = read(ctx);
     invariant(record, 'A2A_INBOUND_TASK_NOT_FOUND'); return view(record);
   }
-  async function* facts(input, operations) {
+  async function* facts(input, operations, snapshotOnly = false) {
       const ctx = authorize(input, operations), record = read(ctx), operationKey = record?.latestAdmission;
       invariant(operationKey && accepted(record.operations[operationKey]?.submission), 'A2A_INBOUND_COMMAND_NOT_ACCEPTED');
       const operation = record.operations[operationKey];
       for await (const fact of streamA2aInboundKernelFacts(operation.submission, events, {
-        expectedRunId: record.runId, afterSeq: operation.cursor, stopAtWaiting: operation.kind !== 'cancel',
+        expectedRunId: record.runId, afterSeq: operation.cursor, stopAtWaiting: snapshotOnly ? false : operation.kind !== 'cancel', snapshotOnly,
         signal: ctx.signal, assertCurrent: () => guard(ctx.signal),
       })) {
         update(ctx, latest => {
@@ -212,6 +212,7 @@ export function createA2aInboundAdmission({ directory, verifier, controlPlane, e
     submit: input => execute(input, 'send'), cancel: input => execute(input, 'cancel'),
     inspect: input => snapshot(input, ['get_task', 'subscribe_to_task']),
     facts: input => facts(input, ['get_task', 'subscribe_to_task']),
+    ...(typeof events?.read === 'function' ? { reconcile: input => facts(input, ['get_task', 'subscribe_to_task'], true) } : {}),
     // A response to an authenticated mutation may observe that same owned
     // Task. Do not forge a read assertion or bypass original-body validation.
     snapshot: input => snapshot(input, observations), observe: input => facts(input, observations),

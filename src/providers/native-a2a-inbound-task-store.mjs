@@ -6,6 +6,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, copy, invariant, parseNativeJson } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { atomicPrivate, privateDirectory, readAll, tryLock } from '../../packages/agentkit-harness/src/native/local-command-state.mjs';
+import { compileA2aPublicToolPolicy, projectA2aPublicTools } from './native-a2a-public-tool-producer.mjs';
 
 export const A2A_INBOUND_TASK_STORE = 'agentkit.a2a-inbound-task-store/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -62,7 +63,7 @@ function output(record, refs) {
     return ref.part_id == null ? item.parts.map(part => part.text).join('') : item.parts.find(part => part.id === ref.part_id)?.text ?? '';
   }).join('');
 }
-function project(record, fact, updates, includeReasoning) {
+function project(record, fact, updates, includeReasoning, publicToolPolicy) {
   check(object(fact) && fact.schema_version === 1 && uuid(fact.event_id) && integer(fact.seq) && fact.seq >= 1
     && id(fact.session_id) && id(fact.run_id) && id(fact.timestamp) && Number.isFinite(Date.parse(fact.timestamp))
     && object(fact.payload) && ['control', 'runtime', 'interaction', 'workflow', 'schedule', 'job', 'relationship'].includes(fact.family)
@@ -73,6 +74,9 @@ function project(record, fact, updates, includeReasoning) {
   const p = fact.payload;
   if (fact.family === 'runtime') {
     check(p.schema_version === 2 && p.run_id === record.runId && p.event_type === fact.event_type && id(p.scope_id));
+    if (Object.keys(publicToolPolicy.tools).length && ['tool_call', 'tool_result'].includes(p.item_kind)) {
+      projectA2aPublicTools(record, fact, updates, publicToolPolicy); return;
+    }
     if (['run.completed', 'run.failed', 'run.canceled', 'run.interrupted'].includes(p.event_type)) {
       const next = p.event_type === 'run.completed' ? 'completed' : p.event_type === 'run.canceled' ? 'cancelled'
         : p.event_type === 'run.interrupted' ? 'interrupted' : 'failed';
@@ -135,7 +139,7 @@ function project(record, fact, updates, includeReasoning) {
       invariant(p.state !== 'completed' || record.runtimeTerminal === 'completed', 'A2A_INBOUND_COMPLETION_UNCONFIRMED');
       invariant(!record.runtimeTerminal || record.runtimeTerminal === p.state
         || p.state === 'interrupted' && record.runtimeTerminal === 'failed', 'A2A_INBOUND_TERMINAL_CONFLICT');
-      for (const item of Object.values(record.items)) if (!item.closed) {
+      for (const item of [...Object.values(record.items), ...Object.values(record.publicToolActivity?.items ?? {})]) if (!item.closed) {
         const artifact = record.task.artifacts.find(artifact => artifact.artifactId === item.artifactId);
         check(artifact); updates.push({ artifactUpdate: { taskId: record.task.id, contextId: record.task.contextId,
           artifact: copy(artifact), append: false, lastChunk: true } }); item.closed = true;
@@ -148,8 +152,10 @@ function project(record, fact, updates, includeReasoning) {
   }
 }
 
-export function createA2aInboundTaskStore({ directory, assertCurrent, includeReasoning = false } = {}) {
+export function createA2aInboundTaskStore({ directory, assertCurrent, includeReasoning = false, publicToolPolicy } = {}) {
   check(typeof directory === 'string' && typeof assertCurrent === 'function' && typeof includeReasoning === 'boolean');
+  const publicPolicy = compileA2aPublicToolPolicy(publicToolPolicy);
+  const publicToolPolicyDigest = Object.keys(publicPolicy.tools).length ? hash(publicPolicy) : null;
   privateDirectory(directory, true);
   function guard() {
     const current = assertCurrent(); if (current && typeof current.then === 'function') void Promise.resolve(current).catch(() => {});
@@ -165,7 +171,8 @@ export function createA2aInboundTaskStore({ directory, assertCurrent, includeRea
     check(record.contract === A2A_INBOUND_TASK_STORE && record.key === ctx.key && object(record.task) && object(record.seen)
       && object(record.inputs) && object(record.items) && object(record.productOutbox)
       && record.includeReasoning === includeReasoning && integer(record.cursor) && record.cursor >= 0);
-    invariant(canonical(record.binding) === canonical(ctx.binding), 'A2A_INBOUND_TASK_BINDING_CONFLICT'); return record;
+    invariant(canonical(record.binding) === canonical(ctx.binding), 'A2A_INBOUND_TASK_BINDING_CONFLICT');
+    invariant((record.publicToolPolicyDigest ?? null) === publicToolPolicyDigest, 'A2A_INBOUND_PUBLIC_POLICY_CONFLICT'); return record;
   }
   function transaction(ctx, change) {
     guard(); const release = tryLock(join(directory, ctx.key + '.sqlite'), 5000); invariant(release, 'A2A_INBOUND_STORE_BUSY');
@@ -187,6 +194,7 @@ export function createA2aInboundTaskStore({ directory, assertCurrent, includeRea
       check((taskId === undefined || id(taskId)) && (contextId === undefined || id(contextId)));
       return transaction(ctx, existing => {
         const record = existing ?? { contract: A2A_INBOUND_TASK_STORE, key: ctx.key, binding: ctx.binding, includeReasoning,
+          ...(publicToolPolicyDigest ? { publicToolPolicyDigest } : {}),
           task: { id: taskId ?? randomUUID(), contextId: contextId ?? randomUUID(), status: { state: 'TASK_STATE_SUBMITTED' },
             metadata: copy(integrationMetadata), history: [], artifacts: [] },
           inputs: {}, seen: {}, productOutbox: {}, cursor: 0, sessionId: null, runId: null, runtimeTerminal: null,
@@ -232,7 +240,7 @@ export function createA2aInboundTaskStore({ directory, assertCurrent, includeRea
         invariant(integer(fact.seq) && fact.seq > record.cursor, 'A2A_INBOUND_EVENT_ORDER_CONFLICT');
         invariant(!terminal.has(record.task.status.state), 'A2A_INBOUND_TERMINAL_CONFLICT');
         invariant(Object.keys(record.seen).length < 10000, 'A2A_INBOUND_STORE_LIMIT');
-        const updates = []; project(record, fact, updates, includeReasoning);
+        const updates = []; project(record, fact, updates, includeReasoning, publicPolicy);
         if (ctx.binding.owner.callerPrincipalType === 'user' && fact.family === 'control' && fact.event_type === 'control.run_transition'
           && ['running', 'waiting', 'completed', 'failed', 'interrupted', 'cancelled'].includes(fact.payload.state))
           record.productOutbox[fact.event_id] = { digest, fact: copy(fact), state: 'pending', failures: 0, error: null };

@@ -7,6 +7,7 @@ import { buildA2aAgentCard, JSONRPC_PATH, REST_PATH_PREFIX } from './native-a2a-
 import { createA2aInboundAdmission } from './native-a2a-inbound-admission.mjs';
 import { createA2aInboundTaskStore } from './native-a2a-inbound-task-store.mjs';
 import { createA2AEventDispatcher } from './native-a2a-event-dispatcher.mjs';
+import { compileA2aPublicToolPolicy } from './native-a2a-public-tool-producer.mjs';
 
 export const A2A_INBOUND_SERVER = 'agentkit.a2a-inbound-server/v1';
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -39,12 +40,14 @@ function taskView(view, length) {
 }
 
 export function createA2aInboundServer({ card: cardOptions, admissionDirectory, taskDirectory, verifier, controlPlane, events,
-  assertCurrent, includeReasoning = false } = {}) {
+  assertCurrent, includeReasoning = false, publicToolPolicy } = {}) {
   invariant(typeof verifier?.verify === 'function' && typeof verifier?.verifyProbe === 'function'
     && typeof events?.subscribe === 'function' && typeof assertCurrent === 'function', 'A2A_INBOUND_CONFIGURATION_INVALID');
-  // Public tool observations need their producer before they may be advertised.
-  invariant(!cardOptions?.publicToolNames?.length, 'A2A_INBOUND_TOOL_PRODUCER_UNAVAILABLE');
-  const card = buildA2aAgentCard(cardOptions), verify = verifier.verify, verifyProbe = verifier.verifyProbe;
+  const publicPolicy = compileA2aPublicToolPolicy(publicToolPolicy);
+  const publicNames = [...new Set(Object.values(publicPolicy.tools).map(rule => rule.name))].sort();
+  invariant(cardOptions?.publicToolNames === undefined || Array.isArray(cardOptions.publicToolNames)
+    && canonical([...new Set(cardOptions.publicToolNames)].sort()) === canonical(publicNames), 'A2A_INBOUND_TOOL_PRODUCER_UNAVAILABLE');
+  const card = buildA2aAgentCard({ ...cardOptions, publicToolNames: publicNames }), verify = verifier.verify, verifyProbe = verifier.verifyProbe;
   const lifetime = new AbortController(), background = new Map(), active = new Set();
   const guard = () => {
     lifetime.signal.throwIfAborted(); const verdict = assertCurrent();
@@ -53,7 +56,7 @@ export function createA2aInboundServer({ card: cardOptions, admissionDirectory, 
     return true;
   };
   const admission = createA2aInboundAdmission({ directory: admissionDirectory, verifier, controlPlane, events, assertCurrent: guard });
-  const store = createA2aInboundTaskStore({ directory: taskDirectory, assertCurrent: guard, includeReasoning });
+  const store = createA2aInboundTaskStore({ directory: taskDirectory, assertCurrent: guard, includeReasoning, publicToolPolicy: publicPolicy });
   const appendProduct = controlPlane.appendProductKernelFacts;
   invariant(typeof appendProduct === 'function', 'A2A_INBOUND_PRODUCT_OUTBOX_UNAVAILABLE');
   const dispatcher = createA2AEventDispatcher({ pending: () => store.pendingProduct(),
@@ -143,6 +146,14 @@ export function createA2aInboundServer({ card: cardOptions, admissionDirectory, 
     } else {
       paramsCheck(typeof params.id === 'string' && params.id.length > 0);
       view = store.get(identity, { taskId: params.id });
+      if (!terminal.has(view.task.status.state) && ['get_task', 'subscribe_to_task'].includes(operation)
+        && typeof admission.reconcile === 'function') {
+        for await (const fact of admission.reconcile(input(request, view.task, signal))) {
+          store.apply(identity, { taskId: view.task.id, contextId: view.task.contextId }, fact);
+          dispatcher.wake();
+        }
+        view = store.get(identity, { taskId: params.id });
+      }
       // Reading from the protocol store never grants a new Server mutation.
       if (operation === 'get_task') {
         if (!terminal.has(view.task.status.state)) detach(identity, request, view.task);

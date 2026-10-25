@@ -47,14 +47,15 @@ async function step(work, signal, guard) {
 }
 
 export async function* streamA2aInboundKernelFacts(submission, events, {
-  expectedRunId = null, afterSeq = 0, stopAtWaiting = true, signal, assertCurrent,
+  expectedRunId = null, afterSeq = 0, stopAtWaiting = true, snapshotOnly = false, signal, assertCurrent,
 } = {}) {
   const current = parseA2aInboundSubmission({ SessionId: submission?.sessionId, AgentId: submission?.agentId,
     CommandId: submission?.receipt?.command_id, Receipt: submission?.receipt });
   invariant(accepted(current.receipt.status), 'A2A_INBOUND_COMMAND_NOT_ACCEPTED');
   invariant(integer(afterSeq) && afterSeq >= 0 && typeof stopAtWaiting === 'boolean'
     && (expectedRunId === null || text(expectedRunId)) && signal instanceof AbortSignal
-    && typeof assertCurrent === 'function' && typeof events?.subscribe === 'function', 'A2A_INBOUND_SUBSCRIPTION_INVALID');
+    && typeof snapshotOnly === 'boolean' && typeof assertCurrent === 'function'
+    && typeof events?.[snapshotOnly ? 'read' : 'subscribe'] === 'function', 'A2A_INBOUND_SUBSCRIPTION_INVALID');
   const guard = () => {
     signal.throwIfAborted(); const verdict = assertCurrent();
     if (verdict && typeof verdict.then === 'function') void Promise.resolve(verdict).catch(() => {});
@@ -64,7 +65,25 @@ export async function* streamA2aInboundKernelFacts(submission, events, {
   let runId = current.receipt.run_id ?? expectedRunId, cursor = afterSeq, iterator;
   invariant(!expectedRunId || !current.receipt.run_id || expectedRunId === current.receipt.run_id, 'A2A_INBOUND_RUN_CONFLICT');
   try {
-    const source = await step(() => events.subscribe(current.sessionId, cursor, { signal }), signal, guard);
+    const read = events.read;
+    const source = snapshotOnly ? (async function* () {
+      let nextCursor = afterSeq;
+      for (let pageIndex = 0; pageIndex < 100; pageIndex++) {
+        const page = await step(() => {
+          invariant(events.read === read, 'A2A_INBOUND_AUTHORITY_LOST');
+          return read.call(events, current.sessionId, nextCursor, 100, { signal });
+        }, signal, guard);
+        invariant(Array.isArray(page) && page.length <= 100, 'A2A_INBOUND_EVENT_SOURCE_INVALID');
+        if (!page.length) return;
+        let last = nextCursor;
+        for (const fact of page) {
+          invariant(integer(fact?.seq) && fact.seq > last, 'A2A_INBOUND_EVENT_SOURCE_INVALID');
+          last = fact.seq; yield fact;
+        }
+        nextCursor = last;
+      }
+      invariant(false, 'A2A_INBOUND_RECONCILIATION_LIMIT');
+    })() : await step(() => events.subscribe(current.sessionId, cursor, { signal }), signal, guard);
     invariant(typeof source?.[Symbol.asyncIterator] === 'function', 'A2A_INBOUND_EVENT_SOURCE_INVALID');
     iterator = source[Symbol.asyncIterator]();
     for (;;) {
@@ -96,6 +115,7 @@ export async function* streamA2aInboundKernelFacts(submission, events, {
         guard(); return;
       }
     }
+    if (snapshotOnly) { guard(); return; }
     invariant(false, 'A2A_INBOUND_STREAM_UNCONFIRMED');
   } finally {
     try { if (iterator?.return) void Promise.resolve(iterator.return()).catch(() => {}); } catch {}
