@@ -107,3 +107,21 @@ node --test --test-concurrency=4 tests/*.test.mjs packages/agentkit-harness/test
 ownership，不再误报可恢复。实际命令、测试策略、模块摘要及界面证据见
 [Web 会话记录](native-web-session.md)。未重新全仓测试、安装或打包，远端问答等
 未覆盖界面组合仍保留在能力主表中。
+
+## 内嵌推理兼容收尾
+
+补齐参考 `model_proxy.compat` 的正文投影及增量 projector；策略在新 Run 准入时
+固定，旧 Run 无策略时不改变行为。端点选择优先于模型名，保留 Kimi Code 例外。
+本轮仅运行核心编译，以及以下两个定向命令：
+
+```sh
+node scripts/build-native-harness.mjs
+node --test --test-name-pattern 'inline reasoning:' packages/agentkit-harness/test/native-model.test.mjs
+node --test --test-name-pattern 'managed binding reuses real Studio assembly' tests/studio-native-harness.test.mjs
+```
+
+编译通过，模型 9 项和 Host 2 项通过。真实本地 HTTP 覆盖普通/流式响应、标记跨
+chunk、无标记正文、未闭合推理及中断不释放 pending 内容；Host 原配置恢复一致。
+日志位于 `.artifacts/native-migration/inline-reasoning-{model,host}.log`。
+未重跑全量、双 Node、安装或打包，亦未调用线上模型。厂商请求参数的完整兼容
+不能从这项结果推定，剩余边界见能力主表。

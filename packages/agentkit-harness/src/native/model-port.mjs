@@ -165,7 +165,7 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
     ? createAnthropicStreamState(profile)
     : binding.protocol === 'openai-responses'
       ? createResponsesStreamState(profile)
-      : createOpenAIStreamTurn(profile);
+      : createOpenAIStreamTurn(profile, binding);
   // Idle silence aborts the fetch via the internal controller so the pending
   // body read rejects cleanly instead of leaving an orphaned read to cancel.
   const abort = (reason) => internal.abort(reason);
@@ -209,7 +209,7 @@ async function bufferedResponse(response, request, binding, maxBytes) {
     if (binding.protocol === 'openai-responses') {
       return parseResponsesBuffered(bodyText, request, { captureReplay });
     }
-    return parseOpenAIBuffered(bodyText, request, { captureReplay });
+    return parseOpenAIBuffered(bodyText, request, { captureReplay, binding });
   } catch {
     return terminalResult('invalid_response');
   }

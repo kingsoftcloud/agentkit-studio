@@ -244,6 +244,7 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(
   const bound = await f.host.resolveManagedBinding(f.payload, args);
   const scope = bound.scope;
   assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
+  assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v1', rule: 'auto' });
   assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
   assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
   if (deliveryReviewPolicy) assert.deepEqual(bound.configuration.deliveryReviewPolicy,

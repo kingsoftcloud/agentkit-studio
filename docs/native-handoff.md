@@ -67,5 +67,7 @@ MCP、Skills 和工作区后开始对话。无需 Native 启用开关。凭据�
 3. 有界 YAML、归档路径和公开 HTTPS 重定向策略与 Python 保留差异，见能力主表。
 4. 完整 Electron、其他 OS 和共享 Server 部署能力尚未闭环；Server/AgentKernel
    扩展不能直接算作 Native 核心缺失，也不能宣称当前实现已经提供它们。
+5. 模型内嵌推理过滤已补齐并冻结到 Run 配置；Python provider compatibility
+   中其余厂商请求参数策略尚未逐项完成对照，不能以三协议可运行代替兼容性完成。
 
 剩余事项不作为继续扩大本地回归轮次的理由；后续只处理具体能力缺口及对应证据。

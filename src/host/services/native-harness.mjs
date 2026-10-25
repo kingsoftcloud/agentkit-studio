@@ -37,6 +37,7 @@ import { createStudioNativeVisionBinding } from '../../providers/native-vision-b
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 import { readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
+import { admitInlineReasoningPolicy } from '../../../packages/agentkit-harness/src/native/model-inline-reasoning.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -65,7 +66,8 @@ const recoveredPromptAssembly = (assembly, source) => ({ ...assembly,
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
-  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry, contextSourceRegistry, observability } = {}) {
+  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry, contextSourceRegistry, observability,
+  modelCompatibilityRule } = {}) {
   const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
@@ -360,11 +362,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const memoryVerification = memoryHost ? memoryHost.wrapVerification(verification) : null;
       const modelBinding = (profile, id, boundContext) => {
         const desc = profileDescription(profile), digest = hash(desc);
+        const inlineReasoningPolicy = original ? original.configuration.profile.inlineReasoningPolicy
+          : admitInlineReasoningPolicy(modelCompatibilityRule);
         const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context,
           readWorkingSetDefaults, recentToolBatchDefaults });
         return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
         profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
-          compatibilityDigest: digest, ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
+          compatibilityDigest: inlineReasoningPolicy ? hash({ description: desc, inlineReasoningPolicy }) : digest,
+          ...(inlineReasoningPolicy ? { inlineReasoningPolicy } : {}),
+          ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
           providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
           resolveProfile: async () => {

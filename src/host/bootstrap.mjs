@@ -216,6 +216,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       import('@deepseek-ai/dsh-agent'), studioObservabilityPromise])
       .then(([{ createStudioNativeHarness }, { renderPrompt }, agents, studio, resources, { emitAgentEvent, agentEvents, assembleContextFor }, observability]) => createStudioNativeHarness({
         ctx, storeDir: studioStoreDir, workspaceRoot, agents, builds: studio.build, models, resources, fetchImpl: hostFetch, renderPrompt,
+        modelCompatibilityRule: runtimeEnv.KSADK_MODEL_COMPAT_RULE,
         publishStreamFrame: ({ agent }, frame) => emitAgentEvent(ctx, agent, 'agent/assistant-stream', { frame }),
         agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks, contextSourceRegistry: bridge.nativeContextSources, observability,
       })), 'agentkit-studio: Native Harness lifetime');

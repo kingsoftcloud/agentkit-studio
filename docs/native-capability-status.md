@@ -47,6 +47,13 @@
 
 ## 必须保留的差异与未闭环项
 
+OpenAI Chat 的内嵌推理过滤已按参考实现补齐：GLM/Z.AI 和 KSPMAS
+使用版本化策略，兼顾 Kimi Code 例外、跨 chunk 标记、非流式和未闭合推理段。
+新 Run 保存策略及兼容指纹，恢复沿用原策略；没有策略的旧 Run 保持原行为。
+`KSADK_MODEL_COMPAT_RULE` 在 Host 准入时解析，不在请求或恢复中重新读取。
+这项完成不代表 Python `model_proxy.compat` 中所有厂商请求参数规则均已移植；
+thinking/effort、required tool choice 等厂商特殊策略仍需逐项对照，不能宣称已逐项无损。
+
 1. **Studio 浏览器流程**：普通对话、允许/拒绝、历史重开、刷新活动流、取消和原运行
    收尾已有[真实浏览器证据](native-web-session.md)。远端问答、子任务控制和其他错误
    组合尚未全部实际操作，不能从已覆盖路径推广为产品 UI 全部完成。

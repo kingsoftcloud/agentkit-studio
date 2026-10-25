@@ -69,6 +69,9 @@ export interface ModelProfile {
   retryMaxDelayMs: number; retryBackoffMultiplier: number; rateLimitCooldownMs: number;
   providerReplayMode: 'none' | 'reasoning_content' | 'anthropic_content';
   compatibilityDigest: string;
+  /** Absent on older Runs; projection policy is frozen at admission. */
+  inlineReasoningPolicy?: { contract: 'profiled-content/v1'; rule: 'auto' | 'permissive' | 'openai'
+    | 'strict-openai' | 'cerebras' | 'groq' | 'deepseek' | 'zai' | 'kspmas-gateway' | 'moonshot' | 'mimo' };
 }
 export interface RunLimits {
   maxWallMs: number | null; maxModelCalls: number | null; maxToolCalls: number | null;

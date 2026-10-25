@@ -150,6 +150,14 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     && profile.requestTimeoutMs > 0 && profile.requestTimeoutMs < limits.effectTimeoutMs
     && profile.maxProviderRetries <= 9 && profile.retryInitialDelayMs <= profile.retryMaxDelayMs
     && Number.isFinite(profile.retryBackoffMultiplier) && profile.retryBackoffMultiplier >= 1, 'invalid_model_profile');
+  if (profile.inlineReasoningPolicy !== undefined) {
+    const policy = profile.inlineReasoningPolicy;
+    invariant(policy !== null && typeof policy === 'object' && !Array.isArray(policy)
+      && Object.keys(policy).every(key => ['contract', 'rule'].includes(key))
+      && policy.contract === 'profiled-content/v1'
+      && ['auto', 'permissive', 'openai', 'strict-openai', 'cerebras', 'groq', 'deepseek',
+        'zai', 'kspmas-gateway', 'moonshot', 'mimo'].includes(policy.rule), 'invalid_inline_reasoning_policy');
+  }
   const names = new Set<string>();
   for (const tool of config.tools) {
     invariant(tool.name.trim() && !names.has(tool.name), 'duplicate_or_invalid_tool');

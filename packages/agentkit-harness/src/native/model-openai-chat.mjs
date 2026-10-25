@@ -6,19 +6,14 @@
 // and never executes tools; it emits text/thinking/tool_delta display deltas and
 // returns one sealed ModelResult. Kernel policy owns backoff and call budgets.
 //
-// Inline reasoning projection (the GLM source-compat rule that strips a
-// visible thinking block from content) is NOT migrated here. That rule lives
-// in the Python reference provider-compat layer and has no counterpart in the
-// JS contract compatibilityDigest (an opaque binding fingerprint, not a rule
-// selector). Content deltas are emitted verbatim as text; a provider embedding
-// reasoning in content will surface it. This is a known, unfilled gap, not a
-// claim of complete fidelity.
+// Profiled inline reasoning is projected under the Run's frozen policy.
 
 import {
   normalizeResponse, parseOpenAIUsage, sealUsage, ProtocolError, resolveUrl, boundOutputTokens,
 } from './model-normalize.mjs';
 import { sealModelReplay, openAIReplayFields } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaOpenAI, MediaError } from './model-media.mjs';
+import { inlineReasoningMarker, projectInlineReasoning, createInlineReasoningProjector } from './model-inline-reasoning.mjs';
 // parseModelJson is the kernel's strict finite JSON parser: it rejects
 // duplicate object keys and non-finite numbers (e.g. 1e400). Using it here keeps
 // provider-envelope and tool-argument decoding consistent with the kernel's
@@ -198,7 +193,7 @@ function validateAssistantToolIds(calls) {
 // Parse a buffered 2xx chat completions body into a sealed result. Used when a
 // 2xx response is not SSE (rare for stream:true); also the basis for envelope
 // validation. Throws ProtocolError on a malformed envelope.
-export function parseOpenAIBuffered(bodyText, request, { captureReplay = false } = {}) {
+export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, binding } = {}) {
   let payload;
   try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -227,6 +222,7 @@ export function parseOpenAIBuffered(bodyText, request, { captureReplay = false }
   let text = message.content;
   if (text == null) text = '';
   if (typeof text !== 'string') throw new ProtocolError('unsupported assistant content');
+  text = projectInlineReasoning(text, inlineReasoningMarker(request.profile.inlineReasoningPolicy, binding));
   let calls;
   // tool_calls truthiness mirrors Python: an empty array carries no calls.
   const rawCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
@@ -330,9 +326,12 @@ function chatReasoning(message) {
 // assembled tool batch and reported usage across SSE frames. Mirrors
 // ksadk._StreamTurn. Frame errors throw ProtocolError; finalize preserves the
 // accumulated text/usage and classifies the attempt.
-export function createOpenAIStreamTurn(profile) {
+export function createOpenAIStreamTurn(profile, binding) {
   const captureReplay = profile.providerReplayMode !== 'none';
   const emitThinking = profile.providerReplayMode !== 'none';
+  const marker = inlineReasoningMarker(profile.inlineReasoningPolicy, binding);
+  const projector = createInlineReasoningProjector(marker);
+  let emitContent;
   return {
     text: '',
     reasoning: '',
@@ -345,6 +344,7 @@ export function createOpenAIStreamTurn(profile) {
     done: false,
 
     consume(frame, emit) {
+      emitContent = emit;
       const data = frame.data;
       if (data.trim() === '[DONE]') { this.done = true; return; }
       let payload;
@@ -399,7 +399,8 @@ export function createOpenAIStreamTurn(profile) {
         this.finish = finish;
       }
       this.text += content;
-      if (content) emit({ kind: 'text', text: content });
+      const publicContent = projector.push(content);
+      if (publicContent) emit({ kind: 'text', text: publicContent });
       if (reasoning && emitThinking) emit({ kind: 'thinking', text: reasoning });
       try {
         if ('function_call' in delta) throw new ProtocolError('legacy function calls are unsupported');
@@ -447,6 +448,17 @@ export function createOpenAIStreamTurn(profile) {
     },
 
     finalize({ errorKind = null, failureKind = null } = {}) {
+      const result = this.rawResult({ errorKind, failureKind });
+      if (!['provider_retryable_error', 'provider_terminal_error'].includes(result.kind)) {
+        const tail = projector.seal();
+        if (tail) emitContent?.({ kind: 'text', text: tail });
+      }
+      const text = projectInlineReasoning(result.text, marker);
+      return text === result.text ? result : { ...result, text,
+        kind: result.kind === 'final_candidate' && !text.trim() ? 'empty_response' : result.kind };
+    },
+
+    rawResult({ errorKind = null, failureKind = null } = {}) {
       const finish = this.refused ? 'content_filter' : this.finish;
       const { usage, usageReported } = sealUsage(this.usage);
       if (errorKind && errorKind !== 'provider_retryable_error') {

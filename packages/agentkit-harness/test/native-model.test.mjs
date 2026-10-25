@@ -10,6 +10,48 @@ import { deepEqual as looseEqual } from 'node:assert';
 import http from 'node:http';
 import { createNativeModelPort } from '../src/native/model-port.mjs';
 import { readModelSse } from '../src/native/model-sse.mjs';
+import { admitInlineReasoningPolicy, inlineReasoningMarker, projectInlineReasoning } from '../src/native/model-inline-reasoning.mjs';
+
+test('inline reasoning: reference provider selection preserves unrelated and legacy content', () => {
+  const text = 'private</think>public', auto = admitInlineReasoningPolicy();
+  for (const [policy, binding, expected] of [
+    [auto, { model: 'glm-5.3-flash' }, 'public'],
+    [auto, { model: 'glm-5.3-flash', baseUrl: 'https://deepseek.invalid' }, text],
+    [auto, { model: 'kimi-k2.7-code', baseUrl: 'https://kspmas.invalid' }, text],
+    [auto, { model: 'unknown' }, text],
+    [admitInlineReasoningPolicy('strict-openai'), { model: 'glm' }, text],
+    [admitInlineReasoningPolicy('unknown-rule'), { model: 'glm' }, text],
+    [undefined, { model: 'glm' }, text],
+  ]) assert.equal(projectInlineReasoning(text, inlineReasoningMarker(policy, binding)), expected);
+});
+
+test('inline reasoning: real HTTP stream and buffered responses follow the Python projection', async t => {
+  const profile = makeProfile({ inlineReasoningPolicy: admitInlineReasoningPolicy('zai') });
+  for (const streaming of [false, true]) for (const [chunks, expected] of [
+    [['The screenshot shows 6428.</thi', 'nk>64', '28'], '6428'],
+    [['Ordinary ', 'answer'], 'Ordinary answer'],
+    [['\u0085<think>unfinished'], ''],
+  ]) await t.test(`${streaming ? 'stream' : 'buffered'} ${JSON.stringify(expected)}`, async () => {
+    const handler = () => streaming ? { headers: SSE_HEADERS, body: [
+      ...chunks.map(text => sse(ochunk({ content: text }))), sse(ochunk({}, 'stop')), sseDone(),
+    ] } : { headers: JSON_HEADERS, body: JSON.stringify({ choices: [{ finish_reason: 'stop',
+      message: { role: 'assistant', content: chunks.join('') } }] }) };
+    const { result, events, requests } = await collect(null, 'openai-chat', handler, makeRequest({ profile }));
+    assert.equal(result.text, expected);
+    assert.equal(result.kind, expected ? 'final_candidate' : 'empty_response');
+    if (streaming) assert.equal(events.filter(event => event.kind === 'text').map(event => event.text).join(''), expected);
+    assert.equal(requests.length, 1);
+  });
+});
+
+test('inline reasoning: incomplete streams never release pending private content', async () => {
+  const { result, events } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS,
+    body: [sse(ochunk({ content: '<think>unfinished' }))] }),
+  makeRequest({ profile: makeProfile({ inlineReasoningPolicy: admitInlineReasoningPolicy('zai') }) }));
+  assert.equal(result.kind, 'provider_retryable_error');
+  assert.equal(result.text, '');
+  assert.equal(events.some(event => event.kind === 'text'), false);
+});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
