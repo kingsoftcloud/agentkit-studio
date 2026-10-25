@@ -36,6 +36,7 @@ import type { ChildLifecycleResult, ChildTaskControlState } from './child-contra
 import { childControlDelivery } from './child-control.mjs';
 import type { BackgroundCommandRequest } from './background-contract.mjs';
 import { toolResourceUsageFacts, unknownToolResourceUsageFacts } from './tool-resource-usage.mjs';
+import { deliveryReviewMessages, reviewPending, unavailableReview } from './delivery-review.mjs';
 
 export interface KernelOptions {
   store: RunStore; ports: NativePorts; owner: string;
@@ -475,7 +476,7 @@ export class NativeKernel {
     let raw: ObjectValue, status: EffectReceipt['status'] = 'committed', changes: Partial<RunSnapshot>;
     let consumedCommandId: string | null = null;
     const facts: { kind: string; payload: ObjectValue }[] = [];
-    const capture = intent.kind === 'model' && intent.payload.purpose !== 'compaction'
+    const capture = intent.kind === 'model' && intent.payload.purpose !== 'compaction' && intent.payload.purpose !== 'delivery_review'
       && configuration.contract.finalSubmissionSchema === null
       ? modelStreamCapture(configuration.limits.maxModelStreamBytes ?? 1024 * 1024, this.now,
         (event, record) => this.onStream({ ...context, scope: copy(context.scope) }, event, record)) : null;
@@ -512,7 +513,16 @@ export class NativeKernel {
             break;
           }
           const result = normalizeToolIdentities(snapshot, raw as unknown as ModelResult, this.digest);
-          changes = reduceModel(snapshot, result, configuration, this.now(), this.random(), this.digest);
+          changes = reduceModel(snapshot, result, configuration, this.now(), this.random(), this.digest, intent.operationKey);
+          if (intent.payload.purpose === 'delivery_review') {
+            const offset = changes.messages?.slice(snapshot.messages.length).findIndex(message => message.kind === 'delivery_review_source') ?? -1;
+            facts.push({ kind: 'completion.delivery_review_completed', payload: { kind: result.kind,
+              messageIndex: offset < 0 ? null : snapshot.messages.length + offset,
+              messageCursor: changes.messages?.length ?? snapshot.messages.length, text: '',
+              toolCalls: offset < 0 ? [] : result.toolCalls.map(objectValue), usage: objectValue(result.usage), usageReported: result.usageReported !== false,
+              status: changes.deliveryReview?.status ?? snapshot.deliveryReview!.status } });
+            break;
+          }
           if (changes.outputRestarts === snapshot.outputRestarts + 1)
             facts.push({ kind: 'output.restarted', payload: outputRestartPayload(snapshot, { ...snapshot, ...changes }) });
           if (changes.candidate) changes.candidate = sealCandidate(changes.candidate, { ...snapshot, ...changes }, configuration, this.digest);
@@ -571,6 +581,7 @@ export class NativeKernel {
             && snapshot.lastBrowserObservation?.toolCall === snapshot.usage.toolCalls
             && snapshot.lastWorkspaceMutationToolCall !== snapshot.usage.toolCalls;
           changes = { pendingIntent: null, workspaceRevision: observation.revision,
+            ...(configuration.deliveryReviewPolicy ? { workspaceObservationStatus: observation.status === 'ok' ? 'captured' as const : 'unavailable' as const } : {}),
             workspaceDirtySinceCheckpoint: snapshot.workspaceDirtySinceCheckpoint || observation.changedPaths.length > 0
               || revisionChanged && !browserArtifactOnly,
             lastWorkspaceMutationToolCall: revisionChanged && !browserArtifactOnly ? snapshot.usage.toolCalls : snapshot.lastWorkspaceMutationToolCall,
@@ -583,6 +594,7 @@ export class NativeKernel {
               && (configuration.limits.maxModelCalls === null
                 || modelRoom(snapshot, configuration) > 0);
             changes = { ...changes, phase: repair ? 'preparing_context' : 'finalizing', candidate: null,
+              ...(snapshot.deliveryReview ? { deliveryReview: { ...snapshot.deliveryReview, status: 'unavailable' as const, reason: 'review_subject_changed' } } : {}),
               verification: null, outcome: repair ? null : 'unverified', reason: repair ? null : 'candidate_workspace_changed',
               repairs: snapshot.repairs + (repair ? 1 : 0), finalText: repair ? '' : snapshot.candidate.text,
               messages: [...snapshot.messages, { role: 'user', kind: 'verification_feedback',
@@ -599,6 +611,7 @@ export class NativeKernel {
               ...(result.action === 'blocked' ? { outcome: 'blocked' as const, reason: result.reason } : {}),
               context: { ...snapshot.context, preparedCursor: intent.payload.cursor ?? null,
                 ...(raw.contributions ? { contributions: objectValue(raw.contributions) } : {}) } };
+            if (reviewPending(snapshot) && result.action !== 'ready') changes = { ...changes, ...unavailableReview(snapshot, 'review_context_budget_unavailable') };
             if (result.action === 'ready') {
               invariant(result.admission && result.admission.sourceDigest === contextSourceDigest(snapshot, this.digest)
                 && result.admission.countedInputTokens + result.admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
@@ -663,6 +676,7 @@ export class NativeKernel {
       } else if (intent.kind === 'context' && configuration.contextPolicy || ['invalid_context_messages', 'invalid_context_tool_pairing', 'context_binding_mismatch', 'context_hook_feedback_missing', 'context_guidance_missing'].includes(code)) {
         raw = { code }; status = 'failed';
         changes = { pendingIntent: null, preparedContext: null, phase: 'finalizing', outcome: 'blocked', reason: code };
+        if (reviewPending(snapshot)) changes = unavailableReview(snapshot, code);
       } else if (intent.kind === 'model' && !signal.aborted && ['effect_timeout', 'effect_port_error'].includes(code)) {
         const result: ModelResult = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false,
           failureKind: code === 'effect_timeout' ? 'request_timeout' : 'host_error' };
@@ -690,6 +704,10 @@ export class NativeKernel {
       clearTimeout(timer); effectSignal.removeEventListener('abort', abortListener);
     }
     if (intent.kind === 'model') {
+      if (intent.payload.purpose === 'delivery_review' && !facts.some(fact => fact.kind === 'completion.delivery_review_completed'))
+        facts.push({ kind: 'completion.delivery_review_completed', payload: { kind: 'provider_retryable_error', text: '', toolCalls: [],
+          messageIndex: null, messageCursor: changes.messages?.length ?? snapshot.messages.length, usage: objectValue(emptyUsage()), usageReported: false,
+          status: changes.deliveryReview?.status ?? snapshot.deliveryReview!.status } });
       // Port-supplied display envelopes are never trusted. Only this driver's
       // accepted prefix is bound to the durable effect receipt and event.
       delete raw.displayStream;
@@ -725,6 +743,8 @@ export class NativeKernel {
         finally { if (this.childObservers.get(key) === waiting) this.childObservers.delete(key); }
       }
       case 'model': {
+        const review = intent.payload.purpose === 'delivery_review';
+        invariant(review === reviewPending(snapshot) || intent.payload.purpose === 'compaction', 'model_purpose_changed');
         if (configuration.contextPolicy) {
           invariant(this.ports.context?.tokens?.tokenizerId === configuration.contextPolicy.tokenizerId
             && this.ports.context.tokens.tokenizerDigest === configuration.contextPolicy.tokenizerDigest, 'context_tokenizer_binding_mismatch');
@@ -745,7 +765,9 @@ export class NativeKernel {
             && admission.countedInputTokens + admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
         }
         const request: ModelRequest = { ...context, profile: copy(configuration.profile),
-          messages: browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest)),
+          ...(review ? { purpose: 'delivery_review' as const } : {}),
+          messages: review ? snapshot.preparedContext ? modelContextMessages(snapshot, this.digest) : deliveryReviewMessages(snapshot)
+            : browserTaskMessages(beforeCall, configuration, modelContextMessages(snapshot, this.digest)),
           tools: copy(advertisedTools(beforeCall, configuration)), finalizationOnly: intent.payload.finalizationOnly === true,
           maxInlineImageBytes: configuration.limits.maxInlineImageBytes };
         return this.ports.model.generate(request, emit);
@@ -815,7 +837,8 @@ export class NativeKernel {
           })) } } : planned;
         }
         invariant(this.ports.context.prepare, 'context_prepare_port_missing');
-        return this.ports.context.prepare({ ...context, snapshot: copy(snapshot), configuration: copy(configuration), forceCompaction: intent.payload.forceCompaction === true });
+        const prepared = await this.ports.context.prepare({ ...context, snapshot: copy(snapshot), configuration: copy(configuration), forceCompaction: intent.payload.forceCompaction === true });
+        return reviewPending(snapshot) ? { ...prepared, messages: deliveryReviewMessages(snapshot, prepared.messages) } : prepared;
       }
       case 'verify': invariant(this.ports.verification && snapshot.candidate, 'verification_port_missing'); return this.ports.verification.verify({ ...context,
         snapshot: copy(snapshot), contract: copy(configuration.contract), candidate: copy(snapshot.candidate) });

@@ -3,7 +3,8 @@ import { canonical, copy, invariant } from './values.mjs';
 
 export function contextSourceDigest(snapshot: RunSnapshot, digest: (value: unknown) => string): string {
   return digest({ messages: snapshot.messages, goalRevision: snapshot.goalRevision,
-    workspaceRevision: snapshot.workspaceRevision, configDigest: snapshot.configDigest });
+    workspaceRevision: snapshot.workspaceRevision, configDigest: snapshot.configDigest,
+    ...(snapshot.deliveryReview?.status === 'pending' ? { deliveryReview: snapshot.deliveryReview } : {}) });
 }
 
 /** Validate the provider-neutral protocol after pruning, before a model can see it. */

@@ -79,8 +79,8 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
 
-test('managed binding reuses real Studio assembly with its own ledger and trusted principal', async t => {
-  const f = await setup(t, { recovery: true }), store = new MemoryRunStore();
+for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(`managed binding reuses real Studio assembly with its own ledger and trusted principal${deliveryReviewPolicy ? ' and pinned review policy' : ''}`, async t => {
+  const f = await setup(t, { recovery: true, ...(deliveryReviewPolicy ? { spec: { execution: { deliveryReviewPolicy } } } : {}) }), store = new MemoryRunStore();
   const target = { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id };
   const principal = { userId: 'managed-user' }, runId = 'managed-real-run';
   const args = { store, admission: null, runId, target, principal };
@@ -89,6 +89,8 @@ test('managed binding reuses real Studio assembly with its own ledger and truste
   assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
   assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
   assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
+  if (deliveryReviewPolicy) assert.deepEqual(bound.configuration.deliveryReviewPolicy,
+    { pathSuffixes: ['.ts'], maxRounds: 2, maxReadRounds: 2, reviewUnknownPaths: true });
   assert.equal(scope.tenantId, target.tenantId); assert.equal(scope.userId, principal.userId);
   assert.equal(scope.agentId, target.agentInstanceId);
   const kernel = new NativeKernel({ store, ports: bound.ports, owner: 'managed-test-owner', digest });
@@ -156,6 +158,40 @@ test('shared Native Host rejects an invalid diagnostic allowance before inferenc
   const f = await setup(t, { spec: { execution: { toolErrorRecoveryModelCalls: 0 } } });
   await assert.rejects(f.host.executeTurn(f.payload), { code: 'invalid_tool_error_recovery_model_calls' });
   assert.equal(f.requests.length, 0);
+});
+
+for (const frozen of [false, true]) test(`shared Native ${frozen ? 'Frozen Build' : 'Revision'} Host keeps model-assisted delivery review private and repairs actual source`, async t => {
+  const reviewData = findings => ({ requirements: [{ requirement: 'PRIVATE_REVIEW_BODY', implementation_evidence: 'ledger.ts',
+    verification_evidence: 'Semantic acceptance unavailable.' }], findings });
+  const f = await setup(t, { sqlite: true, spec: { execution: { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } }, respond: count => {
+    if ([1, 4].includes(count) || [3, 6].includes(count)) return { choices: [{ index: 0, delta: { tool_calls: [{ index: 0,
+      id: `review-flow-${count}`, type: 'function', function: { name: [1, 4].includes(count) ? 'write' : 'submit_delivery_review',
+        arguments: JSON.stringify([1, 4].includes(count) ? { text: count === 1 ? 'broken' : 'fixed zero case' }
+          : reviewData(count === 3 ? [{ issue: 'Missing zero case.', recommended_check: 'Inspect and repair the source.' }] : [])) } }] }, finish_reason: 'tool_calls' }] };
+    return { choices: [{ index: 0, delta: { content: count === 2 ? 'Candidate.' : 'Repaired.' }, finish_reason: 'stop' }] };
+  } });
+  const file = join(f.root, 'workspace', 'ledger.ts');
+  f.payload.binding.nativeTools = { definitions: () => [tool({ name: 'write', readOnly: false, concurrentSafe: false })],
+    forAgent: () => ({ workspace: { observe: async () => ({ status: 'ok', changedPaths: [],
+      revision: createHash('sha256').update(await readFile(file).catch(error => {
+        if (error.code === 'ENOENT') return Buffer.alloc(0); throw error;
+      })).digest('hex') }) }, tools: { execute: async request => { await writeFile(file, request.call.arguments.text);
+      return { status: 'ok', content: 'written', workspaceChangedPaths: ['ledger.ts'] }; } } }) };
+  if (frozen) f.payload.binding.buildId = 'review-build';
+  await f.host.executeTurn(f.payload);
+  const record = f.ledger.load(f.head().scope, f.head().runId);
+  assert.equal(record.snapshot.usage.modelCalls, 6, JSON.stringify({ reason: record.snapshot.reason,
+    policy: record.configuration.deliveryReviewPolicy, status: record.snapshot.workspaceObservationStatus,
+    paths: record.snapshot.workspaceModifiedPaths, mutation: record.snapshot.lastWorkspaceMutationToolCall,
+    review: record.snapshot.deliveryReview, limits: record.configuration.limits })); assert.equal(record.snapshot.usage.toolCalls, 2);
+  assert.equal(record.snapshot.repairs, 1); assert.equal(record.snapshot.finalText, 'Repaired.'); assert.equal(record.snapshot.outcome, 'unverified');
+  assert.equal(record.snapshot.deliveryReview.rounds, 2); assert.equal(await readFile(file, 'utf8'), 'fixed zero case');
+  assert.deepEqual(record.configuration.deliveryReviewPolicy, { pathSuffixes: ['.ts'], maxRounds: 2, maxReadRounds: 2, reviewUnknownPaths: true });
+  assert.deepEqual(f.requests.map(request => JSON.parse(request.options.body).tools?.map(definition => definition.function.name))
+    .filter((_tools, index) => [2, 5].includes(index)), [['submit_delivery_review'], ['submit_delivery_review']]);
+  assert.equal(f.events.filter(event => event.type === 'tool/result').length, 2);
+  assert.equal(JSON.stringify(f.events).includes('PRIVATE_REVIEW_BODY'), false);
+  if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'review-build'));
 });
 
 test('managed discovery releases its Session resources before an ordinary Native turn can bind', async t => {

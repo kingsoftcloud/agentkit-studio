@@ -237,7 +237,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
             try { status = JSON.parse(message.content)?.status; } catch { status = undefined; }
           }
           result(`transcript:${index}`, message.callId, message, ['error', 'uncertain', 'not_dispatched'].includes(status));
-        } else invariant(false, 'native_delivery_assistant_binding_missing');
+        } else if (message.role !== 'assistant' || message.kind !== 'candidate_draft') invariant(false, 'native_delivery_assistant_binding_missing');
       }
     };
     for (const event of events) {
@@ -247,9 +247,9 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         messages.splice(retained, retired.length, notice); cursor = retained;
         continue;
       }
-      if (!['model.completed', 'context.summary_completed', 'model.stream_interrupted'].includes(event.kind)) continue;
+      if (!['model.completed', 'context.summary_completed', 'completion.delivery_review_completed', 'model.stream_interrupted'].includes(event.kind)) continue;
       const payload = event.payload, index = payload.messageIndex;
-      const summary = event.kind === 'context.summary_completed';
+      const summary = event.kind === 'context.summary_completed' || event.kind === 'completion.delivery_review_completed' && index === null;
       const interrupted = event.kind === 'model.stream_interrupted';
       if (interrupted) {
         drain(payload.messageCursor);
@@ -325,7 +325,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
   };
   delivery.beginStream = () => {
     const record = store.load(scope, runId);
-    const step = 1 + record.events.filter(event => ['model.completed', 'context.summary_completed', 'model.stream_interrupted'].includes(event.kind)).length;
+    const step = 1 + record.events.filter(event => ['model.completed', 'context.summary_completed', 'completion.delivery_review_completed', 'model.stream_interrupted'].includes(event.kind)).length;
     if (step > 1) append('step/end', { turn, step: step - 1 });
     append('step/start', { turn, step });
     return step;

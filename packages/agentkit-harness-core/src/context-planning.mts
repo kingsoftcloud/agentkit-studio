@@ -4,9 +4,10 @@ import { canonical, copy, invariant } from './values.mjs';
 import { contextSourceDigest, validateContextMessages } from './context-view.mjs';
 import { assertHookFeedbackRetained } from './hook-runtime.mjs';
 import { retryDelay } from './retry.mjs';
+import { deliveryReviewMessages, reviewPending } from './delivery-review.mjs';
 
 export interface ContextCounters {
-  countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction', maxOutputTokens: number): Promise<number>;
+  countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number): Promise<number>;
   countText(text: string): Promise<number>;
 }
 const emptyState = (): ContextPlanningState => ({ history: null, compaction: null, compactions: 0,
@@ -177,6 +178,24 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   const policy = config.contextPolicy;
   invariant(policy, 'context_policy_missing');
   const state = copy(snapshot.contextState ?? emptyState());
+  if (reviewPending(snapshot)) {
+    const active = activeIndexes(snapshot, state, config, digest).map(index => copy(snapshot.messages[index]!));
+    const admitted: Message[] = [];
+    const projection = () => deliveryReviewMessages(snapshot, withSummary(active, state.history?.summary ?? '', contextContinuity(snapshot, config), admitted));
+    for (const message of inputContributions) {
+      invariant(message.role === 'user' && message.kind === 'context_contribution'
+        && Object.keys(message).every(key => ['role', 'kind', 'content'].includes(key)), 'context_contribution_invalid');
+      admitted.push(copy(message));
+      if (checkedCount(await counters.countRequest(projection(), copy(tools), 'delivery_review', config.profile.maxOutputTokens))
+        + config.profile.maxOutputTokens > config.profile.contextWindow) admitted.pop();
+    }
+    const messages = projection(), countedInputTokens = checkedCount(await counters.countRequest(messages, copy(tools), 'delivery_review', config.profile.maxOutputTokens));
+    if (forceCompaction || state.compaction || countedInputTokens + config.profile.maxOutputTokens > config.profile.contextWindow)
+      return { action: 'blocked', reason: 'review_context_budget_unavailable', state, messages: [], admission: null };
+    return { action: 'ready', reason: 'delivery_review_ready', state, messages, admission: {
+      sourceDigest: contextSourceDigest(snapshot, digest), toolsDigest: digest(tools), tokenizerId: policy.tokenizerId,
+      tokenizerDigest: policy.tokenizerDigest, countedInputTokens, maxOutputTokens: config.profile.maxOutputTokens, contextWindow: config.profile.contextWindow } };
+  }
   let contributions: Message[] = [];
   if (inputContributions.length) {
     invariant(inputContributions.every(message => message.role === 'user' && message.kind === 'context_contribution'

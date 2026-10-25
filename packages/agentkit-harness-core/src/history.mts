@@ -5,7 +5,7 @@ import { canonical, copy, invariant } from './values.mjs';
 type Identify = (value: unknown) => string;
 const inheritedKinds = new Set(['user_guidance', 'historical_tool_observation',
   'guidance', 'steering', 'user_input', 'dsh_context', 'tool_context', 'host_input',
-  'historical_verification_observation', 'user_document_observation', 'background_child_observation', 'background_command_observation']);
+  'historical_verification_observation', 'user_document_observation', 'background_child_observation', 'background_command_observation', 'delivery_review_source']);
 
 /** Imported protocol ids are stable across later turns; observations grant no new execution. */
 export function projectSessionHistory(parent: StoredRun | null, configuration: RunConfiguration, identify: Identify): Message[] {
@@ -29,7 +29,7 @@ export function projectSessionHistory(parent: StoredRun | null, configuration: R
     const source = message.history ?? { sourceRunId: snapshot.runId, sourceIndex: index };
     invariant(source.sourceRunId.trim() && Number.isSafeInteger(source.sourceIndex) && source.sourceIndex >= 0, 'invalid_historical_source');
     message.history = source;
-    if (!replayAllowed) { delete message.providerReplay; delete message.replayToolIds; }
+    if (!replayAllowed || original.kind === 'delivery_review_source') { delete message.providerReplay; delete message.replayToolIds; }
     if (message.role === 'tool') {
       const pair = message.callId ? pending.get(message.callId) : undefined;
       if (pair) {

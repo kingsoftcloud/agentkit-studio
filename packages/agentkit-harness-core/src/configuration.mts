@@ -1,10 +1,11 @@
 import { emptyUsage, NATIVE_ENGINE, NATIVE_SCHEMA } from './contracts.mjs';
-import type { Message, ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapshot, TaskContract, ToolDefinition } from './contracts.mjs';
+import type { DeliveryReviewPolicy, Message, ModelProfile, RunConfiguration, RunIdentity, RunLimits, RunSnapshot, TaskContract, ToolDefinition } from './contracts.mjs';
 import { canonical, copy, invariant, scopeKey } from './values.mjs';
 import { validateSubmissionContract } from './final-submission.mjs';
 import { compileToolInput } from './tool-input.mjs';
 import { validateHookDefinition } from './hook-contract.mjs';
 import { validateContextSource } from './context-contributions.mjs';
+import { normalizeDeliveryReviewPolicy, REVIEW_SUBMISSION_TOOL } from './delivery-review.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -17,6 +18,7 @@ export interface ConfigurationInput {
   outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
+  deliveryReviewPolicy?: (Partial<DeliveryReviewPolicy> & Pick<DeliveryReviewPolicy, 'pathSuffixes'>) | null;
   hostRecoveryBinding?: RunConfiguration['hostRecoveryBinding'];
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
@@ -52,6 +54,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
+    ...(input.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: input.deliveryReviewPolicy === null ? null : normalizeDeliveryReviewPolicy(input.deliveryReviewPolicy) }),
     ...(input.hostRecoveryBinding === undefined ? {} : { hostRecoveryBinding: input.hostRecoveryBinding }),
     ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
     ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
@@ -75,6 +78,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(config.toolErrorRecoveryPolicy == null || config.toolErrorRecoveryPolicy === 'diagnose-before-repeat/v1', 'invalid_tool_error_recovery_policy');
   invariant(config.toolErrorRecoveryModelCalls == null || Number.isSafeInteger(config.toolErrorRecoveryModelCalls)
     && config.toolErrorRecoveryModelCalls >= 1 && config.toolErrorRecoveryModelCalls <= 10, 'invalid_tool_error_recovery_model_calls');
+  invariant(config.deliveryReviewPolicy == null || !config.tools.some(tool => tool.name === REVIEW_SUBMISSION_TOOL), 'reserved_delivery_review_tool');
   invariant(config.childLifecyclePolicy == null || config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_lifecycle_policy');
   invariant(config.childApprovalPolicy == null || config.childApprovalPolicy === 'owned-child-approval/v1'
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');
@@ -206,6 +210,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     ...(configuration.guidancePolicy === 'boundary-guide/v1' ? { pendingGuidanceIds: [] } : {}),
     ...(configuration.toolErrorRecoveryPolicy != null || configuration.toolErrorRecoveryModelCalls != null
       ? { toolErrorRecovery: null, observedProgressRevision: 0, observedProgressFingerprints: [] } : {}),
+    ...(configuration.deliveryReviewPolicy ? { deliveryReview: null, workspaceObservationStatus: 'unavailable' as const } : {}),
     pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
     usage: emptyUsage(), descendantUsage: emptyUsage(), modelErrors: 0, providerErrors: 0,
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,

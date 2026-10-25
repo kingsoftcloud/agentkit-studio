@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { canonical, copy, invariant } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, normalizeDeliveryReviewPolicy } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeModelPort, nativeModelRecoveryPolicy } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
@@ -288,11 +288,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
         : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1',
           ...(record.spec.execution?.toolErrorRecoveryModelCalls === undefined ? {}
-            : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }) };
+            : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
+          ...(record.spec.execution?.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: record.spec.execution.deliveryReviewPolicy === null
+            ? null : normalizeDeliveryReviewPolicy(record.spec.execution.deliveryReviewPolicy) }) };
       if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
         'studio_native_recovery_prompt_changed');
       // Seal the Host recovery capsule once per Build. The Memory owner guard

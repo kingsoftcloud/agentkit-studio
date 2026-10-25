@@ -54,6 +54,37 @@ test('two output retirements preserve original model positions, committed tools 
   assert.equal(JSON.stringify(f.store.events(scope, 'run').filter(event => event.kind === 'output.restarted')).includes('providerReplay'), false);
   assert.equal(JSON.stringify(coldSink.events).includes('private-should-not-be-published'), false);
 });
+
+test('private review usage and source reads survive cold Session delivery without publishing critique or drafts', async t => {
+  const f = setup(t, undefined, { deliveryReviewPolicy: { pathSuffixes: ['.ts'] },
+    tools: [tool({ name: 'write', readOnly: false, concurrentSafe: false }), tool({ name: 'read', contextRole: 'workspace_read' })],
+    limits: { maxModelCalls: 20, maxToolCalls: 20, finalizationReserveModelCalls: 0 } });
+  const sink = consumer(), calls = []; let models = 0, writes = 0, seen = 0;
+  const data = findings => ({ requirements: [{ requirement: 'PRIVATE_REVIEW_JSON', implementation_evidence: 'ledger.ts', verification_evidence: 'Missing semantics.' }], findings });
+  const result = await new NativeKernel({ store: f.store, digest, owner: 'review-delivery', onCheckpoint: delivery(f.store, sink), ports: {
+    model: { generate: async (request, emit) => {
+      const count = ++models; emit({ kind: 'text', text: request.purpose === 'delivery_review' ? 'PRIVATE_REVIEW_STREAM' : 'provisional' });
+      if ([1, 3, 5].includes(count)) return { ...final(), kind: 'tool_calls', text: count === 3 ? 'PRIVATE_REVIEW_SOURCE_PROSE' : '',
+        toolCalls: [{ callId: `call-${count}`, name: count === 3 ? 'read' : 'write', arguments: {} }] };
+      if ([4, 7].includes(count)) return { ...final(), kind: 'tool_calls', text: '', toolCalls: [{ callId: `submit-${count}`, name: 'submit_delivery_review',
+        arguments: data(count === 4 ? [{ issue: 'PRIVATE_REVIEW_FINDING', recommended_check: 'Inspect source and repair.' }] : []) }] };
+      return { ...final(), text: count === 2 ? 'Candidate.' : 'Delivered' };
+    } }, tools: { execute: async request => { calls.push(request.call.name); if (request.call.name === 'read') return { status: 'ok', content: 'Current source.' };
+      writes++; return { status: 'ok', content: 'Written.', workspaceChangedPaths: ['ledger.ts'] }; } },
+    workspace: { observe: async () => { const changedPaths = seen !== writes ? ['ledger.ts'] : []; seen = writes;
+      return { status: 'ok', revision: `revision-${writes}`, changedPaths }; } },
+  } }).runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(result.finalText, 'Delivered'); assert.equal(result.outcome, 'unverified');
+  assert.deepEqual(calls, ['write', 'read', 'write']); assert.equal(models, 7); assert.equal(result.usage.modelCalls, 7);
+  assert.equal(sink.events.filter(event => event.type === 'tool/result').length, 3);
+  assert.equal(JSON.stringify(sink.events).includes('PRIVATE_REVIEW'), false);
+  const messages = sink.events.filter(event => event.type === 'assistant/message').map(event => event.data);
+  assert.equal(messages.filter(message => message.usage).length, 7);
+  assert.equal(messages.reduce((sum, message) => sum + (message.usage?.inputTokens ?? 0), 0), 21);
+  const saved = structuredClone(sink.events); f.reopen();
+  await delivery(f.store, sink)(f.store.load(scope, 'run').snapshot); assert.deepEqual(sink.events, saved);
+  const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot); assert.deepEqual(cold.events, saved);
+});
 test('host-wide delivery projection admits multiple standard DSH attempts within one step', () => {
   const projection = nativeDeliveryProjection();
   let state = projection.init();

@@ -18,6 +18,7 @@ import { completeContinuation, outputRecoveryMode, restartContinuation } from '.
 import { advanceDiagnosticRecovery, advanceObservedProgress, advanceToolErrorStreak, guardedToolErrorAction,
   refuseUndiagnosedToolAction, reserveDiagnosticTrial, toolErrorRecoveryBoundary, toolErrorRecoveryEnabled,
   toolErrorStreakExhausted } from './tool-error-recovery.mjs';
+import { deliveryReviewReaders, deliveryReviewTools, reduceDeliveryReview, reviewPending, scheduleDeliveryReview, unavailableReview } from './delivery-review.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -57,6 +58,7 @@ export function finalizationOnly(snapshot: RunSnapshot, config: RunConfiguration
     || config.limits.maxWallMs !== null && config.limits.maxWallMs - snapshot.activeElapsedMs <= config.limits.finalizationReserveWallMs;
 }
 export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration) {
+  if (reviewPending(snapshot)) return deliveryReviewTools(snapshot, config);
   const submission = finalSubmissionTool(config);
   const tools = finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0 ? []
     : browserTaskTools(snapshot, config, config.tools).filter(tool => config.contract.allowedToolNames === null
@@ -154,12 +156,13 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       return finalizing(snapshot, 'blocked', 'repeated_tool_error_no_progress');
     }
     if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
-    if (snapshot.phase === 'preparing_context' && capabilities.workspace && capabilities.verification) {
+    if (!reviewPending(snapshot) && snapshot.phase === 'preparing_context' && capabilities.workspace && capabilities.verification) {
       const candidate = checkpointCandidate(snapshot, config, digest);
       if (candidate) return transition(snapshot, { phase: 'verifying', candidate, verification: null, preparedContext: null },
         [{ kind: 'verification.checkpoint_started', payload: { workspaceRevision: snapshot.workspaceRevision } }]);
     }
-    return prepareEffect(snapshot, 'model', 'requesting_model', { finalizationOnly: finalizationOnly(snapshot, config) });
+    return prepareEffect(snapshot, 'model', 'requesting_model', reviewPending(snapshot)
+      ? { purpose: 'delivery_review', finalizationOnly: false } : { finalizationOnly: finalizationOnly(snapshot, config) });
   }
   if (snapshot.phase === 'executing_tools') {
     const post = planHook(snapshot, config, 'PostToolUse', digest);
@@ -200,7 +203,11 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   }
   if (snapshot.phase === 'verifying') {
     invariant(snapshot.candidate, 'verification_candidate_missing');
-    if (!capabilities.verification) return finalizing(snapshot, 'unverified', 'verification_report_missing');
+    if (!capabilities.verification) {
+      const review = scheduleDeliveryReview(snapshot, config, 'verification_report_missing', digest);
+      return review ? transition(snapshot, review, [{ kind: 'completion.delivery_review_started', payload: {} }])
+        : finalizing(snapshot, 'unverified', 'verification_report_missing');
+    }
     return prepareEffect(snapshot, 'verify', 'verifying', { candidate: objectValue(snapshot.candidate) });
   }
   invariant(false, 'unsupported_phase');
@@ -231,13 +238,26 @@ export function validateModelResult(input: ModelResult): ModelResult {
   return result;
 }
 export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: RunConfiguration, now: number, random: number,
-  digest: (value: unknown) => string = canonical): Partial<RunSnapshot> {
+  digest: (value: unknown) => string = canonical, responseId = `${snapshot.runId}:review:${snapshot.usage.modelCalls}`): Partial<RunSnapshot> {
   const result = validateModelResult(input);
   const replay = boundReplay(result, config);
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
   const base: Partial<RunSnapshot> = { pendingIntent: null, preparedContext: null, usage,
     ...(snapshot.pendingGuidanceIds?.length && effectiveGuidanceResponse(result) ? { pendingGuidanceIds: [] } : {}),
     ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
+  if (reviewPending(snapshot)) {
+    const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
+    const readers = deliveryReviewReaders(beforeCall, config);
+    if (result.kind === 'tool_calls' && result.toolCalls.length && readers.length
+      && result.toolCalls.every(call => readers.some(tool => tool.name === call.name))) return { ...base, phase: 'executing_tools',
+      pendingTools: result.toolCalls, modelErrors: 0, continuations: 0,
+      deliveryReview: { ...snapshot.deliveryReview!, readRounds: snapshot.deliveryReview!.readRounds + 1, continuationMessages: [] },
+      messages: [...snapshot.messages, { role: 'assistant', kind: 'delivery_review_source', content: '', toolCalls: result.toolCalls,
+        ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) }] };
+    if (result.kind === 'context_overflow') return { ...base, ...unavailableReview(snapshot, 'review_context_budget_unavailable') };
+    if (!['provider_retryable_error', 'provider_terminal_error', 'policy_abort', 'user_abort'].includes(result.kind))
+      return { ...base, ...reduceDeliveryReview({ ...snapshot, usage }, result, config, digest, responseId) };
+  }
   // Only a meaningful sealed task response acknowledges delivery. Provider
   // errors, malformed calls and context-overflow retries keep this input debt.
   if (snapshot.hookState && ['tool_calls', 'final_candidate', 'output_limit'].includes(result.kind)

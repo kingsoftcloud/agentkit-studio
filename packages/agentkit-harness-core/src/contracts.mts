@@ -170,6 +170,7 @@ export interface RunConfiguration {
   outputRecoveryPolicy?: 'task-or-delivery/v1' | null;
   toolErrorRecoveryPolicy?: 'diagnose-before-repeat/v1' | null;
   toolErrorRecoveryModelCalls?: number | null;
+  deliveryReviewPolicy?: DeliveryReviewPolicy | null;
   /** Opaque, Host-owned recovery locator. The core never interprets it as authority. */
   hostRecoveryBinding?: ObjectValue;
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
@@ -261,6 +262,17 @@ export interface ToolErrorRecovery {
   diagnosticObservationSeen: boolean; diagnosticModelCall: number | null;
   trialConsumed: boolean; trialCallId: string | null; trialModelCall: number | null;
 }
+export interface DeliveryReviewPolicy {
+  pathSuffixes: string[]; maxRounds: number; maxReadRounds: number; reviewUnknownPaths: boolean;
+}
+export interface DeliveryReviewSuggestion {
+  requirements: { requirement: string; implementation_evidence: string; verification_evidence: string }[];
+  findings: { issue: string; recommended_check: string }[];
+}
+export interface DeliveryReviewState {
+  status: 'pending' | 'observed' | 'unavailable'; rounds: number; subjectDigest: string; reviewedSubjects: string[];
+  suggestion: DeliveryReviewSuggestion | null; reason: string | null; continuationMessages: Message[]; readRounds: number;
+}
 export interface PreparedContext {
   messages: Message[];
   /** Binds this disposable model view to the immutable transcript and environment. */
@@ -303,6 +315,8 @@ export interface RunSnapshot extends RunIdentity {
   recoveryRetriesUsed: number;
   toolErrorStreak: ToolErrorStreak | null;
   toolErrorRecovery?: ToolErrorRecovery | null;
+  deliveryReview?: DeliveryReviewState | null;
+  workspaceObservationStatus?: 'captured' | 'unavailable';
   observedProgressRevision?: number; observedProgressFingerprints?: string[];
   browserSessionRefs: BrowserSessionRef[]; browserReobservationRefs: BrowserSessionRef[];
   lastBrowserObservation: BrowserEvidence | null; lastBrowserAttemptToolCall: number | null;
@@ -363,6 +377,7 @@ export interface PortContext extends RunIdentity {
   executionFence?: number;
 }
 export interface ModelRequest extends PortContext {
+  purpose?: 'task' | 'compaction' | 'delivery_review';
   profile: ModelProfile; messages: Message[]; tools: ToolDefinition[]; finalizationOnly: boolean;
   maxInlineImageBytes: number;
 }
@@ -409,7 +424,7 @@ export interface ContextPort {
   tokens?: {
     tokenizerId: string; tokenizerDigest: string;
     countRequest(request: PortContext & { profile: ModelProfile; messages: Message[]; tools: ToolDefinition[];
-      purpose: 'task' | 'compaction'; maxOutputTokens: number; maxInlineImageBytes: number }): Promise<number>;
+      purpose: 'task' | 'compaction' | 'delivery_review'; maxOutputTokens: number; maxInlineImageBytes: number }): Promise<number>;
     countText(request: PortContext & { text: string }): Promise<number>;
   };
 }

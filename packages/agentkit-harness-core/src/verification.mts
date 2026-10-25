@@ -1,6 +1,7 @@
 import type { CompletionCandidate, RunConfiguration, RunSnapshot, VerificationReport } from './contracts.mjs';
 import { canonical, invariant } from './values.mjs';
 import { outstandingChildCalls } from './child-budget.mjs';
+import { scheduleDeliveryReview } from './delivery-review.mjs';
 
 function modelFeedbackItem(check: VerificationReport['checks'][number]) {
   return { id: check.id, status: check.status, safeSummary: check.safeSummary ?? '', repairable: check.repairable === true };
@@ -68,6 +69,8 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
     pendingIntent: null, phase: 'finalizing', verification: report, outcome,
     verificationToolCalls: reportBound ? snapshot.usage.toolCalls : null,
     reason: snapshot.candidate?.purpose === 'checkpoint' ? `checkpoint_${reason}` : reason,
+    ...scheduleDeliveryReview({ ...snapshot, verification: report,
+      verificationToolCalls: reportBound ? snapshot.usage.toolCalls : null }, config, reason, digest),
   });
   const candidate = snapshot.candidate;
   invariant(candidate, 'verification_candidate_missing');

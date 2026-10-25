@@ -152,6 +152,7 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
           hookState: null, stopHookContinuations: 0,
           continuations: 0, retryNotBefore: 0, toolErrorStreak: null, workspaceRevision: null,
           ...(snapshot.toolErrorRecovery === undefined ? {} : { toolErrorRecovery: null }),
+          ...(snapshot.deliveryReview === undefined ? {} : { deliveryReview: null }),
           contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null,
             ...(steering?.contract ? { history: null, compactionsWithoutProgress: 0, progressDigest: null } : {}) } : null,
           preparedContext: null, queuedGuidance: [], finalText: '', outcome: null, reason: null,

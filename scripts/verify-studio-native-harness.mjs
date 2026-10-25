@@ -15,6 +15,7 @@ import { respondToMemoryProof, runMemoryProof } from './native-memory-proof.mjs'
 import { createManagedMemoryProof } from './native-memory-managed-proof.mjs';
 import { createParallelMemoryProof } from './native-memory-parallel-proof.mjs';
 import { createWebProof } from './native-web-proof.mjs';
+import { createDeliveryReviewProof } from './native-delivery-review-proof.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
@@ -22,7 +23,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
-  'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false } } });
+  'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false }, 'delivery-review': { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
@@ -46,6 +47,9 @@ assert.ok(!values.web || values['mount-host'] && !values.memory && !managedMemor
   && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
   '--web is a separate mounted Host proof; --frozen is supported');
 const webProof = values.web ? createWebProof() : null;
+assert.ok(!values['delivery-review'] || values['mount-host'] && !values.web && !values.memory && !managedMemory && !parallelMemory
+  && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery, '--delivery-review is a separate mounted Host proof; --frozen is supported');
+const deliveryReviewProof = values['delivery-review'] ? createDeliveryReviewProof() : null;
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = values.source ? resolve(values.source) : null, repository = fileURLToPath(new URL('..', import.meta.url));
 const installation = values.installation ? resolve(values.installation) : null;
@@ -79,6 +83,7 @@ const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
     if (webProof) { await webProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
+    if (deliveryReviewProof) { await deliveryReviewProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
     if (values['mcp-schema'] && request.url === '/mcp') {
       if (request.method !== 'POST') { response.writeHead(405); response.end(); return; }
       const body = parseNativeJson(raw);
@@ -233,6 +238,7 @@ try {
     `        memoryManaged: ${Boolean(managedMemory || parallelMemory)}`,
     `        memoryParallel: ${Boolean(parallelMemory)}`,
     `        web: ${values.web}`,
+    `        deliveryReview: ${values['delivery-review']}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -245,7 +251,10 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (webProof) {
+  if (deliveryReviewProof) {
+    await deliveryReviewProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
+    harness = null;
+  } else if (webProof) {
     await webProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
     harness = null;
   } else if (parallelMemory) {
