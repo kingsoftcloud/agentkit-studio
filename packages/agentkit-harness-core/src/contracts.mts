@@ -213,6 +213,15 @@ export interface ContextSourceDefinition {
   contract: 'agentkit.native-context-source/v1'; sourceId: string; bindingDigest: string;
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
 }
+/** A frozen transcript import, never a parent Run or an execution checkpoint. */
+export interface ConversationSeed {
+  contract: 'native-conversation-fork/v1';
+  source: { parentSessionId: string; sessionId: string; runId: string; turnId: string; boundarySeq: number;
+    snapshotRevision: number; configDigest: string; snapshotDigest: string; transcriptDigest: string };
+  messages: Message[];
+  todos?: TodoItem[];
+  discoveredToolNames?: string[];
+}
 export interface RunConfiguration {
   childTaskPolicy?: 'session-controls/v1';
   coordinatorResponsePolicy?: 'owned-parent-response/v1';
@@ -229,6 +238,7 @@ export interface RunConfiguration {
   contract: TaskContract; instructions: string; hostBindingDigest: string;
   /** Admitted user input, bound with the configuration; null uses the objective alone. */
   inputMessages: Message[] | null;
+  conversationSeed?: ConversationSeed;
   contextSources: ContextSourceDefinition[]; hooks: HookDefinition[];
   contextPolicy: ContextPlanningPolicy | null;
   workspaceObservationPolicy: { role: 'browser'; pathSuffixes: string[] } | null;

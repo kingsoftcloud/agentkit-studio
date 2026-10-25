@@ -8,7 +8,8 @@ const inheritedKinds = new Set(['user_guidance', 'historical_tool_observation',
   'historical_verification_observation', 'user_document_observation', 'background_child_observation', 'background_command_observation', 'delivery_review_source']);
 
 /** Imported protocol ids are stable across later turns; observations grant no new execution. */
-export function projectSessionHistory(parent: StoredRun | null, configuration: RunConfiguration, identify: Identify): Message[] {
+export function projectSessionHistory(parent: StoredRun | null, configuration: RunConfiguration, identify: Identify,
+  options: { identityNamespace?: string } = {}): Message[] {
   if (!parent) return [];
   const snapshot = parent.snapshot;
   invariant(terminal(snapshot.phase), 'history_requires_terminal_parent');
@@ -50,8 +51,9 @@ export function projectSessionHistory(parent: StoredRun | null, configuration: R
       const ids = new Map<string, string>();
       for (const [callIndex, call] of message.toolCalls.entries()) {
         invariant(call.callId.trim() && !pending.has(call.callId), 'malformed_tool_history');
-        const mapped = original.history ? call.callId : 'hist_' + identify({ scope: snapshot.scope,
-          sourceRunId: source.sourceRunId, sourceIndex: source.sourceIndex, callId: call.callId, callIndex }).slice(0, 32);
+        const mapped = original.history && options.identityNamespace === undefined ? call.callId : 'hist_' + identify({ scope: snapshot.scope,
+          sourceRunId: source.sourceRunId, sourceIndex: source.sourceIndex, callId: call.callId, callIndex,
+          ...(options.identityNamespace === undefined ? {} : { identityNamespace: options.identityNamespace }) }).slice(0, 32);
         invariant(!seen.has(mapped), 'duplicate_historical_tool_id'); seen.add(mapped);
         ids.set(call.callId, mapped); pending.set(call.callId, { mapped, source }); call.callId = mapped;
       }

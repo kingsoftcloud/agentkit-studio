@@ -10,6 +10,7 @@ import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
 import { installWorkspaceRepairFault } from './studio-native-workspace-repair.mjs';
+import { installConversationForkControls } from './studio-native-conversation-fork.mjs';
 
 export const name = 'studio-native-host-verification';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets'];
@@ -57,7 +58,7 @@ async function applyProof(ctx, options) {
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
-        execution: { ...(options.todos || options.planMode ? {} : { nativeTodoMode: 'off' }),
+        execution: { ...(options.todos || options.planMode || options.conversationFork ? {} : { nativeTodoMode: 'off' }),
           ...(options.planMode ? {} : { nativePlanMode: 'off' }),
           ...(options.workspaceRepair ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.mcpUrl && !options.toolSearch && !options.planMcp ? { nativeToolSearchMode: 'off' } : {}),
@@ -157,7 +158,8 @@ async function applyProof(ctx, options) {
     ctx.effect(() => disposePreset, 'Studio verification preset');
   }
   ctx.on('agent/created', async ({ agent, source }) => {
-    if (agent.session.id === 'native-studio-session' || options.memoryParallel && agent.session.id === 'native-studio-peer') {
+    if (agent.session.id === 'native-studio-session' || options.conversationFork && agent.session.header.isSeeded
+      || options.memoryParallel && agent.session.id === 'native-studio-peer') {
       if (options.mountHost) {
         const origin = ctx.webServer.getOrigin();
         const unauthorized = await fetch(origin + '/agentkit', { method: 'POST', headers: { origin, 'content-type': 'application/json' },
@@ -200,7 +202,7 @@ async function applyProof(ctx, options) {
         if (!rows.some(row => row.name === '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin'
           && row.config?.nativeEngineContract === 'agentkit.native-dsh-turn/v1')) throw Error('Production Native preset was not admitted');
       }
-      if (source === 'resume') {
+      if (source === 'resume' || options.conversationFork && agent.session.header.isSeeded) {
         if (ctx.sessionProjections.stateOf(agent.session, 'agentPreset') !== presetId) throw Error('Native preset identity was not persisted');
         await ctx.agentPresets.recompose(agent.ctx, presetId);
       } else await ctx.agentPresets.select(agent, presetId);
@@ -231,7 +233,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
@@ -270,6 +272,7 @@ async function applyProof(ctx, options) {
     return Promise.resolve(request.reason?.includes('forget') ? 'allowed-once' : 'rejected');
   }, { prepend: true });
   if (options.workspaceRepair) await installWorkspaceRepairFault(ctx, options, record);
+  if (options.conversationFork) installConversationForkControls(ctx, options);
   if (options.recovery) {
     const origin = ctx.webServer.getOrigin();
     const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });

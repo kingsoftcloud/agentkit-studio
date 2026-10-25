@@ -97,6 +97,7 @@ export class NativeKernel {
     invariant(!head || terminal(head.phase), 'session_already_active');
     invariant(identity.parentRunId === null || identity.parentRunId === head?.runId, 'session_head_conflict');
     const parent = head ? this.store.load(identity.scope, head.runId) : null;
+    invariant(!parent || configuration.conversationSeed === undefined, 'conversation_seed_requires_new_session');
     const initial = initialSnapshot({ ...identity, parentRunId: head?.runId ?? null }, configuration, configDigest);
     if (initial.planMode && parent?.snapshot.planMode) initial.planMode = { ...copy(parent.snapshot.planMode),
       active: initial.planMode.active, revision: parent.snapshot.planMode.revision + (initial.planMode.active === parent.snapshot.planMode.active ? 0 : 1) };

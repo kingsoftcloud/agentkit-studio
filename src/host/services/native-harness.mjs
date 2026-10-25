@@ -13,6 +13,7 @@ import { nativeDeliveryProjection } from '../../../packages/agentkit-harness/src
 import { nativeLiveStream } from '../../../packages/agentkit-harness/src/native/assistant-stream.mjs';
 import { createNativeChildHistory, mergeNativeChildHistory } from '../../../packages/agentkit-harness/src/native/child-history.mjs';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
+import { nativeConversationForkSeed } from '../../providers/native-conversation-fork.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { bindStudioNativeMemoryRecall } from '../../providers/native-memory-recall.mjs';
 import { bindNativeDeadlinePolicy, bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
@@ -204,7 +205,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       return { ...detail, runId: page.runId };
     });
   };
-  const resolveBinding = async ({ agent, input, binding, signal, prepareInput }, original, execution) => {
+  const resolveBinding = async ({ agent, input, binding, signal, prepareInput, turn }, original, execution) => {
       // Both entrypoints assemble identical ports; managed Runs must use the
       // receiver's actual ledger and trusted principal, never the local ledger.
       const store = execution?.store ?? localStore;
@@ -456,6 +457,12 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           } }) };
       };
       const parentModel = modelBinding(selected, selectedId, context, true), roles = nativeChildRoles(record.spec);
+      invariant(original || !execution || !agent.session.header?.isSeeded || !agent.session.header.parentSession
+        || store.sessionHead(scope, sessionId), 'native_conversation_fork_managed_not_supported');
+      const conversationSeed = original ? original.configuration.conversationSeed : execution ? undefined
+        : await nativeConversationForkSeed({ ctx, agent, store, scope, turn, profile: parentModel.profile,
+          tools, policies: recoveryPolicies, signal });
+      signal.throwIfAborted();
       if (visionProfile) {
         const observer = modelBinding(visionProfile, visionId);
         vision = createStudioNativeVisionBinding({ scope, sessionId, store, model: observer.model,
@@ -580,6 +587,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
           { providerRef: memoryProviderRef }),
         configuration: { profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy, ...recoveryPolicies,
+        ...(conversationSeed === undefined ? {} : { conversationSeed }),
         ...(contextSources.length ? { contextSources } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: sealedCapsule,

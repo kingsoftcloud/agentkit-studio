@@ -11,6 +11,7 @@ import { validateToolDiscovery } from './tool-discovery.mjs';
 import { validateTodoConfiguration } from './todos.mjs';
 import { validateCoordinatorConfiguration } from './coordinator-response.mjs';
 import { validatePlanModeConfiguration } from './plan-mode.mjs';
+import { validateConversationSeed } from './conversation-seed.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -38,6 +39,7 @@ export interface ConfigurationInput {
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
   inputMessages?: Message[] | null;
+  conversationSeed?: RunConfiguration['conversationSeed'];
   backgroundNotificationPolicy?: RunConfiguration['backgroundNotificationPolicy'];
   childLifecyclePolicy?: RunConfiguration['childLifecyclePolicy'];
   childApprovalPolicy?: RunConfiguration['childApprovalPolicy'];
@@ -65,6 +67,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     engine: NATIVE_ENGINE, profile, limits,
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
+    ...(input.conversationSeed === undefined ? {} : { conversationSeed: input.conversationSeed }),
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
     ...(input.wallDeliveryPolicy === undefined ? {} : { wallDeliveryPolicy: input.wallDeliveryPolicy }),
     ...(input.artifactPolicy === undefined ? {} : { artifactPolicy: input.artifactPolicy }),
@@ -96,6 +99,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       finalSubmissionSchema: null, finalSubmissionPayloadKey: null, finalOutputFormat: 'text', ...input.contract },
   };
   canonical(config);
+  validateConversationSeed(config);
   validateArtifactConfiguration(config);
   invariant(config.sourceReadPolicy == null || config.sourceReadPolicy === 'studio-source-read/v1'
     && config.artifactPolicy === 'runtime-artifacts/v1' && config.contextPolicy !== null, 'invalid_source_read_policy');
@@ -326,10 +330,13 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
     taskContract: null, taskContractDigest: null,
     messages: [
       ...(configuration.instructions ? [{ role: 'system' as const, content: configuration.instructions, persistent: true }] : []),
+      ...(configuration.conversationSeed?.messages ?? []),
       ...(configuration.inputMessages ?? [{ role: 'user' as const, content: configuration.contract.objective }]),
     ], preparedContext: null, queuedGuidance: [],
-    ...(configuration.toolDiscoveryPolicy ? { toolDiscovery: { discovered: [], promoted: [] } } : {}),
-    ...(configuration.todoPolicy ? { todos: { items: [], revision: 0, assistantTurns: 0, lastWriteAssistantTurn: 0, lastReminderAssistantTurn: 0 } } : {}),
+    ...(configuration.toolDiscoveryPolicy ? { toolDiscovery: { discovered: configuration.conversationSeed?.discoveredToolNames ?? [],
+      promoted: configuration.conversationSeed?.discoveredToolNames ?? [] } } : {}),
+    ...(configuration.todoPolicy ? { todos: { items: configuration.conversationSeed?.todos ?? [], revision: configuration.conversationSeed?.todos === undefined ? 0 : 1,
+      assistantTurns: 0, lastWriteAssistantTurn: 0, lastReminderAssistantTurn: 0 } } : {}),
     ...(configuration.planModePolicy ? { planMode: { active: configuration.planModeInitialActive!, revision: 0 } } : {}),
     ...(configuration.guidancePolicy === 'boundary-guide/v1' ? { pendingGuidanceIds: [] } : {}),
     ...(configuration.toolErrorRecoveryPolicy != null || configuration.toolErrorRecoveryModelCalls != null

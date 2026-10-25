@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **29/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **30/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,13 +53,15 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 5/15 covers durable file preimages on the admitted writer path (one point)
+M5 6/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
 (one point), and explicit original-Run cold preimage compensation, including a
-second process death during compensation and its product recovery entry (one point).
-This does not certify full recovery/undo, conversation branching or
+second process death during compensation and its product recovery entry (one point),
+and exact closed-turn Native conversation fork admission, cold first-use/follow-up,
+and fork-of-fork with independent Run/budget and paired historical tools (one point).
+This does not certify full recovery/undo, full conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
@@ -84,7 +86,7 @@ audited and integrated.
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
-| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/runtime-contract.mjs`, Host recovery | Explicit file compensation now passes a SIGKILL/cold recovery through packed Studio and authenticated original-Run control. Generic DSH event-prefix forks still lack Native ledger history seeding; conversation rewind and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
+| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-fork.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Exact closed-turn Native fork now imports selected ledger history into a fresh independent Run, including Todo/discovery and cold fork-of-fork. Open cuts, conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
 
 ## Deliberate architecture constraints
@@ -1421,7 +1423,7 @@ Pinned ZCode source and tests establish these behaviors:
   read-state (line 675). `session-history-rewind.test.ts:277` demonstrates that
   repeated edits must not revive an abandoned original branch.
 
-Current Native boundary: maintained DSH's
+At the audit checkpoint preceding the implementation below, maintained DSH's
 `packages/api/session-controller/src/commands.ts:226` and
 `packages/core/session/src/fork.ts` already create an event-prefix fork and
 synthetic closers for an open tail. Native's new-Run path in
@@ -1429,11 +1431,12 @@ synthetic closers for an open tail. Native's new-Run path in
 new Session's own store head; `core/src/kernel.mts:100` and `history.mts` import
 history only from that ledger parent. A copied visible DSH transcript alone is
 therefore not evidence of an imported Native model history. There is currently
-no Native fork history-seeding bridge in that path. Forked model selection also
+no Native fork history-seeding bridge in that path at that checkpoint. The new
+adapter below adds the closed-turn bridge. Forked model selection also
 needs an explicit comparison: generic DSH fork uses current defaults, whereas
 ZCode resolves historical normal selection.
 
-Next implementation must import the selected conversation into a fresh admitted
+The implementation must import the selected conversation into a fresh admitted
 Native Run, bind its exact source/boundary/digest, preserve protocol pairing and
 appropriate Todo/Plan/context state, and verify cold first-use and fork-of-fork.
 It must leave source Run, lease/fence, budgets, pending operations, private file
@@ -1451,6 +1454,104 @@ In particular, copied ownership records are not by themselves proof that a
 closed inherited turn becomes active in the child, nor that private checkpoints
 are copied. Only the evidenced history-adapter/model-selection gaps above guide
 the next change. No full fork/rewind alignment point is earned by this audit.
+
+## Integrated Native closed-turn conversation forks
+
+`src/providers/native-conversation-fork.mjs` now bridges the existing production
+DSH SessionController fork to Native's single execution loop. On a fresh fork's
+first admission it:
+
+1. Locates this Session's own inherited-prefix boundary and compares that exact
+   prefix with a read-only observation of its actual parent Session. Cancellation,
+   Session replacement, parent/prefix changes and a different Native scope are
+   rejected before importing any checkpoint data; observations are always released.
+2. Resolves the selected closed turn's original Native ownership, not the source
+   Session's latest head. The admitted configuration and every identity field must
+   match the private ledger's terminal checkpoint. Its revision, configuration,
+   snapshot and transcript digests become frozen provenance.
+3. Projects the existing Native history into a new Session-specific tool-ID
+   namespace, retaining call/result pairing and original observation provenance.
+   Existing historical IDs are remapped again on fork-of-fork, then stay stable
+   across ordinary subsequent turns. Source tool calls remain observations.
+4. Admits `native-conversation-fork/v1` data in the new configuration. The core
+   validates protocol pairing and rejects system authority/current input IDs and
+   private provider protocol bytes. Todo items/priorities and currently admitted
+   discovered tools are initialized in the child's own state. Budgets, pending
+   effects/interactions, leases, children, background commands, workspace mutation
+   state and execution-owned artifact references are initialized fresh.
+5. Uses the existing session-head CAS to create an independent Run. Its
+   `parentRunId` is null, rather than adopting the source execution chain. The
+   source is unchanged. Same-turn redelivery uses frozen seed bytes; recovery
+   retains the original optional field, and later ordinary child turns inherit
+   from their own ledger parent without re-querying/re-importing the source.
+
+Native deliberately keeps provider-private reasoning, signatures and protocol
+replay in the original private ledger. They are excluded from this seed because
+the seed is also serialized in the durable DSH ownership event. Model-visible
+text, media and paired tool facts still travel by value. This is a documented
+fork boundary difference from retaining every private protocol part in a ZCode
+fork bundle; its cache/cost/quality impact remains to be measured. The ordinary
+same-Session Native replay behavior is unchanged. No new service, model summary,
+planning model or execution loop was added; initial work/storage is proportional
+to the selected history, which still needs large-history measurement.
+
+Reproduce the actual integration proof:
+
+```sh
+pnpm pack --pack-destination /tmp/agentkit-native-conversation-fork-pack
+node scripts/verify-studio-native-harness.mjs \
+  --source .artifacts/dsh-native-zcode \
+  --archive /tmp/agentkit-native-conversation-fork-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz \
+  --mount-host --conversation-fork --frozen --keep
+```
+
+Final proof passed in `/tmp/native-conversation-fork-proof-final.log`, evidence
+directory `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-ssStDN`.
+`accepted-evidence.json` records package SHA-256
+`b7b6f781db465f1e0429fc5ae123f160b6c108b8da6d0a39e137dbe55c80571f` and maintained
+Host provenance; `conversation-fork-proof.json` records four distinct Host PIDs
+(81999, 82021, 82024, 82035) and eight controlled model HTTP calls. It uses the
+actual SessionController fork entrypoint with a test-only command transport,
+the public SDK for prompts, real SQLite and the packed Studio/standard Host.
+Controller and SDK Agent handles are separated by real process shutdown, proving
+durable publication and cold first use rather than opening duplicate writers.
+
+Assertions cover a selected earlier turn after the source advanced, exclusion of
+later source text, historical file call/result pairing without another file
+effect, Todo priority and discovered-schema continuity, fresh independent Run
+budgets/state, cold ordinary child continuation, an earlier child boundary after
+that child advanced, fork-of-fork ID remapping, unchanged source/child ledgers
+and file bytes, and the frozen Build while latest Agent instructions differ.
+The controlled model establishes request behavior, not general coding quality.
+
+Related checks:
+
+- `/tmp/native-conversation-fork-targeted.log`: 185 relevant history, turn,
+  Host and recovery cases passed (including four new core seed cases).
+- `/tmp/native-conversation-fork-final-units.log`: 15 seed/adapter/boundary cases
+  passed, including the four core cases above. The other eleven cover exact
+  source selection, altered prefix/scope, canceled/replaced Sessions, redelivery,
+  private replay exclusion and open boundaries. A fork of an open fork's
+  synthetic `forked` closer cannot authorize import of the source's later full
+  checkpoint.
+- Harness compilation and final contract checks passed. No full repository
+  suite was run. Claude Code completed its isolated test contribution in eight
+  turns (`/tmp/native-conversation-fork-tests-review.json`); the main agent fixed
+  its input fixture, replaced a vacuous private-data assertion with a real
+  private-replay source, reviewed the file and ran the tests. This contribution
+  is not an independent implementation-review pass.
+
+Earned progress is **30/100**, M5 **6/15**. One new point covers the integrated
+closed-turn Native fork behavior above. It does not certify full conversation
+branching or the whole recovery milestone. Native currently refuses arbitrary
+open cuts and synthetic closed tails rather than importing a later checkpoint;
+fresh managed-server fork admission is explicitly unsupported. Background-owned
+source boundaries still need their own capsule/history adaptation. In-place rewind,
+before-input/root cuts, full historical model/permission/Plan selection, large or
+compacted history and media/artifact-reference fork acceptance, combined file and
+conversation rollback, managed/child-specific flows and neutral cross-engine
+handoff remain in the original implementation/acceptance scope. No token savings
+or speedup is claimed.
 
 ## Local evidence and comparison protocol
 
