@@ -18,7 +18,7 @@
 | 2. micro-compact、历史工具输出清理、工作集及读取预算 | 核心 `context-microcompact.mts`、`source-read-budget.mts`、`source-working-set-group.mts`、`artifact-request-capacity.mts` | [源码读取](native-source-read.md)、[Artifacts](native-artifacts.md)；清理投影，不改工具事实 |
 | 2. 媒体、私有协议数据、执行和最终交付预留 | Node `model-media.mjs`、`model-replay.mjs`；核心 `deadline-delivery.mts`；Host `providers/native-task-policy.mjs` | [交付时限](native-deadline-delivery.md)、协议/媒体测试；不自动获取任意媒体 URL |
 | 3. 工具元数据、模型披露、只读并行与预算 | 核心 `contracts.mts`、`configuration.mts`、`machine.mts`、`tool-input.mts` | Python oracle 与核心行为测试；写入、浏览器、审批调用保留串行边界，模型不获得 Host 私有控制元数据 |
-| 3. 工具权限、审批、原 interaction 继续 | Host `providers/native-host-interaction.mjs`、`providers/native-dsh-tools.mjs` | `native-host-child-approval.test.mjs` 及 Host 权限拒绝证据；完整浏览器人工操作仍待验收 |
+| 3. 工具权限、审批、原 interaction 继续 | Host `providers/native-host-interaction.mjs`、`providers/native-dsh-tools.mjs` | `native-host-child-approval.test.mjs`、Host 权限拒绝及真实浏览器允许一次/拒绝写入；[浏览器证据](native-web-session.md)说明范围 |
 | 3. 错误重试、连续错误终止、被打断工具及回执核对 | 核心 `tool-error-recovery.mts`、`tool-receipt.mts`、`recovery.mts`；Host `host/services/native-recovery.mjs` | [错误恢复](native-tool-error-recovery.md)、[工具恢复](native-tool-recovery.md)；未知副作用不自动重跑 |
 | 4. 目标契约、独立验证、最终输出结构 | 核心 `task-contract.mts`、`verification.mts`、`final-submission.mts`；Host `providers/native-verification.mjs` | 验证/修复及真实进程丢失回执测试；模型声称或格式检查不能证明语义目标已通过 |
 | 4. 交付 review、checkpoint、受限修复和输出续接 | 核心 `delivery-review.mts`、`output-recovery.mts`、`deadline-delivery.mts` | [交付 review](native-delivery-review.md)与对应进程测试；原模型/工具/时间预算不因修复补充 |
@@ -35,7 +35,7 @@
 | 9. Workspace、文件约束、独立子工作区和受控合并 | Node `workspace-tools.mjs`、`workspace-editing.mjs`、`child-workspaces.mjs`；Host `providers/native-child-merge.mjs` | [子工作区](native-child-workspaces.md)、真实进程锁竞争及崩溃专项 |
 | 9. Artifacts 存储/目录/分页/搜索与消费回执 | 核心 `artifact-runtime.mts`、`scoped-artifact-search.mts`；Node `artifact-store.mjs` | [Artifacts](native-artifacts.md)及对应进程/容量测试 |
 | 9. Browser 连续页面、DOM/视觉、验证和释放 | Node `browser-workspace.mjs`；核心 `browser-runtime.mts`；Host `providers/native-verification.mjs` | [Browser](native-browser.md)、真实 Chromium/DSH 专项；这不替代 Studio 产品界面的交互验收 |
-| 10. 本地对话、流式、历史、恢复、取消和审批接入 | Node `session-delivery.mjs`；Host `host/services/native-harness.mjs`、`host/services/native-recovery.mjs` | 默认 Revision/Frozen 完整 Host、公开事件前缀、持久会话及跨进程恢复；浏览器完整操作仍未闭环 |
+| 10. 本地对话、流式、历史、恢复、取消和审批接入 | Node `session-delivery.mjs`；Host `host/services/native-harness.mjs`、`host/services/native-recovery.mjs` | 默认 Revision/Frozen 完整 Host、持久会话及跨进程恢复；真实浏览器对话、审批、刷新活动前缀、取消和原运行收尾已验证，见[界面接入](native-web-session.md) |
 | 10. 模型/工具/MCP/Skills/工作区与 Build 固定 | Host `agent-preset-admission.mjs`、`host/bootstrap.mjs`、`build-engine.mjs` | [默认策略与回退](native-default-runtime.md)；新 Revision/Build 默认 Native，旧 Frozen pin 不重解释 |
 | 10. 自动化、定时、评测、Frozen HTTP 和 portable 部署 | Host `host/services/automation.mjs`；现有 Frozen/portable runtime | [自动化](native-automation.md)、[portable 工具](native-portable-tools.md)及打包 Host 专项；周期触发不重放未知 occurrence |
 | 10. 托管命令、A2A 出入站、问答与人机审批 | Host `host/services/native-managed-kernel.mjs`、`providers/native-a2a-host.mjs`、`providers/native-a2a-inbound-server.mjs` | [托管执行](native-managed-kernel.md)、[入站](native-a2a-inbound.md)、[Host 决定](native-a2a-host-decisions.md)；生产 Server/线上认证与浏览器人工操作仍待验收 |
@@ -47,8 +47,9 @@
 
 ## 必须保留的差异与未闭环项
 
-1. **Studio 浏览器流程**：Host RPC、真实会话、组件/SSR 证据不能替代用户实际点击审批、
-   恢复、远端问答与错误处理的完整浏览器验收。尚不能宣称产品 UI 全部完成。
+1. **Studio 浏览器流程**：普通对话、允许/拒绝、历史重开、刷新活动流、取消和原运行
+   收尾已有[真实浏览器证据](native-web-session.md)。远端问答、子任务控制和其他错误
+   组合尚未全部实际操作，不能从已覆盖路径推广为产品 UI 全部完成。
 2. **可选线上后端**：E2B 成功执行、重连/清理，以及真实云 Skills/KB/Memory、正式
    Server/Gateway 认证和互操作仍缺完整线上证据。Node SDK 和确定性 HTTP 路径已有实现；
    连接被拒绝的测试只能证明错误和恢复边界。

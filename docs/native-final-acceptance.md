@@ -97,3 +97,13 @@ node --test --test-concurrency=4 tests/*.test.mjs packages/agentkit-harness/test
 
 这些为当前缺口的定向证据，未再次全仓回归、双 Node 验证、安装或打包。
 当前逐组实现、验证与剩余差异见[能力对照](native-capability-status.md)。
+
+## 真实浏览器接入收尾
+
+实际 Studio Web 操作确认对话、允许一次、拒绝、历史重开、流式刷新、取消、
+原回合恢复收尾及取消后继续对话。修正 Native 每帧 revision 连续性和 Bridge
+丢弃已持久取消 ending 两处接线问题；8 项流式和 6 项 Bridge 定向检查通过。
+真实进程重启后，原取消回合收尾没有新增模型调用；新回合取消自动关闭 Session
+ownership，不再误报可恢复。实际命令、测试策略、模块摘要及界面证据见
+[Web 会话记录](native-web-session.md)。未重新全仓测试、安装或打包，远端问答等
+未覆盖界面组合仍保留在能力主表中。

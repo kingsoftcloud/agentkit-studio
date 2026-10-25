@@ -40,6 +40,45 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unrestricted met
 
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 
+test('Native cancellation waits for its durable ending and returns it so DSH can close the turn', async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
+  const ending = { reason: { kind: 'aborted', reason: { kind: 'user' } } };
+  let settled = false;
+  bridge.setNativeTurnExecutor(async ({ signal }) => {
+    started.resolve(); await drained.promise; assert.equal(signal.aborted, true); return ending;
+  });
+  const pending = bridge.executeNativeTurn({ signal: caller.signal });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  await started.promise; caller.abort({ kind: 'user' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false); assert.equal(bridge.diagnostics().requests, 1);
+  drained.resolve(); assert.deepEqual(await pending, ending);
+  assert.equal(bridge.diagnostics().requests, 0); bridge.close();
+});
+
+for (const retirement of ['host', 'registration']) test(`Native ${retirement} retirement cannot return a late canceled ending`, async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
+  const retire = bridge.setNativeTurnExecutor(async () => {
+    started.resolve(); await drained.promise; return { reason: { kind: 'aborted', reason: { kind: 'user' } } };
+  });
+  const pending = bridge.executeNativeTurn({ signal: caller.signal });
+  await started.promise; caller.abort({ kind: 'user' });
+  if (retirement === 'host') bridge.close(); else retire();
+  // Caller cancellation and owner retirement can supply the rejection cause;
+  // neither is permission to return the late worker's canceled ending.
+  const retiredCode = retirement === 'host' ? 'STUDIO_RUNTIME_BRIDGE_CLOSED' : 'STUDIO_RUNTIME_REGISTRATION_RETIRED';
+  drained.resolve(); await assert.rejects(pending, error => error === caller.signal.reason || error?.code === retiredCode);
+  assert.equal(bridge.diagnostics().requests, 0); bridge.close();
+});
+
+test('Native cancellation rejects a late successful result instead of accepting unacknowledged cancellation', async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
+  bridge.setNativeTurnExecutor(async () => { started.resolve(); await drained.promise; return { reason: { kind: 'completed' } }; });
+  const pending = bridge.executeNativeTurn({ signal: caller.signal });
+  await started.promise; caller.abort(Error('User canceled'));
+  drained.resolve(); await assert.rejects(pending, /User canceled/); bridge.close();
+});
+
 test('Native turn retirement waits for the worker to drain and rejects late completion', async () => {
   const bridge = createRuntimeBridge(), started = deferred(), drained = deferred();
   let workerSignal, settled = false;

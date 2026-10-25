@@ -103,7 +103,13 @@ export function createRuntimeBridge() {
         // The Native worker owns cancellation and durable receipts. DSH must
         // not begin another turn until that worker has stopped driving effects.
         const result = await registration.value({ ...input, signal: task.signal });
-        task.signal.throwIfAborted();
+        // A canceled Native worker returns only after committing its ending.
+        // Preserve that acknowledgment so DSH can close the external turn.
+        // Throwing it away leaves a canceled Run with an open Session owner.
+        // Host/registration retirement still fences every late completion.
+        const settledCancellation = input.signal?.aborted && !lifetime.signal.aborted
+          && !registration.controller.signal.aborted && result?.reason?.kind === 'aborted';
+        if (!settledCancellation) task.signal.throwIfAborted();
         return result;
       } finally { task.finish(); }
     },

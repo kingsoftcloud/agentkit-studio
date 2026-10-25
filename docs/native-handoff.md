@@ -61,7 +61,8 @@ MCP、Skills 和工作区后开始对话。无需 Native 启用开关。凭据�
 
 **迁移主干已实现并默认启用，完整无损交付尚未证明。** 剩余事项明确保留：
 
-1. Studio 浏览器审批、恢复、远端问答等完整人工操作流程尚未完成验收。
+1. Studio 的对话、允许/拒绝、历史、流式刷新、取消和原运行收尾已有
+   [真实界面证据](native-web-session.md)；远端问答、子任务控制等组合尚未全部验收。
 2. 可选 E2B、云 Skills/KB/Memory 和正式 Server/Gateway 的完整线上互操作缺少证据。
 3. 有界 YAML、归档路径和公开 HTTPS 重定向策略与 Python 保留差异，见能力主表。
 4. 完整 Electron、其他 OS 和共享 Server 部署能力尚未闭环；Server/AgentKernel

@@ -148,7 +148,8 @@ for (const sqlite of [false, true]) {
     assert.equal(host.calls.model, 1);
     host.sink.session.append('turn/start', { turn: 2 });
     await host.execute({ ...host.payload, turn: 2 });
-    assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.revision), [1, 2]);
+    assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.revision), [1, before.length + 1]);
+    assert.deepEqual(frames.map(frame => frame.revision), frames.map((_, i) => i + 1));
   });
   test(`${kind}: failed streamed tool fragments settle as an attempt and never dispatch`, async t => {
     const frames = [];
@@ -167,6 +168,7 @@ for (const sqlite of [false, true]) {
     assert.deepEqual(ends.map(frame => frame.outcome.eventType), ['assistant/attempt', 'assistant/message']);
     assert.equal(host.sink.events.find(event => event.seq === ends[0].outcome.seq).type, 'assistant/attempt');
     assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.step), [1, 2]);
+    assert.deepEqual(frames.map(frame => frame.revision), frames.map((_, i) => i + 1));
     assert.equal(JSON.stringify(host.sink.events).includes('Unsealed private prefix'), false);
   });
   test(`${kind}: cancel closes a durable prefix and fences late streamed callbacks`, async t => {
@@ -180,6 +182,7 @@ for (const sqlite of [false, true]) {
     assert.equal(host.head().phase, 'canceled');
     assert.equal(frames.at(-1).outcome.eventType, 'assistant/attempt');
     assert.equal(frames.at(-1).outcome.kind, 'committed');
+    assert.deepEqual(frames.map(frame => frame.revision), frames.map((_, i) => i + 1));
     const count = frames.length; lateEmit({ kind: 'text', text: 'late' }); assert.equal(frames.length, count);
   });
   test(`${kind}: failed durable flush abandons live frames and replay delivers once without another model`, async t => {

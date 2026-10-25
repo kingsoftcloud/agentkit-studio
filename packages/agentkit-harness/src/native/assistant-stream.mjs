@@ -35,32 +35,37 @@ export function nativeDurableStream(operationKey, display) {
 /** Public DSH frames; publication failures cannot change execution authority. */
 export function nativeLiveStream({ agent, runId, turn, publish, beginStep, revisions }) {
   const attempts = new Map();
-  const emit = frame => { try { publish?.(structuredClone(frame)); } catch { /* display observer */ } };
+  // DSH continuity revisions count every frame in the Agent lifecycle, not
+  // model attempts. Reusing a start revision for its chunks makes the real
+  // Session follower discard the active stream as a continuity violation.
+  const emit = frame => {
+    const revision = (revisions.get(agent) ?? 0) + 1;
+    revisions.set(agent, revision);
+    try { publish?.(structuredClone({ ...frame, revision })); } catch { /* display observer */ }
+  };
   return {
     accept(context, record) {
       if (!publish) return;
       let attempt = attempts.get(context.operationKey);
       if (!attempt) {
-        const revision = (revisions.get(agent) ?? 0) + 1;
-        revisions.set(agent, revision);
-        attempt = { attemptId: `${runId}:${context.operationKey}`, revision, index: 0,
+        attempt = { attemptId: `${runId}:${context.operationKey}`, index: 0,
           project: nativeStreamProjector(context.operationKey) };
         attempts.set(context.operationKey, attempt);
-        emit({ type: 'start', attemptId: attempt.attemptId, revision, turn, step: beginStep() });
+        emit({ type: 'start', attemptId: attempt.attemptId, turn, step: beginStep() });
       }
       for (const { time, chunk } of attempt.project(record)) emit({ type: 'chunk', attemptId: attempt.attemptId,
-        revision: attempt.revision, index: attempt.index++, time, chunk });
+        index: attempt.index++, time, chunk });
     },
     settled(operationKey, eventType, seq) {
       const attempt = attempts.get(operationKey);
       if (!attempt) return;
       attempts.delete(operationKey);
-      emit({ type: 'end', attemptId: attempt.attemptId, revision: attempt.revision, index: attempt.index,
+      emit({ type: 'end', attemptId: attempt.attemptId, index: attempt.index,
         outcome: { kind: 'committed', eventType, seq } });
     },
     abandon() {
       for (const attempt of attempts.values()) emit({ type: 'end', attemptId: attempt.attemptId,
-        revision: attempt.revision, index: attempt.index, outcome: { kind: 'abandoned' } });
+        index: attempt.index, outcome: { kind: 'abandoned' } });
       attempts.clear();
     },
   };
