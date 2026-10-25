@@ -1,5 +1,13 @@
 # Native 迁移当前验收状态
 
+真实 bundled Codex CLI `0.159.2` 已完成一次定向验收：Chat Completions 经生产代理、
+Responses 直连两条路径均完成动态工具调用、流式输出、历史续接和请求取消；6 个真实
+CLI 子进程全部退出。命令为 `node scripts/verify-native-codex-cli.mjs --execute`，
+证据为 `.artifacts/native-migration/codex-real-cli.log`。隔离 CODEX_HOME，PATH 仅含
+Node，模型为本地确定性 HTTP 服务；不代表云模型质量或完整 Studio UI 验收。
+该项已经关闭，不因其他模块合入而重复执行。后续只检查实际改动涉及的契约，
+全量回归留到功能清单闭环后的最终验收。
+
 新增[工具结果归档与目录观察](native-artifacts.md)：完整回执、受限模型视图和已授予引用的
 分页读取/搜索/清单已进入 TS Kernel，并补充真实进程中断验证。共用 Native Host 与子任务
 已绑定作用域独立的归档端口，命令完整输出接入中央归档，目录投影与当前目标的回执导航

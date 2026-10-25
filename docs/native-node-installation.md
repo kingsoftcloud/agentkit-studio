@@ -101,7 +101,12 @@ node scripts/verify-studio-native-a2a.mjs \
 这里只扩展了验收器的安装输入；公开产品和引擎契约未改变。其他专用恢复验收器仍使用
 `--source`，不能把上述入站路径的结果推广到所有运行组合。
 
-这仍不等于完整迁移验收。真实模型/Codex CLI、线上 E2B/云服务、全部自动化/Frozen/
+真实 bundled Codex CLI 已另行通过 `node scripts/verify-native-codex-cli.mjs --execute`：
+隔离 home、仅 Node 的 PATH、本地确定性 HTTP 模型，覆盖两种协议的真实 CLI 工具调用、
+流式输出、历史续接、取消和子进程退出。它复用生产适配器与 Chat Completions 代理，
+不使用假 CLI；不替代完整挂载 Host 或真实云模型验收。
+
+这仍不等于完整迁移验收。真实云模型、线上 E2B/云服务、全部自动化/Frozen/
 部署/恢复界面组合及最终默认切换分别验收；完整 Desktop/Electron 及其他平台的
 纯 Node 安装仍待闭环。当前实际结论以
 [验收状态](native-migration-status.md) 和保留的具体验证记录为准。
