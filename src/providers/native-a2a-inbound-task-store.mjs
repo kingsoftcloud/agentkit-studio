@@ -99,14 +99,21 @@ function project(record, fact, updates, includeReasoning, publicToolPolicy) {
       check(['append', 'replace'].includes(p.op) && object(p.update));
       if (p.update.content_type !== 'text') return;
       check(id(p.update.part_id) && typeof p.update.text === 'string');
+      // Match the reference executor: empty append is not output, while a
+      // message replacement may explicitly clear an already published value.
+      if (!p.update.text && (p.item_kind === 'reasoning' || p.op !== 'replace')) return;
       let part = item.parts.find(part => part.id === p.update.part_id);
       if (!part) { part = { id: p.update.part_id, text: '' }; item.parts.push(part); }
       part.text = p.op === 'append' ? part.text + p.update.text : p.update.text;
     } else {
       check(Array.isArray(p.snapshot?.parts));
-      const parts = p.snapshot.parts.filter(part => part?.content_type === 'text');
+      // Reasoning snapshots use the first part, as _snapshot_text does in the
+      // reference executor. Message snapshots retain all ordered text parts.
+      const parts = (p.item_kind === 'reasoning' ? p.snapshot.parts.slice(0, 1) : p.snapshot.parts)
+        .filter(part => part?.content_type === 'text');
       check(parts.every(part => id(part.part_id) && typeof part.text === 'string')
         && new Set(parts.map(part => part.part_id)).size === parts.length);
+      if (p.item_kind === 'reasoning' ? !parts[0]?.text : !parts.length && !previous) return;
       item.parts = parts.map(part => ({ id: part.part_id, text: part.text }));
     }
     record.items[key] = item;

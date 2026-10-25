@@ -69,6 +69,36 @@ test('undeclared tool calls and uncorrelated results never produce public activi
   assert.deepEqual(store.get(identity, ids).task.artifacts, []);
 });
 
+test('text-only projection ignores new nontext snapshots and empty appends across reopen', t => {
+  const { store, config } = fixture(t);
+  const fact = runtime(1, { event_type: 'item.completed', item_id: 'attachment', item_kind: 'message',
+    snapshot: { parts: [{ content_type: 'artifact', part_id: 'file', uri: 'https://example.com/result' }] } });
+  assert.deepEqual(store.apply(identity, ids, fact).updates, []);
+  const cold = createA2aInboundTaskStore(config);
+  assert.deepEqual(cold.apply(identity, ids, fact).updates, []);
+  assert.deepEqual(cold.get(identity, ids).task.artifacts, []);
+  assert.deepEqual(cold.apply(identity, ids, update(2, '')).updates, []);
+  assert.equal(cold.get(identity, ids).cursor, 2);
+  assert.equal(cold.apply(identity, ids, update(3, 'Visible')).task.artifacts[0].parts[0].text, 'Visible');
+  const cleared = cold.apply(identity, ids, runtime(4, { event_type: 'item.snapshot_replaced', item_id: 'answer', item_kind: 'message',
+    snapshot: { parts: [] } }));
+  assert.equal(cleared.updates[0].artifactUpdate.artifact.parts[0].text, '', 'existing message may be cleared');
+});
+
+test('text-only projection keeps reference reasoning snapshot selection and skips empty replacements', t => {
+  const { store, config } = fixture(t, { includeReasoning: true });
+  const snapshot = (seq, parts) => runtime(seq, { event_type: 'item.snapshot_replaced', item_id: 'thought', item_kind: 'reasoning', snapshot: { parts } });
+  assert.deepEqual(store.apply(identity, ids, snapshot(1, [{ content_type: 'data', part_id: 'data', data: {} },
+    { content_type: 'text', part_id: 'later', text: 'Ignored later part' }])).updates, []);
+  const first = store.apply(identity, ids, snapshot(2, [{ content_type: 'text', part_id: 'first', text: 'First' },
+    { content_type: 'text', part_id: 'later', text: 'Second' }]));
+  assert.equal(first.task.artifacts[0].parts[0].text, 'First');
+  const cold = createA2aInboundTaskStore(config);
+  assert.deepEqual(cold.apply(identity, ids, update(3, '', { item_id: 'thought', item_kind: 'reasoning', op: 'replace' })).updates, []);
+  assert.deepEqual(cold.apply(identity, ids, snapshot(4, [])).updates, []);
+  assert.equal(cold.get(identity, ids).task.artifacts[0].parts[0].text, 'First');
+});
+
 test('Task and UUID projection receipts survive cold reopen; replay does not duplicate streamed parts', t => {
   const { store, config } = fixture(t), fact = update(1, 'Hello😀');
   const first = store.apply(identity, ids, fact); assert.equal(first.updates[0].artifactUpdate.append, false);

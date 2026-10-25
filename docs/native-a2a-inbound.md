@@ -182,6 +182,19 @@ Node 22 和真实 maintained DSH WebServer 挂载证据记录于对应 checkpoin
 `events/adapters/_a2a_snapshot.py`（远端文件到本地 canonical 内容）误算为此入口的
 媒体发布要求。Node 的远端文件消费仍属于独立出站调用路径。
 
+文本投影还保留参考的空值语义：首次纯非文本消息不生成空 response artifact，空 append
+不产生输出；已经发布的 message 可以被显式空快照清空。推理快照沿用参考
+`_snapshot_text` 的首 part 选择，空推理或非文本首 part 不替换已有 thinking。
+这些忽略的事实仍保存原 UUID/游标，冷重放不会补出一条空回复。直接相关的 5 项检查
+通过，包含新增的两个持久重开用例；仅执行：
+
+```sh
+node --test --test-name-pattern 'text-only projection|snapshot replaces all ordered parts|empty output refs|Task and UUID projection' tests/native-a2a-inbound-task-store.test.mjs
+```
+
+未重跑全仓、编译、安装或打包。该修正只影响入站 Task 的文本观察投影，不改变原运行
+的模型、工具执行或 Server 命令。
+
 GetTask/SubscribeToTask 的即时持久事实核对已经接入：`execute` 在返回非终态 Task 前
 调用 `admission.reconcile`，沿原接收回执、Session、Run 和已确认游标分页读取，不提交
 新 Server 命令，不重新执行 Native。核对与 Task 投影提交之后才推进原接收游标。
