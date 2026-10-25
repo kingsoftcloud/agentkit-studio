@@ -5,7 +5,7 @@ import { access, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function createPlanModeProof({ mcp = false } = {}) {
+export function createPlanModeProof({ mcp = false, commands = false } = {}) {
   const mcpEffects = [];
   const plans = ['Inspect and implement.', 'Inspect, implement, and preserve a rollback path.', 'Continue the approved implementation after checking current state.'];
   const tasks = [{ content: 'Prepare implementation and rollback plan', status: 'in_progress', priority: 'high' }];
@@ -45,6 +45,11 @@ export function createPlanModeProof({ mcp = false } = {}) {
         assert.ok(body.messages.some(message => message.role === 'tool' && message.content.includes('Actual MCP planning observation')));
         assert.ok(body.messages.some(message => message.role === 'tool' && message.content.includes('MCP exploration denied by Host policy')));
       }
+      if (commands) {
+        assert.equal(body.messages.filter(message => message.role === 'tool' && message.content.includes('plan_mode_write_denied')).length, 3);
+        assert.ok(body.messages.some(message => message.role === 'tool' && message.content.includes('planning-command-proof')));
+        assert.ok(body.messages.some(message => message.role === 'tool' && message.content.includes('Command exploration denied by Host policy')));
+      }
     }
     if (count === 5) assert.ok(body.messages.some(message => message.role === 'tool' && message.content.includes('Include rollback steps.')));
     if (count === 8) {
@@ -54,11 +59,19 @@ export function createPlanModeProof({ mcp = false } = {}) {
     const calls = count === 1 ? [{ name: 'ToolSearch', arguments: { query: `select:EnterPlanMode,ExitPlanMode,TodoWrite${mcp ? ',plan_probe,plan_safe,plan_destroy' : ''}` } }]
       : count === 2 ? [wrapped('EnterPlanMode', {})]
       : count === 3 ? [{ name: 'write_workspace_file', arguments: { path: 'forbidden.txt', content: 'must not be written' } }, wrapped('TodoWrite', { todos: tasks }),
+        ...(commands ? [
+          { name: 'run_command', arguments: { command: 'printf planning-command-proof' } },
+          { name: 'run_command', arguments: { command: 'printf forbidden > forbidden-command.txt' } },
+          { name: 'run_command', arguments: { command: 'pwd', env: { PATH: './bin' } } },
+          { name: 'run_command', arguments: { command: 'printf denied-by-host' } },
+        ] : []),
         ...(mcp ? [wrapped('plan_probe', {}), wrapped('plan_safe', {}), wrapped('plan_safe', { deny: true }), wrapped('plan_destroy', {})] : [])]
       : count === 4 ? [wrapped('ExitPlanMode', { plan: plans[0] })]
       : count === 5 ? [wrapped('ExitPlanMode', { plan: plans[1] })]
       : count === 6 ? [{ name: 'write_workspace_file', arguments: { path: 'approved-1.txt', content: 'approved first turn' } }]
-      : count === 8 ? [{ name: 'write_workspace_file', arguments: { path: 'forbidden-cold.txt', content: 'must not be written' } }, ...(mcp ? [{ name: 'plan_probe', arguments: {} }] : [])]
+      : count === 8 ? [{ name: 'write_workspace_file', arguments: { path: 'forbidden-cold.txt', content: 'must not be written' } },
+        ...(commands ? [{ name: 'run_command', arguments: { command: 'printf cold-command-proof' } }] : []),
+        ...(mcp ? [{ name: 'plan_probe', arguments: {} }] : [])]
       : count === 9 ? [{ name: 'ExitPlanMode', arguments: { plan: plans[2] } }]
       : count === 10 ? [{ name: 'write_workspace_file', arguments: { path: 'approved-2.txt', content: 'approved second turn' } }] : [];
     const delta = calls.length ? { tool_calls: calls.map((call, index) => ({ index, id: `plan-${count}-${index}`, type: 'function',
@@ -81,7 +94,8 @@ export function createPlanModeProof({ mcp = false } = {}) {
       assert.equal(second.finalResponse, 'Second plan implemented.', `Native second plan failed: ${second.finalResponse}`);
     } finally { await harness.close(); }
     assert.deepEqual(failures, []); assert.equal(requests.length, 11);
-    for (const filename of ['forbidden.txt', 'forbidden-cold.txt']) await assert.rejects(access(join(root, 'workspace', filename)), { code: 'ENOENT' });
+    for (const filename of ['forbidden.txt', 'forbidden-cold.txt', ...(commands ? ['forbidden-command.txt'] : [])])
+      await assert.rejects(access(join(root, 'workspace', filename)), { code: 'ENOENT' });
     for (const turn of [1, 2]) assert.equal(await readFile(join(root, 'workspace', `approved-${turn}.txt`), 'utf8'), `approved ${turn === 1 ? 'first' : 'second'} turn`);
     const reviews = await rows(join(root, 'plan-reviews.jsonl'));
     assert.deepEqual(reviews.map(row => row.question.detail), plans); assert.deepEqual(reviews.map(row => row.approved), [false, true, true]);
@@ -92,7 +106,8 @@ export function createPlanModeProof({ mcp = false } = {}) {
     const admissions = await rows(join(root, 'tool-admissions.jsonl'));
     assert.deepEqual(admissions.map(row => row.name), mcp
       ? ['plan_probe', 'plan_safe', 'plan_safe', 'write_workspace_file', 'plan_probe', 'write_workspace_file']
-      : ['write_workspace_file', 'write_workspace_file']);
+      : commands ? ['run_command', 'run_command', 'write_workspace_file', 'run_command', 'write_workspace_file']
+        : ['write_workspace_file', 'write_workspace_file']);
     if (mcp) assert.deepEqual(mcpEffects, ['plan_probe', 'plan_safe', 'plan_probe']);
     const { id: agentId } = JSON.parse(await readFile(join(root, 'agent-id.json'), 'utf8'));
     const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex'), userId: 'local-user', agentId };
@@ -109,6 +124,13 @@ export function createPlanModeProof({ mcp = false } = {}) {
           assert.equal(definitions.length, 3); assert.ok(definitions.every(tool => !tool.readOnly && !tool.concurrentSafe));
           assert.equal(definitions.find(tool => tool.name === 'plan_destroy').planModeAccess.destructive, true);
         }
+        if (commands) {
+          const command = record.configuration.tools.find(tool => tool.name === 'run_command');
+          assert.equal(command.planModeCommandPolicy, 'zcode-posix-readonly/v1');
+          assert.equal(command.readOnly, false); assert.equal(command.concurrentSafe, false);
+          assert.ok(record.snapshot.messages.some(message => message.role === 'tool' && message.content.includes(
+            record.configuration.planModeInitialActive ? 'cold-command-proof' : 'planning-command-proof')));
+        }
         assert.equal(record.snapshot.phase, 'completed'); assert.ok(plans.slice(1).includes(record.snapshot.planMode.approvedPlan.plan));
       }
     } finally { store.close(); }
@@ -118,9 +140,9 @@ export function createPlanModeProof({ mcp = false } = {}) {
     assert.deepEqual(modes.map(event => event.data.active), [false, true, false, true, false]);
     assert.equal(new Set(modes.map(event => event.data.nativeId)).size, modes.length);
     await writeFile(join(root, 'plan-mode-proof.json'), JSON.stringify({ passed: true, modelRequests: requests.length,
-      reviews: reviews.length, hostPids: projections.map(row => row.hostPid), approvedWrites: 2, mcpEffects,
-      scope: `Packed Studio + standard maintained Host + SDK, actual plan-review service, denied/approved plans, real write restriction/effects, Todo in planning, persisted mode projection, cold Host user re-entry and approved-plan continuity.${mcp ? ' Actual MCP default/explicit permission admission, destructive denial, Host pre-policy denial and cold resident tool invocation.' : ''} Controlled model/human; no live quality/performance claim.` }, null, 2));
-    console.log(`Studio Native Plan PASS: actual review, feedback, mode restrictions, approved writes, cold Host user re-entry.${mcp ? ' MCP permission admission/denials and cold invocation verified.' : ''}`);
+      reviews: reviews.length, hostPids: projections.map(row => row.hostPid), approvedWrites: 2, mcpEffects, readOnlyCommands: commands ? 2 : 0,
+      scope: `Packed Studio + standard maintained Host + SDK, actual plan-review service, denied/approved plans, real write restriction/effects, Todo in planning, persisted mode projection, cold Host user re-entry and approved-plan continuity.${mcp ? ' Actual MCP default/explicit permission admission, destructive denial, Host pre-policy denial and cold resident tool invocation.' : ''}${commands ? ' Actual read-only POSIX commands across cold Host restart, write/environment denials and Host pre-policy denial.' : ''} Controlled model/human; no live quality/performance claim.` }, null, 2));
+    console.log(`Studio Native Plan PASS: actual review, feedback, mode restrictions, approved writes, cold Host user re-entry.${mcp ? ' MCP permission admission/denials and cold invocation verified.' : ''}${commands ? ' Read-only commands, write/environment denials and Host pre-policy verified.' : ''}`);
   }
   return { respond, run };
 }

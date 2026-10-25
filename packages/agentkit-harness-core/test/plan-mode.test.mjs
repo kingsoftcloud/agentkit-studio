@@ -141,11 +141,39 @@ test('Plan access never turns MCP hints into repeatable-read or concurrency auth
     assert.throws(() => fixture({ tools: [{ ...base, ...override }] }), /invalid_plan_mode_access|invalid_tool_concurrency/);
 });
 
-test('cold claimed MCP admitted in planning is reconciled instead of re-executed', async t => {
+test('dynamic Plan command permission fails closed without its port and only seals active-mode requests', async () => {
+  for (const decision of [undefined, false, true, 'inactive']) {
+    const definition = tool({ name: 'run_command', readOnly: false, concurrentSafe: false,
+      backgroundCommandPolicy: 'owned-command-launch/v1', planModeCommandPolicy: 'zcode-posix-readonly/v1',
+      parameters: { type: 'object', required: ['command'], properties: { command: { type: 'string' } } } });
+    const { config, snapshot } = configuration({ planModeInitialActive: decision !== 'inactive',
+      tools: [...planModeToolDefinitions(), ...todoToolDefinitions(), definition] });
+    let models = 0, effects = 0, checks = 0;
+    const kernel = new NativeKernel({ store: new MemoryRunStore(), digest, owner: 'command-plan', ports: {
+      model: { generate: async request => {
+        if (++models === 1) return result([call('run_command', { command: 'pwd' })]);
+        if (decision === undefined || decision === false) assert.match(request.messages.at(-1).content, /plan_mode_write_denied/);
+        return result();
+      } }, tools: { ...(decision === undefined ? {} : { checkPlanMode: async request => {
+        checks++; assert.equal(request.planMode, 'session-plan/v1'); return decision === true;
+      } }), execute: async request => {
+        effects++; assert.equal(request.planMode, decision === true ? 'session-plan/v1' : undefined);
+        return { status: 'ok', content: 'Read command result' };
+      } } } });
+    kernel.start(snapshot, config); assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+    assert.equal(effects, decision === true || decision === 'inactive' ? 1 : 0);
+    assert.equal(checks, decision === true || decision === false ? 1 : 0);
+  }
+});
+
+for (const kind of ['MCP', 'command']) test(`cold claimed ${kind} admitted in planning is reconciled instead of re-executed`, async t => {
   const directory = mkdtempSync(join(tmpdir(), 'native-plan-mcp-')), filename = join(directory, 'runs.sqlite');
   let store = new SqliteRunStore(filename); t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
-  const mcp = call('mcp'); const { config, snapshot } = configuration({ planModeInitialActive: true, todoPolicy: undefined, tools: [...planModeToolDefinitions(),
-    tool({ name: 'mcp', readOnly: false, concurrentSafe: false, planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive: false } })] });
+  const name = kind === 'MCP' ? 'mcp' : 'run_command';
+  const mcp = call(name); const { config, snapshot } = configuration({ planModeInitialActive: true, todoPolicy: undefined, tools: [...planModeToolDefinitions(),
+    tool({ name, readOnly: false, concurrentSafe: false, ...(kind === 'MCP'
+      ? { planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive: false } }
+      : { planModeCommandPolicy: 'zcode-posix-readonly/v1', backgroundCommandPolicy: 'owned-command-launch/v1' }) })] });
   store.create(config, snapshot); const lease = store.acquire(scope, 'run', 'lost', 1, 1);
   const batch = prepareEffect(snapshot, 'tool', 'executing_tools', { calls: [mcp], interaction: null }, {
     pendingTools: [mcp], messages: [...snapshot.messages, { role: 'assistant', content: '', toolCalls: [mcp] }] });

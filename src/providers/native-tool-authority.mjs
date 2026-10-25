@@ -28,6 +28,8 @@ export function createNativeToolAuthority({ scope, sessionId, store, isClosed = 
       if (index < 0 || request.operationKey !== (intent.payload.calls.length === 1
         ? intent.operationKey : `${intent.operationKey}:call:${index + 1}`)) return false;
       const definition = current.configuration.tools.find(tool => tool.name === request.call.name);
+      if (request.planMode !== (snapshot.planMode?.active && current.configuration.planModePolicy === 'session-plan/v1'
+        && definition?.planModeCommandPolicy ? 'session-plan/v1' : undefined)) return false;
       if (canonical(request.sourceReadBudget ?? null) !== canonical(sourceReadBudgetFor(snapshot, current.configuration, request.call, hash) ?? null)) return false;
       return !!definition && canonical(definition) === canonical(request.definition);
     } catch { return false; }

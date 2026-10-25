@@ -557,6 +557,49 @@ test('Plan MCP admission binds actual MCP identity, preserves Host denials and f
   assert.equal(host.calls.length, 1);
 });
 
+test('Plan command permissions reach real Node execution and recheck runtime after Host policy', async t => {
+  const host = setup(t, ['run_command']); mkdirSync(join(host.workspaceRoot, 'sub'));
+  const store = new SqliteRunStore(join(host.workspaceRoot, '..', 'plan-command.sqlite')); t.after(() => store.close());
+  const schemas = [...host.registry.values()];
+  assert.equal(host.gateway.definitions(host.agent, schemas)[0].planModeCommandPolicy, undefined);
+  const tools = host.gateway.definitions(host.agent, schemas, { planModeCommandPolicy: 'zcode-posix-readonly/v1' });
+  assert.equal(tools[0].readOnly, false); assert.equal(tools[0].concurrentSafe, false);
+  const execute = host.ctx.tools.execute;
+  host.ctx.tools.execute = async request => {
+    if (request.arguments.command === 'git status --short') writeFileSync(join(host.workspaceRoot, 'HEAD'), 'ref: refs/heads/main\n');
+    if (request.arguments.command === 'printf host-denied') return { isError: true, content: [{ type: 'text', text: 'Host policy denied command' }] };
+    return execute(request);
+  };
+  const data = fixture({ planModePolicy: 'session-plan/v1', planModeInitialActive: true,
+    tools: [...tools, ...planModeToolDefinitions()], limits: { effectTimeoutMs: 1000000 } });
+  const ports = host.gateway.forAgent(host.agent, { scope, store });
+  const authority = createNativeToolAuthority({ scope, sessionId: 'session', store });
+  const check = ports.tools.checkPlanMode; let models = 0, checks = 0;
+  ports.tools.checkPlanMode = async request => {
+    checks++; assert.equal(authority(request), true);
+    const missing = { ...request }; delete missing.planMode; assert.equal(authority(missing), false);
+    assert.equal(authority({ ...request, planMode: 'other' }), false);
+    return check(request);
+  };
+  const kernel = new NativeKernel({ store, digest, owner: 'actual-plan-command', ports: { ...ports, model: {
+    generate: async request => {
+      if (++models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [
+        { command: 'printf planning-observed' }, { command: 'printf forbidden > forbidden.txt' },
+        { command: 'git status --short' }, { command: 'printf host-denied' }, { command: 'pwd', env: { KSADK_COMMAND_CWD: 'sub' } },
+      ].map((arguments_, index) => ({ callId: `plan-command-${index}`, name: 'run_command', arguments: arguments_ })) };
+      const results = request.messages.filter(message => message.role === 'tool');
+      assert.equal(results.filter(message => message.content.includes('plan_mode_write_denied')).length, 2);
+      assert.ok(results.some(message => message.content.includes('planning-observed')));
+      assert.ok(results.some(message => message.content.includes('/sub')));
+      assert.ok(results.some(message => message.content.includes('Host policy denied command')));
+      return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+    } } } });
+  kernel.start(data.snapshot, data.config); const done = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(done.phase, 'completed'); assert.equal(done.planMode.active, true); assert.equal(checks, 5);
+  assert.equal(existsSync(join(host.workspaceRoot, 'forbidden.txt')), false);
+  assert.equal(host.calls.length, 3, 'Only admitted calls reach the actual command adapter');
+});
+
 test('Native owns revision-bound MCP receipts while post-policy output controls the model view', async t => {
   const invoked = [], reply = { content: [{ type: 'text', text: 'known answer' }], structuredContent: { count: 7 }, isError: false };
   const host = setup(t, ['lookup'], [{ name: 'lookup', executor: 'mcp', mcpResourceId: 'catalog' }], {

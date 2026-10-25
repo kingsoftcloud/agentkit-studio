@@ -6,7 +6,7 @@ import { initialSnapshot } from './configuration.mjs';
 import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL_CALL } from './tool-discovery.mjs';
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
 import { executeTodo, isTodoCall, todoUpdateFact, TODO_WRITE } from './todos.mjs';
-import { executePlanMode, isPlanModeCall, planModeDenial, planModeFact, planModeGuidance, PLAN_MODE_POLICY } from './plan-mode.mjs';
+import { executePlanMode, isPlanModeCall, planModeDenial, planModeFact, planModeGuidance, planModeWriteDenial, PLAN_MODE_POLICY } from './plan-mode.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
@@ -941,12 +941,18 @@ export class NativeKernel {
           try {
             toolSignal.throwIfAborted();
             const request = { ...context, signal: toolSignal,
+              ...(snapshot.planMode?.active && configuration.planModePolicy === PLAN_MODE_POLICY
+                && definition.planModeCommandPolicy ? { planMode: 'session-plan/v1' as const } : {}),
               ...(configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY ? { resultGovernance: RUNTIME_ARTIFACT_POLICY } : {}),
               ...(sourceReadBudget ? { sourceReadBudget } : {}),
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
-            const result = await Promise.race([isPlanModeCall(configuration, call)
+            const execute = async (): Promise<ToolResult> => {
+              if (request.planMode && (!this.ports.tools.checkPlanMode || await this.ports.tools.checkPlanMode(request) !== true))
+                return planModeWriteDenial();
+              toolSignal.throwIfAborted();
+              return isPlanModeCall(configuration, call)
               ? Promise.resolve(executePlanMode(snapshot, configuration, call, (intent.payload.interaction ?? null) as ObjectValue | null))
               : isTodoCall(configuration, call)
               ? Promise.resolve(executeTodo(snapshot, configuration, call))
@@ -961,7 +967,9 @@ export class NativeKernel {
                   ...(singleReadAdmission ? { admitCompleteRead: singleReadAdmission } : {}),
                   ...(artifactCapacity ? { resultMessageUnits: artifactCapacity.resultMessageUnits,
                     countResult: result => artifactCapacity.countResult(call, result) } : {}) } : undefined)
-              : this.ports.tools.execute(request), aborted]);
+              : this.ports.tools.execute(request);
+            };
+            const result = await Promise.race([execute(), aborted]);
             toolSignal.throwIfAborted();
             invariant(this.monotonicNow() - started < definition.timeoutMs, 'tool_timeout');
             return await governArtifactResult(request, definition, result, configuration, this.ports.artifacts);

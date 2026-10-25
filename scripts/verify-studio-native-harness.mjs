@@ -34,7 +34,8 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false }, 'delivery-review': { type: 'boolean', default: false },
   'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false },
   'tool-search': { type: 'boolean', default: false }, todos: { type: 'boolean', default: false },
-  'plan-mode': { type: 'boolean', default: false }, 'plan-mcp': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
+  'plan-mode': { type: 'boolean', default: false }, 'plan-mcp': { type: 'boolean', default: false },
+  'plan-commands': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
@@ -86,7 +87,8 @@ assert.ok(!values['plan-mode'] || values['mount-host'] && !values.todos && !valu
   && !artifactPolicyProof && !webProof && !managedMemory && !parallelMemory && !values.automation && !values.hooks,
   '--plan-mode is a separate mounted Host proof');
 assert.ok(!values['plan-mcp'] || values['plan-mode'], '--plan-mcp requires --plan-mode');
-const planModeProof = values['plan-mode'] ? createPlanModeProof({ mcp: values['plan-mcp'] }) : null;
+assert.ok(!values['plan-commands'] || values['plan-mode'] && !values['plan-mcp'], '--plan-commands requires --plan-mode without --plan-mcp');
+const planModeProof = values['plan-mode'] ? createPlanModeProof({ mcp: values['plan-mcp'], commands: values['plan-commands'] }) : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
@@ -300,6 +302,7 @@ try {
     `        todos: ${values.todos}`,
     `        planMode: ${values['plan-mode']}`,
     `        planMcp: ${values['plan-mcp']}`,
+    `        planCommands: ${values['plan-commands']}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] || values['plan-mcp'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',

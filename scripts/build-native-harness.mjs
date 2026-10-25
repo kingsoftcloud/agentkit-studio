@@ -5,3 +5,4 @@ const compiler = fileURLToPath(new URL('../node_modules/typescript/bin/tsc', imp
 const result = spawnSync(process.execPath, [compiler, '-p', 'packages/agentkit-harness-core/tsconfig.json'], { cwd: root, stdio: 'inherit' });
 if (result.error) throw result.error;
 if (result.status !== 0) process.exitCode = result.status || 1;
+else await import('./build-command-plan.mjs');

@@ -6,6 +6,7 @@ import { LocalCommandStore, createLocalBackgroundReader } from './local-backgrou
 import { TERMINAL, delay, readRecord } from './local-command-state.mjs';
 import { buildScriptEnvironment, localControlSettings, runBoundedProcess, LOCAL_PROCESS_CONTRACT } from './local-process.mjs';
 import { checkGovernedCommand, LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from './local-command-policy.mjs';
+import { checkPlanCommand, PLAN_COMMAND_POLICY } from './command-plan.mjs';
 
 export const LOCAL_COMMAND_TOOLS_CONTRACT = 'agentkit.local-command-tools/v1';
 const schemas = { nullableSeconds: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
@@ -73,6 +74,20 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
     let part = root;
     for (const name of rel.split(sep).filter(Boolean)) { part = join(part, name); invariant(!lstatSync(part).isSymbolicLink(), 'command_cwd_symlink'); }
     invariant(lstatSync(cwd).isDirectory(), 'command_cwd_not_directory'); return cwd;
+  }
+  async function checkPlanMode(request) {
+    try {
+      checkRoot();
+      invariant(request.planMode === 'session-plan/v1' && request.definition.planModeCommandPolicy === PLAN_COMMAND_POLICY
+        && request.call.name === 'run_command', 'plan_command_binding_invalid');
+      request.signal.throwIfAborted();
+      invariant(assertAuthority(request) === true, 'local_command_authority_stale');
+      const args = request.call.arguments, cwd = cwdFor(args.cwd || args.env?.KSADK_COMMAND_CWD);
+      const { KSADK_COMMAND_CWD: _routing, ...env } = args.env ?? {};
+      const allowed = await checkPlanCommand(args.command, { cwd, workspaceRoot: root, env, signal: request.signal });
+      request.signal.throwIfAborted(); checkRoot();
+      return allowed && assertAuthority(request) === true;
+    } catch { return false; }
   }
   async function budget(result, request) {
     if (request.resultGovernance === 'runtime-artifacts/v1') return result;
@@ -145,6 +160,9 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
       const finding = await checkGovernedCommand(command, { cwd, allowedRoots: [root], signal: request.signal });
       guard();
       if (finding) return errorResult('command_policy_blocked', { finding, exit_code: 126, executed: false });
+      if (request.planMode !== undefined && !await checkPlanMode(request))
+        return { status: 'error', content: { code: 'plan_mode_write_denied', executed: false } };
+      guard();
       request.signal.throwIfAborted(); checkRoot(); cwdFor(args.cwd || args.env?.KSADK_COMMAND_CWD);
       const env = buildScriptEnvironment({ ...environment, ...args.env }, { settings: policy });
       const before = captureWorkspace(request);
@@ -202,7 +220,7 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
         : errorResult(request?.signal?.aborted ? 'canceled' : error.code ?? 'local_command_error', { executed: false });
     }
   }
-  return Object.freeze({ get definitions() { return copy(definitions); }, execute,
+  return Object.freeze({ get definitions() { return copy(definitions); }, execute, checkPlanMode,
     commandId: operationKey => store.commandId(operationKey), reader: createLocalBackgroundReader(store) });
 }
 
@@ -210,7 +228,7 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
  * DSH/Codex calls with their actual Session/call identity, without a fake Run. */
 export function createNativeLocalCommandTools(options = {}) {
   const transport = createLocalCommandTransport(options);
-  return Object.freeze({ get definitions() { return transport.definitions; }, reader: transport.reader,
+  return Object.freeze({ get definitions() { return transport.definitions; }, reader: transport.reader, checkPlanMode: transport.checkPlanMode,
     async execute(request) {
       const sourceRunId = request?.runId;
       const { launchedCommand, ...result } = await transport.execute(request);

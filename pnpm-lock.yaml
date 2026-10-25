@@ -74,6 +74,9 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      unbash:
+        specifier: 4.0.1
+        version: 4.0.1
 
 packages:
 
@@ -1030,6 +1033,10 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  unbash@4.0.1:
+    resolution: {integrity: sha512-1ajSo3813sDoVIHx4inJdUS4l5L2ic5cFiddemPiyjb/PZEoBAhFwHtbaEdRDFxbAKy7FCG7s5ww3/uCFawuIA==}
+    engines: {node: '>=14'}
+
   undici@8.11.2:
     resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
     engines: {node: '>=22.19.0'}
@@ -1967,6 +1974,8 @@ snapshots:
       mime-types: 3.0.2
 
   typescript@6.0.3: {}
+
+  unbash@4.0.1: {}
 
   undici@8.11.2: {}
 

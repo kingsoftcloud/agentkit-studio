@@ -689,7 +689,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
       } };
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false, planModeCommandPolicy } = {}) {
+      invariant(planModeCommandPolicy === undefined || planModeCommandPolicy === 'zcode-posix-readonly/v1', 'studio_native_plan_command_policy_invalid');
       invariant(typeof planModeMcpAccess === 'boolean' || Array.isArray(planModeMcpAccess)
         && planModeMcpAccess.every(name => typeof name === 'string'), 'studio_native_mcp_plan_selection_invalid');
       invariant(toolDiscoveryPolicy === undefined || toolDiscoveryPolicy === 'local-tool-search/v1', 'studio_native_tool_discovery_policy_invalid');
@@ -727,6 +728,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
         if (exact) return { ...structuredClone(exact),
+          ...(name === 'run_command' && commandBackend === 'local_process' && planModeCommandPolicy
+            ? { planModeCommandPolicy } : {}),
           ...(sourceObservationPolicy && exact.readOnly && exact.contextRole === 'workspace_read'
             ? { sourceObservationPolicy, resultArchivePolicy: 'archived-model-view/v5' } : {}),
           ...(directoryObservationPolicy && exact.readOnly && exact.contextRole === 'workspace_list' ? {
@@ -889,6 +892,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } : {}),
         ...(builtinNames.has(browserName) ? { browser: { recoverSessions: request => browserTools.forSession(sessionId).recoverSessions(request) } } : {}),
         tools: {
+          checkPlanMode: async request => {
+            if (commandBackend !== 'local_process' || !builtinNames.has(request.call.name)
+              || request.call.name !== 'run_command' || request.definition.planModeCommandPolicy !== 'zcode-posix-readonly/v1'
+              || !assertCurrent || !assertCurrent(request)) return false;
+            return (await commands()).checkPlanMode(request);
+          },
           ...(a2a && commandAuthority?.store ? { settleQuestions: createNativeA2aQuestionTerminator({ a2a,
             scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
             stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) } : {}),

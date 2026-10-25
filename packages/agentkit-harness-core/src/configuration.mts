@@ -213,6 +213,10 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     compileToolInput(tool.parameters);
     invariant(Number.isFinite(tool.timeoutMs) && tool.timeoutMs > 0 && tool.timeoutMs < limits.effectTimeoutMs, 'invalid_tool_timeout');
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
+    invariant(tool.planModeCommandPolicy === undefined || tool.planModeCommandPolicy === 'zcode-posix-readonly/v1'
+      && tool.name === 'run_command' && tool.backgroundCommandPolicy === 'owned-command-launch/v1'
+      && !tool.readOnly && !tool.concurrentSafe && tool.recoveryPolicy !== 'safe-read/v1'
+      && !tool.planModeAccess, 'invalid_plan_command_policy');
     invariant(tool.planModeAccess === undefined || tool.planModeAccess
       && Object.keys(tool.planModeAccess).every(key => ['contract', 'destructive'].includes(key))
       && tool.planModeAccess.contract === 'zcode-mcp-plan/v1' && typeof tool.planModeAccess.destructive === 'boolean'

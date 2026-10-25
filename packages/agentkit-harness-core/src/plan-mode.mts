@@ -40,8 +40,12 @@ export function validatePlanModeConfiguration(config: RunConfiguration): void {
 
 export function planModeDenial(snapshot: RunSnapshot, config: RunConfiguration, call: ToolCall, definition: ToolDefinition): ToolResult | null {
   if (!snapshot.planMode?.active || config.planModePolicy !== PLAN_MODE_POLICY || isPlanModeCall(config, call)
-    || isTodoCall(config, call) || definition.readOnly
+    || isTodoCall(config, call) || definition.readOnly || definition.planModeCommandPolicy === 'zcode-posix-readonly/v1'
     || definition.planModeAccess?.contract === 'zcode-mcp-plan/v1' && !definition.planModeAccess.destructive) return null;
+  return planModeWriteDenial();
+}
+
+export function planModeWriteDenial(): ToolResult {
   return { status: 'error', content: { code: 'plan_mode_write_denied', executed: false,
     message: 'Planning mode allows read-only exploration, non-destructive MCP tools and session planning controls. Present the plan with ExitPlanMode and obtain user approval before implementation.' } };
 }
@@ -91,6 +95,6 @@ export function planModeFact(snapshot: RunSnapshot, messageCursor: number): Obje
 
 export function planModeGuidance(snapshot: RunSnapshot): string {
   return snapshot.planMode?.active
-    ? 'Plan mode is active. Explore with read/search tools, clarify requirements, and prepare a concrete implementation plan. Do not modify the workspace or start mutating commands/children. Session Todo updates and MCP tools admitted as non-destructive by the frozen tool catalog are allowed, subject to normal tool permissions. Use ExitPlanMode to present the full plan for user approval before implementation.'
+    ? 'Plan mode is active. Explore with read/search tools, clarify requirements, and prepare a concrete implementation plan. Do not modify the workspace or start mutating commands/children. Local commands with the admitted read-only command policy are checked against their syntax, options and runtime directory before execution. Session Todo updates and MCP tools admitted as non-destructive by the frozen tool catalog are allowed, subject to normal tool permissions. Use ExitPlanMode to present the full plan for user approval before implementation.'
     : 'Plan mode is inactive. Continue the user task subject to the existing tool permissions and execution budget. An approved plan is progress context, not a blanket permission grant.';
 }

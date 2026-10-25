@@ -66,7 +66,7 @@ async function applyProof(ctx, options) {
           context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
-        ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.memory ? [] : options.web ? ['web_fetch', 'web_search']
+        ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
           : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
@@ -221,6 +221,8 @@ async function applyProof(ctx, options) {
         return { kind: 'deny', reason: 'Memory pipeline denied the write' };
       if (options.planMcp && exec.name === 'plan_safe' && exec.arguments.deny)
         return { kind: 'deny', reason: 'MCP exploration denied by Host policy' };
+      if (options.planCommands && exec.name === 'run_command' && exec.arguments.command === 'printf denied-by-host')
+        return { kind: 'deny', reason: 'Command exploration denied by Host policy' };
       if (exec.arguments.path === 'denied.txt' || options.commands && exec.arguments.command.endsWith('> denied.txt'))
         return { kind: 'deny', reason: 'Verification policy denied this write' };
     }

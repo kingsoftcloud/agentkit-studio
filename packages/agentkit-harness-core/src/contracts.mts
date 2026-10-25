@@ -61,6 +61,8 @@ export interface ToolDefinition {
   discovery?: { deferred: true; aliases?: string[]; searchHint?: string; mcp?: { serverName: string; toolName: string } };
   /** Frozen MCP Plan admission only; never grants replay or concurrency authority. */
   planModeAccess?: { contract: 'zcode-mcp-plan/v1'; destructive: boolean };
+  /** Requires a dynamic permission check and a second check at command launch. */
+  planModeCommandPolicy?: 'zcode-posix-readonly/v1';
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
@@ -463,6 +465,8 @@ export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta' | '
 export interface ModelStreamRecord { time: number; event: ModelStreamEvent }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }
 export interface ToolRequest extends PortContext {
+  /** Kernel-sealed command restriction, present only in an active Plan mode. */
+  planMode?: 'session-plan/v1';
   resultGovernance?: 'runtime-artifacts/v1';
   sourceReadBudget?: SourceReadBudget;
   call: ToolCall; definition: ToolDefinition; interaction: ObjectValue | null;
@@ -481,6 +485,7 @@ export interface ToolReceiptObservation {
 }
 export interface ToolPort {
   execute(request: ToolRequest): Promise<ToolResult>;
+  checkPlanMode?(request: ToolRequest): Promise<boolean>;
   observeReceipt?(request: ToolReceiptRequest): Promise<ToolReceiptObservation>;
 }
 export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }

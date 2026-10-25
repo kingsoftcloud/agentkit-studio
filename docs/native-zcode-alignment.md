@@ -36,16 +36,17 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **17/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **18/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting), M4 5/20
+(successful context-window truncation and durable cache usage accounting), M4 6/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
-actual Studio plan review, plus frozen non-destructive MCP Plan access through the
-actual Host permission/execution path). M5–M6 have no earned points yet. The denominator
-is unchanged; command/session Plan exceptions and the remaining M4 controls are not
+actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
+local POSIX command Plan permission through the actual Host execution path).
+M5–M6 have no earned points yet. The denominator is unchanged; session/child Plan
+exceptions and the remaining M4 controls are not
 certified completely aligned.
 
 ## Source and implementation map
@@ -64,7 +65,7 @@ audited and integrated.
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | Node `workspace-{tools,editing}.mjs`, Host source/directory projections and mutation lock | Audit actual registration, edit preconditions, result bounds and reversible changes; do not substitute broad Git reset for undo. Pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
-| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo and Plan controls now use durable receipt commits, real Studio projections, detailed plan review and cold-turn continuity. Command/MCP/session-control exceptions, child planning and full reminder/control comparisons remain pending. |
+| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, detailed review, cold-turn continuity, MCP and local POSIX command exceptions are integrated. Session-control exceptions, child planning and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/runtime/methods/turn-loop.ts`, background tests | core child/background modules, Node owned child/command, Host watcher | Native implementations exist. Audit completed-batch delivery, budgets, cancellation, workspaces and restart behavior. Pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
@@ -466,9 +467,10 @@ Deliberate differences and remaining comparisons:
   not add ZCode's separate `auto/yolo/guarded/edit` permission-mode system.
 - ZCode permits non-destructive MCP capabilities even when not read-only, and
   explicitly allowed non-destructive session controls. The MCP exception is now
-  integrated as described below. Dynamic read-only shell classification and
-  other session/child exceptions remain gaps; Native still denies these mutating
-  definitions in planning. These remaining gaps are not certified aligned.
+  integrated as described below. Dynamic local POSIX command classification is
+  also integrated below. Remote-command and other session/child exceptions remain
+  gaps; Native still denies these mutating definitions in planning. These remaining
+  gaps are not certified aligned.
 - Full ZCode Plan reminder cadence/workflow text, child-local planning and every
   user steering/permission interaction still need comparison. Mode guidance is
   integrated now; it does not establish equivalent task quality.
@@ -559,6 +561,73 @@ simple executable-name allowlist would not reproduce it. Explicit non-destructiv
 session control in the pinned source includes `RespondToCoordinator`
 (`tool/handlers/respond-to-coordinator.ts`). It must not be conflated with a
 blanket permission to launch or steer a potentially mutating Native child.
+
+## Dynamic local POSIX command permission during planning
+
+Pinned source: `tool/handlers/bash.ts:resolveBashPermissionCapability` grants
+read-only command capability using `bash-semantics.ts:isRuntimeReadOnlyBashCommand`.
+That function parses shell syntax, rejects dynamic/unsupported words, checks
+per-command options and redirection, and checks the actual Git directory context.
+Native now directly reuses its evaluator with the 23 unchanged parser/policy/Git
+modules in `third-party/zcode-command-plan/`. The source manifest pins original
+paths and hashes; the build verifies them. Apache and parser ISC license notices
+are shipped. This reuses an independent permission component, not a second loop.
+
+The new `zcode-posix-readonly/v1` policy is frozen on the owned local `run_command`
+definition for new Plan-enabled Host Runs. Original Runs keep their policy
+presence or absence. Commands retain non-read-only, serialized, owned-launch
+definitions: a permission classification does not establish safe replay.
+Kernel seals active Plan mode into the actual request and requires a dynamic
+permission port. A missing port denies execution. Ledger authority rejects a
+removed/forged mode restriction. The transport checks again after normal Host
+policy and the existing governed-command check, using the actual workspace cwd.
+A Host-stage change from an ordinary directory to a bare Git indicator is denied
+before launch. Existing authorization, cancellation, deadlines, retained output
+and uncertain-effect recovery remain in the execution path.
+
+The parser runs in a bounded Node worker (2-second classification deadline,
+64-MiB old-generation limit). Cancellation/deadline returns a denial without
+waiting indefinitely for worker exit. Native's explicit environment overrides
+are classified using the same reference assignment rules, so locale overrides
+can pass while PATH/GIT_DIR/BASH_ENV cannot. The internal `KSADK_COMMAND_CWD`
+routing alias is resolved and checked as cwd rather than a shell environment
+assignment. Native's existing workspace cwd and symlink boundaries still apply.
+E2B/remote runtime context cannot be inferred from the Host filesystem; its
+command exception remains pending the Runtime boundary audit. Child planning and
+session communication exceptions remain pending as well.
+
+Local checks for this batch:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs tests/native-command-plan-reference.test.mjs
+node --test --test-name-pattern='Plan command permissions' tests/native-dsh-tools.test.mjs
+node --test tests/native-dsh-tools.test.mjs packages/agentkit-harness/test/native-local-command-policy.test.mjs packages/agentkit-harness/test/native-local-command-read.test.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs packages/agentkit-harness-core/test/prepared-command.test.mjs packages/agentkit-harness-core/test/recovery.test.mjs tests/native-tool-receipt-authority.test.mjs tests/native-command-plan-reference.test.mjs
+node --test --test-name-pattern='restor|cold|frozen|planning controls|MCP' tests/studio-native-harness.test.mjs
+node node_modules/typescript/bin/tsc -p tsconfig.contracts.json
+node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --mount-host --plan-mode --plan-commands --keep
+node scripts/check-portability.mjs
+```
+
+The final control/reference group passed 16 cases and the actual command gateway
+case passed. Earlier overlapping checks passed 75 command/adapter cases, 55
+recovery/prepared-command/authority/control cases (before the added cold-command
+case), and 13 Host restoration/frozen-configuration cases. The packed proof
+completed eleven controlled model requests across two actual Host processes,
+executed two real read-only POSIX commands, rejected a shell write and PATH
+override, preserved a real Host policy denial, and retained all prior Plan/Todo/
+approval/cold-continuity assertions. Two approved workspace writes succeeded;
+all three forbidden paths remain absent. Cold SQLite claimed-command recovery
+also verifies no blind replay after a lost outcome. No full repository suite ran.
+
+The bundled classifier is 105,371 bytes and requires no external parser package
+at runtime (`unbash@4.0.1` is a pinned build-only dependency). A local ten-sample
+Node v26.5.0 permission micro-check of `git status --short` measured a 0.32-ms
+median for the bundled reference function and 26.3 ms for a fresh bounded worker.
+An admitted Plan command uses two worker checks, plus the existing execution
+checks. No model call is added; this is classifier overhead only, not a task-level
+speed, Token saving or ZCode quality comparison. Full task comparison stays in M6.
 
 ## Local evidence and comparison protocol
 
