@@ -36,12 +36,12 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **22/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **23/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
-deferred-tool discovery with durable cleanup/Session continuity), M3 3/20
+deferred-tool discovery with durable cleanup/Session continuity), M3 4/20
 (successful context-window truncation, durable cache usage accounting and
-source-aligned edit matching through actual packed Studio child tools), M4 9/20
+source-aligned edit matching and structured patches through actual packed Studio child tools), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
@@ -50,8 +50,9 @@ plus child-local Todo continuity and durable coordinator responses through the
 actual packed Studio Host, plus owned Plan delegation/wait with immutable child
 mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
-The latest M3 point covers edit matching and its publication boundary, not the
-whole editing/undo or tool execution group.
+The latest M3 point covers structured patch verification/publication and the
+actual bound Studio child path, not the whole editing/undo or tool execution
+group. Ordinary Agent-form catalog discovery for the new tool remains pending.
 M5–M6 have no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
@@ -70,7 +71,7 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | core `edit-matchers.mts`, Node `workspace-{tools,editing,edit-match,edit-worker}.mjs`, Host source/directory projections and mutation lock | Reference matching is admitted for new edit/multi-edit tools and passes actual packed Studio continuation. Native read-state, atomic publication and unknown-effect guards remain. Creation-via-Edit, large files, patch tools, undo and remaining read/write policy comparisons are pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | core `edit-matchers.mts`, `patch-{parser,apply}.mts`, Node workspace ports/workers, Host source/directory projections and mutation lock | Reference matching and structured patches pass actual bound packed Studio continuation. Native read-state, individual-file publication and unknown-effect guards remain. Agent-form discovery of the new patch tool, creation-via-Edit, large/legacy-encoded files, undo, hook aliases and remaining read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
@@ -900,6 +901,89 @@ workspace across cold continuation, original history and one settlement per
 child. Parent workspace bytes remain unchanged. PATH contains Node only and
 Python paths are deliberately unusable. Controlled requests demonstrate actual
 adapter behavior, not live-model coding quality parity.
+
+### Structured workspace patches through the bound Studio child path
+
+Reviewed the pinned reference `src/tool/handlers/apply-patch.ts`,
+`src/tool/patch-parser.ts`, `src/tool/patch-apply.ts`,
+`../contracts/src/tools/apply-patch.ts`, `src/tool/compat.ts` and the actual
+`tests/file-tool-port.test.ts` patch cases. Reference behavior verifies all
+sections before sequential filesystem publication; a multi-file patch is not
+an atomic transaction. Matching progresses through exact, trailing-whitespace,
+trimmed and Unicode-normalized lines, with contextual/EOF hunks and moves.
+
+Core parser and pure application code are copied with Apache-2.0 notices.
+Comparison against the pinned source confirms identical code after removing
+the two attribution lines, changing module extensions and adapting two optional
+property types for Native's `exactOptionalPropertyTypes`. Upstream SHA-256:
+
+- `patch-parser.ts`: `0e104647b152f204e45feb568aa42a80b135ec2bf267a6f01c935eedf424e924`.
+- `patch-apply.ts`: `374ff78899ba1caf8f2a1c433f919020ca51ee3aaee2313848b2dc62cc6cc6a8`.
+
+Native exposes `apply_workspace_patch` only to explicitly bound Native Builds,
+using frozen `workspacePatchPolicy: zcode-patch/v1`. The legacy DSH Native
+ten-tool workspace port stays unchanged. The Native Host/child binding,
+isolated writable-child classification, merge eligibility and component status
+recognize the new tool. Portable exports containing it use
+`agentkit.portable-native-builtin/v3`; v1/v2 inventories remain unchanged and a
+v2 import cannot accept a downgraded patch bundle. A committed parent patch
+receipt refreshes instruction scopes for every changed path, including both
+move endpoints, without re-executing a tool during notification replay.
+
+The publication owner captures source bytes, validates every hunk in a bounded
+pure worker, then rechecks every preimage/path under the existing workspace
+mutation lock before publication. A patch does not require a preceding model
+Read, matching the reference handler. Successful writes refresh Native read
+state for subsequent edits. Authorization, Plan restrictions, cancel and fence
+checks remain in the existing execution path. Actual mutation paths are retained
+immediately; a failure after publication yields an uncertain effect and cannot
+be blindly replayed on recovery. This does not claim cross-file atomicity or
+an OS-level compare-and-swap against external editors.
+
+Explicit differences and remaining scope:
+
+- Native uses strict UTF-8, preserves LF/CRLF and moved-file mode, and limits
+  source/output to 2 MiB per file, 16 MiB total and 64 sections. ZCode's encoding
+  port also supports legacy encodings. That parity remains pending.
+- Native refuses duplicate/aliased/ancestor-overlapping paths and occupied move
+  destinations instead of trying to overwrite or order dependent sections.
+- Pure verification has a 2-second wall limit and 128 MiB worker old-generation
+  limit. No added runtime package or model round trip is needed. End-to-end
+  task speed and Token savings have not been measured.
+- The actual preset-bound Studio path works. The ordinary Agent creation tool
+  catalog is still backed by the older catalog and must gain a Native-only
+  patch entry before product discovery is complete. Hook Write/Edit aliases,
+  undo and the rest of the file-tool audit also remain pending.
+
+Local checks:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness/test/native-workspace-patch.test.mjs
+node --test packages/agentkit-harness/test/native-workspace*.test.mjs tests/portable-bundle.test.mjs tests/dsh-node-workspace-tools.test.mjs
+node --test --test-name-pattern='scoped instructions|structured patch receipts' tests/native-dsh-tools.test.mjs
+pnpm check:contracts
+node scripts/check-portability.mjs
+pnpm pack --pack-destination /tmp/agentkit-native-patch-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-patch-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --continue-child --history --structured-patch --keep
+```
+
+The patch group passes 15 cases, including actual SQLite cold approval,
+Plan denial before execution, external changes/cancel before publication and a
+real state-persistence failure after the first published file without blind
+replay. Affected workspace/portable/DSH regression passed 151 cases with one
+optional Node-22-binary check skipped before the additional Plan case; both
+instruction-scope cases pass. No full repository suite ran.
+
+Portability passed for 1,621 tracked files. The packed proof log is
+`/tmp/agentkit-native-patch-sdk.log`, with evidence in
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-mARkVk`. Its
+`structured-patch-proof.json` records two real Host processes, eight parent/six
+child model requests, two actual patch calls with six verified file changes,
+two real reads and the same child Session across cold continuation. The child
+workspace has the final edited/moved bytes and deleted paths absent; parent
+workspace bytes remain unchanged. Node-only PATH excludes Python. Controlled
+model responses prove adapter behavior, not live-model coding quality parity.
 
 ## Local evidence and comparison protocol
 

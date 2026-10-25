@@ -249,6 +249,42 @@ test('scoped instructions observe committed parent file receipts and can replay 
   assert.equal(h.calls.length, 1);
 });
 
+test('committed structured patch receipts refresh every affected instruction scope without replay', async t => {
+  const h = setup(t, ['apply_workspace_patch']);
+  mkdirSync(join(h.workspaceRoot, 'old')); writeFileSync(join(h.workspaceRoot, 'old/file.ts'), 'before\n');
+  const { config, snapshot } = fixture({ tools: h.gateway.definitions(h.agent, [...h.registry.values()]) });
+  const store = new SqliteRunStore(join(h.workspaceRoot, '..', 'patch-instructions.sqlite')); t.after(() => store.close());
+  let models = 0, observed = false;
+  const kernel = new NativeKernel({ store, digest, owner: 'patch-instructions', ports: {
+    ...h.gateway.forAgent(h.agent, { scope, store }),
+    input: { prepare: async () => {
+      const record = store.load(scope, 'run');
+      if (models === 1) {
+        observed = true;
+        const expected = ['new/file.ts', 'old/file.ts', 'nested/AGENTS.md'].map(path => join(h.workspaceRoot, path));
+        assert.deepEqual(new Set(h.gateway.instructionTouches(h.agent, record)), new Set(expected));
+        const executions = h.calls.length;
+        assert.deepEqual(h.gateway.instructionTouches(h.agent, structuredClone(record)), h.gateway.instructionTouches(h.agent, record));
+        assert.equal(h.calls.length, executions);
+        const failed = structuredClone(record);
+        for (const event of failed.events) if (event.kind === 'tool.completed') event.payload.status = 'error';
+        assert.deepEqual(h.gateway.instructionTouches(h.agent, failed), []);
+      }
+      return { status: 'admitted', messages: [] };
+    } },
+    model: { generate: async () => ++models === 1
+      ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'patch', name: 'apply_workspace_patch', arguments: {
+        patch_text: '*** Begin Patch\n*** Update File: old/file.ts\n*** Move to: new/file.ts\n@@\n-before\n+after\n*** Add File: nested/AGENTS.md\n+Nested instructions\n*** End Patch',
+      } }] }
+      : { kind: 'final_candidate', text: 'done', toolCalls: [], usage: emptyUsage() } },
+  } });
+  kernel.start(snapshot, config); assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  assert.equal(observed, true); assert.equal(h.calls.length, 1);
+  assert.equal(readFileSync(join(h.workspaceRoot, 'new/file.ts'), 'utf8'), 'after\n');
+  assert.equal(existsSync(join(h.workspaceRoot, 'old/file.ts')), false);
+  assert.deepEqual(h.gateway.instructionTouches(h.agent, store.load(scope, 'run')), []);
+});
+
 for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages'])
 for (const redact of [false, true]) test(`${protocol}: source capture uses already-read authorized bytes, and real scoped search/read preserve coordinates (redacted: ${redact})`, async t => {
   const h = setup(t, ['read_workspace_file']);

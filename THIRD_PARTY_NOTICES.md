@@ -1,5 +1,14 @@
 # Third-party source notices
 
+`packages/agentkit-harness-core/src/patch-parser.mts` and `patch-apply.mts`
+preserve ZCode's structured patch parser and pure hunk application from commit
+`3c5b227649371507ddc4eb46ac5133afe6db1cab`, paths
+`apps/zcode-cli/packages/core/src/tool/{patch-parser,patch-apply}.ts`.
+Only attribution headers, local module extensions and optional-property type
+annotations required by Native's stricter compiler change. The Native adapter
+owns path confinement, permissions, snapshots, publication and recovery.
+The Apache-2.0 license is preserved in `third-party/ZCode-LICENSE`.
+
 `packages/agentkit-harness-core/src/edit-matchers.mts` preserves the standalone
 matching algorithm from ZCode commit `3c5b227649371507ddc4eb46ac5133afe6db1cab`,
 `apps/zcode-cli/packages/core/src/tool/edit-matchers.ts`, with an attribution

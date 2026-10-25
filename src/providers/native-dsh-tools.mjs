@@ -69,10 +69,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     if (!states.has(agent)) states.set(agent, new Map());
     const sessions = states.get(agent);
     if (!sessions.has(sessionId)) sessions.set(sessionId, createNativeWorkspaceTools({ workspaceRoot: workspace,
-      stateDir, sessionId, authorize: async () => 'allow' }));
+      stateDir, sessionId, authorize: async () => 'allow', enablePatches: true }));
     return sessions.get(sessionId);
   };
-  const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
+  const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions', enablePatches: true });
   const workspaceToolNames = new Set(template.definitions.map(definition => definition.name));
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
   const managementDefinitions = skillManagementDefinitions();
@@ -601,7 +601,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     childMcpBinding: structuredClone(childMcpBinding),
     workspaceSyntax: builtinNames.has('lint_workspace_file') ? NATIVE_PYTHON_SYNTAX : null,
     workspaceMutationContract: [...builtinNames].some(name => ['write_workspace_file', 'write_workspace_files',
-      'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
+      'edit_workspace_file', 'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch'].includes(name)) ? WORKSPACE_MUTATION_LOCK : null,
     webBinding: webTemplate ? { contract: webTemplate.contract, bindingDigest: webTemplate.bindingDigest } : null,
     codeBinding: [...codeNames].some(name => builtinNames.has(name))
       ? { contract: E2B_CODE_TOOLS_CONTRACT, backend: commandBackend, registryNameContract: SANDBOX_CODE_NAME_CONTRACT,
@@ -781,6 +781,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         if (typeof value.content?.path === 'string') touched.add(value.content.path);
         if (value.name === 'write_workspace_files') for (const item of value.content?.written ?? [])
           if (typeof item?.path === 'string') touched.add(item.path);
+        if (value.name === 'apply_workspace_patch') for (const path of value.content?.changed_paths ?? [])
+          if (typeof path === 'string') touched.add(path);
       }
       return [...touched].map(path => resolve(workspace, path));
     },
@@ -818,7 +820,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const sessionId = commandAuthority?.childSessionId ?? String(agent.session.id);
       const workspaceTools = commandAuthority?.childSessionId && commandAuthority.workspaceRoot
         ? createNativeWorkspaceTools({ workspaceRoot: commandAuthority.workspaceRoot,
-          stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId),
+          stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId), enablePatches: true,
           sessionId, authorize: async () => 'allow' }) : state(agent, sessionId);
       const ledgerAuthority = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;

@@ -11,7 +11,7 @@ import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' },
-  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' } } });
+  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' }, 'structured-patch': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 if (values['child-controls']) assert.ok(values.promote && values.history && values['continue-child'], '--child-controls requires --promote --history --continue-child');
 if (values['guidance-fifo']) assert.ok(values['child-controls'], '--guidance-fifo requires --child-controls');
@@ -19,6 +19,9 @@ if (values['task-controls']) assert.ok(!values.promote && !values['child-control
 if (values['child-plan']) assert.ok(values['task-controls'] && values['continue-child'], '--child-plan requires --task-controls --continue-child');
 if (values['edit-matching']) assert.ok(values['continue-child'] && values.history && !values['task-controls'] && !values['child-controls'] && !values.promote,
   '--edit-matching requires --continue-child --history without other child scenarios');
+if (values['structured-patch']) assert.ok(values['continue-child'] && values.history && !values['task-controls'] && !values['child-controls'] && !values.promote && !values['edit-matching'],
+  '--structured-patch requires --continue-child --history without other child scenarios');
+const editedChild = values['edit-matching'] || values['structured-patch'];
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
 console.log(`Studio child evidence: ${root}`);
@@ -45,10 +48,11 @@ const server = createServer(async (request, response) => {
     let call, calls, text;
     if (child) {
       const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3
-        || values['edit-matching'] && childStep === 2;
+        || editedChild && childStep === 2;
       assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? []
         : ['read_workspace_file', ...(values['child-plan'] ? ['write_workspace_file'] : []),
-          ...(values['edit-matching'] ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []), 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
+          ...(values['edit-matching'] ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []),
+          ...(values['structured-patch'] ? ['apply_workspace_patch'] : []), 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       const results = body.messages.filter(message => message.role === 'tool');
       if (values['child-controls'] && childStep > 0 && turn === 1) assert.match(JSON.stringify(body.messages), /SDK child guidance/);
@@ -112,10 +116,19 @@ const server = createServer(async (request, response) => {
           await parentContinued;
         }
         call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
+        if (values['structured-patch']) call = { name: 'apply_workspace_patch', arguments: { patch_text: ['*** Begin Patch',
+          '*** Update File: proof.txt', '@@', `-${turn === 1 ? 'Evidence from the actual child workspace' : 'Child patched 1'}`, `+Child patched ${turn}`,
+          ...(turn === 1 ? ['*** Add File: move-source.txt', '+move old', '*** Add File: obsolete.txt', '+obsolete']
+            : ['*** Update File: move-source.txt', '*** Move to: moved.txt', '@@', '-move old', '+move new', '*** Delete File: obsolete.txt']),
+          '*** End Patch'].join('\n') } };
         if (values['child-plan']) {
           calls = [{ name: 'write_workspace_file', arguments: { path: 'plan-child.txt', content: `Child implementation ${turn}` } }, call];
           call = undefined;
         }
+      }
+      else if (values['structured-patch'] && childStep === 2) {
+        assert.match(results.at(-1).content, /"ok":true/); assert.match(results.at(-1).content, /"files"/);
+        call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
       }
       else if (values['edit-matching'] && childStep === 2) {
         assert.match(results.at(-1).content, turn === 1 ? /Evidence from the actual child workspace/ : /Child edited 1/);
@@ -124,6 +137,7 @@ const server = createServer(async (request, response) => {
           : { name: 'multi_edit_workspace_file', arguments: { path: 'proof.txt', edits: [{ old_text: '\\u0043hild edited 1', new_text: 'Child edited 2' }] } };
       }
       else { if (values['edit-matching']) assert.match(results.at(-1).content, turn === 1 ? /line_number_prefix_stripped/ : /unicode_escape_normalized/);
+        else if (values['structured-patch']) assert.match(results.at(-1).content, new RegExp(`Child patched ${turn}`));
         else assert.match(results.at(-1).content, /Evidence from the actual child workspace/);
         if (values['child-plan']) {
           const writeCall = body.messages.flatMap(message => message.tool_calls ?? []).findLast(item => item.function.name === 'write_workspace_file');
@@ -136,7 +150,7 @@ const server = createServer(async (request, response) => {
     } else {
       assert.ok(body.tools.some(tool => tool.function.name === 'native_start_child'));
       const step = parentStep++;
-      if (step === 0) call = { name: turn === 1 || values['continue-child'] ? 'native_delegate' : 'native_start_child', arguments: { role: 'reader', task: `${values['edit-matching'] ? 'Read and edit' : 'Read'} proof.txt for turn ${turn}`,
+      if (step === 0) call = { name: turn === 1 || values['continue-child'] ? 'native_delegate' : 'native_start_child', arguments: { role: 'reader', task: `${editedChild ? 'Read and edit' : 'Read'} proof.txt for turn ${turn}`,
         ...(turn === 2 ? { output_format: 'json_object', output_contract: 'parent',
           ...(values['continue-child'] ? { continuation_of: firstChildId, background: true } : {}) } : {}) } };
       else if (step === 1) {
@@ -199,6 +213,7 @@ try {
     ...(values['task-controls'] ? ['        taskControls: true'] : []), '',
     ...(values['child-plan'] ? ['        childPlanMode: true'] : []),
     ...(values['edit-matching'] ? ['        editMatching: true'] : []),
+    ...(values['structured-patch'] ? ['        structuredPatch: true'] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -245,7 +260,7 @@ try {
   }
   await harness.close(); harness = null;
   assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length,
-    values['task-controls'] ? 8 : values['edit-matching'] ? 6 : values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
+    values['task-controls'] ? 8 : editedChild ? 6 : values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
   const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const { readNativeRecoveryBinding } = await import(pathToFileURL(join(installed, 'src/providers/native-recovery-binding.mjs')).href);
@@ -265,8 +280,8 @@ try {
       assert.equal(JSON.stringify(recovery).includes('child-proof-secret'), false);
       const canceled = values['child-controls'] && !parent.childRunIds.includes(firstChildId);
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
-      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['task-controls'] ? 4 : values['guidance-fifo'] || values['edit-matching'] ? 3 : 2);
-      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : values['edit-matching'] ? 2 : 1);
+      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['task-controls'] ? 4 : values['guidance-fifo'] || editedChild ? 3 : 2);
+      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : editedChild ? 2 : 1);
       const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
       if (reservation.deliveryMode === 'foreground') {
         assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
@@ -275,6 +290,17 @@ try {
       const child = store.load(reservation.childScope, reservation.childRunId);
       assert.equal(child.snapshot.phase, canceled ? 'canceled' : 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId);
+      if (values['structured-patch']) {
+        assert.equal(child.configuration.tools.find(tool => tool.name === 'apply_workspace_patch').workspacePatchPolicy, 'zcode-patch/v1');
+        const patchReceipt = child.receipts.find(row => row.result.results?.[0]?.content?.files?.length === 3);
+        assert.ok(patchReceipt); assert.equal(patchReceipt.result.results[0].status, 'ok');
+        if (parent.turnId !== '1') {
+          const isolated = join(root, 'studio/native-harness/child-workspaces', child.configuration.hostRecoveryBinding.childWorkspace.isolationId, 'work');
+          assert.equal(await readFile(join(isolated, 'proof.txt'), 'utf8'), 'Child patched 2\n');
+          assert.equal(await readFile(join(isolated, 'moved.txt'), 'utf8'), 'move new\n');
+          for (const path of ['obsolete.txt', 'move-source.txt']) await assert.rejects(readFile(join(isolated, path)), { code: 'ENOENT' });
+        }
+      }
       if (values['edit-matching']) {
         for (const name of ['edit_workspace_file', 'multi_edit_workspace_file'])
           assert.equal(child.configuration.tools.find(tool => tool.name === name).workspaceEditPolicy, 'zcode-match/v1');
@@ -311,12 +337,12 @@ try {
         assert.equal(child.snapshot.parentRunId, firstChildId); assert.equal(child.snapshot.sessionId, original.snapshot.sessionId);
         assert.equal(child.configuration.childOwnerBinding.continuationOf, firstChildId);
         assert.equal(child.configuration.childOwnerBinding.continuationParentRunId, firstParent.runId);
-        assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['task-controls'] ? 4 : values['guidance-fifo'] || values['edit-matching'] ? 3 : 2);
-        assert.equal(original.snapshot.usage.toolCalls, values['child-plan'] ? 4 : values['task-controls'] ? 3 : values['edit-matching'] ? 2 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
+        assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['task-controls'] ? 4 : values['guidance-fifo'] || editedChild ? 3 : 2);
+        assert.equal(original.snapshot.usage.toolCalls, values['child-plan'] ? 4 : values['task-controls'] ? 3 : editedChild ? 2 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
         if (values['child-plan']) assert.equal(original.snapshot.planMode.active, true);
         assert.equal(store.sessionHead(reservation.childScope, original.snapshot.sessionId).runId, child.snapshot.runId);
       } else assert.equal(child.snapshot.parentRunId, null);
-      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : values['edit-matching'] ? 2 : 1);
+      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : editedChild ? 2 : 1);
       if (values['child-controls']) {
         const commandKind = canceled ? 'cancel' : 'guide';
         const count = !canceled && values['guidance-fifo'] ? 2 : 1;
@@ -361,6 +387,15 @@ try {
       childModelRequests: requests.filter(body => body.model === 'child-proof').length,
       strategies: ['line_number_prefix_stripped', 'unicode_escape_normalized'], actualReads: 2, actualEdits: 2,
       continuedChildSession: true, parentWorkspaceUnchanged: true, noPython: true }, null, 2));
+  }
+  if (values['structured-patch']) {
+    assert.equal(await readFile(join(root, 'workspace/proof.txt'), 'utf8'), 'Evidence from the actual child workspace');
+    for (const path of ['move-source.txt', 'moved.txt', 'obsolete.txt']) await assert.rejects(readFile(join(root, 'workspace', path)), { code: 'ENOENT' });
+    const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(new Set(hosts.map(host => host.pid)).size, 2);
+    await writeFile(join(root, 'structured-patch-proof.json'), JSON.stringify({ contract: 'agentkit.native-structured-patch-proof/v1', hostProcesses: hosts,
+      parentModelRequests: requests.filter(body => body.model === 'parent-proof').length, childModelRequests: requests.filter(body => body.model === 'child-proof').length,
+      actualPatchCalls: 2, verifiedFileChanges: 6, actualReads: 2, continuedChildSession: true, parentWorkspaceUnchanged: true, noPython: true }, null, 2));
   }
   if (values['task-controls']) {
     const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));

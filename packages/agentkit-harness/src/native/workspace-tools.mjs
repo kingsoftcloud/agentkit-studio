@@ -17,7 +17,7 @@
  */
 import { createHash } from 'node:crypto';
 import {
-  closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync,
+  chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, readlinkSync, readSync, realpathSync, rmdirSync, statSync,
   unlinkSync,
 } from 'node:fs';
@@ -26,6 +26,8 @@ import { checkPythonSyntax, NATIVE_PYTHON_SYNTAX } from './python-syntax.mjs';
 import { acquireWorkspaceMutationLock, workspaceMutationGuard } from './workspace-mutation-lock.mjs';
 import { budgetWorkspaceSourcePage, validateSourcePageBudget } from './source-page.mjs';
 import { prepareWorkspaceEdits } from './workspace-edit-match.mjs';
+import { prepareWorkspacePatch } from './workspace-patch.mjs';
+import { parseStructuredPatch } from '../../../agentkit-harness-core/dist/patch-parser.mjs';
 
 import {
   WorkspacePathError, escapeRegex, fnmatch, publishWorkspaceBytes, sha256,
@@ -41,7 +43,7 @@ import {
 
 const MUTATING = new Set([
   'write_workspace_file', 'write_workspace_files', 'edit_workspace_file',
-  'multi_edit_workspace_file', 'delete_workspace_file',
+  'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch',
 ]);
 
 const READ_ONLY = new Set([
@@ -67,7 +69,7 @@ class RootBoundaryError extends Error {
 }
 
 export function createNativeWorkspaceTools({
-  workspaceRoot, stateDir, sessionId, authorize,
+  workspaceRoot, stateDir, sessionId, authorize, enablePatches = false,
 } = {}) {
   if (!workspaceRoot) throw new TypeError('createNativeWorkspaceTools requires workspaceRoot');
   if (!stateDir) throw new TypeError('createNativeWorkspaceTools requires stateDir');
@@ -566,6 +568,100 @@ export function createNativeWorkspaceTools({
     return { text: read.text, pinned, results };
   }
 
+  function patchFailure(code, message) { return { ok: false, error_type: code, error_message: message, executed: false }; }
+  function absent(target) {
+    try { lstatSync(target); return false; } catch (error) { if (error.code === 'ENOENT') return true; throw error; }
+  }
+  async function preparePatch(request, guard) {
+    const patch = request.call.arguments?.patch_text;
+    if (typeof patch !== 'string' || patch.length > 262144) return { error: patchFailure('apply_patch_invalid_patch', 'patch_text must be a string of at most 262144 characters') };
+    let sections;
+    try { sections = parseStructuredPatch(patch); }
+    catch (error) { return { error: patchFailure('apply_patch_invalid_patch', error.message) }; }
+    if (!sections.length) return { error: patchFailure('apply_patch_empty_patch', 'Patch has no file changes') };
+    if (sections.length > 64) return { error: patchFailure('patch_budget_exceeded', 'At most 64 file sections are allowed') };
+    const changes = [], paths = new Set(); let bytes = 0;
+    for (const section of sections) {
+      const target = resolvePath(section.path), rel = relativeOf(target);
+      const moveTarget = section.movePath === undefined ? undefined : resolvePath(section.movePath);
+      for (const path of [target, ...(moveTarget ? [moveTarget] : [])]) {
+        if (paths.has(path) || [...paths].some(other => path.startsWith(other + '/') || other.startsWith(path + '/')))
+          return { error: patchFailure('patch_path_conflict', 'A file path is repeated, aliases another path or overlaps another file in the patch') };
+        paths.add(path);
+      }
+      if ((section.type === 'add' && !absent(target)) || (moveTarget && !absent(moveTarget)))
+        return { error: patchFailure('apply_patch_file_exists', 'An add or move destination already exists') };
+      let text = '', pinned, mode;
+      if (section.type !== 'add') {
+        const read = readWorkspaceText(target);
+        if (read.error) return { error: patchFailure('apply_patch_file_not_exist', `${rel}: ${read.error.error_message}`) };
+        text = read.text; bytes += Buffer.byteLength(text);
+        if (bytes > 16 * 1024 * 1024) return { error: patchFailure('patch_budget_exceeded', 'Patch source exceeds 16 MiB') };
+        const stat = statSync(target, { bigint: true }), lines = splitlines(text).length;
+        mode = Number(stat.mode) & 0o777;
+        pinned = makeReadState({ path: rel, canonicalPath: target, contentSha256: sha256(Buffer.from(text)), mtimeNs: stat.mtimeNs,
+          sizeBytes: Number(stat.size), startLine: 1, endLine: lines, totalLines: lines, partial: false });
+      }
+      if (section.type === 'update' && !section.chunks.length)
+        return { error: patchFailure('apply_patch_invalid_patch', 'Update file section has no hunks') };
+      changes.push({ section, target, rel, moveTarget, text, pinned, mode });
+    }
+    const result = await prepareWorkspacePatch(changes.map(({ section, text }) => ({ section, text })), { signal: request.signal });
+    guard();
+    if (!result) return { error: patchFailure('patch_budget_exceeded', 'Patch verification exceeded its local time or memory budget. No files changed.') };
+    if (result.error) return { error: patchFailure(result.code, result.error) };
+    for (let index = 0; index < changes.length; index++) {
+      const change = changes[index];
+      // The reference operates on logical LF text and writes using each file's
+      // original encoding/EOL. Native currently supports UTF-8 and LF/CRLF.
+      change.updated = change.text.includes('\r\n') ? result.changes[index].replaceAll('\n', '\r\n') : result.changes[index];
+    }
+    return { changes };
+  }
+
+  function verifyPatchChange(change) {
+    if (resolvePath(change.section.path) !== change.target || change.moveTarget && resolvePath(change.section.movePath) !== change.moveTarget)
+      return patchFailure('patch_path_changed', 'A patch path changed during verification');
+    if (change.section.type === 'add') {
+      if (!absent(change.target)) return patchFailure('apply_patch_file_exists', 'An add destination was created during verification');
+    } else {
+      const read = readWorkspaceText(change.target);
+      if (read.error) return { ...read.error, path: change.rel };
+      const stale = validateReadState(change.target, change.rel, { state: change.pinned, content: read.text });
+      if (stale) return stale;
+    }
+    if (change.moveTarget && !absent(change.moveTarget)) return patchFailure('apply_patch_file_exists', 'A move destination was created during verification');
+    return null;
+  }
+
+  function applyWorkspacePatch(_args, { preparedPatch }) {
+    if (!preparedPatch) return patchFailure('apply_patch_not_prepared', 'Patch must be verified before publication');
+    // Validate the complete captured preimage again under the publication lock.
+    for (const change of preparedPatch.changes) { const error = verifyPatchChange(change); if (error) return error; }
+    const files = [];
+    for (const change of preparedPatch.changes) {
+      activeGuard?.();
+      const stale = verifyPatchChange(change);
+      if (stale) {
+        if (activeMutations.size) throw Object.assign(Error(stale.error_message), { code: 'patch_publication_incomplete' });
+        return stale;
+      }
+      const type = change.moveTarget ? 'move' : change.section.type;
+      if (type === 'delete') { unlinkSync(change.target); activeMutations.add(change.rel); }
+      else {
+        const target = change.moveTarget ?? change.target;
+        publish(target, Buffer.from(change.updated), { createOnly: type === 'add' || type === 'move' });
+        if (type === 'move') { chmodSync(target, change.mode); activeGuard?.(); unlinkSync(change.target); activeMutations.add(change.rel); }
+        refreshReadState(relativeOf(target), statSync(target, { bigint: true }), change.updated, target);
+      }
+      const path = change.moveTarget ? relativeOf(change.moveTarget) : change.rel;
+      const diff = buildDiff(path, change.text, change.updated);
+      files.push({ path: change.rel, type, ...(change.moveTarget ? { move_path: path } : {}), diff,
+        diff_sha256: sha256(Buffer.from(diff)), ...changeCounts(change.text, change.updated) });
+    }
+    return { ok: true, files, changed_paths: [...activeMutations], summary: files.map(file => `${file.type}: ${file.path}${file.move_path ? ` -> ${file.move_path}` : ''}`).join('\n') };
+  }
+
   function commitEdit(target, rel, updated, pinned) {
     const { text: current, error } = readWorkspaceText(target);
     if (error) return { stat: null, error: { ...error, path: rel } };
@@ -776,6 +872,10 @@ export function createNativeWorkspaceTools({
   // ---- definitions ----------------------------------------------------------
 
   const definitions = buildDefinitions();
+  if (enablePatches) definitions.push(def('apply_workspace_patch', 'Apply a structured patch to workspace files. Use *** Begin Patch / *** End Patch, Add File, Delete File, Update File and optional Move to headers. Hunks use @@ with space/context, -/removed and +/added lines. All hunks are verified before writing. Existing move destinations and overlapping paths are refused. A multi-file publication is not atomic; an uncertain result requires reconciliation, never blind replay.', {
+    type: 'object', additionalProperties: false, required: ['patch_text'], properties: { patch_text: { type: 'string', maxLength: 262144 } },
+  }, { workspacePatchPolicy: 'zcode-patch/v1', readOnly: false, concurrentSafe: false,
+    contextRole: 'none', permissions: ['workspace:write', 'workspace:delete'], timeoutMs: 30000 }));
 
   const impls = {
     workspace_status: workspaceStatus,
@@ -788,6 +888,7 @@ export function createNativeWorkspaceTools({
     lint_workspace_file: lintWorkspaceFile,
     search_workspace_files: searchWorkspaceFiles,
     delete_workspace_file: deleteWorkspaceFile,
+    ...(enablePatches ? { apply_workspace_patch: applyWorkspacePatch } : {}),
   };
 
   // ---- execute --------------------------------------------------------------
@@ -866,7 +967,17 @@ export function createNativeWorkspaceTools({
 
     if (signal?.aborted) return canceled();
 
-    let result, preparedEdit;
+    let result, preparedEdit, preparedPatch;
+    if (name === 'apply_workspace_patch') {
+      if (request.definition?.workspacePatchPolicy !== 'zcode-patch/v1') return { status: 'error', content: { code: 'invalid_workspace_patch_policy' } };
+      try {
+        preparedPatch = await preparePatch(request, guard);
+        if (preparedPatch.error) return { status: 'error', content: preparedPatch.error };
+      } catch (error) {
+        if (signal?.aborted) return canceled();
+        return { status: 'error', content: { ok: false, error_type: error.code || 'apply_patch_verification_failed', error_message: error.message, executed: false } };
+      }
+    }
     // Matching runs before the publication lock, with strings only. The locked
     // commit rechecks the captured read state and content after this await.
     if (request.definition?.workspaceEditPolicy !== undefined) {
@@ -887,7 +998,7 @@ export function createNativeWorkspaceTools({
       if (mutating) release = acquireWorkspaceMutationLock(pinnedRootReal);
       guard();
       activeMutations = mutations; activeGuard = guard;
-      result = impl(call.arguments ?? {}, { signal, request, preparedEdit });
+      result = impl(call.arguments ?? {}, { signal, request, preparedEdit, preparedPatch });
       guard();
     } catch (e) {
       if (signal?.aborted && !mutations.size) return canceled();
@@ -895,7 +1006,7 @@ export function createNativeWorkspaceTools({
         return { status: 'error', content: { ok: false, error_type: 'path_escape', error_message: e.message } };
       }
       if (mutations.size) return { status: 'uncertain', workspaceChangedPaths: [...mutations],
-        content: { ok: false, error_type: 'state_persist_failed', executed: true, paths: [...mutations] } };
+        content: { ok: false, error_type: name === 'apply_workspace_patch' ? 'patch_publication_incomplete' : 'state_persist_failed', executed: true, paths: [...mutations] } };
       return { status: 'error', content: { ok: false, error_type: e.code || 'internal_error', error_message: e.message } };
     } finally { activeMutations = previousMutations; activeGuard = previousGuard; release?.(); }
     // The only asynchronous implementation parses captured read-only bytes.
@@ -1122,6 +1233,7 @@ function canceled() {
 }
 
 function extractChangedPaths(result) {
+  if (Array.isArray(result.changed_paths)) return result.changed_paths;
   if (result.path) return [result.path];
   if (result.deleted) return [result.deleted];
   if (Array.isArray(result.written)) return result.written.map((w) => w.path).filter(Boolean);
@@ -1243,5 +1355,6 @@ function def(name, description, parameters, opts) {
     observationRole: 'none',
     progressObservation: false,
     contextRetention: 'normal',
+    ...(opts.workspacePatchPolicy ? { workspacePatchPolicy: opts.workspacePatchPolicy } : {}),
   };
 }

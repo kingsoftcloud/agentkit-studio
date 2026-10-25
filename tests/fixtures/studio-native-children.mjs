@@ -12,7 +12,7 @@ export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   let grantProof;
   const a2aProof = options.managedA2aProofPath ? JSON.parse(await readFile(options.managedA2aProofPath, 'utf8')) : null;
-  if (options.managedProofPath || options.taskControls || options.editMatching) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
+  if (options.managedProofPath || options.taskControls || options.editMatching || options.structuredPatch) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
     node: process.version, path: process.env.PATH }) + '\n');
   await mkdir(workspaceRoot, { recursive: true });
   if (!existsSync(join(workspaceRoot, 'proof.txt'))) await writeFile(join(workspaceRoot, 'proof.txt'), 'Evidence from the actual child workspace');
@@ -36,8 +36,10 @@ export async function apply(ctx, options) {
           inheritMcp: Boolean(options.mcpUrl), maxTurns: options.mcpUrl ? 5 : 4, maxToolCalls: options.mcpUrl ? 3 : 2 }
         : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
           tools: ['read_workspace_file', ...(options.childPlanMode ? ['write_workspace_file'] : []),
-            ...(options.editMatching ? ['edit_workspace_file', 'multi_edit_workspace_file'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls ? 5 : 3, maxToolCalls: options.taskControls ? 4 : 2 }],
-      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.editMatching ? ['read_workspace_file', 'edit_workspace_file', 'multi_edit_workspace_file']
+            ...(options.editMatching ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []),
+            ...(options.structuredPatch ? ['apply_workspace_patch'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls ? 5 : 3, maxToolCalls: options.taskControls ? 4 : 2 }],
+      bindings: { tools: a2aProof ? ['call_a2a_agent'] : options.structuredPatch ? ['read_workspace_file', 'apply_workspace_patch']
+        : options.editMatching ? ['read_workspace_file', 'edit_workspace_file', 'multi_edit_workspace_file']
         : options.writingRecovery || options.childPlanMode ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
         ...(a2aProof ? { a2a: a2aProof.bindings } : {}),
         ...(options.mcpUrl ? { mcpServers: ['child-proof-mcp'] } : {}),

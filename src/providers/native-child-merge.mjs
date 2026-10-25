@@ -64,7 +64,7 @@ export function createStudioNativeChildMerge({ scope, sessionId, store, roles, f
         const child = resolved.child, childSnapshot = child.snapshot;
         const role = byRole.get(child.configuration.childOwnerBinding?.role);
         const writing = role?.tools.some(name => ['write_workspace_file', 'write_workspace_files', 'edit_workspace_file',
-          'multi_edit_workspace_file', 'delete_workspace_file'].includes(name));
+          'multi_edit_workspace_file', 'delete_workspace_file', 'apply_workspace_patch'].includes(name));
         const head = store.sessionHead(childSnapshot.scope, childSnapshot.sessionId);
         if (!writing || role.concurrentSafe || childSnapshot.phase !== 'completed'
           || ['failed', 'blocked', 'budget_exhausted'].includes(childSnapshot.outcome)

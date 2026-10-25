@@ -13,7 +13,7 @@ import { createZip, readZipFiles, buildIdFor } from '../src/zip.mjs';
 import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
 import { selectedNativeBuildContract } from '../src/build-engine.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
-import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT,
+import { PORTABLE_NATIVE_BUILTIN_CONTRACT, PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT, PORTABLE_NATIVE_PATCH_CONTRACT,
   PORTABLE_NATIVE_BUILTIN_TOOLS, PORTABLE_NATIVE_WORKSPACE_TOOLS } from '../src/portable-native-tools.mjs';
 
 const NATIVE_DSH_TURN = 'agentkit.native-dsh-turn/v1';
@@ -267,6 +267,22 @@ test('the complete reference Node builtin inventory survives a v2 Frozen export/
     portable.data = Buffer.from(JSON.stringify({ ...identity, createdAt, bundleId: `bundle_${sha256(JSON.stringify(identity))}` }));
     assert.throws(() => verifyPortableBundle(createZip(files)), { code: 'PORTABLE_BUNDLE_INVALID' });
   }
+});
+
+test('Native patch builds export a distinct v3 capability and reject a recomputed v2 downgrade', async t => {
+  const names = ['apply_workspace_patch', 'read_workspace_file'];
+  const f = await fixture(t, { nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: names } });
+  const prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const { manifest } = verifyPortableBundle(zip);
+  assert.deepEqual(manifest.nativeBuiltin, { contract: PORTABLE_NATIVE_PATCH_CONTRACT, engine: NATIVE_DSH_TURN, tools: names });
+  const target = join(f.root, 'patch-target'); const imported = await importPortableBundle(zip, target);
+  const restored = await createStudioBuild({ storeDir: join(target, 'studio') }).resolve(imported.agentId, imported.buildId);
+  assert.deepEqual(restored.bindings.tools, names); assert.equal(restored.spec.executionPolicy, undefined);
+  const files = readZipFiles(zip), portable = files.find(file => file.name === 'portable.json');
+  const { bundleId, createdAt, ...identity } = { ...manifest, nativeBuiltin: { ...manifest.nativeBuiltin, contract: PORTABLE_NATIVE_BUILTIN_CATALOG_CONTRACT } };
+  portable.data = Buffer.from(JSON.stringify({ ...identity, createdAt, bundleId: `bundle_${sha256(JSON.stringify(identity))}` }));
+  assert.throws(() => verifyPortableBundle(createZip(files)), { code: 'PORTABLE_BUNDLE_INVALID' });
 });
 
 test('builtin tools that are not Node-wired are rejected with an explicit reason at export', async t => {
