@@ -5,7 +5,7 @@
  * serves overview, list, detail, and raw OTLP to the observability page.
  */
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NATIVE_SKILL_EVENTS, selectNativeSkillEvents } from '../packages/agentkit-harness/src/native/skill-events.mjs';
 
@@ -68,9 +68,27 @@ function extractTokenUsage(events) {
   return reported ? { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens } : { inputTokens: null, outputTokens: null, totalTokens: null };
 }
 
+function measuredUsage(value, events) {
+  if (value === undefined) return extractTokenUsage(events);
+  if (!value || !['inputTokens', 'outputTokens', 'totalTokens'].every(key => Number.isSafeInteger(value[key]) && value[key] >= 0)
+    || value.inputTokens + value.outputTokens !== value.totalTokens)
+    throw new StudioObservabilityError('TRACE_USAGE_INVALID', 'Trace measured usage is invalid');
+  return { inputTokens: value.inputTokens, outputTokens: value.outputTokens, totalTokens: value.totalTokens };
+}
+
+async function saveTrace(path, record) {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(JSON.stringify(record, null, 2)); await handle.sync(); }
+    finally { await handle.close(); }
+    await rename(temporary, path);
+  } finally { await rm(temporary, { force: true }); }
+}
+
 function normalizeTrace(record) {
   const duration = Date.parse(record.completedAt) - Date.parse(record.startedAt);
-  const tokenUsage = extractTokenUsage(record.events || []);
+  const tokenUsage = measuredUsage(record.measuredTokenUsage, record.events || []);
   const spans = (record.spans || []).map(span => ({ ...span, durationMs: Math.max(0, Date.parse(span.endedAt) - Date.parse(span.startedAt)) || 0 }));
   const otlp = structuredClone(record.otlp);
   const otlpTraceId = createHash('sha256').update(String(record.traceId)).digest('hex').slice(0, 32);
@@ -81,20 +99,20 @@ function normalizeTrace(record) {
 export function createStudioObservability({ storeDir } = {}) {
   async function ensureDir() { await mkdir(storeDir, { recursive: true, mode: 0o700 }); }
 
-  async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [] }) {
+  async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [], measuredTokenUsage }) {
     await ensureDir();
     const spans = projectSpans(events);
-    const tokenUsage = extractTokenUsage(events);
+    const tokenUsage = measuredUsage(measuredTokenUsage, events);
     const record = {
       traceId: String(traceId || `trace_${randomUUID().replace(/-/g, '')}`),
       sessionId: String(sessionId || ''), agentId: String(agentId || ''), agentName: String(agentName || ''),
       executionLocation, ...(provenance ? { provenance } : {}),
       status: String(status || 'completed'), startedAt: String(startedAt || (events[0]?.at || new Date().toISOString())),
       completedAt: String(completedAt || (events[events.length - 1]?.at || new Date().toISOString())),
-      tokenUsage, spanCount: spans.length, spans, events,
+      tokenUsage, ...(measuredTokenUsage ? { measuredTokenUsage: tokenUsage } : {}), spanCount: spans.length, spans, events,
       otlp: { resourceSpans: [{ resource: { attributes: [{ key: 'agent.id', value: { stringValue: String(agentId || '') } }, { key: 'agent.name', value: { stringValue: String(agentName || '') } }] }, scopeSpans: [{ spans: spans.map(span => ({ traceId: traceId, spanId: span.spanId, parentSpanId: span.parentSpanId, name: span.name, kind: span.kind, startTimeUnixNano: String(new Date(span.startedAt).getTime() * 1e6), endTimeUnixNano: String(new Date(span.endedAt).getTime() * 1e6), attributes: Object.entries(span.attributes).map(([key, value]) => ({ key, value: { stringValue: String(value) } })) })) }] }] },
     };
-    await writeFile(join(storeDir, `${record.traceId}.json`), JSON.stringify(record, null, 2));
+    await saveTrace(join(storeDir, `${record.traceId}.json`), record);
     return record;
   }
 

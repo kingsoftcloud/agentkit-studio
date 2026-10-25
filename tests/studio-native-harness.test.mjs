@@ -14,6 +14,7 @@ import { createBackgroundCommandPort } from '../packages/agentkit-harness/src/na
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { createStudioObservability } from '../src/studio-observability.mjs';
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
 import { STUDIO_MANAGED_NATIVE_INPUT } from '../src/host/services/native-managed-input.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
@@ -24,13 +25,14 @@ import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-s
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 
-async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
   const storeDir = storeAlias ? join(root, 'configured-home') : root;
   if (storeAlias) await symlink(root, storeDir, 'dir');
   const workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
+  const observability = trace ? createStudioObservability({ storeDir: join(root, 'traces') }) : undefined;
   const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'], ...spec.bindings } } });
   const bridge = contextSources ? createRuntimeBridge() : null;
   const retireContext = (contextSources?.(record) ?? []).map(source => bridge.nativeContextSources.register(source));
@@ -50,7 +52,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     resolutions.push({ agentId, buildId }); return { ...structuredClone(record),
       executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
-  const host = await createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, ledger,
+  const host = await createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, ledger, observability,
     ...(recovery ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: agent => ({ agent }) } : {}),
     contextSourceRegistry: bridge?.nativeContextSources,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
@@ -74,10 +76,36 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
   // The workspace identity is public deterministic configuration, not a path
   // read from user input. Keep the hash identical to production's scope key.
   const ledgerScope = () => createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex');
-  return { root, host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services,
+  return { root, host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services, observability,
     bridge, retireContext,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+
+test('actual Native Host projects its SQLite Run into Studio traces and replay cannot repeat inference or rewrite timings', async t => {
+  const f = await setup(t, { sqlite: true, trace: true });
+  await f.host.executeTurn(f.payload);
+  const head = f.head(), rows = await f.observability.list({ agentId: f.record.metadata.id });
+  assert.equal(rows.items.length, 1);
+  const trace = await f.observability.get(rows.items[0].traceId), record = f.ledger.load(head.scope, head.runId);
+  assert.equal(trace.runId, head.runId); assert.equal(trace.status, 'completed');
+  assert.equal(trace.events.length, record.events.length);
+  assert.deepEqual(trace.events.map(event => event.native_event_id), record.events.map(event => event.eventId));
+  assert.equal(trace.provenance.nativeProjection.source, 'durable-native-ledger');
+  assert.equal(trace.tokenUsage.totalTokens, head.usage.inputTokens + head.usage.outputTokens);
+  assert.doesNotMatch(JSON.stringify(trace), /secret-one/);
+  const requests = f.requests.length;
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.requests.length, requests);
+  assert.deepEqual((await f.observability.get(trace.traceId)).events, trace.events);
+  assert.ok((await f.observability.getOtlp(trace.traceId)).resourceSpans[0].scopeSpans[0].spans.length > 1);
+});
+
+test('a failed Native trace cache cannot fail the actual Host turn or authorize another model request', async t => {
+  const f = await setup(t, { sqlite: true, trace: true });
+  f.observability.syncTrace = async () => { throw Object.assign(new Error('offline trace cache'), { code: 'TRACE_OFFLINE' }); };
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.head().phase, 'completed'); assert.equal(f.requests.length, 1);
+});
 
 for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(`managed binding reuses real Studio assembly with its own ledger and trusted principal${deliveryReviewPolicy ? ' and pinned review policy' : ''}`, async t => {
   const f = await setup(t, { recovery: true, ...(deliveryReviewPolicy ? { spec: { execution: { deliveryReviewPolicy } } } : {}) }), store = new MemoryRunStore();

@@ -71,6 +71,19 @@ a new live event transport. The complete mounted Host/UI trace-delivery path is
 still part of final product acceptance; component projection alone does not prove
 every runtime produces or forwards such a trace.
 
+The shared Native Host now produces this trace from its original durable Run
+ledger, wired through the production bootstrap for ordinary and Managed turns.
+Projection preserves event identity and measured snapshot usage, serializes
+updates by scope and Run, and rejects stale revisions. Native events do not
+carry wall-clock timestamps: trace events explicitly use their first projection
+observation time, retained on replay. Exact diagnostic numbers that JSON cannot
+represent are decimal strings. Trace-cache failure cannot drive the Kernel or
+repeat model/tool effects. Nine directed checks passed in
+`.artifacts/native-migration/native-trace-projection.log`, including actual Host
+service execution, cold SQLite projection, stale projection and cache failure.
+This closes the producer wiring gap; full mounted Host/browser UI acceptance
+remains a final integration step.
+
 Directed Node 26 checks passed in
 `.artifacts/native-migration/skill-events-targeted.log` (15 cases) and
 `skill-events-boundaries.log` (10 cases, 5 additional unique cases). They cover

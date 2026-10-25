@@ -212,11 +212,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     'agentkit-studio: DSH A2A controls');
   const nativeHost = () => nativeHostPromise ||= ownAsyncResource(ctx,
     Promise.all([import('./services/native-harness.mjs'), import('@deepseek-ai/dsh-system-prompt'), agentStorePromise, studioBuildPromise, resourceAdaptersPromise,
-      import('@deepseek-ai/dsh-agent')])
-      .then(([{ createStudioNativeHarness }, { renderPrompt }, agents, studio, resources, { emitAgentEvent, agentEvents, assembleContextFor }]) => createStudioNativeHarness({
+      import('@deepseek-ai/dsh-agent'), studioObservabilityPromise])
+      .then(([{ createStudioNativeHarness }, { renderPrompt }, agents, studio, resources, { emitAgentEvent, agentEvents, assembleContextFor }, observability]) => createStudioNativeHarness({
         ctx, storeDir: studioStoreDir, workspaceRoot, agents, builds: studio.build, models, resources, fetchImpl: hostFetch, renderPrompt,
         publishStreamFrame: ({ agent }, frame) => emitAgentEvent(ctx, agent, 'agent/assistant-stream', { frame }),
-        agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks, contextSourceRegistry: bridge.nativeContextSources,
+        agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks, contextSourceRegistry: bridge.nativeContextSources, observability,
       })), 'agentkit-studio: Native Harness lifetime');
   ctx.effect(() => bridge.setNativeTurnExecutor(async payload => (await nativeHost()).executeTurn(payload)), 'agentkit-studio: Native whole-turn registration');
   if (nativeManagedKernel !== undefined) {

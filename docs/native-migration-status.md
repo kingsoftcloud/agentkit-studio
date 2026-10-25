@@ -1,5 +1,12 @@
 # Native 迁移当前验收状态
 
+共用 Native Host 已从原 SQLite Run 账本生成 Studio Trace，生产 bootstrap 已接线，
+普通回合和 Managed 回合共用该投影。保留 Run/Session、事件身份、版本及实际累计
+token；冷重放不改写已有观察时间，旧版本不能覆盖新版本。Trace 写入失败不会导致
+模型或工具重跑。9 项直接检查通过（含实际 Host 服务回合），未跑全量；完整挂载
+Host 与浏览器 UI 的最终验收仍未完成。原事件不含墙钟时间，Trace 明确记录首次
+投影观察时间，不将其宣称为原始执行时间。
+
 Skill 类型化诊断已接入共用 Node 加载器、本地/E2B 持久工作流及原 ToolRegistry 结果，
 原身份的 JSONL sidecar 校验、错误/清理事实、冷重放及显式消费凭据 API 已实现；Studio
 Trace/OTLP 消费器也能展开这些事实。22 项不同的直接用例通过，未跑全量。完整挂载

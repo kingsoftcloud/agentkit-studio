@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
@@ -63,12 +64,14 @@ const recoveredPromptAssembly = (assembly, source) => ({ ...assembly,
 
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
-  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry, contextSourceRegistry } = {}) {
+  fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry, contextSourceRegistry, observability } = {}) {
   const sessions = ctx.get('sessions'), projections = ctx.get('sessionProjections'), llm = ctx.get('llm');
   invariant(typeof sessions?.flush === 'function' && typeof projections?.register === 'function'
     && typeof renderPrompt === 'function', 'studio_native_host_services_unavailable');
   const store = ledger ?? new SqliteRunStore(join(storeDir, 'native-harness', 'runs.sqlite'));
   const localStore = store;
+  const traceProjection = observability ? createNativeTraceProjection({ stateDir: join(storeDir, 'native-harness', 'trace-projections'), observability,
+    onError: error => console.warn('[agentkit-studio] Native trace projection failed:', error.code) }) : null;
   let unregister;
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
@@ -104,7 +107,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     controls.set(key, control);
     try { payload.recoveryStarted?.(control); }
     catch (error) { controls.delete(key); throw error; }
-    return () => { if (controls.get(key) === control) controls.delete(key); };
+    const trace = traceProjection?.attach({ store: control.store ?? store, scope: control.scope, runId: control.runId,
+      sessionId: control.sessionId, agentName: payload.agent?.options?.name ?? '' });
+    return async () => { if (controls.get(key) === control) controls.delete(key); await trace?.close(); };
   };
   const controlFor = request => {
     invariant(!closed && typeof request?.agentId === 'string' && request.agentId.trim()
@@ -642,6 +647,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   };
   const execute = createNativeDshTurnExecutor({ store, projections, durableOwnership: true, flush: session => sessions.flush(session),
     publishStreamFrame, streamRevisions, onIdle: createNativeHostInteraction({ ctx, store }),
+    onCheckpoint: (_payload, snapshot) => { traceProjection?.checkpoint(snapshot); },
     onActive: installControl,
     resolveTurn: payload => resolveBinding(payload),
     resolveRecoveryTurn: resolveRestoredBinding,
