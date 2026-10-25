@@ -216,3 +216,20 @@ test('head generation ahead of the latest own marker is a conflict', () => {
     { code: 'native_conversation_rewind_generation_conflict' },
     'equal generation with a divergent commandId is rejected');
 });
+
+test('durable command cleanup admits only retained rows and rejects ambiguous cleanup evidence', () => {
+  const ref = n => ({ taskId: String(n).repeat(64), sourceRunId: `run-${n}`, operationKey: `launch-${n}` });
+  const cleanup = { contract: 'agentkit.native-conversation-command-control/v1', requestDigest: 'original-request',
+    retained: [{ ref: ref(1), notified: false }], stopped: [{ ref: ref(2), status: 'canceled' }] };
+  const event = validMarker({ requestDigest: 'original-request', commandCleanup: cleanup });
+  const admitted = nativeConversationRewindAdmission({ session: makeSession({ events: [event] }), head: makeHead(), turn: 'turn-3' });
+  assert.deepEqual(admitted.conversationRewind.retainedBackgroundCommands, cleanup.retained);
+  admitted.conversationRewind.retainedBackgroundCommands[0].notified = true;
+  assert.equal(cleanup.retained[0].notified, false);
+  for (const bad of [
+    { ...cleanup, requestDigest: 'different-request' },
+    { ...cleanup, stopped: [{ ref: ref(2), status: 'unknown' }] },
+    { ...cleanup, stopped: [{ ref: ref(1), status: 'canceled' }] },
+  ]) assert.throws(() => nativeConversationRewindMarkers([validMarker({ requestDigest: 'original-request', commandCleanup: bad })]),
+    { code: 'native_conversation_rewind_marker_invalid' });
+});

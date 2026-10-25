@@ -16,14 +16,14 @@ export function createNativeConversationPanel({ React, hostRemote, buttonStyle }
       h('details', { onToggle: event => { if (event.currentTarget.open) void controller?.refresh(); } },
         h('summary', null, '对话回退'),
         h('p', { style: { fontSize: '12px' } }, '回退到这条输入之前，后续对话将移出当前分支，工作区文件保留。'),
-        status?.requiresStop ? h('p', null, '回退将先停止当前任务；确认执行结果后切换对话分支。') : null,
+        status?.requiresStop ? h('p', null, '回退将先停止需要移除的任务；确认执行结果后切换对话分支。') : null,
         state.error ? h('p', { role: 'alert' }, state.error) : null,
         status && !status.canRewind ? h('p', null, '当前对话不可回退。') : null,
         status && status.canRewind ? (status.inputs.length
           ? status.inputs.map(input => h('div', { key: input.messageId, style: { borderTop: '1px solid var(--border, #ddd)', padding: '8px 0' } },
               h('p', { style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, input.text),
               h('button', { type: 'button', style: buttonStyle(), disabled: Boolean(state.pending) || state.sending,
-                onClick: () => void controller.rewind(input.messageId) }, status.requiresStop ? '停止当前任务并回退' : '回退到这条输入之前')))
+                onClick: () => void controller.rewind(input.messageId) }, status.requiresStop ? '停止相关任务并回退' : '回退到这条输入之前')))
           : h('p', null, '没有可回退的用户输入。')) : null,
         state.pending ? h('p', { role: 'status' }, '回退请求尚未确认。') : null,
         state.pending ? h('button', { type: 'button', style: buttonStyle(), disabled: state.sending,

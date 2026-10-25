@@ -101,6 +101,8 @@ export class NativeKernel {
     invariant(!rewind || head && rewind.expectedHeadRunId === head.runId
       && rewind.generation > (head.conversationBranch?.generation ?? 0), 'conversation_rewind_head_conflict');
     invariant(!parent || configuration.conversationSeed === undefined || rewind, 'conversation_seed_requires_new_session');
+    invariant(!rewind?.retainedBackgroundCommands?.some(row => !head?.backgroundCommands.some(original => canonical(original) === canonical(row))),
+      'conversation_rewind_command_not_owned');
     const initial = initialSnapshot({ ...identity, parentRunId: head?.runId ?? null }, configuration, configDigest);
     const inherited = rewind ? null : parent;
     const branch = rewind ? { commandId: rewind.commandId, generation: rewind.generation } : head?.conversationBranch;
@@ -125,7 +127,7 @@ export class NativeKernel {
         ...initial.messages.filter(message => message.role !== 'system')],
       workspaceRevision: head?.workspaceRevision ?? null,
       workspaceModifiedPaths: copy(head?.workspaceModifiedPaths ?? []), artifactRefs: copy(inherited?.snapshot.artifactRefs ?? []),
-      backgroundCommands: copy(inherited?.snapshot.backgroundCommands ?? []),
+      backgroundCommands: copy(rewind ? rewind.retainedBackgroundCommands ?? [] : inherited?.snapshot.backgroundCommands ?? []),
     };
     return this.store.create(configuration, snapshot);
   }

@@ -8,6 +8,7 @@ import { NATIVE_PYTHON_SYNTAX } from '../../packages/agentkit-harness/src/native
 import { createNativeLocalCommandTools, localCommandToolDefinitions, LOCAL_COMMAND_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/local-command-tools.mjs';
 import { createOwnedCommandResolver } from '../../packages/agentkit-harness/src/native/owned-command.mjs';
 import { createBackgroundCommandPort } from '../../packages/agentkit-harness/src/native/background-command-port.mjs';
+import { createNativeConversationCommandControl } from '../../packages/agentkit-harness/src/native/conversation-command-control.mjs';
 import { createNativeArtifactStore } from '../../packages/agentkit-harness/src/native/artifact-store.mjs';
 import { buildScriptEnvironment, localControlSettings, LOCAL_PROCESS_CONTRACT } from '../../packages/agentkit-harness/src/native/local-process.mjs';
 import { LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from '../../packages/agentkit-harness/src/native/local-command-policy.mjs';
@@ -642,6 +643,12 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
       risk: [LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY], backend: 'local_process', environmentDigest: hash(commandEnv),
     } : null,
+    conversationCommands(agent, authority) {
+      invariant(!closed && commandBackend === 'local_process' && authority?.scope?.agentId === config.agentId
+        && authority.store && agent?.session?.id, 'studio_native_conversation_commands_unbound');
+      return createNativeConversationCommandControl({ workspaceRoot: workspace, stateRoot: join(stateDir, 'background-commands'),
+        scope: authority.scope, store: authority.store, sessionId: String(agent.session.id), isClosed: () => closed });
+    },
     backgroundObserver(agent, authority) {
       invariant(!closed, 'studio_native_tools_closed');
       invariant(authority?.scope?.agentId === config.agentId && authority.store && agent?.session?.id

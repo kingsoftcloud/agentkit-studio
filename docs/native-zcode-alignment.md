@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **34/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **35/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,7 +53,7 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 10/15 covers durable file preimages on the admitted writer path (one point)
+M5 11/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
@@ -69,7 +69,9 @@ and retained successful full Read/Write/Edit observation hydration on those idle
 branches, with original freshness and post-policy/commit guards (one point),
 and actual in-flight model cancellation before same-Session branch commit,
 bounded Host settlement and cold continuation with immutable canceled ledger
-(one point; full removed-child/background cleanup remains pending).
+(one point), and selective local background-command cleanup with kept-task
+authority across a cold Host (one point; full removed-child and other-backend
+cleanup remains pending).
 This does not certify full recovery/undo, full conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
@@ -1932,3 +1934,71 @@ retirement / compaction / reconciled read variants, fork/isolated-child read
 hydration, neutral runtime handoff, other matrix gaps and the M6 before/reference/
 after comparison remain incomplete. No real-model quality, Token savings,
 latency parity, browser-click acceptance or cloud execution claim is made.
+
+## Selective local command cleanup across conversation rewind (35/100)
+
+Reference: pinned ZCode `src/runtime/methods/rewind-message.ts:542-572`
+waits for removed-branch task cancellation before persisting the cut;
+`:628-650` selects running tasks by branch generation and removed turn IDs.
+Native preserves its own committed launch receipts, supervisor ownership and
+immutable Run ledgers rather than importing a second runtime task registry.
+
+`src/providers/native-conversation-tasks.mjs` proves each command's original
+launch receipt and actual Session turn owner. Kept, closed turns retain their
+commands even if model history has been pruned; partial turns require an
+original accepted launch call/result in the selected history. Removed turns
+cannot retain authority merely because a task ID appears in user text.
+
+The Host-only `conversation-command-control.mjs` verifies the exact current
+StoredRun, local owner-derived task IDs and launch backend before stopping any
+command. It pins physical paths, including the macOS `/var` alias used by the
+existing launcher. Removed commands use their existing fsynced cancel file and
+bounded supervisor wait. Unknown outcomes, head/input drift, aborts, changed
+authority and unsupported backends reject settlement. Retained rows remain
+exactly the original rows; source Run receipts and notification flags are not
+rewritten. This adds no model-visible cleanup tool or alternate executor.
+
+The installed Host performs cleanup under actual `Agent.runMaintenance` to
+exclude ordinary turns and notification admission during asynchronous stops.
+Both an in-flight rewind and a durable cut not yet consumed by a new Run fence
+background notifications. The persisted Session marker records the confirmed
+partition, and the first rebased Run admits only exact already-owned retained
+rows. Later ordinary turns inherit those rows. A failed Session flush can retry
+the same marker without repeating stops. The cleanup timeout propagates into
+the backend operation, preventing a timed-out request from later publishing a
+cut. Studio identifies the action as stopping related tasks before rewind.
+
+Acceptance:
+
+- Native build/pack succeeded. Focused controller, retention, admission fence,
+  marker, Host, client-state and core rewind checks: **70 passed** in
+  `/tmp/native-command-cut-related-final.log`. Three additional Host failure
+  cases then passed in the **18-case** Host group
+  `/tmp/native-command-cut-host-edges.log` (the groups overlap): maintenance
+  ownership/failed-flush retry, unknown stop outcome and backend timeout.
+- Actual packed Studio proof: `--mount-host --conversation-rewind
+  --conversation-command-rewind --frozen --keep`, log
+  `/tmp/native-command-cut-proof-final.log`, evidence root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-4x1yCw`.
+  Two actual Hosts (15612/15641), eight controlled HTTP model calls and two real
+  local background processes. Authenticated rewind keeps the first command
+  running, confirms the removed command canceled, and retries without another
+  cut. A cold Host reads, stops and observes the kept command using its original
+  locator. Removed input/output/task ID are absent from model context; original
+  source ledgers remain identical. Accepted evidence and
+  `conversation-command-rewind-proof.json` are saved in that root.
+- Archive: `/tmp/agentkit-native-command-cut-pack-final/kingsoftcloud-agentkit-studio-0.0.2.tgz`,
+  SHA-256 `0e509b3e82c77d345bd876f73ee4c9ab0aa7b7e00ef783d93efc0803a9a28496`.
+- Actual Claude Code session `1cb6c5e2-40e6-441e-9d6b-d82236dbd1c7`
+  implemented the bounded backend and initial real-process tests. Its turn ended
+  at the turn limit. Main integration corrected diagnostic supervisor access,
+  paused-head test setup, physical-path normalization and full-record/drift
+  guards, then ran the final proofs. No Claude task remains live for this batch.
+
+Earned progress is **35/100**, M5 **11/15**, denominator unchanged. This point
+covers selective **local command** settlement and retained command continuity.
+Full child-task cleanup and historical-selection variants, combined rewind,
+remaining read hydration cases, neutral runtime handoff and other matrix gaps
+remain incomplete. Other backends remain fail-closed where settlement cannot
+be proved. M6 remains **0/15**; controlled-model correctness evidence is not a
+real-model quality, Token savings, latency parity or cloud execution benchmark.

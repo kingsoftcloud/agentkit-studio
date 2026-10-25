@@ -2,14 +2,21 @@ import type { RunConfiguration } from './contracts.mjs';
 import { canonical, invariant } from './values.mjs';
 import { validateContextMessages } from './context-view.mjs';
 import { todoItems } from './todos.mjs';
+import { backgroundCommandRef } from './background-contract.mjs';
 
 /** Validate data only. The Host authenticates the source before admitting these bytes. */
 export function validateConversationSeed(config: RunConfiguration): void {
   const rewind = config.conversationRewind;
   if (rewind !== undefined) invariant(config.conversationSeed && rewind?.contract === 'native-conversation-rewind/v1'
-    && Object.keys(rewind).sort().join(',') === 'commandId,contract,expectedHeadRunId,generation,markerDigest'
+    && Object.keys(rewind).filter(key => key !== 'retainedBackgroundCommands').sort().join(',') === 'commandId,contract,expectedHeadRunId,generation,markerDigest'
     && [rewind.commandId, rewind.expectedHeadRunId, rewind.markerDigest].every(value => typeof value === 'string' && value.trim())
     && Number.isSafeInteger(rewind.generation) && rewind.generation > 0, 'invalid_conversation_rewind');
+  if (rewind?.retainedBackgroundCommands !== undefined) {
+    const rows = rewind.retainedBackgroundCommands;
+    invariant(Array.isArray(rows) && new Set(rows.map(row => canonical(row.ref))).size === rows.length
+      && rows.every(row => Object.keys(row).sort().join(',') === 'notified,ref' && typeof row.notified === 'boolean'
+        && canonical(backgroundCommandRef(row.ref)) === canonical(row.ref)), 'invalid_conversation_rewind_commands');
+  }
   const seed = config.conversationSeed;
   if (seed === undefined) return;
   invariant(seed && seed.contract === 'native-conversation-fork/v1'

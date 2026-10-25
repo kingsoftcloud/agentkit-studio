@@ -83,6 +83,8 @@ export class TransactionalRunStore implements RunStore {
         && rewind.generation > (parent.conversationBranch?.generation ?? 0)
         && canonical(initial.conversationBranch) === canonical({ commandId: rewind.commandId, generation: rewind.generation })
         : canonical(initial.conversationBranch ?? null) === canonical(parent?.conversationBranch ?? null), 'conversation_rewind_head_conflict');
+      if (rewind) invariant((rewind.retainedBackgroundCommands ?? []).every(row => parent?.backgroundCommands.some(original => canonical(original) === canonical(row)))
+        && canonical(initial.backgroundCommands) === canonical(rewind.retainedBackgroundCommands ?? []), 'conversation_rewind_command_not_owned');
       return { record: { configuration: config, snapshot: initial, lease: null, fence: 0,
         events: [], intents: [], receipts: [], commands: [], commits: [], projections: {} }, value: { snapshot: copy(initial), created: true } };
     });

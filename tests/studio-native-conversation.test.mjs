@@ -60,6 +60,63 @@ function heldModel() {
     return new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true })); } };
 }
 
+async function commandSetup(t, options = {}) {
+  let step = 0;
+  const h = await setup(t, { ...options,
+    configuration: { tools: [tool({ name: 'run_command', readOnly: false, concurrentSafe: false,
+      backgroundCommandPolicy: 'owned-command-launch/v1' })] },
+    model: async () => ({ kind: ++step === 1 ? 'tool_calls' : 'final_candidate', text: step === 1 ? '' : 'Running',
+      usage: emptyUsage(), toolCalls: step === 1 ? [{ callId: 'launch', name: 'run_command', arguments: {} }] : [] }),
+    tools: { execute: async request => ({ status: 'ok', content: { backend: 'sandbox/local_process' },
+      backgroundCommandRef: { taskId: '1'.repeat(64), sourceRunId: request.runId, operationKey: request.operationKey } }) } });
+  const calls = [];
+  let maintenance = false;
+  h.agent.runMaintenance = async job => {
+    assert.equal(maintenance, false); maintenance = true;
+    try { return await job(new AbortController().signal); } finally { maintenance = false; }
+  };
+  h.onQuery(() => ({ ...h.binding, nativeTools: { commandBinding: { backend: 'local_process' },
+    conversationCommands: () => ({ contract: 'agentkit.native-conversation-command-control/v1',
+      async settle(request) {
+        assert.equal(maintenance, true, 'cleanup must run under Host maintenance');
+        assert.equal(request.assertCurrent(), true); calls.push(request);
+        if (options.settle) return options.settle(request);
+        return { contract: 'agentkit.native-conversation-command-control/v1', requestDigest: request.requestDigest,
+          retained: [], stopped: request.record.snapshot.backgroundCommands.map(row => ({ ref: row.ref, status: 'canceled' })) };
+      } }) } }));
+  return { ...h, calls };
+}
+
+test('command cleanup is maintenance-owned and a failed flush retries the same marker without another stop', async t => {
+  const h = await commandSetup(t), original = h.store.load(h.scope, h.identity.runId);
+  const status = await h.service.status(h.status); assert.equal(status.canRewind, true); assert.equal(status.requiresStop, true);
+  h.durability(false);
+  await assert.rejects(h.service.rewind(h.request), { code: 'native_conversation_rewind_not_durable' });
+  assert.equal(h.calls.length, 1); assert.deepEqual(h.calls[0].retainedRefs, []);
+  assert.equal(h.events.at(-1).data.source.nativeRewind.commandCleanup.stopped.length, 1);
+  h.durability(true);
+  assert.equal((await h.service.rewind(h.request)).state, 'applied'); assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.store.load(h.scope, h.identity.runId), original);
+});
+
+test('unknown removed-command outcome never publishes a branch cut', async t => {
+  const h = await commandSetup(t, { settle() { throw Error('background_command_outcome_unknown'); } });
+  const before = structuredClone(h.events);
+  await assert.rejects(h.service.rewind(h.request), /background_command_outcome_unknown/);
+  assert.deepEqual(h.events, before); assert.equal(h.service.isRewinding(h.status), false);
+});
+
+test('cleanup timeout aborts the backend operation and leaves the conversation intact', async t => {
+  let cleanupSignal;
+  const h = await commandSetup(t, { stopTimeoutMs: 20,
+    settle({ signal }) { cleanupSignal = signal; return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }); } });
+  const before = structuredClone(h.events);
+  await assert.rejects(h.service.rewind(h.request));
+  assert.equal(cleanupSignal.aborted, true); assert.deepEqual(h.events, before);
+});
+
 test('active rewind persists cancel with the real kernel, waits for closure, then commits once', async t => {
   const model = heldModel(), h = await setup(t, { active: true, model: model.generate }); await model.ready;
   const before = h.store.load(h.scope, h.identity.runId);

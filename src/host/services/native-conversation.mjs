@@ -3,6 +3,7 @@ import { nativeConversationPrefixSeed } from '../../providers/native-conversatio
 import { conversationDigest, nativeConversationRewindMarkers, NATIVE_CONVERSATION_REWIND_SOURCE } from '../../providers/native-conversation-rewind.mjs';
 import { readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
+import { nativeConversationRetainedCommands } from '../../providers/native-conversation-tasks.mjs';
 
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
 export function validateNativeConversationRequest(request, rewind = false) {
@@ -41,7 +42,7 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
       && store.sessionHead(scope, request.sessionId)?.runId === head.runId, 'studio_native_conversation_changed');
     const refreshed = store.load(scope, head.runId);
     invariant(canonical(refreshed.configuration) === canonical(record.configuration), 'studio_native_conversation_changed');
-    return { agent, session, scope, record: refreshed };
+    return { agent, session, scope, record: refreshed, binding };
   };
   const selection = session => {
     const events = session.snapshotEvents(), nodes = [...session.surface.nodes];
@@ -50,7 +51,7 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
     return { events, nodes, inputs, markers: nativeConversationRewindMarkers(events)
       .filter(event => event.data.source.nativeRewind.sessionId === String(session.id) && session.isOwnSeq(event.seq)) };
   };
-  const safe = ({ agent, record }) => Boolean(record && !record.configuration.childOwnerBinding
+  const safe = ({ agent, record }, commandsSettled = false) => Boolean(record && !record.configuration.childOwnerBinding
     && (!record.lease || record.lease.expiresAt <= Date.now()) && agent.status === 'idle' && !agent.externalTurns?.pending()
     && terminal(record.snapshot.phase) && record.snapshot.phase !== 'interrupted'
     && !record.intents.some(intent => intent.status === 'running'
@@ -64,7 +65,9 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
     && record.snapshot.children.every(child => ['completed', 'failed', 'canceled'].includes(child.state))
     && record.snapshot.childBudgetReservations.every(item => item.settledUsageDigest !== null)
     && !['effect_outcome_unknown', 'child_owner_unavailable'].includes(record.snapshot.reason)
-    && record.snapshot.backgroundCommands.every(command => command.notified));
+    && (commandsSettled || record.snapshot.backgroundCommands.every(command => command.notified)));
+  const canCleanCommands = current => current.binding?.nativeTools?.commandBinding?.backend === 'local_process'
+    && typeof current.binding?.nativeTools?.conversationCommands === 'function';
   const control = ({ agent, session, scope, record }) => {
     const live = record && activeControl({ agentId: scope.agentId, sessionId: session.id });
     return live && !record.configuration.childOwnerBinding && agent.status === 'running'
@@ -80,9 +83,11 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
     validateNativeConversationRequest(request);
     const signal = AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : [])]);
     const current = await inspect(request, signal), selected = selection(current.session);
+    const canRewind = safe(current) || safe(current, true) && canCleanCommands(current) || Boolean(control(current));
     return { contract: 'agentkit.studio-native-conversation/v1', agentId: request.agentId, sessionId: request.sessionId,
       headRunId: current.record?.snapshot.runId ?? null, generation: selected.markers.at(-1)?.data.source.nativeRewind.generation ?? 0,
-      canRewind: safe(current) || Boolean(control(current)), requiresStop: Boolean(control(current)),
+      canRewind, requiresStop: Boolean(canRewind && (control(current)
+        || canCleanCommands(current) && current.record.snapshot.backgroundCommands.some(row => !row.notified))),
       inputs: selected.inputs.slice(-64).map(event => ({ messageId: event.data.id,
         text: event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n').slice(0, 240) || '附件输入' })) };
   };
@@ -117,7 +122,7 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
     configure({ ...record.configuration, conversationSeed: seed, conversationRewind: { contract: marker.contract,
       commandId: marker.commandId, expectedHeadRunId: marker.expectedHeadRunId, generation: marker.generation, markerDigest: conversationDigest(marker) } });
     invariant(canonical(request) === bytes, 'studio_native_conversation_changed');
-    if (!safe(current)) {
+    if (!safe(current, true)) {
       const live = control(current);
       invariant(live, 'studio_native_conversation_rewind_requires_idle');
       live.assertCurrent?.(); signal.throwIfAborted();
@@ -138,19 +143,59 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
         && (settled.markers.at(-1)?.data.source.nativeRewind.generation ?? 0) === original.expectedGeneration,
       'studio_native_conversation_changed');
       selected = settled;
-      invariant(safe(current), 'native_conversation_rewind_stop_unsettled');
+      invariant(safe(current, true), 'native_conversation_rewind_stop_unsettled');
     }
-    const removed = selected.nodes.slice(selected.nodes.indexOf(target.seq));
-    signal.throwIfAborted();
-    invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent && safe(current)
-      && canonical(session.snapshotEvents()) === canonical(selected.events)
-      && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId, 'studio_native_conversation_changed');
-    session.append('user/message', { id: `ak-native-rewind-${conversationDigest(original)}`, role: 'user',
-      source: { kind: NATIVE_CONVERSATION_REWIND_SOURCE, form: 'notice', summary: '已回退对话，工作区文件保留', nativeRewind: marker },
-      content: [{ type: 'text', text: '对话已回退到所选输入之前。工作区文件保留当前状态；继续修改前请重新读取相关文件。' }] },
-    { surfaceOp: { op: 'replace', startSeq: removed[0], endSeq: removed.at(-1) }, sourceEventSeqs: removed });
-    invariant(await ctx.get('sessions').flush(session) === true, 'native_conversation_rewind_not_durable');
-    return response(original, marker);
+    const cleanup = current.record.snapshot.backgroundCommands.length > 0 && canCleanCommands(current);
+    const publish = async publishSignal => {
+      if (cleanup) {
+        const frozen = canonical(current.record), frozenEvents = canonical(selected.events);
+        const cleanupSignal = AbortSignal.any([publishSignal, AbortSignal.timeout(stopTimeoutMs)]);
+        const assertCurrent = () => {
+          cleanupSignal.throwIfAborted();
+          invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent
+            && safe(current, true) && canonical(session.snapshotEvents()) === frozenEvents
+            && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId
+            && canonical(store.load(scope, original.expectedHeadRunId)) === frozen, 'studio_native_conversation_changed');
+          return true;
+        };
+        const retainedRefs = nativeConversationRetainedCommands({ store, scope, record: current.record, seed,
+          prefix: selected.events.slice(0, target.seq), sourceEvents: selected.events });
+        const commands = current.binding.nativeTools.conversationCommands(agent, { scope, store });
+        invariant(commands?.contract === 'agentkit.native-conversation-command-control/v1'
+          && typeof commands.settle === 'function', 'native_conversation_command_control_unavailable');
+        marker.commandCleanup = await awaitA2aControl(() => commands.settle({ record: current.record, retainedRefs,
+          requestDigest: marker.requestDigest, signal: cleanupSignal, assertCurrent }), cleanupSignal);
+        assertCurrent();
+        invariant(marker.commandCleanup?.contract === commands.contract && marker.commandCleanup.requestDigest === marker.requestDigest
+          && canonical(marker.commandCleanup.retained.map(row => row.ref)) === canonical(retainedRefs)
+          && marker.commandCleanup.retained.every(row => current.record.snapshot.backgroundCommands.some(original => canonical(original) === canonical(row)))
+          && canonical(marker.commandCleanup.stopped.map(row => row.ref)) === canonical(current.record.snapshot.backgroundCommands
+            .filter(row => !retainedRefs.some(ref => canonical(ref) === canonical(row.ref))).map(row => row.ref))
+          && marker.commandCleanup.stopped.every(row => ['completed', 'failed', 'canceled', 'timed_out', 'output_limit'].includes(row.status)),
+        'native_conversation_command_cleanup_invalid');
+        configure({ ...record.configuration, conversationSeed: seed, conversationRewind: { contract: marker.contract,
+          commandId: marker.commandId, expectedHeadRunId: marker.expectedHeadRunId, generation: marker.generation,
+          markerDigest: conversationDigest(marker), retainedBackgroundCommands: marker.commandCleanup.retained } });
+      }
+      const commandsSettled = Boolean(marker.commandCleanup);
+      invariant(safe(current, commandsSettled), 'native_conversation_rewind_stop_unsettled');
+      const removed = selected.nodes.slice(selected.nodes.indexOf(target.seq));
+      publishSignal.throwIfAborted();
+      invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent && safe(current, commandsSettled)
+        && canonical(session.snapshotEvents()) === canonical(selected.events)
+        && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId, 'studio_native_conversation_changed');
+      session.append('user/message', { id: `ak-native-rewind-${conversationDigest(original)}`, role: 'user',
+        source: { kind: NATIVE_CONVERSATION_REWIND_SOURCE, form: 'notice', summary: '已回退对话，工作区文件保留', nativeRewind: marker },
+        content: [{ type: 'text', text: '对话已回退到所选输入之前。工作区文件保留当前状态；继续修改前请重新读取相关文件。' }] },
+      { surfaceOp: { op: 'replace', startSeq: removed[0], endSeq: removed.at(-1) }, sourceEventSeqs: removed });
+      invariant(await ctx.get('sessions').flush(session) === true, 'native_conversation_rewind_not_durable');
+      return response(original, marker);
+    };
+    if (cleanup) {
+      invariant(typeof agent.runMaintenance === 'function', 'native_conversation_command_maintenance_unavailable');
+      return agent.runMaintenance(maintenanceSignal => publish(AbortSignal.any([signal, maintenanceSignal])));
+    }
+    return publish(signal);
   };
   const rewind = async (request, callerSignal) => {
     validateNativeConversationRequest(request, true);
@@ -165,5 +210,5 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
     pending.set(key, entry);
     return entry.promise;
   };
-  return { status, rewind };
+  return { status, rewind, isRewinding: request => pending.has(canonical({ agentId: request.agentId, sessionId: request.sessionId })) };
 }

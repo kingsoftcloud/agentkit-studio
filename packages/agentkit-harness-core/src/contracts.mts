@@ -224,7 +224,8 @@ export interface ConversationSeed {
 }
 export interface RunConfiguration {
   conversationRewind?: { contract: 'native-conversation-rewind/v1'; commandId: string;
-    expectedHeadRunId: string; generation: number; markerDigest: string };
+    expectedHeadRunId: string; generation: number; markerDigest: string;
+    retainedBackgroundCommands?: BackgroundCommandState[] };
   childTaskPolicy?: 'session-controls/v1';
   coordinatorResponsePolicy?: 'owned-parent-response/v1';
   todoPolicy?: 'session-todos/v1';

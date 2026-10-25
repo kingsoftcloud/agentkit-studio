@@ -780,7 +780,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents,
     childRecord: request => childHistory(request).record(request) });
   const managedScopeControl = createStudioNativeManagedScopeControl({ ctx, workspaceId, lifetime, active, agentEvents, readChildren });
-  const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents });
+  const notifyBackgroundCompletion = createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents,
+    isRewinding: conversation.isRewinding });
   const dispatchBackgroundCompletion = createStudioNativeBackgroundDispatcher({ ctx, store, workspaceId, lifetime, active, notify: notifyBackgroundCompletion });
   const startWaitRecovery = ({ signal } = {}) => {
     invariant(signal === undefined || signal instanceof AbortSignal, 'studio_native_recovery_signal_invalid');

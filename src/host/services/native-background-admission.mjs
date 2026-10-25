@@ -4,6 +4,7 @@ import { nativeDshOwnershipHost } from '../../../packages/agentkit-harness/src/n
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, nativeDshBackgroundOwnership, nativeDshIdleOwnershipHost,
   readNativeDshBackgroundOwnership, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
+import { nativeConversationRewindMarkers } from '../../providers/native-conversation-rewind.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
@@ -22,7 +23,7 @@ async function live(operation, signal) {
 }
 
 /** Internal Host admission, never an inbox message or an executable command port. */
-export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents }) {
+export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId, lifetime, active, execute, agentEvents, isRewinding = () => false }) {
   const driving = new Set();
   const drive = async ({ agent, agentId, sourceRunId, taskId, signal: callerSignal }) => {
     invariant(text(agentId) && text(sourceRunId) && /^[a-f0-9]{64}$/.test(taskId)
@@ -30,6 +31,14 @@ export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId,
     const signal = callerSignal ? AbortSignal.any([callerSignal, lifetime.signal]) : lifetime.signal;
     signal.throwIfAborted();
     const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId };
+    const checkBranch = () => {
+      invariant(!isRewinding({ agentId, sessionId: agent.session.id }), 'studio_native_background_conversation_rewind_pending');
+      const marker = typeof agent.session.snapshotEvents === 'function' ? nativeConversationRewindMarkers(agent.session.snapshotEvents())
+        .filter(event => event.data.source.nativeRewind.sessionId === agent.session.id && agent.session.isOwnSeq(event.seq)).at(-1)?.data.source.nativeRewind : null;
+      const head = store.sessionHead(scope, agent.session.id);
+      invariant(!marker || marker.generation <= (head?.conversationBranch?.generation ?? 0), 'studio_native_background_conversation_rewind_pending');
+    };
+    checkBranch();
     const key = canonical({ scope, sessionId: agent.session.id });
     invariant(!driving.has(key), 'studio_native_background_already_active');
     driving.add(key);
@@ -84,6 +93,7 @@ export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId,
       // Admission persists before the owner is returned; no model can run until
       // the shared executor has claimed and flushed that owner.
       await idle.start(async payload => {
+        checkBranch();
         preparedSignal = AbortSignal.any([signal, payload.signal]);
         preparedSignal.throwIfAborted();
         const admitted = await admitBackgroundNotification({ store, scope, sourceRunId, taskId, digest: hash,

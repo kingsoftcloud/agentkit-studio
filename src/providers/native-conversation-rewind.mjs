@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, backgroundCommandRef } from '../../packages/agentkit-harness-core/dist/index.mjs';
 
 export const NATIVE_CONVERSATION_REWIND_SOURCE = 'agentkit-native-conversation-rewind';
 export const conversationDigest = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -14,6 +14,16 @@ export function nativeConversationRewindMarkers(events) {
       && typeof marker.expectedHeadRunId === 'string' && marker.expectedHeadRunId.trim()
       && typeof marker.targetMessageId === 'string' && marker.targetMessageId.trim() && marker.seed,
     'native_conversation_rewind_marker_invalid');
+    if (marker.commandCleanup !== undefined) {
+      const cleanup = marker.commandCleanup;
+      invariant(cleanup?.contract === 'agentkit.native-conversation-command-control/v1' && cleanup.requestDigest === marker.requestDigest
+        && Array.isArray(cleanup.retained) && Array.isArray(cleanup.stopped)
+        && cleanup.retained.every(row => typeof row.notified === 'boolean' && canonical(backgroundCommandRef(row.ref)) === canonical(row.ref))
+        && cleanup.stopped.every(row => ['completed', 'failed', 'canceled', 'timed_out', 'output_limit'].includes(row.status)
+          && canonical(backgroundCommandRef(row.ref)) === canonical(row.ref))
+        && new Set([...cleanup.retained, ...cleanup.stopped].map(row => canonical(row.ref))).size === cleanup.retained.length + cleanup.stopped.length,
+      'native_conversation_rewind_marker_invalid');
+    }
     generations.set(marker.sessionId, marker.generation);
   }
   return markers;
@@ -36,5 +46,6 @@ export function nativeConversationRewindAdmission({ session, head, turn, sameTur
   invariant(head && head.runId === marker.expectedHeadRunId && head.turnId !== String(turn), 'native_conversation_rewind_head_conflict');
   return { conversationSeed: copy(marker.seed), conversationRewind: {
     contract: marker.contract, commandId: marker.commandId, expectedHeadRunId: marker.expectedHeadRunId,
-    generation: marker.generation, markerDigest: conversationDigest(event) } };
+    generation: marker.generation, markerDigest: conversationDigest(event),
+    ...(marker.commandCleanup ? { retainedBackgroundCommands: copy(marker.commandCleanup.retained) } : {}) } };
 }

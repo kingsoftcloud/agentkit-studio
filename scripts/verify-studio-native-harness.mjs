@@ -26,6 +26,7 @@ import { createPlanModeProof } from './native-plan-mode-proof.mjs';
 import { createWorkspaceRepairProof } from './native-workspace-repair-proof.mjs';
 import { createConversationForkProof } from './native-conversation-fork-proof.mjs';
 import { createConversationRewindProof } from './native-conversation-rewind-proof.mjs';
+import { createConversationCommandRewindProof } from './native-conversation-command-rewind-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -35,6 +36,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'conversation-fork': { type: 'boolean', default: false },
   'conversation-rewind': { type: 'boolean', default: false },
   'conversation-active-rewind': { type: 'boolean', default: false },
+  'conversation-command-rewind': { type: 'boolean', default: false },
   hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
@@ -103,9 +105,11 @@ assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entrie
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;
 assert.ok(!values['conversation-rewind'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
-  && !['conversation-rewind', 'conversation-active-rewind', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-rewind is a separate mounted Host proof');
+  && !['conversation-rewind', 'conversation-active-rewind', 'conversation-command-rewind', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-rewind is a separate mounted Host proof');
 assert.ok(!values['conversation-active-rewind'] || values['conversation-rewind'], '--conversation-active-rewind requires --conversation-rewind');
-const conversationRewindProof = values['conversation-rewind'] ? createConversationRewindProof({ active: values['conversation-active-rewind'] }) : null;
+assert.ok(!values['conversation-command-rewind'] || values['conversation-rewind'] && !values['conversation-active-rewind'], '--conversation-command-rewind requires --conversation-rewind without --conversation-active-rewind');
+const conversationRewindProof = values['conversation-command-rewind'] ? createConversationCommandRewindProof()
+  : values['conversation-rewind'] ? createConversationRewindProof({ active: values['conversation-active-rewind'] }) : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
@@ -312,6 +316,7 @@ try {
     `        workspaceRepair: ${Boolean(workspaceRepairProof)}`,
     `        conversationFork: ${Boolean(conversationForkProof || conversationRewindProof)}`,
     `        conversationRewind: ${Boolean(conversationRewindProof)}`,
+    `        conversationCommandRewind: ${values['conversation-command-rewind']}`,
     `        trace: ${values.trace}`,
     `        hooks: ${values.hooks}`,
     `        memory: ${values.memory || Boolean(managedMemory || parallelMemory)}`,

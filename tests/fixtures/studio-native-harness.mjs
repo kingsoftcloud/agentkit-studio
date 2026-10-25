@@ -70,7 +70,8 @@ async function applyProof(ctx, options) {
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
-          : options.workspaceRepair ? ['apply_workspace_patch'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
+          : options.workspaceRepair ? ['apply_workspace_patch'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files']
+          : options.conversationCommandRewind ? ['run_command', 'read_command_output', 'stop_command'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
@@ -253,6 +254,9 @@ async function applyProof(ctx, options) {
     await appendFile(filename, JSON.stringify({ question: review, approved, hostPid: process.pid }) + '\n');
     return { answers: [{ id: review.id, selected: [approved ? 'Approve' : 'Keep planning'],
       ...(approved ? {} : { custom: 'Include rollback steps.' }) }] };
+  }, { prepend: true });
+  if (options.conversationCommandRewind) ctx.on('approval/request', async request => {
+    if (request.agent.session.id === 'native-studio-session' && ['run_command', 'stop_command'].includes(request.toolName)) return 'allowed-once';
   }, { prepend: true });
   if (options.memoryManaged) ctx.on('approval/request', async request => {
     if (request.agent.session.id !== 'native-studio-session' || request.toolName !== 'manage_memory') return;
