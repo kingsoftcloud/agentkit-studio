@@ -36,12 +36,13 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **23/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **24/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
-deferred-tool discovery with durable cleanup/Session continuity), M3 4/20
+deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
 (successful context-window truncation, durable cache usage accounting and
-source-aligned edit matching and structured patches through actual packed Studio child tools), M4 9/20
+source-aligned edit matching and structured patches through actual packed Studio child tools,
+plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
@@ -50,9 +51,8 @@ plus child-local Todo continuity and durable coordinator responses through the
 actual packed Studio Host, plus owned Plan delegation/wait with immutable child
 mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
-The latest M3 point covers structured patch verification/publication and the
-actual bound Studio child path, not the whole editing/undo or tool execution
-group. Ordinary Agent-form catalog discovery for the new tool remains pending.
+The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
+frozen-Build admission, not the whole editing/undo or tool execution group.
 M5–M6 have no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
@@ -71,7 +71,7 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | core `edit-matchers.mts`, `patch-{parser,apply}.mts`, Node workspace ports/workers, Host source/directory projections and mutation lock | Reference matching and structured patches pass actual bound packed Studio continuation. Native read-state, individual-file publication and unknown-effect guards remain. Agent-form discovery of the new patch tool, creation-via-Edit, large/legacy-encoded files, undo, hook aliases and remaining read/write policy comparisons are pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | core `edit-matchers.mts`, `patch-{parser,apply}.mts`, Node workspace ports/workers, Host source/directory projections and mutation lock | Reference matching and structured patches pass actual packed Studio continuation, Native-local catalog authoring and frozen-Build admission. Native read-state, individual-file publication and unknown-effect guards remain. Creation-via-Edit, large/legacy-encoded files, undo, hook aliases and remaining read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
@@ -950,10 +950,9 @@ Explicit differences and remaining scope:
 - Pure verification has a 2-second wall limit and 128 MiB worker old-generation
   limit. No added runtime package or model round trip is needed. End-to-end
   task speed and Token savings have not been measured.
-- The actual preset-bound Studio path works. The ordinary Agent creation tool
-  catalog is still backed by the older catalog and must gain a Native-only
-  patch entry before product discovery is complete. Hook Write/Edit aliases,
-  undo and the rest of the file-tool audit also remain pending.
+- The actual preset-bound Studio path works. The subsequent Native-local catalog
+  batch below also covers ordinary Agent authoring and frozen-Build admission.
+  Hook Write/Edit aliases, undo and the rest of the file-tool audit remain pending.
 
 Local checks:
 
@@ -985,7 +984,83 @@ workspace has the final edited/moved bytes and deleted paths absent; parent
 workspace bytes remain unchanged. Node-only PATH excludes Python. Controlled
 model responses prove adapter behavior, not live-model coding quality parity.
 
+### Native-owned catalog, ordinary authoring and frozen-Build admission
+
+`src/native-tool-catalog.mjs` supplies the new patch tool from the same definition
+factory used by its executor. Discovery cannot label this writer read-only or
+replace its schema with an old remote catalog entry. Native Host admission
+resolves this explicitly bound local name before consulting the optional legacy
+catalog, and only for the selected Native engine. No additional tool is silently
+added to a Build, and no execution authority comes from a catalog response.
+
+The Agent form now sends its selected runtime with tool discovery; the
+authenticated resource route and template authoring use the same merged
+catalog. Native search/source/status filters and paging apply after bounded
+legacy-page collection, with a separate merged-cursor namespace, deduplication
+and rejection of invalid/repeated cursors. The collection stops after 20 pages
+of 200 legacy entries and asks for a narrower query rather than silently omitting
+tools. An unavailable optional catalog produces an explicit warning and shows
+the available Native-local addition. Cancellation, authorization and malformed
+responses remain errors. DSH Native, Codex and untyped requests retain their
+original remote catalog/cursor behavior.
+
+This is authoring metadata work: it adds no model calls, tool declarations to
+unbound Runs, runtime dependencies or extra execution loop. Large catalogs incur
+bounded metadata collection before merged pagination; actual task-level latency
+and Token comparisons remain pending. The implementation deliberately does not
+replace the whole existing legacy tool directory in this batch.
+
+Targeted checks passed 33 cases across catalog routing/transport, template
+authoring and structured-patch execution; the final catalog/transport group
+passes eight cases. Contracts and the client/package build passed. The packed
+proof extends `--structured-patch` to read the authenticated catalog, create an
+ordinary Agent from its returned resource ID, create a frozen Build and admit
+that exact Build on both Host processes. Both parent recovery bindings retain
+the original Build ID. It then performs the same two actual child patch calls,
+six file changes and cold continuation under Node-only PATH. This proves the
+actual authoring/execution backend path; it does not claim an interactive browser
+click-through or live-model task-quality comparison.
+
+```sh
+node --test tests/native-tool-catalog.test.mjs tests/resource-remote.test.mjs tests/mcp-probe-route.test.mjs tests/template-authoring.test.mjs packages/agentkit-harness/test/native-workspace-patch.test.mjs
+pnpm check:contracts
+node scripts/check-portability.mjs
+pnpm pack --pack-destination /tmp/agentkit-native-catalog-final-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-catalog-final-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --continue-child --history --structured-patch --keep
+```
+
+Portability passed for 1,623 tracked files. Final archive log:
+`/tmp/agentkit-native-catalog-final-pack.log`; packed proof log:
+`/tmp/agentkit-native-catalog-final-sdk.log`; evidence:
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-dLwD7Y`.
+`native-catalog-authoring-proof.json` and `structured-patch-proof.json` preserve
+the discovered schema/writer permissions, created Agent, exact frozen Build,
+two actual Host processes, eight parent/six child model calls and
+successful isolated patch results. The verifier's previous no-Build assertion
+was updated to compare the actual frozen Build ID rather than removing the
+recovery check. No full repository suite ran.
+
 ## Local evidence and comparison protocol
+
+Next source audit: file rewind. A real Claude Code read-only invocation reached
+its six-turn limit; resuming it with tools disabled produced a report explicitly
+marking incomplete Native coverage. The main-agent cross-check read
+`runtime/helpers/rewind.ts`, `methods/{tools,file-rewind,workspace-fork,rewind,workspace-checkpoints}.ts`
+and Native's write/edit/delete/read-state/publication paths. Corrections to the
+report matter: the legacy `restoreWorkspaceCheckpointFiles` writes/removes its
+saved state directly; hash conflict checking and compensation belong to the
+file-summary rewind path, not every reference restore path. An originally
+absent file has a null preimage, while undoing a deletion needs its saved bytes.
+The reviewed automatic checkpoint candidate accepts a scalar `filePath`,
+`originalFile` and `structuredPatch`; the aggregate ApplyPatch output does not
+meet that shape. Full reference undo coverage must not be inferred from an
+interface or handler name. Native's read-state hashes and child publication
+receipts alone do not establish a parent file-undo feature. The next integrated
+batch must join durable preimages, preview/conflict checks, authorized apply and
+cold recovery; an unused snapshot module alone will not certify rewind parity.
+Audit logs: `/tmp/agentkit-native-zcode-undo-claude.json` and
+`/tmp/agentkit-native-zcode-undo-claude-report.json`. This research adds no earned
+milestone point and is not runtime acceptance evidence.
 
 Representative tasks must cover code navigation, a bug fix, a cross-file edit,
 tool failure, truncated tool output, active-turn guidance/cancel, long context,

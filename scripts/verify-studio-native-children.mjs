@@ -262,6 +262,8 @@ try {
   assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length,
     values['task-controls'] ? 8 : editedChild ? 6 : values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
   const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
+  const catalogAuthoring = values['structured-patch']
+    ? JSON.parse(await readFile(join(root, 'native-catalog-authoring-proof.json'), 'utf8')) : null;
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const { readNativeRecoveryBinding } = await import(pathToFileURL(join(installed, 'src/providers/native-recovery-binding.mjs')).href);
   const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
@@ -272,7 +274,7 @@ try {
     for (const parent of parents) {
       const record = store.load(scope, parent.runId);
       const recovery = readNativeRecoveryBinding(record, { agentId, sessionId: 'native-child-parent', runId: parent.runId });
-      assert.equal(recovery.agentRevision, 1); assert.equal(recovery.buildId, null);
+      assert.equal(recovery.agentRevision, 1); assert.equal(recovery.buildId, catalogAuthoring?.buildId ?? null);
       assert.deepEqual(recovery.source, { provider: 'agentkit-studio-parent-profile', model: 'parent-proof' });
       assert.ok(recovery.messages.some(message => message.content.some(part => part.type === 'text'
         && (parent.turnId === '1' ? part.text.includes('Use a bounded reader for proof 1') : part.text.includes('读取 proof.txt')))));
@@ -393,9 +395,14 @@ try {
     for (const path of ['move-source.txt', 'moved.txt', 'obsolete.txt']) await assert.rejects(readFile(join(root, 'workspace', path)), { code: 'ENOENT' });
     const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
     assert.equal(new Set(hosts.map(host => host.pid)).size, 2);
+    const authoring = catalogAuthoring;
+    assert.equal(authoring.authenticatedCatalog, true); assert.equal(authoring.authenticatedCreate, true); assert.equal(authoring.authenticatedBuild, true);
+    assert.equal(authoring.tool.resourceId, 'apply_workspace_patch'); assert.equal(authoring.tool.source, 'studio-native');
+    assert.match(authoring.buildId, /^build_/);
     await writeFile(join(root, 'structured-patch-proof.json'), JSON.stringify({ contract: 'agentkit.native-structured-patch-proof/v1', hostProcesses: hosts,
       parentModelRequests: requests.filter(body => body.model === 'parent-proof').length, childModelRequests: requests.filter(body => body.model === 'child-proof').length,
-      actualPatchCalls: 2, verifiedFileChanges: 6, actualReads: 2, continuedChildSession: true, parentWorkspaceUnchanged: true, noPython: true }, null, 2));
+      actualPatchCalls: 2, verifiedFileChanges: 6, actualReads: 2, continuedChildSession: true, parentWorkspaceUnchanged: true, noPython: true,
+      catalogAuthoring: authoring }, null, 2));
   }
   if (values['task-controls']) {
     const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));

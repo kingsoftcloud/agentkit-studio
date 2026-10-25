@@ -11,6 +11,7 @@ import { snapshotNativeMcpSchema, snapshotNativeMcpPlanAccess } from '../provide
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { nativeHarnessHostContract, selectedNativeBuildContract } from '../build-engine.mjs';
 import { loadConfiguredNativeSkills } from '../providers/native-skill-source.mjs';
+import { nativeLocalToolContract } from '../native-tool-catalog.mjs';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
 import { createStartupReconciler } from '../preset-recovery.mjs';
@@ -283,13 +284,17 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
         ? agent.spec.bindings : {};
-      const refs = (Array.isArray(bindings.tools) ? bindings.tools : []).map(value => {
+      const bindingRefs = (Array.isArray(bindings.tools) ? bindings.tools : []).map(value => {
         if (typeof value === 'string') return value;
         return value?.resourceId || value?.id || value?.name || '';
       }).filter(Boolean).map(String);
       const mcpBindings = Array.isArray(bindings.mcpServers) ? bindings.mcpServers : [];
-      if (!refs.length && !mcpBindings.length) return [];
-      const builtinContracts = [];
+      if (!bindingRefs.length && !mcpBindings.length) return [];
+      const native = agent?.spec?.runtime?.type === 'harness'
+        && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
+      const builtinContracts = native ? bindingRefs.map(nativeLocalToolContract).filter(Boolean) : [];
+      const localNames = new Set(builtinContracts.map(tool => tool.resourceId));
+      const refs = bindingRefs.filter(ref => !localNames.has(ref));
       if (refs.length) {
         let page;
         try {

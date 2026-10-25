@@ -125,7 +125,7 @@ export async function apply(ctx, options) {
       return (await response.json()).outcome;
     }, { prepend: true });
   }
-  const presetId = dshPresetId(record.metadata.id, record.metadata.revision);
+  let catalogBuildId = '';
   let activeAgent;
   const authenticate = async () => {
     const origin = ctx.webServer.getOrigin();
@@ -135,6 +135,45 @@ export async function apply(ctx, options) {
     await writeFile(join(home, 'control-auth.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
     return { origin, cookie };
   };
+  if (options.structuredPatch) {
+    const { origin, cookie } = await authenticate();
+    const rpc = async (method, payload) => {
+      const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ method, payload }), signal: AbortSignal.timeout(10000) });
+      const result = (await response.json()).result;
+      if (response.status !== 200 || !result?.ok) throw Error(`Native catalog proof ${method}: ${result?.error?.code || response.status}`);
+      return result.value;
+    };
+    const catalog = await rpc('resources/list', { kind: 'tool', runtimeType: 'harness', query: 'apply_workspace_patch' });
+    const patch = catalog.items.find(item => item.resourceId === 'apply_workspace_patch' && item.source === 'studio-native');
+    if (!patch || patch.contract.executor !== 'builtin' || patch.contract.sideEffect !== 'workspace') throw Error('Native patch catalog missing its writer contract');
+    const proofPath = join(home, 'native-catalog-authoring-proof.json');
+    if (!existsSync(proofPath)) {
+      // Exercise the ordinary Agent form's authenticated create/build routes,
+      // using the discovered ID rather than a test-only tool registration.
+      record = await rpc('agents/create-local', { name: 'Native catalog patch agent', runtimeType: 'harness', spec: {
+        ...record.spec, bindings: { ...record.spec.bindings, tools: [{ resourceId: 'read_workspace_file' }, { resourceId: patch.resourceId }] },
+      } });
+      await writeFile(join(home, 'identity.json'), JSON.stringify({ agentId: record.metadata.id }));
+      await rpc('builds/create', { agentId: record.metadata.id, revision: record.metadata.revision });
+      const deadline = Date.now() + 15000;
+      while (!catalogBuildId) {
+        const builds = await rpc('builds/list', { agentId: record.metadata.id });
+        catalogBuildId = builds.items.find(item => item.status === 'SUCCEEDED')?.id || '';
+        if (!catalogBuildId) {
+          if (Date.now() >= deadline) throw Error('Native catalog proof build timed out');
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      }
+      await writeFile(proofPath, JSON.stringify({ authenticatedCatalog: true, authenticatedCreate: true, authenticatedBuild: true,
+        agentId: record.metadata.id, buildId: catalogBuildId, tool: patch }, null, 2));
+    } else {
+      const proof = JSON.parse(await readFile(proofPath, 'utf8'));
+      if (proof.agentId !== record.metadata.id) throw Error('Native catalog proof Agent changed on restart');
+      catalogBuildId = proof.buildId;
+    }
+  }
+  const presetId = dshPresetId(record.metadata.id, record.metadata.revision, catalogBuildId);
   // The real SessionController must be callable before reconstructing an agent.
   if (options.writingRecovery) await authenticate();
   ctx.on('agent/created', async ({ agent, source }) => {
@@ -142,7 +181,7 @@ export async function apply(ctx, options) {
     activeAgent = agent;
     const { origin, cookie } = await authenticate();
     const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
-      body: JSON.stringify({ method: 'agents/ensure-preset', payload: { agentId: record.metadata.id } }) });
+      body: JSON.stringify({ method: 'agents/ensure-preset', payload: { agentId: record.metadata.id, ...(catalogBuildId ? { buildId: catalogBuildId } : {}) } }) });
     const result = (await response.json()).result;
     if (response.status !== 200 || !result?.ok || result.value.presetId !== presetId) throw Error('Child proof preset admission failed');
     await writeFile(join(home, 'control-auth.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });

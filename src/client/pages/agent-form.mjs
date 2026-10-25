@@ -63,7 +63,7 @@ export function createAgentForm({
     useEffect(() => {
       let alive = true;
       setCatalogStatus('loading');
-      Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind)))
+      Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind === 'tool' ? { kind, runtimeType: form.runtime } : kind)))
         .then(results => {
           if (!alive) return;
           const next = {};

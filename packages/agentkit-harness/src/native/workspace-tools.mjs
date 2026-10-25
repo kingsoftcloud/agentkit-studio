@@ -872,10 +872,7 @@ export function createNativeWorkspaceTools({
   // ---- definitions ----------------------------------------------------------
 
   const definitions = buildDefinitions();
-  if (enablePatches) definitions.push(def('apply_workspace_patch', 'Apply a structured patch to workspace files. Use *** Begin Patch / *** End Patch, Add File, Delete File, Update File and optional Move to headers. Hunks use @@ with space/context, -/removed and +/added lines. All hunks are verified before writing. Existing move destinations and overlapping paths are refused. A multi-file publication is not atomic; an uncertain result requires reconciliation, never blind replay.', {
-    type: 'object', additionalProperties: false, required: ['patch_text'], properties: { patch_text: { type: 'string', maxLength: 262144 } },
-  }, { workspacePatchPolicy: 'zcode-patch/v1', readOnly: false, concurrentSafe: false,
-    contextRole: 'none', permissions: ['workspace:write', 'workspace:delete'], timeoutMs: 30000 }));
+  if (enablePatches) definitions.push(workspacePatchDefinition());
 
   const impls = {
     workspace_status: workspaceStatus,
@@ -1340,6 +1337,14 @@ function buildDefinitions() {
       required: ['path'], additionalProperties: false,
     }, { readOnly: false, concurrentSafe: false, contextRole: 'none', permissions: ['workspace:delete'], timeoutMs: 30000 }),
   ];
+}
+
+/** Shared by Native execution and its local Studio catalog; no workspace access. */
+export function workspacePatchDefinition() {
+  return def('apply_workspace_patch', 'Apply a structured patch to workspace files. Use *** Begin Patch / *** End Patch, Add File, Delete File, Update File and optional Move to headers. Hunks use @@ with space/context, -/removed and +/added lines. All hunks are verified before writing. Existing move destinations and overlapping paths are refused. A multi-file publication is not atomic; an uncertain result requires reconciliation, never blind replay.', {
+    type: 'object', additionalProperties: false, required: ['patch_text'], properties: { patch_text: { type: 'string', maxLength: 262144 } },
+  }, { workspacePatchPolicy: 'zcode-patch/v1', readOnly: false, concurrentSafe: false,
+    contextRole: 'none', permissions: ['workspace:write', 'workspace:delete'], timeoutMs: 30000 });
 }
 
 function def(name, description, parameters, opts) {
