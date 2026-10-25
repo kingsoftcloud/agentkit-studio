@@ -26,7 +26,7 @@ import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from '
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeChildRoles, STUDIO_NATIVE_CHILD_SKILLS_CONTRACT } from './native-subagents.mjs';
-import { createNativeToolAuthority } from './native-tool-authority.mjs';
+import { createNativeToolAuthority, createNativeToolReceiptAuthority } from './native-tool-authority.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
 import { nativeChildMergeDefinition } from './native-child-merge.mjs';
@@ -690,7 +690,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
       } };
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false, planModeCommandPolicy, workspaceEditPolicy } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false, planModeCommandPolicy, workspaceEditPolicy, workspaceCheckpointDefinitions } = {}) {
+      invariant(workspaceCheckpointDefinitions === undefined || Array.isArray(workspaceCheckpointDefinitions), 'studio_native_checkpoint_definitions_invalid');
       invariant(workspaceEditPolicy === undefined || workspaceEditPolicy === 'zcode-match/v1', 'studio_native_workspace_edit_policy_invalid');
       invariant(planModeCommandPolicy === undefined || planModeCommandPolicy === 'zcode-posix-readonly/v1', 'studio_native_plan_command_policy_invalid');
       invariant(typeof planModeMcpAccess === 'boolean' || Array.isArray(planModeMcpAccess)
@@ -728,7 +729,13 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           const memDef = sessionMemoryDefs?.get(name);
           if (memDef) return structuredClone(memDef);
         }
-        const exact = builtinNames.has(name) ? formal.get(name) : null;
+        const exact = builtinNames.has(name) && formal.has(name) ? structuredClone(formal.get(name)) : null;
+        if (exact && workspaceToolNames.has(name) && !exact.readOnly && workspaceCheckpointDefinitions !== undefined) {
+          const original = workspaceCheckpointDefinitions.find(tool => tool.name === name);
+          for (const key of ['workspaceCheckpointPolicy', 'recoveryPolicy']) {
+            delete exact[key]; if (original?.[key] !== undefined) exact[key] = original[key];
+          }
+        }
         if (exact) return { ...structuredClone(exact),
           ...(workspaceEditPolicy && ['edit_workspace_file', 'multi_edit_workspace_file'].includes(name) ? { workspaceEditPolicy } : {}),
           ...(name === 'run_command' && commandBackend === 'local_process' && planModeCommandPolicy
@@ -829,6 +836,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const assertCurrent = ledgerAuthority ? request => ledgerAuthority(request) && (!childSkills
         || request.buildId === childSkills.buildId && canonical(commandAuthority.store.load(commandAuthority.scope, request.runId)
           .configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills)) : undefined;
+      const assertReceiptCurrent = commandAuthority?.store ? createNativeToolReceiptAuthority({ ...commandAuthority, sessionId,
+        isClosed: () => closed }) : undefined;
+      const a2aReceiptObserver = a2a && commandAuthority?.store ? createNativeA2aReceiptObserver({ a2a,
+        scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
+        stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) : null;
       const a2aService = a2a && commandAuthority?.scope && assertCurrent ? a2a.forSession({ scope: commandAuthority.scope, sessionId,
         destinationSessionId: String(agent.session.id),
         stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, assertCurrent }) : null;
@@ -909,9 +921,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           ...(a2a && commandAuthority?.store ? { waitForReceipt: createNativeA2aReceiptWaiter({ a2a,
             scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
             stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) } : {}),
-          ...(a2a && commandAuthority?.store ? { observeReceipt: createNativeA2aReceiptObserver({ a2a,
-            scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
-            stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) } : {}),
+          ...(assertReceiptCurrent ? { observeReceipt: async request => {
+            if (request.definition.workspaceCheckpointPolicy === 'file-preimages/v1' && builtinNames.has(request.call.name)
+              && formal.has(request.call.name) && allowed.has(request.call.name))
+              return workspaceTools.observeReceipt(request, { assertCurrent: assertReceiptCurrent });
+            if (a2aReceiptObserver) return a2aReceiptObserver(request);
+            invariant(assertReceiptCurrent(request), 'studio_native_tool_receipt_authority_stale');
+            return { contract: request.contract, originalOperationKey: request.originalOperationKey, callId: request.call.callId, result: null };
+          } } : {}),
           execute: async request => {
         invariant(!closed, 'studio_native_tools_closed');
         invariant(request.sessionId === sessionId && (allowed.has(request.call.name)
@@ -1026,8 +1043,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           const content = invocation.outcome ? structuredClone(invocation.outcome.content) : result?.additionalContexts?.length
             ? { content: result.content, additionalContexts: result.additionalContexts } : result.content;
           if (assertMcpCurrent) { try { assertMcpCurrent(); } catch { status = 'uncertain'; } }
-          return { ...invocation.outcome, status, content,
+          const outcome = { ...invocation.outcome, status, content,
           context, ...(archiveContext ? { archiveContext } : {}), ...(additionalContexts.length ? { additionalContexts } : {}) };
+          if (assertCurrent && builtinNames.has(request.call.name) && formal.has(request.call.name))
+            workspaceTools.recordReceipt(request, outcome, { assertCurrent });
+          return outcome;
         } finally { calls.delete(callId); }
       } } };
     },

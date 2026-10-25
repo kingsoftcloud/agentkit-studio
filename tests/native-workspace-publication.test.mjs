@@ -98,8 +98,20 @@ function gateway(t, f, limits = {}) {
       callId: 'write', name: 'write_workspace_file', arguments: { path: 'file.txt', content: 'Native actual write' },
     }] } : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] },
   } } }); kernel.start(snapshot, config);
-  return { store, kernel, snapshot };
+  return { store, kernel, snapshot, bound, agent, registry };
 }
+
+test('Host reconstruction preserves pre-checkpoint and pre-receipt frozen writer policies', t => {
+  const f = setup(t), host = gateway(t, f), assembly = [...host.registry.values()];
+  const current = host.bound.definitions(host.agent, assembly);
+  assert.equal(current[0].workspaceCheckpointPolicy, 'file-preimages/v1'); assert.equal(current[0].recoveryPolicy, 'receipt-observation/v1');
+  for (const checkpoint of [false, true]) {
+    const original = structuredClone(current); delete original[0].recoveryPolicy;
+    if (!checkpoint) delete original[0].workspaceCheckpointPolicy;
+    assert.deepEqual(host.bound.definitions(host.agent, assembly, { workspaceCheckpointDefinitions: original }), original);
+  }
+  assert.deepEqual(host.bound.definitions(host.agent, assembly), current, 'restoration cannot mutate defaults for other Sessions');
+});
 
 test('production gateway publishes only against its actual current SQLite tool intent', async t => {
   const f = setup(t), host = gateway(t, f);

@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **26/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **28/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,8 +53,10 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 2/15 covers durable file preimages on the admitted writer path (one point)
+M5 4/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
+(one point), guarded compensation of failed file rewinds (one point), and
+separately fenced cold final-receipt lookup through the production Host gateway
 (one point). This does not certify full recovery/undo, conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
@@ -1092,9 +1094,10 @@ Remaining differences stay in the original objective:
   session history for admission/planning. Large-history memory/latency needs
   optimization and acceptance.
 - Native does not write automatic compensation after losing execution ownership
-  or cancellation authority. Partial-restore reconciliation and compensation
-  while authority remains valid are unfinished; uncertain-effect blocking is
-  not their replacement. No cross-file atomicity or OS-level compare-and-swap
+  or cancellation authority. The next batch below implements compensation while
+  authority remains valid and final-receipt lookup. Partial restoration without
+  a final receipt still needs explicit recovery; uncertain-effect blocking is
+  not its replacement. No cross-file atomicity or OS-level compare-and-swap
   against external editors is claimed.
 - No runtime dependency, Python process or extra model call was added. An
   eight-sample local 1-KiB fresh-file writer microbenchmark on Node v26.5.0
@@ -1149,6 +1152,113 @@ real unfinished scope; changing their label is not recovery. Review outputs:
 This is supporting review, not a complete independent certification.
 
 Portability passed for 1,625 tracked files (`/tmp/native-rewind-final-portability.log`).
+
+### Guarded rewind compensation and original final-receipt observation
+
+Reference `src/runtime/methods/file-rewind.ts:149-219,253-278` reverses its local
+write journal on a restore failure. Native now compensates a failed rewind under
+the existing workspace lock while the original execution authority remains valid.
+The durable checkpoint enters `compensating` before inverse writes. Only paths
+actually published by this invocation are restored, in reverse order, and only
+when bytes, mode and canonical target still match its last publication. Each
+write/chmod checks cancellation, root and ledger/fence ownership again. Full
+preimage verification precedes a durable compensated/failed result; the original
+target checkpoints remain active so a fresh approved preview can retry.
+
+Cancellation, fence loss, external edits and a repointed path (even with identical
+bytes) prevent compensation from overwriting someone else's state. Failed or
+interrupted compensation remains unknown and blocks later workspace writes.
+Unlike the reference's unconditional compensation helper, Native never obtains
+new write authority from a journal or a receipt-read request. This is an explicit
+ownership difference; complete cold partial-restore repair is still pending.
+
+New admitted checkpoint writers use the existing `receipt-observation/v1`
+contract. The Host records their exact final typed result and post-policy model
+view only after the DSH permission/result pipeline completes. A raw filesystem
+success or a post-policy rejection cannot mint that receipt. The existing
+operator `reconcile_tool` command then grants a separate, current fenced read of
+the original scope/Run/turn/Build/call/claimed fence and frozen definition.
+`observeReceipt` only reads private state; it cannot execute or repair files.
+The Kernel retains the immutable original uncertain receipt, commits a new
+observation, governs its result and charges the original tool once. Both success
+and a successfully compensated error can be recovered this way. Rewind admission
+also recognizes that actual committed observation rather than requiring the
+original uncertain receipt to be rewritten.
+
+Host reconstruction now explicitly preserves checkpoint/recovery policy
+presence and absence from the original configuration. Pre-checkpoint Runs do
+not acquire snapshots, and pre-receipt Runs do not silently gain reconciliation
+authority. The new defaults remain unchanged for other Sessions. The existing
+authenticated recovery status/reconcile route and client remain the operator
+entry; no new model-facing tool, runtime dependency or execution loop was added.
+
+Local evidence:
+
+- The rewind group covers actual state-file failure/compensation and fresh retry,
+  a lost compensated-error receipt across cold reopen, cancel/fence/external/path
+  conflicts, raw-versus-final receipt distinction, original receipt preservation
+  and rewind after a committed successful observation. Earlier file-only cases
+  remain covered. Original unknown writes now hold the Session in
+  `awaiting_reconciliation`; a new Run/model cannot bypass them.
+- `tests/native-workspace-receipt-process.test.mjs` runs the production Host
+  gateway, SQLite and Node workspace in separate PIDs. Accepted case:
+  62136 SIGKILL → 62138 cold query; rejected post-policy case:
+  62147 SIGKILL → 62158 cold query. Each publishes once, preserves the original
+  config/intent/fence/uncertain receipt and charges one tool call. Accepted output
+  resumes with the original filtered model view; rejected output stays unknown
+  with no new model or tool dispatch. The DSH dispatcher/display policy is
+  controlled in this test, not a full mounted Studio/UI recovery proof.
+- The first affected workspace/receipt/authority group passed 28 cases. The
+  affected Host/turn/portable/catalog group passed 140 cases, and the
+  reconstruction/recovery-service group passed 24 cases. Contracts passed.
+  The final affected group passed 31 cases
+  (`/tmp/native-rewind-recovery-final.log`). The subsequent path-escape case and
+  four related conflict cases passed (`/tmp/native-rewind-compensation-path.log`).
+  The path-escape fix ensures a failure after publication stays uncertain rather
+  than being mislabeled as a known pre-execution path error.
+- `/tmp/native-rewind-compensation-sdk-final.log` proves the final packed actual
+  `mountStudioHost`, authenticated authored Build and cold child rewind remain
+  integrated. Evidence:
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-WG33Od`;
+  PIDs 66533/66831, eight parent/seven child model requests, one real rewind,
+  original child bytes restored and parent workspace unchanged, Node-only PATH.
+  This is the normal cold-continuation flow, not an injected partial-repair UI
+  proof or a live-model quality comparison. Pack log:
+  `/tmp/native-rewind-compensation-pack.log`.
+- A small eight-sample fresh 1-KiB writer measurement including final-receipt
+  persistence observed median 15.244 ms without checkpoints and 31.990 ms with
+  checkpoints on Node v26.5.0. Build/check activity overlapped this measurement;
+  it is noisy local-port overhead, excludes actual DSH policy/Kernel/model/network
+  and establishes no task-level speed or Token improvement. Report:
+  `/tmp/native-rewind-recovery-cost.json`.
+
+```sh
+node --test packages/agentkit-harness/test/native-workspace-rewind.test.mjs tests/native-workspace-receipt-process.test.mjs tests/native-workspace-publication.test.mjs tests/native-tool-receipt-authority.test.mjs
+node --test tests/native-dsh-tools.test.mjs tests/native-dsh-turn-runtime.test.mjs tests/portable-bundle.test.mjs tests/native-tool-catalog.test.mjs
+node --test tests/studio-native-recovery.test.mjs tests/native-workspace-publication.test.mjs
+pnpm check:contracts
+node scripts/check-portability.mjs
+pnpm pack --pack-destination /tmp/agentkit-native-compensation-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-compensation-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --continue-child --history --structured-patch --workspace-rewind --keep
+```
+
+No full repository suite ran. Prepared/compensating checkpoints without a final
+receipt, crashes in the raw-publication-to-post-policy interval, legacy Runs
+without an admitted receipt policy, conversation branching and full runtime
+handoff remain uncompleted scope. Do not clear these states by age/fence expiry
+or infer a successful original operation merely from current bytes.
+
+The real Claude Code architecture audit completed in four turns
+(`/tmp/native-rewind-recovery-claude.json`). Main-agent cross-checking also read
+`tool-receipt.mts` and confirmed the separately fenced query contract and ordinary
+non-A2A operator entry. Its general statement that all automatic reconciliation
+is absent is too broad: A2A has its own explicit waiter path; this local workspace
+batch does not add an automatic write/repair path. A second read-only code review
+reached its invocation budget without a final report
+(`/tmp/native-rewind-compensation-review.json`). A tools-disabled continuation
+of the same CLI session is collecting its existing observations; it is not a
+fresh audit. The main-agent source review and runtime evidence above remain the
+current checks, not a claim that independent review passed.
 
 ## Local evidence and comparison protocol
 

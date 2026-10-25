@@ -13,6 +13,8 @@ import { sha256, TWO_MB, realpathExisting } from './workspace-paths.mjs';
 export const WORKSPACE_CHECKPOINT_POLICY = 'file-preimages/v1';
 const fail = code => { throw Object.assign(Error(code), { code }); };
 const MAX_BYTES = 16 * 1024 * 1024;
+const unsettled = row => ['prepared', 'compensating'].includes(row.status);
+const operationIdentity = value => canonical(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'executionFence')));
 export function captureCheckpointFile(path) {
   let stat;
   try { stat = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return { kind: 'absent' }; throw error; }
@@ -72,20 +74,20 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
   function begin(request, rewindOf = []) {
     if (!request.operationKey || !request.call?.callId) fail('checkpoint_execution_binding_missing');
     const existing = rows();
-    if (existing.some(row => row.status === 'prepared')) fail('checkpoint_outcome_unknown');
+    if (existing.some(unsettled)) fail('checkpoint_outcome_unknown');
     const binding = Object.fromEntries(['scope', 'sessionId', 'runId', 'turnId', 'buildId', 'operationKey', 'executionFence']
       .filter(key => request[key] !== undefined).map(key => [key, structuredClone(request[key])]));
     binding.callId = request.call.callId; binding.toolName = request.call.name;
     // Ownership transfer changes the fence, not the identity of the effect.
     // A durable completed publication must not run again just because its
     // original Native receipt was lost before a new owner acquired the Run.
-    const operationIdentity = value => canonical(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'executionFence')));
     if (existing.some(row => row.status !== 'failed' && operationIdentity(row.binding) === operationIdentity(binding))) fail('checkpoint_operation_already_recorded');
     const record = { policy: WORKSPACE_CHECKPOINT_POLICY, rootDigest, sessionId, id: randomUUID(), createdAt: new Date().toISOString(),
-      status: 'prepared', binding, files: [], rewindOf };
+      status: 'prepared', binding, callDigest: sha256(canonical(request.call)), definitionDigest: sha256(canonical(request.definition)), files: [], rewindOf };
     save(record);
     return {
       id: record.id,
+      get canCompensate() { return record.status === 'prepared'; },
       stage(path, after) {
         if (Buffer.byteLength(after.bytes ?? '', 'base64') > TWO_MB) fail('checkpoint_budget_exceeded');
         const target = resolvePath(path), before = captureCheckpointFile(target);
@@ -98,6 +100,7 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
           + Buffer.byteLength(file.after.bytes ?? '', 'base64'), 0) > MAX_BYTES) fail('checkpoint_budget_exceeded');
         record.files = files;
         save(record);
+        return before;
       },
       finish(paths) {
         record.files = record.files.filter(file => paths.has(file.path));
@@ -111,6 +114,13 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
         record.status = record.files.length ? 'completed' : 'failed'; save(record, record.files.length ? rewindOf : []);
       },
       fail() { record.status = 'failed'; save(record); },
+      compensating() { record.status = 'compensating'; save(record); },
+      compensated() {
+        for (const file of record.files) {
+          if (resolvePath(file.path) !== file.canonicalPath || !checkpointStatesEqual(captureCheckpointFile(file.canonicalPath), file.before)) fail('checkpoint_compensation_conflict');
+        }
+        record.status = 'failed'; record.compensated = true; save(record);
+      },
     };
   }
   function preview(checkpointId, committed) {
@@ -118,7 +128,7 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
     if (!target) fail('checkpoint_not_found');
     const selected = all.filter(row => row.seq >= target.seq && row.status !== 'undone' && row.status !== 'failed');
     const unsafe = [], states = new Map();
-    if (target.status !== 'completed' || all.some(row => row.status === 'prepared')) unsafe.push({ reason: 'checkpoint_outcome_unknown' });
+    if (target.status !== 'completed' || all.some(unsettled)) unsafe.push({ reason: 'checkpoint_outcome_unknown' });
     for (const row of selected.toReversed()) {
       if (row.status !== 'completed' || committed?.(row) !== true) { unsafe.push({ checkpoint_id: row.id, reason: 'checkpoint_receipt_uncommitted' }); continue; }
       for (const file of row.files.toReversed()) {
@@ -126,7 +136,7 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
         try {
           if (resolvePath(file.path) !== file.canonicalPath) fail('checkpoint_path_changed');
           state = states.get(file.path);
-          if (!state) { const current = captureCheckpointFile(file.canonicalPath); state = { current, desired: current, path: file.path }; }
+          if (!state) { const current = captureCheckpointFile(file.canonicalPath); state = { current, desired: current, path: file.path, canonicalPath: file.canonicalPath }; }
           if (!checkpointStatesEqual(state.desired, file.after)) fail('checkpoint_external_modified');
           state.desired = file.before; states.set(file.path, state);
         } catch (error) { unsafe.push({ path: file.path, reason: error.code || 'checkpoint_read_failed' }); }
@@ -139,7 +149,25 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
       files: files.map(file => ({ path: file.path, action: file.desired.kind === 'absent' ? 'delete' : 'restore',
         current_sha256: file.current.sha256 ?? null, restored_sha256: file.desired.sha256 ?? null })) } };
   }
-  return { begin, preview, list: () => rows().toReversed().slice(0, 50).map(row => ({ checkpoint_id: row.id, created_at: row.createdAt,
+  function receiptRecord(request, original = false) {
+    return rows().toReversed().find(row => ['completed', 'failed'].includes(row.status)
+      && ['scope', 'sessionId', 'runId', 'turnId', 'buildId'].every(key => canonical(row.binding[key] ?? null) === canonical(request[key] ?? null))
+      && row.binding.operationKey === (original ? request.originalOperationKey : request.operationKey)
+      && row.binding.executionFence === (original ? request.originalClaimedFence : request.executionFence)
+      && row.callDigest === sha256(canonical(request.call)) && row.definitionDigest === sha256(canonical(request.definition)));
+  }
+  return { begin, preview,
+    recordReceipt(request, result) {
+      if (!['ok', 'error'].includes(result.status)) return;
+      const row = receiptRecord(request); if (!row) return;
+      // The Host calls this only after its complete permission/post-policy and
+      // model/display projection pipeline. A raw filesystem success is not a
+      // product receipt and cannot bypass that pipeline on cold recovery.
+      if (row.receipt && canonical(row.receipt) !== canonical(result)) fail('checkpoint_receipt_conflict');
+      save({ ...row, receipt: structuredClone(result) });
+    },
+    readReceipt(request) { return structuredClone(receiptRecord(request, true)?.receipt ?? null); },
+    list: () => rows().toReversed().slice(0, 50).map(row => ({ checkpoint_id: row.id, created_at: row.createdAt,
     status: row.status, run_id: row.binding.runId ?? null, tool: row.binding.toolName, paths: row.files.map(file => file.path) })) };
 }
 
@@ -154,6 +182,17 @@ export function committedWorkspaceCheckpoint(row, { store, scope, sessionId }) {
   if (index < 0 || intent.claimedFence !== row.binding.executionFence
     || record.snapshot.turnId !== row.binding.turnId
     || !record.configuration.tools.some(tool => tool.name === row.binding.toolName && tool.workspaceCheckpointPolicy === WORKSPACE_CHECKPOINT_POLICY)) return false;
-  return record.receipts.some(receipt => receipt.operationKey === row.binding.operationKey && receipt.status === 'committed'
-    && receipt.result.results?.[index]?.status === 'ok' && receipt.result.results[index].content?.checkpoint_id === row.id);
+  const successful = result => result?.status === 'ok' && result.content?.checkpoint_id === row.id;
+  if (record.receipts.some(receipt => receipt.operationKey === row.binding.operationKey && receipt.status === 'committed'
+    && successful(receipt.result.results?.[index]))) return true;
+  if (index !== 0 || intent.payload.calls.length !== 1
+    || !record.configuration.tools.some(tool => tool.name === row.binding.toolName && tool.recoveryPolicy === 'receipt-observation/v1')) return false;
+  return record.receipts.some(receipt => {
+    const query = record.intents.find(item => item.operationKey === receipt.operationKey && item.kind === 'tool_receipt');
+    return receipt.status === 'committed' && query?.payload.originalOperationKey === row.binding.operationKey
+      && query.payload.originalClaimedFence === row.binding.executionFence && query.payload.callId === row.binding.callId
+      && receipt.result.contract === 'agentkit.tool-receipt-observation/v1'
+      && receipt.result.originalOperationKey === row.binding.operationKey && receipt.result.callId === row.binding.callId
+      && successful(receipt.result.result);
+  });
 }
