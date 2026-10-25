@@ -31,6 +31,27 @@ AgentKit Harness 的 Agent，新 Revision 默认 Native。普通新建对话可�
 如需隔离已有数据，启动前把 `DSH_HOME` 与 `AGENTKIT_HOME` 指向两处专用目录；
 `DSH_HOME` 必须位于两个源码仓库之外。无需重新执行 `make setup` 或启动全量测试。
 
+2026-10-25 已实际执行该开发入口的打包、隔离 profile 安装、doctor 和启动。
+修正安装时 `--force` 导致 pnpm 下载其他平台可选依赖的问题，并让 doctor 严格
+接受 manifest 绑定的维护提交；错误基线、额外提交及已跟踪改动仍拒绝，保留工作区。
+启动及版本检查的两项定向用例通过，没有重跑全仓。实际浏览器已在
+`http://localhost:3098/` 显示 Studio 首页、智能体和设置入口；本轮没有配置真实模型
+凭据或发送模型请求。内置浏览器使用 `127.0.0.1` 的首次认证导航曾失败，改用
+`localhost` 的启动令牌链接成功，没有关闭认证。
+
+本机本轮使用的独立数据目录和 profile 可这样复用：
+
+```sh
+DSH_HOME=/Users/zhangxiuqi/.agentkit-studio-native-local-20261025/dsh \
+AGENTKIT_HOME=/Users/zhangxiuqi/.agentkit-studio-native-local-20261025/agentkit \
+make dev DSH_ROOT=/Users/zhangxiuqi/KC/agentkit-studio/.artifacts/dsh-native-idle \
+  DSH_PROFILE=native-local
+```
+
+首次连接使用启动日志中的令牌链接；若在内置浏览器打开，将地址主机名换为
+`localhost` 并保留端口及令牌。证据位于
+`.artifacts/native-migration/local-dev-start-20261025/`，令牌不写入交接记录。
+
 ## 当前可交付内容
 
 - `packages/agentkit-harness-core/`：不依赖 Studio UI 或 DSH 对象的 TypeScript

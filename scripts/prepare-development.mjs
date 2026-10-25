@@ -9,7 +9,19 @@ import { checkBoundMaintenanceSource } from './dsh-maintenance-source.mjs';
 export async function prepareDevelopment({ source, patches, commit, checkOnly = false }) {
   const root = resolve(source), patchRoot = resolve(patches);
   const git = (args, env = process.env) => execFileSync('git', args, { cwd: root, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim();
-  if (!/^[a-f0-9]{40}$/.test(commit) || git(['rev-parse', 'HEAD']) !== commit) throw Error('DSH checkout 与固定 commit 不符；请使用独立的 DSH_ROOT，不会重置现有源码');
+  const mismatch = () => Error('DSH checkout 与固定 commit 不符；请使用独立的 DSH_ROOT，不会重置现有源码');
+  if (!/^[a-f0-9]{40}$/.test(commit)) throw mismatch();
+  const head = git(['rev-parse', 'HEAD']);
+  if (head !== commit) {
+    // A source-bound maintenance checkout already contains the reviewed
+    // patches as commits. Verify the exact export rather than applying them
+    // again or requiring that checkout to be reset to the upstream baseline.
+    const bound = await checkBoundMaintenanceSource({ patches: patchRoot, source: root });
+    if (!bound?.verified || bound.baseCommit !== commit || head !== bound.headCommit
+      || git(['rev-parse', 'HEAD^{tree}']) !== bound.tree) throw mismatch();
+    if (git(['status', '--porcelain', '--untracked-files=no'])) throw Error('DSH checkout 包含额外改动或未完成的补丁；已保留现场，请选择独立 DSH_ROOT');
+    return { status: 'already-applied', patches: bound.patches };
+  }
   const names = (await readdir(patchRoot)).filter(name => name.endsWith('.patch')).sort();
   if (!names.length) throw Error('没有可应用的 DSH 补丁');
   await checkBoundMaintenanceSource({ patches: patchRoot, source: root });
