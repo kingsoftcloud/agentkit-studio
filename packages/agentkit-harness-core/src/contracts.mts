@@ -205,6 +205,7 @@ export interface ContextSourceDefinition {
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
 }
 export interface RunConfiguration {
+  todoPolicy?: 'session-todos/v1';
   toolDiscoveryPolicy?: 'local-tool-search/v1';
   artifactPolicy?: 'runtime-artifacts/v1' | null;
   sourceReadPolicy?: 'studio-source-read/v1' | null;
@@ -342,7 +343,9 @@ export interface PreparedContext {
   /** Uncached contributors must be read again when another lease admits a model. */
   sourceFence?: number;
 }
+export type TodoItem = { content: string; status: 'pending' | 'in_progress' | 'completed'; priority: 'high' | 'medium' | 'low' };
 export interface RunSnapshot extends RunIdentity {
+  todos?: { items: TodoItem[]; revision: number; assistantTurns: number; lastWriteAssistantTurn: number; lastReminderAssistantTurn: number };
   toolDiscovery?: { discovered: string[]; promoted: string[] };
   /** Runtime-owned capacity for the complete original assistant batch, never a dispatched subset. */
   sourceReadQuote?: SourceReadQuote | null;

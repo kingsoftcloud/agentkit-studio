@@ -3,7 +3,7 @@ import { createNativeTraceProjection } from '../../providers/native-trace-projec
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeArtifactStore } from '../../../packages/agentkit-harness/src/native/artifact-store.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
@@ -305,7 +305,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
         : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
           ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
@@ -330,6 +330,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       try {
       invariant(record.spec.execution?.nativeToolSearchMode === undefined || ['auto', 'off'].includes(record.spec.execution.nativeToolSearchMode),
         'studio_native_tool_search_mode_invalid');
+      invariant(record.spec.execution?.nativeTodoMode === undefined || ['auto', 'off'].includes(record.spec.execution.nativeTodoMode),
+        'studio_native_todo_mode_invalid');
+      if (!original && record.spec.execution?.nativeTodoMode !== 'off'
+        && projections?.stateOf?.(agent.session, 'todos') !== undefined
+        && !baseTools.some(tool => ['TodoRead', 'TodoWrite', 'todo_write'].includes(tool.name))) recoveryPolicies.todoPolicy = 'session-todos/v1';
       const toolDiscoveryPolicy = original ? original.configuration.toolDiscoveryPolicy
         : record.spec.execution?.nativeToolSearchMode === 'off'
           || baseTools.some(tool => toolDiscoveryDefinitions().some(control => control.name === tool.name))
@@ -347,8 +352,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       ...((original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy)
         ? { wallDeliveryPolicy: original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy } : {}) };
       const boundToolDefinitions = binding.nativeTools.definitions(agent, input.assembly.tools, toolOptions);
-      if (!original && boundToolDefinitions.some(tool => tool.discovery)) recoveryPolicies.toolDiscoveryPolicy = toolDiscoveryPolicy;
+      if (!original && (boundToolDefinitions.some(tool => tool.discovery) || recoveryPolicies.todoPolicy)) recoveryPolicies.toolDiscoveryPolicy = toolDiscoveryPolicy;
       const tools = [...boundToolDefinitions, ...(recoveryPolicies.toolDiscoveryPolicy ? toolDiscoveryDefinitions() : []),
+        ...(recoveryPolicies.todoPolicy ? todoToolDefinitions(!!recoveryPolicies.toolDiscoveryPolicy) : []),
         ...(recoveryPolicies.artifactPolicy ? artifactToolDefinitions() : [])];
       const artifactFactory = childScope => typeof binding.nativeTools.artifactsFor === 'function'
         ? binding.nativeTools.artifactsFor(childScope) : createNativeArtifactStore({ directory: join(storeDir, 'native-harness', 'result-artifacts'), scope: childScope });

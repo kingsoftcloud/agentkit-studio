@@ -21,6 +21,7 @@ import { createArtifactPolicyProof } from './native-artifact-policy-proof.mjs';
 import { createNativeTraceProof } from './native-trace-proof.mjs';
 import { createInstructionsProof } from './native-instructions-proof.mjs';
 import { createToolSearchProof } from './native-tool-search-proof.mjs';
+import { createTodosProof } from './native-todos-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -31,7 +32,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
   'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false }, 'delivery-review': { type: 'boolean', default: false },
   'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false },
-  'tool-search': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
+  'tool-search': { type: 'boolean', default: false }, todos: { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
@@ -73,6 +74,11 @@ assert.ok(!values.instructions || values['mount-host'] && !values.frozen && !art
 const instructionsProof = values.instructions ? createInstructionsProof() : null;
 assert.ok(!values['tool-search'] || values['mount-host'] && values['mcp-schema'] && !values.frozen && !values.trace && !values.recovery, '--tool-search requires --mount-host --mcp-schema');
 const toolSearchProof = values['tool-search'] ? createToolSearchProof() : null;
+assert.ok(!values.todos || values['mount-host'] && !values['mcp-schema'] && !values.instructions && !values.frozen
+  && !values.memory && !values.commands && !values.recovery && !values.trace && !deliveryReviewProof && !deadlinePolicyProof
+  && !artifactPolicyProof && !webProof && !managedMemory && !parallelMemory && !values.automation && !values.hooks,
+  '--todos is a separate mounted Host proof');
+const todosProof = values.todos ? createTodosProof() : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
@@ -109,6 +115,7 @@ async function waitForPublicPrefix(count, expected) {
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
+    if (todosProof) { await todosProof.respond({ request, response, raw, requests }); return; }
     if (instructionsProof) { await instructionsProof.respond({ request, response, raw, requests }); return; }
     if (webProof) { await webProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
     if (deliveryReviewProof) { await deliveryReviewProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
@@ -189,6 +196,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (todosProof) await writeFile(join(root, 'todos-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (toolSearchProof) await writeFile(join(root, 'tool-search-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (instructionsProof) await writeFile(join(root, 'instructions-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.memory || managedMemory || parallelMemory) await writeFile(join(root, 'memory-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
@@ -279,6 +287,7 @@ try {
     `        artifactPolicy: ${values['artifact-policy']}`,
     `        instructions: ${values.instructions}`,
     `        toolSearch: ${values['tool-search']}`,
+    `        todos: ${values.todos}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -291,7 +300,10 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (toolSearchProof) {
+  if (todosProof) {
+    await todosProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
+    harness = null;
+  } else if (toolSearchProof) {
     await toolSearchProof.run({ harness, DeepSeekHarness, options, root, installed, requests, failures, mcpEffects });
     harness = null;
   } else if (instructionsProof) {

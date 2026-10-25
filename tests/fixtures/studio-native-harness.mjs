@@ -56,9 +56,10 @@ async function applyProof(ctx, options) {
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
-        ...(options.mcpUrl && !options.toolSearch ? { execution: { nativeToolSearchMode: 'off' } } : {}),
-        ...(options.deliveryReview ? { execution: { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } } : {}),
-        ...(options.deadlinePolicy ? { execution: { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } } : {}),
+        execution: { ...(options.todos ? {} : { nativeTodoMode: 'off' }),
+          ...(options.mcpUrl && !options.toolSearch ? { nativeToolSearchMode: 'off' } : {}),
+          ...(options.deliveryReview ? { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } : {}),
+          ...(options.deadlinePolicy ? { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } : {}) },
         ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
           recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: !options.memoryManaged, flushAfterTurn: Boolean(options.memoryManaged) } },
           context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
@@ -204,7 +205,10 @@ async function applyProof(ctx, options) {
   });
   ctx.on('agent/execute-turn', async (payload, next) => {
     if (payload.agent.session.id === 'default-session') delegate = true;
-    return next();
+    const result = await next();
+    if (options.todos) await appendFile(join(options.directory, 'todos-projections.jsonl'), JSON.stringify({
+      todos: ctx.sessionProjections.stateOf(payload.agent.session, 'todos'), hostPid: process.pid }) + '\n');
+    return result;
   });
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (exec.agent.session.id === 'native-studio-session' || options.memoryParallel && exec.agent.session.id === 'native-studio-peer') {

@@ -5,6 +5,7 @@ import type { CommitBatch, EffectIntent, EffectReceipt, Lease, Message, ModelReq
 import { initialSnapshot } from './configuration.mjs';
 import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL_CALL } from './tool-discovery.mjs';
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
+import { executeTodo, isTodoCall, todoUpdateFact, TODO_WRITE } from './todos.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
@@ -92,6 +93,11 @@ export class NativeKernel {
     invariant(identity.parentRunId === null || identity.parentRunId === head?.runId, 'session_head_conflict');
     const parent = head ? this.store.load(identity.scope, head.runId) : null;
     const initial = initialSnapshot({ ...identity, parentRunId: head?.runId ?? null }, configuration, configDigest);
+    if (initial.todos && parent?.snapshot.todos) {
+      initial.todos = copy(parent.snapshot.todos);
+      if (initial.todos.revision > 0 && !configuration.contextPolicy) initial.messages.splice(1, 0, { role: 'user', kind: 'todo_state',
+        content: canonical({ authority: 'session_task_state', todos: initial.todos.items, revision: initial.todos.revision }) });
+    }
     if (initial.toolDiscovery && parent?.snapshot.toolDiscovery) {
       const inherited = parent.snapshot.toolDiscovery.discovered.filter(name => configuration.tools.some(tool => tool.name === name && tool.discovery)
         && (configuration.contract.allowedToolNames === null || configuration.contract.allowedToolNames.includes(name)));
@@ -443,6 +449,20 @@ export class NativeKernel {
     finally { clearTimeout(timer); probeSignal.removeEventListener('abort', onAbort); }
   }
   private async recoverEffect(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent, elapsedMs = 0): Promise<CommitBatch> {
+    const stagedCalls = intent.payload.calls as unknown as ToolCall[] | undefined;
+    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => isTodoCall(config, call))) {
+      // These controls stage pure values. The fenced receipt commit is the only
+      // state mutation, so a lost claim cannot have changed external state.
+      const results = stagedCalls.map(call => executeTodo(snapshot, config, call));
+      const changes = stagePostHooks(snapshot, reduceTools(snapshot, results, stagedCalls, intent, config, this.digest), config, stagedCalls, results);
+      return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed',
+        result: { results: results as never, recoveryPolicy: 'session-todos/v1' } }, changes, elapsedMs,
+      [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: 'session-todos/v1' } },
+        ...stagedCalls.map((call, index) => ({ kind: 'tool.completed', payload: { callId: call.callId,
+          name: call.name, status: results[index]!.status, content: results[index]!.content } })),
+        ...(changes.todos && changes.todos.revision !== snapshot.todos?.revision
+          ? [{ kind: 'todo.updated', payload: todoUpdateFact({ ...snapshot, ...changes }, changes.messages!.length) }] : [])]);
+    }
     if (intent.kind === 'child' && config.childLifecyclePolicy === 'owned-background/v2' && this.ports.children?.reconcile) {
       const abort = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -604,6 +624,11 @@ export class NativeKernel {
           const rejectedDraft = configuration.contract.finalSubmissionSchema !== null && result.kind === 'final_candidate';
           const appended = changes.messages?.slice(snapshot.messages.length) ?? [];
           const assistantOffset = appended.findIndex(message => message.role === 'assistant');
+          if (snapshot.todos && assistantOffset >= 0) {
+            const assistantTurns = snapshot.todos.assistantTurns + 1;
+            changes.todos = { ...copy(snapshot.todos), assistantTurns,
+              ...(result.toolCalls.some(call => call.name === TODO_WRITE) ? { lastWriteAssistantTurn: assistantTurns } : {}) };
+          }
           facts.push({ kind: 'model.completed', payload: { kind: result.kind, text: rejectedDraft ? '' : result.text,
             ...(rejectedDraft ? { candidateStatus: 'rejected' } : {}),
             messageIndex: assistantOffset < 0 ? null : snapshot.messages.length + assistantOffset,
@@ -634,6 +659,8 @@ export class NativeKernel {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
           changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, configuration, this.digest), configuration, calls, results);
+          if (changes.todos && changes.todos.revision !== snapshot.todos?.revision)
+            facts.push({ kind: 'todo.updated', payload: todoUpdateFact({ ...snapshot, ...changes }, changes.messages!.length) });
           const promotion = this.startupPromotion(snapshot, configuration, results, changes);
           if (promotion) {
             Object.assign(changes, promotion.changes); consumedCommandId = promotion.commandId;
@@ -902,7 +929,9 @@ export class NativeKernel {
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
-            const result = await Promise.race([configuration.toolDiscoveryPolicy && [TOOL_SEARCH, DEFERRED_TOOL_CALL].includes(call.name)
+            const result = await Promise.race([isTodoCall(configuration, call)
+              ? Promise.resolve(executeTodo(snapshot, configuration, call))
+              : configuration.toolDiscoveryPolicy && [TOOL_SEARCH, DEFERRED_TOOL_CALL].includes(call.name)
               ? Promise.resolve(executeToolDiscovery(snapshot, configuration, call))
               : configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
               ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts, this.ports.context?.tokens

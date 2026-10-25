@@ -27,6 +27,7 @@ function sessionUsage(usage) {
 }
 
 function atomKey(event) {
+  if (event.type === 'todo/write' && /^ak-native-[a-f0-9]{64}$/.test(event.data.nativeId ?? '')) return `todo:${event.data.nativeId}`;
   if (['system/message', 'user/message', 'assistant/message', 'tool/result'].includes(event.type)) {
     const message = event.type === 'user/message' ? event.data : event.data.message;
     return `message:${message.id}`;
@@ -259,6 +260,11 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       }
     };
     for (const event of events) {
+      if (['todo.initialized', 'todo.updated'].includes(event.kind)) {
+        drain(event.payload.messageCursor);
+        append('todo/write', { todos: structuredClone(event.payload.todos), nativeId: id(`todo:${event.eventId}`) });
+        continue;
+      }
       if (event.kind === 'effect.prepared' && event.payload.kind === 'input'
         && inputBoundaries.has(event.payload.operationKey) && modelCount > 0) {
         // Host pre-step observers consume durable file touches at step/end.

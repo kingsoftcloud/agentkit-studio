@@ -36,12 +36,14 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **12/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **14/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting). M4–M6 have no earned
-points yet. This does not imply any whole capability group is complete.
+(successful context-window truncation and durable cache usage accounting), M4 2/20
+(durable session Todo controls, compaction continuity and actual Studio projection
+across cold Host turns). M5–M6 have no earned points yet. The denominator is unchanged;
+Plan mode and the remaining M4 controls are not certified complete.
 
 ## Source and implementation map
 
@@ -59,7 +61,7 @@ audited and integrated.
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | Node `workspace-{tools,editing}.mjs`, Host source/directory projections and mutation lock | Audit actual registration, edit preconditions, result bounds and reversible changes; do not substitute broad Git reset for undo. Pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
-| Plan / Todo | `src/tool/handlers/{todo,plan-mode-prompts}.ts`, `src/runtime/methods/turn-loop.ts` | Host builtin registry and Native `contextRole: task_planning` | Presence in DSH Native does not establish AgentKit Native exposure. Trace registration, persistence, plan mode restrictions and reminders. Pending. |
+| Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/todo.ts`, `src/runtime/helpers/runtime-reminders.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition | Session Todo controls now use durable receipt commits, real Studio todos projection and cold-turn inheritance. Plan permission/mode transitions, child Todo behavior and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/runtime/methods/turn-loop.ts`, background tests | core child/background modules, Node owned child/command, Host watcher | Native implementations exist. Audit completed-batch delivery, budgets, cancellation, workspaces and restart behavior. Pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
@@ -320,6 +322,82 @@ cases and 7 Host cases passed. Count each batch once; repeated runs are not new
 coverage. TypeScript core build and contract compilation passed. Portability
 checking also exposed pre-existing personal paths in `native-handoff.md`; those
 examples now use a checkout placeholder and normal `HOME`/`PWD` expansion.
+
+## Integrated session Todo behavior
+
+Source audit at the pinned ZCode commit covered
+`core/src/tool/handlers/todo.ts`, `contracts/src/tools/todo.ts`,
+`core/src/runtime/helpers/runtime-reminders.ts` and the turn-loop call site.
+A real Claude Code read-only audit of the first three files was cross-checked
+against those files; its findings are audit inputs, not runtime acceptance.
+
+Executable reference behavior accepts multiple `in_progress` items, duplicate
+content and whitespace-only nonempty content. The single-active-item refinement
+is commented out despite the schema description. Priority is required; unknown
+item fields are stripped, unknown root fields rejected; writes replace the whole
+list and return old/new lists with status counts. Native follows these behaviors.
+There is no new arbitrary input-state cap: existing request/context and tool-output
+governance still apply. The reference's 100,000-byte output allowance is not an
+input validation limit.
+
+New `session-todos/v1` Runs own `TodoRead`/`TodoWrite` controls and durable session
+state. Execution stages pure results; the fenced atomic intent/receipt/state
+commit performs the sole Todo mutation. A lost claimed Todo-only effect can be
+settled against the unchanged ledger without invoking an external tool. This
+does not authorize replay of external writes with unknown outcomes. Successful
+writes emit immutable `todo.updated` facts, inherited state emits `todo.initialized`.
+These facts publish standard `todo/write` Session events with stable Native IDs,
+so append-before-flush retries and cold delivery do not duplicate UI updates.
+The existing Studio todos projection displays content/status; priority remains
+in Native state, tool receipts and Session events. No separate UI or model call
+is introduced for tracking tasks.
+
+State survives subsequent Native Runs in the same Session, including explicit
+empty-list replacement. Other Sessions start empty. Context continuity carries
+the authoritative items/revision, protected by the prepared-context source
+digest; a model-written summary cannot replace them. Runs without context
+planning receive an inherited state notice. Runs with context planning reuse
+continuity instead of inserting that extra notice as well.
+
+Reminder counters are persisted assistant turns, excluding failed inference and
+summary requests; they survive next-turn inheritance. A reminder requires ten
+assistant turns since both the latest TodoWrite and latest reminder, and is
+suppressed during output continuation and delivery review. Full source comparison
+of all control/reminder interactions is still pending.
+
+Host composition enables the controls by default when the standard `todos`
+projection is installed, uses existing deferred search when available, and
+supports `execution.nativeTodoMode: off`. Explicit external tool-name collisions
+preserve the external meaning. Old Run configurations retain policy absence and
+their original digest. Unlike ZCode's session-scoped `readOnly: true` metadata,
+Native marks TodoWrite non-read-only and non-concurrent: Native's read-only flag
+also governs scheduling and external replay authority. Its kernel-owned receipt
+mutation does not enter workspace-write approval. Plan-mode permission integration
+remains a separate required batch; so do child-local Todo exposure and mixed
+external-read recovery comparisons.
+
+Targeted local checks:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness-core/test/todos.test.mjs
+node --test packages/agentkit-harness-core/test/recovery.test.mjs packages/agentkit-harness-core/test/tool-discovery.test.mjs tests/native-session-delivery.test.mjs
+node --test packages/agentkit-harness-core/test/todos.test.mjs packages/agentkit-harness-core/test/context-planning.test.mjs packages/agentkit-harness-core/test/context-microcompact.test.mjs tests/native-session-delivery.test.mjs
+node --test tests/studio-native-harness.test.mjs
+node node_modules/typescript/bin/tsc -p tsconfig.contracts.json
+node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --mount-host --todos --keep
+```
+
+The scoped checks passed 10 Todo cases, a 45-case recovery/discovery/delivery
+regression group, a 71-case Todo/context/delivery closure group and 95 Host cases;
+these groups overlap and must not be added as unique coverage. The packed Host
+proof uses the shipped SDK and maintained standard DSH source, seven controlled
+model HTTP requests, two actual Host processes, two Native receipt-backed updates
+and three persisted Session Todo events (including next-turn initialization).
+It verifies actual default discovery, priorities, standard todos projection and
+cold Host inheritance. It does not prove live-model task quality or Token savings.
+Plan mode and complete M4 acceptance remain pending. Whole-repository tests were
+not run for these incremental changes.
 
 ## Local evidence and comparison protocol
 

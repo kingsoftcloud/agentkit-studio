@@ -37,6 +37,7 @@ function checkedCount(value: number): number {
 /** Host facts remain separate from low-trust prose, including summaries and hook proposals. */
 export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguration): ObjectValue {
   return copy({ schemaVersion: 'agentkit.native-context-continuity/v1', authority: 'host_record', goal: snapshot.goal,
+    ...(snapshot.todos ? { todos: snapshot.todos.items, todoRevision: snapshot.todos.revision } : {}),
     ...(config.profile.operatorGuidancePolicy ? { operatorGuidancePolicy: config.profile.operatorGuidancePolicy } : {}),
     goalRevision: snapshot.goalRevision, contract: config.contract, usage: snapshot.usage, descendantUsage: snapshot.descendantUsage,
     limits: config.limits, workspaceRevision: snapshot.workspaceRevision, workspaceModifiedPaths: snapshot.workspaceModifiedPaths,

@@ -24,6 +24,7 @@ import { deliveryReadOutsidePaths, deliverySummaryAllowed, deliveryTaskMessages,
 import { captureAnthropicContext, stageOperatorGuidance } from './anthropic-context.mjs';
 import { contextContinuity } from './context-planning.mjs';
 import { discoveryModelTools, resolveDiscoveredCalls, discoveredCallExposed, TOOL_SEARCH } from './tool-discovery.mjs';
+import { reduceTodo, todoReminder, todoUpdateFact } from './todos.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -118,6 +119,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   }
   if (snapshot.phase === 'created') return transition(snapshot, { phase: 'preparing_context' }, [
     { kind: 'run.started', payload: { buildId: snapshot.buildId } },
+    ...(snapshot.todos && snapshot.todos.revision > 0 ? [{ kind: 'todo.initialized', payload: todoUpdateFact(snapshot, snapshot.messages.length) }] : []),
     ...(snapshot.backgroundNotification ? [{ kind: 'background.notification_admitted', payload: { ...snapshot.backgroundNotification } }] : []),
   ]);
   if (snapshot.phase === 'verifying' && snapshot.browserReobservationRefs?.length) {
@@ -147,6 +149,10 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return prepareEffect(snapshot, 'workspace', snapshot.phase, { cursor });
   }
   if (snapshot.phase === 'preparing_context' || snapshot.phase === 'compacting') {
+    if (snapshot.phase === 'preparing_context' && !reviewPending(snapshot) && modelRoom(snapshot, config) > 0) {
+      const reminder = todoReminder(snapshot, config);
+      if (reminder) return transition(snapshot, reminder, [{ kind: 'todo.reminder', payload: { modelCalls: snapshot.usage.modelCalls } }]);
+    }
     const observation = observeExecutionBudget(snapshot, config);
     if (observation) return observation;
     const recovery = toolErrorRecoveryBoundary(snapshot, config, modelRoom(snapshot, config));
@@ -428,6 +434,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
         interactionId: `${intent.operationKey}:approval`, hostInteractionId: result.interactionId, callId: call.callId, operationKey: intent.operationKey } };
     }
     updated.usage.toolCalls += 1;
+    const todos = reduceTodo(updated, config, call, result);
+    if (todos) updated.todos = todos;
     if (result.workspaceChangedPaths?.length) {
       updated.workspaceDirtySinceCheckpoint = true;
       updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
@@ -504,6 +512,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   }
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
     ...(updated.toolDiscovery ? { toolDiscovery: updated.toolDiscovery } : {}),
+    ...(updated.todos ? { todos: updated.todos } : {}),
     context: updated.context,
     ...(updated.deliveryArtifacts ? { deliveryArtifacts: updated.deliveryArtifacts } : {}),
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,

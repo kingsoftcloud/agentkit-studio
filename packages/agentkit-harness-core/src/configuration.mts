@@ -8,6 +8,7 @@ import { validateContextSource } from './context-contributions.mjs';
 import { normalizeDeliveryReviewPolicy, REVIEW_SUBMISSION_TOOL } from './delivery-review.mjs';
 import { validateArtifactConfiguration } from './artifact-runtime.mjs';
 import { validateToolDiscovery } from './tool-discovery.mjs';
+import { validateTodoConfiguration } from './todos.mjs';
 
 export interface ConfigurationInput {
   profile: Pick<ModelProfile, 'profileId' | 'profileVersion' | 'providerFamily' | 'compatibilityDigest'> & Partial<ModelProfile>;
@@ -23,6 +24,7 @@ export interface ConfigurationInput {
   outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolDiscoveryPolicy?: RunConfiguration['toolDiscoveryPolicy'];
+  todoPolicy?: RunConfiguration['todoPolicy'];
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
   deliveryReviewPolicy?: (Partial<DeliveryReviewPolicy> & Pick<DeliveryReviewPolicy, 'pathSuffixes'>) | null;
   hostRecoveryBinding?: RunConfiguration['hostRecoveryBinding'];
@@ -63,6 +65,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolDiscoveryPolicy === undefined ? {} : { toolDiscoveryPolicy: input.toolDiscoveryPolicy }),
+    ...(input.todoPolicy === undefined ? {} : { todoPolicy: input.todoPolicy }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
     ...(input.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: input.deliveryReviewPolicy === null ? null : normalizeDeliveryReviewPolicy(input.deliveryReviewPolicy) }),
     ...(input.hostRecoveryBinding === undefined ? {} : { hostRecoveryBinding: input.hostRecoveryBinding }),
@@ -196,6 +199,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(profile.temperature === undefined || Number.isFinite(profile.temperature) && profile.temperature >= 0 && profile.temperature <= 2, 'invalid_temperature');
   invariant(profile.topP === undefined || Number.isFinite(profile.topP) && profile.topP > 0 && profile.topP <= 1, 'invalid_top_p');
   validateToolDiscovery(config);
+  validateTodoConfiguration(config);
   const names = new Set<string>();
   for (const tool of config.tools) {
     invariant(tool.name.trim() && !names.has(tool.name), 'duplicate_or_invalid_tool');
@@ -291,6 +295,7 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
       ...(configuration.inputMessages ?? [{ role: 'user' as const, content: configuration.contract.objective }]),
     ], preparedContext: null, queuedGuidance: [],
     ...(configuration.toolDiscoveryPolicy ? { toolDiscovery: { discovered: [], promoted: [] } } : {}),
+    ...(configuration.todoPolicy ? { todos: { items: [], revision: 0, assistantTurns: 0, lastWriteAssistantTurn: 0, lastReminderAssistantTurn: 0 } } : {}),
     ...(configuration.guidancePolicy === 'boundary-guide/v1' ? { pendingGuidanceIds: [] } : {}),
     ...(configuration.toolErrorRecoveryPolicy != null || configuration.toolErrorRecoveryModelCalls != null
       ? { toolErrorRecovery: null, observedProgressRevision: 0, observedProgressFingerprints: [] } : {}),
