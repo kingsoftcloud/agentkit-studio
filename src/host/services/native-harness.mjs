@@ -775,7 +775,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   });
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents,
     cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, storeDir }) });
-  const conversation = createStudioNativeConversation({ ctx, store, workspaceId, lifetime, agentEvents });
+  const conversation = createStudioNativeConversation({ ctx, store, workspaceId, lifetime, agentEvents,
+    activeControl: request => controls.get(controlKey(request.agentId, request.sessionId)) });
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents,
     childRecord: request => childHistory(request).record(request) });
   const managedScopeControl = createStudioNativeManagedScopeControl({ ctx, workspaceId, lifetime, active, agentEvents, readChildren });

@@ -10,6 +10,7 @@ export function createNativeConversationState({ hostRemote, agentId, sessionId, 
       && (value.headRunId === null || typeof value.headRunId === 'string' && value.headRunId.trim() && value.headRunId.length <= 256)
       && Number.isSafeInteger(value.generation) && value.generation >= 0
       && typeof value.canRewind === 'boolean'
+      && (value.requiresStop === undefined || typeof value.requiresStop === 'boolean' && (!value.requiresStop || value.canRewind))
       && (!value.canRewind || typeof value.headRunId === 'string')
       && Array.isArray(value.inputs) && value.inputs.length <= 64
       && new Set(value.inputs.map(input => input?.messageId)).size === value.inputs.length
@@ -52,6 +53,8 @@ export function createNativeConversationState({ hostRemote, agentId, sessionId, 
         ++refreshVersion; set({ pending: null, loading: false });
         await refresh();
         set({ error: '对话状态已变化，本次回退未执行。请核对刷新后的记录。' });
+      } else if (error?.code === 'native_conversation_rewind_stop_unsettled') {
+        set({ error: '当前任务已停止，但仍有执行结果或任务待核实，回退尚未提交。处理后可重试原请求。' });
       } else set({ error: '回退请求尚未确认。可确认原回退请求，请勿重复发起。' });
     }
     finally { set({ sending: false }); }

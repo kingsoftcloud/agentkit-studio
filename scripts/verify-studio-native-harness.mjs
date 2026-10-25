@@ -34,6 +34,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'workspace-repair': { type: 'boolean', default: false },
   'conversation-fork': { type: 'boolean', default: false },
   'conversation-rewind': { type: 'boolean', default: false },
+  'conversation-active-rewind': { type: 'boolean', default: false },
   hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
@@ -102,8 +103,9 @@ assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entrie
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;
 assert.ok(!values['conversation-rewind'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
-  && !['conversation-rewind', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-rewind is a separate mounted Host proof');
-const conversationRewindProof = values['conversation-rewind'] ? createConversationRewindProof() : null;
+  && !['conversation-rewind', 'conversation-active-rewind', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-rewind is a separate mounted Host proof');
+assert.ok(!values['conversation-active-rewind'] || values['conversation-rewind'], '--conversation-active-rewind requires --conversation-rewind');
+const conversationRewindProof = values['conversation-rewind'] ? createConversationRewindProof({ active: values['conversation-active-rewind'] }) : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');

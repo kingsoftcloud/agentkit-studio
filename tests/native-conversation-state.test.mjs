@@ -56,6 +56,22 @@ test('refresh loads status, clears error, and validates identity', async () => {
   assert.equal(snap.error, '');
 });
 
+test('a running Native status exposes stop-and-rewind without changing the request authority', async () => {
+  const host = mockHost({ status: okStatus({ requiresStop: true }) }), state = makeState(host);
+  await state.refresh(); assert.equal(state.getSnapshot().status.requiresStop, true);
+  await state.rewind('m1');
+  assert.deepEqual(Object.keys(host.calls.rewind[0]).sort(), ['agentId', 'sessionId', 'expectedHeadRunId', 'expectedGeneration', 'targetMessageId', 'commandId'].sort());
+});
+
+test('unsettled cancellation explains the stopped task and keeps the exact rewind pending', async () => {
+  const host = mockHost({ rewind: () => { throw Object.assign(Error('unsettled'), { code: 'native_conversation_rewind_stop_unsettled' }); } });
+  const state = makeState(host); await state.refresh(); await state.rewind('m1');
+  const pending = state.getSnapshot().pending;
+  assert.match(state.getSnapshot().error, /仍有执行结果或任务待核实/);
+  await state.retry(); assert.deepEqual(state.getSnapshot().pending, pending);
+  assert.deepEqual(host.calls.rewind[0], host.calls.rewind[1]);
+});
+
 test('invalid status contract leaves status null and sets error', async () => {
   const host = mockHost({ status: okStatus({ contract: 'agentkit.wrong/v1' }) });
   const state = makeState(host);

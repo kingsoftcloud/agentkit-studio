@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **33/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **34/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,7 +53,7 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 9/15 covers durable file preimages on the admitted writer path (one point)
+M5 10/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
@@ -66,7 +66,10 @@ cutoff-local Todo/discovery through cold packed Studio first use (one point),
 and authenticated idle same-Session conversation rewind with cold rebased
 continuation, repeated root rewind and branch-fenced workspace reads (one point),
 and retained successful full Read/Write/Edit observation hydration on those idle
-branches, with original freshness and post-policy/commit guards (one point).
+branches, with original freshness and post-policy/commit guards (one point),
+and actual in-flight model cancellation before same-Session branch commit,
+bounded Host settlement and cold continuation with immutable canceled ledger
+(one point; full removed-child/background cleanup remains pending).
 This does not certify full recovery/undo, full conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
@@ -92,7 +95,7 @@ audited and integrated.
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
-| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut,rewind}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Authenticated idle same-Session rewind rebuilds model history/Todo/discovery without changing source Runs or files, including repeated root cuts, cold continuation and retained full Read/Write/Edit freshness. Active task cancellation, range/pruned/reconciled read-state variants, combined file/conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
+| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut,rewind}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Same-Session rewind rebuilds history/Todo/discovery with retained full Read/Write/Edit freshness. Actual in-flight model cancellation, branch commit and cold continuation pass; unknown tool effects remain blocked. Full removed-task cleanup, range/pruned/reconciled read-state variants, combined rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
 
 ## Deliberate architecture constraints
@@ -1857,3 +1860,75 @@ Earned progress is **33/100**, M5 **9/15**, denominator unchanged; M6 remains
 historical/retirement/compaction/reconciled-state variants, fork/isolated-child
 read hydration and neutral runtime handoff remain unaccepted, alongside the
 other matrix gaps and the fixed before/reference/after comparison.
+
+## Active model stop before conversation rewind (34/100)
+
+Reference: pinned ZCode `src/runtime/methods/rewind-message.ts:542-572`
+commits conversation replacement only after removed-branch task cancellation;
+`:628-650` filters running tasks by branch generation and removed turn IDs and
+fails closed if stop cannot be confirmed. This increment implements the Native
+active-turn stop boundary; full branch-selective background/child cleanup is
+still required to align that complete reference behavior.
+
+`src/host/services/native-conversation.mjs` now receives a read-only lookup into
+the actual installed Native executor controls. A request validates the exact
+head/generation/active input and freezes the retained data-only seed before any
+cancel. The original kernel persists a request-bound cancel command, wakes its
+own idle wait, and the original Agent is canceled with user cause. The service
+does not install another driver or acquire another lease. It awaits the actual
+Agent's `whenIdle()` with a 30-second bound, then authenticates the binding again
+and checks Agent identity, head, retained prefix, input identities and generation
+before the Session surface replacement. A terminal kernel still delivering or
+cleaning up is awaited without a new cancel command.
+
+Concurrent identical requests share the in-flight result. Conflicting requests
+cannot race the branch commit; a durable cancel also binds the original request
+digest across timeout/retry. Accepted marker retries only flush the same marker.
+The Studio panel labels active requests as stop-and-rewind and explains when
+execution stopped but unresolved work prevented the branch commit.
+
+A canceled model request can have unknown provider usage without having executed
+any tool. Its original uncertain receipt and usage diagnostics remain immutable;
+the selected history omits the removed response. This is not permission to discard
+unknown side effects. Unknown tools, uncertain members of a committed tool batch,
+unsettled child states/budget reservations and outstanding background notifications
+still prevent commit. No canceled write is replayed to make the rewind succeed.
+
+Local evidence:
+
+- `node --test tests/studio-native-conversation.test.mjs tests/native-conversation-state.test.mjs tests/native-conversation-rewind.test.mjs tests/native-dsh-ownership.test.mjs`:
+  **72 passed**, `/tmp/native-active-rewind-final-checks.log`. Includes a real
+  Native kernel canceled during a claimed write, no second write, bounded Host
+  wait/retry, request conflicts, changed prefix, foreign control, aborted caller,
+  pending children/usage/background and terminal-kernel cleanup. The final
+  cleanup assertion was independently re-run: **1 passed**,
+  `/tmp/native-active-rewind-terminal-boundary.log`.
+- Existing core cancellation/approval selection: **4 passed**,
+  `/tmp/native-active-rewind-kernel.log`. Contract compilation and pack-time
+  core/client/MCP builds/portability checks passed. No full test suite was run.
+- Actual packed proof:
+  `node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-active-rewind-pack-final/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --conversation-rewind --conversation-active-rewind --frozen --keep`.
+  PASS in `/tmp/native-active-rewind-proof-final.log`; evidence directory
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-qHZPZi`.
+  Archive SHA-256 `338735e268d94b35846403825448af3ab3cbe2dafc7441318a463e81ce82bf2e`.
+  Five actual Host processes (7322/7357/7371/7384/7399), **15 controlled HTTP
+  model requests**, seven Runs. Request 14 remains open until canceled through
+  the authenticated Studio rewind route; the SDK observes an aborted turn,
+  generation 3 commits once, and a fifth Host cold-continues without removed
+  input or replaying source writes. SQLite retains the canceled model receipt
+  as uncertain and the old Run remains unchanged by continuation.
+- Actual Claude Code performed read-only initial and final source reviews in
+  session `6968300d-2a56-47fd-a260-99b211968675`; final report
+  `/tmp/native-active-rewind-claude-final-review.json`. These are review opinions,
+  not execution evidence. The initial report read the pre-edit wiring. The final
+  report incorrectly explained terminal-kernel cleanup as `safe()` passing while
+  Agent status is running; the real code explicitly skips cancel for a terminal
+  kernel **and still awaits Host idle**, covered by the final assertion above.
+
+Earned progress is **34/100**, M5 **10/15**, denominator unchanged. This point
+covers active model stop, authoritative branch commit and cold continuation.
+Full removed-child/background cleanup, combined rewind, complete historical /
+retirement / compaction / reconciled read variants, fork/isolated-child read
+hydration, neutral runtime handoff, other matrix gaps and the M6 before/reference/
+after comparison remain incomplete. No real-model quality, Token savings,
+latency parity, browser-click acceptance or cloud execution claim is made.

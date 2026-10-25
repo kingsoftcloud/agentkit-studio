@@ -6,10 +6,11 @@ import { pathToFileURL } from 'node:url';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 
 const tasks = [{ content: 'Kept branch task', status: 'in_progress', priority: 'high' }];
-export function createConversationRewindProof() {
+export function createConversationRewindProof({ active = false } = {}) {
+  const activeRequest = Promise.withResolvers();
   async function respond({ request, response, raw, requests }) {
     assert.equal(request.url, '/v1/chat/completions'); const body = JSON.parse(raw); requests.push(body);
-    const count = requests.length; assert.ok(count <= 13, 'No source write replay or extra rewind summary');
+    const count = requests.length; assert.ok(count <= (active ? 15 : 13), 'No source write replay or extra rewind summary');
     const text = JSON.stringify(body.messages);
     assert.doesNotMatch(text, /nativeWorkspaceReads|native-workspace-read-observation/);
     if (count >= 6 && count <= 9) {
@@ -21,6 +22,16 @@ export function createConversationRewindProof() {
     if (count >= 10) {
       assert.doesNotMatch(text, /Kept first input|Kept first answer|Discard second input|Discard second answer|Replacement input|Replacement answer|Kept branch task/);
       assert.equal(body.tools.some(tool => tool.function.name === 'TodoRead'), false);
+    }
+    if (active && count === 14) {
+      assert.match(text, /Active discarded input/);
+      // An actual HTTP model request remains open until the original Native
+      // executor cancels it. No substitute driver or successful model reply.
+      activeRequest.resolve(); return;
+    }
+    if (active && count === 15) {
+      assert.match(text, /Root input/); assert.match(text, /Follow-up answer/);
+      assert.doesNotMatch(text, /Active discarded input/);
     }
     const lastTool = () => JSON.parse(body.messages.filter(message => message.role === 'tool').at(-1).content);
     if (count === 7) {
@@ -47,7 +58,7 @@ export function createConversationRewindProof() {
       6: [otherEdit('kept-write.txt', 'Kept original', 'Kept edited'), otherEdit('retained.txt', 'Retained original', 'Retained edited'),
         otherEdit('stale.txt', 'Stale changed', 'Wrong'), edit('New branch bytes')],
       7: [read], 8: [edit('New branch bytes')], 10: [read], 12: [edit('Final bytes')] })[count] ?? [];
-    const answers = { 3: 'Kept first answer', 5: 'Discard second answer', 9: 'Replacement answer', 11: 'Root answer', 13: 'Follow-up answer' };
+    const answers = { 3: 'Kept first answer', 5: 'Discard second answer', 9: 'Replacement answer', 11: 'Root answer', 13: 'Follow-up answer', 15: 'After active rewind answer' };
     const delta = calls.length ? { tool_calls: calls.map((call, index) => ({ index, id: `rewind-${count}-${index}`, type: 'function',
       function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : { content: answers[count] };
     assert.ok(calls.length || delta.content);
@@ -118,14 +129,50 @@ export function createConversationRewindProof() {
       const follow = load(scope); assert.equal(follow.configuration.conversationRewind, undefined);
       assert.equal(follow.snapshot.conversationBranch.generation, 2); assert.equal(follow.snapshot.parentRunId, rooted.snapshot.runId);
       assert.equal(await readFile(join(root, 'workspace/rewind.txt'), 'utf8'), 'Final bytes');
+      let canceledRunId = null, continuedRunId = null;
+      if (active) {
+        const running = harness.session(sessionId).run('Active discarded input');
+        // Keep both fulfillment and rejection observed while the HTTP control
+        // waits for the same actual Agent to close its owned turn.
+        const ended = running.then(value => ({ value }), error => ({ error: String(error) }));
+        await Promise.race([activeRequest.promise, new Promise((_, reject) => {
+          const timer = setTimeout(() => reject(Error('Active model did not start')), 15000); timer.unref();
+          activeRequest.promise.finally(() => clearTimeout(timer));
+        })]);
+        const live = await rpc('sessions/native-conversation-status', identity);
+        assert.equal(live.ok, true, JSON.stringify(live)); assert.equal(live.value.canRewind, true); assert.equal(live.value.requiresStop, true);
+        canceledRunId = live.value.headRunId;
+        const activeCommand = { ...identity, expectedHeadRunId: canceledRunId, expectedGeneration: live.value.generation,
+          targetMessageId: live.value.inputs.find(input => input.text === 'Active discarded input')?.messageId,
+          commandId: 'actual-rewind-active-model' };
+        assert.ok(activeCommand.targetMessageId);
+        const cut = await rpc('sessions/native-conversation-rewind', activeCommand); assert.equal(cut.ok, true, JSON.stringify(cut));
+        assert.equal(cut.value.generation, 3);
+        const closure = await ended; assert.equal(closure.error, undefined, JSON.stringify(closure));
+        assert.ok(closure.value.events.some(event => event.type === 'turn/end' && event.data.reason.kind === 'aborted'));
+        const canceled = load(scope, canceledRunId);
+        assert.equal(canceled.snapshot.phase, 'canceled');
+        assert.ok(canceled.commands.some(row => row.consumed && row.command.kind === 'cancel'
+          && row.command.payload.nativeConversationRewindRequestDigest));
+        assert.equal(canceled.receipts.at(-1).status, 'uncertain', 'Unknown model usage is preserved, never forged committed');
+        assert.deepEqual(await rpc('sessions/native-conversation-rewind', activeCommand), cut);
+        await harness.close(); harness = new DeepSeekHarness(options);
+        const continued = await (await harness.resumeSession(sessionId)).run('After active rewind input');
+        answer(continued, 'After active rewind answer');
+        const record = load(scope); continuedRunId = record.snapshot.runId;
+        assert.equal(record.snapshot.parentRunId, canceledRunId); assert.equal(record.snapshot.conversationBranch.generation, 3);
+        assert.deepEqual(load(scope, canceledRunId), canceled, 'Cold continuation leaves canceled ledger immutable');
+      }
       assert.deepEqual(load(scope, firstRecord.snapshot.runId), firstRecord); assert.deepEqual(load(scope, secondRecord.snapshot.runId), secondRecord);
-      assert.deepEqual(load(scope, replaced.snapshot.runId), replaced); assert.deepEqual(failures, []); assert.equal(requests.length, 13);
+      assert.deepEqual(load(scope, replaced.snapshot.runId), replaced); assert.deepEqual(failures, []); assert.equal(requests.length, active ? 15 : 13);
       const probes = (await readFile(join(root, 'mounted-host-http.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-      const hostPids = [...new Set(probes.map(row => row.hostPid))]; assert.equal(hostPids.length, 4);
+      const hostPids = [...new Set(probes.map(row => row.hostPid))]; assert.equal(hostPids.length, active ? 5 : 4);
       await writeFile(join(root, 'conversation-rewind-proof.json'), JSON.stringify({ passed: true, hostPids, modelCalls: requests.length,
         firstRunId: firstRecord.snapshot.runId, removedRunId: secondRecord.snapshot.runId, replacementRunId: replaced.snapshot.runId,
-        rootRunId: rooted.snapshot.runId, followRunId: follow.snapshot.runId,
-        scope: 'Actual authenticated Studio routes + same SDK Session, ordinary idle Native rewind, cold replacement/root/follow-up, retained full Read/Write state, original freshness rather than removed newer reads, no removed read authority, immutable source Runs. Controlled model; active task cancellation and full historical selection remain separate.' }, null, 2));
+        rootRunId: rooted.snapshot.runId, followRunId: follow.snapshot.runId, canceledRunId, continuedRunId,
+        scope: 'Actual authenticated Studio routes + same SDK Session, idle rewind, cold replacement/root/follow-up, retained Read/Write state, stale/removed read refusal, immutable source Runs.'
+          + (active ? ' Also actual in-flight HTTP model cancellation before branch commit and cold continuation. No active side-effect/child/background cleanup claim.' : '')
+          + ' Controlled model; full historical selection remains separate.' }, null, 2));
       console.log('Studio Native conversation rewind PASS: authenticated same-Session branch cut, retained Read/Write hydration, removed/stale read refusal, repeated root rewind, cold continuation, no source replay.');
     } finally { await harness.close(); }
   }
