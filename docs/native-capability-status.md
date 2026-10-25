@@ -38,7 +38,7 @@
 | 10. 本地对话、流式、历史、恢复、取消和审批接入 | Node `session-delivery.mjs`；Host `host/services/native-harness.mjs`、`host/services/native-recovery.mjs` | 默认 Revision/Frozen 完整 Host、持久会话及跨进程恢复；真实浏览器对话、审批、刷新活动前缀、取消和原运行收尾已验证，见[界面接入](native-web-session.md) |
 | 10. 模型/工具/MCP/Skills/工作区与 Build 固定 | Host `agent-preset-admission.mjs`、`host/bootstrap.mjs`、`build-engine.mjs` | [默认策略与回退](native-default-runtime.md)；新 Revision/Build 默认 Native，旧 Frozen pin 不重解释 |
 | 10. 自动化、定时、评测、Frozen HTTP 和 portable 部署 | Host `host/services/automation.mjs`；现有 Frozen/portable runtime | [自动化](native-automation.md)、[portable 工具](native-portable-tools.md)及打包 Host 专项；周期触发不重放未知 occurrence |
-| 10. 托管命令、A2A 出入站、问答与人机审批 | Host `host/services/native-managed-kernel.mjs`、`providers/native-a2a-host.mjs`、`providers/native-a2a-inbound-server.mjs` | [托管执行](native-managed-kernel.md)、[入站](native-a2a-inbound.md)、[Host 决定](native-a2a-host-decisions.md)；生产 Server/线上认证与浏览器人工操作仍待验收 |
+| 10. 托管命令、A2A 出入站、问答与人机审批 | Host `host/services/native-managed-kernel.mjs`、`providers/native-a2a-host.mjs`、`providers/native-a2a-inbound-server.mjs` | [托管执行](native-managed-kernel.md)、[入站](native-a2a-inbound.md)、[Host 决定](native-a2a-host-decisions.md)；真实浏览器问答允许/拒绝已验收，生产 Server/线上认证仍待验收 |
 | 10. 事件、用量、诊断、Trace 与展示 | Host `providers/native-trace-projection.mjs`；现有恢复、A2A 和子任务面板 | 默认完整 Host Trace 路由通过；[A2A Session 观察](native-a2a-session-events.md)、[Skill 诊断](native-skill-events.md)；A2A 投递状态现已进入任务面板 |
 | Node builtin 与本地/远程适配 | Node 工具目录、Host `providers/native-dsh-tools.mjs` 和 `providers/dsh-node-builtins.mjs` | [builtin 对应](native-node-builtins.md)；31 项普通及 3 项平台工具已有 Node 路径，Python fallback 已移除；不能以工具名相同证明全部线上后端已验收 |
 | Skills 搜索/下载/工作流与配置 | Host Skill Service/GitHub 连接、本地/E2B Node 工作流 | [Skill 管理](native-skill-management.md)、[输入](native-skill-inputs.md)、[诊断](native-skill-events.md)；ZIP64 已补齐，其他格式/安全差异仍明确保留 |
@@ -59,8 +59,9 @@ OpenAI Chat 的内嵌推理过滤已按参考实现补齐：GLM/Z.AI 和 KSPMAS
 [模型请求兼容](native-provider-compatibility.md)。真实供应商互操作仍需线上证据，不能宣称逐项无损。
 
 1. **Studio 浏览器流程**：普通对话、允许/拒绝、历史重开、刷新活动流、取消和原运行
-   收尾已有[真实浏览器证据](native-web-session.md)。远端问答、子任务控制和其他错误
-   组合尚未全部实际操作，不能从已覆盖路径推广为产品 UI 全部完成。
+   收尾已有[真实浏览器证据](native-web-session.md)。子任务指导、转后台、结果、停止与
+   历史保留，以及远端问答的回答保存、独立操作审批、允许与拒绝也已实际操作。
+   尚未覆盖嵌套子任务中的远端问答等全部组合，不以组合穷举作为继续扩大本地回归的理由。
 2. **可选线上后端**：E2B 成功执行、重连/清理，以及真实云 Skills/KB/Memory、正式
    Server/Gateway 认证和互操作仍缺完整线上证据。Node SDK 和确定性 HTTP 路径已有实现；
    连接被拒绝的测试只能证明错误和恢复边界。

@@ -81,3 +81,35 @@ node --test --test-name-pattern 'Native.*(cancel|retirement)|retiring old Native
 `cancel-retirement-identity.log` 和 `cancel-retirement-fencing.log`，未改生产逻辑来适配测试。
 
 这些证据只支持所列路径。完整差异和仍未验收项见[能力对照](native-capability-status.md)。
+
+## 子任务控制与远端问答收尾
+
+准备器支持 `--children` 和 `--a2a`，可分别加入上述命令；`--resume` 保留这些配置。
+准备器仍不发送产品消息或替用户审批。`--children` 增加 reader 子角色；
+`--a2a` 启动仅在 localhost 运行的确定性控制面和 JSONRPC 远端，使用隔离的
+workload fixture token，经过实际 Host 的发现、准入、绑定、投递和问题账本。
+这证明产品组装与界面流程，不代表正式 Server/Gateway 认证已在线验证。
+
+| 消息 | 实际界面操作与结果 |
+| --- | --- |
+| `NATIVE_BROWSER_CHILD` | 原 delegate 允许一次；发送包含 `BROWSER_CHILD_GUIDANCE` 的指导，转为后台，原子任务收到指导并完成；查看结果显示 `BROWSER_CHILD_GUIDED_DONE` |
+| `NATIVE_BROWSER_CHILD_CANCEL` | 原 delegate 允许一次；点击停止子任务，原 child canceled，父任务正常收尾；刷新后保留两轮子任务历史 |
+| `NATIVE_BROWSER_A2A` | 原调用允许一次；问题填写 `BROWSER_CITY` 并提交；先保存回答并等待独立操作授权；第二次允许后才发送继续请求，原远端任务完成 |
+| `NATIVE_BROWSER_A2A_DENY` | 同样先保存回答；第二道操作审批选择拒绝；账本为 `operation_denied`，不发送继续请求，也不取消远端任务，原父运行完成 |
+
+子任务模型流由 fixture 的 `/fixture/release-child`、`/fixture/release-parent` POST
+释放；它们只结束确定性模型回复，不调用产品 RPC 或修改 Run。原指导、后台切换、
+停止、问题回答和审批均通过实际界面完成。
+
+实际证据目录为 `.artifacts/native-migration/browser-child-controls-20261025/` 和
+`.artifacts/native-migration/browser-a2a-questions-20261025-canonical/`。
+各自的 `execution-evidence.json` 保存源码摘要、真实 SQLite Run、模型请求及关键断言；
+PNG/AX 保存界面。子任务两轮共 8 次模型请求，两个父任务 completed，子任务分别
+completed / canceled。远端成功及拒绝两轮共 4 次模型请求、2 次初始发送、仅 1 次
+继续发送、0 次远端取消；另保留首次 fixture 失败的 1 次模型请求及 canceled Run。
+
+首次 A2A fixture 使用 macOS `/var` 别名，被工作区符号链接保护拒绝，未到远端发送；
+准备器改用 canonical realpath。首次 canonical fixture 的平台 ID 缺少 UUID 版本位，
+在正式验证器处失败，仍未发送远端调用；通过界面停止该原运行后修正 fixture，重启
+同一环境继续。失败记录保留，不计为通过；未放宽产品工作区或 ID 校验。
+本阶段没有新增生产代码修改，也没有重跑全仓、编译、安装或打包。
