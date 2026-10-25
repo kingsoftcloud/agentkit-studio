@@ -9,6 +9,7 @@ import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
+import { installWorkspaceRepairFault } from './studio-native-workspace-repair.mjs';
 
 export const name = 'studio-native-host-verification';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets'];
@@ -58,6 +59,7 @@ async function applyProof(ctx, options) {
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         execution: { ...(options.todos || options.planMode ? {} : { nativeTodoMode: 'off' }),
           ...(options.planMode ? {} : { nativePlanMode: 'off' }),
+          ...(options.workspaceRepair ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.mcpUrl && !options.toolSearch && !options.planMcp ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.deliveryReview ? { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } : {}),
           ...(options.deadlinePolicy ? { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } : {}) },
@@ -67,7 +69,7 @@ async function applyProof(ctx, options) {
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
-          : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
+          : options.workspaceRepair ? ['apply_workspace_patch'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
@@ -165,7 +167,7 @@ async function applyProof(ctx, options) {
         const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });
         if (login.status !== 302) throw Error('Mounted Host connection authentication failed');
         const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
-        if (options.automation || options.recovery || options.trace) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
+        if (options.automation || options.recovery || options.trace || options.workspaceRepair) await writeFile(join(options.directory, 'mounted-host-connection.json'), JSON.stringify({ origin, cookie }), { mode: 0o600 });
         const rpc = async (method, payload = {}) => {
           const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
             body: JSON.stringify({ method, payload, rpcId: method }), signal: AbortSignal.timeout(10000) });
@@ -229,7 +231,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
@@ -267,6 +269,7 @@ async function applyProof(ctx, options) {
     // turn enclosure, the policy decision and persisted asked/decided events.
     return Promise.resolve(request.reason?.includes('forget') ? 'allowed-once' : 'rejected');
   }, { prepend: true });
+  if (options.workspaceRepair) await installWorkspaceRepairFault(ctx, options, record);
   if (options.recovery) {
     const origin = ctx.webServer.getOrigin();
     const login = await fetch(ctx.connection.authenticatedUrl(origin + '/connect'), { redirect: 'manual', signal: AbortSignal.timeout(5000) });

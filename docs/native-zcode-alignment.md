@@ -84,7 +84,7 @@ audited and integrated.
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
-| Recovery / runtime boundaries | runtime persistence and session fork implementation | core store/recovery, Node SQLite, `src/runtime-contract.mjs`, Host recovery | Keep engine/build pin, single effective executor, private checkpoint boundaries. Audit neutral handoff and execution placement separately; no cloud scheduler in this phase. Pending. |
+| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/runtime-contract.mjs`, Host recovery | Explicit file compensation now passes a SIGKILL/cold recovery through packed Studio and authenticated original-Run control. Generic DSH event-prefix forks still lack Native ledger history seeding; conversation rewind and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
 
 ## Deliberate architecture constraints
@@ -1356,6 +1356,101 @@ or CAS. Legacy Runs without the frozen repair policy are not upgraded. Managed
 server control and child-specific product repair flows, full mounted fault/UI
 acceptance, conversation branches, neutral engine handoff and large-history
 journal performance remain pending. No full repository suite was run.
+
+## Mounted Studio partial-write compensation acceptance
+
+The explicit-compensation item above now has a production mounted-Host proof,
+in addition to its controlled gateway process cases. Reproduce with:
+
+```sh
+pnpm pack --pack-destination /tmp/agentkit-native-mounted-repair-pack
+node scripts/verify-studio-native-harness.mjs \
+  --source .artifacts/dsh-native-zcode \
+  --archive /tmp/agentkit-native-mounted-repair-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz \
+  --mount-host --workspace-repair --frozen --keep
+```
+
+`scripts/native-workspace-repair-proof.mjs` drives the public maintained SDK and
+the actual packed Studio. The fixture only makes the original read-state
+persistence target a directory: the first real ApplyPatch file publication then
+succeeds and read-state publication fails before the second file. The production
+Kernel journals the uncertain original operation. After a real Session flush,
+the fixture stops the actual Host; the parent confirms its PID is live and sends
+SIGKILL. The cold Host uses its real SessionController/preset restoration and the
+authenticated `sessions/native-workspace-repair` operation. No replacement
+prompt, forged original result or substitute model/tool loop is installed.
+
+Final evidence: `/tmp/native-mounted-repair-proof.log`, directory
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-y8hmc5`,
+including `accepted-evidence.json` (archive SHA-256/dependency provenance) and
+`workspace-repair-proof.json`. The original frozen Build remains admitted while
+the fixture's latest Agent instructions differ. Assertions cover actual partial
+bytes before death, missing second file, unauthenticated 401, read-only status,
+rejection of caller-supplied result data, unchanged original configuration,
+config digest, intent and uncertain receipt, one tool attempt, one separate repair
+intent, compensated files before the second model request, exact final assistant
+text, unchanged durable Session prefix, one turn/start/owner/end, and idempotent
+operator command retry. Two controlled model calls and one charged original tool
+attempt complete the original Run. Provider billing remains unknown; the usage
+summary correctly does not claim complete cost accounting.
+
+This closes the mounted **local root Session** fault/recovery acceptance gap;
+it does not certify the browser button, managed-server/child-specific repair,
+Shell/MCP compensation, full conversation undo, or performance. No full suite was
+run. Progress remains **29/100**: this strengthens the already credited explicit
+compensation item rather than counting the same feature twice.
+
+## Conversation fork/rewind source audit and next implementation
+
+Pinned ZCode source and tests establish these behaviors:
+
+- `runtime/methods/session-fork.ts:1061` selects the active transcript, validates
+  an exact contiguous stable segment ending at a successful assistant message,
+  and preserves only its prefix (`stableForkHistoryMessages`, line 1143).
+  Tests `session-fork.test.ts:1322` and `:1374` cover no boundary expansion and
+  missing/out-of-order/duplicate/invalid boundaries; these tests were read, not
+  executed in this checkout.
+- `commitAtomicConversationFork` (line 585) preallocates child-local message,
+  part, turn, tool and goal/verifier identities, then calls `commitForkBundle`
+  once (line 748), including historical model selection and execution state.
+  This ordinary conversation fork returns no restored files. A fork operation
+  must not silently restore workspace files or adopt source execution authority.
+- `rewind-message.ts:440` resolves the active branch independently of compact
+  visibility. `applyConversationRewindPlan` (line 542) cancels removed-branch
+  background work, persists kept IDs/cut/generation, and rebuilds history and
+  read-state (line 675). `session-history-rewind.test.ts:277` demonstrates that
+  repeated edits must not revive an abandoned original branch.
+
+Current Native boundary: maintained DSH's
+`packages/api/session-controller/src/commands.ts:226` and
+`packages/core/session/src/fork.ts` already create an event-prefix fork and
+synthetic closers for an open tail. Native's new-Run path in
+`packages/agentkit-harness/src/native/dsh-turn-runtime.mjs:186` resolves only the
+new Session's own store head; `core/src/kernel.mts:100` and `history.mts` import
+history only from that ledger parent. A copied visible DSH transcript alone is
+therefore not evidence of an imported Native model history. There is currently
+no Native fork history-seeding bridge in that path. Forked model selection also
+needs an explicit comparison: generic DSH fork uses current defaults, whereas
+ZCode resolves historical normal selection.
+
+Next implementation must import the selected conversation into a fresh admitted
+Native Run, bind its exact source/boundary/digest, preserve protocol pairing and
+appropriate Todo/Plan/context state, and verify cold first-use and fork-of-fork.
+It must leave source Run, lease/fence, budgets, pending operations, private file
+checkpoints and command ownership with the source. In-place rewind additionally
+needs a persisted active-branch cursor and derived-state rebuild; simply hiding
+UI events or reusing a different Run head is insufficient. Open cuts, compact
+boundaries and combined file/conversation rollback remain explicit acceptance
+cases, not exclusions from the original goal.
+
+Real Claude Code completed a bounded read-only audit in four turns
+(`/tmp/native-conversation-fork-review.json`). Its missing-executor and
+memory-based assertions are not accepted as findings: the main agent checked
+the actual executor/kernel/history, the DSH fork seed and synthetic closers.
+In particular, copied ownership records are not by themselves proof that a
+closed inherited turn becomes active in the child, nor that private checkpoints
+are copied. Only the evidenced history-adapter/model-selection gaps above guide
+the next change. No full fork/rewind alignment point is earned by this audit.
 
 ## Local evidence and comparison protocol
 
