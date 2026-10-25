@@ -214,6 +214,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     const workingSet = [policy.readWorkingSetCount, policy.readWorkingSetMaxTokens, policy.readWorkingSetTotalMaxTokens];
     invariant(workingSet.every(value => value === undefined)
       || workingSet.every(value => Number.isSafeInteger(value) && value! >= 0), 'invalid_context_working_set_policy');
+    const recent = [policy.recentToolBatchCount, policy.recentToolBatchMaxTokens, policy.recentToolBatchesTotalMaxTokens];
+    invariant(recent.every(value => value === undefined)
+      || recent.every(value => Number.isSafeInteger(value) && value! >= 0), 'invalid_context_recent_tool_policy');
   }
   validateSubmissionContract(config);
   if (config.workspaceObservationPolicy) {

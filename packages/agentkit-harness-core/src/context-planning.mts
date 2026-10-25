@@ -326,13 +326,25 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     placeholder = 'x';
   }
   const target = (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.targetRatio;
-  // Retain complete recent groups. A partial live call/result group is never a model view.
-  for (const group of [...groups].reverse()) {
-    if (group.every(index => mandatory.has(index))) continue;
-    const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
-    if (proposed.length === indexes.length) continue;
-    const cost = checkedCount(await counters.countRequest(view(proposed, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
-    if (cost <= target) retained = proposed;
+  const groupCosts = new Map<number, number>();
+  const groupCost = async (group: number[]) => {
+    invariant(counters.countMessage, 'context_retention_counter_missing');
+    if (groupCosts.has(group[0]!)) return groupCosts.get(group[0]!)!;
+    let total = 0;
+    for (const index of group) total = checkedCount(total + checkedCount(await counters.countMessage(copy(snapshot.messages[index]!))));
+    groupCosts.set(group[0]!, total); return total;
+  };
+  if (!forceCompaction && policy.recentToolBatchCount) {
+    let total = 0;
+    const toolGroups = groups.filter(group => snapshot.messages[group[0]!]!.toolCalls?.length);
+    for (const group of toolGroups.slice(-policy.recentToolBatchCount).reverse()) {
+      const cost = await groupCost(group);
+      if (cost > policy.recentToolBatchMaxTokens! || cost > policy.recentToolBatchesTotalMaxTokens! - total) break;
+      const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
+      if (proposed.length === indexes.length) continue;
+      if (checkedCount(await counters.countRequest(view(proposed, placeholder), copy(tools), 'task', config.profile.maxOutputTokens)) > target) break;
+      retained = proposed; total += cost;
+    }
   }
   if (!forceCompaction && policy.readWorkingSetCount) {
     invariant(counters.countMessage, 'context_working_set_counter_missing');
@@ -355,14 +367,23 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
       const identities = new Set([...seen, ...observation.identities]);
       if (identities.size === seen.size || identities.size > policy.readWorkingSetCount) continue;
       for (const identity of observation.identities) seen.add(identity);
-      let groupCost = 0;
-      for (const index of group) groupCost = checkedCount(groupCost + checkedCount(await counters.countMessage(copy(snapshot.messages[index]!))));
-      if (groupCost > policy.readWorkingSetMaxTokens! || groupCost > policy.readWorkingSetTotalMaxTokens! - total) continue;
+      const costOfGroup = await groupCost(group);
+      if (costOfGroup > policy.readWorkingSetMaxTokens! || costOfGroup > policy.readWorkingSetTotalMaxTokens! - total) continue;
       const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
       if (proposed.length === indexes.length) continue;
       const cost = checkedCount(await counters.countRequest(view(proposed, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
-      if (cost + config.profile.maxOutputTokens <= config.profile.contextWindow) { retained = proposed; total += groupCost; }
+      if (cost + config.profile.maxOutputTokens <= config.profile.contextWindow) { retained = proposed; total += costOfGroup; }
     }
+  }
+  // New policies preserve a chronological suffix; older source ranges survive
+  // only through the explicit working set, never by filling small holes.
+  for (const group of [...groups].reverse()) {
+    if (group.every(index => retained.includes(index))) continue;
+    const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
+    if (proposed.length === indexes.length) continue;
+    const cost = checkedCount(await counters.countRequest(view(proposed, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
+    if (cost <= target) retained = proposed;
+    else if (policy.recentToolBatchCount !== undefined) break;
   }
   const removed = indexes.filter(index => !retained.includes(index));
   if (!removed.length) return fits && !forceCompaction ? result('ready', 'context_no_reducible_history', messages, admission)

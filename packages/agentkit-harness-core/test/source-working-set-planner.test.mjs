@@ -80,11 +80,38 @@ test('source identity and token ceilings retain atomic groups without exceeding 
 
 test('fresh Studio bindings receive bounded source defaults; restored policies keep absent fields', () => {
   const description = { protocol: 'openai-chat', modelName: 'test', contextWindow: 32000, maxOutputTokens: 1000 };
-  const fresh = bindNativeContext({ description, readWorkingSetDefaults: true }).policy;
+  const fresh = bindNativeContext({ description, readWorkingSetDefaults: true, recentToolBatchDefaults: true }).policy;
   assert.deepEqual([fresh.readWorkingSetCount, fresh.readWorkingSetMaxTokens, fresh.readWorkingSetTotalMaxTokens], [8, 6000, 16000]);
+  assert.deepEqual([fresh.recentToolBatchCount, fresh.recentToolBatchMaxTokens, fresh.recentToolBatchesTotalMaxTokens], [4, 5333, 8000]);
   const restored = bindNativeContext({ description }).policy;
   assert.equal(Object.hasOwn(restored, 'readWorkingSetCount'), false);
+  assert.equal(Object.hasOwn(restored, 'recentToolBatchCount'), false);
   const run = scenario();
   assert.throws(() => configure({ ...run.config, contextPolicy: { ...run.config.contextPolicy, readWorkingSetMaxTokens: -1 } }),
     /invalid_context_working_set_policy/);
+});
+
+test('new retention keeps a chronological suffix instead of replaying small older reasoning across a dropped recent unit', async () => {
+  const run = scenario({ triggerRatio: .5, targetRatio: .45, readWorkingSetCount: 0, recentToolBatchCount: 1,
+    recentToolBatchMaxTokens: 512, recentToolBatchesTotalMaxTokens: 512 });
+  const older = run.snapshot.messages.length;
+  run.snapshot.messages.push({ role: 'assistant', content: 'OLDER_SMALL_REASONING' }, { role: 'assistant', content: 'x'.repeat(12000) });
+  const planned = await compact(run);
+  assert.equal(planned.action, 'compact');
+  assert.equal(planned.state.compaction.retainedRefs.includes(contextMessageRef(run.snapshot.messages[older], older, digest)), false);
+  assert.ok(planned.state.compaction.sourceText.includes('OLDER_SMALL_REASONING'));
+});
+
+test('complete granted artifact search observations can survive compaction but clipped feedback cannot claim complete source identity', async () => {
+  for (const complete of [true, false]) {
+    const run = scenario(), ref = { uri: 'artifact://source/search', digest: `sha256:${'b'.repeat(64)}`, sizeBytes: 10,
+      mediaType: 'text/plain', metadata: {} };
+    run.snapshot.artifactRefs.push(ref);
+    run.snapshot.messages.push({ role: 'assistant', content: '', toolCalls: [{ callId: 'search', name: 'ArtifactSearch',
+      arguments: { uris: [ref.uri], query: 'code' } }] }, { role: 'tool', name: 'ArtifactSearch', callId: 'search',
+      content: canonical({ observation_type: 'scoped-artifact-search/v1', query: 'code', complete, results: [{ uri: ref.uri,
+        coordinate_space: 'artifact', complete, matches: [{ offset_chars: 0, excerpt: 'code', excerpt_truncated: !complete }] }] }) });
+    const planned = await compact(run);
+    assert.equal(planned.action, 'compact'); assert.equal(retained(planned, run.snapshot, 'search'), complete);
+  }
 });

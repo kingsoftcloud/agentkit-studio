@@ -132,6 +132,7 @@ export interface ContextPlanningPolicy {
   maxSummaryRetries: number;
   /** Optional for restored runs; count source identities, retaining complete protocol groups. */
   readWorkingSetCount?: number; readWorkingSetMaxTokens?: number; readWorkingSetTotalMaxTokens?: number;
+  recentToolBatchCount?: number; recentToolBatchMaxTokens?: number; recentToolBatchesTotalMaxTokens?: number;
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;

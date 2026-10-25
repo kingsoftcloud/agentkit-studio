@@ -2,13 +2,14 @@ import { invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeContextPort } from '../../packages/agentkit-harness/src/native/context-counter.mjs';
 
 /** Bind budget, counter and policy from the resolved Agent revision/Frozen Build. */
-export function bindNativeContext({ description, context = {}, maxTokens, readWorkingSetDefaults = false } = {}) {
+export function bindNativeContext({ description, context = {}, maxTokens, readWorkingSetDefaults = false, recentToolBatchDefaults = false } = {}) {
   invariant(context && typeof context === 'object' && !Array.isArray(context), 'studio_native_context_invalid');
   const raw = context.compaction ?? {};
   invariant(raw && typeof raw === 'object' && !Array.isArray(raw), 'studio_native_compaction_invalid');
   const supported = ['enabled', 'thresholdRatio', 'targetRatio', 'summaryMaxTokens', 'maxCompactions',
     'maxCompactionsWithoutProgress', 'minModelTurnsBetween', 'maxSummaryRetries',
-    'readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens'];
+    'readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens',
+    'recentToolBatchCount', 'recentToolBatchMaxTokens', 'recentToolBatchesTotalMaxTokens'];
   invariant(Object.keys(raw).every(key => supported.includes(key)), 'studio_native_compaction_option_unsupported');
   const requestedWindow = context.maxInputTokens ?? description.contextWindow;
   const output = maxTokens ?? context.reserveOutputTokens ?? description.maxOutputTokens;
@@ -29,6 +30,12 @@ export function bindNativeContext({ description, context = {}, maxTokens, readWo
       .some(key => Object.hasOwn(raw, key)) ? {
         readWorkingSetCount: raw.readWorkingSetCount ?? 8, readWorkingSetMaxTokens: raw.readWorkingSetMaxTokens ?? 6000,
         readWorkingSetTotalMaxTokens: raw.readWorkingSetTotalMaxTokens ?? 16000,
+      } : {}),
+    ...(recentToolBatchDefaults || ['recentToolBatchCount', 'recentToolBatchMaxTokens', 'recentToolBatchesTotalMaxTokens']
+      .some(key => Object.hasOwn(raw, key)) ? {
+        recentToolBatchCount: raw.recentToolBatchCount ?? 4,
+        recentToolBatchMaxTokens: raw.recentToolBatchMaxTokens ?? Math.min(12000, Math.floor(contextWindow / 6)),
+        recentToolBatchesTotalMaxTokens: raw.recentToolBatchesTotalMaxTokens ?? Math.min(24000, Math.floor(contextWindow / 4)),
       } : {}),
   } };
 }

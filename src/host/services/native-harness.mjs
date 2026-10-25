@@ -239,7 +239,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const deadlineExecution = original && !Object.hasOwn(original.configuration, 'wallDeliveryPolicy') ? undefined : record.spec.execution;
       const deadline = bindNativeDeadlinePolicy(deadlineExecution);
       const readWorkingSetDefaults = !original || Object.hasOwn(original.configuration.contextPolicy ?? {}, 'readWorkingSetCount');
-      const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens, readWorkingSetDefaults });
+      const recentToolBatchDefaults = !original || Object.hasOwn(original.configuration.contextPolicy ?? {}, 'recentToolBatchCount');
+      const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens,
+        readWorkingSetDefaults, recentToolBatchDefaults });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputSelection = original ? admittedModelSelection(agent, input.assembly) : { ...selection, ...source };
       const inputServices = { attachments: () => ctx.get('attachments'),
@@ -352,7 +354,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const memoryVerification = memoryHost ? memoryHost.wrapVerification(verification) : null;
       const modelBinding = (profile, id, boundContext) => {
         const desc = profileDescription(profile), digest = hash(desc);
-        const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context, readWorkingSetDefaults });
+        const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context,
+          readWorkingSetDefaults, recentToolBatchDefaults });
         return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
         profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
           compatibilityDigest: digest, ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,

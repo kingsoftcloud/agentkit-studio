@@ -35,6 +35,22 @@ export function sourceWorkingSetGroup(messages: Message[], definitions: ToolDefi
         continue;
       }
       immutable = false;
+      if (definition.contextRole === 'workspace_search' && call.name === 'ArtifactSearch') {
+        const uris = args.uris;
+        if (!Array.isArray(uris) || !uris.length || new Set(uris).size !== uris.length
+          || uris.some(uri => typeof uri !== 'string' || !artifacts.some(ref => ref.uri === uri))
+          || receipt.observation_type !== 'scoped-artifact-search/v1' || typeof args.query !== 'string'
+          || receipt.query !== args.query || receipt.complete !== true || receipt.capacity_limited === true
+          || !Array.isArray(receipt.results) || receipt.results.length !== uris.length) return null;
+        for (const [rowIndex, row] of receipt.results.entries()) {
+          if (!object(row) || row.uri !== uris[rowIndex] || row.complete !== true || Object.hasOwn(row, 'code')
+            || !['captured_source', 'artifact'].includes(String(row.coordinate_space)) || !Array.isArray(row.matches)
+            || row.matches.some(match => !object(match) || !nonnegative(match.offset_chars) || typeof match.excerpt !== 'string'
+              || match.excerpt_truncated !== false || match.source_line !== undefined && !positive(match.source_line))) return null;
+        }
+        identities.add(canonical(['artifact-search', args, uris.map(uri => artifacts.find(ref => ref.uri === uri)!.digest)]));
+        continue;
+      }
       if (receipt.status !== 'ok') return null;
       if (definition.contextRole === 'task_planning') continue;
       const content = receipt.content;
