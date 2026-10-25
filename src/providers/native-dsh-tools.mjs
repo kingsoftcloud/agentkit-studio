@@ -16,6 +16,7 @@ import { requestedExactWorkspaceFile, exactByteDifference } from './native-final
 import { directoryModelReply, DIRECTORY_MODEL_DESCRIPTION, DIRECTORY_SCOPE_MODEL_DESCRIPTION } from './native-directory-observation.mjs';
 import { workspaceSourceModelReply } from './native-source-observation.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
+import { nativeConversationReadStates } from './native-conversation-reads.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { createNativeDshWebTools } from './native-dsh-web.mjs';
 import { nativeWebToolDefinitions } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
@@ -866,7 +867,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         const record = commandAuthority.store.load(commandAuthority.scope, request.runId);
         invariant(!childSkills || request.buildId === childSkills.buildId
           && canonical(record.configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills), 'studio_native_child_skill_binding_changed');
-        workspaceTools.adoptConversationBranch(record.snapshot.conversationBranch);
+        workspaceTools.adoptConversationBranch(record.snapshot.conversationBranch, () => nativeConversationReadStates({
+          store: commandAuthority.store, scope: commandAuthority.scope, seed: record.configuration.conversationSeed }));
         return allowed;
       } : undefined;
       const assertReceiptCurrent = commandAuthority?.store ? createNativeToolReceiptAuthority({ ...commandAuthority, sessionId,
@@ -1088,6 +1090,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               return llm.fileRequestText(ref);
             } };
           let context = await projectNativeDshContent(result.content, options); const additionalContexts = [];
+          // A filtered/hidden Read is not evidence that its original full bytes
+          // entered the authorized observation. Writes/edits record bytes this
+          // invocation itself successfully published, independent of display.
+          const visibleWorkspaceRead = request.call.name !== 'read_workspace_file'
+            || !context.media?.length && invocation.outcome && context.content === canonical(invocation.outcome.content);
           let archiveContext;
           if (status === 'ok' && request.definition.directoryObservationPolicy && builtinNames.has(request.call.name)
             && formal.get(request.call.name)?.contextRole === 'workspace_list' && !context.media?.length) {
@@ -1121,6 +1128,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           if (assertMcpCurrent) { try { assertMcpCurrent(); } catch { status = 'uncertain'; } }
           const outcome = { ...invocation.outcome, status, content,
           context, ...(archiveContext ? { archiveContext } : {}), ...(additionalContexts.length ? { additionalContexts } : {}) };
+          if (!visibleWorkspaceRead && outcome.metadata?.nativeWorkspaceReads) {
+            outcome.metadata = { ...outcome.metadata }; delete outcome.metadata.nativeWorkspaceReads;
+            if (!Object.keys(outcome.metadata).length) delete outcome.metadata;
+          }
           if (assertCurrent && builtinNames.has(request.call.name) && formal.has(request.call.name))
             workspaceTools.recordReceipt(request, outcome, { assertCurrent });
           return outcome;

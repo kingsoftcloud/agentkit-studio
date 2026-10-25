@@ -40,7 +40,7 @@ import {
   splitlines, validateReadState, validateSingleEditRequest,
 } from './workspace-editing.mjs';
 import {
-  WorkspaceStateStore, argumentsDigest, makeReadState,
+  WorkspaceStateStore, argumentsDigest, makeReadState, serializeReadState, deserializeReadState,
 } from './workspace-state.mjs';
 
 const MUTATING = new Set([
@@ -81,7 +81,11 @@ export function createNativeWorkspaceTools({
   // Mutating implementations below are synchronous. Track publications within the
   // current invocation so a later state-write failure cannot masquerade as a
   // definite failure before execution. No tracking state crosses an await.
-  let activeMutations = null, activeGuard = null, activeCheckpoint = null, activePublications = null;
+  let activeMutations = null, activeGuard = null, activeCheckpoint = null, activePublications = null, activeReads = null;
+  function rememberRead(state) {
+    store.recordReadState(state);
+    if (!state.partial) activeReads?.set(state.path, serializeReadState(state));
+  }
   function assertCheckpointPath(target) {
     if (activeCheckpoint && resolvePath(relativeOf(target)) !== target)
       throw Object.assign(Error('checkpoint_path_changed'), { code: 'checkpoint_path_changed' });
@@ -336,7 +340,7 @@ export function createNativeWorkspaceTools({
         mtime_ns: stat.mtimeNs, start_line: start, end_line: end, line_count: selected.length,
         read_range: { start, end }, total_lines: totalLines, partial: start !== 1 || end !== totalLines, suggested_action: '' },
       content, args.max_chars, sourceBudget);
-      if (result.ok && !result.artifact_only) store.recordReadState(makeReadState({ path: rel, mtimeNs: stat.mtimeNs,
+      if (result.ok && !result.artifact_only) rememberRead(makeReadState({ path: rel, mtimeNs: stat.mtimeNs,
         sizeBytes: Number(stat.size), startLine: start, endLine: result.end_line ?? start, totalLines, partial: result.partial,
         canonicalPath: target, contentSha256: sha256(Buffer.from(text, 'utf-8')) }));
       return result;
@@ -375,7 +379,7 @@ export function createNativeWorkspaceTools({
       if (!returnedCount) window.partial_line = start;
     }
     const rel = relativeOf(target);
-    store.recordReadState(makeReadState({
+    rememberRead(makeReadState({
       path: rel,
       mtimeNs: stat.mtimeNs,
       sizeBytes: Number(stat.size),
@@ -729,7 +733,7 @@ export function createNativeWorkspaceTools({
 
   function refreshReadState(rel, stat, text, target) {
     const lines = splitlines(text);
-    store.recordReadState(makeReadState({
+    rememberRead(makeReadState({
       path: rel,
       mtimeNs: stat.mtimeNs,
       sizeBytes: Number(stat.size),
@@ -1075,13 +1079,13 @@ export function createNativeWorkspaceTools({
           error_message: error.message, executed: false } };
       }
     }
-    const mutations = new Set(), publications = new Map(), previousMutations = activeMutations, previousGuard = activeGuard,
-      previousCheckpoint = activeCheckpoint, previousPublications = activePublications;
+    const mutations = new Set(), publications = new Map(), reads = new Map(), previousMutations = activeMutations, previousGuard = activeGuard,
+      previousCheckpoint = activeCheckpoint, previousPublications = activePublications, previousReads = activeReads;
     let release, checkpoint, preparedRewind;
     try {
       if (mutating) release = acquireWorkspaceMutationLock(pinnedRootReal);
       guard();
-      activeMutations = mutations; activeGuard = guard;
+      activeMutations = mutations; activeGuard = guard; activeReads = reads;
       if (name === 'rewind_workspace_files') {
         activePublications = publications;
         if (request.definition?.workspaceCheckpointPolicy !== WORKSPACE_CHECKPOINT_POLICY) throw Object.assign(Error('checkpoint_policy_missing'), { code: 'checkpoint_policy_missing' });
@@ -1120,7 +1124,7 @@ export function createNativeWorkspaceTools({
         ...(compensationError ? { compensation_reason: compensationError.code || 'compensation_failed' } : {}), executed: true, paths: [...mutations] } };
       return { status: 'error', content: { ok: false, error_type: e.code || 'internal_error', error_message: e.message } };
     } finally { activeMutations = previousMutations; activeGuard = previousGuard; activeCheckpoint = previousCheckpoint;
-      activePublications = previousPublications; release?.(); }
+      activePublications = previousPublications; activeReads = previousReads; release?.(); }
     // The only asynchronous implementation parses captured read-only bytes.
     // Restore mutation tracking before any await so concurrent writers cannot
     // attribute their publications to this invocation.
@@ -1136,6 +1140,11 @@ export function createNativeWorkspaceTools({
 
     if (result && result.ok === true) {
       const out = { status: 'ok', content: result };
+      // Durable Host facts, excluded from model/display output. Restore only
+      // exact full observations from successful selected historical calls.
+      if (reads.size && ['read_workspace_file', 'write_workspace_file', 'write_workspace_files',
+        'edit_workspace_file', 'multi_edit_workspace_file', 'apply_workspace_patch'].includes(name))
+        out.metadata = { nativeWorkspaceReads: { contract: 'native-workspace-read-observation/v1', tool: name, states: [...reads.values()] } };
       // Only mutating tools report workspace-changed paths; reads must not.
       if (mutating) {
         const changed = extractChangedPaths(result);
@@ -1390,7 +1399,14 @@ export function createNativeWorkspaceTools({
     guard(); checkpoints.recordRepairReceipt(request, result); guard();
   }
   return { definitions, execute, observe, recordReceipt, observeReceipt, repairWorkspace, recordRepairReceipt,
-    adoptConversationBranch: branch => store.adoptConversationBranch(branch),
+    adoptConversationBranch: (branch, restore) => store.adoptConversationBranch(branch, () => {
+      const candidates = typeof restore === 'function' ? restore() : restore ?? [];
+      return candidates.filter(raw => {
+        const state = deserializeReadState(raw);
+        if (!state || state.partial) return false;
+        try { return resolvePath(state.path) === state.canonicalPath; } catch { return false; }
+      });
+    }),
     // Host-only change capture for a governed command. It shares the bounded,
     // stable observer; paths remain structured even when names contain tabs.
     capture(request) {

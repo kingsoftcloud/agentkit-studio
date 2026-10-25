@@ -361,6 +361,29 @@ for (const artifactFailure of [false, true]) test(`saving an unread source canno
   assert.equal(result.sourceObservationState, 'unread'); assert.equal(result.content.requested_source.content, `1 | ${original}`);
 });
 
+for (const filtered of [false, true]) test(`full Read hydration metadata follows the actual Host observation (filtered: ${filtered})`, async t => {
+  const h = setup(t, ['read_workspace_file']);
+  writeFileSync(join(h.workspaceRoot, 'small.txt'), 'complete observed file\n');
+  if (filtered) {
+    const execute = h.ctx.tools.execute;
+    h.ctx.tools.execute = async request => ({ ...await execute(request), content: [{ type: 'text', text: '{"ok":true,"content":"filtered"}' }] });
+  }
+  const { config, snapshot, store, ports } = await sourceRuntime(t, h); let calls = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'read-observer', ports: { ...ports, model: { generate: async request => {
+    assert.doesNotMatch(JSON.stringify(request.messages), /nativeWorkspaceReads|native-workspace-read-observation/);
+    return ++calls === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'full-read',
+      name: 'read_workspace_file', arguments: { path: 'small.txt' } }] }
+      : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+  } } } });
+  kernel.start(snapshot, config); assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  const result = store.load(scope, 'run').receipts.find(receipt => receipt.result.results).result.results[0];
+  assert.equal(Boolean(result.metadata?.nativeWorkspaceReads), !filtered);
+  if (!filtered) {
+    assert.equal(result.metadata.nativeWorkspaceReads.states.length, 1);
+    assert.equal(result.metadata.nativeWorkspaceReads.states[0].partial, false);
+  }
+});
+
 for (const firstAction of ['read', 'edit']) test(`rewind adopts workspace branch before the first ${firstAction} captures read state`, async t => {
   const h = setup(t, ['read_workspace_file', 'edit_workspace_file']);
   writeFileSync(join(h.workspaceRoot, 'branch.txt'), 'original');

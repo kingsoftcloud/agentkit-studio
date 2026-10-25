@@ -181,7 +181,7 @@ export class WorkspaceStateStore {
     this._persistReadState();
   }
 
-  adoptConversationBranch(branch) {
+  adoptConversationBranch(branch, restore = () => []) {
     if (!branch) return;
     if (!Number.isSafeInteger(branch.generation) || branch.generation < 1 || typeof branch.commandId !== 'string' || !branch.commandId.trim())
       throw Object.assign(Error('workspace_read_branch_invalid'), { code: 'workspace_read_branch_invalid' });
@@ -191,7 +191,15 @@ export class WorkspaceStateStore {
       throw Object.assign(Error('workspace_read_branch_conflict'), { code: 'workspace_read_branch_conflict' });
     // Never let a read on the removed branch authorize an edit after rewind.
     // Fresh reads in this generation remain valid across later turns/restarts.
-    this._readState.clear(); this._conversationBranch = { ...branch }; this._persistReadState();
+    const retained = new Map();
+    for (const raw of restore()) {
+      const state = deserializeReadState(raw);
+      if (state && !state.partial) retained.set(state.path, state);
+    }
+    const previousReads = this._readState, previousBranch = this._conversationBranch;
+    this._readState = retained; this._conversationBranch = { ...branch };
+    try { this._persistReadState(); }
+    catch (error) { this._readState = previousReads; this._conversationBranch = previousBranch; throw error; }
   }
 
   addPending({ callId, name, argumentsDigest, ttlMs = PENDING_TTL_MS }) {

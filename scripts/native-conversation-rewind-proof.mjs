@@ -1,6 +1,6 @@
 /** Actual authenticated Studio controls, same Session, cold Native continuation. */
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
@@ -11,6 +11,7 @@ export function createConversationRewindProof() {
     assert.equal(request.url, '/v1/chat/completions'); const body = JSON.parse(raw); requests.push(body);
     const count = requests.length; assert.ok(count <= 13, 'No source write replay or extra rewind summary');
     const text = JSON.stringify(body.messages);
+    assert.doesNotMatch(text, /nativeWorkspaceReads|native-workspace-read-observation/);
     if (count >= 6 && count <= 9) {
       assert.match(text, /Kept first input/);
       assert.match(text, /Kept first answer/);
@@ -24,6 +25,10 @@ export function createConversationRewindProof() {
     const lastTool = () => JSON.parse(body.messages.filter(message => message.role === 'tool').at(-1).content);
     if (count === 7) {
       assert.equal(lastTool().ok, false); assert.equal(lastTool().error_type, 'file_not_read');
+      const edits = body.messages.filter(message => message.role === 'tool').slice(-4).map(message => JSON.parse(message.content));
+      assert.equal(edits[0].ok, true, 'Kept successful Write restores its own known bytes');
+      assert.equal(edits[1].ok, true, 'Kept full Read permits editing without another Read');
+      assert.equal(edits[2].ok, false); assert.equal(edits[2].error_type, 'file_modified_since_read', 'A removed newer Read cannot replace retained freshness');
     }
     if (count === 9 || count === 13) {
       assert.equal(lastTool().ok, true); assert.equal(lastTool().replacements, 1);
@@ -31,10 +36,17 @@ export function createConversationRewindProof() {
     if (count === 11) assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /New branch bytes/);
     const edit = content => ({ name: 'edit_workspace_file', arguments: { path: 'rewind.txt', old_text: content === 'Final bytes' ? 'New branch bytes' : 'Original bytes', new_text: content } });
     const read = { name: 'read_workspace_file', arguments: { path: 'rewind.txt' } };
+    const otherEdit = (path, old_text, new_text) => ({ name: 'edit_workspace_file', arguments: { path, old_text, new_text } });
     const calls = ({ 1: [{ name: 'ToolSearch', arguments: { query: 'select:TodoRead,TodoWrite' } },
-      { name: 'write_workspace_file', arguments: { path: 'rewind.txt', content: 'Original bytes' } }],
+      { name: 'write_workspace_file', arguments: { path: 'kept-write.txt', content: 'Kept original' } },
+      { name: 'read_workspace_file', arguments: { path: 'retained.txt' } },
+      { name: 'read_workspace_file', arguments: { path: 'stale.txt' } }],
       2: [{ name: 'DeferredToolCall', arguments: { name: 'TodoWrite', input: { todos: tasks } } }],
-      4: [read], 6: [edit('New branch bytes')], 7: [read], 8: [edit('New branch bytes')], 10: [read], 12: [edit('Final bytes')] })[count] ?? [];
+      4: [{ name: 'write_workspace_file', arguments: { path: 'rewind.txt', content: 'Original bytes' } },
+        { name: 'read_workspace_file', arguments: { path: 'stale.txt' } }],
+      6: [otherEdit('kept-write.txt', 'Kept original', 'Kept edited'), otherEdit('retained.txt', 'Retained original', 'Retained edited'),
+        otherEdit('stale.txt', 'Stale changed', 'Wrong'), edit('New branch bytes')],
+      7: [read], 8: [edit('New branch bytes')], 10: [read], 12: [edit('Final bytes')] })[count] ?? [];
     const answers = { 3: 'Kept first answer', 5: 'Discard second answer', 9: 'Replacement answer', 11: 'Root answer', 13: 'Follow-up answer' };
     const delta = calls.length ? { tool_calls: calls.map((call, index) => ({ index, id: `rewind-${count}-${index}`, type: 'function',
       function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : { content: answers[count] };
@@ -62,9 +74,13 @@ export function createConversationRewindProof() {
       assert.equal(result.finalResponse, expected, JSON.stringify(result.events.filter(event => event.type === 'turn/end')));
     };
     try {
+      await mkdir(join(root, 'workspace'), { recursive: true });
+      await writeFile(join(root, 'workspace/retained.txt'), 'Retained original');
+      await writeFile(join(root, 'workspace/stale.txt'), 'Stale original');
       const first = await harness.session(sessionId).run('Kept first input'); assert.equal(first.finalResponse, 'Kept first answer');
       const owner = first.events.find(event => event.type === 'turn/owner'); const admission = parseNativeJson(owner.data.binding);
       const scope = admission.identity.scope, identity = { agentId: scope.agentId, sessionId }, firstRecord = load(scope);
+      await writeFile(join(root, 'workspace/stale.txt'), 'Stale changed');
       const second = await harness.session(sessionId).run('Discard second input'); assert.equal(second.finalResponse, 'Discard second answer');
       const secondRecord = load(scope);
       const status = await rpc('sessions/native-conversation-status', identity);
@@ -83,6 +99,9 @@ export function createConversationRewindProof() {
       const replaced = load(scope); assert.equal(replaced.snapshot.parentRunId, secondRecord.snapshot.runId);
       assert.equal(replaced.snapshot.conversationBranch.generation, 1); assert.deepEqual(replaced.snapshot.todos.items, tasks);
       assert.equal(await readFile(join(root, 'workspace/rewind.txt'), 'utf8'), 'New branch bytes');
+      assert.equal(await readFile(join(root, 'workspace/kept-write.txt'), 'utf8'), 'Kept edited');
+      assert.equal(await readFile(join(root, 'workspace/retained.txt'), 'utf8'), 'Retained edited');
+      assert.equal(await readFile(join(root, 'workspace/stale.txt'), 'utf8'), 'Stale changed');
       const active = await rpc('sessions/native-conversation-status', identity); assert.equal(active.ok, true, JSON.stringify(active));
       assert.deepEqual(active.value.inputs.map(input => input.messageId), [ownInput(first.events, 'Kept first input'), ownInput(replacement.events, 'Replacement input')]);
       assert.equal((await rpc('sessions/native-conversation-rewind', { ...identity, expectedHeadRunId: replaced.snapshot.runId, expectedGeneration: 1,
@@ -106,8 +125,8 @@ export function createConversationRewindProof() {
       await writeFile(join(root, 'conversation-rewind-proof.json'), JSON.stringify({ passed: true, hostPids, modelCalls: requests.length,
         firstRunId: firstRecord.snapshot.runId, removedRunId: secondRecord.snapshot.runId, replacementRunId: replaced.snapshot.runId,
         rootRunId: rooted.snapshot.runId, followRunId: follow.snapshot.runId,
-        scope: 'Actual authenticated Studio routes + same SDK Session, ordinary idle Native rewind, cold replacement/root/follow-up, no old history or read authority, immutable source Runs. Controlled model; active task cancellation, retained-read hydration and full historical selection remain separate.' }, null, 2));
-      console.log('Studio Native conversation rewind PASS: authenticated same-Session branch cut, repeated root rewind, cold history/state reset, guarded read authority, no source replay.');
+        scope: 'Actual authenticated Studio routes + same SDK Session, ordinary idle Native rewind, cold replacement/root/follow-up, retained full Read/Write state, original freshness rather than removed newer reads, no removed read authority, immutable source Runs. Controlled model; active task cancellation and full historical selection remain separate.' }, null, 2));
+      console.log('Studio Native conversation rewind PASS: authenticated same-Session branch cut, retained Read/Write hydration, removed/stale read refusal, repeated root rewind, cold continuation, no source replay.');
     } finally { await harness.close(); }
   }
   return { respond, run };

@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **32/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **33/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,7 +53,7 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 8/15 covers durable file preimages on the admitted writer path (one point)
+M5 9/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
@@ -64,7 +64,9 @@ and fork-of-fork with independent Run/budget and paired historical tools (one po
 and exact ordinary Native before-input/root and in-turn message cuts with
 cutoff-local Todo/discovery through cold packed Studio first use (one point),
 and authenticated idle same-Session conversation rewind with cold rebased
-continuation, repeated root rewind and branch-fenced workspace reads (one point).
+continuation, repeated root rewind and branch-fenced workspace reads (one point),
+and retained successful full Read/Write/Edit observation hydration on those idle
+branches, with original freshness and post-policy/commit guards (one point).
 This does not certify full recovery/undo, full conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
@@ -84,13 +86,13 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Creation-via-Edit, large/legacy-encoded files, combined file/conversation rewind, retained-read hydration, full historical selection, partial-restore reconciliation, hook aliases and remaining read/write policy comparisons are pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Creation-via-Edit, large/legacy-encoded files, combined file/conversation rewind, range/pruned/reconciled read-state variants, full historical selection, partial-restore reconciliation, hook aliases and remaining read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
-| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut,rewind}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Authenticated idle same-Session rewind rebuilds model history/Todo/discovery without changing source Runs or files, including repeated root cuts and cold continuation. Active task cancellation, retained-read hydration, combined file/conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
+| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut,rewind}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Authenticated idle same-Session rewind rebuilds model history/Todo/discovery without changing source Runs or files, including repeated root cuts, cold continuation and retained full Read/Write/Edit freshness. Active task cancellation, range/pruned/reconciled read-state variants, combined file/conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
 
 ## Deliberate architecture constraints
@@ -1777,3 +1779,81 @@ M5 **8/15**, with the same denominator. Active cancellation and removed tasks,
 retained-read hydration, combined rewind, historical/media/compaction variants,
 managed/background/child semantics, neutral handoff, remaining M1–M4 gaps and
 the fixed before/reference/after comparison still require work.
+
+## Retained read observation hydration (33/100)
+
+Reference: pinned ZCode `src/agent/read-file-state-hydrator.ts:29` selects active
+messages, `:101` restores full Read observations, and `:127` restores successful
+Write/Edit metadata. Its comment at `:136` explicitly forbids reading current
+disk to fill in historical write/edit knowledge. Native now follows that rule
+for ordinary idle same-Session conversation rewind.
+
+`workspace-tools.mjs:85` captures serialized revision observations at the actual
+read/publication point, including post-edit merged bytes, through the existing
+`refreshReadState` path. Successful complete Read/Write/Edit, batch writes and
+patches can carry `metadata.nativeWorkspaceReads` in the existing private tool
+receipt. The observation stores relative/canonical path, exact string-encoded
+mtime, byte size, line coverage and content SHA-256; it does not duplicate file
+content. Failed/partial observations are not promoted to full observations.
+The DSH gateway removes Read metadata when the post-policy observation differs
+from the original authorized Read output. The kernel's unread-source result
+also prevents restoration. No tool-definition or model request field is added.
+
+`native-conversation-reads.mjs:8` walks only the selected seed's historical tool
+results. Original Run/index/name/content provenance must match, and the original
+private receipt must be committed with an `ok` result and valid full metadata.
+Result contexts must match the selected observation. Missing legacy evidence,
+unmatched/unknown closures, failed/uncertain/uncommitted/unread results and
+foreign scopes cannot manufacture read authority. Source records are loaded and
+indexed once per original Run during adoption, rather than searching the entire
+ledger for each result. No new execution loop or second operation journal exists.
+
+Each new branch generation hydrates from **its own** selected prefix before its
+first workspace operation. Same-generation continuation does not rehydrate and
+therefore retains fresh reads/edits across restart. A later root cut supplies an
+empty prefix and clears everything again. Failed state publication rolls back
+the in-memory adoption so retry cannot mistake an unpersisted branch for an
+accepted one. Canonical workspace checks and Native's existing mtime/size/hash
+stale guards remain; current disk bytes never replace the historical revision.
+
+Evidence:
+
+- Actual packed command:
+  `node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-retained-read-pack-final/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --conversation-rewind --frozen --keep`.
+  SHA-256 `8b5e16d4b924a0f9f8745745cb93f01234d8fdb300290919e4bd9c3cb9356497`.
+- PASS log `/tmp/native-retained-read-proof-final.log`; actual Host/SQLite/Session
+  evidence `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-ljCewz`;
+  four Host PIDs 1104/1128/1147/1157 and thirteen controlled model calls.
+  Retained full Read and Write both authorize editing after cold rewind without
+  another Read. A removed branch's newer Read cannot certify an externally
+  changed file; a removed-only file observation cannot authorize editing.
+  Repeated root rewind, ordinary cold continuation and immutable source Runs
+  still pass. The model request assertions and saved public Session log contain
+  no private read metadata (`retained-read-audit.json`).
+- Real-kernel selection/hydration group: 17 pass
+  (`/tmp/native-retained-read-selection-final.log`), including successful Edit
+  post-image, partial/external changes, missing evidence, uncertain/uncommitted
+  receipts, foreign workspace/scope, repeated root and failed publication retry.
+- Gateway/post-policy and selection checkpoint: 74 pass
+  (`/tmp/native-retained-read-observation.log`). Final workspace/Session/Host
+  guard group: 63 pass (`/tmp/native-retained-read-final-checks.log`). These
+  checkpoints overlap; they are not an additive test count. Contracts and the
+  packed core/client/MCP builds pass. No full suite was run.
+- Actual Claude Code performed a read-only review of the reference and planned
+  integration risks; it made no edits and ran no tests. The main agent reviewed
+  its findings. Its suggested first-generation-only hydration flag is not used:
+  later rewinds have their own fresh seeds and must hydrate those, while a root
+  seed stays empty. Selected-message provenance bounds the receipt lookup.
+
+The local proof persisted eleven observation capsules totaling 4,664 bytes,
+420–431 bytes each. This is private receipt storage in this fixture, not a Token
+saving or speed benchmark. There is no additional model summary. Native keeps
+its strict original mtime/size/hash checks; output-altering Read policies can
+require a fresh Read. Legacy observations without metadata likewise need a
+fresh Read rather than retroactively reading current files.
+
+Earned progress is **33/100**, M5 **9/15**, denominator unchanged; M6 remains
+**0/15**. Active cancellation/removed task cleanup, combined rewind, complete
+historical/retirement/compaction/reconciled-state variants, fork/isolated-child
+read hydration and neutral runtime handoff remain unaccepted, alongside the
+other matrix gaps and the fixed before/reference/after comparison.
