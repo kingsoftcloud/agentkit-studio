@@ -4,6 +4,8 @@
 `355059d78e47ed764bbdb3606304cdf34e9838a3`。目标分支 `feat-ksadk-harness`。
 本表对照[原能力清单](native-reference-capabilities.md)的十组能力及产品入口，
 区分已有实现、已有行为证据与尚未验收，不能把一项专项通过推广为全部组合完成。
+用户已明确本次仅本地验收；可选云服务、正式 Server、其他 OS 与桌面发行验证不作为
+本次本地测试前置条件，原有实现范围和差异记录保留。启动方式见[本地交接](native-handoff.md)。
 
 以下核心文件相对于 `packages/agentkit-harness-core/src/`；Node 适配文件相对于
 `packages/agentkit-harness/src/native/`；Host 文件相对于 `src/`。
@@ -72,6 +74,7 @@ OpenAI Chat 的内嵌推理过滤已按参考实现补齐：GLM/Z.AI 和 KSPMAS
    `ksadk/kernel/postgres_store.py` 是 Server/AgentKernel 存储，不能把它的缺失说成
    Native 状态机缺少事务，但现有实现也不能宣称具备共享 Server 的部署能力。
 
-默认切换已经完成。上述事项没有全部关闭，因此当前结论仍是**迁移主干已实现，完整无损交付尚未证明**。
+默认切换已经完成。本地迁移主干可开始验收；上述跨部署事项仍保留，因此不作所有
+线上后端、平台和部署均已无损验证的声明。
 旧 Python 数据库、序列化字节、历史摘要算法不在本任务兼容范围；原 Native 本身不支持的
 inject、checkpoint/time-travel 和任意 resume.input 也不作为新增要求，依据见原能力清单。

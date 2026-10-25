@@ -4,6 +4,33 @@
 `feat-ksadk-harness-2` / `355059d78e47ed764bbdb3606304cdf34e9838a3`。
 没有旧 Python 会话或数据库迁移要求。
 
+## 本次本地验收范围
+
+用户已明确本次只测试本地。当前分支可用于本地试用；不需要先准备 E2B、云
+Skills/KB/Memory、正式 Server/Gateway 或生产签名配置。它们的线上互操作、共享
+Server 部署、其他 OS 和正式桌面发行包保留原有未验收说明，不作为本次本地测试
+的前置条件。Native 核心与各适配器的迁移范围不因此删减。
+
+本地重点为 AgentKit Harness 的对话、工具、审批、取消、历史、子任务与重启恢复，
+以及本地自动化和 Frozen Build。现有确定性模型 HTTP、实际 Web 界面、持久 SQLite、
+Node-only 安装及 DSH Native/Codex 专项证据继续有效；不同阶段的证据不冒充最终
+提交的一次全量通过。可选云服务不配置时，使用对应的本地能力和工作区即可。
+
+在本机当前工作区，可复用已准备的维护版 Host：
+
+```sh
+cd /Users/zhangxiuqi/KC/agentkit-studio
+make dev DSH_ROOT=/Users/zhangxiuqi/KC/agentkit-studio/.artifacts/dsh-native-idle
+```
+
+该标准开发入口会构建并安装当前插件，默认监听 `http://127.0.0.1:3098`，不是测试
+脚本的确定性模型环境。沿用所选本地 profile 的模型设置；在 Studio 选择使用
+AgentKit Harness 的 Agent，新 Revision 默认 Native。普通新建对话可能使用 DSH Native，
+因此应按 Agent 的实际 runtime 选择验收入口。连接令牌仅按启动日志在本机使用。
+
+如需隔离已有数据，启动前把 `DSH_HOME` 与 `AGENTKIT_HOME` 指向两处专用目录；
+`DSH_HOME` 必须位于两个源码仓库之外。无需重新执行 `make setup` 或启动全量测试。
+
 ## 当前可交付内容
 
 - `packages/agentkit-harness-core/`：不依赖 Studio UI 或 DSH 对象的 TypeScript
@@ -59,7 +86,8 @@ MCP、Skills 和工作区后开始对话。无需 Native 启用开关。凭据�
 不重放、无 Python 的真实安装/Host 执行，以及 DSH Native/Codex 相关路径。
 默认 Revision 和 Frozen Build 的完整挂载 Host 路径已通过。
 
-**迁移主干已实现并默认启用，完整无损交付尚未证明。** 剩余事项明确保留：
+**本地迁移主干已实现并默认启用，可以开始本地验收；跨部署的完整无损声明仍不成立。**
+以下记录保留更广范围的差异和验收边界，不是等待本地测试的门槛：
 
 1. Studio 的对话、允许/拒绝、历史、流式刷新、取消和原运行收尾已有
    [真实界面证据](native-web-session.md)；子任务指导、转后台、结果、停止、历史保留和
