@@ -71,14 +71,26 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     signal.throwIfAborted();
     const unobserve = onFrame ? observe?.(agent, onFrame) : undefined;
     try {
-      await controller.prompt({ sessionId, requestId: occurrenceId, ...(requestFingerprint === undefined ? {} : { requestFingerprint }),
-        mode: 'queue', content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal);
-      await new Promise((resolve, reject) => {
-        const onAbort = () => { agent.cancel({ kind: 'user' }); reject(signal.reason || Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' })); };
-        if (signal.aborted) { onAbort(); return; }
+      let onAbort, submitted = false;
+      const canceled = new Promise((_, reject) => {
+        onAbort = () => {
+          try { if (submitted) agent.cancel({ kind: 'user' }); }
+          catch (error) { reject(error); return; }
+          reject(signal.reason || Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' }));
+        };
         signal.addEventListener('abort', onAbort, { once: true });
-        agent.whenIdle().then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, error => { signal.removeEventListener('abort', onAbort); reject(error); });
       });
+      try {
+        // Dispatch can wait for Host preparation after work has started. Own
+        // cancellation before awaiting its acknowledgement, not only when idle.
+        signal.throwIfAborted(); submitted = true;
+        await Promise.race([controller.prompt({ sessionId, requestId: occurrenceId,
+          ...(requestFingerprint === undefined ? {} : { requestFingerprint }), mode: 'queue',
+          content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal), canceled]);
+        signal.throwIfAborted();
+        await Promise.race([agent.whenIdle(), canceled]);
+        signal.throwIfAborted();
+      } finally { signal.removeEventListener('abort', onAbort); }
       await persistCompletedSession(persistence, agent.session, signal);
       let events;
       if (reuseSession) events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal);

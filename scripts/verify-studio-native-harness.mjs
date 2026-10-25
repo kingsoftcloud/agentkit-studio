@@ -18,6 +18,7 @@ import { createWebProof } from './native-web-proof.mjs';
 import { createDeliveryReviewProof } from './native-delivery-review-proof.mjs';
 import { createDeadlinePolicyProof } from './native-deadline-policy-proof.mjs';
 import { createArtifactPolicyProof } from './native-artifact-policy-proof.mjs';
+import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
@@ -133,7 +134,9 @@ const server = createServer(async (request, response) => {
       assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('FROZEN_NATIVE_SYSTEM_A')));
       assert.equal(JSON.stringify(body.messages).includes('LATEST_NATIVE_SYSTEM_B'), false);
     }
-    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName]);
+    const artifactTools = artifactToolDefinitions();
+    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName, ...artifactTools.map(tool => tool.name)]);
+    for (const definition of artifactTools) assert.deepEqual(body.tools.find(tool => tool.function.name === definition.name).function.parameters, definition.parameters);
     if (values['mcp-schema']) {
       const parameters = parseNativeJson(raw).tools[0].function.parameters;
       assert.equal(parameters.properties.id.minimum, exactInteger); assert.equal(parameters.properties.id.maximum, exactInteger);
@@ -414,6 +417,12 @@ try {
     assert.equal(new Set(runs.map(run => reopened.load(scope, run.runId).configuration.contract.revision)).size, 3);
     const evidence = await createNativeArtifactStore({ directory: join(root, 'studio/native-harness/verification-evidence'), scope });
     for (const run of runs) {
+      const bound = reopened.load(scope, run.runId).configuration;
+      assert.deepEqual([bound.contextPolicy.readWorkingSetCount, bound.contextPolicy.readWorkingSetMaxTokens,
+        bound.contextPolicy.readWorkingSetTotalMaxTokens], [8, 6000, 16000]);
+      assert.deepEqual([bound.contextPolicy.recentToolBatchCount, bound.contextPolicy.recentToolBatchMaxTokens,
+        bound.contextPolicy.recentToolBatchesTotalMaxTokens], [4, Math.min(12000, Math.floor(bound.profile.contextWindow / 6)),
+        Math.min(24000, Math.floor(bound.profile.contextWindow / 4))]);
       if (values.hooks) {
         const record = reopened.load(scope, run.runId);
         assert.equal(record.configuration.hooks.length, 1); assert.equal(record.configuration.stopHookContinuationLimit, 0);

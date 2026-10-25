@@ -78,6 +78,34 @@ test('canceling an uncooperative Session flush ends delivery and observes a late
   rejectFlush(Error('late flush rejection')); await new Promise(resolve => setImmediate(resolve));
 });
 
+test('canceling while prompt acknowledgement is pending cancels the original Agent and observes its late rejection', async () => {
+  const { run, services } = harness(), abort = new AbortController();
+  let entered, rejectPrompt, cancellations = 0, flushes = 0;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  services.sessionController.resolveAgent = async () => ({ agent: { session: { id: 's' },
+    whenIdle: () => assert.fail('Dispatch has not acknowledged'), cancel: () => { cancellations++; } } });
+  services.sessionController.prompt = () => new Promise((_, reject) => { rejectPrompt = reject; entered(); });
+  services.sessions.flush = () => { flushes++; assert.fail('Canceled work is not durable completion'); };
+  const pending = run({ agentId: 'a', sessionId: 's', input: 'probe', signal: abort.signal });
+  await waiting;
+  const reason = Error('cancel pending dispatch'); abort.abort(reason);
+  await assert.rejects(pending, error => error === reason);
+  assert.equal(cancellations, 1); assert.equal(flushes, 0);
+  rejectPrompt(Error('late dispatch failure')); await new Promise(resolve => setImmediate(resolve));
+});
+
+test('Agent cancellation failures reject the runner without escaping the abort listener', async () => {
+  const { run, services } = harness(), abort = new AbortController();
+  let entered, rejectIdle;
+  const waiting = new Promise(resolve => { entered = resolve; }), failure = Error('cancel control unavailable');
+  services.sessionController.resolveAgent = async () => ({ agent: { session: { id: 's' },
+    whenIdle: () => new Promise((_, reject) => { rejectIdle = reject; entered(); }), cancel: () => { throw failure; } } });
+  const pending = run({ agentId: 'a', sessionId: 's', input: 'probe', signal: abort.signal });
+  await waiting; assert.doesNotThrow(() => abort.abort(Error('caller canceled')));
+  await assert.rejects(pending, error => error === failure);
+  rejectIdle(Error('late idle rejection')); await new Promise(resolve => setImmediate(resolve));
+});
+
 test('Codex tool presentation facts are counted once without executing the tool again', async () => {
   const { run, calls } = harness(undefined, ['started', 'completed'].map(phase => ({ type: 'agentkit/codex-tool', data: { name: 'card', callId: 'codex:one', phase } })));
   const result = await run({ agentId: 'a', sessionId: 's', input: 'probe' });

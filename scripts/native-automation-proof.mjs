@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 
 export function respondToAutomationProof(body, response, calls) {
   const userText = body.messages.filter(message => message.role === 'user').map(message => typeof message.content === 'string'
@@ -12,7 +13,9 @@ export function respondToAutomationProof(body, response, calls) {
   assert.ok(text.includes(evaluation ? 'FROZEN_NATIVE_SYSTEM_A' : 'LATEST_NATIVE_SYSTEM_B'));
   assert.equal(text.includes(evaluation ? 'LATEST_NATIVE_SYSTEM_B' : 'FROZEN_NATIVE_SYSTEM_A'), false);
   assert.equal(body.model, 'pinned');
-  assert.deepEqual(body.tools.map(tool => tool.function.name), ['run_command']);
+  const artifacts = artifactToolDefinitions();
+  assert.deepEqual(body.tools.map(tool => tool.function.name), ['run_command', ...artifacts.map(tool => tool.name)]);
+  for (const definition of artifacts) assert.deepEqual(body.tools.find(tool => tool.function.name === definition.name).function.parameters, definition.parameters);
   const result = body.messages.findLast(message => message.role === 'tool');
   if (result) assert.match(result.content, /denied|permission|read.only|not allowed|approval|权限|拒绝/i);
   calls.push({ input, denied: Boolean(result) });
@@ -80,6 +83,8 @@ export function verifyAutomationLedger({ store, scope, proof, calls, events }) {
   for (const [sessionId, frozen] of [[proof.scheduleSessionId, false], [proof.evaluationSessionId, true]]) {
     const runs = store.list(scope, sessionId); assert.equal(runs.length, 1);
     const record = store.load(scope, runs[0].runId);
+    assert.equal(record.configuration.contextPolicy.recentToolBatchCount, 4);
+    assert.equal(record.configuration.contextPolicy.readWorkingSetCount, 8);
     assert.equal(record.configuration.instructions.includes(frozen ? 'FROZEN_NATIVE_SYSTEM_A' : 'LATEST_NATIVE_SYSTEM_B'), true);
     assert.equal(record.configuration.instructions.includes(frozen ? 'LATEST_NATIVE_SYSTEM_B' : 'FROZEN_NATIVE_SYSTEM_A'), false);
     if (frozen) assert.equal(record.snapshot.buildId, proof.buildId);
