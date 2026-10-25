@@ -105,7 +105,8 @@ async function applyProof(ctx, options) {
       ...(options.web ? { KSADK_WEB_SEARCH_PROVIDER: 'http',
         KSADK_WEB_SEARCH_BASE_URL: new URL('/search', options.modelUrl).href,
         KSADK_WEB_SEARCH_API_KEY: 'web-proof-search-secret', KSADK_WEB_SSRF_POLICY_JSON: '{"allow_private":true}' } : {}),
-      ...(!options.frozen ? { AGENTKIT_STUDIO_NATIVE_HARNESS: 'agentkit.native-dsh-turn/v1' } : {}) } });
+      // Exercise the actual product default, including restored presets.
+    } });
     presetId = dshPresetId(record.metadata.id, record.metadata.revision, record.buildId || '');
   } else {
     const bridge = mountRuntimeBridge(ctx);

@@ -26,7 +26,7 @@ Skill 管理的 Node 实现、持久化边界、验证范围与尚未闭环的�
 
 Studio 的 Native 整轮执行现在先通过 `Agent.externalTurns` 写入版本化 `turn/owner`，等待会话持久刷新，再创建 Native Run。归属记录包含原 scope、Session、轮次、Run、Build、前序 Run、任务链、完整冻结配置及摘要、原始输入和模型来源，不包含端口或模型凭证。刷新失败或超时不会执行模型和工具；取消发生在此窗口时，先保存原 Run 的取消命令。重建 Agent 保留原未结束轮次，认证接口 `sessions/native-recovery-status/resume` 由可信 Host 重新绑定端口并核对完整配置后独占同一轮次、推进同一 Run。会话“子任务”面板已有明确的“恢复原运行”操作，读取和刷新不会自动执行；重复恢复请求不会新建 Run。普通 DSH 轮次与 fork 继续原修复路径。普通 Revision 与 Frozen Build 的真实进程退出、认证冷恢复已验证，完整浏览器和全部产品恢复流程仍待验收。
 
-当前迁移尚未完成，Studio 的默认 Harness 仍沿用既有执行路径。生产 Host 已加入可显式启用的 Native 整轮执行与 Node 工作区工具组装；这不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。
+当前迁移尚未完成。Studio 新 Revision 和新 Harness Build 的默认选择已改为 Native 整轮执行，旧 Frozen Build 按原引擎 pin 运行；可通过显式 `legacy` 配置回退新建运行的默认路径，见[默认选择与回退](native-default-runtime.md)。默认选择变化不代表全部 Python 正式能力、各产品入口或安装方式已通过验收。
 
 进度口径已纠正：之前的 85%–94% 属于未按完整验收清单加权的工程估计，不能作为
 剩余工作量或验收完成率。目前没有可复核的整体百分比；当前硬性缺口和证据范围见
@@ -58,7 +58,7 @@ Node SQLite 使用独立数据库、WAL 和事务提交，记录配置摘要、�
 
 生产 Host 的 `createStudioNativeHarness` 从 Studio Agent 修订或 Frozen Build 解析可信配置，绑定已选模型与工作区身份，通过宿主 attachment 服务解析用户图片和文件引用。凭证只在模型端口调用时重新读取，不进入 Native 配置或账本。`createNativeDshTools` 将 Native 工具意图交给实际 DSH ToolRegistry，保留其权限管线；被允许的十种工作区工具及本地命令工具使用 Node 实现。工具名与资源 ID 分开处理，停用契约不能重新获得 builtin 执行权限。写入成功后管线报错时保留未知结果状态，新轮次不能绕过未知写或中断状态继续执行。
 
-开发验收可设置 `AGENTKIT_STUDIO_NATIVE_HARNESS=agentkit.native-dsh-turn/v1`，使新接纳的本地 Harness preset 显式绑定该契约；未知契约会被拒绝。未启用时，普通 Revision 保持原有 Harness 路径；Frozen Build 使用构建时固定的引擎，见下文。已启用的 Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。此开关用于阶段接入，默认切换仍待完整能力验收。未迁移的 builtin 当前显式返回 `STUDIO_NATIVE_BUILTIN_UNAVAILABLE`。本地记忆已接通压缩前消费、轮次后消费、管理工具和显式记忆验收；共享 preset 的多 Session 绑定与关闭防护见 `native-memory.md`。云端记忆写入仍显式拒绝组装，完整记忆能力尚未完成。
+新接纳的本地 Harness preset 默认绑定 `agentkit.native-dsh-turn/v1`；原显式版本配置继续可用，未知配置会被拒绝。`AGENTKIT_STUDIO_NATIVE_HARNESS=legacy` 为新 Revision/Build 选择原路径；Frozen Build 始终使用构建时固定的引擎，见下文。Native preset 要求整轮 Host 接口，不能退回 DSH 模型步骤或 Python 工具循环。普通 builtin 目录及 platform factory 已有 Node 端口，缺少实际端口时明确返回不可用。本地记忆已接通压缩前消费、轮次后消费、管理工具和显式记忆验收；共享 preset 的多 Session 绑定与关闭防护见 `native-memory.md`。已有云记忆写入策略现在通过独立持久 owner 提交，原请求和回执可在运行面板核对，见 `native-cloud-memory.md`。
 
 `node scripts/verify-studio-native-harness.mjs --source <已构建的维护源码>` 验证实际打包的 Studio 文件、公开 Host prompt 模块解析、生产 Native Host 工厂及 runtime plugin。它在真实 SDK profile 中选择 preset，执行两轮 Native 对话并在轮间重启进程，另外运行一轮策略拒绝写入，核对六次真实 HTTP 请求、两次经过实际 DSH 工具管线的 Node 文件写入、被拒绝的文件未落盘、会话持久化、用量和一个独立的默认 DSH 会话。Node 26 与最低 Node 22.19.0 均通过。运行子进程的 PATH 仅含 Node，Python 配置指向不存在的位置。该验证的 DSH 公共包及 Studio 依赖来自固定的本地 Host 图，不能替代全新环境安装、完整 `mountStudioHost` 启动或所有 runtime 的无 Python 验收。完整流式界面消费、审批界面、源读取工作集等剩余上下文策略、输入的显式重绑与未知领取恢复操作、其他正式端口和自动化/部署入口仍待完成。
 

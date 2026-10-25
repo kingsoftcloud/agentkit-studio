@@ -1,6 +1,6 @@
 # Native 迁移集中验收记录
 
-状态：**尚未完成最终交付，未切换默认引擎**。本记录区分集中检查、失败修复和
+状态：**已切换新 Revision / 新 Build 的默认 Native 引擎，尚未完成全部能力交付验收**。本记录区分集中检查、失败修复和
 产品入口证明，不能将测试数量换算为迁移百分比。
 
 ## 固定版本与范围
@@ -8,7 +8,7 @@
 Python 行为参考为 `feat-ksadk-harness-2` 的
 `355059d78e47ed764bbdb3606304cdf34e9838a3`；参考仓库保持只读。
 集中检查从目标分支 `feat-ksadk-harness` 的 `5d668a9` 启动，Node 26.5.0。
-本轮没有重新安装、打包或重复多 Node 全仓回归。
+集中回归后未重新安装或重复多 Node 全仓回归。随后默认切换仅打包一次并验证两条受影响的完整 Host 路径，见下文。
 
 ## 实际执行
 
@@ -61,7 +61,23 @@ node --test --test-concurrency=4 tests/*.test.mjs packages/agentkit-harness/test
 本轮关闭其中六个过期接口疑问；它仍不能单独证明全部能力迁移完成。
 [当前状态](native-migration-status.md) 和各专项记录保留实际产品证据与差异。
 
-当前仍由 `host/bootstrap.mjs` / `host/services/builds.mjs` 的显式版本开关选择
-Native；未启用的新 Revision 仍走旧 Harness。旧 Frozen 引擎 pin 必须继续保留，
-不能为了默认切换而重解释旧包。默认切换、最终产品组装验收、可选服务的线上
-证据及完整能力差异结论仍是交付事项，本次没有宣称完成。
+新 Revision / 新 Harness Build 已默认选择 Native；`legacy` 可回退新建默认策略，
+旧 Frozen 引擎 pin 继续保留。配置及恢复边界见[默认引擎说明](native-default-runtime.md)。
+最终产品组装验收、可选服务的线上证据及完整能力差异结论仍是交付事项。
+
+## 默认切换的定向验证
+
+默认选择、实际归档、回退和 Frozen pin 的定向检查共 53 项通过；Host 服务检查
+3 项通过。复用维护版 DSH `c7e4398390cdd0cf2604ce48acd40d84bd896068` 和现有依赖，
+只打包一次，未重新安装或重跑全仓。两条完整挂载 Host 均不提供 Native 启用开关：
+
+| 路径 | 实际结果 | 记录（相对证据目录） |
+| --- | --- | --- |
+| 普通 Revision，含 Trace | 通过；真实鉴权 HTTP、流式输出、权限拒绝和跨进程恢复 | `default-host/revision.log`、`default-host/revision-evidence.json` |
+| Frozen Build，含 MCP 精确数值 Schema | 通过；真实 MCP 副作用、流式输出、权限拒绝和跨进程恢复 | `default-host/frozen.log`、`default-host/frozen-evidence.json` |
+
+两条路径各发生 6 次本地模型 HTTP 请求。归档 SHA-256：
+`26ac7d302ee5febe31f4a6d20203b72ac3246e7610c689f86e4bb643bede609f`。
+汇总证据为 `default-host/reviewed-evidence.json`，Trace 路由证据为
+`default-host/native-trace-route-proof.json`。这是实际打包 Host 的默认入口证明，
+不等同于真实云模型、全部可选线上服务或浏览器渲染验收。

@@ -99,7 +99,9 @@ Host configuration accepts explicit milliseconds and the Python Studio v1–v7
 product-policy calculation, including versioned editor/self-read roles, summary
 ceilings, and v7 receipt feedback. Trusted exact-content writes and delivery edits
 are checked before dispatch; their sealed definitions survive original admission
-restore. Product default cutover remains pending. See [configuration and evidence
+restore. New Studio revisions and builds now default to Native while frozen engine
+pins remain authoritative; see [default selection](native-default-runtime.md).
+See [configuration and evidence
 boundaries](native-deadline-delivery.md).
 
 - **formal** — Host-owned request planning and compaction sealing:

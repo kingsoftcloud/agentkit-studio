@@ -4,10 +4,36 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioBuild } from '../src/studio-build.mjs';
-import { buildExecutionEngine, selectedNativeBuildContract } from '../src/build-engine.mjs';
+import { buildExecutionEngine, nativeHarnessHostContract, selectedNativeBuildContract } from '../src/build-engine.mjs';
+import { createBuildServices } from '../src/host/services/builds.mjs';
 import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
 import { createZip, buildIdFor } from '../src/zip.mjs';
 const native = 'agentkit.native-dsh-turn/v1';
+test('the product Host defaults new revisions and actual Build archives to Native while preserving legacy rollback and frozen pins', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'native-product-default-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const spec = { runtime: { type: 'harness' }, bindings: {} }, input = { agentId: 'ar-local-default', agentName: 'Default',
+    revision: 1, metadata: { local: true }, spec };
+  const { build } = await createBuildServices({ storeDir: root }).studioBuildPromise;
+  const { build: rollback } = await createBuildServices({ storeDir: root, env: { AGENTKIT_STUDIO_NATIVE_HARNESS: 'legacy' } }).studioBuildPromise;
+  const modern = await build.build(input), old = await rollback.build(input);
+  assert.notEqual(modern.id, old.id);
+  assert.equal(selectedNativeBuildContract(await build.resolve(input.agentId, modern.id)), native);
+  assert.equal(selectedNativeBuildContract(await build.resolve(input.agentId, old.id), nativeHarnessHostContract()), undefined);
+  assert.equal(selectedNativeBuildContract(await rollback.resolve(input.agentId, modern.id), nativeHarnessHostContract({ AGENTKIT_STUDIO_NATIVE_HARNESS: 'legacy' })), native);
+  for (const [env, expected] of [[{}, native], [{ AGENTKIT_STUDIO_NATIVE_HARNESS: '' }, native],
+    [{ AGENTKIT_STUDIO_NATIVE_HARNESS: native }, native], [{ AGENTKIT_STUDIO_NATIVE_HARNESS: 'legacy' }, undefined]]) {
+    const registered = [], agent = { metadata: { id: input.agentId, local: true, revision: 1 }, spec };
+    const admission = new DshPresetAdmission({ nativeEngineContract: nativeHarnessHostContract(env), getAgent: async () => agent,
+      registry: { register: async value => { registered.push(value); return () => {}; } } });
+    try { await admission.ensure(input.agentId);
+      assert.equal(registered[0].plugins.find(plugin => plugin.id === 'studio-runtime').config.nativeEngineContract, expected);
+    } finally { await admission.dispose(); }
+  }
+  for (const runtime of ['dsh-native', 'codex']) assert.equal(buildExecutionEngine({ runtime: { type: runtime } }, nativeHarnessHostContract()), undefined);
+  for (const value of ['future/v2', 'false', false, null])
+    assert.throws(() => nativeHarnessHostContract({ AGENTKIT_STUDIO_NATIVE_HARNESS: value }), /Unsupported Native Harness engine contract/);
+});
+
 test('actual archives pin the engine and produce different Build IDs for the same revision', async t => {
   const root = await mkdtemp(join(tmpdir(), 'native-build-engine-')); t.after(() => rm(root, { recursive: true, force: true }));
   const input = { agentId: 'ar-local-engine', agentName: 'Engine', revision: 1, metadata: { local: true },

@@ -9,7 +9,7 @@ import { realpathSync } from 'node:fs';
 import { NATIVE_MCP_JSON_CODEC } from '../providers/native-mcp-json.mjs';
 import { snapshotNativeMcpSchema } from '../providers/native-mcp-schema.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
-import { selectedNativeBuildContract } from '../build-engine.mjs';
+import { nativeHarnessHostContract, selectedNativeBuildContract } from '../build-engine.mjs';
 import { loadConfiguredNativeSkills } from '../providers/native-skill-source.mjs';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
@@ -32,6 +32,7 @@ import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/a
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
+  const nativeEngineContract = nativeHarnessHostContract(runtimeEnv);
   const configuredLocalSkillDirectory = runtimeEnv.KSADK_LOCAL_SKILLS_DIR?.trim();
   const localSkillDirectory = configuredLocalSkillDirectory ? resolve(configuredLocalSkillDirectory) : undefined;
   const hostCompatibility = await loadHostCompatibility(ctx);
@@ -260,8 +261,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
-    // Explicit development opt-in until the full capability matrix closes.
-    nativeEngineContract: runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS || undefined,
+    nativeEngineContract,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),
     getBasePlugins: async agent => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
@@ -276,7 +276,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       const definitions = boundSkillResources(bindings).length
         ? await loadBoundSkillDefinitions(bindings, await resourceAdaptersPromise) : [];
       const native = agent?.spec?.runtime?.type === 'harness'
-        && selectedNativeBuildContract(agent, runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS || undefined) === NATIVE_DSH_TURN_CONTRACT;
+        && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
       return native ? loadConfiguredNativeSkills({ directory: localSkillDirectory, definitions }) : definitions;
     },
     getToolContracts: async agent => {
@@ -342,8 +342,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         }
       }
       const mcpContracts = [];
-      const nativeMcp = runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS === NATIVE_DSH_TURN_CONTRACT
-        && agent?.spec?.runtime?.type === 'harness';
+      const nativeMcp = agent?.spec?.runtime?.type === 'harness'
+        && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
       const seenNames = new Set(builtinContracts.map(contract => String(contract?.name || '')));
       const adapters = mcpBindings.length ? await resourceAdaptersPromise : null;
       for (const binding of mcpBindings) {

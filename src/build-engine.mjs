@@ -6,6 +6,14 @@ import { HARNESS_CONTRACT_VERSION } from '../packages/agentkit-harness/src/contr
 export const BUILD_ENGINE_CONTRACT = 'agentkit.build-engine/v1';
 const unsupported = () => Object.assign(new Error('STUDIO_BUILD_ENGINE_UNSUPPORTED'), { code: 'STUDIO_BUILD_ENGINE_UNSUPPORTED' });
 
+/** Product default for new revisions/builds; frozen archives keep their own pin. */
+export function nativeHarnessHostContract(env = {}) {
+  const configured = env.AGENTKIT_STUDIO_NATIVE_HARNESS;
+  if (configured === undefined || configured === '' || configured === NATIVE_DSH_TURN_CONTRACT) return NATIVE_DSH_TURN_CONTRACT;
+  if (configured === 'legacy') return undefined;
+  throw new TypeError('Unsupported Native Harness engine contract');
+}
+
 /** Host selection is frozen into the content-addressed build, outside the
  * editable Agent spec. A later Host flag cannot reinterpret the same Build. */
 export function buildExecutionEngine(spec, nativeEngineContract) {

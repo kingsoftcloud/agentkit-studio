@@ -5,7 +5,11 @@
 原有条件跳过 2；修复 Kernel 的取消 Promise 未处理拒绝及测试夹具/过期断言后，
 18 项受影响检查通过，原跳过的 Node 22 文件读写另行 1 项通过。没有重跑整套，
 也不能将增量证据写成最终版本的一次全绿；缺 `GITLEAKS_BIN` 的原扫描器集成仍跳过。
-完整产品验收与默认切换尚未完成。
+新 Revision / 新 Harness Build 已默认 Native，原 Frozen pin 保留；无启用开关的
+Revision（Trace）和 Frozen（MCP 精确 Schema）两条完整 Host 路径均通过执行及
+跨进程恢复。配置与回退见[默认引擎说明](native-default-runtime.md)。完整能力差异
+结论、浏览器产品流程及可选服务线上验收仍未闭环。以下阶段记录保留各自当时的范围；
+默认策略以本段及默认引擎说明为准。
 
 云记忆原提交状态已接入现有 `sessions/native-recovery-status` 和“运行与子任务”面板：
 展示原请求/消息 ID、记忆库及服务回执，明确区分待确认、结果未知、服务已受理和
@@ -206,13 +210,13 @@ GitHub Skill 已补齐 1000 文件、单 Skill 100 MiB、排除目录、风险�
 | Studio 所有执行入口 | 本地对话、历史、部分 Frozen/后台通知路径已有真实 Host 证据 | 自动化、定时、Frozen HTTP/部署和完整浏览器消费的全部组合验收 |
 | 安装和执行不依赖 Python | 普通工具目录的 31 项及平台额外 3 项已有 Node 端口，Python fallback 已删除；维护版 Host 在 macOS arm64 的 Node 22/26 全新正常安装、挂载、Native 整轮执行及恢复均通过 | 名称覆盖不证明全部后端/行为；自定义 executor 和资源 authority 扩展仍需审计，Desktop Node Office 编写、资源离线安装与原生操作已专项验证；完整 Electron 与其他平台仍待闭环 |
 | DSH Native 与 Codex 保持正常 | 工作区、Web、本地命令、component_status、五个 Skill 读取及本地 execute_skills 已打包验证；A2A 已增加真实 DSH 身份的 Node 端口与独立持久记录；E2B 工作流已接入 Node 并验证实际 SDK 拒绝连接后的跨进程恢复 | 两种 runtime 的完整模型/CLI 回归；所有工具的完整行为对照；交互 E2B 的线上验收和空闲/容量回收 |
-| 默认切换及最终交付 | Native 仍通过显式版本开关启用 | 所有前置验收闭环后切换默认；最终能力差异表、配置恢复说明和最终验证记录 |
+| 默认切换及最终交付 | 新 Revision / 新 Build 默认 Native；保留 legacy 回退及 Frozen pin；两条无开关完整 Host 路径通过 | 最终能力差异结论、浏览器产品流程及可选服务线上证据 |
 
 当前仍不能判定“只剩少量验收”：
 
 - 普通 builtin 的 Python fallback 已删除；缺少端口会明确失败，不代表缺少的后端能力已补齐。
-- Desktop 已默认使用 Node Office 资源和工作流；实际三格式创建、编辑、重开、原生转换/渲染/重算，以及无 Python 的资源准备、离线安装和跨 PID 查询通过。完整 Electron、全部文档特性和其他平台仍待验收；详见[Node Office](native-node-office.md)。Native Harness 的最终默认开关仍待全部验收。
-- 主迁移文档仍明确默认 Harness 沿用原路径，需要完整验收后切换。
+- Desktop 已默认使用 Node Office 资源和工作流；实际三格式创建、编辑、重开、原生转换/渲染/重算，以及无 Python 的资源准备、离线安装和跨 PID 查询通过。完整 Electron、全部文档特性和其他平台仍待验收；详见[Node Office](native-node-office.md)。
+- 主迁移文档已更新默认 Native 策略；默认切换不代表所有可选后端已经完成线上验收。
 
 先前阶段提交 `5631729` 完成了本地 Skills 工作流、原调用的持久记录、命令监督、
 精确产物交付及本地/远程资源组装。八模块曾在 Node 26.5.0/22.19.0 各通过 144 项；
