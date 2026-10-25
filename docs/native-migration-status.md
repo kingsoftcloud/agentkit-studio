@@ -1,5 +1,16 @@
 # Native 迁移当前验收状态
 
+普通 Revision 的 Native Trace 已通过一次真实完整挂载 Host 验证：现有鉴权 HTTP
+`traces/list`、`traces/get`、`traces/otlp` 均读到原 Run，两个成功回合跨 Host 重启，
+另一个回合确认原策略拒绝写入。3 条 trace 的累计用量、模型/工具 span、事件身份
+及旧记录不改写通过；观察读取不增加原有 6 次模型 HTTP 调用。命令为
+`node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-idle --archive .artifacts/native-migration/trace-host/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --trace --keep`。
+证据为 `.artifacts/native-migration/trace-host/host-final.log`、
+`native-trace-route-proof.json` 和 `accepted-evidence.json`。打包使用
+`npm pack --ignore-scripts`，本轮只改 MJS、复用已构建产物和维护版依赖图；没有
+全新安装、多 Node 版本或全量回归。真实浏览器、Managed/自动化 Trace 的端到端
+验收仍应在最终产品验收中区分验证，不能由普通回合替代。
+
 GitHub Skill 导入已补齐公共 GitHub HTTPS 范围内的重定向（仓库迁移、相对跳转，
 最多 20 跳），每跳复核原授权并沿用取消/超时；本地发现、候选及文件排序改用
 Python 的 Unicode 码点顺序。4 个直接受影响模块首轮 137/140 通过，适配契约断言

@@ -18,9 +18,10 @@ import { createWebProof } from './native-web-proof.mjs';
 import { createDeliveryReviewProof } from './native-delivery-review-proof.mjs';
 import { createDeadlinePolicyProof } from './native-deadline-policy-proof.mjs';
 import { createArtifactPolicyProof } from './native-artifact-policy-proof.mjs';
+import { createNativeTraceProof } from './native-trace-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
-  'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false },
+  'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
   hooks: { type: 'boolean', default: false }, memory: { type: 'boolean', default: false },
@@ -62,6 +63,10 @@ assert.ok(!values['artifact-policy'] || values['mount-host'] && !deadlinePolicyP
   && !values.memory && !managedMemory && !parallelMemory && !values.automation && !values.commands
   && !values['mcp-schema'] && !values.hooks && !values.recovery, '--artifact-policy is a separate mounted Host proof; --frozen is supported');
 const artifactPolicyProof = values['artifact-policy'] ? createArtifactPolicyProof() : null;
+assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
+  && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
+  '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
+const traceProof = values.trace ? createNativeTraceProof() : null;
 const toolName = values.commands ? 'run_command' : 'write_workspace_file';
 const source = values.source ? resolve(values.source) : null, repository = fileURLToPath(new URL('..', import.meta.url));
 const installation = values.installation ? resolve(values.installation) : null;
@@ -249,6 +254,7 @@ try {
     `        frozen: ${values.frozen}`,
     `        automation: ${values.automation}`,
     `        recovery: ${values.recovery}`,
+    `        trace: ${values.trace}`,
     `        hooks: ${values.hooks}`,
     `        memory: ${values.memory || Boolean(managedMemory || parallelMemory)}`,
     `        memoryManaged: ${Boolean(managedMemory || parallelMemory)}`,
@@ -343,6 +349,7 @@ try {
     for (const kind of ['turn/start', 'turn/owner', 'turn/end', 'tool/call', 'tool/result']) assert.equal(result.events.filter(event => event.type === kind).length, 1, kind);
     const owner = result.events.find(event => event.type === 'turn/owner');
     const admission = readNativeDshOwnership(owner.data, { sessionId: 'native-studio-session', turn });
+    await traceProof?.verify(root, admission.identity.runId);
     assert.ok(owner.seq < result.events.find(event => event.type === 'step/start').seq);
     assert.equal(admission.configuration.hostRecoveryBinding.source.model, 'pinned');
     for (const kind of ['step/start', 'step/end', 'assistant/message']) assert.equal(result.events.filter(event => event.type === kind).length, 2, kind);
@@ -362,6 +369,10 @@ try {
   }
   const denied = await session.run('Attempt the denied write and report its denial.');
   assert.equal(denied.finalResponse, 'Policy denied the write.');
+  if (traceProof) {
+    const owner = denied.events.find(event => event.type === 'turn/owner');
+    await traceProof.verify(root, readNativeDshOwnership(owner.data, { sessionId: 'native-studio-session', turn: owner.data.turn }).identity.runId);
+  }
   assert.equal(denied.events.filter(event => event.type === 'tool/result').length, 1);
   assert.equal(denied.events.some(event => event.type === 'request/header'), false);
   await assert.rejects(readFile(join(root, 'workspace/denied.txt')), { code: 'ENOENT' });

@@ -84,6 +84,18 @@ service execution, cold SQLite projection, stale projection and cache failure.
 This closes the producer wiring gap; full mounted Host/browser UI acceptance
 remains a final integration step.
 
+The ordinary Revision path subsequently passed a full `mountStudioHost`
+integration using `verify-studio-native-harness.mjs --mount-host --trace`.
+It reads the actual authenticated Studio trace list/detail/OTLP routes for
+three committed Runs across an actual Host restart, preserving earlier trace
+identity, observed timestamps and facts; measured input/output totals are
+10/14 per Run. The existing proof also confirms the two real workspace writes,
+policy-denied write, public streaming/session settlement, six model HTTP
+requests with no extra inference, and a separate default DSH turn. Evidence
+is under `.artifacts/native-migration/trace-host/`. This reused the maintained
+dependency graph and a Node-only Host PATH; it was not a fresh installation,
+browser rendering proof or Managed/automation trace acceptance.
+
 Directed Node 26 checks passed in
 `.artifacts/native-migration/skill-events-targeted.log` (15 cases) and
 `skill-events-boundaries.log` (10 cases, 5 additional unique cases). They cover
