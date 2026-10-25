@@ -2002,3 +2002,54 @@ remaining read hydration cases, neutral runtime handoff and other matrix gaps
 remain incomplete. Other backends remain fail-closed where settlement cannot
 be proved. M6 remains **0/15**; controlled-model correctness evidence is not a
 real-model quality, Token savings, latency parity or cloud execution benchmark.
+
+## Active owned-child settlement at conversation commit (35/100, stronger evidence)
+
+The same pinned ZCode removed-branch cancellation boundary also applies to
+Native-owned child tasks. Actual source tracing confirms that parent cancel
+uses the existing `owned-background/v2` lifecycle: `kernel.mts:293` reconciles
+the interrupted parent effect; `transitions.mts` enters deferred finalization;
+`child-runtime.mts:42` prepares the original owner's cancel/collect operation;
+`reduceChildLifecycle` settles reservations before parent terminal state.
+The Host rewind gate requires terminal children and settled reservation digests.
+No second child cancellation driver was added.
+
+`scripts/verify-studio-native-children.mjs --conversation-rewind` now runs a
+separate scenario with `native-child-rewind-proof.mjs`. The actual packed Host
+starts one background reader child, while the controlled HTTP model holds both
+the child's first request and the parent's next request open. Before rewind,
+the real child is `requesting_model` and its reservation is unsettled. The
+authenticated rewind cancels both original executors and returns applied.
+A **synchronous `session/event` observer at the actual branch marker commit**
+reads SQLite and proves that both parent and child were already canceled and
+the original child reservation had a settlement digest at that exact boundary.
+One lifecycle result settles that child; unknown canceled model usage stays in
+its receipt. The child executes no tool. A second Host consumes the new branch,
+with empty child ownership/reservations, no removed prompt/task in model context,
+and no replay or mutation of either original canceled Run.
+
+Final local acceptance:
+
+- `/tmp/native-child-rewind-proof-final.log`: PASS; evidence root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-ThLJNZ`.
+  Hosts 17589/17601; four controlled model HTTP requests, one child; Node-only
+  PATH and unavailable Python. `child-rewind-proof.json` records the actual
+  commit observation and both Host identities.
+- Pack `/tmp/agentkit-native-child-cut-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz`,
+  SHA-256 `1597c8bb9d6f6cba4ce13d71f54b368b5d562976bc48ccbf23510e3f1fbf1367`.
+  Contract build/pack, script syntax and diff whitespace checks passed. No full
+  suite rerun was needed for the new isolated proof/fixture path.
+- Actual Claude Code read-only audit session
+  `60488173-cfc9-400c-85d5-a35979c2d5cd` returned source-backed findings in
+  `/tmp/native-rewind-child-audit-final.json`. It found no demonstrated bypass
+  of the settlement gate and correctly identified the missing real parent-cancel
+  proof, now covered above. Its initial run hit the turn limit; the final resumed
+  report and both command handles are terminal. Audit opinions are distinct from
+  runtime evidence. Receipt-wait/A2A interruption, settlement exceeding the Host
+  timeout and other child failure boundaries remain unaccepted.
+
+Progress remains **35/100**, M5 **11/15**. This strengthens the existing active
+stop milestone rather than assigning another point for a related test. It does
+not complete the entire child/background group, historical selection, combined
+rewind or cross-engine handoff. Performance and real-model comparisons remain
+pending, with M6 **0/15**.

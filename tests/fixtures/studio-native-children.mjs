@@ -12,7 +12,7 @@ export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   let grantProof;
   const a2aProof = options.managedA2aProofPath ? JSON.parse(await readFile(options.managedA2aProofPath, 'utf8')) : null;
-  if (options.managedProofPath || options.taskControls || options.editMatching || options.structuredPatch) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
+  if (options.managedProofPath || options.taskControls || options.editMatching || options.structuredPatch || options.conversationRewindProof) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
     node: process.version, path: process.env.PATH }) + '\n');
   await mkdir(workspaceRoot, { recursive: true });
   if (!existsSync(join(workspaceRoot, 'proof.txt'))) await writeFile(join(workspaceRoot, 'proof.txt'), 'Evidence from the actual child workspace');
@@ -213,6 +213,25 @@ export async function apply(ctx, options) {
       await appendFile(join(home, 'managed-tool-admissions.jsonl'), JSON.stringify({ pid: process.pid, name: exec.name,
         callId: exec.callId, sessionId: exec.agent.session.id }) + '\n');
       return next();
+    });
+  }
+  if (options.conversationRewindProof) {
+    const { SqliteRunStore } = await import('../../packages/agentkit-harness/src/native/sqlite-store.mjs');
+    const scope = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex'),
+      userId: 'local-user', agentId: record.metadata.id };
+    ctx.on('session/event', session => {
+      if (session.id !== 'native-child-parent') return;
+      const marker = session.snapshotEvents().at(-1)?.data?.source?.nativeRewind;
+      if (marker?.commandId !== 'active-owned-child-rewind') return;
+      const store = new SqliteRunStore(join(home, 'studio/native-harness/runs.sqlite'));
+      try {
+        const parent = store.load(scope, marker.expectedHeadRunId), reservation = parent.snapshot.childBudgetReservations[0];
+        const child = store.load(reservation.childScope, reservation.childRunId);
+        writeFileSync(join(home, 'child-rewind-commit-observation.json'), JSON.stringify({ pid: process.pid,
+          parentPhase: parent.snapshot.phase, childPhase: child.snapshot.phase,
+          settledUsageDigest: reservation.settledUsageDigest, generation: marker.generation,
+          observedAt: 'synchronous Session event for branch commit' }));
+      } finally { store.close(); }
     });
   }
   // Any entry into the DSH model loop would violate Native loop ownership.

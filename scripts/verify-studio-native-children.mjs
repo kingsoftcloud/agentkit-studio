@@ -8,11 +8,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createChildRewindProof } from './native-child-rewind-proof.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
-  promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' },
+  promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' }, 'conversation-rewind': { type: 'boolean' },
   'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' }, 'structured-patch': { type: 'boolean' }, 'workspace-rewind': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
+if (values['conversation-rewind']) assert.ok(!Object.entries(values).some(([key, value]) => value === true
+  && !['conversation-rewind', 'keep'].includes(key)), '--conversation-rewind is a separate child lifecycle proof');
+const conversationRewindProof = values['conversation-rewind'] ? createChildRewindProof() : null;
 if (values['child-controls']) assert.ok(values.promote && values.history && values['continue-child'], '--child-controls requires --promote --history --continue-child');
 if (values['guidance-fifo']) assert.ok(values['child-controls'], '--guidance-fifo requires --child-controls');
 if (values['task-controls']) assert.ok(!values.promote && !values['child-controls'], '--task-controls runs its own bounded child workflow');
@@ -44,6 +48,7 @@ const server = createServer(async (request, response) => {
     let raw = ''; for await (const part of request) raw += part;
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(request.url, '/v1/chat/completions');
+    if (conversationRewindProof) return conversationRewindProof.respond({ body, response });
     const child = body.model === 'child-proof';
     assert.ok(child || body.model === 'parent-proof');
     let call, calls, text;
@@ -226,10 +231,14 @@ try {
     '- insert:', '    - id: child-proof-webserver', "      name: '@deepseek-ai/dsh-host-webserver'", '      config:', "        host: '127.0.0.1'", '        port: 0',
     '    - id: child-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: child-proof-model-selection', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
+    ...(values['conversation-rewind'] ? ['    - id: child-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+      '    - id: child-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
+      '    - id: child-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : []),
     '    - id: child-proof-presets', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: standard',
     '    - id: child-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-native-children.mjs')).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...(values['task-controls'] ? ['        taskControls: true'] : []), '',
+    ...(values['conversation-rewind'] ? ['        conversationRewindProof: true'] : []),
     ...(values['child-plan'] ? ['        childPlanMode: true'] : []),
     ...(values['edit-matching'] ? ['        editMatching: true'] : []),
     ...(values['structured-patch'] ? ['        structuredPatch: true'] : []),
@@ -242,6 +251,10 @@ try {
     env: { ...process.env, PATH: nodeBin, DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents'),
       AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk' } };
   harness = new DeepSeekHarness(options);
+  if (conversationRewindProof) {
+    await conversationRewindProof.run({ harness, DeepSeekHarness, options, root, installed, control, failures, requests });
+    harness = null;
+  } else {
   let session = harness.session('native-child-parent');
   for (turn = 1; turn <= 2; turn++) {
     parentStep = 0; childStep = 0;
@@ -445,6 +458,7 @@ try {
   }
   const controlsProof = values['child-controls'] ? `authenticated same-ID guidance and child cancellation, no tool after cancellation, ${values['guidance-fifo'] ? 'two FIFO guidance commands consumed by distinct model receipts' : 'one original child inbox command'}, ` : '';
   console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${controlsProof}${values['task-controls'] ? 'child-local Todo continuity and exactly-once coordinator reports across two Host PIDs, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
+  }
 } finally {
   releaseChild();
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
