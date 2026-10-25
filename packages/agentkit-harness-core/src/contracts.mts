@@ -29,6 +29,8 @@ export interface Message extends ToolContextMessage {
   kind?: string; callId?: string; name?: string; toolCalls?: ToolCall[];
   /** Private provider protocol data; never part of a public event's payload. */
   providerReplay?: ObjectValue; media?: Json[]; persistent?: boolean;
+  /** Runtime-owned receipt outcome for optional request pruning; never inferred from model prose. */
+  toolOutcome?: ToolResult['status'];
   /** Stable provenance for imported history; never grants current-run authority. */
   history?: { sourceRunId: string; sourceIndex: number };
   /** Original protocol call id -> canonical historical/current call id. */
@@ -133,6 +135,7 @@ export interface ContextPlanningPolicy {
   /** Optional for restored runs; count source identities, retaining complete protocol groups. */
   readWorkingSetCount?: number; readWorkingSetMaxTokens?: number; readWorkingSetTotalMaxTokens?: number;
   recentToolBatchCount?: number; recentToolBatchMaxTokens?: number; recentToolBatchesTotalMaxTokens?: number;
+  pruneToolResults?: boolean; pruneKeepRecentBatches?: number; pruneMinSavedTokens?: number;
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;
@@ -163,6 +166,11 @@ export interface ContextAdmission {
 export interface ContextPlanningResult {
   action: 'ready' | 'compact' | 'blocked'; reason: string; state: ContextPlanningState;
   messages: Message[]; admission: ContextAdmission | null;
+  toolResultPruning?: ToolResultPruning;
+}
+export interface ToolResultPruning {
+  sourceMessageRefs: string[]; toolCallIds: string[];
+  preInputTokens: number; postInputTokens: number; savedTokens: number;
 }
 export interface ContextSourceDefinition {
   contract: 'agentkit.native-context-source/v1'; sourceId: string; bindingDigest: string;
@@ -300,6 +308,7 @@ export interface PreparedContext {
   /** Binds this disposable model view to the immutable transcript and environment. */
   sourceDigest: string;
   admission?: ContextAdmission;
+  toolResultPruning?: ToolResultPruning;
   /** Uncached contributors must be read again when another lease admits a model. */
   sourceFence?: number;
 }

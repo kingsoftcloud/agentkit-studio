@@ -8,6 +8,7 @@ import { retryDelay } from './retry.mjs';
 import { deliveryReviewMessages, reviewPending } from './delivery-review.mjs';
 import { artifactProgressIdentity } from './artifact-runtime.mjs';
 import { sourceWorkingSetGroup } from './source-working-set-group.mjs';
+import { projectOldToolResults } from './context-microcompact.mjs';
 
 export interface ContextCounters {
   countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number): Promise<number>;
@@ -120,6 +121,33 @@ function mandatoryIndexes(snapshot: RunSnapshot, groups: number[][], config: Run
   }
   invariant(goal >= 0, 'context_goal_missing'); mandatory.add(goal);
   return mandatory;
+}
+/** Fresh, bounded source identities are protected before applying token ceilings. */
+function workingSetGroups(snapshot: RunSnapshot, state: ContextPlanningState, config: RunConfiguration,
+  groups: number[][], indexes: number[], refs: string[]): number[][] {
+  const limit = config.contextPolicy!.readWorkingSetCount;
+  if (!limit) return [];
+  const definitions = new Map(config.tools.map(tool => [tool.name, tool]));
+  let lastMutation = -1;
+  for (const index of indexes) for (const call of snapshot.messages[index]!.toolCalls ?? []) {
+    const definition = definitions.get(call.name);
+    if (!definition || !definition.readOnly && definition.contextRole !== 'task_planning') lastMutation = index;
+  }
+  const history = state.history;
+  const staleHistory = new Set(history && (snapshot.workspaceRevision === null || history.workspaceRevision == null
+    || history.workspaceRevision !== snapshot.workspaceRevision) ? history.retainedRefs : []);
+  const seen = new Set<string>(), selected: number[][] = [];
+  for (const group of [...groups].reverse()) {
+    if (seen.size >= limit) break;
+    const observation = sourceWorkingSetGroup(group.map(index => snapshot.messages[index]!), config.tools, snapshot.artifactRefs);
+    if (!observation || !observation.immutable
+      && (group[0]! <= lastMutation || group.some(index => staleHistory.has(refs[index]!)))) continue;
+    const identities = new Set([...seen, ...observation.identities]);
+    if (identities.size === seen.size || identities.size > limit) continue;
+    for (const identity of observation.identities) seen.add(identity);
+    selected.push(group);
+  }
+  return selected;
 }
 function verifyCoverage(compaction: ContextCompaction, complete = false): void {
   let cursor = 0;
@@ -302,6 +330,26 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     tokenizerId: policy.tokenizerId, tokenizerDigest: policy.tokenizerDigest, countedInputTokens: counted,
     maxOutputTokens: config.profile.maxOutputTokens, contextWindow: config.profile.contextWindow };
   assertHookFeedbackRetained(snapshot, messages);
+  const workingSet = forceCompaction ? [] : workingSetGroups(snapshot, state, config, groups, indexes, refs);
+  if (policy.enabled && policy.pruneToolResults && !forceCompaction
+    && counted >= (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio) {
+    const protectedIndexes = new Set([...mandatoryIndexes(snapshot, groups, config), ...workingSet.flat()]);
+    const projected = projectOldToolResults(snapshot.messages, refs, groups, config.tools, protectedIndexes,
+      policy.pruneKeepRecentBatches ?? 5, digest);
+    if (projected.clearedIndexes.length) {
+      const prunedMessages = withSummary(indexes.map(index => projected.messages[index]!), state.history?.summary ?? '', continuity, contributions);
+      const post = checkedCount(await counters.countRequest(copy(prunedMessages), copy(tools), 'task', config.profile.maxOutputTokens));
+      if (counted - post >= (policy.pruneMinSavedTokens ?? 256)
+        && post < (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio) {
+        assertHookFeedbackRetained(snapshot, prunedMessages);
+        return { ...result('ready', 'historical_tool_results_within_budget', prunedMessages,
+          { ...admission, countedInputTokens: post }), toolResultPruning: {
+          sourceMessageRefs: projected.clearedIndexes.map(index => refs[index]!), toolCallIds: projected.clearedCallIds,
+          preInputTokens: counted, postInputTokens: post, savedTokens: counted - post,
+        } };
+      }
+    }
+  }
   if (!policy.enabled) return fits && !forceCompaction ? result('ready', 'context_compaction_disabled', messages, admission)
     : result('blocked', 'context_compaction_disabled');
   if (!allowCompaction) return fits && !forceCompaction ? result('ready', 'context_finalization_reserved', messages, admission)
@@ -348,25 +396,8 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   }
   if (!forceCompaction && policy.readWorkingSetCount) {
     invariant(counters.countMessage, 'context_working_set_counter_missing');
-    const definitions = new Map(config.tools.map(tool => [tool.name, tool]));
-    let lastMutation = -1;
-    for (const index of indexes) for (const call of snapshot.messages[index]!.toolCalls ?? []) {
-      const definition = definitions.get(call.name);
-      if (!definition || !definition.readOnly && definition.contextRole !== 'task_planning') lastMutation = index;
-    }
-    const history = state.history;
-    const staleHistory = new Set(history && (snapshot.workspaceRevision === null || history.workspaceRevision == null
-      || history.workspaceRevision !== snapshot.workspaceRevision) ? history.retainedRefs : []);
-    const seen = new Set<string>();
     let total = 0;
-    for (const group of [...groups].reverse()) {
-      if (seen.size >= policy.readWorkingSetCount) break;
-      const observation = sourceWorkingSetGroup(group.map(index => snapshot.messages[index]!), config.tools, snapshot.artifactRefs);
-      if (!observation || !observation.immutable
-        && (group[0]! <= lastMutation || group.some(index => staleHistory.has(refs[index]!)))) continue;
-      const identities = new Set([...seen, ...observation.identities]);
-      if (identities.size === seen.size || identities.size > policy.readWorkingSetCount) continue;
-      for (const identity of observation.identities) seen.add(identity);
+    for (const group of workingSet) {
       const costOfGroup = await groupCost(group);
       if (costOfGroup > policy.readWorkingSetMaxTokens! || costOfGroup > policy.readWorkingSetTotalMaxTokens! - total) continue;
       const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);

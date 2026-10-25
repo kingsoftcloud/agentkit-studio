@@ -659,9 +659,13 @@ export class NativeKernel {
               invariant(result.admission && result.admission.sourceDigest === contextSourceDigest(snapshot, this.digest)
                 && result.admission.countedInputTokens + result.admission.maxOutputTokens <= configuration.profile.contextWindow, 'context_admission_invalid');
               changes.preparedContext = { messages: validateContextMessages(result.messages), sourceDigest: result.admission.sourceDigest,
-                admission: result.admission, ...(configuration.contextSources.length ? { sourceFence: executionFence } : {}) };
+                admission: result.admission,
+                ...(result.toolResultPruning ? { toolResultPruning: result.toolResultPruning } : {}),
+                ...(configuration.contextSources.length ? { sourceFence: executionFence } : {}) };
               assertHookFeedbackRetained(snapshot, changes.preparedContext.messages);
               assertGuidanceRetained(snapshot, changes.preparedContext.messages);
+              if (result.toolResultPruning) facts.push({ kind: 'context.tool_results_pruned',
+                payload: result.toolResultPruning as unknown as ObjectValue });
             }
             facts.push({ kind: 'context.planned', payload: { action: result.action, reason: result.reason,
               admission: result.admission as unknown as ObjectValue | null, compactions: result.state.compactions,

@@ -437,6 +437,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
+      ...(config.contextPolicy?.pruneToolResults ? { toolOutcome: result.status } : {}),
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
     if (definition?.deliveryWrite && !definition.readOnly && result.status === 'ok' && result.content && typeof result.content === 'object'
       && !Array.isArray(result.content) && result.content.ok === true && result.content.path === call.arguments.path

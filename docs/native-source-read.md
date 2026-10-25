@@ -59,6 +59,35 @@ Studio 近期完整工具批次默认保护 4 批，单批上限 `min(12000, con
 不会因为较早单元更短而把它重新放到新摘要之后；源码工作集单独处理。恢复配置分别
 保留这组三字段和源码工作集字段的原有缺省状态。
 
+## 可选旧工具结果清理
+
+`spec.context.compaction.pruneToolResults: true` 启用参考 Native 的 microcompaction。
+Studio 默认关闭；未配置的恢复运行继续保留字段缺省状态。可选参数
+`pruneKeepRecentBatches` 默认 5，`pruneMinSavedTokens` 默认 256，均为正整数。
+只在达到压缩触发阈值时尝试；完整模型请求的实际计数必须节省到最小额度且降至触发
+阈值以下，才直接继续任务而不调用摘要模型。强制压缩不使用此投影。
+
+成功状态来自真实工具执行回执的 `toolOutcome`，不从模型或工具正文推断。
+缺少状态、错误、待审批、媒体、浏览器、规划、委派只读及永久保留的结果不能清理；
+仍有效的源码工作集在 token 保留上限之前受保护。近期批次只统计完整工具批次，
+中间的普通消息不消耗窗口。投影保留原调用配对，用带原消息引用和内容摘要的标记
+替换旧正文，清除旧的替代显示/回放字段。原始 transcript 和持久工具回执不变。
+采用的投影及节省量随 `preparedContext.toolResultPruning` 持久化，并发出
+`context.tool_results_pruned` 事件；数据库重开后无需重放工具或补发摘要请求。
+
+参考为 `355059d` 的 `context_microcompact.py`、`context_request_projection.py`
+和实际 Studio `native_planning.py` 的关闭默认值。TS 额外使用可信执行状态字段，
+因为已有 TS 工具观察不统一包装为 Python 的 `{status, content}` JSON。
+
+本项只运行 Node 26 编译、4 个新增行为用例及直接受重构影响的 6 个工作集用例。
+新增用例包含完整请求计数拒绝、保护观察及真实 Kernel/SQLite 重开；未跑全量。
+最初两个新增 fixture 分别含非法 undefined 和把可缺省的 task purpose 当成必填，
+已修正 fixture 后通过，未放宽运行时断言。命令为
+`node scripts/build-native-harness.mjs` 及
+`node --test packages/agentkit-harness-core/test/context-microcompact.test.mjs packages/agentkit-harness-core/test/source-working-set-planner.test.mjs`；
+新增文件修正后只重跑该文件。Claude Code 在独立 worktree 的纯模块任务超时无交付，
+本项代码由 Codex 完成，worker 原有三文件修改未变化。
+
 ## 验证边界与剩余工作
 
 定向测试覆盖真实 NativeKernel、Node 工作区/归档存储和 SQLite，以及三种协议的实际
