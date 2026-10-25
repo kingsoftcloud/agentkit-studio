@@ -13,7 +13,7 @@ import { readModelSse } from '../src/native/model-sse.mjs';
 import { admitInlineReasoningPolicy, inlineReasoningMarker, projectInlineReasoning } from '../src/native/model-inline-reasoning.mjs';
 import { admitProviderCompatibilityPolicy } from '../src/native/model-provider-compat.mjs';
 import { NativeKernel, MemoryRunStore } from '../../agentkit-harness-core/dist/index.mjs';
-import { fixture as coreFixture, scope as coreScope, digest as coreDigest } from '../../agentkit-harness-core/test/fixtures.mjs';
+import { fixture as coreFixture, scope as coreScope, digest as coreDigest, tool as coreTool } from '../../agentkit-harness-core/test/fixtures.mjs';
 
 test('idle policy HTTP: hidden reasoning keeps a long real stream alive across adapter and kernel deadlines', async () => {
   const handler = () => ({ headers: SSE_HEADERS, body: (async function* () {
@@ -569,6 +569,76 @@ function anthropicFinalText(text = 'Hello', { stop = 'end_turn', outputTokens = 
     ae('message_stop', { type: 'message_stop' }),
   ];
 }
+
+// ZCode reference: turn-output-token-continuation.ts at 3c5b227. A successful
+// generated response that fills the context window is output truncation; a
+// rejected overlong input remains a separate context-overflow failure.
+for (const streaming of [false, true]) {
+  test(`zcode alignment: completed context-window truncation preserves text and usage, streaming=${streaming}`, async () => {
+    const { result } = await collect(0, 'anthropic-messages', () => streaming
+      ? { headers: SSE_HEADERS, body: anthropicFinalText('Continue this', { stop: 'model_context_window_exceeded' }) }
+      : { headers: JSON_HEADERS, body: JSON.stringify({ content: [{ type: 'text', text: 'Continue this' }],
+        stop_reason: 'model_context_window_exceeded', usage: { input_tokens: 7, output_tokens: 3 } }) }, makeRequest());
+    assert.equal(result.kind, 'output_limit');
+    assert.equal(result.text, 'Continue this');
+    assert.equal(result.textCommitVersion, 'provider-finished-text/v1');
+    assert.deepEqual(result.toolCalls, []);
+    assert.equal(result.usage.inputTokens, 7);
+    assert.equal(result.usage.outputTokens, 3);
+  });
+}
+
+test('zcode alignment: context-window truncation cannot dispatch a parseable but unfinished tool batch', async () => {
+  const { result } = await collect(0, 'anthropic-messages', () => ({ headers: JSON_HEADERS,
+    body: JSON.stringify({ content: [{ type: 'tool_use', id: 'unfinished', name: 'read', input: {} }],
+      stop_reason: 'model_context_window_exceeded', usage: { input_tokens: 7, output_tokens: 3 } }) }), makeRequest());
+  assert.equal(result.kind, 'output_limit');
+  assert.deepEqual(result.toolCalls, []);
+});
+
+test('zcode alignment: context-window marker without message_stop is an incomplete transport attempt', async () => {
+  const frames = anthropicFinalText('Partial', { stop: 'model_context_window_exceeded' });
+  const { result } = await collect(0, 'anthropic-messages', () => ({ headers: SSE_HEADERS, body: frames.slice(0, -1) }), makeRequest());
+  assert.equal(result.kind, 'provider_retryable_error');
+  assert.deepEqual(result.toolCalls, []);
+  assert.equal(result.textCommitVersion, undefined);
+});
+
+test('zcode alignment: completed context-window truncation resumes the Native task and executes only the subsequent complete call', async () => {
+  let executions = 0;
+  await withServer((_request, _body, index) => ({ headers: JSON_HEADERS, body: JSON.stringify(index === 0
+    ? { content: [{ type: 'text', text: 'Unfinished work' }, { type: 'tool_use', id: 'partial', name: 'write', input: {} }],
+      stop_reason: 'model_context_window_exceeded', usage: { input_tokens: 7, output_tokens: 3 } }
+    : index === 1
+      ? { content: [{ type: 'tool_use', id: 'complete', name: 'write', input: {} }],
+        stop_reason: 'tool_use', usage: { input_tokens: 8, output_tokens: 2 } }
+      : { content: [{ type: 'text', text: 'Completed task' }], stop_reason: 'end_turn',
+        usage: { input_tokens: 9, output_tokens: 2 } }) }), async server => {
+    const { config, snapshot } = coreFixture({ outputRecoveryPolicy: 'task-or-delivery/v1',
+      tools: [coreTool({ name: 'write', readOnly: false, concurrentSafe: false })],
+      profile: { profileId: 'test', profileVersion: '1', compatibilityDigest: 'fixture/v1', providerFamily: 'anthropic-messages' } });
+    const model = createNativeModelPort({ resolveProfile: async () => ({ protocol: 'anthropic-messages',
+      baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fake-key', model: 'fake-model' }) });
+    const store = new MemoryRunStore();
+    const kernel = new NativeKernel({ store, digest: coreDigest, owner: 'context-limit-test', ports: { model,
+      tools: { execute: async request => {
+        assert.equal(request.call.callId, 'complete'); executions++;
+        return { status: 'ok', content: 'written' };
+      } } } });
+    kernel.start(snapshot, config);
+    const end = await kernel.runUntilIdle(coreScope, 'run');
+    assert.equal(end.phase, 'completed');
+    assert.equal(end.finalText, 'Completed task');
+    assert.equal(executions, 1);
+    assert.equal(server.requests.length, 3);
+    assert.equal(end.usage.modelCalls, 3);
+    assert.equal(end.usage.toolCalls, 1);
+    assert.equal(end.usage.inputTokens, 24);
+    assert.equal(end.usage.outputTokens, 7);
+    const resumed = JSON.parse(server.requests[1].body);
+    assert.ok(resumed.messages.some(message => message.content.some(block => block.type === 'text' && /interrupted|resume/i.test(block.text))));
+  });
+});
 
 test('anthropic: final candidate streams text and seals usage', async () => {
   const handler = () => ({ status: 200, headers: SSE_HEADERS, body: anthropicFinalText('Hello') });
@@ -1173,6 +1243,7 @@ test('Anthropic split usage includes cache reads and writes with right-biased up
   assert.equal(result.usageReported, true);
   assert.equal(result.usage.inputTokens, 19);
   assert.equal(result.usage.cachedInputTokens, 2);
+  assert.equal(result.usage.cacheWriteInputTokens, 7);
   assert.equal(result.usage.outputTokens, 0);
 });
 

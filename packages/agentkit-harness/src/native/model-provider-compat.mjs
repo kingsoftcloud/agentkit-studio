@@ -15,7 +15,7 @@ export function admitAnthropicPolicies(protocol, model) {
   if (protocol !== 'anthropic-messages') return {};
   const known = [...mandatory, 'claude-haiku-5-5'].includes(String(model).trim().toLowerCase());
   return { anthropicPolicy: { contract: 'anthropic-wire/v1', midSystem: known, blockBinding: known ? 'drop_block' : 'disabled' },
-    ...(known ? { operatorGuidancePolicy: 'journaled-system/v1', toolCatalogPolicy: 'stable-task/v1',
+    ...(known ? { promptCachePolicy: 'anthropic-prefix/v1', operatorGuidancePolicy: 'journaled-system/v1', toolCatalogPolicy: 'stable-task/v1',
       providerReplayProjectionPolicy: 'anthropic-client-compaction/v1' } : {}) };
 }
 

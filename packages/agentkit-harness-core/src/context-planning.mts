@@ -339,7 +339,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   assertHookFeedbackRetained(snapshot, messages);
   const workingSet = forceCompaction ? [] : workingSetGroups(snapshot, state, config, groups, indexes, refs);
   if (policy.enabled && policy.pruneToolResults && !forceCompaction
-    && counted >= (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio) {
+    && counted >= (policy.pruneThresholdTokens ?? (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio)) {
     const protectedIndexes = new Set([...mandatoryIndexes(snapshot, groups, config), ...workingSet.flat()]);
     const projected = projectOldToolResults(snapshot.messages, refs, groups, config.tools, protectedIndexes,
       policy.pruneKeepRecentBatches ?? 5, digest);

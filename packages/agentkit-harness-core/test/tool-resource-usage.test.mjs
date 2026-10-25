@@ -10,7 +10,7 @@ import { fixture, scope, digest, tool } from './fixtures.mjs';
 
 const definition = tool({ name: 'observe', readOnly: false, concurrentSafe: false });
 const call = { callId: 'observe-1', name: 'observe', arguments: {} };
-const usage = () => ({ ...emptyUsage(), inputTokens: 12, outputTokens: 4, modelCalls: 1, cost: .25 });
+const usage = () => ({ ...emptyUsage(), inputTokens: 12, outputTokens: 4, modelCalls: 1, cost: .25, cacheWriteInputTokens: 3 });
 const configuration = { tools: [definition], limits: { maxModelCalls: 3, maxWallMs: null, finalizationReserveModelCalls: 1 } };
 const response = (calls = []) => ({ kind: calls.length ? 'tool_calls' : 'final_candidate', text: calls.length ? '' : 'Done', toolCalls: calls, usage: emptyUsage() });
 
@@ -28,6 +28,7 @@ for (const [name, result, code] of [
   ['null counter', { resourceUsage: { ...usage(), outputTokens: null } }, 'invalid_usage'],
   ['fractional counter', { resourceUsage: { ...usage(), modelCalls: .5 } }, 'invalid_usage'],
   ['negative cost', { resourceUsage: { ...usage(), cost: -1 } }, 'invalid_usage'],
+  ['negative cache writes', { resourceUsage: { ...usage(), cacheWriteInputTokens: -1 } }, 'invalid_usage'],
   ['unknown field', { resourceUsage: { ...usage(), privateNote: 'must_not_be_a_usage_event' } }, 'invalid_usage'],
 ]) test(`nested tool usage rejects ${name}`, () => {
   assert.throws(prepared([{ status: 'ok', content: {}, ...result }]), { code });

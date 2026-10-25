@@ -20,6 +20,10 @@ const POLICY_ABORTS = new Set(['policy_abort', 'content_filter']);
 const CONTEXT_LIMITS = new Set(['context_overflow', 'context_length_exceeded']);
 const OUTPUT_LIMITS = new Set([
   'output_limit', 'length', 'max_tokens', 'max_output_tokens', 'incomplete',
+  // A completed generation can fill input + output capacity without its input
+  // having been rejected. Match ZCode's bounded output-continuation semantics;
+  // real input-overflow errors still take the separate context-overflow path.
+  'model_context_window_exceeded',
 ]);
 const TOOL_FINISHES = new Set(['tool_calls', 'tool_use']);
 const COMPLETE_FINISHES = new Set([

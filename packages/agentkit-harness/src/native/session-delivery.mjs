@@ -10,6 +10,22 @@ export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const ownObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** Native totals include cache input; DSH's input/cache buckets are disjoint. */
+function sessionUsage(usage) {
+  const read = usage.cachedInputTokens ?? 0, write = usage.cacheWriteInputTokens ?? 0;
+  const splitKnown = Number.isSafeInteger(read) && read >= 0 && Number.isSafeInteger(write) && write >= 0
+    && read <= usage.inputTokens && write <= usage.inputTokens - read;
+  const total = usage.inputTokens + usage.outputTokens;
+  return {
+    inputTokens: splitKnown ? usage.inputTokens - read - write : usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(Number.isSafeInteger(total) ? { totalTokens: total } : {}),
+    ...(splitKnown && usage.cachedInputTokens !== undefined ? { cacheReadTokens: read } : {}),
+    ...(splitKnown && usage.cacheWriteInputTokens !== undefined ? { cacheWriteTokens: write } : {}),
+    ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
+  };
+}
+
 function atomKey(event) {
   if (['system/message', 'user/message', 'assistant/message', 'tool/result'].includes(event.type)) {
     const message = event.type === 'user/message' ? event.data : event.data.message;
@@ -263,11 +279,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       drain(summary || index === null ? payload.messageCursor : index);
       if (modelCount++ > 0) { append('step/end', { turn, step }); step++; append('step/start', { turn, step }); }
       const message = summary || index === null ? null : messages[index];
-      const usage = payload.usageReported === false ? null : {
-        inputTokens: payload.usage.inputTokens, outputTokens: payload.usage.outputTokens,
-        ...(payload.usage.cachedInputTokens === undefined ? {} : { cacheReadTokens: payload.usage.cachedInputTokens }),
-        ...(payload.usage.reasoningTokens === undefined ? {} : { reasoningTokens: payload.usage.reasoningTokens }),
-      };
+      const usage = payload.usageReported === false ? null : sessionUsage(payload.usage);
       const stream = nativeDurableStream(payload.operationKey, payload.displayStream);
       // An uncommitted provider prefix is an attempt, never a tool batch or
       // final candidate. Keep any reported usage on its existing empty message.

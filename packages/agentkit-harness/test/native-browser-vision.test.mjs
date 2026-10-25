@@ -362,10 +362,11 @@ test('goalRevision in cache key', async () => {
 });
 
 test('combined usage valid for core addUsage', async () => {
-  const r = await createNativeVisionBrowser({ browser: makeBrowser(makeBrowserResult({ media: makeImageBlock(), resourceUsage: { modelCalls: 5, toolCalls: 3, cost: 10, inputTokens: 500, outputTokens: 200, cachedInputTokens: 50, reasoningTokens: 20 } })), model: makeVisionModel({ usage: { inputTokens: 100, outputTokens: 50, cost: 2, cachedInputTokens: 10, reasoningTokens: 5 } }), profile: makeVisionProfile(), assertCurrent: assertCurrentTrue }).execute(makeRequest());
+  const r = await createNativeVisionBrowser({ browser: makeBrowser(makeBrowserResult({ media: makeImageBlock(), resourceUsage: { modelCalls: 5, toolCalls: 3, cost: 10, inputTokens: 500, outputTokens: 200, cachedInputTokens: 50, cacheWriteInputTokens: 30, reasoningTokens: 20 } })), model: makeVisionModel({ usage: { inputTokens: 100, outputTokens: 50, cost: 2, cachedInputTokens: 10, cacheWriteInputTokens: 7, reasoningTokens: 5 } }), profile: makeVisionProfile(), assertCurrent: assertCurrentTrue }).execute(makeRequest());
   assert.equal(r.resourceUsage.modelCalls, 6);
   assert.equal(r.resourceUsage.inputTokens, 600);
   assert.equal(r.resourceUsage.cachedInputTokens, 60);
+  assert.equal(r.resourceUsage.cacheWriteInputTokens, 37);
   assert.equal(r.resourceUsage.cost, 12);
   assert.equal(r.resourceUsageReported, true);
   assert.doesNotThrow(() => addUsage(emptyUsage(), r.resourceUsage));

@@ -10,10 +10,10 @@ export function toolResourceUsage(result: ToolResult): Usage {
     && result.resourceUsage !== undefined, 'invalid_tool_usage_report_status');
   const usage = copy(result.resourceUsage ?? emptyUsage());
   invariant(usage && typeof usage === 'object' && !Array.isArray(usage)
-    && Object.keys(usage).every(key => ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost', 'cachedInputTokens', 'reasoningTokens'].includes(key)), 'invalid_usage');
-  for (const key of ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost', 'cachedInputTokens', 'reasoningTokens'] as const) {
+    && Object.keys(usage).every(key => ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost', 'cachedInputTokens', 'cacheWriteInputTokens', 'reasoningTokens'].includes(key)), 'invalid_usage');
+  for (const key of ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost', 'cachedInputTokens', 'cacheWriteInputTokens', 'reasoningTokens'] as const) {
     const value = usage[key];
-    invariant(value === undefined && ['cachedInputTokens', 'reasoningTokens'].includes(key)
+    invariant(value === undefined && ['cachedInputTokens', 'cacheWriteInputTokens', 'reasoningTokens'].includes(key)
       || typeof value === 'number' && Number.isFinite(value) && value >= 0 && (key === 'cost' || Number.isSafeInteger(value)), 'invalid_usage');
   }
   return usage;

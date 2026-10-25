@@ -96,14 +96,15 @@ test('Draft 4 and Draft 6 retain exclusive bounds, ignore later keywords and ign
   assert.throws(() => compileToolInput({ $schema: 'https://example.invalid/schema', type: 'object' }), /unsupported_tool_schema_dialect/);
 });
 
-test('cached and reasoning usage survives aggregation while missing reports stay explicitly incomplete', async () => {
+test('cached read/write and reasoning usage survives aggregation while missing reports stay explicitly incomplete', async () => {
   let models = 0;
   const { snapshot, store } = await run({ model: async request => {
     assert.equal(request.maxInlineImageBytes, 40 * 1024 * 1024);
     return ++models === 1 ? result([], { kind: 'provider_retryable_error', usageReported: false })
-      : result([], { usage: { ...emptyUsage(), inputTokens: 9, outputTokens: 5, cachedInputTokens: 4, reasoningTokens: 2 }, usageReported: true });
+      : result([], { usage: { ...emptyUsage(), inputTokens: 9, outputTokens: 5, cachedInputTokens: 4, cacheWriteInputTokens: 3, reasoningTokens: 2 }, usageReported: true });
   }, configuration: { profile: { ...fixture().config.profile, retryInitialDelayMs: 0, retryMaxDelayMs: 0 } } });
   assert.equal(snapshot.usage.cachedInputTokens, 4); assert.equal(snapshot.usage.reasoningTokens, 2);
+  assert.equal(snapshot.usage.cacheWriteInputTokens, 3);
   assert.equal(snapshot.diagnostics.providerUsageIncomplete, true); assert.equal(store.events(scope, 'run').at(-1).payload.usageComplete, false);
   for (const usage of [{ ...emptyUsage(), inputTokens: 0.5 }, { ...emptyUsage(), reasoningTokens: -1 }, { ...emptyUsage(), cachedInputTokens: Number.MAX_SAFE_INTEGER + 1 }]) {
     assert.throws(() => addUsage(emptyUsage(), usage));

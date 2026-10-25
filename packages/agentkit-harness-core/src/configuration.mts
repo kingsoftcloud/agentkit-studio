@@ -172,6 +172,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     'invalid_stream_timeout_policy');
   invariant(profile.controllerReasoningPolicy === undefined || profile.controllerReasoningPolicy === 'disclosed-delegate/v1',
     'invalid_controller_reasoning_policy');
+  invariant(profile.promptCachePolicy === undefined || profile.promptCachePolicy === 'anthropic-prefix/v1'
+    && profile.providerFamily === 'anthropic-messages', 'invalid_prompt_cache_policy');
   if (profile.anthropicPolicy !== undefined) {
     const policy = profile.anthropicPolicy;
     invariant(policy && profile.providerFamily === 'anthropic-messages'
@@ -258,7 +260,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(recent.every(value => value === undefined)
       || recent.every(value => Number.isSafeInteger(value) && value! >= 0), 'invalid_context_recent_tool_policy');
     invariant(policy.pruneToolResults === undefined || typeof policy.pruneToolResults === 'boolean', 'invalid_context_pruning_policy');
-    invariant([policy.pruneKeepRecentBatches, policy.pruneMinSavedTokens].every(value => value === undefined
+    invariant([policy.pruneKeepRecentBatches, policy.pruneMinSavedTokens, policy.pruneThresholdTokens].every(value => value === undefined
       || Number.isSafeInteger(value) && value! >= 1), 'invalid_context_pruning_policy');
   }
   validateSubmissionContract(config);

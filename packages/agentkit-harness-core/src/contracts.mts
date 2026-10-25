@@ -82,6 +82,7 @@ export interface ModelProfile {
   streamTimeoutPolicy?: 'idle/v1'; providerThinkingDisplay?: boolean;
   controllerReasoningPolicy?: 'disclosed-delegate/v1';
   anthropicPolicy?: { contract: 'anthropic-wire/v1'; midSystem: boolean; blockBinding: 'drop_block' | 'disabled' };
+  promptCachePolicy?: 'anthropic-prefix/v1';
   operatorGuidancePolicy?: 'journaled-system/v1';
   toolCatalogPolicy?: 'stable-task/v1';
   providerReplayProjectionPolicy?: 'anthropic-client-compaction/v1';
@@ -155,6 +156,8 @@ export interface ContextPlanningPolicy {
   readWorkingSetCount?: number; readWorkingSetMaxTokens?: number; readWorkingSetTotalMaxTokens?: number;
   recentToolBatchCount?: number; recentToolBatchMaxTokens?: number; recentToolBatchesTotalMaxTokens?: number;
   pruneToolResults?: boolean; pruneKeepRecentBatches?: number; pruneMinSavedTokens?: number;
+  /** Optional earlier local cleanup boundary; absence preserves the original full-compaction threshold. */
+  pruneThresholdTokens?: number;
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;
@@ -224,8 +227,9 @@ export interface RunConfiguration {
   childOwnerBinding?: ChildOwnerBinding;
 }
 export interface Usage {
+  /** Inclusive prompt/output totals. Cache counters are additive subtypes, not extra input. */
   inputTokens: number; outputTokens: number; modelCalls: number; toolCalls: number; cost: number;
-  cachedInputTokens?: number; reasoningTokens?: number;
+  cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningTokens?: number;
 }
 /** Parent-owned allocation. A child cannot release it by reporting model-visible JSON. */
 export interface ChildBudgetReservation {

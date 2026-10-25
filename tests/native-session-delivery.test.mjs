@@ -193,10 +193,44 @@ test('committed transcript, usage and step boundaries replay without duplicate a
   assert.equal(types.filter(type => type === 'step/end').length, 2);
   assert.ok(types.indexOf('tool/result') < types.lastIndexOf('assistant/message'));
   const assistants = sink.events.filter(event => event.type === 'assistant/message');
-  assert.deepEqual(assistants.map(event => event.data.usage), [{ inputTokens: 3, outputTokens: 4 }, { inputTokens: 3, outputTokens: 4 }]);
+  assert.deepEqual(assistants.map(event => event.data.usage), [{ inputTokens: 3, outputTokens: 4, totalTokens: 7 }, { inputTokens: 3, outputTokens: 4, totalTokens: 7 }]);
   assert.equal(JSON.stringify(sink.events).includes('never-export-this'), false);
   assert.equal(JSON.stringify(sink.events).includes('replayState'), false);
   assert.equal(Object.values(store.load(scope, 'run').projections)[0], result.eventSeq);
+});
+
+test('inclusive cache usage becomes disjoint Session buckets and survives cold delivery exactly once', async t => {
+  const f = setup(t), sink = consumer(); let models = 0;
+  const worker = new NativeKernel({ store: f.store, digest, owner: 'cache-usage', onCheckpoint: delivery(f.store, sink), ports: {
+    model: { generate: async () => {
+      models++;
+      return { ...final(), usage: { ...emptyUsage(), inputTokens: 19, outputTokens: 5,
+        cachedInputTokens: 2, cacheWriteInputTokens: 7, reasoningTokens: 3 }, usageReported: true };
+    } },
+  } });
+  const result = await worker.runUntilIdle(scope, 'run');
+  assert.equal(result.usage.inputTokens, 19); assert.equal(result.usage.cacheWriteInputTokens, 7);
+  assert.deepEqual(sink.events.filter(event => event.type === 'assistant/message').map(event => event.data.usage), [
+    { inputTokens: 10, outputTokens: 5, totalTokens: 24, cacheReadTokens: 2, cacheWriteTokens: 7, reasoningTokens: 3 },
+  ]);
+  const saved = structuredClone(sink.events); f.reopen();
+  assert.equal(f.store.load(scope, 'run').snapshot.usage.cacheWriteInputTokens, 7);
+  await delivery(f.store, sink)(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(sink.events, saved);
+  const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(cold.events, saved); assert.equal(models, 1);
+});
+
+test('inconsistent provider cache subtypes do not inflate delivered Session totals', async t => {
+  const f = setup(t), sink = consumer();
+  await new NativeKernel({ store: f.store, digest, owner: 'cache-usage', onCheckpoint: delivery(f.store, sink), ports: {
+    model: { generate: async () => ({ ...final(), usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4,
+      cachedInputTokens: 2, cacheWriteInputTokens: 2 } }) },
+  } }).runUntilIdle(scope, 'run');
+  assert.deepEqual(sink.events.find(event => event.type === 'assistant/message').data.usage,
+    { inputTokens: 3, outputTokens: 4, totalTokens: 7 });
+  assert.equal(f.store.load(scope, 'run').snapshot.usage.cacheWriteInputTokens, 2,
+    'the raw provider counter remains in the Native ledger for diagnosis');
 });
 
 test('context summary usage is delivered once without publishing private summary prose', async t => {

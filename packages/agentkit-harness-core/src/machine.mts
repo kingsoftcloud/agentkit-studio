@@ -36,7 +36,7 @@ export function addUsage(left: Usage, right: Usage): Usage {
     result[key] = left[key] + right[key];
     invariant(Number.isFinite(result[key]) && (key === 'cost' || Number.isSafeInteger(result[key])), 'usage_overflow');
   }
-  for (const key of ['cachedInputTokens', 'reasoningTokens'] as const) {
+  for (const key of ['cachedInputTokens', 'cacheWriteInputTokens', 'reasoningTokens'] as const) {
     if (left[key] === undefined && right[key] === undefined) continue;
     const current = left[key] ?? 0, added = right[key] ?? 0;
     invariant(Number.isSafeInteger(current) && current >= 0 && Number.isSafeInteger(added) && added >= 0

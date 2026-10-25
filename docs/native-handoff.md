@@ -19,8 +19,8 @@ Node-only 安装及 DSH Native/Codex 专项证据继续有效；不同阶段的�
 在本机当前工作区，可复用已准备的维护版 Host：
 
 ```sh
-cd /Users/zhangxiuqi/KC/agentkit-studio
-make dev DSH_ROOT=/Users/zhangxiuqi/KC/agentkit-studio/.artifacts/dsh-native-idle
+cd /path/to/agentkit-studio
+make dev DSH_ROOT="$PWD/.artifacts/dsh-native-idle"
 ```
 
 该标准开发入口会构建并安装当前插件，默认监听 `http://127.0.0.1:3098`，不是测试
@@ -42,9 +42,9 @@ AgentKit Harness 的 Agent，新 Revision 默认 Native。普通新建对话可�
 本机本轮使用的独立数据目录和 profile 可这样复用：
 
 ```sh
-DSH_HOME=/Users/zhangxiuqi/.agentkit-studio-native-local-20261025/dsh \
-AGENTKIT_HOME=/Users/zhangxiuqi/.agentkit-studio-native-local-20261025/agentkit \
-make dev DSH_ROOT=/Users/zhangxiuqi/KC/agentkit-studio/.artifacts/dsh-native-idle \
+DSH_HOME="$HOME/.agentkit-studio-native-local-20261025/dsh" \
+AGENTKIT_HOME="$HOME/.agentkit-studio-native-local-20261025/agentkit" \
+make dev DSH_ROOT="$PWD/.artifacts/dsh-native-idle" \
   DSH_PROFILE=native-local
 ```
 

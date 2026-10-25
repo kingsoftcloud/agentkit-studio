@@ -282,6 +282,7 @@ test('Studio Anthropic policy admission freezes journal and replay configuration
   assert.deepEqual(bound.configuration.profile.anthropicPolicy,
     { contract: 'anthropic-wire/v1', midSystem: true, blockBinding: 'drop_block' });
   assert.equal(bound.configuration.profile.operatorGuidancePolicy, 'journaled-system/v1');
+  assert.equal(bound.configuration.profile.promptCachePolicy, 'anthropic-prefix/v1');
   assert.equal(bound.configuration.profile.toolCatalogPolicy, 'stable-task/v1');
   assert.equal(bound.configuration.profile.providerReplayProjectionPolicy, 'anthropic-client-compaction/v1');
   const kernel = new NativeKernel({ store, ports: bound.ports, digest, owner: 'admission-owner' });

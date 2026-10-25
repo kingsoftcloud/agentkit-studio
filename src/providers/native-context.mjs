@@ -10,7 +10,7 @@ export function bindNativeContext({ description, context = {}, maxTokens, readWo
     'maxCompactionsWithoutProgress', 'minModelTurnsBetween', 'maxSummaryRetries',
     'readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens',
     'recentToolBatchCount', 'recentToolBatchMaxTokens', 'recentToolBatchesTotalMaxTokens',
-    'pruneToolResults', 'pruneKeepRecentBatches', 'pruneMinSavedTokens'];
+    'pruneToolResults', 'pruneKeepRecentBatches', 'pruneMinSavedTokens', 'pruneThresholdTokens'];
   invariant(Object.keys(raw).every(key => supported.includes(key)), 'studio_native_compaction_option_unsupported');
   const requestedWindow = context.maxInputTokens ?? description.contextWindow;
   const output = maxTokens ?? context.reserveOutputTokens ?? description.maxOutputTokens;
@@ -27,9 +27,10 @@ export function bindNativeContext({ description, context = {}, maxTokens, readWo
     summaryMaxTokens: raw.summaryMaxTokens ?? Math.min(8192, output, Math.max(2048, Math.floor(contextWindow / 8))),
     maxCompactions: raw.maxCompactions ?? null, maxCompactionsWithoutProgress: raw.maxCompactionsWithoutProgress ?? 8,
     minModelTurnsBetween: raw.minModelTurnsBetween ?? 2, maxSummaryRetries: raw.maxSummaryRetries ?? 2,
-    ...(['pruneToolResults', 'pruneKeepRecentBatches', 'pruneMinSavedTokens'].some(key => Object.hasOwn(raw, key)) ? {
+    ...(['pruneToolResults', 'pruneKeepRecentBatches', 'pruneMinSavedTokens', 'pruneThresholdTokens'].some(key => Object.hasOwn(raw, key)) ? {
       pruneToolResults: raw.pruneToolResults ?? false, pruneKeepRecentBatches: raw.pruneKeepRecentBatches ?? 5,
       pruneMinSavedTokens: raw.pruneMinSavedTokens ?? 256,
+      ...(Object.hasOwn(raw, 'pruneThresholdTokens') ? { pruneThresholdTokens: raw.pruneThresholdTokens } : {}),
     } : {}),
     ...(readWorkingSetDefaults || ['readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens']
       .some(key => Object.hasOwn(raw, key)) ? {

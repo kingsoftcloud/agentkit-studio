@@ -19,6 +19,8 @@ const tools = [tool()];
 const request = (messages, overrides = {}) => ({ profile, messages, tools, finalizationOnly: false, ...overrides });
 const blocks = [{ type: 'thinking', thinking: 'PRIVATE', signature: 'ORIGINAL_SIGNATURE' },
   { type: 'tool_use', id: 'provider-id', name: 'read', input: {} }];
+const withoutCacheMarkers = messages => messages.map(message => ({ ...message,
+  content: Array.isArray(message.content) ? message.content.map(({ cache_control, ...block }) => block) : message.content }));
 const result = { kind: 'tool_calls', text: '', toolCalls: [{ callId: 'provider-id', name: 'read', arguments: {} }],
   usage: emptyUsage(), providerReplay: { version: 'model-replay/v2', profileFingerprint: profileFingerprint(profile),
     compatibilityDigest: profile.compatibilityDigest, anthropicContent: blocks } };
@@ -135,8 +137,15 @@ test('Anthropic projection HTTP/kernel: journaled prefixes and stable catalog su
   } });
   const completed = await kernel.runUntilIdle(scope, 'run');
   assert.equal(completed.finalText, 'Done'); assert.equal(requests.length, 3); assert.equal(executions, 2);
-  assert.deepEqual(requests[1].messages.slice(0, requests[0].messages.length), requests[0].messages);
-  assert.deepEqual(requests[2].messages.slice(0, requests[1].messages.length), requests[1].messages);
+  assert.deepEqual(withoutCacheMarkers(requests[1].messages.slice(0, requests[0].messages.length)), withoutCacheMarkers(requests[0].messages));
+  assert.deepEqual(withoutCacheMarkers(requests[2].messages.slice(0, requests[1].messages.length)), withoutCacheMarkers(requests[1].messages));
+  for (const req of requests) {
+    assert.deepEqual(req.system[0].cache_control, { type: 'ephemeral' });
+    const lastConversation = req.messages.findLast(message => message.role !== 'system');
+    assert.deepEqual(lastConversation.content.at(-1).cache_control, { type: 'ephemeral' });
+    assert.ok(req.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+      .filter(block => block.type === 'thinking').every(block => block.cache_control === undefined));
+  }
   assert.deepEqual(requests.map(req => req.tools.map(tool => tool.name)), [['read'], ['read'], ['read']]);
   for (const req of requests.slice(1)) {
     const receipts = req.messages.flatMap(message => Array.isArray(message.content) ? message.content : []).filter(block => block.type === 'tool_result');
@@ -145,6 +154,63 @@ test('Anthropic projection HTTP/kernel: journaled prefixes and stable catalog su
   assert.equal(completed.messages.filter(message => message.kind === 'host_request_guidance').length, 3);
   assert.equal(completed.abandonedReplayDigests.length, 0);
   assert.notEqual(completed.messages.filter(message => message.toolCalls?.length)[1].toolCalls[0].callId, 'provider-id');
+});
+
+test('Anthropic caching: stable and dynamic system boundaries stay separate without mutating source messages', () => {
+  const messages = [{ role: 'system', content: 'Stable instructions' }, { role: 'system', content: 'Dynamic environment A' },
+    { role: 'user', content: 'Task' }];
+  const original = structuredClone(messages);
+  const payload = JSON.parse(buildAnthropicRequest(binding, request(messages)).body);
+  const updated = JSON.parse(buildAnthropicRequest(binding, request([messages[0],
+    { ...messages[1], content: 'Dynamic environment B' }, messages[2]])).body);
+  assert.deepEqual(payload.system[0], { type: 'text', text: 'Stable instructions', cache_control: { type: 'ephemeral' } });
+  assert.deepEqual(payload.system[0], updated.system[0]);
+  assert.notEqual(payload.system[1].text, updated.system[1].text);
+  assert.deepEqual(payload.system[1].cache_control, { type: 'ephemeral' });
+  assert.deepEqual(payload.messages.at(-1).content.at(-1).cache_control, { type: 'ephemeral' });
+  assert.deepEqual(messages, original);
+});
+
+test('Anthropic caching: legacy absence remains wire-identical and invalid policies are rejected', () => {
+  const messages = [{ role: 'system', content: 'Fixed' }, { role: 'user', content: 'Task' }];
+  const old = JSON.parse(buildAnthropicRequest(binding, request(messages, { profile: { ...profile, promptCachePolicy: undefined } })).body);
+  assert.equal(old.system, 'Fixed');
+  assert.equal(JSON.stringify(old).includes('cache_control'), false);
+  assert.throws(() => fixture({ profile: { ...profile, promptCachePolicy: 'unknown' } }), /invalid_prompt_cache_policy/);
+  assert.throws(() => fixture({ profile: { ...profile, providerFamily: 'openai-chat' } }), /invalid_prompt_cache_policy/);
+});
+
+test('Anthropic caching: temporary compaction sources have no conversation-tail write marker', () => {
+  const payload = JSON.parse(buildAnthropicRequest(binding, request([
+    { role: 'system', content: 'Summarize safely' }, { role: 'user', content: 'Unique source chunk' },
+  ], { purpose: 'compaction' })).body);
+  assert.deepEqual(payload.system[0].cache_control, { type: 'ephemeral' });
+  assert.equal(payload.messages[0].content[0].cache_control, undefined);
+});
+
+test('Anthropic caching: signed thinking is immutable and tool arguments named cache_control are preserved', () => {
+  const input = { cache_control: 'application data' };
+  const content = [{ type: 'thinking', thinking: 'PRIVATE', signature: 'SIGNED' },
+    { type: 'tool_use', id: 'call', name: 'read', input, cache_control: { type: 'ephemeral', ttl: '1h' } }];
+  const messages = [{ role: 'user', content: 'Task' }, { role: 'assistant', content: '',
+    toolCalls: [{ callId: 'call', name: 'read', arguments: input }], providerReplay: { version: 'model-replay/v2',
+      profileFingerprint: profileFingerprint(profile), compatibilityDigest: profile.compatibilityDigest, anthropicContent: content } },
+    { role: 'tool', callId: 'call', name: 'read', content: 'Result' }];
+  const original = structuredClone(messages);
+  const payload = JSON.parse(buildAnthropicRequest(binding, request(messages)).body);
+  assert.deepEqual(payload.messages[1].content[0], content[0]);
+  assert.equal(payload.messages[1].content[1].cache_control, undefined);
+  assert.deepEqual(payload.messages[1].content[1].input, input);
+  assert.deepEqual(payload.messages[2].content[0].cache_control, { type: 'ephemeral' });
+  assert.deepEqual(messages, original);
+});
+
+test('Anthropic caching: Host automatic caching retains ownership of the moving tail', () => {
+  const payload = JSON.parse(buildAnthropicRequest({ ...binding, parameters: { cache_control: { type: 'ephemeral' } } },
+    request([{ role: 'system', content: 'Stable' }, { role: 'user', content: 'Task' }])).body);
+  assert.deepEqual(payload.cache_control, { type: 'ephemeral' });
+  assert.deepEqual(payload.system[0].cache_control, { type: 'ephemeral' });
+  assert.equal(payload.messages[0].content[0].cache_control, undefined);
 });
 
 test('Anthropic projection kernel: stable catalog never authorizes a tool during finalization', async () => {

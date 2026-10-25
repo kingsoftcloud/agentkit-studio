@@ -91,10 +91,11 @@ function combineUsage(browserUsage, browserReported, visionUsage, visionModelCal
   const inputTokens = safeInt(orig.inputTokens) + vuInput;
   const outputTokens = safeInt(orig.outputTokens) + vuOutput;
   const cachedInputTokens = safeInt(orig.cachedInputTokens) + vuCached;
+  const cacheWriteInputTokens = safeInt(orig.cacheWriteInputTokens) + validVuInt(vu.cacheWriteInputTokens);
   const reasoningTokens = safeInt(orig.reasoningTokens) + vuReason;
   invariant(Number.isSafeInteger(modelCalls) && Number.isSafeInteger(toolCalls), 'vision_usage_overflow');
   invariant(Number.isFinite(cost), 'vision_usage_overflow');
-  for (const t of [inputTokens, outputTokens, cachedInputTokens, reasoningTokens])
+  for (const t of [inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens])
     invariant(Number.isSafeInteger(t), 'vision_usage_overflow');
   // usageReported: false if browser said false OR any vision field is unknown/invalid.
   // Check if ALL vision fields were valid and known.
@@ -103,7 +104,8 @@ function combineUsage(browserUsage, browserReported, visionUsage, visionModelCal
     && Number.isSafeInteger(vu.outputTokens) && vu.outputTokens >= 0
     && Number.isFinite(vu.cost) && vu.cost >= 0;
   const usageReported = (browserReported !== false) && allVisionFieldsValid;
-  return { usage: { modelCalls, toolCalls, cost, inputTokens, outputTokens, cachedInputTokens, reasoningTokens }, usageReported };
+  return { usage: { modelCalls, toolCalls, cost, inputTokens, outputTokens, cachedInputTokens, reasoningTokens,
+    ...(orig.cacheWriteInputTokens === undefined && vu.cacheWriteInputTokens === undefined ? {} : { cacheWriteInputTokens }) }, usageReported };
 }
 
 export function createNativeVisionBrowser({ browser, model, profile, actions = DEFAULT_ACTIONS,

@@ -23,6 +23,7 @@ import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-m
 // decoding consistent with the kernel's own validation.
 import { parseModelJson, stringifyModelJson, parseNativeJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 import { applyAnthropicThinking, projectProviderToolChoice, resolveProviderCompatibility } from './model-provider-compat.mjs';
+import { projectAnthropicPromptCache } from './model-anthropic-cache.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -83,7 +84,8 @@ export function buildAnthropicRequest(binding, request) {
   const beta = (binding.headers && binding.headers['anthropic-beta']) || binding.headers?.['Anthropic-Beta'];
   if (beta && !('anthropic-beta' in headers)) headers['anthropic-beta'] = beta;
 
-  const { system, items } = projectMessagesAnthropic(request, request.maxInlineImageBytes);
+  const { systemParts, items } = projectAnthropicMessages(request, request.maxInlineImageBytes);
+  const system = systemParts.join('\n\n');
   const payload = {
     model: binding.model,
     messages: items,
@@ -131,7 +133,7 @@ export function buildAnthropicRequest(binding, request) {
     betas.add('thinking-binding-controls-2026-08-01');
     headers['anthropic-beta'] = [...betas].join(',');
   }
-  return { url, headers, body: stringifyModelJson(projected) };
+  return { url, headers, body: stringifyModelJson(projectAnthropicPromptCache(projected, systemParts, request)) };
 }
 
 // Project host messages onto the Anthropic Messages wire. System messages are
@@ -140,6 +142,11 @@ export function buildAnthropicRequest(binding, request) {
 // blocks. Assistant anthropic_content replay replaces the projected blocks so
 // the model sees its signed thinking and tool_use exactly.
 export function projectMessagesAnthropic(request, maxInlineImageBytes) {
+  const { systemParts, items } = projectAnthropicMessages(request, maxInlineImageBytes);
+  return { system: systemParts.join('\n\n'), items };
+}
+
+function projectAnthropicMessages(request, maxInlineImageBytes) {
   const profile = request.profile;
   const systemParts = [];
   const items = [];
@@ -221,7 +228,7 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
     while (items[index + 1]?.role === 'system') index++;
     if (items[index + 1] && items[index + 1].role !== 'assistant') throw new ProtocolError('mid-conversation system section must precede assistant or end of input');
   }
-  return { system: systemParts.join('\n\n'), items };
+  return { systemParts, items };
 }
 
 function mergeAnthropicContent(first, second) {
@@ -329,6 +336,7 @@ function buildAnthropicUsage(state) {
     modelCalls: 0, toolCalls: 0, cost: 0,
   };
   if (state.cachedInputTokens != null) usage.cachedInputTokens = state.cachedInputTokens;
+  if (state.cacheCreationInputTokens != null) usage.cacheWriteInputTokens = state.cacheCreationInputTokens;
   if (state.reasoningTokens != null) usage.reasoningTokens = state.reasoningTokens;
   return usage;
 }

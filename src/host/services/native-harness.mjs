@@ -376,7 +376,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         // without activating them, and let each child use its own parameters.
         const runtimePolicy = !original || Object.hasOwn(original.configuration.profile, 'providerThinkingDisplay');
         const controllerReasoningPolicy = original ? original.configuration.profile.controllerReasoningPolicy : 'disclosed-delegate/v1';
-        const anthropicKeys = ['anthropicPolicy', 'operatorGuidancePolicy', 'toolCatalogPolicy', 'providerReplayProjectionPolicy'];
+        const anthropicKeys = ['anthropicPolicy', 'promptCachePolicy', 'operatorGuidancePolicy', 'toolCatalogPolicy', 'providerReplayProjectionPolicy'];
         const anthropicPolicies = original && primary
           ? Object.fromEntries(anthropicKeys.filter(key => original.configuration.profile[key] !== undefined)
             .map(key => [key, original.configuration.profile[key]]))

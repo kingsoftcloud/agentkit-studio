@@ -125,3 +125,39 @@ test('Studio exposes optional pruning configuration while default and restored b
   assert.deepEqual([bound.policy.pruneToolResults, bound.policy.pruneKeepRecentBatches, bound.policy.pruneMinSavedTokens], [true, 5, 256]);
   assert.throws(() => fixture({ contextPolicy: { ...policy, pruneKeepRecentBatches: 0 } }), /invalid_context_pruning_policy/);
 });
+
+test('ZCode-style independent local cleanup threshold saves tokens before a summary is needed', async () => {
+  const { config, snapshot } = scenario();
+  append(snapshot.messages, 'old', 'read', 'OLD_EVIDENCE:'.repeat(650));
+  append(snapshot.messages, 'recent');
+  snapshot.messages.push({ role: 'assistant', content: 'Keep working' });
+  const original = structuredClone(snapshot.messages);
+  const legacy = await planNativeContext(snapshot, config, config.tools, counters, digest, false, true);
+  assert.equal(legacy.reason, 'context_within_budget');
+  assert.equal(legacy.toolResultPruning, undefined);
+  const threshold = Math.floor(legacy.admission.countedInputTokens / 2);
+  const earlyConfig = fixture({ ...config, contextPolicy: { ...config.contextPolicy, pruneThresholdTokens: threshold } }).config;
+  const early = await planNativeContext(snapshot, earlyConfig, earlyConfig.tools, counters, digest, false, true);
+  assert.equal(early.reason, 'historical_tool_results_within_budget');
+  assert.equal(early.state.compactions, 0);
+  assert.deepEqual(early.toolResultPruning.toolCallIds, ['old']);
+  assert.ok(early.toolResultPruning.savedTokens >= 256);
+  assert.deepEqual(snapshot.messages, original);
+  validateContextMessages(early.messages);
+  const disabledConfig = { ...earlyConfig, contextPolicy: { ...earlyConfig.contextPolicy, pruneToolResults: false } };
+  const disabled = await planNativeContext(snapshot, disabledConfig, disabledConfig.tools, counters, digest, false, true);
+  assert.equal(disabled.toolResultPruning, undefined);
+});
+
+test('Studio pins an explicit local cleanup threshold without adding one to restored legacy policy', () => {
+  const description = { protocol: 'openai-chat', modelName: 'test', contextWindow: 32000, maxOutputTokens: 1000 };
+  const context = { compaction: { pruneToolResults: true, pruneThresholdTokens: 12000 } };
+  const bound = bindNativeContext({ description, context });
+  assert.equal(bound.policy.pruneThresholdTokens, 12000);
+  assert.equal(Object.hasOwn(bindNativeContext({ description, context: { compaction: { pruneToolResults: true } } }).policy,
+    'pruneThresholdTokens'), false);
+  for (const value of [0, -1, 1.5, '12000', null])
+    assert.throws(() => fixture({ contextPolicy: { ...policy, pruneThresholdTokens: value } }), /invalid_context_pruning_policy/);
+  for (const value of [NaN, Infinity])
+    assert.throws(() => fixture({ contextPolicy: { ...policy, pruneThresholdTokens: value } }), /non_json_number/);
+});
