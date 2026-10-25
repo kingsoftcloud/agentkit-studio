@@ -25,11 +25,12 @@ export function recoverClaimed(snapshot: RunSnapshot, configuration: RunConfigur
   intent.claimedAtMs === undefined ? 0 : Math.max(0, now - intent.claimedAtMs),
   [{ kind: 'effect.recovery_required', payload: { operationKey: intent.operationKey, kind: intent.kind,
     policy: 'receipt-observation/v1', reason: 'effect_outcome_unknown' } }]);
-  if (intent.kind === 'tool_receipt') return settle(snapshot, intent, { operationKey: intent.operationKey,
+  if (intent.kind === 'tool_receipt' || intent.kind === 'workspace_repair') return settle(snapshot, intent, { operationKey: intent.operationKey,
     status: 'uncertain', result: { code: 'receipt_observation_lost' } },
   { pendingIntent: null, phase: 'awaiting_reconciliation' },
   intent.claimedAtMs === undefined ? 0 : Math.max(0, now - intent.claimedAtMs),
-  [{ kind: 'tool.receipt_unavailable', payload: { originalOperationKey: intent.payload.originalOperationKey! } }]);
+  [{ kind: intent.kind === 'workspace_repair' ? 'workspace.repair_unavailable' : 'tool.receipt_unavailable',
+    payload: { originalOperationKey: intent.payload.originalOperationKey! } }]);
   const policy = replayPolicy(intent, configuration);
   const elapsed = intent.claimedAtMs === undefined ? 0 : Math.max(0, now - intent.claimedAtMs);
   const exhausted = policy !== null && snapshot.recoveryRetriesUsed >= configuration.limits.maxRecoveryRetries;

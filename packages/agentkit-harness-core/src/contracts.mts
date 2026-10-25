@@ -66,6 +66,8 @@ export interface ToolDefinition {
   workspaceEditPolicy?: 'zcode-match/v1';
   workspacePatchPolicy?: 'zcode-patch/v1';
   workspaceCheckpointPolicy?: 'file-preimages/v1';
+  /** Explicit operator compensation, separate from read-only receipt queries. */
+  workspaceRepairPolicy?: 'preimage-compensation/v1';
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
@@ -419,11 +421,11 @@ export interface BrowserEvidence {
   entryPath?: string;
 }
 export interface NativeEvent { eventId: string; runId: string; turnId: string; seq: number; kind: string; payload: ObjectValue }
-export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input' | 'tool_receipt';
+export type EffectKind = 'workspace' | 'model' | 'tool' | 'verify' | 'context' | 'hook' | 'child' | 'input' | 'tool_receipt' | 'workspace_repair';
 export interface EffectIntent { operationKey: string; kind: EffectKind; payload: ObjectValue; status: 'prepared' | 'running'; claimedAtMs?: number; claimedFence?: number }
 export interface EffectReceipt { operationKey: string; status: 'committed' | 'failed' | 'uncertain' | 'not_dispatched'; result: ObjectValue }
 export type CommandKind = 'cancel' | 'policy_revoked' | 'pause' | 'resume' | 'submit_interaction'
-  | 'reconcile_tool' | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';
+  | 'reconcile_tool' | 'repair_workspace' | 'steer' | 'guide' | 'promote_child' | 'message_child' | 'cancel_child';
 export interface RunCommand { commandId: string; kind: CommandKind; payload: ObjectValue }
 export interface CommandReceipt { commandId: string; status: 'accepted' | 'duplicate' | 'rejected'; reason: string | null }
 export interface Lease { owner: string; fence: number; expiresAt: number }
@@ -495,6 +497,13 @@ export interface ToolPort {
   execute(request: ToolRequest): Promise<ToolResult>;
   checkPlanMode?(request: ToolRequest): Promise<boolean>;
   observeReceipt?(request: ToolReceiptRequest): Promise<ToolReceiptObservation>;
+  repairWorkspace?(request: WorkspaceRepairRequest): Promise<WorkspaceRepairResult>;
+}
+export interface WorkspaceRepairRequest extends Omit<ToolReceiptRequest, 'contract'> {
+  contract: 'agentkit.workspace-compensation/v1';
+}
+export interface WorkspaceRepairResult extends Omit<ToolReceiptObservation, 'contract'> {
+  contract: 'agentkit.workspace-compensation/v1';
 }
 export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }
 export interface WorkspacePort { observe(request: PortContext): Promise<WorkspaceObservation> }
@@ -563,5 +572,5 @@ export const terminal = (phase: Phase): boolean => ['completed', 'failed', 'canc
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, modelCalls: 0, toolCalls: 0, cost: 0 });
 export const commandPriority: Record<CommandKind, number> = {
   cancel: 100, policy_revoked: 95, submit_interaction: 90, cancel_child: 85,
-  pause: 80, resume: 80, reconcile_tool: 75, promote_child: 70, message_child: 70, steer: 60, guide: 60,
+  pause: 80, resume: 80, reconcile_tool: 75, repair_workspace: 75, promote_child: 70, message_child: 70, steer: 60, guide: 60,
 };

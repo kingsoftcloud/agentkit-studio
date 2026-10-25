@@ -698,8 +698,9 @@ export function createNativeWorkspaceTools({
       if (type === 'delete') { remove(change.target); }
       else {
         const target = change.moveTarget ?? change.target;
-        publish(target, Buffer.from(change.updated), { createOnly: type === 'add' || type === 'move' });
-        if (type === 'move') { chmodSync(target, change.mode); remove(change.target); }
+        publish(target, Buffer.from(change.updated), { createOnly: type === 'add' || type === 'move',
+          ...(type === 'move' ? { checkpointMode: change.mode } : {}) });
+        if (type === 'move') { activeGuard?.(); assertCheckpointPath(target); chmodSync(target, change.mode); remove(change.target); }
         refreshReadState(relativeOf(target), statSync(target, { bigint: true }), change.updated, target);
       }
       const path = change.moveTarget ? relativeOf(change.moveTarget) : change.rel;
@@ -925,8 +926,10 @@ export function createNativeWorkspaceTools({
     for (const definition of definitions) if (MUTATING.has(definition.name)) {
       definition.workspaceCheckpointPolicy = WORKSPACE_CHECKPOINT_POLICY;
       definition.recoveryPolicy = 'receipt-observation/v1';
+      definition.workspaceRepairPolicy = 'preimage-compensation/v1';
     }
     definitions.push(...workspaceRewindDefinitions());
+    definitions.find(tool => tool.name === 'rewind_workspace_files').workspaceRepairPolicy = 'preimage-compensation/v1';
   }
 
   const impls = {
@@ -1344,7 +1347,49 @@ export function createNativeWorkspaceTools({
     check(); const result = checkpoints.readReceipt(request); check();
     return { contract: request.contract, originalOperationKey: request.originalOperationKey, callId: request.call.callId, result };
   }
-  return { definitions, execute, observe, recordReceipt, observeReceipt,
+  async function repairWorkspace(request, { assertCurrent } = {}) {
+    const envelope = result => ({ contract: request.contract, originalOperationKey: request.originalOperationKey,
+      callId: request.call.callId, result });
+    if (request.contract !== 'agentkit.workspace-compensation/v1' || request.sessionId !== store.sessionId
+      || request.definition?.workspaceRepairPolicy !== 'preimage-compensation/v1'
+      || request.definition?.workspaceCheckpointPolicy !== WORKSPACE_CHECKPOINT_POLICY || typeof assertCurrent !== 'function')
+      throw Object.assign(Error('checkpoint_repair_authority_missing'), { code: 'checkpoint_repair_authority_missing' });
+    const guard = workspaceMutationGuard(request, assertCurrent, checkRootBoundary);
+    let release;
+    try {
+      guard(); release = acquireWorkspaceMutationLock(pinnedRootReal); guard();
+      const plan = checkpoints.prepareRepair(request); guard();
+      if (plan.result) return envelope(plan.result);
+      for (const file of plan.files) {
+        const check = () => { guard(); if (resolvePath(file.path) !== file.canonicalPath)
+          throw Object.assign(Error('checkpoint_path_changed'), { code: 'checkpoint_path_changed' }); };
+        check(); const current = captureCheckpointFile(file.canonicalPath);
+        if (!checkpointStatesEqual(current, file.current)) throw Object.assign(Error('checkpoint_external_modified'), { code: 'checkpoint_external_modified' });
+        if (checkpointStatesEqual(current, file.before)) continue;
+        if (current.kind !== 'absent' && current.kind !== file.before.kind) {
+          check(); if (current.kind === 'directory') rmdirSync(file.canonicalPath); else unlinkSync(file.canonicalPath);
+        }
+        if (file.before.kind === 'file') {
+          check(); publishWorkspaceBytes(file.canonicalPath, Buffer.from(file.before.bytes, 'base64'));
+          check(); chmodSync(file.canonicalPath, file.before.mode);
+        } else if (file.before.kind === 'directory') {
+          check(); mkdirSync(file.canonicalPath, { recursive: true, mode: file.before.mode });
+          check(); chmodSync(file.canonicalPath, file.before.mode);
+        }
+        check();
+      }
+      guard(); plan.complete(); guard();
+      return envelope({ status: 'error', workspaceChangedPaths: plan.files.map(file => file.path), content: {
+        ok: false, error_type: 'workspace_operation_compensated', compensated: true,
+        original_operation_key: request.originalOperationKey, paths: plan.files.map(file => file.path),
+        message: 'The unconfirmed workspace operation was explicitly compensated. Its original success is not asserted.' } });
+    } finally { release?.(); }
+  }
+  function recordRepairReceipt(request, result, { assertCurrent } = {}) {
+    const guard = workspaceMutationGuard(request, assertCurrent, checkRootBoundary);
+    guard(); checkpoints.recordRepairReceipt(request, result); guard();
+  }
+  return { definitions, execute, observe, recordReceipt, observeReceipt, repairWorkspace, recordRepairReceipt,
     // Host-only change capture for a governed command. It shares the bounded,
     // stable observer; paths remain structured even when names contain tabs.
     capture(request) {

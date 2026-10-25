@@ -26,7 +26,7 @@ import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from '
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeChildRoles, STUDIO_NATIVE_CHILD_SKILLS_CONTRACT } from './native-subagents.mjs';
-import { createNativeToolAuthority, createNativeToolReceiptAuthority } from './native-tool-authority.mjs';
+import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from './native-tool-authority.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
 import { nativeChildMergeDefinition } from './native-child-merge.mjs';
@@ -47,6 +47,10 @@ import { knowledgeToolDefinitions, STUDIO_KNOWLEDGE_TOOLS } from '../knowledge-t
 import { legacyMemoryToolDefinitions, LEGACY_MEMORY_TOOLS } from '../legacy-memory-tools.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const names = values => (values ?? []).map(value => typeof value === 'string' ? value : value?.resourceId || value?.name || value?.id).filter(Boolean);
+const WORKSPACE_REPAIR_TOOL = 'native_repair_workspace_operation';
+const repairDefinition = { name: WORKSPACE_REPAIR_TOOL, readOnly: false, description: 'Explicitly undo the unconfirmed original workspace operation using its private preimages.',
+  permissions: ['workspace:read', 'workspace:write', 'workspace:delete'], parameters: { type: 'object', additionalProperties: false,
+    required: ['original_operation_key'], properties: { original_operation_key: { type: 'string' } } } };
 
 /** One preset's tools; only a Native ledger request can enter a Node builtin. */
 export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
@@ -235,6 +239,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     });
   };
   const install = () => {
+    invariant(!allowed.has(WORKSPACE_REPAIR_TOOL), 'studio_native_repair_tool_collision');
     disposers = [...builtin, ...mcpContracts.keys()].map(name => {
       const definition = mcpContracts.has(name) ? mcpContracts.get(name) : formal.get(name) ?? contracts.get(name);
       return ctx.tools.register({ name: codeNames.has(name) ? sandboxRegistryName(name) : name, description: definition.description ?? '',
@@ -343,6 +348,29 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         },
       });
     });
+    if ([...builtinNames].some(name => workspaceToolNames.has(name) && !formal.get(name).readOnly)) disposers.push(ctx.tools.register({
+      ...structuredClone(repairDefinition), output: { schema: NATIVE_DSH_OUTPUT_SCHEMA, render: renderNativeDshBuiltinOutput },
+      execute: async (args, exec) => {
+        const invocation = calls.get(String(exec.callId));
+        invariant(!closed && invocation?.repair && invocation.agent === exec.agent && !invocation.dispatched
+          && canonical(args) === canonical({ original_operation_key: invocation.request.originalOperationKey }), 'studio_native_repair_authority_missing');
+        const executionSignal = exec.signal, registryCallId = exec.callId;
+        const assertCurrent = request => {
+          exec.signal.throwIfAborted();
+          return exec.signal === executionSignal && exec.callId === registryCallId && exec.name === WORKSPACE_REPAIR_TOOL
+            && exec.agent === invocation.agent && canonical(args) === canonical(exec.arguments)
+            && canonical(args) === canonical({ original_operation_key: invocation.request.originalOperationKey })
+            && invocation.assertCurrent(request);
+        };
+        await authorizeNativeBuiltin(ctx, exec, repairDefinition);
+        exec.signal.throwIfAborted();
+        invocation.dispatched = true;
+        const repaired = await invocation.workspaceTools.repairWorkspace({ ...invocation.request,
+          signal: AbortSignal.any([exec.signal, invocation.request.signal]) }, { assertCurrent });
+        invocation.outcome = repaired.result;
+        return nativeDshBuiltinOutput(repaired.result, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
+      },
+    }));
     return close;
   };
   ctx.effect(install, 'agentkit-studio: Native builtin tool bindings');
@@ -732,7 +760,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         const exact = builtinNames.has(name) && formal.has(name) ? structuredClone(formal.get(name)) : null;
         if (exact && workspaceToolNames.has(name) && !exact.readOnly && workspaceCheckpointDefinitions !== undefined) {
           const original = workspaceCheckpointDefinitions.find(tool => tool.name === name);
-          for (const key of ['workspaceCheckpointPolicy', 'recoveryPolicy']) {
+          for (const key of ['workspaceCheckpointPolicy', 'recoveryPolicy', 'workspaceRepairPolicy']) {
             delete exact[key]; if (original?.[key] !== undefined) exact[key] = original[key];
           }
         }
@@ -838,6 +866,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           .configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills)) : undefined;
       const assertReceiptCurrent = commandAuthority?.store ? createNativeToolReceiptAuthority({ ...commandAuthority, sessionId,
         isClosed: () => closed }) : undefined;
+      const assertRepairCurrent = commandAuthority?.store ? createNativeWorkspaceRepairAuthority({ ...commandAuthority, sessionId,
+        isClosed: () => closed }) : undefined;
       const a2aReceiptObserver = a2a && commandAuthority?.store ? createNativeA2aReceiptObserver({ a2a,
         scope: commandAuthority.scope, sessionId, store: commandAuthority.store,
         stateRoot: join(stateDir, 'a2a-calls'), workspaceRoot: workspace, isClosed: () => closed }) : null;
@@ -928,6 +958,42 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             if (a2aReceiptObserver) return a2aReceiptObserver(request);
             invariant(assertReceiptCurrent(request), 'studio_native_tool_receipt_authority_stale');
             return { contract: request.contract, originalOperationKey: request.originalOperationKey, callId: request.call.callId, result: null };
+          } } : {}),
+          ...(assertRepairCurrent ? { repairWorkspace: async request => {
+            invariant(assertRepairCurrent(request) && builtinNames.has(request.call.name) && workspaceToolNames.has(request.call.name)
+              && allowed.has(request.call.name), 'studio_native_repair_authority_missing');
+            const callId = `ak-repair-${hash({ runId: request.runId, operationKey: request.operationKey, scope: request.scope })}`;
+            invariant(!calls.has(callId), 'studio_native_tool_already_executing');
+            const originalSignal = request.signal, session = agent.session, sessionIdentity = String(session.id),
+              sealed = canonical({ ...request, signal: null });
+            const assertCurrent = candidate => !closed && agent.session === session && String(session.id) === sessionIdentity
+              && request.signal === originalSignal && !originalSignal.aborted && canonical({ ...request, signal: null }) === sealed
+              && canonical({ ...candidate, signal: null }) === sealed && assertRepairCurrent(candidate);
+            const invocation = { repair: true, request, agent, workspaceTools, assertCurrent };
+            const envelope = result => ({ contract: request.contract, originalOperationKey: request.originalOperationKey, callId: request.call.callId, result });
+            calls.set(callId, invocation);
+            try {
+              const output = await ctx.tools.execute({ name: WORKSPACE_REPAIR_TOOL, callId, agent, signal: request.signal,
+                arguments: { original_operation_key: request.originalOperationKey } });
+              invariant(assertCurrent(request), 'studio_native_repair_authority_stale');
+              // The raw compensation is an error result by design. Only its
+              // exact typed marker surviving post-policy may settle the Run.
+              if (!invocation.outcome || output?.concludesTurn || typeof output?.isError !== 'boolean'
+                || !Array.isArray(output.content)) return envelope(null);
+              const context = await projectNativeDshContent(output.content, { signal: request.signal, attachments: () => ctx.get?.('attachments') });
+              let approved;
+              try { approved = canonical(parseNativeJson(context.content)) === canonical(invocation.outcome.content); } catch { approved = false; }
+              if (!approved || context.media?.length) return envelope(null);
+              const additionalContexts = [];
+              for (const message of output.additionalContexts ?? []) {
+                invariant(message?.role === 'user', 'studio_native_tool_context_invalid');
+                additionalContexts.push(await projectNativeDshContent(message.content, { signal: request.signal,
+                  attachments: () => ctx.get?.('attachments') }));
+              }
+              const result = { ...invocation.outcome, context, ...(additionalContexts.length ? { additionalContexts } : {}) };
+              workspaceTools.recordRepairReceipt(request, result, { assertCurrent });
+              return envelope(result);
+            } finally { calls.delete(callId); }
           } } : {}),
           execute: async request => {
         invariant(!closed, 'studio_native_tools_closed');

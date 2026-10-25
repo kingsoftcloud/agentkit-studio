@@ -266,11 +266,33 @@ test('the client distinguishes local receipt-wait reattachment from an explicit 
   state.dispose();
 });
 
+for (const transport of ['local', 'http']) test(`${transport}: explicit workspace repair retries the same operator command without a result or file payload`, async () => {
+  const identity = { agentId: 'a', sessionId: 's' }, calls = [];
+  const status = { contract: 'agentkit.studio-native-recovery/v1', ...identity, runId: 'run', phase: 'awaiting_reconciliation',
+    state: 'reconciliation_required', canResume: false, canReconcile: true, canRepairWorkspace: true,
+    reconciliation: { contract: 'agentkit.tool-receipt-observation/v1', operationKey: 'original', callId: 'call' } };
+  const dispatch = async (operation, payload) => {
+    calls.push({ operation, payload });
+    if (operation === 'sessions/native-workspace-repair' && calls.filter(call => call.operation === operation).length === 1) throw Error('Lost reply');
+    return { ok: true, value: status };
+  };
+  const remote = createStudioHostRemote(transport === 'local' ? { connection: { rpc: { call: (_channel, operation, payload) => dispatch(operation, payload) } } }
+    : { fetchImpl: async (_url, init) => { const request = JSON.parse(init.body);
+      return new Response(JSON.stringify({ result: await dispatch(request.method, request.payload) })); } });
+  const state = createNativeRecoveryState({ ...identity, hostRemote: remote, newCommandId: () => 'fixed-repair-command' });
+  await state.refresh(); assert.equal(calls.length, 1); await state.repairWorkspace();
+  assert.ok(state.getSnapshot().pending); await state.retry();
+  const repairs = calls.filter(call => call.operation === 'sessions/native-workspace-repair');
+  assert.equal(repairs.length, 2); assert.deepEqual(repairs[0], repairs[1]);
+  assert.deepEqual(repairs[0].payload, { ...identity, runId: 'run', operationKey: 'original', commandId: 'fixed-repair-command' });
+  assert.equal(state.getSnapshot().pending, null); state.dispose();
+});
+
 // A fixture variant that drives a real Run through createStudioNativeHarness until
 // a tool effect returns ``uncertain``, leaving the Run ``interrupted`` with an
 // uncertain receipt and a durable turn/owner (no turn/end). This is the
 // ``effect_outcome_unknown`` product scenario — not a hand-edited snapshot.
-async function interruptedFixture(t) {
+async function interruptedFixture(t, { repairable = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-recovery-int-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
@@ -278,6 +300,7 @@ async function interruptedFixture(t) {
   const events = [], projections = new Map(), requests = [], seen = [], controller = new AbortController();
   let key = 'secret', running = Promise.resolve();
   projections.set('dsh:original-session:1:v1:', nativeDeliveryProjection());
+  projections.set('agentPreset', { init: () => 'fixture-preset', apply: state => state });
   const session = { id: 'original-session', append(type, data, options) { events.push({ type, data: structuredClone(data), ...options, seq: events.length + 1 }); } };
   session.append('turn/start', { turn: 1 });
   const assembly = { prompt: 'Original system prompt', tools: [], variables: { provider: 'agentkit-studio-fixture', model: 'original' } };
@@ -290,15 +313,20 @@ async function interruptedFixture(t) {
     try { const ending = await running; session.append('turn/end', { turn: owner.turn, ...ending }); return ending; }
     catch (error) { session.append('turn/end', { turn: owner.turn, reason: { kind: 'error', error: { code: 'NATIVE_TURN_FAILED' } } }); throw error; }
   };
-  const writeTool = { name: 'write', description: 'Write a file', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+  const writeTool = { name: repairable ? 'write_workspace_file' : 'write', description: 'Write a file', parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
     readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 5000, contextRole: 'none', observationRole: 'none',
-    progressObservation: false, contextRetention: 'normal' };
-  let toolCalls = 0;
+    progressObservation: false, contextRetention: 'normal', ...(repairable ? { workspaceCheckpointPolicy: 'file-preimages/v1',
+      workspaceRepairPolicy: 'preimage-compensation/v1', recoveryPolicy: 'receipt-observation/v1' } : {}) };
+  let toolCalls = 0, repairCalls = 0;
   const binding = { agentId: record.metadata.id, agentRevision: 1, runtime: 'harness', local: true,
     nativeEngineContract: 'agentkit.native-dsh-turn/v1', nativeTools: {
       definitions: () => [writeTool], forAgent: () => ({ tools: { execute: async () => {
         toolCalls++;
         return { status: 'uncertain', content: 'Write acknowledgment lost' };
+      }, repairWorkspace: async request => {
+        repairCalls++; assert.equal(request.contract, 'agentkit.workspace-compensation/v1');
+        return { contract: request.contract, originalOperationKey: request.originalOperationKey, callId: request.call.callId,
+          result: { status: 'error', content: { error_type: 'workspace_operation_compensated', compensated: true } } };
       } } }),
       argumentEncoding: null, permissionContract: null,
     } };
@@ -315,15 +343,25 @@ async function interruptedFixture(t) {
     assembleContextFor: (actual, signal) => ({ agent: actual, scope: actual, signal }),
     fetchImpl: async (_url, options) => {
       requests.push({ body: JSON.parse(options.body), headers: new Headers(options.headers) });
+      if (repairable && requests.length > 1) return new Response('data: ' + JSON.stringify({ choices: [{ index: 0,
+        delta: { content: 'Compensated original operation' }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n',
+      { headers: { 'content-type': 'text/event-stream' } });
       return new Response('data: ' + JSON.stringify({ id: 'r1', choices: [{ index: 0,
-        delta: { tool_calls: [{ index: 0, id: 'write-1', type: 'function', function: { name: 'write', arguments: '{}' } }] },
+        delta: { tool_calls: [{ index: 0, id: 'write-1', type: 'function', function: { name: writeTool.name, arguments: '{}' } }] },
         finish_reason: 'tool_calls' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
     } });
   t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
   const payload = { agent, input: { kind: 'enter', messages: [{ id: 'original-user', role: 'user', content: [{ type: 'text', text: 'Write the file' }] }], assembly },
     turn: 1, signal: controller.signal, prepareInput: async () => ({ kind: 'enter', messages: [], assembly }), binding };
   // The Run starts, the model calls write, the tool returns uncertain → interrupted.
-  await assert.rejects(host.executeTurn(payload), /NATIVE_TURN_FAILED/);
+  const initial = host.executeTurn(payload); void initial.catch(() => {});
+  if (repairable) {
+    for (let attempt = 0; attempt < 100 && toolCalls === 0; attempt++) await tick();
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await host.recoveryStatus({ agentId: binding.agentId, sessionId: session.id })).phase === 'awaiting_reconciliation') break;
+      await tick();
+    }
+  } else await assert.rejects(initial, /NATIVE_TURN_FAILED/);
   // Verify the tool was actually dispatched (not just that the phase changed).
   assert.equal(toolCalls, 1, 'the write tool was dispatched exactly once');
   // Derive the real scope from the durable turn/owner binding — the Host binds
@@ -333,7 +371,7 @@ async function interruptedFixture(t) {
   const admission = readNativeDshOwnership(owner, { sessionId: session.id, turn: 1 });
   const realScope = admission.identity.scope;
   const runRecord = ledger.load(realScope, admission.identity.runId);
-  assert.equal(runRecord.snapshot.phase, 'interrupted', `phase=${runRecord.snapshot.phase} reason=${runRecord.snapshot.reason}`);
+  assert.equal(runRecord.snapshot.phase, repairable ? 'awaiting_reconciliation' : 'interrupted', `phase=${runRecord.snapshot.phase} reason=${runRecord.snapshot.reason}`);
   assert.equal(runRecord.snapshot.reason, 'effect_outcome_unknown');
   // Verify the uncertain tool result is sealed in the tool receipt — not just
   // that the phase is interrupted. The receipt status is 'committed' (the
@@ -349,8 +387,25 @@ async function interruptedFixture(t) {
   const route = createSessionRoutes({ getNativeHost: async () => host });
   const request = { agentId: binding.agentId, sessionId: session.id, runId: admission.identity.runId };
   return { host, ledger, agent, binding, requests, events, seen, route, request, realScope,
-    get toolCalls() { return toolCalls; } };
+    initial, get repairCalls() { return repairCalls; }, get toolCalls() { return toolCalls; } };
 }
+
+test('authenticated original-Run workspace repair wakes the installed Host driver and rejects result injection', async t => {
+  const f = await interruptedFixture(t, { repairable: true });
+  const before = f.ledger.load(f.realScope, f.request.runId), marker = before.snapshot.toolReconciliation;
+  assert.equal((await f.host.recoveryStatus(f.request)).canRepairWorkspace, true);
+  const command = { ...f.request, commandId: 'operator-repair', operationKey: marker.operationKey };
+  await assert.rejects(f.route('sessions/native-workspace-repair', { ...command, result: { status: 'ok' } }), /RECONCILIATION_INVALID/);
+  await f.route('sessions/native-workspace-repair', command); await f.initial;
+  const after = f.ledger.load(f.realScope, f.request.runId);
+  assert.equal(after.snapshot.phase, 'completed'); assert.equal(f.toolCalls, 1); assert.equal(f.repairCalls, 1);
+  assert.equal(after.snapshot.configDigest, before.snapshot.configDigest);
+  assert.deepEqual(after.receipts.find(row => row.operationKey === marker.operationKey), before.receipts.find(row => row.operationKey === marker.operationKey));
+  assert.equal(after.intents.filter(row => row.kind === 'workspace_repair').length, 1);
+  assert.equal(after.events.filter(row => row.kind === 'workspace.repair_completed').length, 1);
+  assert.equal((await f.route('sessions/native-workspace-repair', command)).value.phase, 'completed');
+  assert.equal(f.repairCalls, 1); assert.equal(f.requests.length, 2);
+});
 
 test('an interrupted Run with an uncertain receipt surfaces reconciliation_required and refuses resume without re-execution', async t => {
   const f = await interruptedFixture(t);

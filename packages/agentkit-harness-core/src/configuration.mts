@@ -231,6 +231,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && ['write_workspace_file', 'write_workspace_files', 'edit_workspace_file', 'multi_edit_workspace_file',
         'delete_workspace_file', 'apply_workspace_patch', 'rewind_workspace_files'].includes(tool.name)
       && !tool.readOnly && !tool.concurrentSafe && tool.recoveryPolicy !== 'safe-read/v1', 'invalid_workspace_checkpoint_policy');
+    invariant(tool.workspaceRepairPolicy === undefined || tool.workspaceRepairPolicy === 'preimage-compensation/v1'
+      && tool.workspaceCheckpointPolicy === 'file-preimages/v1' && tool.recoveryPolicy === 'receipt-observation/v1', 'invalid_workspace_repair_policy');
     invariant(tool.planModeCommandPolicy === undefined || tool.planModeCommandPolicy === 'zcode-posix-readonly/v1'
       && tool.name === 'run_command' && tool.backgroundCommandPolicy === 'owned-command-launch/v1'
       && !tool.readOnly && !tool.concurrentSafe && tool.recoveryPolicy !== 'safe-read/v1'

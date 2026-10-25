@@ -826,7 +826,11 @@ test('catalog resource identities resolve to tool names and disabled contracts c
     { name: 'write_workspace_file', resourceId: 'catalog-file-write', executor: 'builtin', parameters: { type: 'object' } },
     { name: 'workspace_status', resourceId: 'workspace_status', executor: 'builtin', enabled: false, parameters: { type: 'object' } },
   ]);
-  assert.deepEqual([...host.registry.keys()], ['write_workspace_file']);
+  assert.deepEqual([...host.registry.keys()], ['write_workspace_file', 'native_repair_workspace_operation']);
+  assert.deepEqual(host.gateway.definitions(host.agent, [...host.registry.values()]).map(tool => tool.name), ['write_workspace_file'],
+    'operator-only compensation must not appear in the model catalog');
+  await assert.rejects(host.registry.get('native_repair_workspace_operation').execute({ original_operation_key: 'invented' },
+    { agent: host.agent, name: 'native_repair_workspace_operation', callId: 'invented', signal: new AbortController().signal }), /repair_authority_missing/);
   assert.equal((await host.gateway.forAgent(host.agent).tools.execute(host.request({ path: 'file.txt', content: 'bound' }, 'write_workspace_file'))).status, 'ok');
   await assert.rejects(host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'workspace_status')), /studio_native_tool_not_bound/);
 });

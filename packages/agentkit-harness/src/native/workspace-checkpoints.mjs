@@ -15,6 +15,9 @@ const fail = code => { throw Object.assign(Error(code), { code }); };
 const MAX_BYTES = 16 * 1024 * 1024;
 const unsettled = row => ['prepared', 'compensating'].includes(row.status);
 const operationIdentity = value => canonical(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'executionFence')));
+const stateIdentity = ({ kind, sha256, mode }) => ({ kind, ...(sha256 !== undefined ? { sha256 } : {}), ...(mode !== undefined ? { mode } : {}) });
+const uniqueStates = states => [...new Map(states.map(state => [canonical(stateIdentity(state)), stateIdentity(state)])).values()];
+const repairStatesFor = (row, path) => row.repairStates && Object.hasOwn(row.repairStates, path) ? row.repairStates[path] : [];
 export function captureCheckpointFile(path) {
   let stat;
   try { stat = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return { kind: 'absent' }; throw error; }
@@ -56,7 +59,7 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
     return { ...value, seq: Number(row.seq) };
   }
   const rows = () => database(false, db => db ? db.prepare('SELECT * FROM checkpoints ORDER BY seq').all().map(decode) : []);
-  function save(value, undone = []) {
+  function save(value, undone = [], restoreUndone = false) {
     const copy = { ...value }; delete copy.seq;
     database(true, db => {
       db.exec('BEGIN IMMEDIATE');
@@ -65,7 +68,10 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
         put(copy);
         for (const id of undone) {
           const old = decode(db.prepare('SELECT * FROM checkpoints WHERE id=?').get(id)); delete old.seq;
-          put({ ...old, status: 'undone', undoneBy: value.id });
+          if (restoreUndone) {
+            if (old.status !== 'undone' || old.undoneBy !== value.id) fail('checkpoint_repair_chain_changed');
+            delete old.undoneBy; put({ ...old, status: 'completed' });
+          } else put({ ...old, status: 'undone', undoneBy: value.id });
         }
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -91,10 +97,13 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
       stage(path, after) {
         if (Buffer.byteLength(after.bytes ?? '', 'base64') > TWO_MB) fail('checkpoint_budget_exceeded');
         const target = resolvePath(path), before = captureCheckpointFile(target);
-        if (after.kind === 'file' && after.mode === undefined && before.kind === 'file') after = { ...after, mode: before.mode };
+        if (after.kind === 'file' && after.mode === undefined) after = { ...after,
+          mode: before.kind === 'file' ? before.mode : 0o666 & ~process.umask() };
         const entry = record.files.find(file => file.path === path);
         if (entry && entry.canonicalPath !== target) fail('checkpoint_path_changed');
-        const replacement = entry ? { ...entry, after } : { path, canonicalPath: target, before, after };
+        const intermediateStates = uniqueStates([...(entry?.intermediateStates ?? []), ...(entry ? [stateIdentity(before)] : []),
+          ...(after.kind === 'file' ? [{ ...stateIdentity(after), mode: before.kind === 'file' ? before.mode : 0o666 & ~process.umask() }] : [])]);
+        const replacement = { ...(entry ?? { path, canonicalPath: target, before }), after, intermediateStates };
         const files = entry ? record.files.map(file => file === entry ? replacement : file) : [...record.files, replacement];
         if (files.length > 100 || files.reduce((size, file) => size + Buffer.byteLength(file.before.bytes ?? '', 'base64')
           + Buffer.byteLength(file.after.bytes ?? '', 'base64'), 0) > MAX_BYTES) fail('checkpoint_budget_exceeded');
@@ -149,14 +158,52 @@ export function createWorkspaceCheckpointJournal({ stateDir, sessionId, workspac
       files: files.map(file => ({ path: file.path, action: file.desired.kind === 'absent' ? 'delete' : 'restore',
         current_sha256: file.current.sha256 ?? null, restored_sha256: file.desired.sha256 ?? null })) } };
   }
-  function receiptRecord(request, original = false) {
-    return rows().toReversed().find(row => ['completed', 'failed'].includes(row.status)
-      && ['scope', 'sessionId', 'runId', 'turnId', 'buildId'].every(key => canonical(row.binding[key] ?? null) === canonical(request[key] ?? null))
+  function originalRecord(request, original = false) {
+    return rows().toReversed().find(row =>
+      ['scope', 'sessionId', 'runId', 'turnId', 'buildId'].every(key => canonical(row.binding[key] ?? null) === canonical(request[key] ?? null))
       && row.binding.operationKey === (original ? request.originalOperationKey : request.operationKey)
       && row.binding.executionFence === (original ? request.originalClaimedFence : request.executionFence)
       && row.callDigest === sha256(canonical(request.call)) && row.definitionDigest === sha256(canonical(request.definition)));
   }
+  function receiptRecord(request, original = false) {
+    const row = originalRecord(request, original);
+    return row && ['completed', 'failed'].includes(row.status) ? row : undefined;
+  }
   return { begin, preview,
+    prepareRepair(request) {
+      const row = originalRecord(request, true);
+      if (!row || row.receipt || !['prepared', 'compensating', 'completed', 'failed'].includes(row.status)
+        || rows().some(other => other.seq > row.seq && !['failed', 'undone'].includes(other.status))) fail('checkpoint_repair_unavailable');
+      if (row.repairReceipt) return { result: structuredClone(row.repairReceipt) };
+      const files = row.files.toReversed().map(file => {
+        if (resolvePath(file.path) !== file.canonicalPath) fail('checkpoint_path_changed');
+        const current = captureCheckpointFile(file.canonicalPath);
+        if (![file.before, file.after, ...(file.intermediateStates ?? []), ...repairStatesFor(row, file.path)]
+          .some(state => checkpointStatesEqual(current, state))) fail('checkpoint_external_modified');
+        return { ...file, current };
+      });
+      const restore = row.status === 'completed' && row.rewindOf?.length ? row.rewindOf : [];
+      // Persist the chain restoration responsibility BEFORE any inverse write.
+      // A second crash must retain it even though status is now compensating.
+      const repairRewindOf = row.repairRewindOf ?? restore;
+      const repairStates = Object.fromEntries(files.map(file => [file.path, uniqueStates([...repairStatesFor(row, file.path),
+        ...(file.current.kind !== 'absent' && file.current.kind !== file.before.kind ? [{ kind: 'absent' }] : []),
+        ...(file.before.kind === 'file' ? [{ ...stateIdentity(file.before), mode: file.current.kind === 'file'
+          ? file.current.mode : 0o666 & ~process.umask() }] : []),
+        ...(file.before.kind === 'directory' ? [{ kind: 'directory', mode: file.before.mode & ~process.umask() }] : [])])]));
+      save({ ...row, status: 'compensating', repairRewindOf, repairStates });
+      return { files, complete() {
+        for (const file of files) if (resolvePath(file.path) !== file.canonicalPath
+          || !checkpointStatesEqual(captureCheckpointFile(file.canonicalPath), file.before)) fail('checkpoint_compensation_conflict');
+        save({ ...row, status: 'failed', compensated: true, repairRewindOf: [] }, repairRewindOf, true);
+      } };
+    },
+    recordRepairReceipt(request, result) {
+      const row = originalRecord(request, true);
+      if (!row || row.status !== 'failed' || row.compensated !== true) fail('checkpoint_repair_unavailable');
+      if (row.repairReceipt && canonical(row.repairReceipt) !== canonical(result)) fail('checkpoint_receipt_conflict');
+      save({ ...row, repairReceipt: structuredClone(result) });
+    },
     recordReceipt(request, result) {
       if (!['ok', 'error'].includes(result.status)) return;
       const row = receiptRecord(request); if (!row) return;

@@ -8,7 +8,7 @@ import { committedWorkspaceCheckpoint } from '../src/native/workspace-checkpoint
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 import { NativeKernel, emptyUsage, planModeToolDefinitions } from '../../agentkit-harness-core/dist/index.mjs';
 import { fixture, scope, digest } from '../../agentkit-harness-core/test/fixtures.mjs';
-import { createNativeToolAuthority, createNativeToolReceiptAuthority } from '../../../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from '../../../src/providers/native-tool-authority.mjs';
 
 function setup(t, authorize = async () => 'allow') {
   const root = mkdtempSync(join(tmpdir(), 'native-rewind-')), workspace = join(root, 'workspace'), stateDir = join(root, 'state');
@@ -274,4 +274,28 @@ for (const persisted of [true, false]) test(`cold receipt observation ${persiste
     assert.equal((await f.run('rewind_workspace_files', { checkpoint_id, preview_token: preview.output.content.preview_token })).output.status, 'ok');
     assert.equal(existsSync(join(f.workspace, 'once.txt')), false);
   }
+});
+
+test('explicit compensation of an unconfirmed completed rewind restores its original checkpoint chain', async t => {
+  const f = setup(t); f.write('a.txt', 'before\n');
+  const changed = await f.run('apply_workspace_patch', { patch_text: patch('*** Update File: a.txt', '@@', '-before', '+after') });
+  const checkpoint_id = changed.output.content.checkpoint_id;
+  const preview = await f.run('preview_workspace_rewind', { checkpoint_id });
+  const waiting = await f.run('rewind_workspace_files', { checkpoint_id, preview_token: preview.output.content.preview_token }, {}, {
+    skipReceipt: true, afterReceipt: () => ({ status: 'uncertain', content: { code: 'lost_after_raw_rewind' } }),
+  });
+  assert.equal(f.read('a.txt'), 'before\n'); assert.equal(waiting.result.phase, 'awaiting_reconciliation'); f.reopen();
+  const authority = createNativeWorkspaceRepairAuthority({ scope, sessionId: 'session', store: f.store });
+  const kernel = new NativeKernel({ store: f.store, digest, owner: 'repair-rewind', ports: { workspace: f.tools,
+    tools: { execute: async () => assert.fail('original rewind cannot replay'), repairWorkspace: async request => {
+      const result = await f.tools.repairWorkspace(request, { assertCurrent: authority });
+      f.tools.recordRepairReceipt(request, result.result, { assertCurrent: authority }); return result;
+    } }, model: { generate: async () => ({ kind: 'final_candidate', text: 'Undo compensated', toolCalls: [], usage: emptyUsage() }) },
+  } });
+  kernel.submit(scope, waiting.runId, { kind: 'repair_workspace', commandId: 'operator-undo-unconfirmed-rewind',
+    payload: { originalOperationKey: waiting.result.toolReconciliation.operationKey } });
+  assert.equal((await kernel.runUntilIdle(scope, waiting.runId)).phase, 'completed'); assert.equal(f.read('a.txt'), 'after\n');
+  const next = await f.run('preview_workspace_rewind', { checkpoint_id }); assert.equal(next.output.content.can_apply, true);
+  assert.equal((await f.run('rewind_workspace_files', { checkpoint_id, preview_token: next.output.content.preview_token })).output.status, 'ok');
+  assert.equal(f.read('a.txt'), 'before\n');
 });

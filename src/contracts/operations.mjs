@@ -32,6 +32,7 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "sessions/native-recovery-status",
   "sessions/native-recovery-resume",
   "sessions/native-recovery-reconcile",
+  "sessions/native-workspace-repair",
   "sessions/native-a2a-control",
   "sessions/dsh-a2a-history",
   "sessions/dsh-a2a-control",

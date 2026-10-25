@@ -12,7 +12,7 @@ export function waitingToolReceipt(snapshot: RunSnapshot, config: RunConfigurati
     || config.tools.find(tool => tool.name === calls[0]!.name)?.recoveryPolicy !== 'receipt-observation/v1') return null;
   return reduceTools(snapshot, [{ status: 'uncertain', content: { code: 'effect_outcome_unknown' } }], calls, intent, config);
 }
-function source(record: StoredRun, operationKey: string) {
+export function toolReceiptSource(record: StoredRun, operationKey: string) {
   const { snapshot, configuration } = record;
   invariant(snapshot.toolReconciliation?.operationKey === operationKey, 'tool_receipt_identity_mismatch');
   const intent = record.intents.find(item => item.operationKey === operationKey);
@@ -34,7 +34,7 @@ export function prepareToolReceipt(record: StoredRun, command: RunCommand): Comm
     return transition(snapshot, {}, [{ kind: 'command.applied', payload: { commandId: command.commandId,
       kind: command.kind, reason: 'tool_receipt_not_available' } }], { commandId: command.commandId, requireNoPendingCommands: false });
   }
-  const original = source(record, String(command.payload.originalOperationKey));
+  const original = toolReceiptSource(record, String(command.payload.originalOperationKey));
   const batch = prepareEffect(snapshot, 'tool_receipt', 'reconciling_tool', {
     contract: TOOL_RECEIPT_OBSERVATION_CONTRACT, originalOperationKey: original.intent.operationKey,
     callId: original.call.callId, originalClaimedFence: original.intent.claimedFence!,
@@ -47,7 +47,7 @@ export function prepareToolReceipt(record: StoredRun, command: RunCommand): Comm
 export function toolReceiptRequest(context: PortContext, record: StoredRun, intent: EffectIntent): ToolReceiptRequest {
   invariant(intent.kind === 'tool_receipt' && intent.payload.contract === TOOL_RECEIPT_OBSERVATION_CONTRACT,
     'tool_receipt_request_invalid');
-  const original = source(record, String(intent.payload.originalOperationKey));
+  const original = toolReceiptSource(record, String(intent.payload.originalOperationKey));
   invariant(intent.payload.callId === original.call.callId && intent.payload.originalClaimedFence === original.intent.claimedFence,
     'tool_receipt_identity_mismatch');
   return { ...context, contract: TOOL_RECEIPT_OBSERVATION_CONTRACT, originalOperationKey: original.intent.operationKey,
@@ -55,7 +55,7 @@ export function toolReceiptRequest(context: PortContext, record: StoredRun, inte
 }
 export function reduceToolReceipt(record: StoredRun, intent: EffectIntent, observation: ToolReceiptObservation,
   digest: (value: unknown) => string): Partial<RunSnapshot> {
-  const { snapshot, configuration } = record, original = source(record, String(intent.payload.originalOperationKey));
+  const { snapshot, configuration } = record, original = toolReceiptSource(record, String(intent.payload.originalOperationKey));
   invariant(observation?.contract === TOOL_RECEIPT_OBSERVATION_CONTRACT
     && observation.originalOperationKey === original.intent.operationKey && observation.callId === original.call.callId,
   'tool_receipt_identity_mismatch');

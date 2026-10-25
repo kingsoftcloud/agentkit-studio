@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **28/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **29/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,11 +53,13 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 4/15 covers durable file preimages on the admitted writer path (one point)
+M5 5/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
-(one point). This does not certify full recovery/undo, conversation branching or
+(one point), and explicit original-Run cold preimage compensation, including a
+second process death during compensation and its product recovery entry (one point).
+This does not certify full recovery/undo, conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
@@ -1242,11 +1244,12 @@ pnpm pack --pack-destination /tmp/agentkit-native-compensation-pack
 node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-compensation-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --continue-child --history --structured-patch --workspace-rewind --keep
 ```
 
-No full repository suite ran. Prepared/compensating checkpoints without a final
-receipt, crashes in the raw-publication-to-post-policy interval, legacy Runs
-without an admitted receipt policy, conversation branching and full runtime
-handoff remain uncompleted scope. Do not clear these states by age/fence expiry
-or infer a successful original operation merely from current bytes.
+No full repository suite ran. At this batch boundary prepared/compensating
+checkpoints without a final receipt were still pending; the next batch adds an
+explicit compensation path for newly admitted Runs. Legacy Runs without the
+required policy, conversation branching and full runtime handoff remain pending.
+Never infer a successful original operation merely from current bytes or clear
+uncertainty by age/fence expiry.
 
 The real Claude Code architecture audit completed in four turns
 (`/tmp/native-rewind-recovery-claude.json`). Main-agent cross-checking also read
@@ -1255,10 +1258,104 @@ non-A2A operator entry. Its general statement that all automatic reconciliation
 is absent is too broad: A2A has its own explicit waiter path; this local workspace
 batch does not add an automatic write/repair path. A second read-only code review
 reached its invocation budget without a final report
-(`/tmp/native-rewind-compensation-review.json`). A tools-disabled continuation
-of the same CLI session is collecting its existing observations; it is not a
-fresh audit. The main-agent source review and runtime evidence above remain the
-current checks, not a claim that independent review passed.
+(`/tmp/native-rewind-compensation-review.json`). Its tools-disabled continuation
+also ended at its budget without a final report
+(`/tmp/native-rewind-compensation-review-final.json`). Neither is a passed
+independent review. The main-agent source review and runtime evidence above
+remain the completed checks.
+
+### Explicit cold compensation of an unconfirmed workspace operation
+
+The same pinned ZCode `runtime/methods/file-rewind.ts:149-219,253-278` journals
+and compensates writes in the active process. Native now extends its existing
+single loop with a separately persisted `workspace_repair` effect for an explicit
+operator request after process loss. It is deliberately distinct from the
+read-only `tool_receipt` effect. No receipt observer can gain write authority.
+
+New writer definitions admit `workspaceRepairPolicy: preimage-compensation/v1`.
+The original frozen definition, call, scope, Run/turn/Build, claimed fence and
+uncertain receipt must all match. The new effect requires its own live lease and
+fence. Configuration validation rejects attaching the policy to a non-checkpoint
+tool; reconstruction preserves old policy absence. A changed preset/root/session,
+lost authority or cancellation blocks inverse writes.
+
+Under the existing cross-process workspace lock, the journal verifies all paths
+before compensation. Each file must still equal its original preimage, planned
+postimage, or a specifically recorded intermediate state. Canonical targets,
+bytes and modes are checked; unrelated external edits are refused. Intermediate
+publication/chmod states and the responsibility to restore a completed rewind's
+checkpoint chain are persisted before inverse writes. A second crash therefore
+retains enough state for a new authorized attempt. Journal state candidates are
+deduplicated; file bytes are not duplicated for these metadata records.
+
+Completion verifies all restored preimages and atomically marks the original
+journal compensated/failed. If the unconfirmed operation was a completed rewind,
+only the checkpoints marked undone by that operation are reactivated. The exact
+original uncertain Kernel receipt stays immutable. A repair result is always
+`error / workspace_operation_compensated`, never a claim that the original tool
+succeeded. The model receives that failure through existing governance/post-hooks
+and the original tool attempt remains charged once. A lost repair claim is
+classified as unknown, not automatically replayed; the next compensation requires
+another explicit operator command after normal lease acquisition.
+
+The Host dispatches the operator-only internal tool through the actual DSH
+permission and result pipeline. It is absent from the model catalog and rejects
+unbound registry calls. A changed/rejected final model view cannot certify the
+compensation result. The journal stores the final repair receipt separately from
+the original tool's final receipt. Delivery loss can recover that same repair
+outcome, while raw compensation without approved output remains unknown.
+
+Product entry: `sessions/native-workspace-repair`, exposed on both local RPC and
+HTTP control clients. The recovery service checks the original live turn and
+frozen preset/Build before enqueuing `repair_workspace`, then wakes its existing
+driver or resumes the original Run. The request contains only original identity
+and an idempotent command ID, never file bytes, result claims or a permission
+grant. In the recovery panel, an eligible Run offers “撤销未确认文件修改并继续”
+inside an explanation that recommends checking the original receipt first.
+Refresh never writes; an unconfirmed client response retries the same command.
+
+Evidence and limits:
+
+- `/tmp/native-cold-repair-final.log`: 98 targeted cases passed across the original
+  receipt contract, workspace rewind/publication, separate read/repair authority,
+  product recovery service/client and actual gateway process tests. The late
+  journal metadata deduplication passed all seven process cases in
+  `/tmp/native-cold-repair-final-paths.log`.
+- Seven Node-only process scenarios use the production gateway, SQLite and real
+  files: partial publication then SIGKILL; external edit; denied permission;
+  Session replacement after admission; rejected post-policy result followed by a
+  fresh approved request; lost final repair delivery; and a second SIGKILL after
+  an inverse publication but before completion. The last case waits for the real
+  recorded lease expiry, classifies the lost claim without tool dispatch, then
+  submits a new operator command. Original intent/config/receipt are preserved.
+- The Host/turn/portable/catalog group passed 139 of 140 initially: its remaining
+  assertion expected the old exact registry inventory. The updated case now
+  explicitly proves the internal registration is hidden from the model and an
+  unbound direct invocation fails; it passed separately
+  (`/tmp/native-cold-repair-catalog-final.log`). Contracts passed; portability
+  passed for 1,630 tracked files (`/tmp/native-cold-repair-portability-final.log`).
+- The final packed Studio normal cold-child/rewind flow passed
+  (`/tmp/native-cold-repair-sdk-final.log`), evidence directory
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-Kn4Ccr`.
+  This proves actual SDK/mount/Build compatibility, not fault injection through
+  the mounted Studio repair UI. The gateway process scenarios use controlled DSH
+  policies and model replies; the service test uses an Agent double.
+- No new runtime dependency, second execution loop or default extra model call
+  was introduced. These local cases do not establish whole-task Token savings
+  or latency improvement; the fixed before/reference/after comparison is pending.
+- A real Claude Code read-only journal review ended at its budget without a
+  usable final report (`/tmp/native-cold-repair-claude.json`); it is not passed
+  independent review. Do not keep waiting on that terminated invocation.
+
+Remaining limits: only recorded bounded file operations and empty-directory
+states are compensable, not arbitrary Shell/MCP effects or recursive parent
+directory creation. Private journal/preimages must be intact. External conflicts
+require operator resolution, not forced overwrite. Non-cooperating filesystem
+races remain possible between checks and OS writes; this is not an OS transaction
+or CAS. Legacy Runs without the frozen repair policy are not upgraded. Managed
+server control and child-specific product repair flows, full mounted fault/UI
+acceptance, conversation branches, neutral engine handoff and large-history
+journal performance remain pending. No full repository suite was run.
 
 ## Local evidence and comparison protocol
 

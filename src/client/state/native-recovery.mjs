@@ -52,6 +52,9 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
         && ['operationKey', 'callId'].every(key => typeof value.reconciliation[key] === 'string'
           && value.reconciliation[key].trim() && value.reconciliation[key].length <= 256)),
     '核对记录与原运行不一致，请刷新核对。');
+    if (value.canRepairWorkspace !== undefined) check(typeof value.canRepairWorkspace === 'boolean'
+      && (!value.canRepairWorkspace || !value.managed && value.canReconcile === true
+        && value.phase === 'awaiting_reconciliation'), '文件修复权限与原运行不一致，请刷新核对。');
     if (value.a2aTasks !== undefined) check(Array.isArray(value.a2aTasks) && value.a2aTasks.length <= 10000
       && value.a2aTasks.every(task => task?.runId === value.runId && ['runId', 'operationKey', 'callId']
         .every(key => typeof task[key] === 'string' && task[key].trim() && task[key].length <= 256)),
@@ -99,8 +102,10 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
     const pending = state.pending;
     set({ sending: true, error: '' });
     try {
-      const operation = pending.operationKey ? hostRemote.reconcileNativeTool : hostRemote.resumeNativeRun;
-      const status = validate(await operation(pending, lifetime.signal), pending.runId);
+      const { repairWorkspace, ...request } = pending;
+      const operation = repairWorkspace ? hostRemote.repairNativeWorkspace
+        : pending.operationKey ? hostRemote.reconcileNativeTool : hostRemote.resumeNativeRun;
+      const status = validate(await operation(request, lifetime.signal), pending.runId);
       set({ status, pending: null });
       await refresh();
     } catch { set({ error: '恢复请求尚未确认。可确认原运行的请求，请勿创建替代任务。' }); }
@@ -116,6 +121,11 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
       if (disposed || state.pending || !state.status?.canReconcile) return;
       set({ pending: { ...identity, runId: state.status.runId, operationKey: state.status.reconciliation.operationKey,
         commandId: newCommandId() } }); return send();
+    },
+    repairWorkspace() {
+      if (disposed || state.pending || !state.status?.canRepairWorkspace) return;
+      set({ pending: { ...identity, runId: state.status.runId, operationKey: state.status.reconciliation.operationKey,
+        commandId: newCommandId(), repairWorkspace: true } }); return send();
     },
     dispose() { disposed = true; lifetime.abort(); listeners.clear(); },
   };

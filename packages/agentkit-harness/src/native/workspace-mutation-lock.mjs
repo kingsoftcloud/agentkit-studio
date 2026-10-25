@@ -54,7 +54,7 @@ export function acquireWorkspaceMutationLock(path, { timeoutMs = 10000 } = {}) {
 export function workspaceMutationGuard(request, assertCurrent, checkRoot) {
   if (assertCurrent != null && typeof assertCurrent !== 'function') throw failure('workspace_authority_invalid');
   const fields = ['scope', 'sessionId', 'runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId',
-    'operationKey', 'executionFence', 'call', 'definition', 'interaction'];
+    'operationKey', 'executionFence', 'call', 'definition', 'interaction', 'contract', 'originalOperationKey', 'originalClaimedFence'];
   const identity = () => canonical(Object.fromEntries(fields.filter(key => request[key] !== undefined).map(key => [key, request[key]])));
   const before = identity(), signal = request.signal;
   return () => {

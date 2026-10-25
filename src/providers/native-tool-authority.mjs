@@ -37,14 +37,21 @@ export function createNativeToolAuthority({ scope, sessionId, store, isClosed = 
 }
 
 /** Current read intent authority never grants execution rights to the old tool. */
-export function createNativeToolReceiptAuthority({ scope, sessionId, store, isClosed = () => false }) {
+export function createNativeToolReceiptAuthority(options) {
+  return originalEffectAuthority(options, false);
+}
+/** A new operator write claim; a receipt-read claim is never interchangeable. */
+export function createNativeWorkspaceRepairAuthority(options) {
+  return originalEffectAuthority(options, true);
+}
+function originalEffectAuthority({ scope, sessionId, store, isClosed = () => false }, repair) {
   scopeKey(scope); const fixedScope = copy(scope);
   invariant(typeof sessionId === 'string' && sessionId.trim() && typeof store?.load === 'function',
     'studio_native_tool_receipt_binding_invalid');
   return request => {
     try {
       if (isClosed() || !(request.signal instanceof AbortSignal) || request.signal.aborted
-        || request.contract !== 'agentkit.tool-receipt-observation/v1'
+        || request.contract !== (repair ? 'agentkit.workspace-compensation/v1' : 'agentkit.tool-receipt-observation/v1')
         || canonical(request.scope) !== canonical(fixedScope) || request.sessionId !== sessionId) return false;
       const record = store.load(fixedScope, request.runId), snapshot = record.snapshot;
       if (snapshot.phase !== 'reconciling_tool' || !record.lease || record.lease.expiresAt <= Date.now()
@@ -53,7 +60,7 @@ export function createNativeToolReceiptAuthority({ scope, sessionId, store, isCl
         || snapshot.toolReconciliation?.operationKey !== request.originalOperationKey
         || snapshot.toolReconciliation?.callId !== request.call?.callId) return false;
       const query = record.intents.find(item => item.operationKey === snapshot.pendingIntent);
-      if (query?.kind !== 'tool_receipt' || query.status !== 'running' || query.claimedFence !== request.executionFence
+      if (query?.kind !== (repair ? 'workspace_repair' : 'tool_receipt') || query.status !== 'running' || query.claimedFence !== request.executionFence
         || query.operationKey !== request.operationKey || query.payload.contract !== request.contract
         || query.payload.originalOperationKey !== request.originalOperationKey
         || query.payload.originalClaimedFence !== request.originalClaimedFence || query.payload.callId !== request.call.callId) return false;
@@ -64,7 +71,9 @@ export function createNativeToolReceiptAuthority({ scope, sessionId, store, isCl
         && Array.isArray(original.payload.calls) && original.payload.calls.length === 1
         && canonical(original.payload.calls[0]) === canonical(request.call)
         && Boolean(receipt && (receipt.status === 'uncertain' || receipt.result.results?.[0]?.status === 'uncertain'))
-        && definition?.recoveryPolicy === 'receipt-observation/v1' && canonical(definition) === canonical(request.definition);
+        && definition?.recoveryPolicy === 'receipt-observation/v1'
+        && (!repair || definition.workspaceRepairPolicy === 'preimage-compensation/v1')
+        && canonical(definition) === canonical(request.definition);
     } catch { return false; }
   };
 }

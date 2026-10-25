@@ -106,10 +106,12 @@ test('Host reconstruction preserves pre-checkpoint and pre-receipt frozen writer
   const current = host.bound.definitions(host.agent, assembly);
   assert.equal(current[0].workspaceCheckpointPolicy, 'file-preimages/v1'); assert.equal(current[0].recoveryPolicy, 'receipt-observation/v1');
   for (const checkpoint of [false, true]) {
-    const original = structuredClone(current); delete original[0].recoveryPolicy;
+    const original = structuredClone(current); delete original[0].recoveryPolicy; delete original[0].workspaceRepairPolicy;
     if (!checkpoint) delete original[0].workspaceCheckpointPolicy;
     assert.deepEqual(host.bound.definitions(host.agent, assembly, { workspaceCheckpointDefinitions: original }), original);
   }
+  const preRepair = structuredClone(current); delete preRepair[0].workspaceRepairPolicy;
+  assert.deepEqual(host.bound.definitions(host.agent, assembly, { workspaceCheckpointDefinitions: preRepair }), preRepair);
   assert.deepEqual(host.bound.definitions(host.agent, assembly), current, 'restoration cannot mutate defaults for other Sessions');
 });
 

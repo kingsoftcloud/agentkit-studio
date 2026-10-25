@@ -21,6 +21,7 @@ import { quoteArtifactRequestCapacity, quoteSingleArtifactReadAdmission, selectA
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { effectiveRunConfiguration } from './task-contract.mjs';
 import { prepareToolReceipt, reduceToolReceipt, toolReceiptRequest, waitingToolReceipt } from './tool-receipt.mjs';
+import { prepareWorkspaceRepair, reduceWorkspaceRepair, workspaceRepairRequest } from './workspace-repair.mjs';
 import { recoverClaimed } from './recovery.mjs';
 import { toolInputRejection } from './tool-input.mjs';
 import { contextSourceDigest, modelContextMessages, validateContextMessages } from './context-view.mjs';
@@ -266,8 +267,9 @@ export class NativeKernel {
         const commands = runnableCommands(record);
         const command = commands[0];
         if (command) {
-          if (command.kind === 'reconcile_tool') {
-            this.commit(snapshot, lease, prepareToolReceipt(record, command));
+          if (command.kind === 'reconcile_tool' || command.kind === 'repair_workspace') {
+            this.commit(snapshot, lease, command.kind === 'repair_workspace'
+              ? prepareWorkspaceRepair(record, command) : prepareToolReceipt(record, command));
             continue;
           }
           if (['message_child', 'cancel_child'].includes(command.kind)) {
@@ -661,10 +663,16 @@ export class NativeKernel {
           facts.push({ kind: 'input.completed', payload: { step: intent.payload.step!, status: raw.status!,
             messageCursor: changes.messages?.length ?? snapshot.messages.length } });
           break;
+        case 'workspace_repair':
         case 'tool_receipt': {
           const observation = raw as unknown as import('./contracts.mjs').ToolReceiptObservation;
-          changes = reduceToolReceipt(this.store.load(snapshot.scope, snapshot.runId), intent, observation, this.digest);
-          facts.push({ kind: changes.toolReconciliation === null ? 'tool.receipt_reconciled' : 'tool.receipt_unavailable',
+          const record = this.store.load(snapshot.scope, snapshot.runId);
+          changes = intent.kind === 'workspace_repair'
+            ? reduceWorkspaceRepair(record, intent, raw as unknown as import('./contracts.mjs').WorkspaceRepairResult, this.digest)
+            : reduceToolReceipt(record, intent, observation, this.digest);
+          facts.push({ kind: intent.kind === 'workspace_repair'
+            ? changes.toolReconciliation === null ? 'workspace.repair_completed' : 'workspace.repair_unavailable'
+            : changes.toolReconciliation === null ? 'tool.receipt_reconciled' : 'tool.receipt_unavailable',
             payload: { originalOperationKey: intent.payload.originalOperationKey!, callId: intent.payload.callId! } });
           if (changes.toolReconciliation === null) facts.push(...toolResourceUsageFacts(intent.operationKey,
             [snapshot.pendingTools[0]!], [observation.result!]));
@@ -793,9 +801,10 @@ export class NativeKernel {
         && this.ports.children?.interruptedReceipts) {
         return await this.recoverEffect(snapshot, configuration, intent, Math.max(0, this.monotonicNow() - started));
       }
-      if (intent.kind === 'tool_receipt') {
+      if (intent.kind === 'tool_receipt' || intent.kind === 'workspace_repair') {
         raw = { code }; status = 'failed'; changes = { pendingIntent: null, phase: 'awaiting_reconciliation' };
-        facts.push({ kind: 'tool.receipt_unavailable', payload: { originalOperationKey: intent.payload.originalOperationKey!, reason: code } });
+        facts.push({ kind: intent.kind === 'workspace_repair' ? 'workspace.repair_unavailable' : 'tool.receipt_unavailable',
+          payload: { originalOperationKey: intent.payload.originalOperationKey!, reason: code } });
       } else if (intent.kind === 'child') {
         if (['child_observation_paused', 'child_observation_promoted'].includes(code) && configuration.childLifecyclePolicy === 'owned-background/v2'
           && ['poll', 'wait'].includes(String(intent.payload.action)) && (code === 'child_observation_promoted' || !intent.payload.interaction)) {
@@ -878,6 +887,13 @@ export class NativeKernel {
     emit: (event: ModelStreamEvent) => void): Promise<unknown> {
     context.signal.throwIfAborted();
     switch (intent.kind) {
+      case 'workspace_repair': {
+        invariant(this.ports.tools.repairWorkspace, 'workspace_repair_port_missing');
+        const request = workspaceRepairRequest(context, this.store.load(snapshot.scope, snapshot.runId), intent);
+        const result = await this.ports.tools.repairWorkspace(request);
+        return result.result === null ? result : { ...result, result: await governArtifactResult({ ...context,
+          operationKey: request.originalOperationKey }, request.definition, result.result, configuration, this.ports.artifacts) };
+      }
       case 'tool_receipt': {
         invariant(this.ports.tools.observeReceipt, 'tool_receipt_port_missing');
         const request = toolReceiptRequest(context, this.store.load(snapshot.scope, snapshot.runId), intent);

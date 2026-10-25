@@ -11,14 +11,15 @@ export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost,
             signal?.throwIfAborted(); const service = await getDshA2aControls(); signal?.throwIfAborted();
             return { ok: true, value: await (control ? service.control(payload, signal) : service.history(payload, signal)) };
         }
-        if (endpoint === 'sessions/native-recovery-reconcile') {
+        if (endpoint === 'sessions/native-recovery-reconcile' || endpoint === 'sessions/native-workspace-repair') {
             validateNativeReconciliationRequest(payload);
             if (typeof getNativeHost !== 'function')
                 throw Object.assign(new Error('Native recovery unavailable'), { code: 'STUDIO_NATIVE_RECOVERY_UNAVAILABLE' });
             signal?.throwIfAborted();
             const host = await getNativeHost();
             signal?.throwIfAborted();
-            return { ok: true, value: await host.reconcileTool(payload, signal) };
+            return { ok: true, value: await (endpoint === 'sessions/native-workspace-repair'
+                ? host.repairWorkspace(payload, signal) : host.reconcileTool(payload, signal)) };
         }
         if (endpoint === 'sessions/native-a2a-control') {
             validateNativeA2aControlRequest(payload);

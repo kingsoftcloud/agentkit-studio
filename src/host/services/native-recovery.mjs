@@ -159,6 +159,9 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       canResume: managed ? Boolean(managed.retryable && (admission || !terminal(snapshot?.phase)))
         : Boolean(admission && !driving && (!waiting || receiptWait) && record?.snapshot.phase !== 'interrupted'),
       canReconcile: !managed && Boolean(admission && waiting),
+      canRepairWorkspace: !managed && Boolean(admission && waiting
+        && record.configuration.tools.some(tool => tool.name === snapshot.pendingTools[0]?.name
+          && tool.workspaceRepairPolicy === 'preimage-compensation/v1')),
       error: applicable?.error ?? (managed?.workerError && !grantBlocked && !discarded ? { code: managed.workerError,
         message: '原托管运行尚未恢复，请核对配置或恢复状态。' } : null) };
   };
@@ -192,7 +195,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       invariant(inspected.record?.snapshot.phase !== 'interrupted', 'studio_native_recovery_reconciliation_required');
       invariant(inspected.record?.snapshot.phase !== 'awaiting_reconciliation'
         || nativeA2aReceiptWaitSource(inspected.record)
-        || inspected.record.commands.some(row => !row.consumed && row.command.kind === 'reconcile_tool'
+        || inspected.record.commands.some(row => !row.consumed && ['reconcile_tool', 'repair_workspace'].includes(row.command.kind)
           && row.command.payload.originalOperationKey === inspected.record.snapshot.toolReconciliation?.operationKey),
       'studio_native_recovery_reconciliation_required');
       invariant(!controls.has(key), 'studio_native_recovery_already_active');
@@ -215,7 +218,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     }).finally(() => { attempt.running = false; active.delete(task); });
     return acknowledgment.promise;
   };
-  const reconcile = (request, callerSignal) => {
+  const reconcile = (request, callerSignal, repair = false) => {
     validateNativeReconciliationRequest(request);
     const original = copy(request), bytes = canonical(request);
     const signal = AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : [])]);
@@ -235,7 +238,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
         && ctx.get('sessionProjections')?.stateOf?.(session, 'agentPreset') === preset
         && current.record?.snapshot.configDigest === record.snapshot.configDigest,
       'studio_native_recovery_identity_mismatch');
-      const command = { commandId: original.commandId, kind: 'reconcile_tool', payload: { originalOperationKey: original.operationKey } };
+      const command = { commandId: original.commandId, kind: repair ? 'repair_workspace' : 'reconcile_tool', payload: { originalOperationKey: original.operationKey } };
       const previous = current.record.commands.find(row => row.command.commandId === original.commandId);
       if (previous) {
         invariant(canonical(previous.command) === canonical(command), 'command_replay_conflict');
@@ -244,11 +247,13 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
       const marker = current.record.snapshot.toolReconciliation;
       invariant(current.admission && current.record.snapshot.phase === 'awaiting_reconciliation'
         && marker?.operationKey === original.operationKey, 'studio_native_recovery_reconciliation_required');
+      invariant(!repair || current.record.configuration.tools.some(tool => tool.name === current.record.snapshot.pendingTools[0]?.name
+        && tool.workspaceRepairPolicy === 'preimage-compensation/v1'), 'studio_native_workspace_repair_not_admitted');
       const control = controls.get(controlKey(original.agentId, original.sessionId));
       if (control) invariant(control.runId === original.runId && canonical(control.scope) === canonical(scope)
         && typeof control.wake === 'function', 'studio_native_recovery_identity_mismatch');
-      // The request carries no result or permission grant. Only the leased
-      // Kernel may read the original remote task and commit its new receipt.
+      // Caller supplies only original identity. Read and compensation commands
+      // are distinct; only the leased Kernel can dispatch either new effect.
       const receipt = store.enqueue(scope, original.runId, command);
       invariant(receipt.status !== 'rejected', 'studio_native_recovery_reconciliation_rejected');
       if (control) { control.wake(); return summary(original, current); }
@@ -330,5 +335,5 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
     store.acknowledge(scope, request.runId, NATIVE_A2A_QUESTION_CLEANUP, record.snapshot.eventSeq);
     return { status: 'cleaned' };
   };
-  return { status, resume, reconcile, automatic, inspect };
+  return { status, resume, reconcile, repairWorkspace: (request, signal) => reconcile(request, signal, true), automatic, inspect };
 }

@@ -6,25 +6,27 @@ import { join } from 'node:path';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { fixture, scope, digest, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
-import { createNativeToolAuthority, createNativeToolReceiptAuthority } from '../src/providers/native-tool-authority.mjs';
+import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from '../src/providers/native-tool-authority.mjs';
 import { createNativeHostInteraction } from '../src/providers/native-host-interaction.mjs';
 
-for (const sqlite of [false, true]) test(`${sqlite ? 'SQLite' : 'Memory'}: receipt authority requires the actual new read claim and exact original identity`, async t => {
+for (const repair of [false, true]) for (const sqlite of [false, true]) test(`${sqlite ? 'SQLite' : 'Memory'}: ${repair ? 'repair' : 'receipt'} authority requires the actual new claim and exact original identity`, async t => {
   const root = mkdtempSync(join(tmpdir(), 'receipt-authority-'));
   const store = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
   t.after(() => { store.close?.(); rmSync(root, { recursive: true, force: true }); });
-  const definition = tool({ name: 'remote', readOnly: false, concurrentSafe: false, recoveryPolicy: 'receipt-observation/v1' });
+  const definition = tool({ name: repair ? 'write_workspace_file' : 'remote', readOnly: false, concurrentSafe: false, recoveryPolicy: 'receipt-observation/v1',
+    ...(repair ? { workspaceCheckpointPolicy: 'file-preimages/v1', workspaceRepairPolicy: 'preimage-compensation/v1' } : {}) });
   const data = fixture({ tools: [definition] });
   let closed = false, observed;
-  const authority = createNativeToolReceiptAuthority({ scope, sessionId: 'session', store, isClosed: () => closed });
+  const authority = (repair ? createNativeWorkspaceRepairAuthority : createNativeToolReceiptAuthority)({ scope, sessionId: 'session', store, isClosed: () => closed });
+  const other = (repair ? createNativeToolReceiptAuthority : createNativeWorkspaceRepairAuthority)({ scope, sessionId: 'session', store });
   const execute = createNativeToolAuthority({ scope, sessionId: 'session', store });
   const kernel = new NativeKernel({ store, digest, owner: 'actual-owner', ports: {
     model: { generate: async () => ({ kind: 'tool_calls', text: '', usage: emptyUsage(),
-      toolCalls: [{ callId: 'original-call', name: 'remote', arguments: { original: 42 } }] }) },
+      toolCalls: [{ callId: 'original-call', name: definition.name, arguments: { original: 42 } }] }) },
     tools: { execute: async request => { assert.equal(execute(request), true); assert.equal(authority(request), false);
       return { status: 'uncertain', content: 'delivery unknown' }; },
-    observeReceipt: async request => {
-      observed = request; assert.equal(authority(request), true); assert.equal(execute(request), false);
+    [repair ? 'repairWorkspace' : 'observeReceipt']: async request => {
+      observed = request; assert.equal(authority(request), true); assert.equal(execute(request), false); assert.equal(other(request), false);
       assert.ok(request.executionFence > request.originalClaimedFence);
       for (const change of [
         { runId: 'other' }, { sessionId: 'other' }, { buildId: 'other' }, { turnId: 'other' }, { parentRunId: 'other' },
@@ -46,7 +48,8 @@ for (const sqlite of [false, true]) test(`${sqlite ? 'SQLite' : 'Memory'}: recei
     { ...waiting, revision: waiting.revision + 1 }), /checkpoint_stale/);
   const wake = new AbortController(), idle = interact({ agent: { session: { id: 'session' } }, signal: wake.signal }, waiting);
   const woken = assert.rejects(idle, /wake-original/); wake.abort(Error('wake-original')); await woken;
-  kernel.reconcileTool(scope, 'run', waiting.toolReconciliation.operationKey, 'query');
+  kernel.submit(scope, 'run', { commandId: 'query', kind: repair ? 'repair_workspace' : 'reconcile_tool',
+    payload: { originalOperationKey: waiting.toolReconciliation.operationKey } });
   assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'awaiting_reconciliation');
   assert.ok(observed); assert.equal(authority(observed), false, 'a completed query cannot authorize a later request');
 });
