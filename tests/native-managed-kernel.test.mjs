@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createManagedNativeKernel, managedNativeRunId } from '../src/providers/native-managed-kernel.mjs';
 import { createA2aInboundTaskStore } from '../src/providers/native-a2a-inbound-task-store.mjs';
+import { streamA2aInboundKernelFacts } from '../src/providers/native-a2a-inbound-kernel.mjs';
 import { permitIssuer, command, target, scope, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
@@ -30,6 +31,32 @@ function fixture(t, options = {}) {
     async reopen() { await runtime.close(); runtime = createManagedNativeKernel(config); return runtime; },
   };
 }
+
+test('trusted finite event port reads the real managed journal without starting work and supports cold inbound reconciliation', async t => {
+  let models = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => binding(command, {
+    model: { generate: async () => { models++; return response(); } }, tools: { execute: async () => assert.fail('No tool requested') },
+  }) });
+  const cmd = command({ session_id: 'a2a-kernel-finite' }), receipt = await f.receive(cmd);
+  const initial = await f.runtime.events.read(cmd.session_id, 0, 1);
+  assert.ok(initial.length <= 1); assert.equal(models, 0, 'Reading cannot start an accepted command');
+  await assert.rejects(f.runtime.events.read(cmd.session_id, 0, 101), { code: 'NATIVE_KERNEL_CURSOR_INVALID' });
+  await assert.rejects(f.runtime.events.read(cmd.session_id, 0, 1, { signal: AbortSignal.abort() }), { name: 'AbortError' });
+  await f.runtime.drain(cmd.session_id); assert.equal(models, 1);
+  const all = [];
+  for (let cursor = 0;;) {
+    const page = await f.runtime.events.read(cmd.session_id, cursor, 2);
+    if (!page.length) break;
+    assert.ok(page.length <= 2); all.push(...page); cursor = page.at(-1).seq;
+  }
+  await f.reopen();
+  const observed = [];
+  for await (const fact of streamA2aInboundKernelFacts({ sessionId: cmd.session_id, agentId: target.agentInstanceId, receipt },
+    f.runtime.events, { expectedRunId: receipt.run_id, snapshotOnly: true, signal: new AbortController().signal, assertCurrent: () => true }))
+    observed.push(fact);
+  assert.deepEqual(observed, all.filter(fact => fact.run_id === receipt.run_id));
+  assert.equal(observed.at(-1).payload.state, 'completed'); assert.equal(models, 1);
+});
 
 for (const asynchronous of [false, true]) test(`trusted worker diagnostics preserve the original error and cannot turn observer failure into execution (async=${asynchronous})`, async t => {
   const failure = Object.assign(Error('private binding detail'), { code: 'session/writer-held' });

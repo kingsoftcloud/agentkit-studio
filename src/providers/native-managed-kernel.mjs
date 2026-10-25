@@ -688,12 +688,19 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       } });
     return history.record({ ...query, runId: inspected.runId });
   }
-  function facts(sessionId, after = 0) {
+  function facts(sessionId, after = 0, limit = null) {
     guard(); invariant(text(sessionId) && Number.isSafeInteger(after) && after >= 0, 'NATIVE_KERNEL_CURSOR_INVALID');
-    projectAll(); return db.prepare('SELECT data FROM managed_events WHERE session_id=? AND seq>? ORDER BY seq').all(sessionId, after)
-      .map(row => parseNativeJson(row.data));
+    invariant(limit === null || Number.isSafeInteger(limit) && limit >= 1 && limit <= 100, 'NATIVE_KERNEL_CURSOR_INVALID');
+    projectAll();
+    const rows = limit === null ? db.prepare('SELECT data FROM managed_events WHERE session_id=? AND seq>? ORDER BY seq').all(sessionId, after)
+      : db.prepare('SELECT data FROM managed_events WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?').all(sessionId, after, limit);
+    return rows.map(row => parseNativeJson(row.data));
   }
-  const events = Object.freeze({ async *subscribe(sessionId, after = 0, { signal } = {}) {
+  const events = Object.freeze({ async read(sessionId, after = 0, limit = 100, { signal } = {}) {
+    guard(); signal?.throwIfAborted();
+    const rows = facts(sessionId, after, limit);
+    signal?.throwIfAborted(); guard(); return rows;
+  }, async *subscribe(sessionId, after = 0, { signal } = {}) {
     let cursor = after;
     for (;;) {
       guard(); signal?.throwIfAborted();

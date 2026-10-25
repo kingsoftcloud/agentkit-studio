@@ -143,6 +143,13 @@ reasoning；可信 Host 可显式开启。input-required 只发布 schema/公共
 只有 subscribe 的旧可信端口仍返回持久缓存并启动原观察；它不具备同步冷查询保证。
 跨 Host 的永久订阅消费者仍未组装，不能用单 Host 冷恢复证明该能力。
 
+Managed Native Kernel 的可信 `events` 端口现已提供上述 `read`：直接读取当前实例的
+SQLite canonical journal，先投影已提交的 Native 事实，再按 LIMIT 返回；不启动接受的
+命令，不创建新 Run，也不从 HTTP 暴露无 permit 的查询。现有 bootstrap 已将这个端口
+自动提供给未覆盖 events 的 `nativeA2aInbound`，无需调用者另行实现。真实 Managed
+Kernel 的准入前读取、两条分页、取消、冷重开及原 Run 完成投影通过两个定向用例，
+没有新增模型调用；记录见 `.artifacts/native-migration/a2a-managed-finite.log`。
+
 此批对照参考 `355059d` 的 `a2a/tool_activity.py`、`presentation.py` 和
 `kernel_task_adapter.py` / `protocol_errors.py`。只运行直接受影响的
 `native-a2a-inbound-{kernel,task-store,server}.test.mjs`、`native-a2a-tool-activity.test.mjs`，

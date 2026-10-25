@@ -15,8 +15,9 @@
 
 入站 A2A 已补上可信字段白名单的公开工具活动 producer，以及有限持久日志读取的
 GetTask/订阅冷恢复；原 Task、调用关联、披露预算和策略摘要持久化。鉴权 HTTP、重开
-及既有 consumer 的定向验证已通过，见 [入站 A2A](native-a2a-inbound.md)。只提供
-subscribe 的旧事件端口仍无同步冷查询保证，完整 Server 组装和部署验收仍待闭环。
+及既有 consumer 的定向验证已通过，见 [入站 A2A](native-a2a-inbound.md)。共用 Managed
+Kernel 已提供 SQLite 有限读取，现有 Host 自动接入。外部只提供 subscribe 的旧端口
+仍无同步冷查询保证；完整 Server 组装和部署验收仍待闭环。
 
 目标仍是完整迁移、所有 Studio 执行入口贯通、安装与执行均无需 Python，保留 DSH
 Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不免除当前能力和恢复验收。
