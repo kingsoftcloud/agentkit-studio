@@ -588,6 +588,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
           context: { ...context.port, ...(contextSources.length ? { readSource: readContextSource } : {}) }, input: { prepare: async request => {
           request.signal.throwIfAborted();
+          const instructionPaths = binding.nativeTools.instructionTouches?.(agent, store.load(scope, request.runId)) ?? [];
+          if (instructionPaths.length) {
+            invariant(typeof agentEvents === 'function', 'studio_native_instruction_dispatch_unavailable');
+            agentEvents(ctx, agent).emit('agent-instructions/touch', { paths: instructionPaths });
+          }
           const next = await prepareInput(request.step);
           request.signal.throwIfAborted();
           invariant(next && ['enter', 'reject'].includes(next.kind), 'studio_native_prepared_input_invalid');

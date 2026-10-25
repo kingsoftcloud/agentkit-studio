@@ -42,7 +42,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
   const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: { ...spec, bindings: { modelProfileIds: ['fixture'], ...spec.bindings } } });
   const bridge = contextSources ? createRuntimeBridge() : null;
   const retireContext = (contextSources?.(record) ?? []).map(source => bridge.nativeContextSources.register(source));
-  const events = [], definitions = new Map(), requests = [];
+  const events = [], definitions = new Map(), requests = [], instructionObservations = [];
   let apiKey = 'secret-one', unregisters = 0;
   const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: apiKey }) },
@@ -59,7 +59,13 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
       executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
   const host = await createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, ledger, observability, resources,
-    ...(recovery ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: agent => ({ agent }) } : {}),
+    agentEvents: (context, agent) => {
+      assert.equal(context, ctx); assert.equal(agent, payload.agent);
+      return { emit: (name, value) => {
+        assert.equal(name, 'agent-instructions/touch'); instructionObservations.push(value);
+      }, ...(recovery ? { serial: async () => payload.binding } : {}) };
+    },
+    ...(recovery ? { assembleContextFor: agent => ({ agent }) } : {}),
     contextSourceRegistry: bridge?.nativeContextSources,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       requests.push({ url, options });
@@ -86,7 +92,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
   // read from user input. Keep the hash identical to production's scope key.
   const ledgerScope = () => createHash('sha256').update(JSON.stringify(workspaceRoot)).digest('hex');
   return { root, host, payload, record, agents, builds, resolutions, models, values, requests, ledger, head, events, services, observability,
-    bridge, retireContext,
+    bridge, retireContext, instructionObservations,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
 
@@ -1296,6 +1302,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
   const head = f.head(), record = f.ledger.load(head.scope, head.runId);
   assert.equal(head.phase, 'completed'); assert.equal(record.snapshot.outcome, 'unverified');
   assert.equal(f.requests.length, 4); assert.deepEqual(effects, ['write_workspace_file', 'read_workspace_file']);
+  assert.ok(f.instructionObservations.some(value => value.paths.includes(join(f.root, 'workspace', path))));
   assert.deepEqual(record.snapshot.deliveryArtifacts.paths, [path]);
   assert.equal(await readFile(join(f.root, 'workspace', path), 'utf8'), text);
   assert.equal(record.configuration.limits.deliveryContextRecoveryPolicy, 'delivery-window-summary/v2');

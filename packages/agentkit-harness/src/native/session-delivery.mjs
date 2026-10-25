@@ -181,6 +181,8 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     }
 
     const events = record.events.filter(event => event.seq <= snapshot.eventSeq);
+    const inputBoundaries = new Map(record.intents.filter(intent => intent.kind === 'input'
+      && Number.isSafeInteger(intent.payload.messageCursor)).map(intent => [intent.operationKey, intent.payload.messageCursor]));
     // Output retirement preserves immutable model events with their ORIGINAL
     // transcript positions. Reconstruct that timeline, then replay each exact
     // retirement at its original point. Never index old events into new text.
@@ -257,6 +259,16 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       }
     };
     for (const event of events) {
+      if (event.kind === 'effect.prepared' && event.payload.kind === 'input'
+        && inputBoundaries.has(event.payload.operationKey) && modelCount > 0) {
+        // Host pre-step observers consume durable file touches at step/end.
+        // Publish that boundary before preparing the next input, including on
+        // cold replay; the intent cursor fixes its order before new context.
+        drain(inputBoundaries.get(event.payload.operationKey));
+        invariant(pending.size === 0, 'native_delivery_input_before_tool_settlement');
+        append('step/end', { turn, step });
+        continue;
+      }
       if (event.kind === 'output.restarted') {
         const { retained, retired, notice } = retirements.get(event.seq);
         invariant(cursor === retained + retired.length, 'native_delivery_output_restart_cursor_invalid');

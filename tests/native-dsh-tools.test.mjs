@@ -218,6 +218,35 @@ async function sourceRuntime(t, h, artifactFailure = false, protocol = 'openai-c
   return { ...data, store, artifacts, ports };
 }
 
+test('scoped instructions observe committed parent file receipts and can replay without executing tools', async t => {
+  const h = setup(t, ['read_workspace_file']);
+  mkdirSync(join(h.workspaceRoot, 'pkg'));
+  writeFileSync(join(h.workspaceRoot, 'pkg/file.ts'), 'export const value = 1;');
+  const { config, snapshot } = fixture({ tools: h.gateway.definitions(h.agent, [...h.registry.values()]) });
+  const store = new SqliteRunStore(join(h.workspaceRoot, '..', 'instructions.sqlite'));
+  t.after(() => store.close()); store.create(config, snapshot);
+  let calls = 0;
+  const bound = h.gateway.forAgent(h.agent, { scope, store });
+  const kernel = new NativeKernel({ store, digest, owner: 'instruction-observer', ports: { ...bound,
+    input: { prepare: async () => {
+      const record = store.load(scope, 'run');
+      assert.ok(record.events.some(event => event.kind === 'tool.completed' && event.payload.status === 'ok'));
+      assert.deepEqual(h.gateway.instructionTouches(h.agent, record), calls === 1 ? [join(h.workspaceRoot, 'pkg/file.ts')] : []);
+      const executions = h.calls.length;
+      assert.deepEqual(h.gateway.instructionTouches(h.agent, structuredClone(record)), h.gateway.instructionTouches(h.agent, record));
+      assert.equal(h.calls.length, executions, 'replay observes receipts without repeating the filesystem operation');
+      assert.throws(() => h.gateway.instructionTouches({ session: { id: 'child' } }, record), /session_mismatch/);
+      return { status: 'admitted', messages: [] };
+    } },
+    model: { generate: async () => ++calls === 1
+      ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'file', name: 'read_workspace_file', arguments: { path: 'pkg/file.ts' } }] }
+      : { kind: 'final_candidate', text: 'done', toolCalls: [], usage: emptyUsage() } },
+  } });
+  assert.deepEqual(h.gateway.instructionTouches(h.agent, store.load(scope, 'run')), []);
+  assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  assert.equal(h.calls.length, 1);
+});
+
 for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages'])
 for (const redact of [false, true]) test(`${protocol}: source capture uses already-read authorized bytes, and real scoped search/read preserve coordinates (redacted: ${redact})`, async t => {
   const h = setup(t, ['read_workspace_file']);

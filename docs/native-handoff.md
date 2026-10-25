@@ -20,7 +20,7 @@ Node-only 安装及 DSH Native/Codex 专项证据继续有效；不同阶段的�
 
 ```sh
 cd /path/to/agentkit-studio
-make dev DSH_ROOT="$PWD/.artifacts/dsh-native-idle"
+make dev DSH_ROOT="$PWD/.artifacts/dsh-native-zcode"
 ```
 
 该标准开发入口会构建并安装当前插件，默认监听 `http://127.0.0.1:3098`，不是测试
@@ -44,7 +44,7 @@ AgentKit Harness 的 Agent，新 Revision 默认 Native。普通新建对话可�
 ```sh
 DSH_HOME="$HOME/.agentkit-studio-native-local-20261025/dsh" \
 AGENTKIT_HOME="$HOME/.agentkit-studio-native-local-20261025/agentkit" \
-make dev DSH_ROOT="$PWD/.artifacts/dsh-native-idle" \
+make dev DSH_ROOT="$PWD/.artifacts/dsh-native-zcode" \
   DSH_PROFILE=native-local
 ```
 
@@ -72,7 +72,9 @@ Native 的持久化 Run 与 DSH 的产品会话各有职责，不由两个引擎
 开发环境按[入门说明](getting-started.md)运行 `make setup` / `make dev`。
 需要仓库维护的 DSH 源码和补丁；固定来源见
 `patches/dsh-v0.2.1-rc.2/source.json`，当前维护提交为
-`c7e4398390cdd0cf2604ce48acd40d84bd896068`。同版本的公开 DSH npm 包缺少所需
+`a0272d447be3d951800fcb9062ea571ff1d1fede`，新增 Native 子目录项目指令接入。
+旧的 `.artifacts/dsh-native-idle` 是此前验收所用版本，不能替代当前固定来源。
+同版本的公开 DSH npm 包缺少所需
 宿主接口，不能替代维护包；能力不足会拒绝准入。
 
 独立归档安装、维护 Host 包导出和已验证的 Node 版本见

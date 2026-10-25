@@ -19,6 +19,7 @@ import { createDeliveryReviewProof } from './native-delivery-review-proof.mjs';
 import { createDeadlinePolicyProof } from './native-deadline-policy-proof.mjs';
 import { createArtifactPolicyProof } from './native-artifact-policy-proof.mjs';
 import { createNativeTraceProof } from './native-trace-proof.mjs';
+import { createInstructionsProof } from './native-instructions-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -28,7 +29,8 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'memory-managed': { type: 'boolean', default: false },
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
   'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false }, 'delivery-review': { type: 'boolean', default: false },
-  'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false } } });
+  'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false },
+  instructions: { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
@@ -63,6 +65,11 @@ assert.ok(!values['artifact-policy'] || values['mount-host'] && !deadlinePolicyP
   && !values.memory && !managedMemory && !parallelMemory && !values.automation && !values.commands
   && !values['mcp-schema'] && !values.hooks && !values.recovery, '--artifact-policy is a separate mounted Host proof; --frozen is supported');
 const artifactPolicyProof = values['artifact-policy'] ? createArtifactPolicyProof() : null;
+assert.ok(!values.instructions || values['mount-host'] && !values.frozen && !artifactPolicyProof && !deadlinePolicyProof
+  && !deliveryReviewProof && !webProof && !values.memory && !managedMemory && !parallelMemory && !values.automation
+  && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery && !values.trace,
+  '--instructions is a separate mounted Host instruction proof');
+const instructionsProof = values.instructions ? createInstructionsProof() : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
@@ -99,6 +106,7 @@ async function waitForPublicPrefix(count, expected) {
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
+    if (instructionsProof) { await instructionsProof.respond({ request, response, raw, requests }); return; }
     if (webProof) { await webProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
     if (deliveryReviewProof) { await deliveryReviewProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
     if (deadlinePolicyProof) { await deadlinePolicyProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
@@ -177,6 +185,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (instructionsProof) await writeFile(join(root, 'instructions-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.memory || managedMemory || parallelMemory) await writeFile(join(root, 'memory-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.automation) await writeFile(join(root, 'automation-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (!response.headersSent) response.writeHead(500);
@@ -263,6 +272,7 @@ try {
     `        deliveryReview: ${values['delivery-review']}`,
     `        deadlinePolicy: ${values['deadline-policy']}`,
     `        artifactPolicy: ${values['artifact-policy']}`,
+    `        instructions: ${values.instructions}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -271,11 +281,14 @@ try {
     : join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
   const options = { dshBin: installation ? join(installation, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
     : join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
-    cwd: root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
+    cwd: values.instructions ? join(root, 'workspace') : root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (artifactPolicyProof) {
+  if (instructionsProof) {
+    await instructionsProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
+    harness = null;
+  } else if (artifactPolicyProof) {
     await artifactPolicyProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures, frozen: values.frozen });
     harness = null;
   } else if (deadlinePolicyProof) {

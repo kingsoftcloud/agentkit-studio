@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { NativeKernel, canonical, emptyUsage } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeSessionDelivery, nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
+import { NATIVE_DSH_CONTENT_FORMAT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { fixture, tool, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 
 // A fault-injectable durable consumer for transport tests; the shipped SDK
@@ -32,7 +33,7 @@ test('two output retirements preserve original model positions, committed tools 
   const f = setup(t, undefined, { outputRecoveryPolicy: 'task-or-delivery/v1', limits: { maxOutputRestarts: 2 },
     profile: { ...fixture().config.profile, maxContinuations: 1, providerReplayMode: 'reasoning_content' } });
   const sink = consumer(); let models = 0, tools = 0;
-  const adapter = { model: { generate: async () => {
+  const adapter = { input: { prepare: async () => ({ status: 'admitted', messages: [] }) }, model: { generate: async () => {
     models++;
     if (models === 1 || models === 6) return { ...final(), kind: 'tool_calls', text: 'Checking actual state',
       toolCalls: [{ callId: `read-${models}`, name: 'read', arguments: {} }] };
@@ -219,6 +220,37 @@ test('inclusive cache usage becomes disjoint Session buckets and survives cold d
   assert.deepEqual(sink.events, saved);
   const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot);
   assert.deepEqual(cold.events, saved); assert.equal(models, 1);
+});
+
+test('Host pre-step sees a durable preceding step end before admitting scoped context', async t => {
+  const f = setup(t), sink = consumer(); let models = 0, preparations = 0;
+  const adapters = ports();
+  const worker = new NativeKernel({ store: f.store, digest, owner: 'input-boundary', onCheckpoint: delivery(f.store, sink), ports: {
+    tools: adapters.tools,
+    input: { prepare: async () => {
+      preparations++;
+      const boundary = sink.durable.filter(event => ['step/start', 'step/end'].includes(event.type)).at(-1);
+      assert.equal(boundary.type, 'step/end', 'file-touch observers must run before the next model request');
+      return { status: 'admitted', messages: preparations === 1 ? [{ content: 'Scoped project rule', retention: 'normal',
+        presentation: { format: NATIVE_DSH_CONTENT_FORMAT, content: [{ type: 'text', text: 'Scoped project rule' }],
+          source: { kind: 'agent-instructions', form: 'instructions', changes: [] } } }] : [] };
+    } },
+    model: { generate: async (...args) => {
+      models++;
+      if (models === 2) assert.ok(args[0].messages.some(message => message.content === 'Scoped project rule'));
+      return adapters.model.generate(...args);
+    } },
+  } });
+  const result = await worker.runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(models, 2); assert.ok(preparations > 0);
+  const rule = sink.events.findIndex(event => event.type === 'user/message' && event.data.source?.kind === 'agent-instructions');
+  assert.ok(rule >= 0, 'scoped context retains its instruction source');
+  assert.ok(rule > sink.events.findIndex(event => event.type === 'step/end' && event.data.step === 1));
+  assert.ok(rule < sink.events.findIndex(event => event.type === 'assistant/message' && event.data.step === 2));
+  const saved = structuredClone(sink.events); f.reopen();
+  const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(cold.events, saved);
+  assert.equal(adapters.calls.write, 1);
 });
 
 test('inconsistent provider cache subtypes do not inflate delivered Session totals', async t => {

@@ -2385,12 +2385,76 @@
         "scripts/primary-runtime/prepare.ts"
       ],
       "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
+    },
+    {
+      "id": "054",
+      "file": "054-scoped-external-instructions.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "051",
+        "053"
+      ],
+      "contracts": [
+        "External filesystem observations use Agent-scoped dispatch and do not broadcast across presets.",
+        "Successful observed paths use existing discovery, limits, digest deduplication and pre-step composition.",
+        "Open steps defer projection until durable step/end; execution owners replay committed observations after restart."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent-instructions",
+        "@deepseek-ai/dsh-tool-cordis"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source a0272d44: 183 instruction tests passed, authored headless external-read Session refreshed and replayed keylessly; scoped Native packed Host proof passed baseline/next-request/cold-process refresh. Controlled model HTTP; no live provider quality claim."
+      },
+      "removeWhen": "Upstream offers equivalent Agent-scoped external filesystem observation with durable step projection and recorded-session coverage.",
+      "verification": {
+        "hostTests": [
+          "packages/context/agent-instructions/tests/agent-instructions.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/context/agent-instructions/README.i18n.yaml",
+        "packages/context/agent-instructions/README.md",
+        "packages/context/agent-instructions/README.zh.md",
+        "packages/context/agent-instructions/package.json",
+        "packages/context/agent-instructions/src/index.ts",
+        "packages/context/agent-instructions/tests/agent-instructions.spec.ts",
+        "packages/context/agent-instructions/tsconfig.json",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "pnpm-lock.yaml",
+        "scripts/gen-cordis-catalog.ts",
+        "snapshots/session/agent-instructions-external/cordis.snapshot.yml",
+        "snapshots/session/agent-instructions-external/cordis.yml",
+        "snapshots/session/agent-instructions-external/observer.ts",
+        "snapshots/session/agent-instructions-external/replay.override.json",
+        "snapshots/session/agent-instructions-external/session.v4.jsonl",
+        "snapshots/session/agent-instructions-external/snapshot.yml",
+        "snapshots/session/agent-instructions-external/system-prompt.expected.md",
+        "snapshots/session/agent-instructions-external/tool-schemas.expected.json",
+        "snapshots/session/agent-instructions-external/workspace/.agents/AGENTS.md",
+        "snapshots/session/agent-instructions-external/workspace/.dsh-project",
+        "snapshots/session/agent-instructions-external/workspace/AGENTS.canonical.md",
+        "snapshots/session/agent-instructions-external/workspace/AGENTS.md",
+        "snapshots/session/agent-instructions-external/workspace/nested/AGENTS.canonical.md",
+        "snapshots/session/agent-instructions-external/workspace/nested/AGENTS.md",
+        "snapshots/session/agent-instructions-external/workspace/nested/task.txt"
+      ],
+      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
     }
   ],
-  "patchedTree": "15ebe9073b5a11da79c709b122a2de05d1383558",
-  "patchedSourceSha256": "f2d3bf3eb9cce2b147e9db3c1e3fd6bf37711a0a3d107381768cd3e0e3eeed64",
+  "patchedTree": "e86079b225a5547c5bc7344c0893347a3b3eea8a",
+  "patchedSourceSha256": "9f27c66cf96407b26b54171432238299472e0e0b94769a407b6fea23713e4761",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "f21c17e091f2b06c6611399aa5f8a3132ccfd5a3356d9d482a9a606ef990f14b"
+    "sha256": "9d219b65ed97a14a5f63fbf86ce136cb495e3503ef3b4aa96c55649de6631d29"
   }
 }

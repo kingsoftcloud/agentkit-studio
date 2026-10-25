@@ -36,9 +36,10 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **8/100**: M1 4/15 (inputs, initial matrix and reviewed
-source findings), M2 2/15 (explicit earlier cleanup and admitted Anthropic cache
-projection), M3 2/20 (successful context-window truncation and durable cache usage accounting). M4–M6 have no earned
+Current earned progress: **10/100**: M1 4/15 (inputs, initial matrix and reviewed
+source findings), M2 4/15 (explicit earlier cleanup, admitted Anthropic cache
+projection, and actual Host baseline/nested instruction refresh), M3 2/20
+(successful context-window truncation and durable cache usage accounting). M4–M6 have no earned
 points yet. This does not imply any whole capability group is complete.
 
 ## Source and implementation map
@@ -102,9 +103,9 @@ cross-checking corrected these overbroad findings:
   preparation before delegating `agent/execute-turn`; Native projects non-user
   admitted messages as `dsh_context`. Therefore absence of a loader in Studio
   `src/` does not prove baseline instructions are missing. Product composition
-  and actual Native admission still need integration evidence. Nested refresh
-  needs special attention: the DSH loader watches `read/write/edit` with
-  `file_path`, whereas Native tools use different names/argument shapes.
+  and actual Native admission now have local integration evidence below. The
+  nested refresh gap came from the DSH loader observing `read/write/edit` with
+  `file_path`, while Native uses different tool names and owns its loop.
 - Generic externally bound tools can pass through Native's gateway. Plan/Todo
   are not categorically impossible, but their explicit roles, lifecycle, result
   semantics and default exposure are not yet aligned. Changes to the assembled
@@ -113,8 +114,8 @@ cross-checking corrected these overbroad findings:
 
 Implementation sequence after this initial batch:
 
-1. Verify baseline and nested project instruction admission in the actual
-   maintained Host; integrate missing scope refresh without a duplicate loader.
+1. Baseline/nested project instruction admission is locally integrated; retain
+   its keyless recorded-session and actual packed Host proof during later work.
 2. Integrate durable Todo/Plan behavior, mode restrictions, reminders and user
    decisions with the actual Session/UI and Native receipts.
 3. Implement general deferred-tool discovery and compaction continuity while
@@ -125,6 +126,48 @@ Implementation sequence after this initial batch:
 5. Run fixed local reference/baseline/after tasks and close the full audit.
 
 ## Initial integrated changes and evidence
+
+### Scoped workspace instructions through the actual Host
+
+DSH maintenance patch `054` adds the Agent-scoped
+`agent-instructions/touch` event to the existing loader. Native derives absolute
+paths from successful committed parent workspace-tool records immediately before
+the next Host input preparation. Child/MCP records do not become parent workspace
+observations. The event uses `agentEvents(ctx, agent)`, so multiple mounted
+presets cannot broadcast duplicate instructions into the same Agent's inbox.
+Native stores the input intent's transcript cursor and durably delivers the
+previous `step/end` before preparing new input. Cold delivery preserves the
+context's ordering, source and deduplication without repeating tools. Old input
+intents without a cursor keep their existing delivery behavior.
+
+The maintained source and exported bundle pin is
+`a0272d447be3d951800fcb9062ea571ff1d1fede`. The maintained instruction package's
+183 tests passed. Its new authored `agent-instructions-external` headless Session
+passed keyless refresh and read-only replay, using an external read tool and
+asserting nested guidance in the immediately following model request. The Native
+gateway/Session batch passed 77 tests, including SQLite receipt observation,
+multiple output retirements with input preparation, and cold Session replay.
+The Host unit batch passed 91/95 initially; four real-gateway fixture cases needed
+the newly required scoped dispatcher. Those four passed after fixing the fixture
+and adding an assertion of the dispatched path. This is combined targeted
+evidence, not a fresh all-repository test result.
+
+Reproduce the actual packed Studio + maintained Host + SDK integration with:
+
+```sh
+node scripts/verify-studio-native-harness.mjs --source "$DSH_ROOT" --mount-host --instructions --keep
+```
+
+The controlled HTTP model sees root guidance on request 1, nested guidance on
+request 2, and changed nested guidance after a second Host process starts. The
+persisted Session contains one copy of each nested update. The proof writes
+`instruction-session.json` and `instructions-proof.json` into its reported
+temporary directory. This proves local composition and request ordering, not
+live-model quality or a process kill inside the receipt-to-pre-step interval;
+that latter interval currently has SQLite/gateway and delivery replay evidence.
+Uncertain/failed tool results do not advertise successful filesystem observation.
+Nested discovery remains driven by structured filesystem observations, as in the
+existing loader; arbitrary shell commands are not parsed for paths.
 
 ### Completed generation at context capacity
 

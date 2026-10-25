@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-idle",
-  "tree": "15ebe9073b5a11da79c709b122a2de05d1383558",
-  "sourceSha256": "f2d3bf3eb9cce2b147e9db3c1e3fd6bf37711a0a3d107381768cd3e0e3eeed64",
+  "headCommit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-zcode",
+  "tree": "e86079b225a5547c5bc7344c0893347a3b3eea8a",
+  "sourceSha256": "9f27c66cf96407b26b54171432238299472e0e0b94769a407b6fea23713e4761",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "756ceb9f2a63efea3dcc29f665819eb74fd2b994cd18240edc2201949d962b96"
+    "sha256": "b74d56c65811674c49077f9832c9cfcadeefd22e545677aae8dd8ca868f018fc"
   },
   "commits": [
     {
@@ -286,6 +286,12 @@
       "file": "053-node-office-authoring.patch",
       "commit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
       "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
+    },
+    {
+      "id": "054",
+      "file": "054-scoped-external-instructions.patch",
+      "commit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
+      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
     }
   ]
 }

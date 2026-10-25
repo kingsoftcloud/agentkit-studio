@@ -132,7 +132,9 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
   if (capabilities.input && snapshot.usage.modelCalls > 0
     && ['preparing_context', 'verifying'].includes(snapshot.phase)
     && snapshot.context.inputModelCursor !== snapshot.usage.modelCalls) {
-    return prepareEffect(snapshot, 'input', snapshot.phase, { step: snapshot.usage.modelCalls + 1 });
+    return prepareEffect(snapshot, 'input', snapshot.phase, {
+      step: snapshot.usage.modelCalls + 1, messageCursor: snapshot.messages.length,
+    });
   }
   if (snapshot.phase === 'verifying' && snapshot.candidate?.purpose !== 'checkpoint') {
     const hook = planHook(snapshot, config, 'Stop', digest);

@@ -73,6 +73,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
     return sessions.get(sessionId);
   };
   const template = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(stateDir, 'definitions'), sessionId: 'definitions' });
+  const workspaceToolNames = new Set(template.definitions.map(definition => definition.name));
   const formal = new Map(template.definitions.map(definition => [definition.name, definition]));
   const managementDefinitions = skillManagementDefinitions();
   const wantsManagement = managementDefinitions.some(tool => names(config.toolBindings).includes(tool.name)
@@ -750,6 +751,23 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal',
         };
       });
+    },
+    instructionTouches(agent, record) {
+      // Only committed parent receipts feed the parent's scoped instructions.
+      // Recomputing at pre-step also covers a crash after the tool receipt but
+      // before its process-local Host notification; no tool is re-executed.
+      invariant(record.snapshot.sessionId === String(agent.session.id), 'studio_native_instruction_session_mismatch');
+      const after = record.events.findLast(event => event.kind === 'model.completed')?.seq ?? 0;
+      const touched = new Set();
+      for (const event of record.events) {
+        const value = event.payload;
+        if (event.seq <= after || event.kind !== 'tool.completed' || value.status !== 'ok'
+          || !builtinNames.has(value.name) || !workspaceToolNames.has(value.name)) continue;
+        if (typeof value.content?.path === 'string') touched.add(value.content.path);
+        if (value.name === 'write_workspace_files') for (const item of value.content?.written ?? [])
+          if (typeof item?.path === 'string') touched.add(item.path);
+      }
+      return [...touched].map(path => resolve(workspace, path));
     },
     forChild(agent, authority) {
       invariant(authority?.scope && authority.store && typeof authority.sessionId === 'string' && authority.sessionId,
