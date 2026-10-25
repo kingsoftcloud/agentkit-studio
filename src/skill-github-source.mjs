@@ -17,7 +17,8 @@
  * assertCurrent is checked before AND after every await. The caller AbortSignal
  * is required; fetch and reader.read race against it so a noncooperative
  * transport cannot hang the caller. reader.cancel in finally is fire-and-forget
- * (never awaited unbounded). redirect:'error' on every request; no Authorization.
+ * (never awaited unbounded). Redirects remain on public GitHub HTTPS origins;
+ * each hop rechecks authority and carries no Authorization.
  *
  * Commit/tree SHA separation: a resolved commit SHA is verified via
  * /git/commits/<commit> (response.sha === commit, tree.sha extracted); the tree
@@ -30,7 +31,8 @@
  * from skill-discovery.mjs. Version must match exact semver (require_exact_version).
  */
 import { createHash } from 'node:crypto';
-import { skillSlug, parseFrontmatter, SkillDiscoveryError } from './skill-discovery.mjs';
+import { skillSlug, parseFrontmatter, SkillDiscoveryError, compareSkillText } from './skill-discovery.mjs';
+import { followGithubRedirects } from './skill-github-http.mjs';
 import { skillCandidateExcluded } from './skill-candidate-metadata.mjs';
 
 export const GITHUB_SKILL_SOURCE_CONTRACT = 'agentkit.github-skill-source/v1';
@@ -228,13 +230,16 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
     signal.throwIfAborted();
     let response;
     try {
-      response = await raceAbort(
-        fetchImpl(url, { method: 'GET', redirect: 'error', signal, headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } }),
-        signal, value => value?.body?.cancel(),
-      );
+      response = await followGithubRedirects(url, { guard: () => checkAuthority(assertCurrent, signal),
+        request: target => raceAbort(fetchImpl(target, { method: 'GET', redirect: 'manual', signal,
+          headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } }),
+        signal, value => value?.body?.cancel()) });
     } catch (error) {
       checkAuthority(assertCurrent, signal);
       if (signal.aborted) throw signal.reason;
+      if (error?.code === 'skill_github_authority_lost') throw error;
+      if (error?.code === 'skill_github_redirect_invalid')
+        throw fail('skill_github_http_failed', 'GitHub API redirect was rejected');
       throw fail('skill_github_fetch_failed', 'GitHub API request could not be completed');
     }
     checkAuthority(assertCurrent, signal);
@@ -515,7 +520,7 @@ export function createGithubSkillSource({ fetchImpl } = {}) {
           }
         }
 
-        fileResults.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+        fileResults.sort((a, b) => compareSkillText(a.path, b.path));
 
         // 3. Root path is empty string, matching parent interface.
         candidates.push({

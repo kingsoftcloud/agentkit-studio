@@ -2,9 +2,11 @@ import { createGithubSkillSource, GITHUB_SKILL_SOURCE_CONTRACT, parseGithubUrl, 
   requireExactVersion, checkAuthority, raceAbort, parseFrontmatter, skillSlug } from './skill-github-source.mjs';
 import { resolveGithubCommit } from './skill-github-ref.mjs';
 import { readGithubSkillArchive } from './skill-github-archive.mjs';
+import { followGithubRedirects } from './skill-github-http.mjs';
+import { compareSkillText } from './skill-discovery.mjs';
 
 const fail = code => Object.assign(new Error(code), { code });
-const sortPath = (a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+const sortPath = (a, b) => compareSkillText(a.path, b.path);
 const cancel = value => { try { Promise.resolve(value?.cancel()).catch(() => {}); } catch {} };
 
 async function download(fetchImpl, url, signal, assertCurrent) {
@@ -12,8 +14,9 @@ async function download(fetchImpl, url, signal, assertCurrent) {
   const guard = () => { checkAuthority(assertCurrent, signal); current.throwIfAborted(); };
   let response, reader;
   try {
-    guard(); response = await raceAbort(fetchImpl(url, { method: 'GET', redirect: 'error', signal: current,
-      headers: { Accept: 'application/zip' } }), current, value => cancel(value?.body)); guard();
+    response = await followGithubRedirects(url, { guard, request: target => raceAbort(
+      fetchImpl(target, { method: 'GET', redirect: 'manual', signal: current, headers: { Accept: 'application/zip' } }),
+      current, value => cancel(value?.body)) }); guard();
     if (!response.ok) throw fail('skill_github_archive_fetch_failed');
     const length = response.headers?.get('content-length');
     if (length && (!/^\d+$/.test(length) || Number(length) > 50 * 1024 * 1024)) throw fail('skill_github_archive_limit');
@@ -76,7 +79,7 @@ export function createGithubArchiveSkillSource({ fetchImpl } = {}) {
           version: '', description: '', files: [], diagnostics: [{ code, message: 'Skill candidate could not be inspected.' }] });
         else candidates.push({ candidateId: id, path: root, name, version, description: metadata.description, files: selected });
       }
-      candidates.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : sortPath(a, b));
+      candidates.sort((a, b) => compareSkillText(a.name, b.name) || sortPath(a, b));
       checkAuthority(assertCurrent, signal);
       return { repository: { owner, name: repo, url: `https://github.com/${owner}/${repo}` }, commit, candidates };
     },

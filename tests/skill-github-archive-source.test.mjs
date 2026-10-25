@@ -6,6 +6,61 @@ import { createGithubArchiveSkillSource } from '../src/skill-github-archive-sour
 const commit = 'a'.repeat(40), options = () => ({ signal: new AbortController().signal, assertCurrent: () => true });
 const manifest = name => `---\nname: ${name}\ndescription: Unicode 技能 😀\nversion: 1.2.3\n---\nInstructions`;
 const zip = files => createZip(files.map(([path, data]) => ({ name: `repo-${commit}/${path}`, data })));
+
+test('production inspection follows GitHub repository moves and orders Unicode candidates and files like Python', async () => {
+  const first = '\ue000', last = '\u{10000}', archive = zip([
+    [`${last}/SKILL.md`, manifest('same')], [`${first}/SKILL.md`, manifest('same')],
+    [`${first}/${last}.txt`, 'later'], [`${first}/${first}.txt`, 'earlier']]), calls = [];
+  const source = createGithubArchiveSkillSource({ fetchImpl: async (url, init) => {
+    calls.push(url); assert.equal(init.redirect, 'manual'); assert.equal(init.headers.Authorization, undefined);
+    if (url === 'https://api.github.com/repos/o/r/commits/main')
+      return new Response('', { status: 301, headers: { location: '/repositories/123/commits/main' } });
+    if (url === 'https://api.github.com/repositories/123/commits/main') return Response.json({ sha: commit });
+    if (url === `https://codeload.github.com/o/r/zip/${commit}`)
+      return new Response('', { status: 307, headers: { location: `/o/renamed/zip/${commit}` } });
+    assert.equal(url, `https://codeload.github.com/o/renamed/zip/${commit}`); return new Response(archive);
+  } });
+  const result = await source.inspect('https://github.com/o/r', options());
+  assert.equal(result.commit, commit); assert.equal(calls.length, 4);
+  assert.deepEqual(result.candidates.map(value => value.path), [first, last]);
+  assert.deepEqual(result.candidates[0].files.map(value => value.path), ['SKILL.md', `${first}.txt`, `${last}.txt`]);
+});
+
+test('archive redirects cannot escape public GitHub HTTPS, loop, or exceed the reference hop limit', async () => {
+  for (const location of ['https://evil.example/file', 'http://github.com/o/r', 'https://user:pass@github.com/o/r',
+    'https://github.com:444/o/r', 'https://127.0.0.1/file', '']) {
+    let calls = 0;
+    const source = createGithubArchiveSkillSource({ fetchImpl: async () => {
+      calls++; return new Response('', { status: 302, headers: { location } });
+    } });
+    await assert.rejects(source.inspect('https://github.com/o/r', { ...options(), ref: commit }), { code: 'skill_github_archive_fetch_failed' });
+    assert.equal(calls, 1);
+  }
+  for (const looping of [true, false]) {
+    let calls = 0;
+    const source = createGithubArchiveSkillSource({ fetchImpl: async () => {
+      calls++; return new Response('', { status: 308, headers: { location: looping ? `/o/r/zip/${commit}` : `/o/r/zip/${commit}?hop=${calls}` } });
+    } });
+    await assert.rejects(source.inspect('https://github.com/o/r', { ...options(), ref: commit }), { code: 'skill_github_archive_fetch_failed' });
+    assert.equal(calls, looping ? 1 : 21);
+  }
+});
+
+test('redirect retirement or cancellation releases the response and cannot dispatch another request', async () => {
+  for (const abort of [false, true]) {
+    let calls = 0, released = 0, current = true;
+    const controller = new AbortController();
+    const source = createGithubArchiveSkillSource({ fetchImpl: async () => {
+      calls++; return { status: 302, headers: new Headers({ location: '/renamed' }), body: { cancel() {
+        released++; if (abort) controller.abort(Error('stopped')); else current = false;
+        return new Promise(() => {});
+      } } };
+    } });
+    await assert.rejects(source.inspect('https://github.com/o/r', { ref: commit, signal: controller.signal,
+      assertCurrent: () => current }), error => abort ? /stopped/.test(error.message) : error.code === 'skill_github_authority_lost');
+    assert.equal(calls, 1); assert.equal(released, 1);
+  }
+});
 const packet = text => (Buffer.byteLength(text) + 4).toString(16).padStart(4, '0') + text;
 const refs = packet('# service=git-upload-pack\n') + '0000' + packet(`${commit} refs/heads/main\0multi_ack\n`) + '0000';
 
@@ -13,7 +68,7 @@ test('REST quota failure falls back to Git advertisement then one immutable ZIP;
   const binary = Buffer.from([0, 255, 128]), archive = zip([['good/SKILL.md', manifest('good')], ['good/assets/.binary', binary],
     ['bad/SKILL.md', 'missing frontmatter'], ['node_modules/SKILL.md', 'excluded']]), calls = [];
   const source = createGithubArchiveSkillSource({ fetchImpl: async (url, init) => {
-    calls.push(String(url)); assert.equal(init.redirect, 'error'); assert.equal(init.headers?.Authorization, undefined);
+    calls.push(String(url)); assert.equal(init.redirect, 'manual'); assert.equal(init.headers?.Authorization, undefined);
     if (url === 'https://api.github.com/repos/o/r/commits/main') return new Response('', { status: 429 });
     if (url === 'https://github.com/o/r.git/info/refs?service=git-upload-pack') return new Response(refs);
     assert.equal(url, `https://codeload.github.com/o/r/zip/${commit}`); return new Response(archive);

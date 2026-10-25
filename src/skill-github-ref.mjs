@@ -1,5 +1,6 @@
 // REST is preferred; bounded read-only Git advertisements recover public quota
 // failures. Each request has its own deadline, independent of caller authority.
+import { followGithubRedirects } from './skill-github-http.mjs';
 const HEX40 = /^[0-9a-f]{40}$/;
 const OWNER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const fail = code => Object.assign(new Error(code), { code });
@@ -35,8 +36,9 @@ async function request(url, maxBytes, { fetchImpl, signal, assertCurrent }) {
     catch { authority(signal, assertCurrent); throw fail('skill_github_ref_invalid'); }
   }
   try {
-    response = await io(() => fetchImpl(url, { method: 'GET', redirect: 'error', signal: deadline,
-      headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } }), value => discard(value?.body));
+    response = await followGithubRedirects(url, { guard, request: target => io(() => fetchImpl(target,
+      { method: 'GET', redirect: 'manual', signal: deadline,
+        headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } }), value => discard(value?.body)) });
     guard();
     if (!response?.ok || typeof response.body?.getReader !== 'function') throw fail('skill_github_ref_invalid');
     const length = response.headers?.get?.('content-length');

@@ -119,8 +119,15 @@ UTF-8 and CP437 names are supported. Root and nested Skills retain complete
 subtrees. Each Skill permits 1,000 files and 100 MiB. Candidate selections
 support up to 5,000 IDs; stored files are deduplicated by content hash.
 
-All URLs are reconstructed HTTPS URLs, without credentials or environment
-tokens, and requests use `redirect:error`. The earlier separately bounded Git
+Initial URLs are reconstructed HTTPS URLs, without credentials or environment
+tokens. GET redirects are followed manually for repository moves and relative
+locations, up to 20 hops like the reference HTTP client. Every hop remains on
+`github.com`, `api.github.com` or `codeload.github.com` over HTTPS without URL
+credentials; cycles, missing locations and other destinations fail before an
+additional request. Each hop rechecks the original execution authority and
+shares the original request deadline/cancellation. Redirect response bodies
+are released without waiting for a noncooperative cancellation implementation.
+The earlier separately bounded Git
 tree/blob API source remains available and tested, but production Host uses the
 archive source; a failed archive does not silently switch to different budget
 semantics.
@@ -150,13 +157,15 @@ overwrite under the catalog lock.
 
 These differences remain mandatory audit items before lossless parity:
 
-- Python follows redirects; Node rejects them. Node additionally rejects
-  malformed packet framing, duplicate refs, conflicting archive paths and some
+- Python follows redirects to arbitrary destinations; Node follows the public
+  GitHub HTTPS origins above. Node additionally rejects malformed packet
+  framing, duplicate refs, conflicting archive paths and some
   unsafe entries. ZIP64 is unsupported, and YAML alias expansion is bounded to
   100; Python's parser accepts additional scalar coercions. These format and
   transport differences still require a final compatibility decision.
-- Candidate/path sorting uses JavaScript string order; supplementary Unicode
-  ordering has not been proven equivalent to Python's ordering.
+- Candidate names, paths and package file lists use Unicode code-point order,
+  matching Python string ordering without the machine's locale. Local
+  discovery/catalog ordering uses that same comparison.
 - Local runtime configuration is implemented above. Typed Skill diagnostics and
   sidecar admission now use the original durable workflows; see
   [Skill events and evidence boundaries](native-skill-events.md).
@@ -176,6 +185,18 @@ logical size bounds despite deduplication, denial/cancellation/authority loss,
 cross-process publication, cold Node processes and actual SIGKILL after install
 and bind publication. Controlled GitHub transport covers immutable identities,
 malformed trees, digest/size limits and noncooperative network cancellation.
+
+The redirect/ordering change checked only four affected modules on Node 26:
+`node --test tests/skill-github-archive-source.test.mjs tests/skill-github-ref.test.mjs tests/skill-github-source.test.mjs tests/skill-discovery.test.mjs`.
+The first run passed 137 of 140 checks. Two assertions were adapted to the
+explicit manual redirect and existing absolute custom-scan path contracts;
+the implementation retained the existing rejected-redirect error code.
+Only those three cases were rerun and passed. Logs are
+`.artifacts/native-migration/skill-import-compatibility.log` and
+`skill-import-compatibility-targeted.log`. New cases exercise the production
+source through REST and ZIP redirects, supplementary Unicode files/candidates,
+local discovery, rejected destinations, cycles/hop limits and authority loss
+or cancellation between hops. This was not a full migration regression.
 
 Packed Host verification uses actual DSH Native/Codex presets and registries,
 cold Host restart and Python-unavailable PATH. GitHub responses are controlled

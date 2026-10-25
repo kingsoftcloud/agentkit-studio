@@ -626,10 +626,14 @@ decimal/exponent tokens retain IEEE float semantics. Core copies, SQLite,
 artifact metadata, numeric schema predicates, three model protocols, private
 replay and structured final delivery preserve these values. A real Node process
 exit after a committed tool receipt also retains the exact integer without
-redispatch. The current DSH tool pipeline still accepts ordinary JSON values
-only; Studio rejects tool input requiring the exact numeric codec before
-dispatch with an explicit unsupported result. That host boundary remains an open migration requirement,
-so this does not establish completed lossless migration.
+redispatch. The maintained DSH tool pipeline now negotiates
+`dsh.raw-json-number/v1` (maintenance patch `049`): intrinsic numeric
+`JSON.rawJSON` tokens survive snapshotting and permission stages, while owned
+Node tools continue to use the exact original Native request. An older Host
+without that capability explicitly rejects these inputs before dispatch.
+This closes the maintained Host argument-transport implementation gap; the
+ordinary Session/tool-output JSON contract is unchanged. Details and evidence
+are in [the numeric integration record](native-harness-migration.md).
 
 ## Optional typed Skill diagnostics
 

@@ -1,5 +1,12 @@
 # Native 迁移当前验收状态
 
+GitHub Skill 导入已补齐公共 GitHub HTTPS 范围内的重定向（仓库迁移、相对跳转，
+最多 20 跳），每跳复核原授权并沿用取消/超时；本地发现、候选及文件排序改用
+Python 的 Unicode 码点顺序。4 个直接受影响模块首轮 137/140 通过，适配契约断言
+并保留原拒绝错误码后，仅复查原 3 个失败项，全部通过。未跑全量、未重新安装，见
+[Skill 管理](native-skill-management.md)。参考能力表中“宿主精确数值参数仍缺失”
+的旧记录也已按现有维护补丁 `049` 和生产协商代码纠正。
+
 共用 Native Host 已从原 SQLite Run 账本生成 Studio Trace，生产 bootstrap 已接线，
 普通回合和 Managed 回合共用该投影。保留 Run/Session、事件身份、版本及实际累计
 token；冷重放不改写已有观察时间，旧版本不能覆盖新版本。Trace 写入失败不会导致

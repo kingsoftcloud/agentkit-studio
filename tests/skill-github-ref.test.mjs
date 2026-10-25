@@ -127,13 +127,13 @@ test('uppercase SHA returns lowercase after guard', async () => {
 
 // ---- REST commit resolution -------------------------------------------------
 
-test('REST commits returns SHA, redirect:error, no Authorization', async () => {
+test('REST commits returns SHA through checked manual redirects without Authorization', async () => {
   const routes = { 'https://api.github.com/repos/o/r/commits/main': () => jsonResponse(200, { sha: COMMIT_SHA }) };
   const { fetchImpl, calls } = makeTransport(routes);
   const sha = await resolveGithubCommit({ fetchImpl, owner: 'o', repository: 'r', ref: 'main',
     signal: new AbortController().signal, assertCurrent: trueAuthority });
   assert.equal(sha, COMMIT_SHA);
-  assert.equal(calls[0].redirect, 'error');
+  assert.equal(calls[0].redirect, 'manual');
   assert.equal(calls[0].headers.Authorization, undefined);
 });
 
@@ -446,7 +446,7 @@ test('peeled tag > branch > raw tag (all present)', async () => {
 
 // ---- redirect policy -------------------------------------------------------
 
-test('redirect:error on every request', async () => {
+test('checked manual redirect handling on every request', async () => {
   const routes = {
     'https://api.github.com/repos/o/r/commits/main': () => jsonResponse(200, { sha: COMMIT_SHA }),
     'https://github.com/o/r.git/info/refs?service=git-upload-pack': () => rawResponse(200, buildAdvertisement([[HEADS_SHA, 'refs/heads/main']])),
@@ -454,5 +454,5 @@ test('redirect:error on every request', async () => {
   const { fetchImpl, calls } = makeTransport(routes);
   await resolveGithubCommit({ fetchImpl, owner: 'o', repository: 'r', ref: 'main',
     signal: new AbortController().signal, assertCurrent: trueAuthority });
-  for (const c of calls) assert.equal(c.redirect, 'error');
+  for (const c of calls) assert.equal(c.redirect, 'manual');
 });

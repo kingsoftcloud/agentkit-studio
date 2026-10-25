@@ -27,6 +27,15 @@ export class SkillDiscoveryError extends Error {
   }
 }
 
+/** Python string ordering compares Unicode code points, independent of locale. */
+export function compareSkillText(a, b) {
+  const left = Array.from(a, value => value.codePointAt(0)), right = Array.from(b, value => value.codePointAt(0));
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return left.length - right.length;
+}
+
 export function skillSlug(value) {
   const slug = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!slug) throw new SkillDiscoveryError('SKILL_NAME_INVALID', 'SKILL.md 的 name 无法生成目录 slug');
@@ -90,7 +99,7 @@ async function listFiles(directory, base = directory, depth = 0, out = []) {
 
 async function directoryDigest(files) {
   const hash = createHash('sha256');
-  for (const file of files.slice().sort((a, b) => a.relative.localeCompare(b.relative))) {
+  for (const file of files.slice().sort((a, b) => compareSkillText(a.relative, b.relative))) {
     hash.update(file.relative);
     hash.update(await readFile(file.absolute).catch(() => Buffer.alloc(0)));
   }
@@ -128,7 +137,7 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
         sourceDirectories.set(candidate.candidateId, directory);
       }
     }
-    candidates.sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.path.localeCompare(b.path));
+    candidates.sort((a, b) => compareSkillText(a.name || '', b.name || '') || compareSkillText(a.path, b.path));
     const token = `skd_${randomUUID().replace(/-/g, '')}`;
     records.set(token, { token, candidates, sourceDirectories, expiresAt: Date.now() + RECORD_TTL_MS });
     for (const [key, value] of records) if (value.expiresAt < Date.now()) records.delete(key);
@@ -248,7 +257,7 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
       } catch { /* unreadable skill directory is skipped, not fatal for the list */ }
     }
     for (const { directory, ...item } of Object.values(await bundleRecords())) items.push(item);
-    items.sort((a, b) => a.name.localeCompare(b.name));
+    items.sort((a, b) => compareSkillText(a.name, b.name));
     return { items, nextCursor: null, total: items.length, source: 'local-store' };
   }
 

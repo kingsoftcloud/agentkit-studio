@@ -155,7 +155,7 @@ test('inspect fetches commit→git/commits→tree by tree SHA, verifying identit
   assert.deepEqual(result.candidates[0].files.find(f => f.path === 'assets/data.bin').bytes, new Uint8Array(BINARY));
   // Endpoint sequence: commits→git/commits→git/trees→3 blobs
   assert.equal(calls.length, 6);
-  for (const c of calls) { assert.equal(c.redirect, 'error'); assert.equal(c.headers.Authorization, undefined); }
+  for (const c of calls) { assert.equal(c.redirect, 'manual'); assert.equal(c.headers.Authorization, undefined); }
 });
 
 test('inspect rejects when git/commits response sha does not match resolved commit', async () => {
@@ -647,7 +647,7 @@ test('inspect rejects more than 5000 candidates', async () => {
   await assert.rejects(() => src.inspect('https://github.com/o/r', { signal: new AbortController().signal, assertCurrent: trueAuthority }), { code: 'skill_github_candidate_limit' });
 });
 
-test('inspect rejects a redirect response', async () => {
+test('inspect rejects a redirect outside GitHub before dispatch', async () => {
   const routes = {};
   routes[`https://api.github.com/repos/o/r/commits/main`] = () => redirectResponse();
   const { fetchImpl } = makeTransport(routes);
@@ -762,7 +762,7 @@ test('search returns repositories with in:name,description and reconstructed URL
   assert.equal(result.repositories[0].description, 'one 😀');
   assert.equal(result.repositories[0].owner, 'o');
   assert.equal(result.repositories[1].archived, true);
-  assert.equal(calls[0].redirect, 'error');
+  assert.equal(calls[0].redirect, 'manual');
   assert.equal(calls[0].headers.Authorization, undefined);
 });
 

@@ -24,6 +24,17 @@ async function makeHome() {
   return mkdtemp(join(tmpdir(), 'agentkit-skills-'));
 }
 
+test('local Skill discovery orders supplementary Unicode paths by Python code points', async t => {
+  const home = await makeHome(), scan = join(home, 'skills');
+  t.after(() => rm(home, { recursive: true, force: true }));
+  for (const name of ['\u{10000}', '\ue000']) {
+    await mkdir(join(scan, name), { recursive: true });
+    await writeFile(join(scan, name, 'SKILL.md'), '---\nname: same\ndescription: valid\n---\nInstructions');
+  }
+  const result = await createSkillDiscovery({ home }).discover([scan]);
+  assert.deepEqual(result.candidates.map(value => value.path), [join(scan, '\ue000'), join(scan, '\u{10000}')]);
+});
+
 test('parseFrontmatter reads simple scalar fields and ignores non-manifest text', () => {
   const metadata = parseFrontmatter('---\nname: My Skill\ndescription: does things\nversion: 2.1.0\n---\nbody');
   assert.equal(metadata.name, 'My Skill');
