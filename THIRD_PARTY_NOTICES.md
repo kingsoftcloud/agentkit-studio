@@ -1,5 +1,12 @@
 # Third-party source notices
 
+`packages/agentkit-harness-core/src/edit-matchers.mts` preserves the standalone
+matching algorithm from ZCode commit `3c5b227649371507ddc4eb46ac5133afe6db1cab`,
+`apps/zcode-cli/packages/core/src/tool/edit-matchers.ts`, with an attribution
+header added. Native adapts its results at the workspace boundary, retains its
+own read-state/publication checks and runs matching in a bounded Node worker.
+This Apache-2.0 source is covered by `third-party/ZCode-LICENSE`.
+
 `packages/agentkit-harness-core/src/tool-search-ranking.mts` adapts the tool
 ranking algorithm and MCP name normalization from [ZCode](https://github.com/zai-org/ZCode),
 commit `3c5b227649371507ddc4eb46ac5133afe6db1cab`, files

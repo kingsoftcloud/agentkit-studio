@@ -11,12 +11,14 @@ import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' },
-  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' } } });
+  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 if (values['child-controls']) assert.ok(values.promote && values.history && values['continue-child'], '--child-controls requires --promote --history --continue-child');
 if (values['guidance-fifo']) assert.ok(values['child-controls'], '--guidance-fifo requires --child-controls');
 if (values['task-controls']) assert.ok(!values.promote && !values['child-controls'], '--task-controls runs its own bounded child workflow');
 if (values['child-plan']) assert.ok(values['task-controls'] && values['continue-child'], '--child-plan requires --task-controls --continue-child');
+if (values['edit-matching']) assert.ok(values['continue-child'] && values.history && !values['task-controls'] && !values['child-controls'] && !values.promote,
+  '--edit-matching requires --continue-child --history without other child scenarios');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
 console.log(`Studio child evidence: ${root}`);
@@ -42,9 +44,11 @@ const server = createServer(async (request, response) => {
     assert.ok(child || body.model === 'parent-proof');
     let call, calls, text;
     if (child) {
-      const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3;
+      const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3
+        || values['edit-matching'] && childStep === 2;
       assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? []
-        : ['read_workspace_file', ...(values['child-plan'] ? ['write_workspace_file'] : []), 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
+        : ['read_workspace_file', ...(values['child-plan'] ? ['write_workspace_file'] : []),
+          ...(values['edit-matching'] ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []), 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       const results = body.messages.filter(message => message.role === 'tool');
       if (values['child-controls'] && childStep > 0 && turn === 1) assert.match(JSON.stringify(body.messages), /SDK child guidance/);
@@ -113,7 +117,14 @@ const server = createServer(async (request, response) => {
           call = undefined;
         }
       }
-      else { assert.match(results.at(-1).content, /Evidence from the actual child workspace/);
+      else if (values['edit-matching'] && childStep === 2) {
+        assert.match(results.at(-1).content, turn === 1 ? /Evidence from the actual child workspace/ : /Child edited 1/);
+        call = turn === 1 ? { name: 'edit_workspace_file', arguments: { path: 'proof.txt',
+          old_text: '1: Evidence from the actual child workspace', new_text: 'Child edited 1' } }
+          : { name: 'multi_edit_workspace_file', arguments: { path: 'proof.txt', edits: [{ old_text: '\\u0043hild edited 1', new_text: 'Child edited 2' }] } };
+      }
+      else { if (values['edit-matching']) assert.match(results.at(-1).content, turn === 1 ? /line_number_prefix_stripped/ : /unicode_escape_normalized/);
+        else assert.match(results.at(-1).content, /Evidence from the actual child workspace/);
         if (values['child-plan']) {
           const writeCall = body.messages.flatMap(message => message.tool_calls ?? []).findLast(item => item.function.name === 'write_workspace_file');
           const written = results.findLast(message => message.tool_call_id === writeCall?.id);
@@ -125,7 +136,7 @@ const server = createServer(async (request, response) => {
     } else {
       assert.ok(body.tools.some(tool => tool.function.name === 'native_start_child'));
       const step = parentStep++;
-      if (step === 0) call = { name: turn === 1 || values['continue-child'] ? 'native_delegate' : 'native_start_child', arguments: { role: 'reader', task: `Read proof.txt for turn ${turn}`,
+      if (step === 0) call = { name: turn === 1 || values['continue-child'] ? 'native_delegate' : 'native_start_child', arguments: { role: 'reader', task: `${values['edit-matching'] ? 'Read and edit' : 'Read'} proof.txt for turn ${turn}`,
         ...(turn === 2 ? { output_format: 'json_object', output_contract: 'parent',
           ...(values['continue-child'] ? { continuation_of: firstChildId, background: true } : {}) } : {}) } };
       else if (step === 1) {
@@ -187,6 +198,7 @@ try {
     '      config:', `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...(values['task-controls'] ? ['        taskControls: true'] : []), '',
     ...(values['child-plan'] ? ['        childPlanMode: true'] : []),
+    ...(values['edit-matching'] ? ['        editMatching: true'] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -233,7 +245,7 @@ try {
   }
   await harness.close(); harness = null;
   assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length,
-    values['task-controls'] ? 8 : values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
+    values['task-controls'] ? 8 : values['edit-matching'] ? 6 : values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
   const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const { readNativeRecoveryBinding } = await import(pathToFileURL(join(installed, 'src/providers/native-recovery-binding.mjs')).href);
@@ -253,8 +265,8 @@ try {
       assert.equal(JSON.stringify(recovery).includes('child-proof-secret'), false);
       const canceled = values['child-controls'] && !parent.childRunIds.includes(firstChildId);
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
-      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['task-controls'] ? 4 : values['guidance-fifo'] ? 3 : 2);
-      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : 1);
+      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['task-controls'] ? 4 : values['guidance-fifo'] || values['edit-matching'] ? 3 : 2);
+      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : values['edit-matching'] ? 2 : 1);
       const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
       if (reservation.deliveryMode === 'foreground') {
         assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
@@ -263,6 +275,12 @@ try {
       const child = store.load(reservation.childScope, reservation.childRunId);
       assert.equal(child.snapshot.phase, canceled ? 'canceled' : 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId);
+      if (values['edit-matching']) {
+        for (const name of ['edit_workspace_file', 'multi_edit_workspace_file'])
+          assert.equal(child.configuration.tools.find(tool => tool.name === name).workspaceEditPolicy, 'zcode-match/v1');
+        if (parent.turnId !== '1') assert.equal(await readFile(join(root, 'studio/native-harness/child-workspaces',
+          child.configuration.hostRecoveryBinding.childWorkspace.isolationId, 'work/proof.txt'), 'utf8'), 'Child edited 2');
+      }
       if (values['child-plan']) {
         const active = parent.turnId === '1';
         assert.equal(record.configuration.childPlanPolicy, 'inherit-plan/v1');
@@ -293,12 +311,12 @@ try {
         assert.equal(child.snapshot.parentRunId, firstChildId); assert.equal(child.snapshot.sessionId, original.snapshot.sessionId);
         assert.equal(child.configuration.childOwnerBinding.continuationOf, firstChildId);
         assert.equal(child.configuration.childOwnerBinding.continuationParentRunId, firstParent.runId);
-        assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['task-controls'] ? 4 : values['guidance-fifo'] ? 3 : 2);
-        assert.equal(original.snapshot.usage.toolCalls, values['child-plan'] ? 4 : values['task-controls'] ? 3 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
+        assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['task-controls'] ? 4 : values['guidance-fifo'] || values['edit-matching'] ? 3 : 2);
+        assert.equal(original.snapshot.usage.toolCalls, values['child-plan'] ? 4 : values['task-controls'] ? 3 : values['edit-matching'] ? 2 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
         if (values['child-plan']) assert.equal(original.snapshot.planMode.active, true);
         assert.equal(store.sessionHead(reservation.childScope, original.snapshot.sessionId).runId, child.snapshot.runId);
       } else assert.equal(child.snapshot.parentRunId, null);
-      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : 1);
+      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['child-plan'] ? 4 : values['task-controls'] ? 3 : values['edit-matching'] ? 2 : 1);
       if (values['child-controls']) {
         const commandKind = canceled ? 'cancel' : 'guide';
         const count = !canceled && values['guidance-fifo'] ? 2 : 1;
@@ -334,6 +352,16 @@ try {
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
   if (values['child-plan']) await assert.rejects(readFile(join(root, 'workspace/plan-child.txt')), { code: 'ENOENT' });
+  if (values['edit-matching']) {
+    assert.equal(await readFile(join(root, 'workspace/proof.txt'), 'utf8'), 'Evidence from the actual child workspace');
+    const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(new Set(hosts.map(host => host.pid)).size, 2);
+    await writeFile(join(root, 'edit-matching-proof.json'), JSON.stringify({ contract: 'agentkit.native-edit-matching-proof/v1', hostProcesses: hosts,
+      parentModelRequests: requests.filter(body => body.model === 'parent-proof').length,
+      childModelRequests: requests.filter(body => body.model === 'child-proof').length,
+      strategies: ['line_number_prefix_stripped', 'unicode_escape_normalized'], actualReads: 2, actualEdits: 2,
+      continuedChildSession: true, parentWorkspaceUnchanged: true, noPython: true }, null, 2));
+  }
   if (values['task-controls']) {
     const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.equal(new Set(hosts.map(host => host.pid)).size, 2);

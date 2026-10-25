@@ -358,6 +358,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           || baseTools.some(tool => toolDiscoveryDefinitions().some(control => control.name === tool.name))
           ? undefined : 'local-tool-search/v1';
       const toolOptions = { ...(toolDiscoveryPolicy ? { toolDiscoveryPolicy } : {}),
+        ...((original ? original.configuration.tools.some(tool => tool.workspaceEditPolicy) : true)
+          ? { workspaceEditPolicy: 'zcode-match/v1' } : {}),
         // Old Runs retain the exact absence/selection of Plan exceptions.
         planModeMcpAccess: original ? original.configuration.tools.filter(tool => tool.planModeAccess).map(tool => tool.name) : !!planModePolicy,
         ...((original ? original.configuration.tools.some(tool => tool.planModeCommandPolicy) : !!planModePolicy)

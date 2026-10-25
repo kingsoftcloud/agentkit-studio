@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { checkPythonSyntax, NATIVE_PYTHON_SYNTAX } from './python-syntax.mjs';
 import { acquireWorkspaceMutationLock, workspaceMutationGuard } from './workspace-mutation-lock.mjs';
 import { budgetWorkspaceSourcePage, validateSourcePageBudget } from './source-page.mjs';
+import { prepareWorkspaceEdits } from './workspace-edit-match.mjs';
 
 import {
   WorkspacePathError, escapeRegex, fnmatch, publishWorkspaceBytes, sha256,
@@ -437,7 +438,7 @@ export function createNativeWorkspaceTools({
     return { ok: true, written, truncated: files.length > written.length };
   }
 
-  function editWorkspaceFile(args) {
+  function editWorkspaceFile(args, { preparedEdit } = {}) {
     const path = String(args.path ?? '');
     const oldText = args.old_text;
     const newText = args.new_text;
@@ -447,7 +448,7 @@ export function createNativeWorkspaceTools({
     const rel = relativeOf(target);
     const requestError = validateSingleEditRequest(oldText, rel);
     if (requestError) return requestError;
-    const observed = store.getReadState(rel);
+    const observed = preparedEdit?.pinned ?? store.getReadState(rel);
     const pinned = observed ? { ...observed } : null;
     let readError = validateReadState(target, rel, { state: pinned });
     if (readError) return readError;
@@ -456,7 +457,8 @@ export function createNativeWorkspaceTools({
     if (text === null) return { ok: false, path, error_message: 'workspace file read failed' };
     readError = validateReadState(target, rel, { state: pinned, content: text });
     if (readError) return readError;
-    const editResult = applySingleEdit(text, oldText, newText, { expectedReplacements, replaceAll, relative: rel });
+    if (preparedEdit && text !== preparedEdit.text) return stalePreparedEdit(rel);
+    const editResult = preparedEdit ? preparedEdit.results[0] : applySingleEdit(text, oldText, newText, { expectedReplacements, replaceAll, relative: rel });
     if (!editResult.ok) return editResult;
     const updated = String(editResult.updated);
     const diff = buildDiff(rel, text, updated);
@@ -468,6 +470,7 @@ export function createNativeWorkspaceTools({
       absolute_path: target,
       replacements: editResult.replacements,
       used_quote_normalization: editResult.used_quote_normalization,
+      ...(editResult.match_strategy ? { match_strategy: editResult.match_strategy, match_candidate_count: editResult.match_candidate_count } : {}),
       diff,
       diff_sha256: sha256(Buffer.from(diff, 'utf-8')),
       diff_line_count: diffLineCount(diff),
@@ -477,7 +480,7 @@ export function createNativeWorkspaceTools({
     };
   }
 
-  function multiEditWorkspaceFile(args) {
+  function multiEditWorkspaceFile(args, { preparedEdit } = {}) {
     const path = String(args.path ?? '');
     const edits = args.edits;
     const replaceAll = Boolean(args.replace_all);
@@ -494,13 +497,14 @@ export function createNativeWorkspaceTools({
       const reqErr = validateSingleEditRequest(edit.old_text, rel);
       if (reqErr) return { ...reqErr, failed_edit_index: index, edit_count: edits.length };
     }
-    const observed = store.getReadState(rel);
+    const observed = preparedEdit?.pinned ?? store.getReadState(rel);
     const pinned = observed ? { ...observed } : null;
     let readError = validateReadState(target, rel, { state: pinned });
     if (readError) return readError;
     const { text, error } = readWorkspaceText(target);
     if (error) return { ...error, path };
     const original = text ?? '';
+    if (preparedEdit && original !== preparedEdit.text) return stalePreparedEdit(rel);
     readError = validateReadState(target, rel, { state: pinned, content: original });
     if (readError) return readError;
     let updated = original;
@@ -508,7 +512,7 @@ export function createNativeWorkspaceTools({
     let totalReplacements = 0;
     for (let index = 0; index < edits.length; index++) {
       const edit = edits[index];
-      const r = applySingleEdit(updated, edit.old_text, edit.new_text, {
+      const r = preparedEdit ? preparedEdit.results[index] : applySingleEdit(updated, edit.old_text, edit.new_text, {
         expectedReplacements: Number(edit.expected_replacements ?? 1),
         replaceAll: Boolean(edit.replace_all ?? replaceAll),
         relative: rel,
@@ -516,7 +520,8 @@ export function createNativeWorkspaceTools({
       if (!r.ok) return { ...r, failed_edit_index: index, edit_count: edits.length };
       updated = String(r.updated);
       totalReplacements += Number(r.replacements);
-      diagnostics.push({ index, replacements: r.replacements, used_quote_normalization: r.used_quote_normalization, matches: r.matches || [] });
+      diagnostics.push({ index, replacements: r.replacements, used_quote_normalization: r.used_quote_normalization, matches: r.matches || [],
+        ...(r.match_strategy ? { match_strategy: r.match_strategy, match_candidate_count: r.match_candidate_count } : {}) });
     }
     const diff = buildDiff(rel, original, updated);
     const { stat: newStat, error: commitError } = commitEdit(target, rel, updated, pinned);
@@ -535,6 +540,30 @@ export function createNativeWorkspaceTools({
       size: Number(newStat.size),
       mtime_ns: Number(newStat.mtimeNs),
     };
+  }
+
+  function stalePreparedEdit(relative) {
+    return { ok: false, path: relative, error_type: 'file_modified_since_read',
+      error_message: 'workspace file changed while preparing the edit', suggested_action: 'Read the current file and retry.' };
+  }
+
+  async function prepareEdit(request, guard) {
+    const args = request.call.arguments, target = resolvePath(args.path), relative = relativeOf(target);
+    const edits = request.call.name === 'edit_workspace_file' ? [args] : args.edits;
+    if (!Array.isArray(edits) || !edits.length || edits.some(edit => !edit || typeof edit.old_text !== 'string' || typeof edit.new_text !== 'string'))
+      return { error: { ok: false, path: relative, error_type: 'invalid_edits', error_message: 'Non-empty edits with old_text and new_text strings are required.' } };
+    const state = store.getReadState(relative), pinned = state ? { ...state } : null;
+    let error = validateReadState(target, relative, { state: pinned });
+    if (error) return { error };
+    const read = readWorkspaceText(target);
+    if (read.error) return { error: { ...read.error, path: relative } };
+    error = validateReadState(target, relative, { state: pinned, content: read.text });
+    if (error) return { error };
+    const results = await prepareWorkspaceEdits({ text: read.text, relative, edits, replaceAll: Boolean(args.replace_all) }, { signal: request.signal });
+    guard();
+    if (!results) return { error: { ok: false, path: relative, error_type: 'edit_match_budget_exceeded', executed: false,
+      error_message: 'Edit matching exceeded its local time or memory budget. No file was changed. Use a smaller unique exact snippet.' } };
+    return { text: read.text, pinned, results };
   }
 
   function commitEdit(target, rel, updated, pinned) {
@@ -837,14 +866,28 @@ export function createNativeWorkspaceTools({
 
     if (signal?.aborted) return canceled();
 
-    let result;
+    let result, preparedEdit;
+    // Matching runs before the publication lock, with strings only. The locked
+    // commit rechecks the captured read state and content after this await.
+    if (request.definition?.workspaceEditPolicy !== undefined) {
+      if (request.definition.workspaceEditPolicy !== 'zcode-match/v1' || !['edit_workspace_file', 'multi_edit_workspace_file'].includes(name))
+        return { status: 'error', content: { code: 'invalid_workspace_edit_policy' } };
+      try {
+        preparedEdit = await prepareEdit(request, guard);
+        if (preparedEdit.error) return { status: 'error', content: preparedEdit.error };
+      } catch (error) {
+        if (signal?.aborted) return canceled();
+        return { status: 'error', content: { ok: false, error_type: error instanceof WorkspacePathError ? 'path_escape' : error.code || 'edit_match_failed',
+          error_message: error.message, executed: false } };
+      }
+    }
     const mutations = new Set(), previousMutations = activeMutations, previousGuard = activeGuard;
     let release;
     try {
       if (mutating) release = acquireWorkspaceMutationLock(pinnedRootReal);
       guard();
       activeMutations = mutations; activeGuard = guard;
-      result = impl(call.arguments ?? {}, { signal, request });
+      result = impl(call.arguments ?? {}, { signal, request, preparedEdit });
       guard();
     } catch (e) {
       if (signal?.aborted && !mutations.size) return canceled();

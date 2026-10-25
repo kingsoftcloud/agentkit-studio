@@ -6,6 +6,7 @@
  */
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { sha256, TWO_MB } from './workspace-paths.mjs';
+import { findEditMatch, normalizeLineEndings, normalizeReplacementForMatch, preserveQuoteStyle } from '../../../agentkit-harness-core/dist/edit-matchers.mjs';
 /**
  * Python str.splitlines() boundaries, with \r\n consumed as a single split.
  * The character class is built from code points at runtime because \u2028 and
@@ -268,6 +269,42 @@ function countOccurrences(text, needle) {
   let from = 0;
   while ((from = text.indexOf(needle, from)) !== -1) { count++; from += needle.length; }
   return count;
+}
+
+/** Pure reference matching; called in the bounded worker, never with file authority. */
+export function applyZcodeEdit(text, oldText, newText, { expectedReplacements = 1, replaceAll = false, relative }) {
+  const invalid = validateSingleEditRequest(oldText, relative);
+  if (invalid) return invalid;
+  if (oldText === newText) return { ok: false, path: relative, error_type: 'no_change', error_message: 'old_text and new_text are identical' };
+  const content = normalizeLineEndings(text), search = normalizeLineEndings(oldText);
+  const match = findEditMatch({ content, search, replaceAll });
+  if (match.status === 'not_found') return { ok: false, path: relative, error_type: 'snippet_not_found',
+    error_message: 'old_text was not found in the workspace file', occurrences: 0,
+    nearby_candidates: nearbyCandidates(content, search), suggested_action: 'Read the current file and provide a unique old_text snippet.' };
+  if (match.status === 'ambiguous') return { ok: false, path: relative, error_type: 'ambiguous_edit',
+    error_message: 'Normalized old_text matches different file fragments. Provide a larger unique snippet.',
+    occurrences: match.candidateCount, match_strategy: match.strategy, suggested_action: 'Read the current file and use a unique exact snippet.' };
+  const occurrences = countOccurrences(content, match.actualString), expected = Math.max(1, Number(expectedReplacements || 1));
+  if (!replaceAll && occurrences !== expected) return { ok: false, path: relative, error_type: 'ambiguous_edit',
+    error_message: `old_text matched ${occurrences} occurrences, expected ${expected}`, occurrences,
+    expected_replacements: expected, matches: matchPreviews(content, match.actualString), match_strategy: match.strategy,
+    suggested_action: 'Provide a larger unique snippet or use replace_all=true.' };
+  const replacement = preserveQuoteStyle(search, match.actualString,
+    normalizeReplacementForMatch(match.strategy, normalizeLineEndings(newText)));
+  const ending = text.includes('\r\n') ? '\r\n' : '\n';
+  // Match normalized LF across the original bytes, preserving all untouched
+  // line endings. A callback keeps replacement $ sequences literal.
+  const actualSearch = replacement === '' && !match.actualString.endsWith('\n') && content.includes(`${match.actualString}\n`)
+    ? `${match.actualString}\n` : match.actualString;
+  const pattern = actualSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').split('\n').join('\\r?\\n');
+  let remaining = replaceAll ? occurrences : expected, replacements = 0;
+  const updated = text.replace(new RegExp(pattern, 'g'), actual => {
+    if (remaining-- <= 0) return actual;
+    replacements++; return replacement.replaceAll('\n', ending);
+  });
+  return { ok: true, updated, replacements,
+    used_quote_normalization: match.strategy === 'quote_normalized', match_strategy: match.strategy,
+    match_candidate_count: match.candidateCount, matches: matchPreviews(content, match.actualString) };
 }
 
 function replaceFirst(text, needle, replacement, count) {

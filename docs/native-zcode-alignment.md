@@ -36,11 +36,12 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **21/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **22/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
-deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting), M4 9/20
+deferred-tool discovery with durable cleanup/Session continuity), M3 3/20
+(successful context-window truncation, durable cache usage accounting and
+source-aligned edit matching through actual packed Studio child tools), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
@@ -49,6 +50,8 @@ plus child-local Todo continuity and durable coordinator responses through the
 actual packed Studio Host, plus owned Plan delegation/wait with immutable child
 mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
+The latest M3 point covers edit matching and its publication boundary, not the
+whole editing/undo or tool execution group.
 M5–M6 have no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
 certified completely aligned.
@@ -67,7 +70,7 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | Node `workspace-{tools,editing}.mjs`, Host source/directory projections and mutation lock | Audit actual registration, edit preconditions, result bounds and reversible changes; do not substitute broad Git reset for undo. Pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | core `edit-matchers.mts`, Node `workspace-{tools,editing,edit-match,edit-worker}.mjs`, Host source/directory projections and mutation lock | Reference matching is admitted for new edit/multi-edit tools and passes actual packed Studio continuation. Native read-state, atomic publication and unknown-effect guards remain. Creation-via-Edit, large files, patch tools, undo and remaining read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
@@ -810,6 +813,93 @@ Final archive proof: `/tmp/agentkit-child-plan-sdk-final.log`, evidence director
 and its `task-controls-proof.json`. The final child-denial feedback refinement was
 rebuilt, repacked and rechecked with 26 related Plan/inheritance/restore cases.
 Contracts and portability checks also passed.
+
+### Source-aligned file edit matching
+
+Pinned reference paths: `src/tool/edit-matchers.ts`,
+`src/tool/handlers/edit.ts`, and `tests/edit-tool-contract.test.ts`.
+The standalone matcher is copied to core `edit-matchers.mts` with only an
+attribution header; the original source SHA-256 is
+`072ab0ff34e8444d2cb92255ece9d01b70e0e8bc43afd95999ee0cb82328aefd`.
+Local byte comparison verified that the algorithm body is unchanged.
+Apache-2.0 provenance is recorded in `THIRD_PARTY_NOTICES.md`.
+
+New Studio Runs admit `workspaceEditPolicy: zcode-match/v1` on actual builtin
+edit/multi-edit definitions. Frozen legacy absence is preserved during original
+Run reconstruction. The old matching path remains unchanged for that absence;
+children inherit the admitted tool definition rather than independently
+selecting a new matching strategy. Model-facing arguments and tool names do not
+change, and no tool is added to the catalog.
+
+Matching now follows the reference's ordered exact, quote, line-number-prefix,
+visible escape, Unicode escape, trimmed-line, flexible-indent and block-anchor
+fallbacks. Ambiguous different fragments remain rejected, including replace-all;
+replace-all does not enable broad whitespace/anchor matching. Replacement keeps
+reference quote style, escape transformation and literal dollar tokens. Deleting
+a matched line follows the reference's following-newline behavior. Native keeps
+its explicit `expected_replacements` extension and preserves unrelated bytes,
+including mixed line endings. Multi-edit computes sequential changes before any
+publication, so a later failed match leaves the file unchanged.
+
+The pure algorithm runs in a fresh Node worker with a 2-second/64-MiB old-heap
+limit. It receives captured strings and edits, not a workspace tool/port or file
+publication request. The main thread holds no mutation lock while awaiting it.
+After completion it acquires the existing lock, revalidates the original read
+state and content, then uses the existing guarded atomic publication and revision
+recording. External modifications during preparation, denial, cancellation and
+worker exhaustion publish nothing. This introduces no second execution loop or
+new recovery authority; unknown effects after actual publication retain Native's
+existing liability/reconciliation behavior.
+
+Deliberate differences and remaining gaps:
+
+- Native retains its 2-MiB UTF-8 file bound, confined paths and strict current
+  read-state checks. ZCode's edit limit is 1 GiB and its full-read freshness
+  fallback can tolerate some mtime-only drift. Full large-file/read-policy parity
+  is not established by this matching batch.
+- Native still requires non-empty old_text for edits; creating/filling a file
+  uses the existing write tool. ZCode also supports empty-old-string creation and
+  routes notebooks to NotebookEdit. These differences remain in the full audit.
+- The bounded worker can refuse an expensive match and ask for a smaller exact
+  snippet, while the reference matcher has no internal CPU budget. Native keeps
+  the bound so pathological input cannot stall the Host event loop. Independent
+  patch/undo, complete Write/read behavior and broader file-search comparison
+  remain pending.
+- The compiled standalone matcher is 12,566 bytes. There are no additional
+  runtime dependencies or model round trips for matching. A controlled 12-sample
+  local exact-edit measurement on Node v26.5.0 recorded legacy pure matching
+  median 0.048 ms versus fresh worker preparation median 21.088 ms (max 25.931 ms).
+  This measures worker overhead only, excludes filesystem/model/network costs,
+  and proves no task-level speed or Token saving. Report:
+  `/tmp/agentkit-zcode-edit-worker-cost.json`. Whole-task comparison remains M6.
+
+Local evidence:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness/test/native-workspace-zcode-edit.test.mjs
+node --test packages/agentkit-harness/test/native-workspace*.test.mjs tests/dsh-node-workspace-tools.test.mjs
+node --test --test-name-pattern='child Plan|Studio Plan|child-owned|Todo|coordinator|foreground child' tests/studio-native-children.test.mjs
+pnpm check:contracts
+node scripts/check-portability.mjs
+pnpm pack --pack-destination /tmp/agentkit-zcode-edit-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-zcode-edit-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --continue-child --history --edit-matching --keep
+```
+
+The new group passes 17 cases, including real SQLite/approval/port reopen and
+single-receipt publication. The affected workspace/adapter regression passed
+118 cases with one optional Node-22-binary check skipped because that binary is
+absent. The relevant Studio child group passed 13 cases. Contracts and portability
+passed; no full repository suite ran.
+
+Packed proof log: `/tmp/agentkit-zcode-edit-sdk.log`; evidence directory:
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-KUlBB9`.
+`edit-matching-proof.json` records two actual Host PIDs, eight parent/six child
+requests, two reads, actual prefix and Unicode edits in the same isolated child
+workspace across cold continuation, original history and one settlement per
+child. Parent workspace bytes remain unchanged. PATH contains Node only and
+Python paths are deliberately unusable. Controlled requests demonstrate actual
+adapter behavior, not live-model coding quality parity.
 
 ## Local evidence and comparison protocol
 

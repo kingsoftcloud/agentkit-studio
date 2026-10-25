@@ -689,7 +689,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
       } };
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false, planModeCommandPolicy } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false, planModeCommandPolicy, workspaceEditPolicy } = {}) {
+      invariant(workspaceEditPolicy === undefined || workspaceEditPolicy === 'zcode-match/v1', 'studio_native_workspace_edit_policy_invalid');
       invariant(planModeCommandPolicy === undefined || planModeCommandPolicy === 'zcode-posix-readonly/v1', 'studio_native_plan_command_policy_invalid');
       invariant(typeof planModeMcpAccess === 'boolean' || Array.isArray(planModeMcpAccess)
         && planModeMcpAccess.every(name => typeof name === 'string'), 'studio_native_mcp_plan_selection_invalid');
@@ -728,6 +729,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
         if (exact) return { ...structuredClone(exact),
+          ...(workspaceEditPolicy && ['edit_workspace_file', 'multi_edit_workspace_file'].includes(name) ? { workspaceEditPolicy } : {}),
           ...(name === 'run_command' && commandBackend === 'local_process' && planModeCommandPolicy
             ? { planModeCommandPolicy } : {}),
           ...(sourceObservationPolicy && exact.readOnly && exact.contextRole === 'workspace_read'

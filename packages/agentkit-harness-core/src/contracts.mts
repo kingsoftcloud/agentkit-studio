@@ -63,6 +63,7 @@ export interface ToolDefinition {
   planModeAccess?: { contract: 'zcode-mcp-plan/v1'; destructive: boolean };
   /** Requires a dynamic permission check and a second check at command launch. */
   planModeCommandPolicy?: 'zcode-posix-readonly/v1';
+  workspaceEditPolicy?: 'zcode-match/v1';
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
