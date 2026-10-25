@@ -7,6 +7,31 @@ import { join } from 'node:path';
 import { createLocalResourceAdapters, LocalResourceError } from '../src/local-resource-adapters.mjs';
 import { createLocalMcpStore } from '../src/local-mcp-store.mjs';
 import { createZip } from '../src/zip.mjs';
+import { createAgentEngineClient } from '../src/server-client.mjs';
+
+test('durable cloud Memory writer snapshots its endpoint and credentials and retires with the adapter', async () => {
+  const values = { cloudServerUrl: 'http://127.0.0.1:18740', cloudServiceToken: 'original-memory-service-secret' }, requests = [];
+  const adapters = createLocalResourceAdapters({ serverClient: createAgentEngineClient({
+    configuration: { resolve: async () => ({ values }) },
+    fetchImpl: async (url, options) => { requests.push({ url: String(url), options });
+      return Response.json({ Code: 0, RequestId: 'accepted-write', Data: { accepted: true } }); },
+  }) });
+  try {
+    const writer = await adapters.bindMemoryWriter();
+    assert.equal(JSON.stringify(writer.binding).includes(values.cloudServiceToken), false);
+    const prepared = writer.prepare('memory-1', 'user-1', [{ role: 'user', content: 'Original bounded content' }], { agentId: 'agent-1' });
+    values.cloudServerUrl = 'http://127.0.0.1:18741'; values.cloudServiceToken = 'replacement-secret';
+    const request = { signal: new AbortController().signal, assertCurrent: () => true };
+    assert.deepEqual(await writer.write(prepared, request), { accepted: true, requestId: 'accepted-write' });
+    assert.equal(requests[0].url, 'http://127.0.0.1:18740/agentengine/api/v1/CreateMemorySdk');
+    assert.equal(requests[0].options.headers.Authorization, 'Bearer original-memory-service-secret');
+    assert.equal(requests[0].options.headers['X-Ksc-Request-Id'], prepared.requestId);
+    assert.deepEqual(JSON.parse(requests[0].options.body), prepared.payload);
+    await adapters.close();
+    await assert.rejects(writer.write(prepared, request), { code: 'RESOURCE_ADAPTER_CLOSED' });
+    assert.equal(requests.length, 1);
+  } finally { await adapters.close(); }
+});
 
 test('cloud Skill Space with no Skills is a valid empty binding', async () => {
   const calls = [];

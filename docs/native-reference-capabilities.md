@@ -455,8 +455,11 @@ project Studio Build/Gateway facts into the Native ports.
   observation/fact/receipt transactions, correction/forget storage and the
   production PreCompact Hook, plus uncached local recall with bounded untrusted
   Context contributions and fresh reads after compaction or a new lease.
-  Explicit tools/approval/reconciliation, acceptance and completed-turn
-  consumption are still incomplete; see
+  Explicit tools/approval, acceptance and completed-turn consumption are now
+  bound to the actual Native Host and DSH permission pipeline. Existing Studio
+  `memory-instance` cloud turn submission uses a separate durable owner; see
+  [cloud conversation submission](native-cloud-memory.md). Explicit product
+  reconciliation and final product acceptance remain open; see
   [Native Memory migration status](native-memory.md). Cloud transcript writes
   do not satisfy this local capability.
 - `native_model_recovery.py` — explicit host grant for the narrow ordinary

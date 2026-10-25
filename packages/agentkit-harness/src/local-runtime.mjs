@@ -143,6 +143,15 @@ function memoryWriteEnabled(record, binding, input) {
   return mode === 'explicit_only' && explicitMemoryIntent(input);
 }
 
+/** Pure Host policy shared by ordinary and durable Native turn consumers. */
+export function boundMemoryWritePolicy(record, input) {
+  const binding = memoryBinding(record?.spec?.bindings || record?.bindings || {});
+  if (!memoryWriteEnabled(record, binding, input)) return null;
+  const resource = binding.config.binding.resource;
+  return { resourceId: String(resource.id || resource.resourceId || ''),
+    mode: String(record?.spec?.memory?.write?.mode || 'candidate').trim().toLowerCase(), flush: explicitMemoryIntent(input) };
+}
+
 /** Persist one completed turn through the Host-owned memory adapter. */
 export async function writeBoundMemory({ binding, resourceAdapter, input, assistantText, userId, sessionId, agentId, agent, onResource } = {}) {
   if (!binding || typeof resourceAdapter?.writeMemory !== 'function') return { accepted: false, reason: 'adapter_unavailable' };

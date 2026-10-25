@@ -4,9 +4,11 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
-import { MemoryRunStore, NativeKernel, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, MemoryRunStore, NativeKernel, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { digest, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { nativeDshBackgroundOwnership } from '../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
@@ -24,8 +26,11 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
+import { createAgentEngineClient } from '../src/server-client.mjs';
+import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
+import { bindStudioNativeCloudMemoryTurn } from '../src/providers/native-cloud-memory-turn.mjs';
 
-async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false, resources } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
   const storeDir = storeAlias ? join(root, 'configured-home') : root;
   if (storeAlias) await symlink(root, storeDir, 'dir');
@@ -52,7 +57,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     resolutions.push({ agentId, buildId }); return { ...structuredClone(record),
       executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') };
   } };
-  const host = await createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, ledger, observability,
+  const host = await createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, ledger, observability, resources,
     ...(recovery ? { agentEvents: () => ({ serial: async () => payload.binding }), assembleContextFor: agent => ({ agent }) } : {}),
     contextSourceRegistry: bridge?.nativeContextSources,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
@@ -80,6 +85,73 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     bridge, retireContext,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+
+for (const frozen of [false, true]) test(`cloud Memory completion saves its exact prepared DTO once and cold replay reads the receipt (${frozen ? 'Frozen' : 'Revision'})`, async t => {
+  const requests = []; let beforeWrite;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const name = req.headers['x-action'] || req.url.split('/').at(-1); requests.push({ name, body: JSON.parse(raw) });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ Code: 0, RequestId: 'memory-service-receipt', Data: name === 'QueryMemorySdk' ? { Memories: [] } : { accepted: true } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const client = createAgentEngineClient({ configuration: { resolve: async () => ({ values: { cloudServerUrl: `http://127.0.0.1:${server.address().port}` } }) },
+    fetchImpl: async (url, options) => { if (new URL(url).pathname.endsWith('/CreateMemorySdk')) beforeWrite(options); return fetch(url, options); } });
+  const resources = createLocalResourceAdapters({ serverClient: client }); t.after(() => resources.close());
+  const f = await setup(t, { sqlite: true, resources, spec: { memory: { enabled: true, recall: { enabled: false }, write: { mode: 'candidate' } },
+    bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'mem-native' } } } }] } } });
+  if (frozen) f.payload.binding.buildId = 'build_cloud_memory';
+  const effectsPath = () => join(f.root, 'native-harness/cloud-memory-turns',
+    createHash('sha256').update(canonical(f.head().scope)).digest('hex'), 'effects.sqlite');
+  beforeWrite = options => {
+    const db = new DatabaseSync(effectsPath());
+    try {
+      const row = db.prepare('SELECT phase,prepared FROM legacy_memory_effects').get();
+      assert.equal(row.phase, 'prepared'); const intent = JSON.parse(row.prepared);
+      assert.deepEqual(intent.payload, JSON.parse(options.body)); assert.equal(intent.requestId, options.headers['X-Ksc-Request-Id']);
+      assert.equal(f.head().phase, 'completed', 'Cloud submission cannot manufacture the canonical task terminal');
+    } finally { db.close(); }
+  };
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.head().phase, 'completed'); assert.equal(f.requests.length, 1);
+  assert.equal(requests.filter(value => value.name === 'CreateMemorySdk').length, 1);
+  const submitted = requests.find(value => value.name === 'CreateMemorySdk').body;
+  assert.equal(submitted.MemoryCollectionId, 'mem-native'); assert.match(submitted.AgentUserId, /^mp1-/);
+  assert.deepEqual(submitted.Data.Conversation.map(value => value.Content[0].Text), ['Finish', 'Complete']);
+  const stored = f.ledger.load(f.head().scope, f.head().runId);
+  await f.host.close();
+  const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
+  const cold = await bindStudioNativeCloudMemoryTurn({ record: f.record, scope: stored.snapshot.scope, sessionId: 'session',
+    store: reopened, storeDir: f.root, resources, sealedCapsule: stored.configuration.hostRecoveryBinding, input: stored.snapshot.goal,
+    agent: f.payload.agent });
+  try {
+    const result = await cold.consume(reopened.load(stored.snapshot.scope, stored.snapshot.runId).snapshot,
+      { signal: new AbortController().signal, hostBindingDigest: stored.configuration.hostBindingDigest });
+    assert.equal(result.status, 'ok'); assert.equal(result.content.extraction, 'not_confirmed');
+    assert.equal(result.content.requestId, 'memory-service-receipt');
+    assert.equal(requests.filter(value => value.name === 'CreateMemorySdk').length, 1); assert.equal(f.requests.length, 1);
+  } finally { cold.close(); reopened.close(); }
+});
+
+test('cloud Memory lost response leaves an unknown durable receipt without failing or resending the original Native turn', async t => {
+  let sends = 0;
+  const resources = createLocalResourceAdapters({ serverClient: createAgentEngineClient({
+    configuration: { resolve: async () => ({ values: { cloudServerUrl: 'http://127.0.0.1:1' } }) },
+    fetchImpl: async () => { sends++; throw Error('connection lost after submission'); },
+  }) });
+  t.after(() => resources.close());
+  const f = await setup(t, { sqlite: true, resources, spec: { memory: { enabled: true, recall: { enabled: false }, write: { mode: 'candidate' } },
+    bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'mem-native' } } } }] } } });
+  await f.host.executeTurn(f.payload); assert.equal(f.head().phase, 'completed'); assert.equal(sends, 1);
+  await f.host.executeTurn(f.payload); assert.equal(f.head().phase, 'completed'); assert.equal(sends, 1);
+  assert.equal(f.requests.length, 1);
+  const path = join(f.root, 'native-harness/cloud-memory-turns', createHash('sha256').update(canonical(f.head().scope)).digest('hex'), 'effects.sqlite');
+  const db = new DatabaseSync(path);
+  try { const row = db.prepare('SELECT phase,result FROM legacy_memory_effects').get();
+    assert.equal(row.phase, 'finished'); assert.equal(JSON.parse(row.result).status, 'uncertain');
+  } finally { db.close(); }
+});
 
 test('actual Native Host projects its SQLite Run into Studio traces and replay cannot repeat inference or rewrite timings', async t => {
   const f = await setup(t, { sqlite: true, trace: true });

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
+import { bindStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
@@ -318,7 +319,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const sealedCapsule = nativeRecoveryBinding({ binding, input, source, selection, systemPrompt });
       const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId, store, storeDir,
         buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest, sealedCapsule });
-      let memoryDispose, registeredContext, vision;
+      let memoryDispose, registeredContext, vision, cloudMemory;
       try {
         if (memoryHost?.port && typeof binding.nativeTools.bindMemory === 'function')
           memoryDispose = binding.nativeTools.bindMemory(memoryHost);
@@ -343,9 +344,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription, execution: deadlineExecution });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: scope.userId, resourceMode: 'context-only' });
-      // A memory write is an external effect and must get its own Native intent.
-      // Refuse that composition until its durable port is installed.
-      invariant(!materialized.memoryWrite, 'studio_native_memory_write_port_unavailable');
+      cloudMemory = await bindStudioNativeCloudMemoryTurn({ record, scope, sessionId, store, storeDir, resources,
+        sealedCapsule, input: admission.objective, agent });
+      invariant(!materialized.memoryWrite || cloudMemory, 'studio_native_memory_write_port_unavailable');
       const skillInstructions = await binding.nativeTools.skillInstructions?.(signal);
       const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext,
         skillInstructions].filter(Boolean).join('\n\n');
@@ -489,7 +490,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             if (questionError) throw questionError;
           } finally {
             try { vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); }
-            finally { releaseBinding(); }
+            finally { try { cloudMemory?.close(); } finally { releaseBinding(); } }
           }
         },
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
@@ -508,6 +509,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(children ? { childContract: STUDIO_NATIVE_CHILD_CONTRACT, childRoles: roles } : {}),
           ...(memoryHost ? { memoryHostContract: memoryHost.contract,
             memoryHostBinding: memoryHost.hostBindingDigest, memoryVerification: memoryHost.verificationDigest } : {}),
+          ...(cloudMemory ? { cloudMemoryTurn: cloudMemory.binding } : {}),
           toolArgumentEncoding: binding.nativeTools.argumentEncoding ?? null,
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
@@ -580,8 +582,17 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return { status: 'admitted', messages };
         } }, model: parentModel.model },
       };
+      if (cloudMemory) {
+        const localConsume = resolved.consumeCompletedTurn;
+        resolved.consumeCompletedTurn = (snapshot, { signal } = {}) => Promise.allSettled([
+          Promise.resolve().then(() => localConsume?.(snapshot, { signal })),
+          cloudMemory.consume(snapshot, { signal, hostBindingDigest: resolved.configuration.hostBindingDigest }).catch(error => {
+            console.warn('[agentkit-studio] Native cloud Memory completion failed:', error?.code ?? 'MEMORY_WRITE_FAILED'); throw error;
+          }),
+        ]);
+      }
       transferred = true; return resolved;
-      } catch (error) { vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); throw error; }
+      } catch (error) { cloudMemory?.close(); vision?.close(); visionDispose?.(); registeredContext?.close(); memoryDispose?.(); memoryHost?.close(); throw error; }
       } catch (error) { visionDispose?.(); throw error; }
       } finally { if (!transferred) releaseBinding(); }
   };

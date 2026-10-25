@@ -1,6 +1,6 @@
 import { hostFetch } from './http-fetch.mjs';
 /** Node client for the existing AgentEngine public Action API. */
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import aws4 from 'aws4';
 import { createCloudIdentityResolver } from './cloud-identity.mjs';
 import { createCloudEndpointPolicy } from './cloud-endpoints.mjs';
@@ -140,8 +140,8 @@ export function createAicpResourceClient({ origin, trafficSource = 'agentkit', .
   }
   if (typeof trafficSource !== 'string' || /[^\x20-\x7e]/u.test(trafficSource) || Buffer.byteLength(trafficSource) > 16384)
     throw new AgentEngineError('AICP_RESOURCE_TRAFFIC_SOURCE_INVALID', '请求来源须为可打印 ASCII 字符');
-  const { action } = createClient(options, new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListSessions']), endpoint ?? null, trafficSource.trim() || 'agentkit');
-  return { action };
+  const { action, bindMemoryWriter } = createClient(options, new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListSessions']), endpoint ?? null, trafficSource.trim() || 'agentkit');
+  return { action, bindMemoryWriter };
 }
 
 /**
@@ -283,11 +283,12 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
   }
 
-  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment, preserveEnvelope = false } = {}) {
+  const action = (name, payload, options) => performAction(name, payload, options);
+  async function performAction(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment, preserveEnvelope = false } = {}, fixedConfiguration) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
     if (!allowedActions.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
-    const resolved = await configuration.resolve();
+    const resolved = fixedConfiguration ?? await configuration.resolve();
     if (templateEnvironment !== undefined && (!['pre-online','online'].includes(templateEnvironment) || !['ListStudioTemplates','GetStudioTemplate','GetStudioTemplateDownload','GetStudioTemplateCatalogCapabilities'].includes(name))) throw new AgentEngineError('INVALID_TEMPLATE_ENVIRONMENT', '模板环境仅可用于模板读取接口');
     const values = templateEnvironment ? {...resolved.values, cloudRegion:templateEnvironment==='online'?'cn-beijing-6':templateEnvironment, cloudCustomSource:templateEnvironment==='pre-online'?'pre':''} : resolved.values;
     const base = resolveBase(values);
@@ -637,8 +638,21 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     }
     return { ...payload, source: 'agentengine-server', requestId: String(response.headers.get('x-request-id') || '') };
   }
+  async function bindMemoryWriter() {
+    if (!allowedActions.has('CreateMemorySdk')) throw new AgentEngineError('ACTION_NOT_ALLOWED', '此客户端不能写入记忆');
+    const resolved = structuredClone(await configuration.resolve()), values = resolved.values;
+    // Only the connection's public identity is persisted. Credentials remain
+    // in this closure; later settings edits cannot move an admitted write.
+    const binding = { contract: 'agentkit.cloud-memory-transport/v1', origin: resolveBase(values).origin,
+      region: values.cloudRegion || '', customSource: values.cloudCustomSource || '', trafficSource: resourceTrafficSource || 'agentkit',
+      fallbackOrigin: endpoints.innerKop?.origin || '',
+      principalDigest: createHash('sha256').update(JSON.stringify([
+        values.cloudAccessKey || '', values.cloudServiceToken || '', values.cloudAccountId || '',
+      ])).digest('hex') };
+    return { binding, write: (payload, options) => performAction('CreateMemorySdk', payload, options, resolved) };
+  }
   return {
-    getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction,
+    getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction, bindMemoryWriter,
     ...(deploymentIdentity ? { inspectIdentity } : {}),
     listAgents, getAgent, listResource, listCatalogResources,
   };

@@ -347,7 +347,8 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     return memories;
   }
 
-  async function writeMemory(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
+  function prepareMemoryWrite(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
+    assertOpen();
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
     const collectionId = resourceId(id);
     const conversation = (Array.isArray(messages) ? messages : [])
@@ -359,7 +360,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
         MessageId: randomUUID(),
         Content: [{ Type: 'input_text', Text: String(message.content).slice(0, 16000) }],
       }));
-    if (!conversation.length) return { accepted: false, reason: 'empty' };
+    if (!conversation.length) return null;
     const payload = {
       MemoryCollectionId: collectionId,
       AgentUserId: memorySubjectId(collectionId, userId, agentId),
@@ -370,8 +371,33 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       ...(memorySessionId(sessionId) ? { SessionId: memorySessionId(sessionId) } : {}),
       ...(flush === true ? { Flush: true } : {}),
     };
+    return payload;
+  }
+
+  async function writeMemory(id, userId, messages, options = {}) {
+    const payload = prepareMemoryWrite(id, userId, messages, options);
+    if (!payload) return { accepted: false, reason: 'empty' };
     const result = await serverClient.action('CreateMemorySdk', payload, { apiVersion: '2025-11-14' });
     return { accepted: true, data: memoryReply(result, true).data };
+  }
+
+  async function bindMemoryWriter() {
+    assertOpen();
+    if (typeof serverClient?.bindMemoryWriter !== 'function')
+      throw new LocalResourceError('MEMORY_DURABLE_WRITER_UNAVAILABLE', '记忆服务缺少持久写入端口');
+    const transport = await serverClient.bindMemoryWriter(); assertOpen();
+    return { binding: structuredClone(transport.binding),
+      prepare: (id, userId, messages, options) => ({ requestId: randomUUID(), payload: prepareMemoryWrite(id, userId, messages, options) }),
+      async write(prepared, { signal, assertCurrent }) {
+        const guard = () => { assertOpen(); signal.throwIfAborted();
+          const current = assertCurrent();
+          if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+          if (current !== true) throw new LocalResourceError('MEMORY_WRITE_AUTHORITY_LOST', '记忆写入授权已失效'); };
+        guard(); const result = await transport.write(structuredClone(prepared.payload),
+          { signal, requestId: prepared.requestId, apiVersion: '2025-11-14' }); guard();
+        const reply = memoryReply(result, true);
+        return { accepted: true, requestId: reply.requestId };
+      } };
   }
 
   async function close() {
@@ -404,7 +430,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   }
 
   // Host-only descriptor; it can contain credentials. Never expose it through RPC.
-  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, listMemory,
+  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, bindMemoryWriter, listMemory,
     deleteMemory: (id, userId, memoryId, options) => mutateMemory('DeleteMemory', id, userId, memoryId, undefined, options),
     updateMemory: (id, userId, memoryId, content, options) => mutateMemory('UpdateMemory', id, userId, memoryId, content, options), close };
 }

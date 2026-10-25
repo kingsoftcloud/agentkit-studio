@@ -1,5 +1,12 @@
 # Native 迁移当前验收状态
 
+已移除云 `memory-instance` 允许完成后写入时拒绝整个 Native 回合的阻断：现使用
+独立 SQLite 意图和固定传输绑定，先保存完整请求/消息 ID 再派发，冷重放只读原
+回执，断连未知不重发；不把服务受理宣称为已抽取。Revision/Frozen 的实际 Host
+服务、SQLite 重开及真实 HTTP 已直接验证，既有普通写入兼容、未知回执和配置
+漂移/退役共 5 个不同用例有通过记录，未跑全量或重新安装。完整挂载 Host、浏览器
+及未知提交的显式核对产品流程仍需最终验收，见[云记忆提交](native-cloud-memory.md)。
+
 普通 Revision 的 Native Trace 已通过一次真实完整挂载 Host 验证：现有鉴权 HTTP
 `traces/list`、`traces/get`、`traces/otlp` 均读到原 Run，两个成功回合跨 Host 重启，
 另一个回合确认原策略拒绝写入。3 条 trace 的累计用量、模型/工具 span、事件身份
