@@ -10,8 +10,11 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 
 截止交付窗口已补入核心及共用 Host：实际成功写入的当前目标路径才可回读，混合越界
 批次不执行；保留浏览器观察优先级，并支持受原预算约束的交付上下文压缩。运行时间
-使用持久消耗与本地单调时钟，运行中的效果也受硬时限约束。Python 产品策略到预留
-时间的自动映射尚未完成；当前显式配置及验证边界见[截止交付](native-deadline-delivery.md)。
+使用持久消耗与本地单调时钟，运行中的效果也受硬时限约束。Python v1–v7 产品策略
+的预留计算、分版本编辑/回读、摘要上限及分页反馈现已接入；可信写工具会在落盘前
+拒绝与当前精确内容目标冲突的调用。Revision/Frozen 共用 Host 已验证实际写入、
+窗口内回读和原 managed admission 恢复。完整产品默认策略切换仍未完成；
+配置及验证边界见[截止交付](native-deadline-delivery.md)。
 
 本轮重新核对了原引擎范围：原 Native 不支持 generic inject、checkpoint/time-travel
 或任意 resume.input；Teams execution-policy 由 ManagedLangGraph 入口消费，

@@ -139,7 +139,8 @@ function codePointStop(text: string, stop: number): number {
 /** Exact, contiguous source slices. Quotes are data, never executable tool frames. */
 async function quoteChunk(snapshot: RunSnapshot, compaction: ContextCompaction, config: RunConfiguration,
   counters: ContextCounters, digest: (value: unknown) => string): Promise<void> {
-  const maxOutputTokens = Math.min(config.contextPolicy!.summaryMaxTokens, config.profile.maxOutputTokens);
+  const maxOutputTokens = ['deadline-delivery/v1', 'deadline-delivery/v2'].includes(config.wallDeliveryPolicy ?? '')
+    ? config.profile.maxOutputTokens : Math.min(config.contextPolicy!.summaryMaxTokens, config.profile.maxOutputTokens);
   const prefix = snapshot.messages.slice(0, compaction.prefixCount), refs = refsOf(prefix, digest);
   const mediaFor = (stop: number): NonNullable<Message['media']> => {
     const selected = new Map<string, NonNullable<Message['media']>[number]>();

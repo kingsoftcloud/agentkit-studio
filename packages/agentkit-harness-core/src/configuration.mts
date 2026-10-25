@@ -15,6 +15,7 @@ export interface ConfigurationInput {
   stopHookContinuationLimit?: number; delegationDepth?: number;
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   guidancePolicy?: RunConfiguration['guidancePolicy'];
+  wallDeliveryPolicy?: RunConfiguration['wallDeliveryPolicy'];
   outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
@@ -51,6 +52,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
+    ...(input.wallDeliveryPolicy === undefined ? {} : { wallDeliveryPolicy: input.wallDeliveryPolicy }),
     ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
@@ -116,6 +118,10 @@ export function configure(input: ConfigurationInput): RunConfiguration {
         && (message.persistent === undefined || typeof message.persistent === 'boolean'))
       && config.inputMessages.some(message => message.content.trim() || message.media?.length), 'invalid_task_input_messages');
   }
+  invariant(config.tools.every(tool => tool.exactContentPolicy === undefined
+    || ['current-goal-utf8/v1', 'complete-write-only/v1'].includes(tool.exactContentPolicy)), 'invalid_exact_content_policy');
+  invariant(config.wallDeliveryPolicy == null || typeof config.wallDeliveryPolicy === 'string'
+    && /^deadline-delivery\/v[1-7]$/.test(config.wallDeliveryPolicy), 'invalid_wall_delivery_policy');
   for (const [key, value] of Object.entries(limits)) {
     if (key === 'deliveryContextRecoveryPolicy') continue;
     invariant(value === null || Number.isSafeInteger(value) && value >= 0, `invalid_limit:${key}`);

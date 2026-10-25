@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindNativeTaskPolicy } from '../src/providers/native-task-policy.mjs';
+import { bindNativeDeadlinePolicy, bindNativeTaskPolicy } from '../src/providers/native-task-policy.mjs';
 import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native/browser-workspace-protocol.mjs';
 import { browserTaskTools, webObservationDue } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { fixture, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
@@ -56,4 +56,31 @@ test('deadline policy pins exact original wall allowance and versioned context r
   for (const change of [{ maxWallMs: 0 }, { maxWallMs: '60' }, { maxWallMs: 86400001 }, { finalizationReserveWallMs: 240001 },
     { finalizationReserveWallMs: -1 }, { deliveryContextRecoveryPolicy: 'claims-pass' }])
     assert.throws(() => bindNativeTaskPolicy({ tools: [], nativeLimits: { ...nativeLimits, ...change } }), /studio_native_execution_limits_invalid/);
+});
+
+test('product deadline policies preserve reference whole-second boundaries without extending the hard limit', () => {
+  const cases = [[0, 0, 0], [1, 0, 0], [9, 0, 4000], [10, 1000, 5000], [59, 5000, 29000],
+    [300, 30000, 150000], [481, 48000, 240000], [3600, 60000, 240000]];
+  for (let version = 1; version <= 7; version++) for (const [seconds, legacy, modern] of cases) {
+    const policy = `deadline-delivery/v${version}`;
+    const bound = bindNativeTaskPolicy({ tools: [], nativeLimits: { maxModelCalls: 12, maxToolCalls: 0 },
+      execution: { nativeWallDeliveryPolicy: policy, timeoutSeconds: seconds } });
+    assert.equal(bound.wallDeliveryPolicy, policy);
+    assert.equal(bound.limits.maxWallMs, seconds === 0 ? null : seconds * 1000);
+    assert.equal(bound.limits.finalizationReserveWallMs, version === 1 ? legacy : modern);
+    assert.equal(bound.limits.deliveryContextRecoveryPolicy, version <= 2 ? null
+      : version === 3 ? 'committed-write-summary/v1' : 'delivery-window-summary/v2');
+    assert.equal(bound.limits.maxToolCalls, 0);
+  }
+  assert.equal(bindNativeDeadlinePolicy({ nativeWallDeliveryPolicy: 'deadline-delivery/v7' }).limits.maxWallMs, 300000);
+  assert.deepEqual(bindNativeDeadlinePolicy({ timeoutSeconds: 0 }), { wallDeliveryPolicy: null, limits: { maxWallMs: null } });
+  assert.equal(Object.hasOwn(bindNativeTaskPolicy({ tools: [] }), 'wallDeliveryPolicy'), false);
+  assert.deepEqual(bindNativeDeadlinePolicy({ nativeWallDeliveryPolicy: null }), { limits: {} });
+  for (const nativeWallDeliveryPolicy of ['deadline-delivery/v8', false, {}, 7])
+    assert.throws(() => bindNativeDeadlinePolicy({ nativeWallDeliveryPolicy }), /deadline_policy_invalid/);
+  for (const timeoutSeconds of [null, -1, 3601, .5, '300', true])
+    assert.throws(() => bindNativeDeadlinePolicy({ nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds }), /deadline_timeout_invalid/);
+  for (const key of ['maxWallMs', 'finalizationReserveWallMs', 'deliveryContextRecoveryPolicy'])
+    assert.throws(() => bindNativeTaskPolicy({ tools: [], execution: { nativeWallDeliveryPolicy: 'deadline-delivery/v7' },
+      nativeLimits: { [key]: key === 'maxWallMs' ? 300000 : key === 'finalizationReserveWallMs' ? 150000 : null } }), /deadline_limits_conflict/);
 });

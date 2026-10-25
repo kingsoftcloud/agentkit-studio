@@ -130,7 +130,9 @@ export function deliveryTaskMessages(snapshot: RunSnapshot, config: RunConfigura
     || webVerificationOnly(snapshot, config)
     || config.limits.maxModelCalls !== null && config.limits.maxModelCalls - claimed(snapshot, 'model') <= config.limits.finalizationReserveModelCalls
     || config.limits.maxToolCalls !== null && claimed(snapshot, 'tool') >= config.limits.maxToolCalls) return messages;
-  return [...deliveryFeedbackMessages(snapshot, config, messages), { role: 'system', kind: 'deadline_delivery_policy', content: canonical({
+  const view = config.wallDeliveryPolicy == null || config.wallDeliveryPolicy === 'deadline-delivery/v7'
+    ? deliveryFeedbackMessages(snapshot, config, messages) : messages;
+  return [...view, { role: 'system', kind: 'deadline_delivery_policy', content: canonical({
     policy: 'prepared-execution-budget/v1', authority: 'budget_observation_only', quote: snapshot.executionBudgetObservation,
     instruction: 'The existing deadline is in its delivery window. Use only admitted delivery tools and current-goal written paths. '
       + 'Complete the requested deliverable and report missing evidence honestly. No new permission, verification verdict or time is granted.',

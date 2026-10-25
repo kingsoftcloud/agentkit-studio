@@ -12,7 +12,7 @@ import { createNativeChildHistory, mergeNativeChildHistory } from '../../../pack
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { bindStudioNativeMemoryRecall } from '../../providers/native-memory-recall.mjs';
-import { bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
+import { bindNativeDeadlinePolicy, bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
 import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../providers/native-verification.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
@@ -233,6 +233,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       signal.throwIfAborted();
       const visionDescription = visionProfile ? profileDescription(visionProfile) : null;
       invariant(!visionDescription || visionDescription.input.includes('image'), 'studio_native_vision_model_image_input_required');
+      // Older TS runs could contain an unconsumed product field. Restore their
+      // actual admission, rather than activating a newly supported policy.
+      const deadlineExecution = original && !Object.hasOwn(original.configuration, 'wallDeliveryPolicy') ? undefined : record.spec.execution;
+      const deadline = bindNativeDeadlinePolicy(deadlineExecution);
       const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputSelection = original ? admittedModelSelection(agent, input.assembly) : { ...selection, ...source };
@@ -288,9 +292,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
         : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1',
+          ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
           ...(record.spec.execution?.toolErrorRecoveryModelCalls === undefined ? {}
             : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
           ...(record.spec.execution?.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: record.spec.execution.deliveryReviewPolicy === null
@@ -311,9 +316,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       } catch (error) { visionDispose?.(); memoryHost?.close(); throw error; }
       try {
       const toolOptions = { deadlineDelivery: original
-        ? original.configuration.limits.finalizationReserveWallMs > 0 : (record.spec.execution?.nativeLimits?.finalizationReserveWallMs ?? 0) > 0 };
+        ? original.configuration.limits.finalizationReserveWallMs > 0 || !!original.configuration.wallDeliveryPolicy
+        : (record.spec.execution?.nativeLimits?.finalizationReserveWallMs ?? 0) > 0 || !!deadline.wallDeliveryPolicy,
+      exactContentPolicy: original ? original.configuration.tools.some(tool => tool.exactContentPolicy) : true,
+      ...((original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy)
+        ? { wallDeliveryPolicy: original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy } : {}) };
       const tools = binding.nativeTools.definitions(agent, input.assembly.tools, toolOptions);
-      const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription });
+      const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription, execution: deadlineExecution });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: scope.userId, resourceMode: 'context-only' });
       // A memory write is an external effect and must get its own Native intent.

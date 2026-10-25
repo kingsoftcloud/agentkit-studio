@@ -11,6 +11,7 @@ import { createNativeArtifactStore } from '../../packages/agentkit-harness/src/n
 import { buildScriptEnvironment, localControlSettings, LOCAL_PROCESS_CONTRACT } from '../../packages/agentkit-harness/src/native/local-process.mjs';
 import { LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from '../../packages/agentkit-harness/src/native/local-command-policy.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
+import { requestedExactWorkspaceFile, exactByteDifference } from './native-final-shape.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { createNativeDshWebTools } from './native-dsh-web.mjs';
@@ -670,7 +671,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } finally { calls.delete(callId); }
       } });
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false } = {}) {
+      invariant(wallDeliveryPolicy === undefined || typeof wallDeliveryPolicy === 'string'
+        && /^deadline-delivery\/v[1-7]$/.test(wallDeliveryPolicy), 'studio_native_deadline_policy_invalid');
       const schemas = new Map((assemblyTools ?? []).map(schema => [schema.name, schema]));
       // Resolve THIS agent's session Memory owner so the caller-session's LOCKED
       // Memory formal is selected — not a global/last-bound one. The preset
@@ -688,6 +691,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       if (hasSkills) {
         for (const name of ['skill', 'bash', 'pwsh']) if (schemas.has(name)) selected.add(name);
       }
+      const version = wallDeliveryPolicy ? Number(wallDeliveryPolicy.at(-1)) : null;
+      const deliveryEditor = version === null || version >= 5 && builtinNames.has('edit_workspace_file')
+        && selected.has('edit_workspace_file') && formal.get('edit_workspace_file')?.readOnly === false;
+      const deliverySelfRead = version === null || version >= 6 && deliveryEditor;
       return [...selected].map(name => {
         // Memory tools: select THIS session's owner locked formal only.
         if (memoryNames.has(name)) {
@@ -695,9 +702,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           if (memDef) return structuredClone(memDef);
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
-        if (exact) return { ...structuredClone(exact), ...(deadlineDelivery && formal.has(name)
-          ? name === 'read_workspace_file' && exact.readOnly && exact.contextRole === 'workspace_read' ? { deliveryArtifactRole: 'read' }
-            : ['write_workspace_file', 'edit_workspace_file'].includes(name) && !exact.readOnly ? { deliveryWrite: true, deliveryArtifactRole: 'write' } : {} : {}),
+        if (exact) return { ...structuredClone(exact),
+          ...(exactContentPolicy && !exact.readOnly && (name === 'write_workspace_file' || name === 'edit_workspace_file' && deadlineDelivery && deliveryEditor)
+            ? { exactContentPolicy: name === 'write_workspace_file' ? 'current-goal-utf8/v1' : 'complete-write-only/v1' } : {}),
+          ...(deadlineDelivery && formal.has(name)
+          ? name === 'read_workspace_file' && deliverySelfRead && exact.readOnly && exact.contextRole === 'workspace_read' ? { deliveryArtifactRole: 'read' }
+            : (name === 'write_workspace_file' || name === 'edit_workspace_file' && deliveryEditor) && !exact.readOnly
+              ? { deliveryWrite: true, ...(deliverySelfRead ? { deliveryArtifactRole: 'write' } : {}) } : {} : {}),
+          ...(deadlineDelivery && deliveryEditor && ['write_workspace_file', 'edit_workspace_file'].includes(name)
+            ? { description: exact.description + (name === 'write_workspace_file'
+              ? ' Keep each call within the model output limit. For a large deliverable, write a complete first portion, then use the bound edit_workspace_file in later calls to replace a known unique tail or marker with the next portion. Wait for each successful receipt; incomplete calls wrote nothing. A partial file does not complete the task.'
+              : ' This Build permits exact edits during deadline delivery when this tool is admitted. Extend an already successfully written deliverable in bounded portions using an exact unique tail or marker; do not resend its whole body. Approval, current file revision and replacement checks still apply.') } : {}),
           ...(name === browserName && visionTimeouts.has(String(agent?.session?.id))
           ? { timeoutMs: visionTimeouts.get(String(agent.session.id)).timeoutMs } : {}) };
         const schema = schemas.get(name);
@@ -840,6 +855,20 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         if (commandAuthority?.childSessionId) invariant(canonical(request.scope) === canonical(commandAuthority.scope)
           && commandAuthority.toolNames.includes(request.call.name), 'studio_native_child_tool_not_bound');
         request.signal.throwIfAborted();
+        if (builtinNames.has(request.call.name) && request.definition.exactContentPolicy && commandAuthority?.store) {
+          invariant(assertCurrent?.(request), 'studio_native_tool_authority_stale');
+          const goal = commandAuthority.store.load(request.scope, request.runId).snapshot.goal;
+          const required = requestedExactWorkspaceFile(goal), proposed = request.call.arguments;
+          if (required && proposed.path === required.relativePath) {
+            if (request.call.name === 'edit_workspace_file' && request.definition.exactContentPolicy === 'complete-write-only/v1')
+              return { status: 'error', content: { code: 'workspace_exact_content_requires_write', path: required.relativePath,
+                instruction: 'This goal requires exact file bytes. Submit the complete requested content through write_workspace_file; no edit was applied.' } };
+            if (request.call.name === 'write_workspace_file' && typeof proposed.content === 'string' && proposed.content !== required.content)
+              return { status: 'error', content: { code: 'workspace_content_contract_mismatch', source: 'current_run_goal', path: required.relativePath,
+                difference: exactByteDifference(Buffer.from(required.content, 'utf8'), Buffer.from(proposed.content, 'utf8')),
+                instruction: 'Submit a new write_workspace_file call with the exact UTF-8 content requested in the current goal. No file was written.' } };
+          }
+        }
         // A child borrows the parent's MCP transport, but dispatch is owned by
         // the child's current Native intent, never by the parent DSH session.
         const childMcp = commandAuthority?.childSessionId && mcpContracts.has(request.call.name);

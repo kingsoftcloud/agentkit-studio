@@ -204,6 +204,52 @@ test('deadline tools are pinned only from trusted builtins and never granted by 
   assert.equal(untrusted.deliveryWrite, undefined); assert.equal(untrusted.deliveryArtifactRole, undefined);
 });
 
+test('product deadline tool versions preserve editor and self-read admission independently of numeric time', t => {
+  const names = ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'];
+  const h = setup(t, names);
+  for (let version = 1; version <= 7; version++) {
+    const defs = h.gateway.definitions(h.agent, [], { deadlineDelivery: true, wallDeliveryPolicy: `deadline-delivery/v${version}`, exactContentPolicy: true });
+    assert.equal(defs.find(tool => tool.name === names[1]).deliveryWrite, true);
+    assert.equal(!!defs.find(tool => tool.name === names[2]).deliveryWrite, version >= 5);
+    for (const tool of defs) assert.equal(!!tool.deliveryArtifactRole, version >= 6);
+    assert.equal(defs.find(tool => tool.name === names[1]).exactContentPolicy, 'current-goal-utf8/v1');
+    assert.equal(defs.find(tool => tool.name === names[2]).exactContentPolicy, version >= 5 ? 'complete-write-only/v1' : undefined);
+    assert.equal(defs.find(tool => tool.name === names[1]).description.includes('incomplete calls wrote nothing'), version >= 5);
+  }
+  const noEditor = setup(t, names.slice(0, 2));
+  const limited = noEditor.gateway.definitions(noEditor.agent, [], { deadlineDelivery: true, wallDeliveryPolicy: 'deadline-delivery/v7' });
+  assert.ok(limited.every(tool => tool.deliveryArtifactRole === undefined), 'self-read requires a trusted bound editor');
+  assert.throws(() => h.gateway.definitions(h.agent, [], { wallDeliveryPolicy: 'deadline-delivery/v8' }), /deadline_policy_invalid/);
+});
+
+test('actual Native gateway rejects wrong exact UTF-8 writes and delivery edits before any filesystem effect', async t => {
+  const h = setup(t, ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file']);
+  const tools = h.gateway.definitions(h.agent, [], { deadlineDelivery: true, wallDeliveryPolicy: 'deadline-delivery/v7', exactContentPolicy: true });
+  const store = new MemoryRunStore(), task = '在工作区创建 report.txt，内容恰好是 hello😀。完成后回复路径。';
+  const data = fixture({ tools, wallDeliveryPolicy: 'deadline-delivery/v7', contract: { objective: task } }); let models = 0;
+  const observations = [];
+  const kernel = new NativeKernel({ store, digest, owner: 'exact-content', ports: { ...h.gateway.forAgent(h.agent, { scope, store }),
+    model: { generate: async request => {
+      models++;
+      if (models === 2 || models === 3) observations.push({ message: request.messages.at(-1), calls: h.calls.length });
+      return models <= 3 ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: `exact-${models}`,
+        name: models === 2 ? 'edit_workspace_file' : 'write_workspace_file', arguments: models === 2
+          ? { path: 'report.txt', old_text: 'hello', new_text: 'hello😀' }
+          : { path: 'report.txt', content: models === 1 ? 'hello😃' : 'hello😀' } }] }
+        : { kind: 'final_candidate', text: 'report.txt', toolCalls: [], usage: emptyUsage() };
+    } } } });
+  kernel.start(data.snapshot, data.config); const result = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(models, 4);
+  assert.equal(JSON.parse(observations[0].message.content).code, 'workspace_content_contract_mismatch');
+  assert.equal(JSON.parse(observations[0].message.content).difference.firstMismatchByte, 8);
+  assert.equal(JSON.parse(observations[1].message.content).code, 'workspace_exact_content_requires_write');
+  assert.deepEqual(observations.map(item => item.calls), [0, 0]);
+  const last = store.load(scope, 'run').receipts.filter(receipt => receipt.result.results).at(-1).result.results[0];
+  assert.equal(last.status, 'ok', JSON.stringify(last)); assert.equal(h.calls.length, 1);
+  assert.equal(readFileSync(join(h.workspaceRoot, 'report.txt'), 'utf8'), 'hello😀');
+  await kernel.runUntilIdle(scope, 'run'); assert.equal(h.calls.length, 1);
+});
+
 test('separate vision deadlines are Session-owned formal definitions and dispose independently', async t => {
   const h = setup(t, ['browser_inspect_workspace']);
   const before = h.gateway.definitions(h.agent, []);

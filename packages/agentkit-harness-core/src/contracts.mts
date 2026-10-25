@@ -51,6 +51,7 @@ export interface ToolDefinition {
   backgroundCommandPolicy?: 'owned-command-launch/v1';
   delegatedReadOnly?: boolean; deliveryWrite?: boolean;
   deliveryArtifactRole?: 'none' | 'read' | 'write';
+  exactContentPolicy?: 'current-goal-utf8/v1' | 'complete-write-only/v1';
   /** safe-read permits a fresh repeatable read; receipt-observation waits for a
    * separately persisted lookup of the original effect and never re-executes it. */
   recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1';
@@ -159,6 +160,8 @@ export interface ContextSourceDefinition {
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
 }
 export interface RunConfiguration {
+  wallDeliveryPolicy?: 'deadline-delivery/v1' | 'deadline-delivery/v2' | 'deadline-delivery/v3'
+    | 'deadline-delivery/v4' | 'deadline-delivery/v5' | 'deadline-delivery/v6' | 'deadline-delivery/v7' | null;
   engine: typeof NATIVE_ENGINE; profile: ModelProfile; limits: RunLimits; tools: ToolDefinition[];
   contract: TaskContract; instructions: string; hostBindingDigest: string;
   /** Admitted user input, bound with the configuration; null uses the objective alone. */

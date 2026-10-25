@@ -57,13 +57,15 @@ async function applyProof(ctx, options) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         ...(options.deliveryReview ? { execution: { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } } : {}),
+        ...(options.deadlinePolicy ? { execution: { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } } : {}),
         ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
           recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: !options.memoryManaged, flushAfterTurn: Boolean(options.memoryManaged) } },
           context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'] } : { tools: options.memory ? [] : options.web ? ['web_fetch', 'web_search']
-          : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
+          : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
+            : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
   if (options.frozen) {
@@ -214,7 +216,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview || options.deadlinePolicy) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.

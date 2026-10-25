@@ -95,9 +95,12 @@ and trusted Node gateway roles. Successful current-goal writes scope subsequent
 reads; browser observation retains priority; optional summary recovery spends
 the original budget. Monotonic active time and in-flight hard deadlines survive
 through committed consumption, without reconstructing uncommitted crash time.
-Host configuration currently uses explicit milliseconds; the Python Studio
-v1–v7 product-policy calculation remains unmapped. See [configuration and
-evidence boundaries](native-deadline-delivery.md).
+Host configuration accepts explicit milliseconds and the Python Studio v1–v7
+product-policy calculation, including versioned editor/self-read roles, summary
+ceilings, and v7 receipt feedback. Trusted exact-content writes and delivery edits
+are checked before dispatch; their sealed definitions survive original admission
+restore. Product default cutover remains pending. See [configuration and evidence
+boundaries](native-deadline-delivery.md).
 
 - **formal** — Host-owned request planning and compaction sealing:
   `ContextPlanner` / `ContextDriver` (`context_runtime.py`,

@@ -1110,6 +1110,77 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'deadline-frozen-build'));
 });
 
+for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} maps v7 product policy and restores the original managed admission`, async t => {
+  const path = 'report.md', text = 'Observed source; independent acceptance remains unavailable.';
+  const registry = new Map(), effects = []; let modelFailure, elapsed = 0;
+  const f = await setup(t, { recovery: true, spec: { execution: {
+    nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600,
+  } }, respond: (count, body) => { try {
+    const definitions = body.tools.map(tool => tool.function);
+    if (count === 1) assert.ok(definitions.some(tool => tool.name === 'search_workspace_files'));
+    else {
+      assert.equal(definitions.some(tool => tool.name === 'search_workspace_files'), false);
+      assert.deepEqual(definitions.find(tool => tool.name === 'read_workspace_file').parameters.properties.path.enum, [path]);
+      assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('prepared-execution-budget/v1')));
+    }
+    if (count <= 2) return { choices: [{ index: 0, delta: { tool_calls: [{ index: 0,
+      id: `product-deadline-${count}`, type: 'function', function: {
+        name: count === 1 ? 'write_workspace_file' : 'read_workspace_file',
+        arguments: JSON.stringify(count === 1 ? { path, content: text } : { path }),
+      } }] }, finish_reason: 'tool_calls' }] };
+    assert.equal(count, 3);
+    assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /independent acceptance/);
+    return { choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] };
+  } catch (error) { modelFailure ??= error; throw error; } } });
+  const gateway = createNativeDshTools({ ctx: { effect: install => install(),
+    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+      register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
+      async execute(input) {
+        effects.push(input.name);
+        const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
+        return { isError: false, value, content: tool.output.render(input.arguments, value) };
+      },
+    } }, config: { agentId: f.record.metadata.id,
+      toolBindings: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'] },
+    workspaceRoot: join(f.root, 'workspace'), stateDir: join(f.root, 'deadline-product-state') });
+  t.after(() => gateway.close()); f.payload.binding.nativeTools = gateway;
+  f.payload.input.assembly.tools = [...registry.values()];
+  if (frozen) f.payload.binding.buildId = 'deadline-product-frozen-build';
+  const store = new SqliteRunStore(join(f.root, 'deadline-product.sqlite')); t.after(() => store.close());
+  const runId = 'managed-product-deadline', args = { store, admission: null, runId,
+    target: { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id }, principal: { userId: 'managed-user' } };
+  const bound = await f.host.resolveManagedBinding(f.payload, args), scope = bound.scope;
+  assert.equal(bound.configuration.wallDeliveryPolicy, 'deadline-delivery/v7');
+  assert.equal(bound.configuration.limits.maxWallMs, 600000);
+  assert.equal(bound.configuration.limits.finalizationReserveWallMs, 240000);
+  assert.equal(bound.configuration.limits.deliveryContextRecoveryPolicy, 'delivery-window-summary/v2');
+  assert.equal(bound.configuration.tools.find(tool => tool.name === 'write_workspace_file').exactContentPolicy, 'current-goal-utf8/v1');
+  const kernel = new NativeKernel({ store, ports: bound.ports, owner: 'product-deadline-owner', digest,
+    monotonicNow: () => elapsed, onCheckpoint: async snapshot => {
+      if (snapshot.deliveryArtifacts?.paths.includes(path) && !snapshot.pendingIntent) elapsed = 361000;
+    } });
+  kernel.start({ scope, runId, sessionId: f.payload.agent.session.id, turnId: 'managed-command',
+    buildId: bound.buildId, parentRunId: null, taskChainId: runId }, bound.configuration);
+  const done = await kernel.runUntilIdle(scope, runId);
+  if (modelFailure) throw modelFailure;
+  assert.equal(done.phase, 'completed', done.reason); assert.equal(done.outcome, 'unverified');
+  assert.equal(done.activeElapsedMs, 361000); assert.equal(f.requests.length, 3);
+  assert.deepEqual(effects, ['write_workspace_file', 'read_workspace_file']);
+  assert.equal(await readFile(join(f.root, 'workspace', path), 'utf8'), text);
+  const before = store.load(scope, runId);
+  await bound.releaseResources?.({ scope, runId, sessionId: done.sessionId });
+  const restored = await f.host.resolveManagedBinding(f.payload, { ...args,
+    admission: { scope, buildId: bound.buildId, configuration: bound.configuration } });
+  assert.deepEqual(restored.configuration, bound.configuration);
+  const resumed = new NativeKernel({ store, ports: restored.ports, digest, owner: 'product-deadline-restored' });
+  await resumed.runUntilIdle(scope, runId);
+  assert.deepEqual(store.load(scope, runId), before);
+  assert.equal(f.requests.length, 3); assert.deepEqual(effects, ['write_workspace_file', 'read_workspace_file']);
+  assert.equal(f.head(), null, 'managed ownership stays outside the local ledger');
+  await restored.releaseResources?.({ scope, runId, sessionId: done.sessionId });
+  if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'deadline-product-frozen-build'));
+});
+
 test('Studio Native pins the snippet registry name contract and rejects a changed transport on an existing Run', async t => {
   const fixture = await setup(t), binding = { contract: 'agentkit.native-e2b-code-tools/v1', backend: 'e2b',
     registryNameContract: 'agentkit.sandbox-code-registry-name/v1', registryName: 'sandbox_run_code',
