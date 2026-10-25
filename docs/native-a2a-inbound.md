@@ -172,7 +172,7 @@ Node 22 和真实 maintained DSH WebServer 挂载证据记录于对应 checkpoin
 
 新增接收器已有真实 Native 执行和事实存储的单机器证明，详见[命令执行接线](native-managed-kernel.md)。
 还需贯通：正式 Server 互操作与 Agent/Build 生产 binding、完整控制能力；
-永久订阅/即时终态核对；共享 managed 存储、产品 recovery scanner 与全新部署。
+永久订阅；共享 managed 存储、产品 recovery scanner 与全新部署。
 公共 tool activity producer 已由 `native-a2a-public-tool-producer.mjs` 接入实际 Task
 投影和协议服务；对应可信字段白名单、持久重开及认证 wire 用例已存在，不再列为缺失实现。
 
@@ -181,5 +181,13 @@ Node 22 和真实 maintained DSH WebServer 挂载证据记录于对应 checkpoin
 分支一致：仅处理 `TextContent`，不把其他内容转换为出站附件。不能把另一方向的
 `events/adapters/_a2a_snapshot.py`（远端文件到本地 canonical 内容）误算为此入口的
 媒体发布要求。Node 的远端文件消费仍属于独立出站调用路径。
+
+GetTask/SubscribeToTask 的即时持久事实核对已经接入：`execute` 在返回非终态 Task 前
+调用 `admission.reconcile`，沿原接收回执、Session、Run 和已确认游标分页读取，不提交
+新 Server 命令，不重新执行 Native。核对与 Task 投影提交之后才推进原接收游标。
+`tests/native-a2a-inbound-server.test.mjs` 的 cold GetTask 用例覆盖 Host 重启后的
+原 interrupted→failed、重复读取保持原 Task、接收命令仍为一个；历史专项日志
+`.artifacts/native-migration/a2a-ingress-targeted.log` 记录该用例通过（6 项专项均通过）。
+本次依据现有代码及原始日志纠正清单，没有重新执行测试，也不将历史证据写成当前全量通过。
 现有出站调用和显式订阅的验收见
 [内部 A2A](native-a2a-internal.md)；完整迁移门槛见[迁移状态](native-migration-status.md)。
