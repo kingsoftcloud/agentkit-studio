@@ -286,6 +286,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // verification wrapper is always produced for local-default so an explicit
       // Memory task fails closed when the owner is not installed.
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
+      // New Native runs use the original Studio task/delivery policy. A cold
+      // restore retains the exact older optional configuration and digest.
+      const outputRecovery = original ? (Object.hasOwn(original.configuration, 'outputRecoveryPolicy')
+        ? { outputRecoveryPolicy: original.configuration.outputRecoveryPolicy } : {})
+        : { outputRecoveryPolicy: 'task-or-delivery/v1' };
       if (original) invariant(renderPrompt(recoveredPromptAssembly(input.assembly, source)) === systemPrompt,
         'studio_native_recovery_prompt_changed');
       // Seal the Host recovery capsule once per Build. The Memory owner guard
@@ -454,12 +459,12 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
           nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
           { providerRef: memoryProviderRef }),
-        configuration: { profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy,
+        configuration: { profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy, ...outputRecovery,
         ...(contextSources.length ? { contextSources } : {}),
         ...(hooks ? { hooks: hooks.definitions, stopHookContinuationLimit: hooks.stopContinuationLimit } : {}),
         hostRecoveryBinding: sealedCapsule,
         hostBindingDigest: hash({ agentId: binding.agentId, revision: binding.agentRevision, buildId, source, tools, workspaceId,
-          inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy,
+          inputContract: 'agentkit.native-host-input/v1', contextPolicy: context.policy, ...outputRecovery,
           interactionContract: STUDIO_NATIVE_INTERACTION_CONTRACT,
           ...(contextSources.length ? { contextSources } : {}),
           ...(hooks ? { hookContract: STUDIO_NATIVE_HOOK_CONTRACT, hooks: hooks.definitions,

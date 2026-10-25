@@ -5,7 +5,19 @@ Native 和 Codex。没有历史 Python 数据只免除历史数据兼容；不�
 
 先前报告的 85%–94% 没有完整、稳定且按工作量加权的分母，不能支持整体完成度。
 现撤回精确百分比；测试通过率、已写代码量和某条路径成功均不换算成整体迁移率。
-下面列的是当前确定的硬性缺口，不是完整逐项能力审计已经结束的声明。
+本页含不同阶段的验收记录，后续完成项应以对应专项记录和当前源码为准；
+它不是完整逐项能力审计已经结束的声明。
+
+本轮重新核对了原引擎范围：原 Native 不支持 generic inject、checkpoint/time-travel
+或任意 resume.input；Teams execution-policy 由 ManagedLangGraph 入口消费，
+`max_total_tokens` / `max_artifacts` 也不是原 Native RunLimits。这些不再算作 Native
+迁移必须补出的功能。已加入的可信 Teams 上下文/授权基础端口保留为显式扩展，
+不因此声明完整 Teams 执行可用。精确来源见[能力清单](native-reference-capabilities.md)。
+
+输出恢复已补入核心和共用 Studio Host：`task-or-delivery/v1` 根据实际工具准入，
+区分恢复任务和补齐答案；只拼接连续、身份和摘要匹配的 Host 片段。重复截断可按原预算
+丢弃未完成片段并重新生成；原模型事件、工具回执和公开会话投递的顺序与去重均保留。
+旧的可选配置保持原摘要，新的 Revision/Frozen 回合启用该策略。此项不代表全量验收完成。
 
 活动 Native Turn 已补齐[远程终态回执的自动衔接](native-a2a-receipt-wait.md)：
 远程输入/审批等显式控制确认任务结束后，自动入队原工具的只读核对，继续同一个 Run。
@@ -56,8 +68,9 @@ SIGKILL 专项证据。新增的显式可信 Server 命令接收器已连接 TS 
 `nativeA2aInbound` 参数挂载到 DSH WebServer。UUID 投影与 outbox 先提交再 ACK；
 完成需 runtime 完成事实和 canonical control 边界，EOF 不生成成功。Task/准入和新增
 命令执行接收器仍为单机器私有存储，不能视为共享托管部署完成；永久订阅、同步终态核对、
-公共 tool producer、共享 managed SQL 和产品恢复扫描仍待补齐。新增接收器的 inject、
-scoped interrupt、结构化输入、checkpoint/continuation resume 及执行 grant 扩展也有明确缺口。
+共享 managed SQL 等部署扩展仍待验收。后续已补充 signed Server scoped interrupt、
+结构化 A2A 回复、执行 grant 和产品恢复状态，详见[接收器当前契约](native-managed-kernel.md)。
+inject 和 checkpoint/time-travel 等需按上面的原 Native 能力边界判断。
 
 近期已接入 Node 的模型工具还包括 Browser、Skill 发现/安装/绑定，以及
 `search_knowledge_base`。知识库保留完整查询、来源与答案，Native 使用实际意图和

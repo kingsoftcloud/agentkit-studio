@@ -8,6 +8,7 @@ import { isChildReadyBatch } from './child-runtime.mjs';
 import { validateChildControlDelivery } from './child-control.mjs';
 import { guidanceRunnable } from './guidance.mjs';
 import { isContextSourceRefreshBatch } from './context-source-refresh.mjs';
+import { isOutputRestartBatch } from './output-recovery.mjs';
 
 /** The backend must serialize read/modify/write atomically, including failures. */
 export interface LedgerBackend {
@@ -127,7 +128,7 @@ export class TransactionalRunStore implements RunStore {
       invariant(!terminal(previous.phase), 'terminal_immutable');
       invariant(previous.revision === expectedRevision && next.revision === expectedRevision + 1, 'revision_conflict');
       immutableIdentity(previous, next);
-      invariant(transcriptExtends(previous.messages, next.messages), 'transcript_is_append_only');
+      invariant(transcriptExtends(previous.messages, next.messages) || isOutputRestartBatch(record, batch), 'transcript_is_append_only');
       for (const key of ['inputTokens', 'outputTokens', 'modelCalls', 'toolCalls', 'cost'] as const) {
         invariant(Number.isFinite(next.usage[key]) && next.usage[key] >= previous.usage[key]
           && Number.isFinite(next.descendantUsage[key]) && next.descendantUsage[key] >= previous.descendantUsage[key], 'usage_cannot_decrease');

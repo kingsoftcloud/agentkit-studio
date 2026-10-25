@@ -223,8 +223,12 @@ owner 固定真实 Native parent，SDK numeric turn 与 Server command-id 始终
 `authorizeInteraction` 时为 true，表示下述托管 A2A 交互回复；它与 enqueue 的多部分输入
 以及 resume.input 是分别校验的能力。
 未知格式仍返回 `NATIVE_MANAGED_STUDIO_INPUT_UNSUPPORTED`，不使用 JSON 字符串化降级。
-inject、checkpoint/continuation resume、resume.input、
-Teams execution-policy/context 扩展及 legacy-history 导入会明确拒绝，尚未迁移完成。
+inject、checkpoint/continuation resume、resume.input、Teams execution-policy/context 扩展
+及 legacy-history 导入会明确拒绝。这里需要区分参考引擎：原 `NativeRuntimeAdapter`
+本身声明 inject 和 checkpoint 不可用，Native resume 只支持原 invocation 的暂停或审批恢复；
+Teams execution-policy resolver 由 `ManagedHarnessRuntimeAdapter` / ManagedLangGraph 消费。
+这些不能直接列作原 Native 已支持而 TS 丢失的能力。无 Python 历史存量也不要求导入旧库。
+来源与边界见[原能力清单](native-reference-capabilities.md)。
 
 ### 执行授权：独立于运行与工具权限
 
@@ -348,7 +352,8 @@ runtime/v2 事实投影与完整 reasoning/media、公共工具活动和所有�
 此路径只允许核对同一原操作的回执。Native 工具 `awaiting_interaction` 仍需原 Server
 签名与可信 token 校验，Host 的 A2A 回调不能返回 approval/resume 或新增用户输入。
 Server 的 managed-A2A 结构化交互回复见下节；其他交互生产者和
-Teams execution-policy/context 的缺口仍按上节明确报告。
+附加 Teams execution-policy/context 接入尚未实现，边界仍按上节明确报告；
+它不表示原 Python Native 已支持这些策略。
 
 ## Server 定向取消原 A2A 调用
 

@@ -164,7 +164,24 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
         content: [{ type: 'text', text: notices[0].content }] }, { surfaceOp: 'append' });
     }
 
-    const messages = snapshot.messages, events = record.events.filter(event => event.seq <= snapshot.eventSeq);
+    const events = record.events.filter(event => event.seq <= snapshot.eventSeq);
+    // Output retirement preserves immutable model events with their ORIGINAL
+    // transcript positions. Reconstruct that timeline, then replay each exact
+    // retirement at its original point. Never index old events into new text.
+    const messages = structuredClone(snapshot.messages);
+    const retirements = new Map();
+    for (const event of events.toReversed()) {
+      if (event.kind !== 'output.restarted') continue;
+      const payload = event.payload, retained = payload.retainedMessageCount, retired = payload.retiredMessages;
+      invariant(Number.isSafeInteger(retained) && retained >= 0 && retained < messages.length && Array.isArray(retired)
+        && retired.every(message => ownObject(message) && ['user', 'assistant'].includes(message.role)
+          && typeof message.content === 'string' && ['continuation_fragment', 'continuation_observation'].includes(message.kind)
+          && Object.keys(message).every(key => ['role', 'kind', 'content'].includes(key)))
+        && canonical({ role: messages[retained].role, kind: messages[retained].kind ?? null, content: messages[retained].content })
+          === canonical(payload.notice), 'native_delivery_output_restart_invalid');
+      retirements.set(event.seq, { retained, retired, notice: structuredClone(messages[retained]) });
+      messages.splice(retained, 1, ...structuredClone(retired));
+    }
     // Admission can contain multiple user/context messages and attachments.
     // They have already been published above, with their original host source
     // and content blocks. Never publish a flattened second copy from Native.
@@ -224,6 +241,12 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       }
     };
     for (const event of events) {
+      if (event.kind === 'output.restarted') {
+        const { retained, retired, notice } = retirements.get(event.seq);
+        invariant(cursor === retained + retired.length, 'native_delivery_output_restart_cursor_invalid');
+        messages.splice(retained, retired.length, notice); cursor = retained;
+        continue;
+      }
       if (!['model.completed', 'context.summary_completed', 'model.stream_interrupted'].includes(event.kind)) continue;
       const payload = event.payload, index = payload.messageIndex;
       const summary = event.kind === 'context.summary_completed';

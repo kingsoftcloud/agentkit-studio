@@ -14,6 +14,7 @@ export interface ConfigurationInput {
   stopHookContinuationLimit?: number; delegationDepth?: number;
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   guidancePolicy?: RunConfiguration['guidancePolicy'];
+  outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
   hostRecoveryBinding?: RunConfiguration['hostRecoveryBinding'];
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
@@ -46,6 +47,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     tools: input.tools ?? [], instructions: input.instructions ?? '', hostBindingDigest: input.hostBindingDigest,
     inputMessages: input.inputMessages ?? null,
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
+    ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
     ...(input.hostRecoveryBinding === undefined ? {} : { hostRecoveryBinding: input.hostRecoveryBinding }),
     ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
     ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
@@ -65,6 +67,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(config.hostRecoveryBinding === undefined || config.hostRecoveryBinding !== null
     && typeof config.hostRecoveryBinding === 'object' && !Array.isArray(config.hostRecoveryBinding), 'invalid_host_recovery_binding');
   invariant(config.guidancePolicy == null || config.guidancePolicy === 'boundary-guide/v1', 'invalid_guidance_policy');
+  invariant(config.outputRecoveryPolicy == null || config.outputRecoveryPolicy === 'task-or-delivery/v1', 'invalid_output_recovery_policy');
   invariant(config.childLifecyclePolicy == null || config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_lifecycle_policy');
   invariant(config.childApprovalPolicy == null || config.childApprovalPolicy === 'owned-child-approval/v1'
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');

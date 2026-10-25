@@ -86,6 +86,7 @@ test('managed binding reuses real Studio assembly with its own ledger and truste
   const args = { store, admission: null, runId, target, principal };
   const bound = await f.host.resolveManagedBinding(f.payload, args);
   const scope = bound.scope;
+  assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
   assert.equal(scope.tenantId, target.tenantId); assert.equal(scope.userId, principal.userId);
   assert.equal(scope.agentId, target.agentInstanceId);
   const kernel = new NativeKernel({ store, ports: bound.ports, owner: 'managed-test-owner', digest });
@@ -103,6 +104,23 @@ test('managed binding reuses real Studio assembly with its own ledger and truste
   for (const changes of [{ target: { ...target, tenantId: 'other' } }, { principal: { userId: 'other' } }])
     await assert.rejects(f.host.resolveManagedBinding(f.payload, { ...args, admission, ...changes }),
       { code: 'NATIVE_MANAGED_STUDIO_TARGET_CHANGED' });
+});
+
+for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} delivers after a real model output restart`, async t => {
+  const f = await setup(t, { sqlite: true, respond: count => ({ choices: [{ index: 0,
+    delta: { content: count <= 4 ? '{"unfinished":' : 'Complete delivered answer.' }, finish_reason: count <= 4 ? 'length' : 'stop' }] }) });
+  if (frozen) f.payload.binding.buildId = 'output-recovery-build';
+  await f.host.executeTurn(f.payload);
+  const record = f.ledger.load(f.head().scope, f.head().runId);
+  assert.equal(record.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
+  assert.equal(record.snapshot.phase, 'completed'); assert.equal(record.snapshot.finalText, 'Complete delivered answer.');
+  assert.equal(record.snapshot.outputRestarts, 1); assert.equal(f.requests.length, 5);
+  assert.match(JSON.stringify(JSON.parse(f.requests[4].options.body).messages), /output limit repeatedly/);
+  assert.equal(record.events.filter(event => event.kind === 'output.restarted').length, 1);
+  const assistants = f.events.filter(event => event.type === 'assistant/message');
+  assert.ok(assistants.some(event => event.data.message.content.some(part => part.type === 'text' && part.text === 'Complete delivered answer.')));
+  assert.equal(assistants.filter(event => event.data.message.content.some(part => part.type === 'text' && part.text === 'Complete delivered answer.')).length, 1);
+  if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'output-recovery-build'));
 });
 
 test('managed discovery releases its Session resources before an ordinary Native turn can bind', async t => {

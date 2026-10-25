@@ -35,6 +35,9 @@ export interface Message extends ToolContextMessage {
   replayToolIds?: Record<string, string>;
   /** Durable inline input identity; carries no tool or Host authority. */
   inputId?: string; inputGoalRevision?: number;
+  /** Host-sealed output fragments; model prose cannot authorize assembly. */
+  continuationMode?: 'suffix' | 'task_resume' | 'empty_output';
+  continuationResponseId?: string; continuationFragmentDigest?: string;
 }
 export interface ToolDefinition {
   name: string; description: string; parameters: ObjectValue;
@@ -164,6 +167,7 @@ export interface RunConfiguration {
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
   guidancePolicy?: 'boundary-guide/v1' | null;
+  outputRecoveryPolicy?: 'task-or-delivery/v1' | null;
   /** Opaque, Host-owned recovery locator. The core never interprets it as authority. */
   hostRecoveryBinding?: ObjectValue;
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;

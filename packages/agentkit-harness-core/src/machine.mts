@@ -14,6 +14,7 @@ import { rememberCommand } from './background-runtime.mjs';
 import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './child-budget.mjs';
 import { prepareChildLifecycle, unsettledChildren } from './child-runtime.mjs';
 import { toolResourceUsage, toolUsageIncomplete } from './tool-resource-usage.mjs';
+import { completeContinuation, outputRecoveryMode, restartContinuation } from './output-recovery.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -221,7 +222,8 @@ export function validateModelResult(input: ModelResult): ModelResult {
   invariant(result.kind !== 'final_candidate' || result.text.trim(), 'empty_final_candidate');
   return result;
 }
-export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: RunConfiguration, now: number, random: number): Partial<RunSnapshot> {
+export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: RunConfiguration, now: number, random: number,
+  digest: (value: unknown) => string = canonical): Partial<RunSnapshot> {
   const result = validateModelResult(input);
   const replay = boundReplay(result, config);
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
@@ -266,7 +268,6 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
         messages: [...snapshot.messages, { ...message, toolCalls: result.toolCalls }],
         continuations: 0, modelErrors: 0 };
     case 'final_candidate': {
-      const text = normalizedFinalText(result.text, config.contract.finalOutputFormat);
       if (config.contract.finalSubmissionSchema) {
         const errors = snapshot.modelErrors + 1;
         const exhausted = errors > config.profile.maxRetries || modelRoom(snapshot, config) <= 0;
@@ -276,15 +277,31 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
           messages: [...snapshot.messages, { ...message, kind: 'unstructured_final_draft' },
             { role: 'user', kind: 'final_submission_required', content: 'Submit the complete final answer through submit_final_output.' }] };
       }
+      const text = normalizedFinalText(completeContinuation(snapshot.messages, result.text, digest), config.contract.finalOutputFormat);
       return { ...base, phase: 'verifying', modelErrors: 0, candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`,
         text, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision },
         messages: [...snapshot.messages, { ...message, content: text, kind: 'final_candidate' }] };
     }
     case 'output_limit': {
-      if (snapshot.continuations >= config.profile.maxContinuations) return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'continuation_budget_exhausted' };
+      if (snapshot.continuations >= config.profile.maxContinuations) {
+        if (snapshot.outputRestarts < config.limits.maxOutputRestarts) {
+          try { return { ...base, ...restartContinuation(snapshot, config, result.text, digest), phase: 'preparing_context',
+            continuations: 0, outputRestarts: snapshot.outputRestarts + 1 }; }
+          catch (error) { if (!(error instanceof Error) || !('code' in error)) throw error;
+            return { ...base, phase: 'finalizing', outcome: 'blocked', reason: String(error.code) }; }
+        }
+        return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'continuation_budget_exhausted' };
+      }
+      const mode = result.text ? outputRecoveryMode({ ...snapshot, ...base }, config,
+        advertisedTools({ ...snapshot, ...base }, config).length > 0) : 'empty_output';
+      const responseId = snapshot.pendingIntent ?? `${snapshot.runId}:model:${snapshot.usage.modelCalls}`;
       return { ...base, phase: 'preparing_context', continuations: snapshot.continuations + 1,
-        messages: [...snapshot.messages, ...(result.text ? [{ ...message, kind: 'continuation_fragment' }] : []),
-          { role: 'user', kind: 'continuation_observation', content: 'The previous output was interrupted. Incomplete tool calls were not executed. Continue from the last committed state and finish only when the task is complete.' }] };
+        messages: [...snapshot.messages, ...(result.text ? [{ ...message, kind: 'continuation_fragment', continuationResponseId: responseId }] : []),
+          { role: 'user', kind: 'continuation_observation', continuationMode: mode, continuationResponseId: responseId,
+            continuationFragmentDigest: digest(result.text), content: mode === 'task_resume'
+              ? 'The previous output was interrupted while task tools remain available. It is work in progress, not a completed delivery. Continue from the last committed state using the available tools as needed; break remaining work into smaller actions. Incomplete tool calls were not executed. Give a fresh final answer only after the task is complete.'
+              : result.text ? 'The last response hit its output limit. Return only the exact missing suffix of that response. Incomplete tool calls were not executed.'
+                : 'The last response hit its output limit without visible content or a committed tool call. Continue the task from the last committed state; take the next useful action or answer only if the task is complete.' }] };
     }
     case 'context_overflow':
       return { ...base, phase: 'compacting', context: { ...snapshot.context, preparedCursor: null } };

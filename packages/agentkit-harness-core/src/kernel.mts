@@ -21,6 +21,7 @@ import { planNativeContext, reduceContextModel } from './context-planning.mjs';
 import type { ContextCounters } from './context-planning.mjs';
 import { collectContextContributions } from './context-contributions.mjs';
 import { refreshContextSources } from './context-source-refresh.mjs';
+import { outputRestartPayload } from './output-recovery.mjs';
 import { reduceTurnInput } from './turn-input.mjs';
 import { modelStreamCapture } from './model-stream.mjs';
 import { browserRecoveryTransition } from './browser-runtime.mjs';
@@ -511,7 +512,9 @@ export class NativeKernel {
             break;
           }
           const result = normalizeToolIdentities(snapshot, raw as unknown as ModelResult, this.digest);
-          changes = reduceModel(snapshot, result, configuration, this.now(), this.random());
+          changes = reduceModel(snapshot, result, configuration, this.now(), this.random(), this.digest);
+          if (changes.outputRestarts === snapshot.outputRestarts + 1)
+            facts.push({ kind: 'output.restarted', payload: outputRestartPayload(snapshot, { ...snapshot, ...changes }) });
           if (changes.candidate) changes.candidate = sealCandidate(changes.candidate, { ...snapshot, ...changes }, configuration, this.digest);
           const rejectedDraft = configuration.contract.finalSubmissionSchema !== null && result.kind === 'final_candidate';
           const appended = changes.messages?.slice(snapshot.messages.length) ?? [];
@@ -666,7 +669,7 @@ export class NativeKernel {
         raw = objectValue(result);
         changes = intent.payload.purpose === 'compaction' ? reduceContextModel(snapshot, result, configuration,
           addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 }), this.now(), this.random())
-          : reduceModel(snapshot, result, configuration, this.now(), this.random());
+          : reduceModel(snapshot, result, configuration, this.now(), this.random(), this.digest);
         status = 'failed';
       } else {
         raw = { code };

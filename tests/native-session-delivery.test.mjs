@@ -27,6 +27,33 @@ function consumer(seed = [{ type: 'turn/start', data: { turn: 1 }, seq: 1 }]) {
 const source = { provider: 'fixture', model: 'native-model' };
 const inputMessages = [{ id: 'user-input', role: 'user', content: [{ type: 'text', text: 'Complete the task' }] }];
 const final = () => ({ kind: 'final_candidate', text: 'Delivered', toolCalls: [], usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4 } });
+
+test('two output retirements preserve original model positions, committed tools and cold delivery deduplication', async t => {
+  const f = setup(t, undefined, { outputRecoveryPolicy: 'task-or-delivery/v1', limits: { maxOutputRestarts: 2 },
+    profile: { ...fixture().config.profile, maxContinuations: 1, providerReplayMode: 'reasoning_content' } });
+  const sink = consumer(); let models = 0, tools = 0;
+  const adapter = { model: { generate: async () => {
+    models++;
+    if (models === 1 || models === 6) return { ...final(), kind: 'tool_calls', text: 'Checking actual state',
+      toolCalls: [{ callId: `read-${models}`, name: 'read', arguments: {} }] };
+    if (models < 6) return { ...final(), kind: 'output_limit', text: `unfinished ${models}`,
+      providerReplay: { compatibilityDigest: 'fixture/v1', reasoning_content: 'private-should-not-be-published' } };
+    return final();
+  } }, tools: { execute: async () => { tools++; return { status: 'ok', content: `Actual result ${tools}` }; } } };
+  const result = await new NativeKernel({ store: f.store, digest, owner: 'output-delivery', ports: adapter,
+    onCheckpoint: delivery(f.store, sink) }).runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed'); assert.equal(result.outputRestarts, 2); assert.equal(models, 7); assert.equal(tools, 2);
+  assert.equal(sink.events.filter(event => event.type === 'tool/result').length, 2);
+  const saved = structuredClone(sink.events);
+  f.reopen(); await delivery(f.store, sink)(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(sink.events, saved);
+  const coldSink = consumer(); await delivery(f.store, coldSink)(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(coldSink.events, saved);
+  assert.equal(coldSink.events.filter(event => event.type === 'assistant/message'
+    && event.data.message.content.some(part => part.type === 'text' && part.text === 'Delivered')).length, 1);
+  assert.equal(JSON.stringify(f.store.events(scope, 'run').filter(event => event.kind === 'output.restarted')).includes('providerReplay'), false);
+  assert.equal(JSON.stringify(coldSink.events).includes('private-should-not-be-published'), false);
+});
 test('host-wide delivery projection admits multiple standard DSH attempts within one step', () => {
   const projection = nativeDeliveryProjection();
   let state = projection.init();
