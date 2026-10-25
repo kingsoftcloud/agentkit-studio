@@ -59,6 +59,8 @@ export interface ToolDefinition {
   observationRole: 'none' | 'browser';
   progressObservation: boolean; contextRetention: 'normal' | 'persistent';
   discovery?: { deferred: true; aliases?: string[]; searchHint?: string; mcp?: { serverName: string; toolName: string } };
+  /** Frozen MCP Plan admission only; never grants replay or concurrency authority. */
+  planModeAccess?: { contract: 'zcode-mcp-plan/v1'; destructive: boolean };
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';

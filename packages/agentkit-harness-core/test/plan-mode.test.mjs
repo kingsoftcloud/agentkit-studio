@@ -110,6 +110,53 @@ test('policy absence preserves legacy external plan tool semantics', async () =>
   assert.equal(done.phase, 'completed'); assert.equal(effects, 1); assert.equal(Object.hasOwn(done, 'planMode'), false);
 });
 
+test('frozen MCP Plan access preserves approval and denies destructive and legacy unknown tools', async () => {
+  const mcp = (name, destructive) => tool({ name, readOnly: false, concurrentSafe: false,
+    planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive } });
+  const { config, snapshot } = configuration({ planModeInitialActive: true, todoPolicy: undefined, tools: [...planModeToolDefinitions(),
+    mcp('allowed', false), mcp('destructive', true), tool({ name: 'mcp_named_but_unbound', readOnly: false, concurrentSafe: false })] });
+  const store = new MemoryRunStore(); let models = 0; const invoked = [];
+  const kernel = new NativeKernel({ store, digest, owner: 'mcp-plan', ports: {
+    model: { generate: async request => {
+      if (++models === 1) return result([call('allowed'), call('destructive'), call('mcp_named_but_unbound')]);
+      assert.equal(request.messages.filter(message => message.role === 'tool' && message.content.includes('plan_mode_write_denied')).length, 2);
+      return result();
+    } }, tools: { execute: async request => {
+      invoked.push(request); assert.equal(request.call.name, 'allowed'); assert.equal(request.definition.readOnly, false);
+      if (!request.interaction) return { status: 'approval_required', interactionId: 'mcp-review', content: 'Review MCP action' };
+      assert.equal(request.interaction.decision, 'allow'); return { status: 'ok', content: 'MCP result' };
+    } } } });
+  kernel.start(snapshot, config); const waiting = await kernel.runUntilIdle(scope, 'run'); assert.equal(waiting.phase, 'awaiting_interaction');
+  kernel.submit(scope, 'run', { commandId: 'allow-mcp', kind: 'submit_interaction', payload: { interactionId: waiting.pendingInteraction.interactionId, decision: 'allow' } });
+  const done = await kernel.runUntilIdle(scope, 'run'); assert.equal(done.phase, 'completed');
+  assert.equal(done.planMode.active, true); assert.equal(invoked.length, 2);
+});
+
+test('Plan access never turns MCP hints into repeatable-read or concurrency authority', () => {
+  const base = tool({ name: 'mcp', readOnly: false, concurrentSafe: false,
+    planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive: false } });
+  for (const override of [{ readOnly: true }, { concurrentSafe: true }, { recoveryPolicy: 'safe-read/v1' },
+    { planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive: 'false' } },
+    { planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive: false, allow: true } }])
+    assert.throws(() => fixture({ tools: [{ ...base, ...override }] }), /invalid_plan_mode_access|invalid_tool_concurrency/);
+});
+
+test('cold claimed MCP admitted in planning is reconciled instead of re-executed', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'native-plan-mcp-')), filename = join(directory, 'runs.sqlite');
+  let store = new SqliteRunStore(filename); t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  const mcp = call('mcp'); const { config, snapshot } = configuration({ planModeInitialActive: true, todoPolicy: undefined, tools: [...planModeToolDefinitions(),
+    tool({ name: 'mcp', readOnly: false, concurrentSafe: false, planModeAccess: { contract: 'zcode-mcp-plan/v1', destructive: false } })] });
+  store.create(config, snapshot); const lease = store.acquire(scope, 'run', 'lost', 1, 1);
+  const batch = prepareEffect(snapshot, 'tool', 'executing_tools', { calls: [mcp], interaction: null }, {
+    pendingTools: [mcp], messages: [...snapshot.messages, { role: 'assistant', content: '', toolCalls: [mcp] }] });
+  store.commit(scope, 'run', lease, 1, 0, batch); store.claim(scope, 'run', lease, 1, batch.snapshot.pendingIntent);
+  store.close(); store = new SqliteRunStore(filename);
+  const done = await new NativeKernel({ store, digest, owner: 'replacement', now: () => 100, ports: {
+    model: { generate: async () => assert.fail('Must reconcile before inference') },
+    tools: { execute: async () => assert.fail('No blind MCP replay') } } }).runUntilIdle(scope, 'run');
+  assert.equal(done.phase, 'interrupted'); assert.equal(done.reason, 'effect_outcome_unknown'); assert.equal(done.planMode.active, true);
+});
+
 test('takeover of a claimed pure session control preserves the durable pre-tool hook denial', async () => {
   for (const attempted of [enter, call('TodoWrite', { todos: [{ content: 'Denied', status: 'pending', priority: 'high' }] })]) {
     const { config, snapshot } = configuration({ hooks: [{ hookId: 'deny', sourceRef: 'host://deny',

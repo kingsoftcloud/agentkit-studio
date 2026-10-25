@@ -36,15 +36,17 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **16/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **17/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting), M4 4/20
+(successful context-window truncation and durable cache usage accounting), M4 5/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
-actual Studio plan review). M5–M6 have no earned points yet. The denominator is unchanged;
-Plan exceptions and the remaining M4 controls are not certified completely aligned.
+actual Studio plan review, plus frozen non-destructive MCP Plan access through the
+actual Host permission/execution path). M5–M6 have no earned points yet. The denominator
+is unchanged; command/session Plan exceptions and the remaining M4 controls are not
+certified completely aligned.
 
 ## Source and implementation map
 
@@ -463,11 +465,10 @@ Deliberate differences and remaining comparisons:
 - Native `build` in tool results denotes its ordinary execution policy; it does
   not add ZCode's separate `auto/yolo/guarded/edit` permission-mode system.
 - ZCode permits non-destructive MCP capabilities even when not read-only, and
-  explicitly allowed non-destructive session controls. Native currently requires
-  its existing read-only contract for external tools and denies potentially
-  mutating child/command tools in plan mode. This preserves Native effect/child
-  authority while command classifications, MCP annotations and other session
-  exceptions are compared. These gaps are not certified complete alignment.
+  explicitly allowed non-destructive session controls. The MCP exception is now
+  integrated as described below. Dynamic read-only shell classification and
+  other session/child exceptions remain gaps; Native still denies these mutating
+  definitions in planning. These remaining gaps are not certified aligned.
 - Full ZCode Plan reminder cadence/workflow text, child-local planning and every
   user steering/permission interaction still need comparison. Mode guidance is
   integrated now; it does not establish equivalent task quality.
@@ -497,6 +498,67 @@ approved-plan continuity. These groups overlap; counts are not progress weights.
 There is no extra planning model, but approved-plan text can add up to 20,000 UTF-16
 units to dynamic context; task-level Token/latency comparisons are still pending.
 No full repository test suite or live-model performance claim was made.
+
+## Frozen MCP permission exception during planning
+
+Pinned source: `mcp/index.ts:createMcpToolEntry` sets destructive only when
+`descriptor.annotations.destructiveHint === true`; absence defaults to false.
+`permission/service.ts:checkPlanMode` admits non-destructive MCP capabilities even
+when their read-only hint is false or absent. An explicit destructive hint still
+blocks a tool with a read-only hint. Project deny/ask and tool always-ask rules
+precede the Plan branch; this exception does not override them.
+
+Studio now snapshots this separate `zcode-mcp-plan/v1` fact from actual MCP
+descriptors into newly admitted Native binding contracts. The gateway binds only
+actual MCP identities, includes the fact in its binding digest and optionally
+emits it into the frozen Run tool definition. New Plan-policy Runs admit the
+exception; restored Runs retain exactly their prior per-tool selection or
+absence. Older binding contracts without this fact keep their existing digest
+and behavior. A tool name or model-supplied argument cannot supply the exception.
+
+This fact only changes Plan admission. MCP definitions remain non-read-only and
+serialized, retain normal Host permission/pre/post execution and durable outcome
+handling, and acquire no safe-read recovery authority. Cold takeover of a claimed
+MCP effect with no known result interrupts for reconciliation and never replays
+the action. This intentional separation is necessary because an MCP read-only
+hint is not Native evidence that an external side effect can safely repeat.
+
+Local checks for this batch:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness-core/test/plan-mode.test.mjs tests/native-mcp-schema.test.mjs tests/native-plan-interaction.test.mjs
+node --test tests/native-dsh-tools.test.mjs
+node --test packages/agentkit-harness-core/test/recovery.test.mjs packages/agentkit-harness-core/test/tool-discovery.test.mjs tests/native-tool-receipt-authority.test.mjs tests/native-mcp-schema.test.mjs
+node --test --test-name-pattern='restor|cold|frozen|planning controls|MCP' tests/studio-native-harness.test.mjs
+node node_modules/typescript/bin/tsc -p tsconfig.contracts.json
+node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --mount-host --plan-mode --plan-mcp --keep
+node scripts/check-portability.mjs
+```
+
+The control group passed 21 cases, the real gateway/kernel adapter group 56,
+and focused recovery/discovery/receipt tests 28 (overlapping counts), plus 13 Host
+restoration/frozen configuration cases. The packed
+proof uses two actual Host processes, eleven controlled model HTTP requests,
+three real MCP calls, three structured plan reviews and two approved workspace
+writes. It verifies default/explicit non-destructive MCP admission, a destructive
+tool blocked despite its read-only hint, a permitted MCP call denied by actual
+Host pre-execution policy, and resident MCP invocation after cold Host restart.
+Both forbidden workspace files remain absent. The original proof's existing
+discovery, Todo, plan review feedback, mode projection and approved-plan
+continuity assertions remain in force. The extra permission check adds no model
+call; descriptor facts occupy frozen configuration, while a short permission
+sentence enters dynamic Plan guidance. No task-level savings claim is made.
+
+Follow-up source audit: Bash dynamic permissions come from
+`tool/handlers/bash.ts:resolveBashPermissionCapability`, `bash-semantics.ts`,
+`bash-command-parser.ts` (the `unbash` parser), the `bash-readonly-policy-*`
+modules and `bash-git-runtime-safety.ts`. Classification checks command syntax,
+redirection/dynamic words, write options and workspace Git runtime context; a
+simple executable-name allowlist would not reproduce it. Explicit non-destructive
+session control in the pinned source includes `RespondToCoordinator`
+(`tool/handlers/respond-to-coordinator.ts`). It must not be conflated with a
+blanket permission to launch or steer a potentially mutating Native child.
 
 ## Local evidence and comparison protocol
 

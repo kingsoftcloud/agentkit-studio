@@ -355,7 +355,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         : record.spec.execution?.nativeToolSearchMode === 'off'
           || baseTools.some(tool => toolDiscoveryDefinitions().some(control => control.name === tool.name))
           ? undefined : 'local-tool-search/v1';
-      const toolOptions = { ...(toolDiscoveryPolicy ? { toolDiscoveryPolicy } : {}), deadlineDelivery: original
+      const toolOptions = { ...(toolDiscoveryPolicy ? { toolDiscoveryPolicy } : {}),
+        // Old Runs retain the exact absence/selection of Plan exceptions.
+        planModeMcpAccess: original ? original.configuration.tools.filter(tool => tool.planModeAccess).map(tool => tool.name) : !!planModePolicy,
+        deadlineDelivery: original
         ? original.configuration.limits.finalizationReserveWallMs > 0 || !!original.configuration.wallDeliveryPolicy
         : (record.spec.execution?.nativeLimits?.finalizationReserveWallMs ?? 0) > 0 || !!deadline.wallDeliveryPolicy,
       exactContentPolicy: original ? original.configuration.tools.some(tool => tool.exactContentPolicy) : true,

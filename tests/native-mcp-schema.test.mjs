@@ -1,10 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT, snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
+import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT, snapshotNativeMcpSchema, snapshotNativeMcpPlanAccess, bindNativeMcpPlanAccess } from '../src/providers/native-mcp-schema.mjs';
 import { compileToolInput } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 const integer = 9007199254740993n;
 const schema = { type: 'object', required: ['id'], properties: { id: { type: 'integer', minimum: integer, maximum: integer } } };
+
+test('MCP Plan admission follows the pinned explicit-true destructive default and freezes its own fact', () => {
+  for (const annotations of [undefined, {}, { readOnlyHint: false }, { destructiveHint: false }, { destructiveHint: true, readOnlyHint: true }]) {
+    const descriptor = { annotations }; const snapshot = snapshotNativeMcpPlanAccess(descriptor);
+    assert.equal(snapshot.destructive, annotations?.destructiveHint === true);
+    const bound = bindNativeMcpPlanAccess(JSON.parse(JSON.stringify(snapshot)));
+    snapshot.destructive = !snapshot.destructive; assert.notEqual(bound.destructive, snapshot.destructive);
+  }
+  for (const value of [{}, { contract: 'zcode-mcp-plan/v1', destructive: 'false' },
+    { contract: 'zcode-mcp-plan/v1', destructive: false, readOnly: true }]) assert.throws(() => bindNativeMcpPlanAccess(value));
+});
 
 test('Native MCP schemas survive JSON plugin configuration without numeric conversion', () => {
   const original = snapshotNativeMcpSchema({ inputSchema: schema, outputSchema: schema });

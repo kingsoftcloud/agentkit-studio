@@ -20,7 +20,7 @@ import { createNativeDshWebTools } from './native-dsh-web.mjs';
 import { nativeWebToolDefinitions } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
 import { nativeMcpOutcome } from './native-mcp-output.mjs';
 import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
-import { bindNativeMcpSchema, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
+import { bindNativeMcpSchema, bindNativeMcpPlanAccess, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
 import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
@@ -174,11 +174,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   const mcpContracts = new Map([...contracts].filter(([name, contract]) => allowed.has(name) && contract.executor === 'mcp'
     && String(contract.mcpResourceId || contract.resourceId || '').trim()));
   invariant(!mcpContracts.size || typeof executeMcpTool === 'function', 'studio_native_mcp_executor_unavailable');
+  const mcpPlanAccess = new Map([...mcpContracts].filter(([, contract]) => contract.nativeMcpPlanAccess !== undefined)
+    .map(([name, contract]) => [name, bindNativeMcpPlanAccess(contract.nativeMcpPlanAccess)]));
   const mcpSchemas = new Map([...mcpContracts].filter(([, contract]) => contract.nativeMcpSchema !== undefined)
     .map(([name, contract]) => [name, bindNativeMcpSchema(contract.nativeMcpSchema)]));
   const mcpBindingDigest = mcpContracts.size ? hash([...mcpContracts].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([name, contract]) => ({
     name, resourceId: String(contract.mcpResourceId || contract.resourceId).trim(),
     schema: contract.nativeMcpSchema ?? { parameters: contract.parameters ?? { type: 'object', properties: {} } },
+    ...(mcpPlanAccess.has(name) ? { planModeAccess: mcpPlanAccess.get(name) } : {}),
   }))) : null;
   const childMcpBinding = mcpContracts.size ? { contract: 'agentkit.studio-child-borrowed-mcp/v1',
     bindingDigest: mcpBindingDigest, toolNames: [...mcpContracts.keys()].sort() } : null;
@@ -686,7 +689,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
       } };
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy, planModeMcpAccess = false } = {}) {
+      invariant(typeof planModeMcpAccess === 'boolean' || Array.isArray(planModeMcpAccess)
+        && planModeMcpAccess.every(name => typeof name === 'string'), 'studio_native_mcp_plan_selection_invalid');
       invariant(toolDiscoveryPolicy === undefined || toolDiscoveryPolicy === 'local-tool-search/v1', 'studio_native_tool_discovery_policy_invalid');
       invariant(sourceObservationPolicy === undefined || sourceObservationPolicy === 'workspace-source-model/v1', 'studio_native_source_policy_invalid');
       invariant(directoryObservationPolicy === undefined || /^studio-directory-observation\/v[1-3]$/.test(directoryObservationPolicy),
@@ -751,6 +756,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           // Unknown external effects are serialized and never granted safe-read
           // recovery from a catalog hint. Actual permissions remain in DSH.
           readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 60_000,
+          ...(mcpPlanAccess.has(name) && (planModeMcpAccess === true || Array.isArray(planModeMcpAccess) && planModeMcpAccess.includes(name))
+            ? { planModeAccess: structuredClone(mcpPlanAccess.get(name)) } : {}),
           contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal',
         };
       });

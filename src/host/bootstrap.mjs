@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { NATIVE_MCP_JSON_CODEC } from '../providers/native-mcp-json.mjs';
-import { snapshotNativeMcpSchema } from '../providers/native-mcp-schema.mjs';
+import { snapshotNativeMcpSchema, snapshotNativeMcpPlanAccess } from '../providers/native-mcp-schema.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { nativeHarnessHostContract, selectedNativeBuildContract } from '../build-engine.mjs';
 import { loadConfiguredNativeSkills } from '../providers/native-skill-source.mjs';
@@ -371,7 +371,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
             mcpResourceId: resourceId,
             name,
             description: String(tool.description || ''),
-            ...(nativeMcp ? { nativeMcpSchema: snapshotNativeMcpSchema(tool) }
+            ...(nativeMcp ? { nativeMcpSchema: snapshotNativeMcpSchema(tool), nativeMcpPlanAccess: snapshotNativeMcpPlanAccess(tool) }
               : { parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} } }),
             executor: 'mcp',
             timeoutSeconds: 120,

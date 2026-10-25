@@ -9,6 +9,8 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
+import { snapshotNativeMcpPlanAccess } from '../src/providers/native-mcp-schema.mjs';
+import { planModeToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/python-syntax.mjs';
 import { artifactToolDefinitions, canonical, parseNativeJson, directoryProgressQuote } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeArtifactStore } from '../packages/agentkit-harness/src/native/artifact-store.mjs';
@@ -515,6 +517,44 @@ for (const invalidOutput of [false, true]) test(`Native MCP pins exact input/out
   assert.equal(receipt.status, invalidOutput ? 'error' : 'ok');
   await kernel.runUntilIdle(scope, 'run'); assert.equal(effects, 1); assert.equal(models, 3);
   assert.throws(() => host.gateway.definitions(host.agent, [{ name: 'exact', parameters: { type: 'object' } }]), /studio_native_mcp_schema_binding_changed/);
+});
+
+test('Plan MCP admission binds actual MCP identity, preserves Host denials and freezes restored selections', async t => {
+  const contracts = ['allowed', 'destructive', 'blocked_by_host', 'legacy'].map(name => ({ name, executor: 'mcp', resourceId: 'catalog',
+    ...(name === 'legacy' ? {} : { nativeMcpPlanAccess: snapshotNativeMcpPlanAccess({ annotations: { destructiveHint: name === 'destructive' } }) }) }));
+  let effects = 0;
+  const host = setup(t, contracts.map(row => row.name), contracts, { executeMcpTool: async request => {
+    effects++; assert.equal(request.name, 'allowed'); return { content: [{ type: 'text', text: 'Exploration result' }] };
+  } });
+  const schemas = [...host.registry.values()];
+  assert.ok(host.gateway.definitions(host.agent, schemas).every(tool => !tool.planModeAccess), 'Old Runs keep absence');
+  const tools = host.gateway.definitions(host.agent, schemas, { planModeMcpAccess: true });
+  assert.equal(tools.find(tool => tool.name === 'legacy').planModeAccess, undefined);
+  assert.ok(tools.every(tool => !tool.readOnly && !tool.concurrentSafe && tool.recoveryPolicy !== 'safe-read/v1'));
+  contracts[0].nativeMcpPlanAccess.destructive = true;
+  tools[0].planModeAccess.destructive = true;
+  const frozen = host.gateway.definitions(host.agent, schemas, { planModeMcpAccess: ['allowed'] });
+  assert.deepEqual(frozen.filter(tool => tool.planModeAccess).map(tool => tool.name), ['allowed']);
+  assert.equal(frozen[0].planModeAccess.destructive, false, 'Caller mutations cannot change the binding');
+  const execute = host.ctx.tools.execute;
+  host.ctx.tools.execute = request => request.name === 'blocked_by_host'
+    ? { isError: true, content: [{ type: 'text', text: 'Host policy denied' }] } : execute(request);
+  const data = fixture({ planModePolicy: 'session-plan/v1', planModeInitialActive: true,
+    tools: [...host.gateway.definitions(host.agent, schemas, { planModeMcpAccess: true }), ...planModeToolDefinitions()],
+    limits: { effectTimeoutMs: 200000 } });
+  const store = new MemoryRunStore(); let models = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'mcp-plan', ports: { ...host.gateway.forAgent(host.agent, { scope, store }),
+    model: { generate: async request => {
+      if (++models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(),
+        toolCalls: contracts.map(({ name }) => ({ callId: name, name, arguments: {} })) };
+      const messages = request.messages.filter(message => message.role === 'tool');
+      assert.equal(messages.filter(message => message.content.includes('plan_mode_write_denied')).length, 2);
+      assert.ok(messages.some(message => message.content.includes('Host policy denied')));
+      return { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] };
+    } } } });
+  kernel.start(data.snapshot, data.config); const done = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(done.phase, 'completed'); assert.equal(done.planMode.active, true); assert.equal(effects, 1);
+  assert.equal(host.calls.length, 1);
 });
 
 test('Native owns revision-bound MCP receipts while post-policy output controls the model view', async t => {
