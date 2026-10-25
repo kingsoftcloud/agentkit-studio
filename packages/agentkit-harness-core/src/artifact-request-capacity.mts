@@ -1,14 +1,61 @@
 import type { ContextPort, EffectIntent, Message, ObjectValue, PortContext, RunConfiguration, RunSnapshot, ToolCall, ToolResult } from './contracts.mjs';
 import { copy, canonical, invariant } from './values.mjs';
-import { advertisedTools, plan, reduceTools, settle, objectValue } from './machine.mjs';
+import { advertisedTools, finalizationOnly, modelRoom, plan, reduceTools, settle, objectValue } from './machine.mjs';
 import { planNativeContext } from './context-planning.mjs';
 import { browserTaskMessages } from './task-policy.mjs';
-import { deliveryTaskMessages } from './deadline-delivery.mjs';
+import { deliveryTaskMessages, wallDeliveryOnly } from './deadline-delivery.mjs';
 import { selectArtifactSearchFeedback } from './artifact-search-feedback.mjs';
+import { artifactToolDefinitions } from './artifact-runtime.mjs';
+import { sourceWorkingSetGroup } from './source-working-set-group.mjs';
+import type { ContextCounters } from './context-planning.mjs';
 
 type Digest = (value: unknown) => string;
 type Tokens = NonNullable<ContextPort['tokens']>;
 const count = (value: number) => { invariant(Number.isSafeInteger(value) && value > 0, 'artifact_capacity_counter_invalid'); return value; };
+function requestCounters(context: PortContext, config: RunConfiguration, tokens: Tokens, future: RunSnapshot): ContextCounters {
+  return {
+    countRequest: async (messages, tools, purpose, maxOutputTokens) => {
+      context.signal.throwIfAborted();
+      return count(await tokens.countRequest({ ...context, profile: { ...config.profile, maxOutputTokens },
+        messages: purpose === 'task' ? deliveryTaskMessages(future, config, browserTaskMessages(future, config, messages)) : messages,
+        tools, purpose, maxOutputTokens, maxInlineImageBytes: config.limits.maxInlineImageBytes }));
+    }, countText: async text => count(await tokens.countText({ ...context, text })),
+    ...(tokens.countMessage ? { countMessage: async (message: Message) => count(await tokens.countMessage!({ ...context,
+      profile: config.profile, message: copy(message), purpose: 'task', maxInlineImageBytes: config.limits.maxInlineImageBytes })) } : {}),
+  };
+}
+
+/** One original immutable page can enter one complete real summary request.
+ * This quotes input coverage only; the actual Kernel must still seal the summary output. */
+export function quoteSingleArtifactReadAdmission(context: PortContext, snapshot: RunSnapshot, config: RunConfiguration,
+  intent: EffectIntent, tokens: Tokens | undefined, digest: Digest): ((result: ToolResult) => Promise<boolean>) | undefined {
+  const declaration = [...snapshot.messages].reverse().find(message => message.role === 'assistant' && message.toolCalls?.length);
+  const calls = declaration?.toolCalls, call = calls?.[0], installed = config.tools.find(tool => tool.name === 'ArtifactRead');
+  if (config.sourceReadPolicy !== 'studio-source-read/v1' || !config.contextPolicy || !tokens?.countMessage
+    || tokens.tokenizerId !== config.contextPolicy.tokenizerId || tokens.tokenizerDigest !== config.contextPolicy.tokenizerDigest
+    || calls?.length !== 1 || call?.name !== 'ArtifactRead' || snapshot.pendingTools.length !== 1
+    || canonical(snapshot.pendingTools) !== canonical(calls) || canonical(intent.payload.calls) !== canonical(calls)
+    || canonical(installed) !== canonical(artifactToolDefinitions()[0]) || snapshot.contextState?.compaction) return undefined;
+  return async result => {
+    try {
+      context.signal.throwIfAborted();
+      if (result.status !== 'ok' || result.context || !sourceWorkingSetGroup([declaration!, { role: 'tool', name: call.name,
+        callId: call.callId, content: canonical(result.content) }], config.tools, snapshot.artifactRefs)?.immutable) return false;
+      const future = projectArtifactRequest(snapshot, config, intent, new Map([[call.callId, result]]), digest);
+      if (!future) return false;
+      const allow = !finalizationOnly(future, config) && !wallDeliveryOnly(future, config);
+      const planned = await planNativeContext(future, config, advertisedTools(future, config),
+        requestCounters(context, config, tokens, future), digest, false, allow);
+      if (planned.action === 'ready') return !!planned.admission
+        && planned.admission.countedInputTokens + config.profile.maxOutputTokens <= config.profile.contextWindow;
+      const compaction = planned.state.compaction, chunk = compaction?.chunk;
+      return planned.action === 'compact' && modelRoom(future, config) >= 2 && !!compaction?.hooksComplete && !!chunk
+        && compaction.offset === 0 && chunk.start === 0 && chunk.stop === compaction.sourceText.length
+        && chunk.maxOutputTokens === config.profile.maxOutputTokens
+        && chunk.countedInputTokens + chunk.maxOutputTokens <= config.profile.contextWindow;
+    } catch { context.signal.throwIfAborted(); return false; }
+  };
+}
 export interface ArtifactRequestCapacity {
   resultMessageUnits: number;
   groupSize: number;
@@ -95,18 +142,10 @@ export async function quoteArtifactRequestCapacity(context: PortContext, snapsho
     || sealed.some((message, i) => message.role !== 'tool' || message.callId !== calls[i]!.callId)) return null;
   const messageCount = async (message: Message) => count(await tokens.countMessage!({ ...context, profile: config.profile,
     message: copy(message), purpose: 'task', maxInlineImageBytes: config.limits.maxInlineImageBytes }));
-  const counters = (future: RunSnapshot) => ({
-    countRequest: async (messages: Message[], tools: RunConfiguration['tools'], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number) => {
-      context.signal.throwIfAborted();
-      return count(await tokens.countRequest({ ...context, profile: { ...config.profile, maxOutputTokens },
-        messages: purpose === 'task' ? deliveryTaskMessages(future, config, browserTaskMessages(future, config, messages)) : messages,
-        tools, purpose, maxOutputTokens, maxInlineImageBytes: config.limits.maxInlineImageBytes }));
-    }, countText: async (text: string) => count(await tokens.countText({ ...context, text })),
-  });
   const project = async (results: Map<string, ToolResult>) => {
     const future = projectArtifactRequest(snapshot, config, intent, results, digest);
     if (!future) return null;
-    return planNativeContext(future, config, advertisedTools(future, config), counters(future), digest, false, false);
+    return planNativeContext(future, config, advertisedTools(future, config), requestCounters(context, config, tokens, future), digest, false, false);
   };
   try {
     const projected = await project(new Map());

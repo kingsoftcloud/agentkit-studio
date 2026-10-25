@@ -211,6 +211,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && (policy.maxCompactions === null || Number.isSafeInteger(policy.maxCompactions) && policy.maxCompactions >= 0)
       && [policy.maxCompactionsWithoutProgress, policy.minModelTurnsBetween, policy.maxSummaryRetries].every(value => Number.isSafeInteger(value) && value >= 0),
     'invalid_context_policy');
+    const workingSet = [policy.readWorkingSetCount, policy.readWorkingSetMaxTokens, policy.readWorkingSetTotalMaxTokens];
+    invariant(workingSet.every(value => value === undefined)
+      || workingSet.every(value => Number.isSafeInteger(value) && value! >= 0), 'invalid_context_working_set_policy');
   }
   validateSubmissionContract(config);
   if (config.workspaceObservationPolicy) {

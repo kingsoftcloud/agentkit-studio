@@ -191,6 +191,7 @@ export interface ArtifactToolCapacity {
   countText(text: string): Promise<number>;
   resultMessageUnits?: number;
   countResult?(result: ToolResult): Promise<number>;
+  admitCompleteRead?(result: ToolResult): Promise<boolean>;
 }
 export async function executeArtifactTool(context: PortContext, call: ToolCall, snapshot: RunSnapshot,
   config: RunConfiguration, artifacts?: ArtifactPort,
@@ -228,13 +229,17 @@ export async function executeArtifactTool(context: PortContext, call: ToolCall, 
         return capacity.resultMessageUnits === undefined || !!capacity.countResult
           && await capacity.countResult(result) <= capacity.resultMessageUnits;
       };
-      if (!await fits(ok({ uri: ref.uri, offset_chars: offset, returned_chars: 0, content: '', next_offset: offset,
-        result_truncated: false }), '')) return failure('artifact_page_budget_unavailable');
+      const emptyFits = await fits(ok({ uri: ref.uri, offset_chars: offset, returned_chars: 0, content: '', next_offset: offset,
+        result_truncated: false }), '');
+      if (!emptyFits && !capacity?.admitCompleteRead) return failure('artifact_page_budget_unavailable');
       const page = await readPage(artifacts, context, ref, offset, limit), chars = Array.from(page.content);
       const build = (count: number) => ok({ uri: ref.uri, offset_chars: offset, returned_chars: count,
         content: chars.slice(0, count).join(''),
         next_offset: count < chars.length ? offset + count : page.nextOffset,
         result_truncated: count < chars.length });
+      const full = build(chars.length);
+      if (encodedSize(full) <= maximum && await capacity?.admitCompleteRead?.(full)) return full;
+      if (!emptyFits) return failure('artifact_page_budget_unavailable');
       if (await fits(build(chars.length), page.content)) return build(chars.length);
       let low = 0, high = chars.length;
       if (!await fits(build(0), '')) return failure('artifact_page_budget_unavailable');

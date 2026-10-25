@@ -11,7 +11,7 @@ import { addUsage, advertisedTools, modelRoom, objectValue, plan, reduceModel, r
 import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { prepareSourceReadQuote, sourceReadBudgetFor, SOURCE_READ_POLICY } from './source-read-budget.mjs';
-import { quoteArtifactRequestCapacity, selectArtifactRequestResults } from './artifact-request-capacity.mjs';
+import { quoteArtifactRequestCapacity, quoteSingleArtifactReadAdmission, selectArtifactRequestResults } from './artifact-request-capacity.mjs';
 import { reduceVerification, sealCandidate } from './verification.mjs';
 import { effectiveRunConfiguration } from './task-contract.mjs';
 import { prepareToolReceipt, reduceToolReceipt, toolReceiptRequest, waitingToolReceipt } from './tool-receipt.mjs';
@@ -828,6 +828,7 @@ export class NativeKernel {
       }
       case 'tool': {
         const calls = intent.payload.calls as unknown as ToolCall[];
+        const singleReadAdmission = quoteSingleArtifactReadAdmission(context, snapshot, configuration, intent, this.ports.context?.tokens, this.digest);
         const artifactCapacity = calls.every(call => call.name === 'ArtifactRead' || call.name === 'ArtifactSearch')
           ? await quoteArtifactRequestCapacity(context, snapshot, configuration, intent, this.ports.context?.tokens, this.digest) : null;
         const results = await Promise.all(calls.map(async call => {
@@ -863,6 +864,7 @@ export class NativeKernel {
                   && this.ports.context.tokens.tokenizerDigest === sourceReadBudget.tokenizerDigest)
                 ? { ...(sourceReadBudget ? { budget: sourceReadBudget } : {}),
                   countText: text => this.ports.context!.tokens!.countText({ ...request, text }),
+                  ...(singleReadAdmission ? { admitCompleteRead: singleReadAdmission } : {}),
                   ...(artifactCapacity ? { resultMessageUnits: artifactCapacity.resultMessageUnits,
                     countResult: result => artifactCapacity.countResult(call, result) } : {}) } : undefined)
               : this.ports.tools.execute(request), aborted]);
@@ -874,7 +876,7 @@ export class NativeKernel {
             return { status: 'uncertain' as const, content: { code: 'tool_outcome_unknown' } };
           } finally { clearTimeout(timer); toolSignal.removeEventListener('abort', onAbort); }
         }));
-        if (!artifactCapacity) return { results };
+        if (!artifactCapacity || results.length === 1 && singleReadAdmission && await singleReadAdmission(results[0]!)) return { results };
         const selected = await selectArtifactRequestResults(artifactCapacity, calls, results, this.digest);
         if (selected === results) return { results };
         return { results: await Promise.all(selected.map((result, index) => result === results[index] ? result
@@ -893,6 +895,12 @@ export class NativeKernel {
           assertBinding();
           invariant(counter, 'context_tokenizer_binding_mismatch');
           const counters: ContextCounters = {
+            ...(counter.countMessage ? { countMessage: async (message: Message) => {
+              context.signal.throwIfAborted(); assertBinding();
+              const count = await counter.countMessage!({ ...context, profile: copy(configuration.profile), message: copy(message),
+                purpose: 'task', maxInlineImageBytes: configuration.limits.maxInlineImageBytes });
+              context.signal.throwIfAborted(); assertBinding(); return count;
+            } } : {}),
             countRequest: async (messages, tools, purpose, maxOutputTokens) => {
               context.signal.throwIfAborted(); assertBinding();
               const count = await counter.countRequest({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens },

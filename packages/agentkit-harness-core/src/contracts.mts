@@ -130,10 +130,13 @@ export interface ContextPlanningPolicy {
   triggerRatio: number; targetRatio: number; summaryMaxTokens: number;
   maxCompactions: number | null; maxCompactionsWithoutProgress: number; minModelTurnsBetween: number;
   maxSummaryRetries: number;
+  /** Optional for restored runs; count source identities, retaining complete protocol groups. */
+  readWorkingSetCount?: number; readWorkingSetMaxTokens?: number; readWorkingSetTotalMaxTokens?: number;
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;
   retainedRefs: string[]; summary: string;
+  workspaceRevision?: string | null;
 }
 export interface ContextChunk {
   start: number; stop: number; sourceDigest: string; projectionDigest: string;
@@ -146,6 +149,7 @@ export interface ContextCompaction {
   coverage: { start: number; stop: number; projectionDigest: string }[];
   chunk: ContextChunk | null; proposal: string | null; errors: number; quoteLimit: number | null;
   hookSubject: ObjectValue; hooksComplete: boolean;
+  workspaceRevision?: string | null;
 }
 export interface ContextPlanningState {
   history: ContextHistory | null; compaction: ContextCompaction | null;

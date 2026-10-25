@@ -7,10 +7,12 @@ import { assertHookFeedbackRetained } from './hook-runtime.mjs';
 import { retryDelay } from './retry.mjs';
 import { deliveryReviewMessages, reviewPending } from './delivery-review.mjs';
 import { artifactProgressIdentity } from './artifact-runtime.mjs';
+import { sourceWorkingSetGroup } from './source-working-set-group.mjs';
 
 export interface ContextCounters {
   countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number): Promise<number>;
   countText(text: string): Promise<number>;
+  countMessage?(message: Message): Promise<number>;
 }
 const emptyState = (): ContextPlanningState => ({ history: null, compaction: null, compactions: 0,
   compactionsWithoutProgress: 0, progressDigest: null, lastModelCall: 0 });
@@ -278,7 +280,8 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
           verifyCoverage(compaction, true);
           state.history = { prefixCount: compaction.prefixCount, prefixDigest: compaction.prefixDigest,
             contractDigest: compaction.contractDigest, tokenizerDigest: policy.tokenizerDigest,
-            retainedRefs: compaction.retainedRefs, summary: compaction.summary };
+            retainedRefs: compaction.retainedRefs, summary: compaction.summary,
+            ...(Object.hasOwn(compaction, 'workspaceRevision') ? { workspaceRevision: compaction.workspaceRevision } : {}) };
           state.compactions++; state.compactionsWithoutProgress++; state.lastModelCall = snapshot.usage.modelCalls;
           state.compaction = null; compaction = null; forceCompaction = false;
         }
@@ -312,7 +315,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   if (policy.maxCompactions !== null && state.compactions >= policy.maxCompactions) return result('blocked', 'context_compaction_limit');
   if (state.compactionsWithoutProgress >= policy.maxCompactionsWithoutProgress) return result('blocked', 'context_compaction_no_progress');
   const mandatory = mandatoryIndexes(snapshot, groups, config);
-  const placeholder = 'x'.repeat(Math.min(policy.summaryMaxTokens, config.profile.maxOutputTokens, 65536));
+  let placeholder = 'x'.repeat(Math.min(policy.summaryMaxTokens, config.profile.maxOutputTokens, 65536));
   let retained = indexes.filter(index => mandatory.has(index));
   const minimum = checkedCount(await counters.countRequest(view(retained, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
   if (minimum + config.profile.maxOutputTokens > config.profile.contextWindow) {
@@ -320,6 +323,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     const smaller = policy.summaryBudgetMode === 'context_bounded_estimate'
       ? checkedCount(await counters.countRequest(view(retained, 'x'), copy(tools), 'task', config.profile.maxOutputTokens)) : minimum;
     if (smaller + config.profile.maxOutputTokens > config.profile.contextWindow) return result('blocked', 'context_mandatory_state_over_budget');
+    placeholder = 'x';
   }
   const target = (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.targetRatio;
   // Retain complete recent groups. A partial live call/result group is never a model view.
@@ -330,6 +334,36 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     const cost = checkedCount(await counters.countRequest(view(proposed, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
     if (cost <= target) retained = proposed;
   }
+  if (!forceCompaction && policy.readWorkingSetCount) {
+    invariant(counters.countMessage, 'context_working_set_counter_missing');
+    const definitions = new Map(config.tools.map(tool => [tool.name, tool]));
+    let lastMutation = -1;
+    for (const index of indexes) for (const call of snapshot.messages[index]!.toolCalls ?? []) {
+      const definition = definitions.get(call.name);
+      if (!definition || !definition.readOnly && definition.contextRole !== 'task_planning') lastMutation = index;
+    }
+    const history = state.history;
+    const staleHistory = new Set(history && (snapshot.workspaceRevision === null || history.workspaceRevision == null
+      || history.workspaceRevision !== snapshot.workspaceRevision) ? history.retainedRefs : []);
+    const seen = new Set<string>();
+    let total = 0;
+    for (const group of [...groups].reverse()) {
+      if (seen.size >= policy.readWorkingSetCount) break;
+      const observation = sourceWorkingSetGroup(group.map(index => snapshot.messages[index]!), config.tools, snapshot.artifactRefs);
+      if (!observation || !observation.immutable
+        && (group[0]! <= lastMutation || group.some(index => staleHistory.has(refs[index]!)))) continue;
+      const identities = new Set([...seen, ...observation.identities]);
+      if (identities.size === seen.size || identities.size > policy.readWorkingSetCount) continue;
+      for (const identity of observation.identities) seen.add(identity);
+      let groupCost = 0;
+      for (const index of group) groupCost = checkedCount(groupCost + checkedCount(await counters.countMessage(copy(snapshot.messages[index]!))));
+      if (groupCost > policy.readWorkingSetMaxTokens! || groupCost > policy.readWorkingSetTotalMaxTokens! - total) continue;
+      const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
+      if (proposed.length === indexes.length) continue;
+      const cost = checkedCount(await counters.countRequest(view(proposed, placeholder), copy(tools), 'task', config.profile.maxOutputTokens));
+      if (cost + config.profile.maxOutputTokens <= config.profile.contextWindow) { retained = proposed; total += groupCost; }
+    }
+  }
   const removed = indexes.filter(index => !retained.includes(index));
   if (!removed.length) return fits && !forceCompaction ? result('ready', 'context_no_reducible_history', messages, admission)
     : result('blocked', 'context_no_reducible_history');
@@ -338,6 +372,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     goalRevision: snapshot.goalRevision, contractDigest: digest(config.contract), retainedRefs: retained.map(index => refs[index]!), removedRefs: removed.map(index => refs[index]!),
     sourceText, sourceDigest: digest(sourceText), offset: 0, summary: state.history?.summary ?? '', coverage: [], chunk: null,
     proposal: null, errors: 0, quoteLimit: null, hooksComplete: !config.hooks.some(hook => hook.events.includes('PreCompact')),
+    ...(policy.readWorkingSetCount !== undefined ? { workspaceRevision: snapshot.workspaceRevision } : {}),
     hookSubject: { sourceRevision: snapshot.revision, sourceContextDigest: digest(snapshot.messages), sourceMessageCount: snapshot.messages.length,
       messageRefs: removed.map(index => refs[index]!), messages: removed.map(index => snapshot.messages[index]) as unknown as ObjectValue[],
       retainedMessageRefs: retained.map(index => refs[index]!) },

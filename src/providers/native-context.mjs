@@ -2,12 +2,13 @@ import { invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeContextPort } from '../../packages/agentkit-harness/src/native/context-counter.mjs';
 
 /** Bind budget, counter and policy from the resolved Agent revision/Frozen Build. */
-export function bindNativeContext({ description, context = {}, maxTokens } = {}) {
+export function bindNativeContext({ description, context = {}, maxTokens, readWorkingSetDefaults = false } = {}) {
   invariant(context && typeof context === 'object' && !Array.isArray(context), 'studio_native_context_invalid');
   const raw = context.compaction ?? {};
   invariant(raw && typeof raw === 'object' && !Array.isArray(raw), 'studio_native_compaction_invalid');
   const supported = ['enabled', 'thresholdRatio', 'targetRatio', 'summaryMaxTokens', 'maxCompactions',
-    'maxCompactionsWithoutProgress', 'minModelTurnsBetween', 'maxSummaryRetries'];
+    'maxCompactionsWithoutProgress', 'minModelTurnsBetween', 'maxSummaryRetries',
+    'readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens'];
   invariant(Object.keys(raw).every(key => supported.includes(key)), 'studio_native_compaction_option_unsupported');
   const requestedWindow = context.maxInputTokens ?? description.contextWindow;
   const output = maxTokens ?? context.reserveOutputTokens ?? description.maxOutputTokens;
@@ -24,5 +25,10 @@ export function bindNativeContext({ description, context = {}, maxTokens } = {})
     summaryMaxTokens: raw.summaryMaxTokens ?? Math.min(8192, output, Math.max(2048, Math.floor(contextWindow / 8))),
     maxCompactions: raw.maxCompactions ?? null, maxCompactionsWithoutProgress: raw.maxCompactionsWithoutProgress ?? 8,
     minModelTurnsBetween: raw.minModelTurnsBetween ?? 2, maxSummaryRetries: raw.maxSummaryRetries ?? 2,
+    ...(readWorkingSetDefaults || ['readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens']
+      .some(key => Object.hasOwn(raw, key)) ? {
+        readWorkingSetCount: raw.readWorkingSetCount ?? 8, readWorkingSetMaxTokens: raw.readWorkingSetMaxTokens ?? 6000,
+        readWorkingSetTotalMaxTokens: raw.readWorkingSetTotalMaxTokens ?? 16000,
+      } : {}),
   } };
 }
