@@ -58,6 +58,46 @@ Binding returns `effective_from: next_run`. New preset admission reads the new
 Agent revision; existing frozen Sessions keep their original presets.
 Automatic same-Session revision refresh is not claimed here.
 
+## Host-configured local Skills
+
+Native Harness now accepts the reference runtime's optional
+`KSADK_LOCAL_SKILLS_DIR=/absolute/canonical/skills` in the trusted Host environment.
+`ksadk/skills/runtime/loader.py:173–183` reads immediate child directories with an
+exact `SKILL.md`; this is separate from the recursive interactive import screen.
+The Node Host follows that discovery shape, including hidden children, a missing
+directory yielding no additions, and Python Unicode path ordering. It does not
+read a root-level manifest or nested grandchildren as additional runtime Skills.
+
+Admission merges the discovered definitions with explicit Agent bindings. Identical
+definitions are registered once; conflicting names or aliases fail admission.
+DSH names use the existing Studio `runtimeSkill` normalization (lowercase kebab
+case, or a deterministic hashed ID), while original manifest bytes are retained.
+Empty UTF-8 manifests are admitted like Python. Invalid UTF-8 is rejected. The
+existing Native source captures complete resource digests and rechecks them at
+use, so changed scripts cannot silently enter a pinned workflow or cold rebind.
+Native-pinned Frozen Builds use this same admission path even if the live engine
+flag later changes; DSH Native, Codex and legacy Harness keep their existing
+resource selection.
+
+This configuration supplies packages, not permission to execute. Workflow backend
+selection, the real ToolRegistry policy, durable Native intent and existing
+supervised workflow runtime remain required. No extra Skill Service or Python
+bridge is created. Local configuration is Host-local and is not embedded as a
+portable resource in an exported Build.
+
+The existing no-symlink source contract is retained. Directory enumeration is
+bounded to 2,048 entries and 100 discovered Skills, each manifest to 512 KiB;
+existing full-package source/runtime bounds still apply. These Node admission
+bounds and name IDs differ from Python's unrestricted local loader. A trusted
+operator must supply canonical paths instead of symlink aliases.
+
+Directed evidence is in `tests/native-skill-source.test.mjs` and
+`tests/native-remote-skills-host.test.mjs`: discovery, Unicode order, disabled
+discovery of nested/root manifests, content changes, cold binding mismatch,
+conflicts, missing/empty manifests, links and actual Native/SQLite workflow
+execution without a remote service. The registry in that integration test is a
+pipeline double; a fresh complete Host/UI acceptance is still a separate gate.
+
 ## Protocol and remaining parity gaps
 
 Production Host inspection resolves mutable refs using GitHub's REST commit
@@ -117,8 +157,8 @@ These differences remain mandatory audit items before lossless parity:
   transport differences still require a final compatibility decision.
 - Candidate/path sorting uses JavaScript string order; supplementary Unicode
   ordering has not been proven equivalent to Python's ordering.
-- Local Skill discovery/configuration, dedicated Skill events, reference-aware
-  garbage collection and the complete product flows remain audit items.
+- Local runtime configuration is implemented above. Dedicated Skill events,
+  reference-aware garbage collection and the complete product flows remain audit items.
   The optional custom remote Skill Service configuration is a separate path.
   URL `/tree/<ref>/<subdir>` uses a single ref segment; slash-bearing refs use
   the explicit `ref` argument with a plain repository URL.

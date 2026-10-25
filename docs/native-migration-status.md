@@ -1,5 +1,10 @@
 # Native 迁移当前验收状态
 
+Host 的 `KSADK_LOCAL_SKILLS_DIR` 已接入 Native Revision/Frozen 资源准入，按参考实现
+读取直接子目录，通过原 SkillSource、权限和持久工作流执行；同名冲突和内容变化明确
+拒绝。直接检查覆盖发现、资源摘要、实际 Native/SQLite 执行及重开，未跑全量。
+配置、Node 边界及尚未闭环的 Skill 事件等项目见 [Skill 管理](native-skill-management.md)。
+
 真实 bundled Codex CLI `0.159.2` 已完成一次定向验收：Chat Completions 经生产代理、
 Responses 直连两条路径均完成动态工具调用、流式输出、历史续接和请求取消；6 个真实
 CLI 子进程全部退出。命令为 `node scripts/verify-native-codex-cli.mjs --execute`，

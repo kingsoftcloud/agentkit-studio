@@ -1,6 +1,7 @@
 /**
  * Formal Native Skill source: admitted file sources for the production Native
- * skills. Only explicitly passed definitions are sources — no auto-discovery.
+ * skills. Sources are explicitly passed definitions or an explicitly configured
+ * Host local-Skill directory; workspace content never selects the directory.
  *
  * API: createStudioNativeSkillSource({definitions, expectedBinding}) → {source, binding}
  * source: async manifest(skillId), fullText(skillId), resource(skillId, ref), refs
@@ -14,6 +15,7 @@ import {
 import { join, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { canonical } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { runtimeSkill } from '../skill-files.mjs';
 
 export const SKILL_SOURCE_CONTRACT = 'agentkit.studio-native-skill-source/v1';
 
@@ -189,6 +191,7 @@ function scanDir(root, rel, h, resources, state) {
 }
 
 function readFileBounded(abs, size, maxRemaining, pathStat) {
+  if (pathStat && !pathStat.isFile()) throw new SkillSourceError('skill_source_special', 'Not a regular file');
   if (size > maxRemaining) throw new SkillSourceError('skill_source_too_large', 'Size limit exceeded');
   let fd;
   try { fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW); }
@@ -250,7 +253,7 @@ function buildSkillEntry(definition) {
   const name = definition.name;
   if (typeof name !== 'string' || !name.trim()) throw new SkillSourceError('skill_source_name_missing', 'Name required');
   const content = definition.content;
-  if (typeof content !== 'string' || !content) throw new SkillSourceError('skill_source_content_missing', 'Content required');
+  if (typeof content !== 'string') throw new SkillSourceError('skill_source_content_missing', 'Content required');
   const alias = skillAlias(name);
   const metadata = parseFrontmatter(content);
   const summary = deriveSummary(content, metadata);
@@ -417,6 +420,55 @@ function sortDigests(d) {
 function bindingEquals(a, b) { return canonical(a) === canonical(b); }
 
 // ---- main export ----
+
+/** Python runtime/loader.py's KSADK_LOCAL_SKILLS_DIR: immediate child
+ * directories containing an exact SKILL.md, in Python's Unicode path order.
+ * The Host opts in; this never searches the workspace or executes scripts.
+ * Existing source identity/digest checks also cover discovered packages. */
+export function loadConfiguredNativeSkills({ directory, definitions = [] } = {}) {
+  if (directory === undefined || directory === '') return structuredClone(definitions);
+  if (typeof directory !== 'string' || !directory.trim())
+    throw fsError('skill_source_directory_invalid', 'Local Skill directory must be a path');
+  const declared = resolve(directory.trim());
+  try { lstatSync(declared); }
+  catch (error) { if (error.code === 'ENOENT') return structuredClone(definitions); throw error; }
+  const pinned = validateRoot(declared), children = [], discovered = [];
+  const handle = opendirSync(pinned.real);
+  try {
+    for (let entry, count = 0; (entry = handle.readSync()) !== null;) {
+      if (++count > MAX_ENTRIES) throw fsError('skill_source_too_many_entries', 'Entry limit exceeded');
+      if (entry.isSymbolicLink()) throw fsError('skill_source_symlink', 'Symlink in local Skill directory');
+      if (entry.isDirectory()) children.push(entry.name);
+    }
+  } finally { handle.closeSync(); }
+  children.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  for (const name of children) {
+    recheckRoot(pinned);
+    const root = join(pinned.real, name), path = join(root, 'SKILL.md');
+    validateRoot(root);
+    let info;
+    try { info = lstatSync(path, { bigint: true }); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    if (info.isSymbolicLink()) throw fsError('skill_source_manifest_symlink', 'Manifest is symlink');
+    const bytes = readFileBounded(path, Number(info.size), 512 * 1024, info);
+    let content;
+    try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch { throw fsError('skill_source_manifest_encoding', 'Manifest must be UTF-8'); }
+    discovered.push(runtimeSkill({ name, content, path }));
+    if (discovered.length > 100) throw fsError('skill_source_too_many_skills', 'Local Skill limit exceeded');
+  }
+  const combined = structuredClone(definitions);
+  for (const definition of discovered) {
+    const existing = combined.find(item => item.name === definition.name);
+    if (existing) {
+      if (existing.path !== definition.path || existing.content !== definition.content)
+        throw fsError('skill_source_alias_conflict', 'Configured and bound Skills conflict');
+    } else combined.push(definition);
+  }
+  createStudioNativeSkillSource({ definitions: combined });
+  recheckRoot(pinned);
+  return combined;
+}
 
 export function createStudioNativeSkillSource({ definitions, expectedBinding } = {}) {
   if (!Array.isArray(definitions)) throw new SkillSourceError('skill_source_definitions_invalid', 'definitions must be an array');

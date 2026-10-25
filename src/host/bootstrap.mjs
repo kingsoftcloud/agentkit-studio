@@ -9,6 +9,8 @@ import { realpathSync } from 'node:fs';
 import { NATIVE_MCP_JSON_CODEC } from '../providers/native-mcp-json.mjs';
 import { snapshotNativeMcpSchema } from '../providers/native-mcp-schema.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
+import { selectedNativeBuildContract } from '../build-engine.mjs';
+import { loadConfiguredNativeSkills } from '../providers/native-skill-source.mjs';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
 import { createStartupReconciler } from '../preset-recovery.mjs';
@@ -30,6 +32,8 @@ import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/a
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
+  const configuredLocalSkillDirectory = runtimeEnv.KSADK_LOCAL_SKILLS_DIR?.trim();
+  const localSkillDirectory = configuredLocalSkillDirectory ? resolve(configuredLocalSkillDirectory) : undefined;
   const hostCompatibility = await loadHostCompatibility(ctx);
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
@@ -269,9 +273,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getModelSelection: createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }),
     getSkillDefinitions: async agent => {
       const bindings = agent?.spec?.bindings || {};
-      if (!boundSkillResources(bindings).length) return [];
-      const adapter = await resourceAdaptersPromise;
-      return loadBoundSkillDefinitions(bindings, adapter);
+      const definitions = boundSkillResources(bindings).length
+        ? await loadBoundSkillDefinitions(bindings, await resourceAdaptersPromise) : [];
+      const native = agent?.spec?.runtime?.type === 'harness'
+        && selectedNativeBuildContract(agent, runtimeEnv.AGENTKIT_STUDIO_NATIVE_HARNESS || undefined) === NATIVE_DSH_TURN_CONTRACT;
+      return native ? loadConfiguredNativeSkills({ directory: localSkillDirectory, definitions }) : definitions;
     },
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'

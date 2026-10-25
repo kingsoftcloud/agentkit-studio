@@ -16,13 +16,14 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createNativeSkillConnection, prepareNativeSkillHost } from '../src/providers/native-skill-host.mjs';
 import { createZip } from '../src/zip.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';
+import { loadConfiguredNativeSkills } from '../src/providers/native-skill-source.mjs';
 import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
 
 const instructions = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\nRead the supplied JSON.';
 const zip = createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
 const sha = createHash('sha256').update(zip).digest('hex');
 const final = () => ({ kind: 'final_candidate', text: 'Done.', toolCalls: [], usage: emptyUsage() });
-async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false, e2b = false, inputs = false } = {}) {
+async function setup(t, { wrongHash = false, denied = false, rest = false, workflow = false, localOnly = false, configuredLocal = false, e2b = false, inputs = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'remote-skills-host-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot);
   if (inputs) writeFileSync(join(workspaceRoot, 'source.bin'), Buffer.from([0, 255, 128, 1]));
@@ -104,7 +105,8 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
     const directory = join(root, 'local-alpha'); mkdirSync(join(directory, 'scripts'), { recursive: true });
     const path = join(directory, 'SKILL.md'); writeFileSync(path, instructions);
     writeFileSync(join(directory, 'scripts/run-workflow.sh'), 'printf "Local Skill without remote service" > "$KSADK_SKILL_OUTPUT_DIR/local.txt"');
-    config.skillDefinitions = [runtimeSkill({ name: 'alpha', content: instructions, path })];
+    config.skillDefinitions = configuredLocal ? loadConfiguredNativeSkills({ directory: root })
+      : [runtimeSkill({ name: 'alpha', content: instructions, path })];
   }
   const bind = () => { gateway = createNativeDshTools({ ctx, config, workspaceRoot, stateDir,
     commandEnvironment: e2b ? { KSADK_SKILL_RUNTIME_BACKEND: 'e2b', KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-only-skills',
@@ -234,6 +236,18 @@ test('a bound local Skill executes through the Native gateway with no Skill Serv
   assert.equal(h.outputs[0].output_text, 'Local Skill without remote service');
   assert.equal(readFileSync(h.outputs[0].output_files[0], 'utf8'), h.outputs[0].output_text);
   assert.equal(h.requests.length, 0); assert.equal(h.gateway.remoteSkillBinding.serviceBindingDigest, null);
+  await h.reopen();
+});
+
+test('a configured local Skill uses the original Native intent and cold receipt without a remote Skill Service', async t => {
+  const h = await setup(t, { localOnly: true, configuredLocal: true });
+  const result = await h.run([['execute_skills', { workflow_prompt: 'Use alpha', skill_names: ['alpha'] }]]);
+  assert.equal(result.phase, 'completed'); assert.equal(h.outputs[0].ok, true, JSON.stringify(h.outputs[0]));
+  assert.equal(h.outputs[0].output_text, 'Local Skill without remote service');
+  assert.equal(h.requests.length, 0);
+  const saved = h.store.load(scope, 'run');
+  const intent = saved.intents.filter(item => item.kind === 'tool'); assert.equal(intent.length, 1);
+  assert.equal(saved.receipts.filter(receipt => receipt.operationKey === intent[0].operationKey).length, 1);
   await h.reopen();
 });
 

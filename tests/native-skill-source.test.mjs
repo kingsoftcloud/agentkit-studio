@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
-import { createStudioNativeSkillSource, SKILL_SOURCE_CONTRACT } from '../src/providers/native-skill-source.mjs';
+import { createStudioNativeSkillSource, loadConfiguredNativeSkills, SKILL_SOURCE_CONTRACT } from '../src/providers/native-skill-source.mjs';
 
 const sha256Str = v => 'sha256:' + createHash('sha256').update(v).digest('hex');
 
@@ -18,6 +18,46 @@ function setupDir(t) {
 }
 function throwsCode(fn, code) { assert.throws(fn, e => e.code === code, `expected ${code}`); }
 async function rejectsCode(p, code) { await assert.rejects(p, e => e.code === code, `expected ${code}`); }
+
+test('configured local Skills use immediate children in Python path order and pin complete packages', async t => {
+  const root = setupDir(t);
+  writeFileSync(join(root, 'SKILL.md'), 'Root is not a runtime child Skill');
+  for (const [directory, name] of [['\u{10000}', 'supplementary'], ['\uE000', 'bmp'], ['.local', 'hidden'], ['upper', 'Upper-Name']]) {
+    const child = join(root, directory); mkdirSync(join(child, 'scripts'), { recursive: true });
+    writeFileSync(join(child, 'SKILL.md'), `---\r\nname: ${name}\r\ndescription: Local\r\n---\r\nInstructions`);
+    writeFileSync(join(child, 'scripts/run.mjs'), 'console.log(42)');
+  }
+  mkdirSync(join(root, 'container/deep'), { recursive: true });
+  writeFileSync(join(root, 'container/deep/SKILL.md'), 'Nested is not an immediate child');
+  const definitions = loadConfiguredNativeSkills({ directory: root });
+  assert.deepEqual(definitions.map(item => item.name), ['hidden', 'upper-name', 'bmp', 'supplementary']);
+  assert.ok(definitions.every(item => item.invocation.modelInvocable));
+  const first = createStudioNativeSkillSource({ definitions });
+  const ref = first.source.refs.find(ref => ref.includes('bmp'));
+  assert.match(await first.source.fullText(ref), /name: bmp\r\n/);
+  writeFileSync(join(root, '\uE000/scripts/run.mjs'), 'console.log(43)');
+  await rejectsCode(first.source.fullText(ref), 'skill_source_content_changed');
+  throwsCode(() => createStudioNativeSkillSource({ definitions: loadConfiguredNativeSkills({ directory: root }),
+    expectedBinding: first.binding }), 'skill_source_binding_mismatch');
+});
+
+test('configured local Skills retain optional missing roots and reject conflicts, links and special manifests', t => {
+  const root = setupDir(t), bound = [{ name: 'inline', content: '' }];
+  assert.deepEqual(loadConfiguredNativeSkills({ directory: join(root, 'missing'), definitions: bound }), bound);
+  assert.deepEqual(loadConfiguredNativeSkills({ definitions: bound }), bound);
+  const child = join(root, 'alpha'); mkdirSync(child); writeFileSync(join(child, 'SKILL.md'), '');
+  const definitions = loadConfiguredNativeSkills({ directory: root, definitions: bound });
+  assert.deepEqual(definitions.map(item => item.name), ['inline', 'alpha']);
+  assert.equal(definitions[1].content, '');
+  assert.deepEqual(loadConfiguredNativeSkills({ directory: root, definitions }), definitions, 'same source is not registered twice');
+  throwsCode(() => loadConfiguredNativeSkills({ directory: root, definitions: [{ name: 'alpha', content: 'Different' }] }),
+    'skill_source_alias_conflict');
+  rmSync(join(child, 'SKILL.md')); mkdirSync(join(child, 'SKILL.md'));
+  throwsCode(() => loadConfiguredNativeSkills({ directory: root }), 'skill_source_special');
+  rmSync(join(child, 'SKILL.md'), { recursive: true });
+  symlinkSync(join(root, 'SKILL.md'), join(child, 'SKILL.md'));
+  throwsCode(() => loadConfiguredNativeSkills({ directory: root }), 'skill_source_manifest_symlink');
+});
 
 test('inline skill with no resourceBase', async t => {
   const def = { name: 'my-skill', content: '---\nname: my-skill\ndescription: A test\n---\nBody' };
