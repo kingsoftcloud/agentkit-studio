@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -87,6 +87,8 @@ test('managed binding reuses real Studio assembly with its own ledger and truste
   const bound = await f.host.resolveManagedBinding(f.payload, args);
   const scope = bound.scope;
   assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
+  assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
+  assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
   assert.equal(scope.tenantId, target.tenantId); assert.equal(scope.userId, principal.userId);
   assert.equal(scope.agentId, target.agentInstanceId);
   const kernel = new NativeKernel({ store, ports: bound.ports, owner: 'managed-test-owner', digest });
@@ -121,6 +123,39 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
   assert.ok(assistants.some(event => event.data.message.content.some(part => part.type === 'text' && part.text === 'Complete delivered answer.')));
   assert.equal(assistants.filter(event => event.data.message.content.some(part => part.type === 'text' && part.text === 'Complete delivered answer.')).length, 1);
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'output-recovery-build'));
+});
+
+for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} diagnoses real errors before correcting a file`, async t => {
+  const f = await setup(t, { sqlite: true, spec: { execution: { toolErrorRecoveryModelCalls: 3 } },
+    respond: count => ({ choices: [{ index: 0, delta: count < 9 ? { tool_calls: [{ index: 0, id: `diagnostic-${count}`, type: 'function',
+      function: { name: count === 7 ? 'read' : 'write', arguments: JSON.stringify({ text: count === 8 ? 'corrected' : 'wrong' }) } }] }
+      : { content: 'Corrected result delivered.' }, finish_reason: count < 9 ? 'tool_calls' : 'stop' }] }) });
+  const file = join(f.root, 'workspace/result.txt'), executed = [];
+  f.payload.binding.nativeTools = { definitions: () => [tool({ name: 'write', readOnly: false, concurrentSafe: false }),
+    tool({ name: 'read', contextRole: 'workspace_read' })], forAgent: () => ({ tools: { execute: async request => {
+      executed.push(request.call.name);
+      if (request.call.name === 'read') return { status: 'ok', content: { actual: await readFile(file, 'utf8') } };
+      if (request.call.arguments.text !== 'corrected') return { status: 'error', content: { code: 'exact_content_mismatch' } };
+      await writeFile(file, 'correct'); return { status: 'ok', content: 'written', workspaceChangedPaths: ['result.txt'] };
+    } } }) };
+  await writeFile(file, 'old');
+  if (frozen) f.payload.binding.buildId = 'diagnostic-recovery-build';
+  await f.host.executeTurn(f.payload);
+  const record = f.ledger.load(f.head().scope, f.head().runId);
+  assert.equal(record.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
+  assert.equal(record.configuration.toolErrorRecoveryModelCalls, 3); assert.equal(record.snapshot.toolErrorRecovery, null);
+  assert.equal(record.snapshot.finalText, 'Corrected result delivered.'); assert.equal(await readFile(file, 'utf8'), 'correct');
+  assert.deepEqual(executed, [...Array(6).fill('write'), 'read', 'write']); assert.equal(f.requests.length, 9);
+  assert.equal(record.events.filter(event => event.kind === 'tool.error_recovery_started').length, 1);
+  assert.match(JSON.stringify(JSON.parse(f.requests[6].options.body).messages), /diagnosis_is_not_completion/);
+  assert.equal(f.events.filter(event => event.type === 'tool/result').length, 8);
+  if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'diagnostic-recovery-build'));
+});
+
+test('shared Native Host rejects an invalid diagnostic allowance before inference', async t => {
+  const f = await setup(t, { spec: { execution: { toolErrorRecoveryModelCalls: 0 } } });
+  await assert.rejects(f.host.executeTurn(f.payload), { code: 'invalid_tool_error_recovery_model_calls' });
+  assert.equal(f.requests.length, 0);
 });
 
 test('managed discovery releases its Session resources before an ordinary Native turn can bind', async t => {

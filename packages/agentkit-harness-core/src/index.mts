@@ -31,3 +31,4 @@ export * from './child-control.mjs';
 export * from './guidance.mjs';
 export * from './tool-receipt.mjs';
 export * from './output-recovery.mjs';
+export * from './tool-error-recovery.mjs';

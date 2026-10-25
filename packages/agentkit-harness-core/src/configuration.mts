@@ -15,6 +15,8 @@ export interface ConfigurationInput {
   modelRecoveryPolicy?: RunConfiguration['modelRecoveryPolicy'];
   guidancePolicy?: RunConfiguration['guidancePolicy'];
   outputRecoveryPolicy?: RunConfiguration['outputRecoveryPolicy'];
+  toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
+  toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
   hostRecoveryBinding?: RunConfiguration['hostRecoveryBinding'];
   contextPolicy?: RunConfiguration['contextPolicy'];
   workspaceObservationPolicy?: RunConfiguration['workspaceObservationPolicy'];
@@ -48,6 +50,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     inputMessages: input.inputMessages ?? null,
     ...(input.guidancePolicy === undefined ? {} : { guidancePolicy: input.guidancePolicy }),
     ...(input.outputRecoveryPolicy === undefined ? {} : { outputRecoveryPolicy: input.outputRecoveryPolicy }),
+    ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
+    ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
     ...(input.hostRecoveryBinding === undefined ? {} : { hostRecoveryBinding: input.hostRecoveryBinding }),
     ...(input.backgroundNotificationPolicy === undefined ? {} : { backgroundNotificationPolicy: input.backgroundNotificationPolicy }),
     ...(input.childLifecyclePolicy === undefined ? {} : { childLifecyclePolicy: input.childLifecyclePolicy }),
@@ -68,6 +72,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     && typeof config.hostRecoveryBinding === 'object' && !Array.isArray(config.hostRecoveryBinding), 'invalid_host_recovery_binding');
   invariant(config.guidancePolicy == null || config.guidancePolicy === 'boundary-guide/v1', 'invalid_guidance_policy');
   invariant(config.outputRecoveryPolicy == null || config.outputRecoveryPolicy === 'task-or-delivery/v1', 'invalid_output_recovery_policy');
+  invariant(config.toolErrorRecoveryPolicy == null || config.toolErrorRecoveryPolicy === 'diagnose-before-repeat/v1', 'invalid_tool_error_recovery_policy');
+  invariant(config.toolErrorRecoveryModelCalls == null || Number.isSafeInteger(config.toolErrorRecoveryModelCalls)
+    && config.toolErrorRecoveryModelCalls >= 1 && config.toolErrorRecoveryModelCalls <= 10, 'invalid_tool_error_recovery_model_calls');
   invariant(config.childLifecyclePolicy == null || config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_lifecycle_policy');
   invariant(config.childApprovalPolicy == null || config.childApprovalPolicy === 'owned-child-approval/v1'
     && config.childLifecyclePolicy === 'owned-background/v2', 'invalid_child_approval_policy');
@@ -197,6 +204,8 @@ export function initialSnapshot(identity: RunIdentity, configuration: RunConfigu
       ...(configuration.inputMessages ?? [{ role: 'user' as const, content: configuration.contract.objective }]),
     ], preparedContext: null, queuedGuidance: [],
     ...(configuration.guidancePolicy === 'boundary-guide/v1' ? { pendingGuidanceIds: [] } : {}),
+    ...(configuration.toolErrorRecoveryPolicy != null || configuration.toolErrorRecoveryModelCalls != null
+      ? { toolErrorRecovery: null, observedProgressRevision: 0, observedProgressFingerprints: [] } : {}),
     pendingTools: [], pendingIntent: null, pendingInteraction: null, interaction: null,
     usage: emptyUsage(), descendantUsage: emptyUsage(), modelErrors: 0, providerErrors: 0,
     continuations: 0, outputRestarts: 0, repairs: 0, activeElapsedMs: 0, retryNotBefore: 0,

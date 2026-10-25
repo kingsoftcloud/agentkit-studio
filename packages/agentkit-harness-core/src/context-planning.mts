@@ -39,6 +39,11 @@ export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguratio
     children: snapshot.children.map(child => ({ runId: child.runId, state: child.state, notified: child.notified })),
     backgroundCommands: snapshot.backgroundCommands.map(command => ({ ...command.ref, notified: command.notified })),
     verification: snapshot.verification, hostBindingDigest: config.hostBindingDigest,
+    ...(snapshot.toolErrorRecovery ? { toolErrorRecovery: snapshot.toolErrorRecovery,
+      toolErrorRecoveryModelCalls: config.toolErrorRecoveryModelCalls ?? null,
+      toolErrorRecoveryInstruction: 'The repeated-error guard remains active across compaction. '
+        + 'Observe new authorized diagnostic evidence before a later model decision may use one corrected trial. '
+        + 'Reads and unrelated writes do not reset the recovery allowance; diagnosis is not task acceptance.' } : {}),
   }) as unknown as ObjectValue;
 }
 function withSummary(messages: Message[], summary: string, continuity: ObjectValue, contributions: Message[] = []): Message[] {

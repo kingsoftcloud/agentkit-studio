@@ -168,6 +168,8 @@ export interface RunConfiguration {
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
   guidancePolicy?: 'boundary-guide/v1' | null;
   outputRecoveryPolicy?: 'task-or-delivery/v1' | null;
+  toolErrorRecoveryPolicy?: 'diagnose-before-repeat/v1' | null;
+  toolErrorRecoveryModelCalls?: number | null;
   /** Opaque, Host-owned recovery locator. The core never interprets it as authority. */
   hostRecoveryBinding?: ObjectValue;
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
@@ -250,6 +252,14 @@ export interface ChildState {
 export type BackgroundCommand = BackgroundCommandState;
 export interface ToolErrorStreak {
   signature: string; count: number; modelCall: number; goalRevision: number; workspaceRevision: string | null;
+  action?: { name: string; argumentsDigest: string | null };
+}
+export interface ToolErrorRecovery {
+  action: { name: string; argumentsDigest: string | null }; failureFingerprint: string;
+  startedModelCall: number; priorModelCallsSpent: number; observationRevision: number;
+  goalRevision: number; workspaceRevision: string | null;
+  diagnosticObservationSeen: boolean; diagnosticModelCall: number | null;
+  trialConsumed: boolean; trialCallId: string | null; trialModelCall: number | null;
 }
 export interface PreparedContext {
   messages: Message[];
@@ -292,6 +302,8 @@ export interface RunSnapshot extends RunIdentity {
   contextState: ContextPlanningState | null;
   recoveryRetriesUsed: number;
   toolErrorStreak: ToolErrorStreak | null;
+  toolErrorRecovery?: ToolErrorRecovery | null;
+  observedProgressRevision?: number; observedProgressFingerprints?: string[];
   browserSessionRefs: BrowserSessionRef[]; browserReobservationRefs: BrowserSessionRef[];
   lastBrowserObservation: BrowserEvidence | null; lastBrowserAttemptToolCall: number | null;
   lastWebMutationToolCall: number | null; unresolvedInteractionObservation: BrowserInteractionObservation | null;

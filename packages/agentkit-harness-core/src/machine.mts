@@ -15,6 +15,9 @@ import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './
 import { prepareChildLifecycle, unsettledChildren } from './child-runtime.mjs';
 import { toolResourceUsage, toolUsageIncomplete } from './tool-resource-usage.mjs';
 import { completeContinuation, outputRecoveryMode, restartContinuation } from './output-recovery.mjs';
+import { advanceDiagnosticRecovery, advanceObservedProgress, advanceToolErrorStreak, guardedToolErrorAction,
+  refuseUndiagnosedToolAction, reserveDiagnosticTrial, toolErrorRecoveryBoundary, toolErrorRecoveryEnabled,
+  toolErrorStreakExhausted } from './tool-error-recovery.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -128,6 +131,8 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
     return prepareEffect(snapshot, 'workspace', snapshot.phase, { cursor });
   }
   if (snapshot.phase === 'preparing_context' || snapshot.phase === 'compacting') {
+    const recovery = toolErrorRecoveryBoundary(snapshot, config, modelRoom(snapshot, config));
+    if (recovery) return recovery;
     if (config.contextPolicy && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_port_missing');
     if (snapshot.phase === 'compacting' && !capabilities.context) return finalizing(snapshot, 'blocked', 'context_compaction_unavailable');
     const compaction = config.contextPolicy ? snapshot.contextState?.compaction : null;
@@ -145,8 +150,7 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       return prepareEffect(snapshot, 'context', snapshot.phase, { cursor, forceCompaction: snapshot.phase === 'compacting',
         allowCompaction: !finalizationOnly(snapshot, config) });
     }
-    const streak = snapshot.toolErrorStreak;
-    if (streak && streak.count >= 6 && streak.goalRevision === snapshot.goalRevision && streak.workspaceRevision === snapshot.workspaceRevision) {
+    if (toolErrorStreakExhausted(snapshot) && !snapshot.toolErrorRecovery) {
       return finalizing(snapshot, 'blocked', 'repeated_tool_error_no_progress');
     }
     if (modelRoom(snapshot, config) <= 0) return finalizing(snapshot, 'budget_exhausted', 'model_budget_exhausted');
@@ -164,6 +168,8 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
       messages: [...snapshot.messages, ...pendingHookFeedback(snapshot), ...snapshot.queuedGuidance], queuedGuidance: [], preparedContext: null,
     });
     const first = snapshot.pendingTools[0]!;
+    const refused = refuseUndiagnosedToolAction(snapshot, first, digest);
+    if (refused) return refused;
     const definition = config.tools.find(tool => tool.name === first.name);
     if (!definition || config.contract.allowedToolNames !== null && !config.contract.allowedToolNames.includes(first.name)) {
       return transition(snapshot, { pendingTools: snapshot.pendingTools.slice(1), messages: [...snapshot.messages,
@@ -177,18 +183,20 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
         [{ kind: 'tools.budget_exhausted', payload: {} }]);
     }
     let calls: ToolCall[] = [first];
-    if (definition.readOnly && definition.concurrentSafe && !definition.delegatedReadOnly) {
+    if (definition.readOnly && definition.concurrentSafe && !definition.delegatedReadOnly && !guardedToolErrorAction(snapshot, first, digest)) {
       calls = [];
       for (const call of snapshot.pendingTools.slice(0, Math.min(config.limits.maxParallelTools, toolRoom(snapshot, config)))) {
         const tool = config.tools.find(item => item.name === call.name);
         if (!tool?.readOnly || !tool.concurrentSafe || tool.delegatedReadOnly || tool.observationRole !== 'none') break;
+        if (guardedToolErrorAction(snapshot, call, digest)) break;
         calls.push(call);
       }
     }
     const pre = planHook(snapshot, config, 'PreToolUse', digest, calls);
     if (pre) return pre;
-    return prepareEffect(snapshot, 'tool', 'executing_tools', { calls: calls.map(objectValue), interaction: snapshot.interaction },
-      { interaction: null });
+    return reserveDiagnosticTrial(snapshot, first,
+      prepareEffect(snapshot, 'tool', 'executing_tools', { calls: calls.map(objectValue), interaction: snapshot.interaction },
+        { interaction: null }), digest);
   }
   if (snapshot.phase === 'verifying') {
     invariant(snapshot.candidate, 'verification_candidate_missing');
@@ -393,14 +401,10 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       outcome: updated.outcome, reason: updated.reason, preparedContext: updated.preparedContext, contextState: updated.contextState,
       candidate: updated.candidate, verification: updated.verification, finalText: updated.finalText, usage: updated.usage };
     if (result.status === 'uncertain') return { ...browserFields, pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
-    if (result.status === 'error') {
-      const definition = config.tools.find(tool => tool.name === call.name);
-      const signature = digest([call.name, result.status, result.content,
-        ...(definition?.readOnly && definition.observationRole === 'none' ? [call.arguments] : [])]);
-      const prior = updated.toolErrorStreak;
-      const same = prior?.signature === signature && prior.goalRevision === snapshot.goalRevision && prior.workspaceRevision === snapshot.workspaceRevision;
-      updated.toolErrorStreak = { signature, count: same ? prior.count + Number(prior.modelCall !== snapshot.usage.modelCalls) : 1,
-        modelCall: snapshot.usage.modelCalls, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision };
+    updated.toolErrorStreak = advanceToolErrorStreak(updated, call, result, definition, config, digest);
+    if (toolErrorRecoveryEnabled(config)) {
+      Object.assign(updated, advanceObservedProgress(updated, result, definition, digest));
+      Object.assign(updated, advanceDiagnosticRecovery(updated, updated, call, result, definition, digest));
     }
     updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
       role: 'tool', callId: call.callId, name: call.name,
@@ -435,7 +439,10 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     lastBrowserObservation: updated.lastBrowserObservation, lastBrowserAttemptToolCall: updated.lastBrowserAttemptToolCall,
     lastWebMutationToolCall: updated.lastWebMutationToolCall, unresolvedInteractionObservation: updated.unresolvedInteractionObservation,
     workspaceDirtySinceCheckpoint: updated.workspaceDirtySinceCheckpoint, lastWorkspaceMutationToolCall: updated.lastWorkspaceMutationToolCall,
-    workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak };
+    workspaceModifiedPaths: updated.workspaceModifiedPaths, interaction: null, toolErrorStreak: updated.toolErrorStreak,
+    ...(toolErrorRecoveryEnabled(config) ? { toolErrorRecovery: updated.toolErrorRecovery ?? null,
+      observedProgressRevision: updated.observedProgressRevision ?? 0,
+      observedProgressFingerprints: updated.observedProgressFingerprints ?? [] } : {}) };
 }
 export function settle(snapshot: RunSnapshot, intent: EffectIntent, receipt: EffectReceipt, changes: Partial<RunSnapshot>, elapsedMs: number, facts: { kind: string; payload: ObjectValue }[] = []): CommitBatch {
   invariant(receipt.operationKey === intent.operationKey && snapshot.pendingIntent === intent.operationKey, 'effect_receipt_mismatch');
