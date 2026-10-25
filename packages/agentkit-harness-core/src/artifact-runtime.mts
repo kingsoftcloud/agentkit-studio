@@ -2,6 +2,7 @@ import type { ArtifactPort, ArtifactRef, Json, ObjectValue, PortContext, RunConf
   ToolCall, ToolDefinition, ToolResult } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { toolContext } from './tool-context.mjs';
+import { artifactSearchSource } from './artifact-search-source.mjs';
 
 export const RUNTIME_ARTIFACT_POLICY = 'runtime-artifacts/v1' as const;
 export const ARTIFACT_RESULT_MEDIA_TYPE = 'application/vnd.agentkit.tool-result+json';
@@ -197,6 +198,9 @@ export async function executeArtifactTool(context: PortContext, call: ToolCall, 
     const matches: Json[] = []; let complete = true, scanned = 0;
     const build = () => ok({ matches, complete, scanned_artifacts: scanned });
     for (const ref of refs) {
+      // The reference refuses oversized documents before I/O. Searching a prefix
+      // of captured JSON would otherwise expose framing instead of source text.
+      if (ref!.sizeBytes > 1024 * 1024) { scanned++; complete = false; continue; }
       let text = '', offset = 0, finished = false;
       // A bounded scan is honest about omitted text; no hidden storage-wide search is performed.
       while (bytes(text) < 1024 * 1024) {
@@ -206,12 +210,21 @@ export async function executeArtifactTool(context: PortContext, call: ToolCall, 
         offset = page.nextOffset;
       }
       scanned++; if (!finished) complete = false;
+      // A decoded carrier must come from the complete, authenticated document.
+      // A bounded prefix is still searchable as artifact text, never as source coordinates.
+      if (finished) invariant(bytes(text) === ref!.sizeBytes && await sha256(text) === ref!.digest,
+        'artifact_search_content_mismatch');
+      const source = finished ? artifactSearchSource(text, ref!.mediaType) : { body: text };
+      const body = source.body, chars = Array.from(body);
       let from = 0;
       while (true) {
-        const index = text.indexOf(query, from); if (index < 0) break;
+        const index = body.indexOf(query, from); if (index < 0) break;
         if (matches.length >= maxMatches) { complete = false; break; }
-        const start = length(text.slice(0, index)), chars = Array.from(text);
+        const prefix = body.slice(0, index), start = length(prefix);
+        const sourceLine = source.start === undefined ? undefined : BigInt(source.start) + BigInt(prefix.split('\n').length - 1);
         matches.push({ uri: ref!.uri, offset_chars: start, match: query,
+          ...(source.path === undefined ? {} : { coordinate_space: 'captured_source', source_path: source.path,
+            source_line: sourceLine! > BigInt(Number.MAX_SAFE_INTEGER) ? sourceLine! : Number(sourceLine) }),
           excerpt: chars.slice(Math.max(0, start - margin), start + length(query) + margin).join('') });
         // complete=false is one byte longer than true; reserve that final omission state before admitting a match.
         if (encodedSize(ok({ matches, complete: false, scanned_artifacts: refs.length })) > maximum) {
