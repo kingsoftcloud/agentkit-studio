@@ -11,8 +11,23 @@ const inheritedKinds = new Set(['user_guidance', 'historical_tool_observation',
 export function projectSessionHistory(parent: StoredRun | null, configuration: RunConfiguration, identify: Identify,
   options: { identityNamespace?: string } = {}): Message[] {
   if (!parent) return [];
+  invariant(terminal(parent.snapshot.phase), 'history_requires_terminal_parent');
+  return projectHistory(parent, [...parent.snapshot.messages, ...parent.snapshot.queuedGuidance], configuration, identify, options, true);
+}
+
+/** A Host-authenticated conversation cut is data, even when its source is still
+ * running. It imports neither queued future input nor the source's final text.
+ * The Host must resolve the exact published boundary before calling this. */
+export function projectConversationHistory(parent: StoredRun, transcript: Message[], configuration: RunConfiguration, identify: Identify,
+  options: { identityNamespace: string }): Message[] {
+  invariant(Array.isArray(transcript) && typeof options.identityNamespace === 'string' && options.identityNamespace.trim(),
+    'invalid_conversation_history_boundary');
+  return projectHistory(parent, transcript, configuration, identify, options, false);
+}
+
+function projectHistory(parent: StoredRun, transcript: Message[], configuration: RunConfiguration, identify: Identify,
+  options: { identityNamespace?: string }, includeFinal: boolean): Message[] {
   const snapshot = parent.snapshot;
-  invariant(terminal(snapshot.phase), 'history_requires_terminal_parent');
   const replayAllowed = configuration.profile.providerReplayMode !== 'none'
     && canonical(configuration.profile) === canonical(parent.configuration.profile);
   const output: Message[] = [], seen = new Set<string>();
@@ -20,11 +35,13 @@ export function projectSessionHistory(parent: StoredRun | null, configuration: R
   const flush = () => {
     for (const { mapped, source } of pending.values()) output.push({ role: 'tool', callId: mapped, history: source,
       kind: 'incomplete_tool_observation', content: canonical({ status: 'uncertain', executionStatus: 'unknown',
-        reason: 'previous_turn_ended_without_tool_result',
-        instruction: 'No committed result is available. Check actual state before assuming success or repeating a side effect.' }) });
+        reason: includeFinal ? 'previous_turn_ended_without_tool_result' : 'conversation_cut_before_tool_result',
+        instruction: includeFinal
+          ? 'No committed result is available. Check actual state before assuming success or repeating a side effect.'
+          : 'No result is included at this history boundary. Check actual state before assuming success or repeating a side effect.' }) });
     pending.clear();
   };
-  for (const [index, original] of [...snapshot.messages, ...snapshot.queuedGuidance].entries()) {
+  for (const [index, original] of transcript.entries()) {
     if (original.role === 'system' || original.kind && !inheritedKinds.has(original.kind) && original.role !== 'tool') continue;
     const message = copy(original);
     // Journal sections belong to the old Run and are not imported as system authority.
@@ -62,7 +79,7 @@ export function projectSessionHistory(parent: StoredRun | null, configuration: R
     output.push(message);
   }
   flush();
-  if (snapshot.finalText && ['completed', 'interrupted'].includes(snapshot.phase)) {
+  if (includeFinal && snapshot.finalText && ['completed', 'interrupted'].includes(snapshot.phase)) {
     const last = output.at(-1);
     if (!(last?.role === 'assistant' && !last.toolCalls?.length && last.content === snapshot.finalText)) {
       const candidate = [...snapshot.messages].reverse().find(message => message.role === 'assistant'

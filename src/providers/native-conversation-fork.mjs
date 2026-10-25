@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { canonical, configure, copy, invariant, parseNativeJson, projectSessionHistory, terminal } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, configure, copy, invariant, parseNativeJson, projectConversationHistory, projectSessionHistory, terminal } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { readNativeDshOwnership } from '../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
+import { nativeConversationCut } from './native-conversation-cut.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 
-/** Resolve an exact closed-turn fork prefix into data for a fresh Native Run.
+/** Resolve an exact conversation fork prefix into data for a fresh Native Run.
  * Only the new Session's first admission queries the source. Cold recovery uses
  * already-admitted bytes; source defaults/heads/attachments cannot reinterpret it. */
 export async function nativeConversationForkSeed({ ctx, agent, store, scope, turn, profile, tools, policies, signal }) {
@@ -38,20 +39,31 @@ export async function nativeConversationForkSeed({ ctx, agent, store, scope, tur
       if (event.type === 'turn/owner') { invariant(openTurn, 'native_conversation_fork_invalid_transcript'); owner = event.data; }
       if (event.type === 'turn/end') { selectedOwner = owner; selectedEnd = event; openTurn = false; owner = null; }
     }
-    // DSH's arbitrary open cuts add synthetic closers *after* the inherited
-    // boundary. Do not accidentally import the source's later full snapshot.
-    invariant(!openTurn && selectedEnd?.data.reason?.kind !== 'forked', 'native_conversation_fork_open_boundary');
-    invariant(selectedOwner?.engine === NATIVE_DSH_TURN_CONTRACT, 'native_conversation_fork_native_boundary_required');
+    const partial = Boolean(openTurn && owner !== null || selectedEnd?.data.reason?.kind === 'forked');
+    if (openTurn && owner !== null) selectedOwner = owner;
+    const beforeOwnership = selectedOwner === null;
+    if (beforeOwnership) {
+      // An event-level root cut may precede the first ownership event. Use the
+      // observed source only to authenticate its Native scope; import no later
+      // input, configuration state or conversation history from that Run.
+      invariant(!prefix.some(event => ['user/message', 'assistant/message', 'tool/result', 'tool/call'].includes(event.type)),
+        'native_conversation_fork_native_boundary_required');
+      selectedOwner = observed.events.find(event => event.type === 'turn/owner')?.data;
+    }
+    invariant(selectedOwner?.engine === NATIVE_DSH_TURN_CONTRACT && typeof selectedOwner.binding === 'string',
+      'native_conversation_fork_native_boundary_required');
     const facts = parseNativeJson(selectedOwner.binding);
     const admission = readNativeDshOwnership(selectedOwner, { sessionId: facts.identity?.sessionId, turn: selectedOwner.turn });
     invariant(canonical(admission.identity.scope) === canonical(scope)
       && admission.identity.sessionId !== String(session.id), 'native_conversation_fork_scope_mismatch');
     const record = store.load(scope, admission.identity.runId), snapshot = record.snapshot;
-    invariant(terminal(snapshot.phase) && Object.entries(admission.identity).every(([key, value]) => canonical(snapshot[key]) === canonical(value))
+    invariant((partial || beforeOwnership || terminal(snapshot.phase)) && Object.entries(admission.identity).every(([key, value]) => canonical(snapshot[key]) === canonical(value))
       && snapshot.configDigest === admission.configDigest && hash(record.configuration) === admission.configDigest
       && canonical(record.configuration) === canonical(admission.configuration), 'native_conversation_fork_checkpoint_mismatch');
     const normalized = configure({ profile, contract: { objective: 'Project fork history' }, hostBindingDigest: 'fork-history-projection' });
-    const messages = projectSessionHistory(record, normalized, hash, { identityNamespace: String(session.id) });
+    const cut = beforeOwnership ? [] : partial ? nativeConversationCut(record, admission, prefix) : null;
+    const messages = cut ? projectConversationHistory(record, cut, normalized, hash, { identityNamespace: String(session.id) })
+      : projectSessionHistory(record, normalized, hash, { identityNamespace: String(session.id) });
     for (const message of messages) {
       delete message.operatorGuidance; delete message.inputId; delete message.inputGoalRevision;
       // The frozen seed also travels in the DSH turn/owner admission. Keep
@@ -59,11 +71,21 @@ export async function nativeConversationForkSeed({ ctx, agent, store, scope, tur
       // rather than publishing them inside a new Session ownership event.
       delete message.providerReplay; delete message.replayToolIds; delete message.providerReplayProjection;
     }
-    const discovered = (snapshot.toolDiscovery?.discovered ?? []).filter(name => tools.some(tool => tool.name === name && tool.discovery));
+    let todos = snapshot.todos?.items, discoveredNames = snapshot.toolDiscovery?.discovered ?? [];
+    if (beforeOwnership) { todos = []; discoveredNames = []; }
+    else if (partial) {
+      // These are branch-local projections, not the current source state. A
+      // TodoWrite/ToolSearch beyond the cut must not change the child's state.
+      todos = prefix.findLast(event => event.type === 'todo/write')?.data.todos ?? [];
+      const parent = snapshot.parentRunId ? store.load(scope, snapshot.parentRunId) : null;
+      discoveredNames = [...new Set([...(parent?.snapshot.toolDiscovery?.discovered
+        ?? record.configuration.conversationSeed?.discoveredToolNames ?? []), ...cut.flatMap(message => message.discoveredToolNames ?? [])])];
+    }
+    const discovered = discoveredNames.filter(name => tools.some(tool => tool.name === name && tool.discovery));
     return { contract: 'native-conversation-fork/v1', source: { parentSessionId,
       sessionId: snapshot.sessionId, runId: snapshot.runId, turnId: snapshot.turnId, boundarySeq,
       snapshotRevision: snapshot.revision, configDigest: snapshot.configDigest, snapshotDigest: hash(snapshot), transcriptDigest },
-      messages, ...(policies.todoPolicy && snapshot.todos ? { todos: copy(snapshot.todos.items) } : {}),
+      messages, ...(policies.todoPolicy && todos ? { todos: copy(todos) } : {}),
       ...(policies.toolDiscoveryPolicy ? { discoveredToolNames: discovered } : {}) };
   } finally { observed[Symbol.dispose]?.(); }
 }

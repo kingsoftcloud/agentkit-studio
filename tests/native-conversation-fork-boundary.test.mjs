@@ -18,16 +18,16 @@ function setup(prefix) {
 const start = { seq: 0, type: 'turn/start', data: { turn: 1 } };
 const owner = { seq: 1, type: 'turn/owner', data: { engine: NATIVE_DSH_TURN_CONTRACT } };
 
-test('an open prefix does not import the source Run which may already have advanced past the cut', async () => {
+test('an open prefix without a sealed Native owner cannot read a source checkpoint', async () => {
   const f = setup([start, owner]);
-  await assert.rejects(nativeConversationForkSeed(f.request), { code: 'native_conversation_fork_open_boundary' });
+  await assert.rejects(nativeConversationForkSeed(f.request), { code: 'native_conversation_fork_native_boundary_required' });
   assert.equal(f.disposed(), 1); assert.equal(f.reads(), 0);
 });
 
 test('fork-of-an-open-fork synthetic closers are not proof that its original Native Run ended at that boundary', async () => {
   const f = setup([start, owner, { seq: 2, type: 'session/end-seed', data: { inherited: true } },
     { seq: 3, type: 'turn/end', data: { turn: 1, reason: { kind: 'forked' } } }]);
-  await assert.rejects(nativeConversationForkSeed(f.request), { code: 'native_conversation_fork_open_boundary' });
+  await assert.rejects(nativeConversationForkSeed(f.request), { code: 'native_conversation_fork_native_boundary_required' });
   assert.equal(f.disposed(), 1); assert.equal(f.reads(), 0);
 });
 

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NativeKernel, canonical, emptyUsage, todoToolDefinitions, planModeToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, canonical, emptyUsage, todoToolDefinitions, planModeToolDefinitions, projectConversationHistory } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeSessionDelivery, nativeDeliveryProjection } from '../packages/agentkit-harness/src/native/session-delivery.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from '../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { fixture, tool, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { nativeConversationCut } from '../src/providers/native-conversation-cut.mjs';
 
 // A fault-injectable durable consumer for transport tests; the shipped SDK
 // verification separately exercises actual DSH Session validation/persistence.
@@ -28,6 +29,14 @@ function consumer(seed = [{ type: 'turn/start', data: { turn: 1 }, seq: 1 }]) {
 const source = { provider: 'fixture', model: 'native-model' };
 const inputMessages = [{ id: 'user-input', role: 'user', content: [{ type: 'text', text: 'Complete the task' }] }];
 const final = () => ({ kind: 'final_candidate', text: 'Delivered', toolCalls: [], usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4 } });
+
+// Low-level timeline tests insert a position marker, not an ownership capsule.
+// Authenticated admission is covered by native-conversation-fork.test.mjs.
+function cutDelivery(record, events, boundary) {
+  const prefix = [events[0], { type: 'turn/owner' }, ...events.slice(1, events.indexOf(boundary) + 1)];
+  const transcript = nativeConversationCut(record, { messages: inputMessages }, prefix);
+  return projectConversationHistory(record, transcript, record.configuration, digest, { identityNamespace: 'timeline-child' });
+}
 
 test('immutable Plan mode facts survive append-before-flush failure and cold replay without duplicate state events', async t => {
   const f = setup(t, undefined, { planModePolicy: 'session-plan/v1', planModeInitialActive: false, tools: planModeToolDefinitions() });
@@ -88,6 +97,17 @@ test('two output retirements preserve original model positions, committed tools 
   assert.equal(coldSink.events.filter(event => event.type === 'assistant/message'
     && event.data.message.content.some(part => part.type === 'text' && part.text === 'Delivered')).length, 1);
   assert.equal(JSON.stringify(f.store.events(scope, 'run').filter(event => event.kind === 'output.restarted')).includes('providerReplay'), false);
+  const record = f.store.load(scope, 'run');
+  const beforeRetirement = saved.find(event => event.type === 'assistant/message'
+    && event.data.message.content.some(part => part.type === 'text' && part.text === 'unfinished 2'));
+  assert.ok(beforeRetirement);
+  const early = cutDelivery(record, saved, beforeRetirement);
+  assert.equal(early.at(-1).content, 'unfinished 2');
+  assert.doesNotMatch(JSON.stringify(early), /unfinished 3|Actual result 2|Delivered/);
+  const lastResult = saved.filter(event => event.type === 'tool/result').at(-1);
+  const late = cutDelivery(record, saved, lastResult);
+  assert.equal(late.at(-1).content, '"Actual result 2"');
+  assert.doesNotMatch(JSON.stringify(late), /Delivered/);
   assert.equal(JSON.stringify(coldSink.events).includes('private-should-not-be-published'), false);
 });
 
@@ -447,6 +467,12 @@ test('an uncertain per-call result in an acknowledged batch retains its actual p
   assert.deepEqual(results.map(result => result.isError), [false, true]);
   assert.equal(JSON.stringify(sink.events).includes('not_dispatched'), false);
   assert.equal(JSON.stringify(sink.events).includes('privateReceipt'), false);
+  const lastResult = sink.events.filter(event => event.type === 'tool/result').at(-1);
+  const selected = cutDelivery(record, sink.events, lastResult);
+  assert.equal(selected.at(-1).content, 'Remote outcome unknown');
+  assert.deepEqual(selected.at(-1).presentation.content, unknownBlocks);
+  assert.equal(selected.at(-1).callId, selected.filter(message => message.toolCalls).at(-1).toolCalls[0].callId);
+  assert.doesNotMatch(JSON.stringify(selected), /privateReceipt|not_dispatched/);
   const reopened = storage.reopen(), restored = consumer(sink.durable);
   const before = canonical(reopened.load(scope, 'run'));
   await delivery(reopened, restored)(reopened.load(scope, 'run').snapshot);

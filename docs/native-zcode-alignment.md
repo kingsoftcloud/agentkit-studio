@@ -36,7 +36,7 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **30/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **31/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
@@ -53,14 +53,16 @@ mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
 The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
 frozen-Build admission, not the whole editing/undo or tool execution group.
-M5 6/15 covers durable file preimages on the admitted writer path (one point)
+M5 7/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
 separately fenced cold final-receipt lookup through the production Host gateway
 (one point), and explicit original-Run cold preimage compensation, including a
 second process death during compensation and its product recovery entry (one point),
 and exact closed-turn Native conversation fork admission, cold first-use/follow-up,
-and fork-of-fork with independent Run/budget and paired historical tools (one point).
+and fork-of-fork with independent Run/budget and paired historical tools (one point),
+and exact ordinary Native before-input/root and in-turn message cuts with
+cutoff-local Todo/discovery through cold packed Studio first use (one point).
 This does not certify full recovery/undo, full conversation branching or
 cross-runtime handoff. M6 has no earned points yet. The denominator is unchanged; remaining session
 exceptions, explicit child permission modes and other M4 controls are not
@@ -86,7 +88,7 @@ audited and integrated.
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
 | Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo, coordinator progress, owned Plan delegation/wait and default child mode inheritance are integrated. Child Plan tools remain absent as in reference. Explicit permission modes, built-in Explore policy, and remaining background/cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
-| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-fork.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Exact closed-turn Native fork now imports selected ledger history into a fresh independent Run, including Todo/discovery and cold fork-of-fork. Open cuts, conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
+| Recovery / runtime boundaries | runtime persistence, `src/runtime/methods/{session-fork,rewind-message}.ts` | core store/recovery/history, Node SQLite, `src/providers/native-conversation-{fork,cut}.mjs`, `src/runtime-contract.mjs`, Host recovery | File compensation passes packed Studio SIGKILL/cold recovery. Closed-turn and ordinary before-input/root/in-turn cuts import selected history into fresh independent Runs with cutoff-local Todo/discovery; cold continuation/fork-of-fork passes. Conversation rewind, full historical selection and neutral handoff remain pending. Keep engine/build pin and one executor; no cloud scheduler in this phase. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
 
 ## Deliberate architecture constraints
@@ -1541,9 +1543,9 @@ Related checks:
   private-replay source, reviewed the file and ran the tests. This contribution
   is not an independent implementation-review pass.
 
-Earned progress is **30/100**, M5 **6/15**. One new point covers the integrated
+At this earlier closed-turn checkpoint, earned progress was **30/100**, M5 **6/15**. One new point covered the integrated
 closed-turn Native fork behavior above. It does not certify full conversation
-branching or the whole recovery milestone. Native currently refuses arbitrary
+branching or the whole recovery milestone. At that checkpoint Native refused arbitrary
 open cuts and synthetic closed tails rather than importing a later checkpoint;
 fresh managed-server fork admission is explicitly unsupported. Background-owned
 source boundaries still need their own capsule/history adaptation. In-place rewind,
@@ -1552,6 +1554,111 @@ compacted history and media/artifact-reference fork acceptance, combined file an
 conversation rollback, managed/child-specific flows and neutral cross-engine
 handoff remain in the original implementation/acceptance scope. No token savings
 or speedup is claimed.
+
+## Exact ordinary Native conversation cuts (31/100)
+
+The next batch extends the same production fork admission rather than adding
+another execution loop or a separate branch runtime. The pinned ZCode
+`session-fork.ts:1091` copies the active prefix **before** the selected real user
+input, including the empty/root case; `conversationHistoryBeforeInput:1119`
+does not widen the cut to the source's later turn. The stable segment resolver
+at line 1143 likewise requires the exact contiguous selected IDs. Native now
+resolves ordinary DSH event-level cuts to the corresponding Native transcript
+instead of treating every open turn as unavailable.
+
+The DSH API exposes event-level cuts, including a pending tool call; ZCode's
+stable fork API validates an assistant-ended segment. Native keeps the existing
+DSH granularity with explicit unknown historical tool closure instead of
+treating a pending call as completed or adopting its execution state.
+
+Implemented behavior:
+
+- `native-conversation-cut.mjs` selects only the admitted input or published
+  model/tool message at the inherited boundary. A source may already have
+  finished or still be executing its tool. Neither its latest message cursor,
+  queued guidance nor final answer can widen that selected prefix.
+- Before-input/root cuts retain only earlier history. A cut before the first
+  owner can authenticate the later observed Native scope but imports no history
+  or later state. A new turn before its ownership event preserves the preceding
+  completed conversation. These pre-owner variants have adapter tests; the
+  packed root proof cuts after ownership and before the first admitted input.
+- DSH synthetic `forked` closers no longer imply that the original source Run
+  was complete at that point. A fork of such a prefix selects the same partial
+  history with new child-local protocol IDs. This variant has adapter coverage;
+  the packed nested-fork scenario remains the earlier closed-turn variant.
+- A selected call without its selected result is closed as an explicitly
+  unknown historical observation. It is not a child pending tool. Its later
+  source success is not copied, and no source effect is dispatched by admission.
+  Actual external state may have changed after the selected conversation cut;
+  this operation does not rewind workspace files.
+- Todo state comes from the selected public prefix. Discovered schemas come
+  from the initial inherited discovery and selected committed tool observations,
+  rather than the source's later TodoWrite/ToolSearch results.
+- `delivery-timeline.mjs` shares deterministic publication IDs, output-retirement
+  position reconstruction and terminal receipt closures between Session delivery
+  and cut selection. Targeted tests cover cuts before/after output retirements
+  and a committed uncertain receipt without leaking private receipt content.
+- The core's new data-only `projectConversationHistory` permits an authenticated
+  cut from an active source. Ordinary `projectSessionHistory` still requires a
+  terminal parent. The source Run, lease, pending effects and immutable admission
+  are unchanged; existing cold recovery uses the child's frozen seed bytes.
+
+Reproduce the integration proof:
+
+```sh
+pnpm pack --pack-destination /tmp/agentkit-native-open-fork-pack-final
+node scripts/verify-studio-native-harness.mjs \
+  --source .artifacts/dsh-native-zcode \
+  --archive /tmp/agentkit-native-open-fork-pack-final/kingsoftcloud-agentkit-studio-0.0.2.tgz \
+  --mount-host --conversation-fork --frozen --keep
+```
+
+`/tmp/native-open-fork-proof-final.log` passed. Evidence is in
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-TmYkSL`;
+archive SHA-256 is
+`e2e66e92239048a3b8bbd1cb3c3e5b9ceaa718cdd9b3c2e13000bdc5346d5b28`.
+The extended verifier retains the earlier closed-turn/cold continuation/nested
+fork assertions and adds four cold first uses after the source advanced:
+before-input/root at seq 9, input at seq 10, pending call at seq 14, and settled
+write result at seq 18. Eight actual Host processes (87454, 87471, 87477, 87485,
+87497, 87505, 87510, 87520) made twelve controlled HTTP model calls. All four new
+Runs have fresh budgets, no tool effect, no source future answer/Todo, and only
+the settled-search cut promotes TodoRead. Source ledger/file bytes remain
+unchanged. This uses the actual production SessionController fork via the
+existing test command transport, SDK prompts, SQLite and packed Studio/standard
+Host; it is not a browser-click test or a real-model quality comparison.
+
+Related checks passed:
+
+- `/tmp/native-open-fork-regression-final.log`: 141 relevant delivery, ordinary
+  turn, history, output recovery and seed cases at the shared-helper checkpoint.
+- `/tmp/native-open-fork-cuts-final.log`: 20 core cut/adapter/boundary cases,
+  including live source tool execution, pre-owner roots, later pre-owner turns,
+  synthetic closer nesting and private replay exclusion.
+- `/tmp/native-open-fork-timeline-final.log`: 30 delivery/core cut cases including
+  the added output-retirement and uncertain-closure assertions. These check sets
+  overlap; their counts are not additive progress evidence.
+- Harness compilation, contract TypeScript and portability checks passed
+  (1,642 tracked files after staging the new modules/tests). No
+  full repository suite was run for this batch.
+
+Real Claude Code contributed only
+`core/test/conversation-history-cut.test.mjs` (under the Harness core package).
+Its initial invocation reached the seven-turn limit without a file; the same
+session resumed and completed in four turns. The main agent reviewed and ran
+all six contributed cases. Logs:
+`/tmp/native-open-fork-claude-tests{,-resumed}.json`. This is a test contribution,
+not independent review approval or an ongoing parallel task.
+
+Earned progress is **31/100**, M5 **7/15**. The new point is the integrated cut
+behavior above, not full conversation parity. Remaining original scope includes
+in-place conversation rewind and derived read-state reconstruction, combined
+file/conversation rollback, full historical model/permission/Plan selection,
+managed/background-owned source capsules and child-specific flows, complete
+large/compacted history and media/artifact-reference acceptance, neutral engine
+handoff, other M1–M4 gaps and the M6 before/reference/after comparison. The cut
+adds no model summary/request or duplicate Agent loop, but large-history CPU,
+storage, Token, latency and coding-quality comparisons remain unmeasured.
 
 ## Local evidence and comparison protocol
 

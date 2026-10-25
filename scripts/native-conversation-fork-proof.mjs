@@ -12,10 +12,10 @@ export function createConversationForkProof() {
   const callIds = [];
   async function respond({ request, response, raw, requests }) {
     assert.equal(request.url, '/v1/chat/completions'); const body = JSON.parse(raw); requests.push(body);
-    const count = requests.length; assert.ok(count <= 8, 'No extra source replay or fork-summary model');
+    const count = requests.length; assert.ok(count <= 12, 'No extra source replay or fork-summary model');
     const texts = body.messages.map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content)).join('\n');
     const historicalCalls = body.messages.filter(message => message.role === 'assistant').flatMap(message => message.tool_calls ?? []);
-    if (count >= 5) {
+    if (count >= 5 && count <= 8) {
       assert.match(texts, /Source first answer/); assert.match(texts, /First branch input/);
       assert.doesNotMatch(texts, /Future branch input|Source future answer/);
       assert.match(texts, /"todoRevision":1/);
@@ -29,11 +29,29 @@ export function createConversationForkProof() {
       : count === 2 ? [{ name: 'DeferredToolCall', arguments: { name: 'TodoWrite', input: { todos: tasks } } }]
       : count === 5 ? [{ name: 'TodoRead', arguments: {} }] : [];
     if (count === 6) assert.deepEqual(JSON.parse(body.messages.filter(message => message.role === 'tool').at(-1).content).todos, tasks);
-    if (count >= 7) assert.match(texts, /Child first answer/);
+    if (count >= 7 && count <= 8) assert.match(texts, /Child first answer/);
     if (count === 8) assert.doesNotMatch(texts, /Child second input|Child second answer/);
+    if (count >= 9) {
+      assert.doesNotMatch(texts, /Future branch input|Source future answer|Source first answer|Child first answer|Preserve the chosen branch/);
+      if (count === 9) {
+        assert.doesNotMatch(texts, /First branch input/); assert.equal(historicalCalls.length, 0);
+      } else assert.match(texts, /First branch input/);
+      if (count <= 10) assert.equal(historicalCalls.length, 0);
+      if (count >= 11) {
+        const write = historicalCalls.find(call => call.function.name === 'write_workspace_file'); assert.ok(write);
+        const result = body.messages.find(message => message.role === 'tool' && message.tool_call_id === write.id); assert.ok(result);
+        if (count === 11) {
+          assert.equal(JSON.parse(result.content).executionStatus, 'unknown');
+          assert.doesNotMatch(result.content, /absolute_path/);
+        } else assert.match(result.content, /absolute_path/);
+      }
+      assert.equal(body.tools.some(tool => tool.function.name === 'TodoRead'), count === 12,
+        'Only ToolSearch results before the selected cut may promote schemas');
+    }
     const delta = calls.length ? { tool_calls: calls.map((call, index) => ({ index, id: `fork-call-${count}-${index}`, type: 'function',
       function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) }
-      : { content: ({ 3: 'Source first answer', 4: 'Source future answer', 6: 'Child first answer', 7: 'Child second answer', 8: 'Nested child answer' })[count] };
+      : { content: ({ 3: 'Source first answer', 4: 'Source future answer', 6: 'Child first answer', 7: 'Child second answer', 8: 'Nested child answer',
+        9: 'Root branch answer', 10: 'Input branch answer', 11: 'Pending branch answer', 12: 'Settled branch answer' })[count] };
     assert.ok(calls.length || delta.content);
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     response.end(`data: ${JSON.stringify({ id: `fork-response-${count}`, choices: [{ index: 0, delta,
@@ -93,17 +111,39 @@ export function createConversationForkProof() {
       assert.equal(nestedRun.snapshot.parentRunId, null); assert.equal(nestedRun.snapshot.usage.toolCalls, 0);
       assert.equal(callIds.length, 4); assert.equal(callIds[0], callIds[1]); assert.equal(callIds[0], callIds[2]);
       assert.notEqual(callIds[0], callIds[3], 'Fork-of-fork allocates new child protocol IDs');
+      const admittedInput = first.events.find(event => event.type === 'user/message'
+        && event.data.content.some(part => part.type === 'text' && part.text === 'First branch input'));
+      const assistantCall = first.events.find(event => event.type === 'assistant/message'
+        && event.data.message.content.some(part => part.type === 'tool-call' && part.name === 'write_workspace_file'));
+      const writeCall = assistantCall.data.message.content.find(part => part.type === 'tool-call' && part.name === 'write_workspace_file');
+      const writeResult = first.events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === writeCall.id);
+      assert.ok(admittedInput && writeResult);
+      const partialRuns = [];
+      for (const [name, atSeq, answer] of [['root', admittedInput.seq - 1, 'Root branch answer'],
+        ['input', admittedInput.seq, 'Input branch answer'], ['pending', assistantCall.seq, 'Pending branch answer'],
+        ['settled', writeResult.seq, 'Settled branch answer']]) {
+        const branch = await fork(name, { sessionId: sourceId, atSeq });
+        await harness.close(); harness = new DeepSeekHarness(options);
+        assert.equal((await (await harness.resumeSession(branch.sessionId)).run(`Continue ${name} boundary`)).finalResponse, answer);
+        const record = load(branch.sessionId); partialRuns.push({ boundary: name, atSeq, runId: record.snapshot.runId });
+        assert.equal(record.configuration.conversationSeed.source.runId, firstRun.snapshot.runId);
+        assert.equal(record.configuration.conversationSeed.source.boundarySeq, atSeq);
+        assert.equal(record.snapshot.parentRunId, null); assert.equal(record.snapshot.usage.modelCalls, 1);
+        assert.equal(record.snapshot.usage.toolCalls, 0); assert.deepEqual(record.snapshot.todos.items, []);
+        assert.equal(record.intents.some(intent => intent.kind === 'tool'), false);
+        assert.deepEqual(record.snapshot.workspaceModifiedPaths, []); assert.deepEqual(record.snapshot.children, []);
+      }
       assert.equal(await readFile(join(root, 'workspace/fork-source.txt'), 'utf8'), 'Original source bytes');
       assert.equal(canonical(load(sourceId)), canonical(sourceAfter)); assert.equal(canonical(load(child.sessionId)), canonical(childSecond));
-      assert.deepEqual(failures, []); assert.equal(requests.length, 8);
+      assert.deepEqual(failures, []); assert.equal(requests.length, 12);
       const probes = (await readFile(join(root, 'mounted-host-http.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
       const hostPids = [...new Set(probes.map(row => row.hostPid))];
-      assert.equal(hostPids.length, 4, 'Source, cold first use, cold continuation and cold nested first use have distinct Hosts');
+      assert.equal(hostPids.length, 8, 'Every child first use and the continuation run in distinct cold Hosts');
       await writeFile(join(root, 'conversation-fork-proof.json'), JSON.stringify({ passed: true, sourceRunId: firstRun.snapshot.runId,
         laterSourceRunId: sourceAfter.snapshot.runId, childRunId: childRun.snapshot.runId, nestedRunId: nestedRun.snapshot.runId,
-        modelCalls: requests.length, hostPids, preservedTodoPriority: 'high',
-        scope: 'Packed Studio, actual standard Host/SDK/SessionController; exact closed-turn fork after source advanced, fresh Native Run, paired tool history, Todo/discovery, cold child follow-up and fork-of-fork. Controlled model; open cuts/in-place rewind/historical model selection remain separate.' }, null, 2));
-      console.log('Studio Native conversation fork PASS: exact old boundary, Native model history, fresh Run/budget, Todo/discovery, cold continuation and fork-of-fork without source effect replay.');
+        modelCalls: requests.length, hostPids, partialRuns, preservedTodoPriority: 'high',
+        scope: 'Packed Studio, actual standard Host/SDK/SessionController; closed-turn and before-input/root, admitted input, pending-call and settled-result cuts after source advanced; fresh Native Runs, paired tools, cutoff-local Todo/discovery, cold continuation/fork-of-fork. Controlled model; in-place rewind/historical model selection remain separate.' }, null, 2));
+      console.log('Studio Native conversation fork PASS: exact old and in-turn boundaries, root/input/pending/settled cuts, fresh Run/budget, cutoff-local Todo/discovery, cold continuation and fork-of-fork without source effect replay.');
     } finally { await harness.close(); }
   }
   return { respond, run };

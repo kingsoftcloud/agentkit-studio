@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { nativeDurableStream } from './assistant-stream.mjs';
 import { canonical, invariant, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
-import { toolContext } from '../../../agentkit-harness-core/dist/tool-context.mjs';
 import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
 import { readNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
 import { readNativeDshManagedOwnership } from './dsh-managed-ownership.mjs';
+import { nativeDeliveryClosure, nativeDeliveryId, nativeDeliveryTimeline } from './delivery-timeline.mjs';
 
 export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -109,8 +109,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     && canonical(background.identity.scope) === canonical(scope) && background.configuration.instructions === systemText,
   'native_delivery_background_admission_invalid');
   source = { provider: source.provider, model: source.model };
-  const identity = hash({ scope, runId });
-  const id = key => `ak-native-${hash({ identity, key })}`;
+  const id = key => nativeDeliveryId(scope, runId, key);
   const projectedCallId = callId => id(`call:${callId}`);
   const projectionPrefix = `dsh:${session.id}:${turn}:v1:`;
   const projectionName = `${projectionPrefix}${hash({ systemText, input, source, ...(background ? { background } : {}),
@@ -188,20 +187,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     // Output retirement preserves immutable model events with their ORIGINAL
     // transcript positions. Reconstruct that timeline, then replay each exact
     // retirement at its original point. Never index old events into new text.
-    const messages = structuredClone(snapshot.messages);
-    const retirements = new Map();
-    for (const event of events.toReversed()) {
-      if (event.kind !== 'output.restarted') continue;
-      const payload = event.payload, retained = payload.retainedMessageCount, retired = payload.retiredMessages;
-      invariant(Number.isSafeInteger(retained) && retained >= 0 && retained < messages.length && Array.isArray(retired)
-        && retired.every(message => ownObject(message) && ['user', 'assistant'].includes(message.role)
-          && typeof message.content === 'string' && ['continuation_fragment', 'continuation_observation'].includes(message.kind)
-          && Object.keys(message).every(key => ['role', 'kind', 'content'].includes(key)))
-        && canonical({ role: messages[retained].role, kind: messages[retained].kind ?? null, content: messages[retained].content })
-          === canonical(payload.notice), 'native_delivery_output_restart_invalid');
-      retirements.set(event.seq, { retained, retired, notice: structuredClone(messages[retained]) });
-      messages.splice(retained, 1, ...structuredClone(retired));
-    }
+    const { messages, retirements } = nativeDeliveryTimeline(record);
     // Admission can contain multiple user/context messages and attachments.
     // They have already been published above, with their original host source
     // and content blocks. Never publish a flattened second copy from Native.
@@ -322,21 +308,8 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     drain(messages.length);
     if (terminal(snapshot.phase)) {
       for (const [callId] of pending) {
-        const intent = record.intents.find(item => item.kind === 'tool' && item.payload.calls?.some(call => call.callId === callId));
-        const receipt = intent && record.receipts.find(item => item.operationKey === intent.operationKey);
-        // A committed effect receipt can contain an uncertain per-call result.
-        // The state machine stops before adding that result to the transcript;
-        // publish its actual public context rather than calling it undispatched.
-        const index = intent?.payload.calls.findIndex(call => call.callId === callId);
-        const observed = receipt?.status === 'committed' && index >= 0 ? receipt.result.results?.[index] : null;
-        if (observed) {
-          const context = observed.context === undefined ? { content: canonical(observed.content) } : toolContext(observed.context);
-          result(`closure:${callId}`, callId, context, observed.status !== 'ok');
-          continue;
-        }
-        const unknown = intent?.status === 'running' && (!receipt || receipt.status === 'uncertain');
-        result(`closure:${callId}`, callId, { content: canonical({ status: unknown ? 'uncertain' : 'not_dispatched',
-          reason: unknown ? 'effect_outcome_unknown' : snapshot.reason ?? 'run_ended' }) }, true);
+        const { context, isError } = nativeDeliveryClosure(record, callId);
+        result(`closure:${callId}`, callId, context, isError);
       }
       if (snapshot.finalText && (lastAssistant?.text !== snapshot.finalText || lastAssistant.calls.length)) {
         assistant('final-delivery', snapshot.finalText, [], null);

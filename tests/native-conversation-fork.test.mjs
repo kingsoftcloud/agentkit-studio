@@ -8,7 +8,7 @@ import { createNativeDshTurnExecutor } from '../packages/agentkit-harness/src/na
 import { nativeConversationForkSeed } from '../src/providers/native-conversation-fork.mjs';
 
 const final = () => ({ kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() });
-const call = () => ({ ...final(), kind: 'tool_calls', toolCalls: [{ callId: 'write-1', name: 'write', arguments: {} }] });
+const call = () => ({ ...final(), text: '', kind: 'tool_calls', toolCalls: [{ callId: 'write-1', name: 'write', arguments: {} }] });
 const forkProfile = { profileId: 'fork', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'fixture/v1' };
 const forkTools = () => [tool({ name: 'write', discovery: { deferred: true }, readOnly: false, concurrentSafe: false })];
 const noPolicies = { todoPolicy: false, toolDiscoveryPolicy: false };
@@ -16,7 +16,7 @@ const freshSignal = () => new AbortController().signal;
 
 // Build a real completed Native DSH source Run with one tool call then a final,
 // then reconstruct the exact turn/owner capsule the source Session would record.
-async function completedSource(t, { advance = false, privateReplay = false } = {}) {
+async function completedSource(t, { advance = false, privateReplay = false, activeTool = false } = {}) {
   const store = new MemoryRunStore();
   t.after(() => store.close?.());
   const projection = nativeDeliveryProjection();
@@ -32,19 +32,27 @@ async function completedSource(t, { advance = false, privateReplay = false } = {
     inputMessages: [{ role: 'user', content: 'Complete the task' }],
     ...(privateReplay ? { profile: { ...fixture().config.profile, providerReplayMode: 'anthropic_content' } } : {}) }).config;
   const calls = { model: 0, write: 0 };
+  let releaseTool, toolStarted;
+  const entered = new Promise(resolve => { toolStarted = resolve; });
+  const held = new Promise(resolve => { releaseTool = resolve; });
   const binding = { scope, configuration, buildId: 'build', source: { provider: 'fixture', model: 'pinned' }, ports: {
     model: { generate: async () => ++calls.model === 1 ? { ...call(), ...(privateReplay ? { providerReplay: {
       compatibilityDigest: 'fixture/v1', anthropicContent: [{ type: 'tool_use', id: 'write-1', name: 'write', input: {} }] } } : {}) } : final() },
-    tools: { execute: async () => { calls.write++; return { status: 'ok', content: 'Written' }; } },
+    tools: { execute: async () => { calls.write++; toolStarted(); if (activeTool) await held; return { status: 'ok', content: 'Written' }; } },
   } };
   const controller = new AbortController();
   const payload = { agent: { id: scope.agentId, session }, input: { kind: 'enter', messages: inputMessages }, turn: 1, signal: controller.signal };
   const execute = createNativeDshTurnExecutor({ store, projections: { stateOf: () => state }, flush: async () => true, resolveTurn: async () => binding });
-  assert.deepEqual(await execute(payload), { reason: { kind: 'completed' } });
-  assert.deepEqual(calls, { model: 2, write: 1 });
+  const running = execute(payload);
+  const finish = async () => { releaseTool(); return await running; };
+  if (activeTool) { t.after(finish); await entered; }
+  else {
+    assert.deepEqual(await running, { reason: { kind: 'completed' } });
+    assert.deepEqual(calls, { model: 2, write: 1 });
+  }
   const turn1Head = store.sessionHead(scope, 'session');
   const turn1Record = store.load(scope, turn1Head.runId);
-  assert.equal(turn1Record.snapshot.phase, 'completed');
+  assert.equal(turn1Record.snapshot.phase, activeTool ? 'executing_tools' : 'completed');
   const identity = { scope, runId: turn1Head.runId, sessionId: 'session', turnId: '1', buildId: 'build', parentRunId: null, taskChainId: 'session' };
   const ownership = nativeDshOwnership({ identity, configuration: turn1Record.configuration, input: { messages: inputMessages }, source: binding.source });
   const sourceEvents = [
@@ -52,6 +60,8 @@ async function completedSource(t, { advance = false, privateReplay = false } = {
     { type: 'turn/owner', data: ownership, seq: 1 },
     { type: 'turn/end', data: { reason: { kind: 'completed' } }, seq: 2 },
   ];
+  const publishedEvents = [...sourceEvents.slice(0, 2), ...sinkEvents.slice(1), ...(activeTool ? [] : [sourceEvents[2]])]
+    .map((event, seq) => ({ ...event, seq }));
   let advancedEvents = sourceEvents, turn2Head = null;
   if (advance) {
     session.append('turn/start', { turn: 2 });
@@ -63,7 +73,7 @@ async function completedSource(t, { advance = false, privateReplay = false } = {
       { type: 'turn/owner', data: { engine: 'agentkit.native-dsh-turn/v1', turn: 2, binding: '', contract: 'dsh.external-turn/v1' }, seq: 4 },
       { type: 'turn/end', data: { reason: { kind: 'completed' } }, seq: 5 }];
   }
-  return { store, binding, calls, session, sinkEvents, identity, ownership, sourceEvents, advancedEvents, turn1Head, turn1Record, turn2Head };
+  return { store, binding, calls, session, sinkEvents, identity, ownership, sourceEvents, publishedEvents, advancedEvents, turn1Head, turn1Record, turn2Head, finish };
 }
 
 // Child Session snapshot: inherited prefix (seq < markerSeq, not own) then the
@@ -145,15 +155,82 @@ test('a wrong fork scope is rejected before loading the source and still dispose
   assert.equal(disposed.value, true);
 });
 
-test('an open cut whose synthetic closer is outside the inherited prefix is rejected and still disposes', async t => {
+test('a root cut before the admitted input imports no source future and still disposes', async t => {
   const src = await completedSource(t);
   const openPrefix = [src.sourceEvents[0], src.sourceEvents[1]]; // turn/start, turn/owner — no turn/end in the inherited prefix
   const child = childSession({ prefix: openPrefix });
   const disposed = { value: false };
   const ctx = queryCtx(src.sourceEvents, 'session', disposed); // source closes turn/end at seq2, outside the child prefix
-  await assert.rejects(nativeConversationForkSeed({ ctx, agent: { session: child }, store: src.store, scope, turn: 1,
-    profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() }), /native_conversation_fork_open_boundary/);
+  const seed = await nativeConversationForkSeed({ ctx, agent: { session: child }, store: src.store, scope, turn: 1,
+    profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() });
+  assert.deepEqual(seed.messages, []);
   assert.equal(disposed.value, true);
+});
+
+test('a cut before the first owner authenticates scope but imports nothing; a later turn before its owner preserves the completed prefix', async t => {
+  const src = await completedSource(t);
+  const rootPrefix = src.sourceEvents.slice(0, 1);
+  const root = await nativeConversationForkSeed({ ctx: queryCtx(src.sourceEvents),
+    agent: { session: childSession({ prefix: rootPrefix }) }, store: src.store, scope, turn: 1,
+    profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() });
+  assert.deepEqual(root.messages, []);
+  const nextPrefix = [...src.publishedEvents, { seq: src.publishedEvents.length, type: 'turn/start', data: { turn: 2 } }];
+  const next = await nativeConversationForkSeed({ ctx: queryCtx(nextPrefix),
+    agent: { session: childSession({ prefix: nextPrefix }) }, store: src.store, scope, turn: 1,
+    profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() });
+  assert.ok(next.messages.some(message => message.content === 'Done'));
+  assert.ok(next.messages.some(message => message.content === '"Written"'));
+});
+
+test('published in-turn cuts import only the selected input, assistant call or settled result after the source has finished', async t => {
+  const src = await completedSource(t), before = structuredClone(src.turn1Record);
+  const cuts = src.publishedEvents.filter(event => ['user/message', 'assistant/message', 'tool/result'].includes(event.type));
+  assert.equal(cuts.length, 4);
+  for (const [index, boundary] of cuts.entries()) {
+    const prefix = src.publishedEvents.slice(0, boundary.seq + 1);
+    const seed = await nativeConversationForkSeed({ ctx: queryCtx(src.publishedEvents),
+      agent: { session: childSession({ id: `partial-${index}`, prefix }) }, store: src.store, scope, turn: 1,
+      profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() });
+    assert.equal(seed.messages[0].content, 'Complete the task');
+    assert.equal(seed.messages.some(message => message.content === 'Done'), index === 3, `cut ${index}: ${JSON.stringify(seed.messages)}`);
+    if (index === 0) assert.equal(seed.messages.length, 1);
+    else {
+      const call = seed.messages.find(message => message.toolCalls)?.toolCalls[0];
+      const result = seed.messages.find(message => message.role === 'tool');
+      assert.ok(call && result); assert.equal(result.callId, call.callId);
+      if (index === 1) {
+        assert.equal(JSON.parse(result.content).executionStatus, 'unknown');
+        assert.doesNotMatch(result.content, /Written/);
+      } else assert.match(result.content, /Written/);
+    }
+    // The exact partial data must also survive being copied by a later fork of
+    // this DSH fork, whose synthetic closer lies inside the next inherited prefix.
+    const synthetic = [...prefix, { seq: prefix.length, type: 'session/end-seed', data: { inherited: true } },
+      { seq: prefix.length + 1, type: 'turn/end', data: { turn: 1, reason: { kind: 'forked' } } }];
+    const nested = await nativeConversationForkSeed({ ctx: queryCtx(synthetic, 'partial-parent'),
+      agent: { session: childSession({ id: `nested-${index}`, parentSession: 'partial-parent', prefix: synthetic }) },
+      store: src.store, scope, turn: 1, profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() });
+    assert.deepEqual(nested.messages.map(message => message.content), seed.messages.map(message => message.content));
+  }
+  assert.deepEqual(src.store.load(scope, src.turn1Head.runId), before);
+  assert.deepEqual(src.calls, { model: 2, write: 1 });
+});
+
+test('forking while the source tool is running imports unknown history without taking its lease or replaying its write', async t => {
+  const src = await completedSource(t, { activeTool: true });
+  const boundary = src.publishedEvents.find(event => event.type === 'assistant/message');
+  const prefix = src.publishedEvents.slice(0, boundary.seq + 1);
+  const request = { ctx: queryCtx(src.publishedEvents), agent: { session: childSession({ prefix }) }, store: src.store,
+    scope, turn: 1, profile: forkProfile, tools: forkTools(), policies: noPolicies, signal: freshSignal() };
+  const seed = await nativeConversationForkSeed(request);
+  assert.equal(JSON.parse(seed.messages.find(message => message.role === 'tool').content).executionStatus, 'unknown');
+  assert.deepEqual(src.store.load(scope, src.turn1Head.runId), src.turn1Record);
+  assert.deepEqual(src.calls, { model: 1, write: 1 });
+  await src.finish();
+  assert.equal(src.store.load(scope, src.turn1Head.runId).snapshot.phase, 'completed');
+  const afterSourceFinished = await nativeConversationForkSeed(request);
+  assert.deepEqual(afterSourceFinished.messages, seed.messages);
+  assert.deepEqual(src.calls, { model: 2, write: 1 });
 });
 
 test('cancellation after the awaited source query cannot return a seed but still disposes', async t => {
