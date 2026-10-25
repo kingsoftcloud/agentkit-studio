@@ -32,6 +32,8 @@
     "./sse": "./src/sse.mjs"
   },
   "files": [
+    "THIRD_PARTY_NOTICES.md",
+    "third-party",
     "src",
     "packages/agentkit-harness",
     "packages/agentkit-harness-core",

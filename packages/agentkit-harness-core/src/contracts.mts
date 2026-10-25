@@ -20,7 +20,10 @@ export interface RunIdentity {
   scope: RunScope; runId: string; sessionId: string; turnId: string; buildId: string;
   parentRunId: string | null; taskChainId: string;
 }
-export interface ToolCall { callId: string; name: string; arguments: ObjectValue; wireArgumentsInvalid?: boolean }
+export interface ToolCall { callId: string; name: string; arguments: ObjectValue; wireArgumentsInvalid?: boolean;
+  /** Kernel-resolved target retains the model's wrapper for protocol replay. */
+  modelCallWrapper?: 'DeferredToolCall';
+}
 /** Host-owned display data is opaque to the model protocol and grants no authority. */
 export interface MessagePresentation { format: string; content: Json[]; source?: ObjectValue }
 export interface ToolContextMessage { content: string; media?: Json[]; presentation?: MessagePresentation }
@@ -31,6 +34,8 @@ export interface Message extends ToolContextMessage {
   providerReplay?: ObjectValue; media?: Json[]; persistent?: boolean;
   /** Runtime-owned receipt outcome for optional request pruning; never inferred from model prose. */
   toolOutcome?: ToolResult['status'];
+  /** Kernel-owned complete definitions delivered by this successful search. */
+  discoveredToolNames?: string[];
   /** Stable provenance for imported history; never grants current-run authority. */
   history?: { sourceRunId: string; sourceIndex: number };
   /** Original protocol call id -> canonical historical/current call id. */
@@ -53,6 +58,7 @@ export interface ToolDefinition {
   contextRole: 'none' | 'workspace_read' | 'workspace_search' | 'workspace_list' | 'artifact_read' | 'task_planning';
   observationRole: 'none' | 'browser';
   progressObservation: boolean; contextRetention: 'normal' | 'persistent';
+  discovery?: { deferred: true; aliases?: string[]; searchHint?: string; mcp?: { serverName: string; toolName: string } };
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
@@ -199,6 +205,7 @@ export interface ContextSourceDefinition {
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
 }
 export interface RunConfiguration {
+  toolDiscoveryPolicy?: 'local-tool-search/v1';
   artifactPolicy?: 'runtime-artifacts/v1' | null;
   sourceReadPolicy?: 'studio-source-read/v1' | null;
   wallDeliveryPolicy?: 'deadline-delivery/v1' | 'deadline-delivery/v2' | 'deadline-delivery/v3'
@@ -336,6 +343,7 @@ export interface PreparedContext {
   sourceFence?: number;
 }
 export interface RunSnapshot extends RunIdentity {
+  toolDiscovery?: { discovered: string[]; promoted: string[] };
   /** Runtime-owned capacity for the complete original assistant batch, never a dispatched subset. */
   sourceReadQuote?: SourceReadQuote | null;
   /** Immutable controlled admission of an owned command's completion. */

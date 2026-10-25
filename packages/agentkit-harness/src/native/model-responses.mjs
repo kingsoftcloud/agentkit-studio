@@ -34,7 +34,7 @@ import { validateMediaBlock, MediaError } from './model-media.mjs';
 // tool-argument decoding consistent with the kernel's own validation, so a
 // malformed provider payload is a terminal protocol error rather than a
 // silently-accepted ambiguity.
-import { parseModelJson, stringifyModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { parseModelJson, stringifyModelJson, modelWireToolCall, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -265,7 +265,7 @@ export function projectMessagesResponses(request, maxInlineImageBytes) {
     }
     if (message.toolCalls && message.toolCalls.length) {
       validateAssistantToolIds(message.toolCalls);
-      for (const call of message.toolCalls) {
+      for (const call of message.toolCalls.map(modelWireToolCall)) {
         items.push({ type: 'function_call', call_id: call.callId, name: call.name,
                      arguments: safeStringifyArguments(call.arguments) });
       }

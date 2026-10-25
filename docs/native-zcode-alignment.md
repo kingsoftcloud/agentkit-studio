@@ -36,9 +36,10 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **10/100**: M1 4/15 (inputs, initial matrix and reviewed
-source findings), M2 4/15 (explicit earlier cleanup, admitted Anthropic cache
-projection, and actual Host baseline/nested instruction refresh), M3 2/20
+Current earned progress: **12/100**: M1 4/15 (inputs, initial matrix and reviewed
+source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
+projection, actual Host baseline/nested instruction refresh, and integrated local
+deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
 (successful context-window truncation and durable cache usage accounting). M4–M6 have no earned
 points yet. This does not imply any whole capability group is complete.
 
@@ -55,7 +56,7 @@ audited and integrated.
 | Model and stream | `src/runtime/methods/turn-model-step.ts`, `model-streaming-event.ts`, `../adapters/src/model/` | Node `model-{openai-chat,responses,anthropic,normalize}.mjs`, core `model-stream.mts`, `machine.mts` | Native already rejects truncated tool batches. Successful `model_context_window_exceeded` now enters bounded output continuation; buffered/SSE/local HTTP→kernel cases pass. Remaining protocol/stream audit pending. |
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
-| Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `tests/tool-search-*.test.ts` | Node `skill-disclosure.mjs`, Host `native-dsh-tools.mjs`, MCP schema adapter | Skills already have progressive disclosure. Audit general deferred tool discovery and compaction continuity. Pending. |
+| Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts` | Node `workspace-{tools,editing}.mjs`, Host source/directory projections and mutation lock | Audit actual registration, edit preconditions, result bounds and reversible changes; do not substitute broad Git reset for undo. Pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode-prompts}.ts`, `src/runtime/methods/turn-loop.ts` | Host builtin registry and Native `contextRole: task_planning` | Presence in DSH Native does not establish AgentKit Native exposure. Trace registration, persistence, plan mode restrictions and reminders. Pending. |
@@ -118,14 +119,82 @@ Implementation sequence after this initial batch:
    its keyless recorded-session and actual packed Host proof during later work.
 2. Integrate durable Todo/Plan behavior, mode restrictions, reminders and user
    decisions with the actual Session/UI and Native receipts.
-3. Implement general deferred-tool discovery and compaction continuity while
-   keeping the complete admitted tool bundle immutable.
+3. General local deferred-tool discovery and compaction continuity are integrated;
+   complete provider-native reference optimization and representative cost comparison.
 4. Complete editing/undo, control/background/children and recovery comparisons;
    preserve stronger Native side-effect/ownership boundaries as explicit
    differences, not as excuses to omit user-facing capability.
 5. Run fixed local reference/baseline/after tasks and close the full audit.
 
 ## Initial integrated changes and evidence
+
+### Local deferred-tool discovery through Studio and child authority
+
+The pinned reference uses `src/tool/search/{search,exposure,history}.ts`,
+`src/tool/deferred-call.ts`, and handlers `tool-search.ts` / `deferred-tool-call.ts`.
+Native adapts the reference ranking algorithm with Apache-2.0 attribution and a
+bundled license (`THIRD_PARTY_NOTICES.md`, `third-party/ZCode-LICENSE`). Exact
+selection, aliases, required terms, keyword scoring and MCP-prefix matching keep
+the reference algorithm. No external service or extra planning model is needed.
+
+New Studio Runs use `local-tool-search/v1` when their bound catalog contains
+generic external/MCP tools. Builtins and the existing Skill disclosure tools stay
+resident. `execution.nativeToolSearchMode: off` selects full declarations;
+`auto` or absence selects discovery when applicable. A real external tool named
+`ToolSearch` or `DeferredToolCall` keeps its existing meaning: auto falls back to
+full declarations for that scope. Cold restore preserves an old Run's missing
+policy and exact original configuration instead of adopting the new default.
+
+The immutable configuration keeps every definition. Model declarations omit
+deferred schemas and offer `ToolSearch` plus `DeferredToolCall`. A bounded list of
+available names lives in the search declaration, keeping it stable across steps;
+remaining names are searchable by keywords. Search returns complete schemas,
+including exact integer constraints. A schema that cannot fit the governed
+model-result budget is reported in `omitted_count` and does not grant discovery.
+This implementation caps each search at 20 matches, while retaining Native's
+existing result-byte budget; these are deliberate bounded-execution differences.
+
+Before intent creation, valid wrappers resolve to their actual target and input.
+The target owns input validation, permission/hook processing, timeout, scheduling,
+budget, child authority and side-effect reconciliation. The journal stores the
+actual target; a private wrapper marker reconstructs the original call in Chat,
+Responses and Anthropic histories, including signed-thinking replay. The model
+cannot supply that private marker. Unknown writes retain reconciliation and are
+never granted safe-read recovery by the wrapper's metadata.
+
+Search receipts and loaded names are durable. Context cleanup that retires
+schemas promotes the corresponding tools to resident declarations and invalidates
+the prepared request so its actual catalog is counted again. A new Session turn
+inherits only currently allowed discovered names and promotes them. Child MCP
+inheritance carries its own discovery policy and state; kernel controls never
+become external gateway authority.
+
+Evidence for this batch:
+
+- `packages/agentkit-harness-core/test/tool-discovery.test.mjs`: actual Kernel,
+  memory/SQLite, approvals, unknown effects, parallel reads, target validation,
+  hidden-call rejection, complete-schema budgeting, cold resume, compaction and
+  next-turn promotion. Eleven cases, plus two provider-projection cases in
+  `packages/agentkit-harness/test/native-tool-discovery-wire.test.mjs`, pass.
+- Scoped existing regressions: tool-input, microcompact, Kernel, protocol wrapper
+  projection and Native gateway (96 passing); Studio Host (95 passing);
+  children (72 passing). Follow-up cases verify default inherited discovery and
+  real external control-name collisions without rerunning the whole suite.
+- `node scripts/verify-studio-native-harness.mjs --source <built maintained DSH>
+  --mount-host --mcp-schema --tool-search --keep`: actual packed Studio, maintained
+  Host and SDK, controlled HTTP, two Host processes, five model requests, exact
+  MCP schemas and two real effects. Checks default search, actual-target policy
+  and journal identity, wrapper history, cold next-turn promotion and packaging
+  of the third-party notice/license. The existing `--mcp-schema` scenario opts
+  out explicitly to retain its direct-call compatibility scope.
+- Core TypeScript build and Studio contract checks pass. No full repository test
+  run was needed for this batch. The real Claude Code read-only audit produced
+  no usable result and was stopped; it is not review/acceptance evidence.
+
+Still pending: provider-native Anthropic tool references, fuller comparison of
+deferred-selection defaults and history deduplication, and before/reference/after
+task-cost measurements. Controlled HTTP usage counters prove accounting paths,
+not model quality, task success rate or a Token/latency saving percentage.
 
 ### Scoped workspace instructions through the actual Host
 

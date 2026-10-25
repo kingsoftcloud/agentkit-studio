@@ -15,7 +15,7 @@
 // private material is dropped, never leaked onto another model's wire.
 
 import { createHash } from 'node:crypto';
-import { canonical } from '../../../agentkit-harness-core/dist/index.mjs';
+import { canonical, modelWireToolCall } from '../../../agentkit-harness-core/dist/index.mjs';
 import { ProtocolError } from './model-normalize.mjs';
 
 const SEALED_KINDS = new Set(['tool_calls', 'final_candidate', 'output_limit']);
@@ -122,7 +122,7 @@ function validateReplayPairing(blocks, message) {
   if (toolUses.length !== calls.length) return false;
   for (let i = 0; i < toolUses.length; i++) {
     const tu = toolUses[i];
-    const call = calls[i];
+    const call = calls[i] && modelWireToolCall(calls[i]);
     if (!tu || !call) return false;
     if (tu.id !== call.callId) return false;
     if (tu.name !== call.name) return false;

@@ -20,6 +20,7 @@ import { createDeadlinePolicyProof } from './native-deadline-policy-proof.mjs';
 import { createArtifactPolicyProof } from './native-artifact-policy-proof.mjs';
 import { createNativeTraceProof } from './native-trace-proof.mjs';
 import { createInstructionsProof } from './native-instructions-proof.mjs';
+import { createToolSearchProof } from './native-tool-search-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -30,7 +31,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
   'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false }, 'delivery-review': { type: 'boolean', default: false },
   'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false },
-  instructions: { type: 'boolean', default: false } } });
+  'tool-search': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
@@ -70,6 +71,8 @@ assert.ok(!values.instructions || values['mount-host'] && !values.frozen && !art
   && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery && !values.trace,
   '--instructions is a separate mounted Host instruction proof');
 const instructionsProof = values.instructions ? createInstructionsProof() : null;
+assert.ok(!values['tool-search'] || values['mount-host'] && values['mcp-schema'] && !values.frozen && !values.trace && !values.recovery, '--tool-search requires --mount-host --mcp-schema');
+const toolSearchProof = values['tool-search'] ? createToolSearchProof() : null;
 assert.ok(!values.trace || values['mount-host'] && !values.automation && !values.memory && !managedMemory && !parallelMemory
   && !values.web && !values['delivery-review'] && !values['deadline-policy'] && !artifactPolicyProof,
   '--trace exercises the mounted Host workspace/command scenario with actual trace routes');
@@ -134,6 +137,7 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(canonical({ jsonrpc: '2.0', id: body.id, result })); return;
     }
+    if (toolSearchProof) { await toolSearchProof.respond({ request, response, raw, requests }); return; }
     const body = JSON.parse(raw);
     if (parallelMemory) { await parallelMemory.respond({ request, response, body, requests, frozen: values.frozen }); return; }
     if (managedMemory) { await managedMemory.respond({ request, response, body, requests, frozen: values.frozen }); return; }
@@ -185,6 +189,7 @@ const server = createServer(async (request, response) => {
       finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (toolSearchProof) await writeFile(join(root, 'tool-search-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (instructionsProof) await writeFile(join(root, 'instructions-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.memory || managedMemory || parallelMemory) await writeFile(join(root, 'memory-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (values.automation) await writeFile(join(root, 'automation-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
@@ -273,6 +278,7 @@ try {
     `        deadlinePolicy: ${values['deadline-policy']}`,
     `        artifactPolicy: ${values['artifact-policy']}`,
     `        instructions: ${values.instructions}`,
+    `        toolSearch: ${values['tool-search']}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
     ...values['mcp-schema'] ? [`        mcpUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/mcp`)}`] : [],
     '',
@@ -285,7 +291,10 @@ try {
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (instructionsProof) {
+  if (toolSearchProof) {
+    await toolSearchProof.run({ harness, DeepSeekHarness, options, root, installed, requests, failures, mcpEffects });
+    harness = null;
+  } else if (instructionsProof) {
     await instructionsProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
     harness = null;
   } else if (artifactPolicyProof) {

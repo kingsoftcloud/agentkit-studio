@@ -56,6 +56,7 @@ async function applyProof(ctx, options) {
   if (!record) {
     record = await agents.create({ name: 'Native Host proof', runtimeType: 'harness',
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
+        ...(options.mcpUrl && !options.toolSearch ? { execution: { nativeToolSearchMode: 'off' } } : {}),
         ...(options.deliveryReview ? { execution: { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } } : {}),
         ...(options.deadlinePolicy ? { execution: { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } } : {}),
         ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],

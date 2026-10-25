@@ -3,6 +3,7 @@ import type { CommitBatch, EffectIntent, EffectReceipt, Lease, Message, ModelReq
   RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
   HookInvocation, HookInvocationResult, ContextPlanningResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
+import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL_CALL } from './tool-discovery.mjs';
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
@@ -91,6 +92,11 @@ export class NativeKernel {
     invariant(identity.parentRunId === null || identity.parentRunId === head?.runId, 'session_head_conflict');
     const parent = head ? this.store.load(identity.scope, head.runId) : null;
     const initial = initialSnapshot({ ...identity, parentRunId: head?.runId ?? null }, configuration, configDigest);
+    if (initial.toolDiscovery && parent?.snapshot.toolDiscovery) {
+      const inherited = parent.snapshot.toolDiscovery.discovered.filter(name => configuration.tools.some(tool => tool.name === name && tool.discovery)
+        && (configuration.contract.allowedToolNames === null || configuration.contract.allowedToolNames.includes(name)));
+      initial.toolDiscovery = { discovered: inherited, promoted: [...inherited] };
+    }
     const history = projectSessionHistory(parent, configuration, this.digest);
     const snapshot: RunSnapshot = { ...initial,
       messages: [...initial.messages.filter(message => message.role === 'system'), ...history,
@@ -693,6 +699,13 @@ export class NativeKernel {
               if (result.toolResultPruning) facts.push({ kind: 'context.tool_results_pruned',
                 payload: result.toolResultPruning as unknown as ObjectValue });
             }
+            const discovery = discoveryAfterCleanup(snapshot, result);
+            if (discovery) {
+              changes.toolDiscovery = discovery;
+              changes.preparedContext = null;
+              changes.context = { ...changes.context, preparedCursor: null };
+              facts.push({ kind: 'tools.discovery_promoted', payload: { names: discovery.promoted } });
+            }
             facts.push({ kind: 'context.planned', payload: { action: result.action, reason: result.reason,
               admission: result.admission as unknown as ObjectValue | null, compactions: result.state.compactions,
               ...(raw.contributions ? { contributions: objectValue(raw.contributions) } : {}) } });
@@ -889,7 +902,9 @@ export class NativeKernel {
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };
-            const result = await Promise.race([configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
+            const result = await Promise.race([configuration.toolDiscoveryPolicy && [TOOL_SEARCH, DEFERRED_TOOL_CALL].includes(call.name)
+              ? Promise.resolve(executeToolDiscovery(snapshot, configuration, call))
+              : configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
               ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts, this.ports.context?.tokens
                 && (!sourceReadBudget || this.ports.context.tokens.tokenizerId === sourceReadBudget.counterId
                   && this.ports.context.tokens.tokenizerDigest === sourceReadBudget.tokenizerDigest)

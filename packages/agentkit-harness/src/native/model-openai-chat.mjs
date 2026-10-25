@@ -20,7 +20,7 @@ import { applyProviderChatCompatibility } from './model-provider-compat.mjs';
 // provider-envelope and tool-argument decoding consistent with the kernel's
 // own validation, so a malformed provider payload is a terminal protocol error
 // rather than a silently-accepted ambiguity.
-import { parseModelJson, stringifyModelJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { parseModelJson, stringifyModelJson, modelWireToolCall, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 
 // Wrap parseModelJson so its NativeError codes become the adapter's ProtocolError.
 function strictParseJson(text) {
@@ -160,7 +160,7 @@ export function projectMessagesOpenAI(request, maxInlineImageBytes) {
     } else if (role === 'assistant') {
       const msg = { role: 'assistant', content: message.content || '' };
       if (message.toolCalls && message.toolCalls.length) {
-        msg.tool_calls = message.toolCalls.map((call) => ({
+        msg.tool_calls = message.toolCalls.map(modelWireToolCall).map((call) => ({
           id: call.callId, type: 'function',
           function: { name: call.name, arguments: safeStringifyArguments(call.arguments) },
         }));

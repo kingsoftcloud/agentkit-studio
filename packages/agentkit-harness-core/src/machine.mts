@@ -23,6 +23,7 @@ import { deliveryReviewReaders, deliveryReviewTools, reduceDeliveryReview, revie
 import { deliveryReadOutsidePaths, deliverySummaryAllowed, deliveryTaskMessages, observeExecutionBudget, rememberDeliveryWrite, scopedDeliveryReader, wallDeliveryOnly } from './deadline-delivery.mjs';
 import { captureAnthropicContext, stageOperatorGuidance } from './anthropic-context.mjs';
 import { contextContinuity } from './context-planning.mjs';
+import { discoveryModelTools, resolveDiscoveredCalls, discoveredCallExposed, TOOL_SEARCH } from './tool-discovery.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -72,10 +73,10 @@ export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration)
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean; input?: boolean }
 /** Stable declaration is distinct from the per-turn execution admission above. */
 export function modelToolCatalog(snapshot: RunSnapshot, config: RunConfiguration) {
-  if (config.profile.toolCatalogPolicy !== 'stable-task/v1' || reviewPending(snapshot)) return advertisedTools(snapshot, config);
+  if (config.profile.toolCatalogPolicy !== 'stable-task/v1' || reviewPending(snapshot)) return discoveryModelTools(snapshot, config, advertisedTools(snapshot, config));
   const submission = finalSubmissionTool(config);
-  return [...config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name)),
-    ...(submission ? [submission] : [])];
+  return discoveryModelTools(snapshot, config, [...config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name)),
+    ...(submission ? [submission] : [])]);
 }
 /** Pure next action. Dispatch is impossible until its intent has been committed and claimed. */
 export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabilities: PlanCapabilities,
@@ -256,6 +257,7 @@ export function validateModelResult(input: ModelResult): ModelResult {
     invariant(typeof call.callId === 'string' && call.callId.trim() && typeof call.name === 'string' && call.name.trim()
       && !ids.has(call.callId), 'invalid_tool_call');
     ids.add(call.callId); objectValue(call.arguments);
+    invariant(call.modelCallWrapper === undefined, 'model_must_not_set_call_wrapper');
     invariant(call.wireArgumentsInvalid === undefined || typeof call.wireArgumentsInvalid === 'boolean', 'invalid_tool_call');
     invariant(!call.wireArgumentsInvalid || canonical(call.arguments) === '{}', 'invalid_wire_arguments_must_be_empty');
   }
@@ -265,7 +267,9 @@ export function validateModelResult(input: ModelResult): ModelResult {
 }
 export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: RunConfiguration, now: number, random: number,
   digest: (value: unknown) => string = canonical, responseId = `${snapshot.runId}:review:${snapshot.usage.modelCalls}`): Partial<RunSnapshot> {
-  const result = validateModelResult(input);
+  const validated = validateModelResult(input);
+  const result = validated.kind === 'tool_calls' && !reviewPending(snapshot)
+    ? { ...validated, toolCalls: resolveDiscoveredCalls(snapshot, config, validated.toolCalls) } : validated;
   const replay = boundReplay(result, config);
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
   const base: Partial<RunSnapshot> = { pendingIntent: null, preparedContext: null, usage,
@@ -313,8 +317,10 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
         return { ...base, phase: 'finalizing', outcome: 'budget_exhausted', reason: 'tool_call_after_finalization_reserve' };
       }
       if (result.toolCalls.some(call => !advertisedTools({ ...snapshot,
-        usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } }, config).some(tool => tool.name === call.name))) {
-        const unbound = result.toolCalls.some(call => !config.tools.some(tool => tool.name === call.name));
+        usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } }, config).some(tool => tool.name === call.name)
+        || !discoveredCallExposed(snapshot, config, call))) {
+        const unbound = result.toolCalls.some(call => !config.tools.some(tool => tool.name === call.name)
+          || !discoveredCallExposed(snapshot, config, call));
         const errors = snapshot.modelErrors + Number(unbound), exhausted = errors > config.profile.maxRetries;
         return { ...base, phase: exhausted ? 'finalizing' : 'preparing_context', pendingTools: [], modelErrors: errors,
           outcome: exhausted ? 'blocked' : null, reason: exhausted ? 'tool_call_not_advertised_retry_exhausted' : null, messages: [...snapshot.messages,
@@ -460,6 +466,15 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       role: 'tool', callId: call.callId, name: call.name,
       ...(config.contextPolicy?.pruneToolResults ? { toolOutcome: result.status } : {}),
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
+    if (updated.toolDiscovery && call.name === TOOL_SEARCH && result.status === 'ok'
+      && result.content && typeof result.content === 'object' && !Array.isArray(result.content)) {
+      const names = result.content.tool_names;
+      invariant(Array.isArray(names) && names.length <= 20 && names.every(name => typeof name === 'string'
+        && config.tools.some(tool => tool.name === name && tool.discovery?.deferred)
+        && (config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(name))), 'invalid_tool_discovery_receipt');
+      updated.toolDiscovery.discovered = [...new Set([...updated.toolDiscovery.discovered, ...names as string[]])];
+      updated.messages.at(-1)!.discoveredToolNames = names as string[];
+    }
     if (definition?.deliveryWrite && !definition.readOnly && result.status === 'ok' && result.content && typeof result.content === 'object'
       && !Array.isArray(result.content) && result.content.ok === true && result.content.path === call.arguments.path
       && result.workspaceChangedPaths?.includes(String(call.arguments.path)))
@@ -488,6 +503,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
   }
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
+    ...(updated.toolDiscovery ? { toolDiscovery: updated.toolDiscovery } : {}),
     context: updated.context,
     ...(updated.deliveryArtifacts ? { deliveryArtifacts: updated.deliveryArtifacts } : {}),
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,

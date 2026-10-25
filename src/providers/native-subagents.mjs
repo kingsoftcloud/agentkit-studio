@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { canonical, configure, invariant, submissionOutputFormat, artifactToolDefinitions, isArtifactTool } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, configure, invariant, submissionOutputFormat, artifactToolDefinitions, isArtifactTool, toolDiscoveryDefinitions,
+  TOOL_SEARCH, DEFERRED_TOOL_CALL } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeChildOwner } from '../../packages/agentkit-harness/src/native/child-owner.mjs';
 import { createNativeChildResultTools } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeGoalContract } from './native-verification.mjs';
@@ -14,6 +15,9 @@ const workspaceTools = new Set(['workspace_status', 'list_workspace_files', 'rea
   'search_workspace_files', 'write_workspace_file', 'write_workspace_files', 'edit_workspace_file',
   'multi_edit_workspace_file', 'delete_workspace_file']);
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+const isDiscoveryControl = name => name === TOOL_SEARCH || name === DEFERRED_TOOL_CALL;
+const gatewayToolNames = (tools, artifactPolicy, toolDiscoveryPolicy) => tools.filter(tool => (!artifactPolicy || !isArtifactTool(tool.name))
+  && (!toolDiscoveryPolicy || !isDiscoveryControl(tool.name))).map(tool => tool.name);
 const parentOutputSchema = contract => {
   const schema = contract?.finalSubmissionSchema, key = contract?.finalSubmissionPayloadKey;
   const output = key ? schema?.properties?.[key] : schema;
@@ -110,7 +114,9 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
     invariant(skillTools.every(tool => tool?.readOnly === true && tool.concurrentSafe === true
       && !granted.some(item => item.name === tool.name) && !mcpTools.some(item => item.name === tool.name)),
     'studio_native_child_skill_binding_unavailable');
-    bindings.set(role.name, { model, tools: [...granted, ...mcpTools, ...skillTools,
+    const toolDiscoveryPolicy = [...granted, ...mcpTools, ...skillTools].some(tool => tool.discovery) ? 'local-tool-search/v1' : undefined;
+    bindings.set(role.name, { model, ...(toolDiscoveryPolicy ? { toolDiscoveryPolicy } : {}), tools: [...granted, ...mcpTools, ...skillTools,
+      ...(toolDiscoveryPolicy ? toolDiscoveryDefinitions() : []),
       ...(artifactPolicy ? artifactToolDefinitions() : [])], isolatedWrite,
       ...(childA2a ? { a2aBinding: structuredClone(childA2a) } : {}),
       ...(inheritedSkills ? { skillBinding: structuredClone(skillBinding) } : {}),
@@ -153,7 +159,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       invariant(!source || !bound.isolatedWrite || source.configuration.hostRecoveryBinding?.childWorkspace,
         'studio_native_child_workspace_binding_changed');
       const ports = bindTools({ scope: child, store, sessionId: request.childSessionId,
-        toolNames: bound.tools.filter(tool => !artifactPolicy || !isArtifactTool(tool.name)).map(tool => tool.name),
+        toolNames: gatewayToolNames(bound.tools, artifactPolicy, bound.toolDiscoveryPolicy),
         ...(bound.a2aBinding ? { a2aBinding: bound.a2aBinding } : {}),
         ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),
@@ -162,6 +168,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         ...(isolated ? { workspaceRoot: isolated.root } : {}) });
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
+        ...(bound.toolDiscoveryPolicy ? { toolDiscoveryPolicy: bound.toolDiscoveryPolicy } : {}),
         ...(artifactPolicy ? { artifactPolicy } : {}),
         ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
         guidancePolicy: 'boundary-guide/v1',
@@ -206,6 +213,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       const profile = bound && configure({ profile: bound.model.profile, contract: configuration.contract,
         hostBindingDigest: configuration.hostBindingDigest }).profile;
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
+        && configuration.toolDiscoveryPolicy === bound.toolDiscoveryPolicy
         && (configuration.artifactPolicy ?? null) === (artifactPolicy ?? null)
         && (configuration.sourceReadPolicy ?? null) === (sourceReadPolicy ?? null)
         && canonical(configuration.profile) === canonical(profile)
@@ -220,7 +228,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
           ...(parentOutputDigest ? { parentOutputDigest } : {}) }), 'studio_native_child_restore_binding_changed');
       return { ...bindTools({ scope: identity.scope, store, sessionId: identity.sessionId,
-        toolNames: bound.tools.filter(tool => !artifactPolicy || !isArtifactTool(tool.name)).map(tool => tool.name),
+        toolNames: gatewayToolNames(bound.tools, artifactPolicy, bound.toolDiscoveryPolicy),
         ...(bound.a2aBinding ? { a2aBinding: bound.a2aBinding } : {}),
         ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),

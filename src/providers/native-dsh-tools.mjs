@@ -686,7 +686,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
       } };
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy } = {}) {
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy, sourceObservationPolicy, toolDiscoveryPolicy } = {}) {
+      invariant(toolDiscoveryPolicy === undefined || toolDiscoveryPolicy === 'local-tool-search/v1', 'studio_native_tool_discovery_policy_invalid');
       invariant(sourceObservationPolicy === undefined || sourceObservationPolicy === 'workspace-source-model/v1', 'studio_native_source_policy_invalid');
       invariant(directoryObservationPolicy === undefined || /^studio-directory-observation\/v[1-3]$/.test(directoryObservationPolicy),
         'studio_native_directory_policy_invalid');
@@ -745,6 +746,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         if (mcpSchema) invariant(canonical(schema.parameters) === canonical(mcpSchema.registryParameters), 'studio_native_mcp_schema_binding_changed');
         return {
           name, description: schema.description || '', parameters: structuredClone(mcpSchema?.input ?? schema.parameters),
+          ...(toolDiscoveryPolicy ? { discovery: { deferred: true,
+            ...(mcpContracts.has(name) ? { searchHint: `MCP ${String(mcpContracts.get(name).mcpResourceId || mcpContracts.get(name).resourceId)}` } : {}) } } : {}),
           // Unknown external effects are serialized and never granted safe-read
           // recovery from a catalog hint. Actual permissions remain in DSH.
           readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 60_000,

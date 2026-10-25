@@ -29,7 +29,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
   inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
   childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false, a2a,
-  managed = false, releasePending } = {}) {
+  managed = false, releasePending, toolSearch = false } = {}) {
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'studio-native-children-'))), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   let skillDefinitions;
@@ -43,6 +43,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2, ...role }];
   const agents = createAgentStore({ storeDir: join(root, 'agents') });
   const record = await agents.create({ name: 'Parent', runtimeType: 'harness', spec: { subAgents: roles,
+    ...(mcp && !toolSearch ? { execution: { nativeToolSearchMode: 'off' } } : {}),
     bindings: { modelProfileIds: ['parent-profile', 'child-profile'], tools: boundTools } } });
   const ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
   const events = [], registered = new Map(), projections = new Map(), dispatches = [], requests = [];
@@ -81,7 +82,9 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         childModels++;
         await beforeChildModel?.(childModels, body);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
-        const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? mcp.contracts.map(item => item.name).sort() : []),
+        const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? toolSearch
+          && !mcp.contracts.some(tool => ['ToolSearch', 'DeferredToolCall'].includes(tool.name))
+          ? ['ToolSearch', 'DeferredToolCall'] : mcp.contracts.map(item => item.name).sort() : []),
           ...(roles[0].inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : []),
           ...artifactToolDefinitions().map(tool => tool.name)];
         const offeredTools = body.tools ?? [];
@@ -1215,3 +1218,55 @@ for (const [index, childInput] of [[0, ['image']], [1, ['image']], [99, ['image'
     assert.equal(fixture.ledger.list({ ...fixture.scope, agentId: `${fixture.scope.agentId}:child:reader` }).length, 0);
   });
 }
+
+test('default discovery follows inherited child MCP without granting control tools to the external gateway', async t => {
+  const effects = [];
+  const f = await setup(t, { sqlite: true, toolSearch: true, childTool: 'native_delegate', boundTools: [],
+    role: { tools: [], inheritMcp: true, maxToolCalls: null },
+    mcp: { contracts: [childMcpContract], execute: async input => {
+      input.assertCurrent(); effects.push(input); return { content: [{ type: 'text', text: 'Deferred child evidence' }] };
+    } },
+    childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'ToolSearch', arguments: { query: 'select:remote_lookup' } } };
+      if (index === 2) {
+        const output = JSON.parse(body.messages.filter(message => message.role === 'tool').at(-1).content);
+        assert.deepEqual(output.tool_names, ['remote_lookup']);
+        return { call: { name: 'DeferredToolCall', arguments: { name: 'remote_lookup', input: { id: 7 } } } };
+      }
+      assert.match(JSON.stringify(body.messages), /Deferred child evidence/);
+      return { text: 'Discovered child MCP delivery' };
+    } });
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    assert.deepEqual(authority.toolNames, ['remote_lookup']); return bind(agent, authority);
+  };
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const child = f.ledger.list(childScope)[0], saved = f.ledger.load(childScope, child.runId);
+  assert.equal(child.phase, 'completed'); assert.equal(effects.length, 1);
+  assert.equal(saved.configuration.toolDiscoveryPolicy, 'local-tool-search/v1');
+  assert.deepEqual(saved.snapshot.toolDiscovery.discovered, ['remote_lookup']);
+  const actual = saved.intents.filter(intent => intent.kind === 'tool').flatMap(intent => intent.payload.calls);
+  assert.deepEqual(actual.map(call => call.name), ['ToolSearch', 'remote_lookup']);
+  assert.equal(actual[1].modelCallWrapper, 'DeferredToolCall');
+  assert.equal(saved.configuration.tools.find(tool => tool.name === 'remote_lookup').readOnly, false);
+  assert.equal(f.dispatches.filter(item => item.name === 'remote_lookup').length, 1);
+  assert.equal(f.dispatches.some(item => ['ToolSearch', 'DeferredToolCall'].includes(item.name)), false);
+});
+
+test('auto discovery preserves an MCP tool whose actual name collides with a control name', async t => {
+  let effects = 0;
+  const f = await setup(t, { sqlite: true, toolSearch: true, childTool: 'native_delegate', boundTools: [],
+    role: { tools: [], inheritMcp: true },
+    mcp: { contracts: [{ ...childMcpContract, name: 'ToolSearch' }], execute: async input => {
+      input.assertCurrent(); effects++; return { content: [{ type: 'text', text: 'Actual external ToolSearch' }] };
+    } },
+    childPlan: async (_body, index) => index === 1 ? { call: { name: 'ToolSearch', arguments: { id: 1 } } }
+      : { text: 'Legacy named MCP completed' } });
+  await f.host.executeTurn(f.payload);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
+  const child = f.ledger.list(childScope)[0], saved = f.ledger.load(childScope, child.runId);
+  assert.equal(child.phase, 'completed'); assert.equal(effects, 1);
+  assert.equal(Object.hasOwn(saved.configuration, 'toolDiscoveryPolicy'), false);
+  assert.equal(f.dispatches.filter(item => item.name === 'ToolSearch').length, 1);
+});

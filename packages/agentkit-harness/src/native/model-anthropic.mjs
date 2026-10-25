@@ -21,7 +21,7 @@ import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-m
 // parseModelJson is the kernel's strict finite JSON parser (rejects duplicate
 // keys and non-finite numbers); using it keeps provider-envelope and tool-input
 // decoding consistent with the kernel's own validation.
-import { parseModelJson, stringifyModelJson, parseNativeJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { parseModelJson, stringifyModelJson, parseNativeJson, modelWireToolCall, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 import { applyAnthropicThinking, projectProviderToolChoice, resolveProviderCompatibility } from './model-provider-compat.mjs';
 import { projectAnthropicPromptCache } from './model-anthropic-cache.mjs';
 
@@ -206,7 +206,7 @@ function projectAnthropicMessages(request, maxInlineImageBytes) {
         }
         if (role === 'assistant' && message.toolCalls && message.toolCalls.length) {
           validateAssistantToolIds(message.toolCalls);
-          for (const call of message.toolCalls) {
+          for (const call of message.toolCalls.map(modelWireToolCall)) {
             blocks.push({ type: 'tool_use', id: call.callId, name: call.name, input: call.arguments || {} });
           }
         }
