@@ -834,6 +834,7 @@ export class NativeKernel {
           try {
             toolSignal.throwIfAborted();
             const request = { ...context, signal: toolSignal,
+              ...(configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY ? { resultGovernance: RUNTIME_ARTIFACT_POLICY } : {}),
               operationKey: calls.length > 1 ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey,
               call: copy(call), definition: copy(definition), budget: admittedToolBudget(snapshot, configuration, calls.length),
               interaction: intent.payload.interaction as ObjectValue | null };

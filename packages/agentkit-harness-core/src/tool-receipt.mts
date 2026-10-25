@@ -64,7 +64,7 @@ export function reduceToolReceipt(record: StoredRun, intent: EffectIntent, obser
   invariant(result && ['ok', 'error'].includes(result.status)
     && Object.keys(result).every(key => ['status', 'content', 'context', 'additionalContexts', 'workspaceChangedPaths', 'artifactRefs',
       'resourceUsage', 'resourceUsageReported', 'metadata',
-      ...(configuration.artifactPolicy === 'runtime-artifacts/v1' ? ['artifactObservationDigest'] : [])].includes(key))
+      ...(configuration.artifactPolicy === 'runtime-artifacts/v1' ? ['artifactObservationDigest', 'archiveContext'] : [])].includes(key))
     && new TextEncoder().encode(configuration.artifactPolicy === 'runtime-artifacts/v1'
       ? canonical({ content: result.context?.content ?? canonical(result.content), media: result.context?.media ?? [],
         additionalContexts: result.additionalContexts ?? [] }) : canonical(result)).byteLength

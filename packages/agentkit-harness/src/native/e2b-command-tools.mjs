@@ -243,6 +243,7 @@ function createCommandTools({ sessionId, owner, storeFactory,
   }
 
   async function budget(result, request, before, sandboxId, taskId) {
+    if (request.resultGovernance === 'runtime-artifacts/v1') return guard(request, before, true, result) ?? result;
     const body = canonical(result.content);
     if (Buffer.byteLength(body) <= maxOutputBytes) return result;
     const guardResult = guard(request, before, true, result);
@@ -480,6 +481,6 @@ function createCommandTools({ sessionId, owner, storeFactory,
 
   return Object.freeze({ definitions: copy(definitions), async execute(request) {
     const result = await execute(request);
-    return result.content === undefined ? result : boundResult(result);
+    return result.content === undefined || request.resultGovernance === 'runtime-artifacts/v1' ? result : boundResult(result);
   }, contract: ownership.contract });
 }

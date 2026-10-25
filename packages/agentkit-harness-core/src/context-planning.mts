@@ -1,6 +1,7 @@
 import type { ContextAdmission, ContextCompaction, ContextPlanningResult, ContextPlanningState, Message, ModelResult,
   ObjectValue, RunConfiguration, RunSnapshot, ToolDefinition, Usage } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
+import { directoryProgressQuote } from './directory-progress.mjs';
 import { contextSourceDigest, validateContextMessages } from './context-view.mjs';
 import { assertHookFeedbackRetained } from './hook-runtime.mjs';
 import { retryDelay } from './retry.mjs';
@@ -40,6 +41,7 @@ export function contextContinuity(snapshot: RunSnapshot, config: RunConfiguratio
     ...(config.artifactPolicy === 'runtime-artifacts/v1' ? { artifactCatalog: { total: snapshot.artifactRefs.length,
       omitted: Math.max(0, snapshot.artifactRefs.length - 8), tool: 'ArtifactList' } } : {}),
     pendingInteraction: snapshot.pendingInteraction,
+    ...(config.tools.some(tool => tool.directoryObservationPolicy) ? { directoryNavigation: directoryProgressQuote(snapshot) } : {}),
     childBudgetReservations: snapshot.childBudgetReservations ?? [], childRunIds: snapshot.childRunIds ?? [],
     childApproval: snapshot.childApproval ?? null,
     children: snapshot.children.map(child => ({ runId: child.runId, state: child.state, notified: child.notified })),

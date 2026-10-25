@@ -13,7 +13,7 @@ export function createDeadlinePolicyProof() {
     const path = `report-${turn}.txt`;
     assert.ok(turn <= 2); assert.equal(body.model, 'pinned');
     assert.deepEqual(new Set(body.tools.map(tool => tool.function.name)),
-      new Set(['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']));
+      new Set(['write_workspace_file', 'read_workspace_file', 'edit_workspace_file', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']));
     if (frozen) {
       assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('FROZEN_NATIVE_SYSTEM_A')));
       assert.equal(JSON.stringify(body.messages).includes('LATEST_NATIVE_SYSTEM_B'), false);

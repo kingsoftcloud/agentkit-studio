@@ -164,7 +164,7 @@ export function createNativeWorkspaceTools({
     }
   }
 
-  function listWorkspaceFiles(args) {
+  function listWorkspaceFiles(args, { request } = {}) {
     const path = String(args.path ?? '.');
     const glob = args.glob ?? null;
     const recursive = Boolean(args.recursive);
@@ -221,7 +221,7 @@ export function createNativeWorkspaceTools({
       path: e.rel,
       type: e.isDir ? 'directory' : 'file',
       size: e.size,
-      mtime_ns: Number(e.mtimeNs),
+      mtime_ns: request?.definition?.directoryObservationPolicy ? e.mtimeNs : Number(e.mtimeNs),
     }));
     return {
       ok: true,

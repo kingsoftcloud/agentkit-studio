@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonical, configure, invariant, submissionOutputFormat } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, configure, invariant, submissionOutputFormat, artifactToolDefinitions, isArtifactTool } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeChildOwner } from '../../packages/agentkit-harness/src/native/child-owner.mjs';
 import { createNativeChildResultTools } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeGoalContract } from './native-verification.mjs';
@@ -74,8 +74,10 @@ export function nativeChildRoles(spec = {}) {
 
 /** Bind every child to a declared role and its own scoped tool state. */
 export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp, mcpBinding, skillBinding, skillInstructions,
-  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map() }) {
+  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory }) {
   if (!roles.length) return null;
+  invariant(artifactPolicy == null || artifactPolicy === 'runtime-artifacts/v1' && typeof artifactFactory === 'function',
+    'studio_native_child_artifact_binding_invalid');
   const byName = new Map(roles.map(role => [role.name, role]));
   const bindings = new Map();
   for (const role of roles) {
@@ -106,7 +108,8 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
     invariant(skillTools.every(tool => tool?.readOnly === true && tool.concurrentSafe === true
       && !granted.some(item => item.name === tool.name) && !mcpTools.some(item => item.name === tool.name)),
     'studio_native_child_skill_binding_unavailable');
-    bindings.set(role.name, { model, tools: [...granted, ...mcpTools, ...skillTools], isolatedWrite,
+    bindings.set(role.name, { model, tools: [...granted, ...mcpTools, ...skillTools,
+      ...(artifactPolicy ? artifactToolDefinitions() : [])], isolatedWrite,
       ...(childA2a ? { a2aBinding: structuredClone(childA2a) } : {}),
       ...(inheritedSkills ? { skillBinding: structuredClone(skillBinding) } : {}),
       ...(inheritedMcp ? { mcpBinding: structuredClone(mcpBinding) } : {}) });
@@ -147,7 +150,8 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         existing: Boolean(source), ...(source ? { expectedBinding: source.configuration.hostRecoveryBinding?.childWorkspace } : {}) }) : null;
       invariant(!source || !bound.isolatedWrite || source.configuration.hostRecoveryBinding?.childWorkspace,
         'studio_native_child_workspace_binding_changed');
-      const ports = bindTools({ scope: child, store, sessionId: request.childSessionId, toolNames: bound.tools.map(tool => tool.name),
+      const ports = bindTools({ scope: child, store, sessionId: request.childSessionId,
+        toolNames: bound.tools.filter(tool => !artifactPolicy || !isArtifactTool(tool.name)).map(tool => tool.name),
         ...(bound.a2aBinding ? { a2aBinding: bound.a2aBinding } : {}),
         ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),
@@ -156,6 +160,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         ...(isolated ? { workspaceRoot: isolated.root } : {}) });
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
+        ...(artifactPolicy ? { artifactPolicy } : {}),
         guidancePolicy: 'boundary-guide/v1',
         ...(media.length ? { inputMessages: [{ role: 'user', kind: 'user_input', content: request.task, media }] } : {}),
         instructions: [role.instructions, ...(childSkills ? [skillInstructions] : [])].filter(Boolean).join('\n\n'), contract, tools: bound.tools,
@@ -164,15 +169,18 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
           ...(isolated ? { childWorkspace: isolated.binding } : {}), ...(childSkills ? { childSkills } : {}),
         } } : {}),
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
+          ...(artifactPolicy ? { artifactPolicy } : {}),
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
           ...(bound.a2aBinding ? { inheritedA2a: bound.a2aBinding } : {}),
           ...(childSkills ? { inheritedSkills: childSkills } : {}),
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
           ...(parentOutputDigest ? { parentOutputDigest } : {}) }),
-        delegationDepth: request.depth, limits: { maxModelCalls: role.maxTurns, maxToolCalls: role.maxToolCalls ?? (bound.tools.length ? role.maxTurns * 4 : 0),
+        delegationDepth: request.depth, limits: { maxModelCalls: role.maxTurns,
+          maxToolCalls: role.maxToolCalls ?? (bound.tools.some(tool => !artifactPolicy || !isArtifactTool(tool.name)) ? role.maxTurns * 4 : 0),
           maxRepairs: Math.min(2, role.maxTurns - 1), maxSubagentDepth: request.depth, maxWallMs: role.timeoutSeconds * 1000,
           effectTimeoutMs: Math.max(120000, bound.model.profile.requestTimeoutMs + 10000) } }),
-      ports: { ...ports, model: bound.model.model, context: bound.model.context, verification } };
+      ports: { ...ports, ...(artifactPolicy ? { artifacts: await artifactFactory(child) } : {}),
+        model: bound.model.model, context: bound.model.context, verification } };
     },
     restoreChild: async ({ identity, configuration, binding }) => {
       const bound = bindings.get(binding.role), role = byName.get(binding.role);
@@ -194,20 +202,24 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       const profile = bound && configure({ profile: bound.model.profile, contract: configuration.contract,
         hostBindingDigest: configuration.hostBindingDigest }).profile;
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
+        && (configuration.artifactPolicy ?? null) === (artifactPolicy ?? null)
         && canonical(configuration.profile) === canonical(profile)
         && configuration.modelRecoveryPolicy === (bound.model.modelRecoveryPolicy ?? 'manual')
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
           profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
+          ...(artifactPolicy ? { artifactPolicy } : {}),
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
           ...(bound.a2aBinding ? { inheritedA2a: bound.a2aBinding } : {}),
           ...(childSkills ? { inheritedSkills: childSkills } : {}),
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
           ...(parentOutputDigest ? { parentOutputDigest } : {}) }), 'studio_native_child_restore_binding_changed');
-      return { ...bindTools({ scope: identity.scope, store, sessionId: identity.sessionId, toolNames: bound.tools.map(tool => tool.name),
+      return { ...bindTools({ scope: identity.scope, store, sessionId: identity.sessionId,
+        toolNames: bound.tools.filter(tool => !artifactPolicy || !isArtifactTool(tool.name)).map(tool => tool.name),
         ...(bound.a2aBinding ? { a2aBinding: bound.a2aBinding } : {}),
         ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),
         ...(isolated ? { workspaceRoot: isolated.root, workspaceBinding: isolated.binding } : {}) }),
+        ...(artifactPolicy ? { artifacts: await artifactFactory(identity.scope) } : {}),
         model: bound.model.model, context: bound.model.context,
         verification: await verificationFactory({ scope: identity.scope, sessionId: identity.sessionId,
           ...(isolated ? { workspaceRoot: isolated.root } : {}) }) };

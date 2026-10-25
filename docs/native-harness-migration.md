@@ -1,8 +1,8 @@
 # Native Harness TypeScript 迁移
 
-工具结果归档已有核心执行链路和实际 Node 存储验证，见[归档能力与剩余边界](native-artifacts.md)。
-共用 Host/子任务组装、动态来源容量和命令归档转接仍待完成；当前不能将存储适配器或
-核心专项用例视为完整 Artifact 产品能力已迁移。
+工具结果归档现已接入核心、共用 Native Host 和独立作用域的子任务，命令完整输出归档、
+目录投影及当前目标的回执导航已接通，见[归档能力与剩余边界](native-artifacts.md)。
+动态来源容量、完整源码捕获与分页搜索仍待完成；当前专项验证不代表完整产品验收。
 
 当前普通工具目录的 31 项及 platform factory 额外 3 项均有 Node 端口，
 DSH builtin 的 Python 脚本、解释器查找和子进程 fallback 已删除。

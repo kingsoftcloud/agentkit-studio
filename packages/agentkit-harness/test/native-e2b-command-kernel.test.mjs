@@ -6,7 +6,8 @@ import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { factory as subprocessTransport } from './e2b-fake-transport.mjs';
-import { NativeKernel, configure, emptyUsage, canonical } from '../../agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, configure, emptyUsage, canonical, artifactToolDefinitions } from '../../agentkit-harness-core/dist/index.mjs';
+import { createNativeArtifactStore } from '../src/native/artifact-store.mjs';
 import { fixture, scope, digest } from '../../agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 import { createNativeToolAuthority } from '../../../src/providers/native-tool-authority.mjs';
@@ -96,6 +97,7 @@ test('real Kernel authority: wrong scope rejected by createNativeToolAuthority',
   const authority = createNativeToolAuthority({ scope, sessionId: 'session', store });
   setToolExecutor(request => {
     assert.equal(authority({ ...request, scope: { ...scope, workspaceId: 'foreign' } }), false, 'wrong scope rejected');
+    assert.equal(authority({ ...request, resultGovernance: 'runtime-artifacts/v1' }), false, 'unsealed governance rejected');
     assert.equal(authority(request), true, 'correct scope accepted');
     return { status: 'ok', content: { ok: true } };
   });
@@ -103,6 +105,45 @@ test('real Kernel authority: wrong scope rejected by createNativeToolAuthority',
   await worker().runUntilIdle(scope, 'run-scope');
   assert.equal(toolCallCount(), 1, 'tool was actually executed');
   assert.equal(store.load(scope, 'run-scope').snapshot.phase, 'completed');
+});
+
+test('sealed Kernel governance archives full E2B foreground output without weakening live authority', async t => {
+  const root = mkdtempSync(join(tmp, 'e2b-governance-')), workspaceRoot = join(root, 'workspace');
+  const { mkdirSync } = await import('node:fs'); mkdirSync(workspaceRoot);
+  const store = new SqliteRunStore(join(root, 'runs.sqlite'));
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  let commands, models = 0, executions = 0;
+  const artifacts = await createNativeArtifactStore({ directory: join(root, 'artifacts'), scope });
+  const owner = { ensure: async () => {
+    commands ??= new E2BCommandStore({ stateRoot: join(root, 'commands'), workspaceRoot, sessionId: 'session',
+      transport: fakeTransport('sb-governance'), sandboxId: 'sb-governance', authority: () => true });
+    return { sandboxId: 'sb-governance', created: true };
+  }, inspect: () => ({ phase: 'ready', sandboxId: 'sb-governance' }) };
+  const authority = createNativeToolAuthority({ scope, sessionId: 'session', store });
+  const tools = createNativeE2BCommandTools({ scope, sessionId: 'session', owner, storeFactory: () => commands,
+    authorize: async () => 'allow', assertAuthority: authority,
+    resolveOwnedCommand: (request, taskId) => createOwnedCommandResolver({ scope, store })(request, taskId),
+    artifacts: { write: () => assert.fail('Legacy output archive must not replace the full retained result') } });
+  const { config, snapshot } = fixture({ artifactPolicy: 'runtime-artifacts/v1',
+    tools: [...e2bCommandToolDefinitions(), ...artifactToolDefinitions()],
+    limits: { effectTimeoutMs: 1000000, maxToolResultBytes: 4096 } });
+  const kernel = new NativeKernel({ store, digest, owner: 'governed-e2b', ports: { artifacts,
+    tools: { execute: request => {
+      executions++; assert.equal(authority(request), true);
+      assert.equal(authority({ ...request, resultGovernance: undefined }), false);
+      return tools.execute(request);
+    } }, model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'command', name: 'run_command', arguments: {
+        command: `"${process.execPath}" -e "process.stdout.write('x'.repeat(40000)+'E2B_FULL_TAIL😀')"`, timeout: 10 } }] }
+      : { kind: 'final_candidate', text: 'Command retained.', toolCalls: [], usage: emptyUsage() } } } });
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, snapshot.runId);
+  const result = store.load(scope, snapshot.runId).receipts.flatMap(row => row.result.results ?? [])[0];
+  assert.equal(end.phase, 'completed'); assert.equal(result.status, 'ok'); assert.equal(executions, 1);
+  assert.match(result.content.stdout, /E2B_FULL_TAIL😀$/); assert.equal(result.content.output_budget, undefined);
+  assert.ok(Buffer.byteLength(result.context.content) <= 4096); assert.equal(end.artifactRefs.length, 1);
+  const tail = await artifacts.read({ ...snapshot, operationKey: 'tail-check', signal: new AbortController().signal,
+    ref: end.artifactRefs[0], offset: 39000, limit: 8000 });
+  assert.match(tail.content, /E2B_FULL_TAIL😀/);
 });
 
 test('real Kernel authority: wrong sessionId rejected', async t => {

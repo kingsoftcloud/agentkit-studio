@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { canonical, copy, invariant, normalizeDeliveryReviewPolicy } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
+import { createNativeArtifactStore } from '../../../packages/agentkit-harness/src/native/artifact-store.mjs';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '../../../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createNativeModelPort, nativeModelRecoveryPolicy } from '../../../packages/agentkit-harness/src/native/model-port.mjs';
@@ -292,9 +293,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(input.assembly);
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
-        : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1',
+        : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1',
           ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
           ...(record.spec.execution?.toolErrorRecoveryModelCalls === undefined ? {}
             : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
@@ -319,9 +320,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ? original.configuration.limits.finalizationReserveWallMs > 0 || !!original.configuration.wallDeliveryPolicy
         : (record.spec.execution?.nativeLimits?.finalizationReserveWallMs ?? 0) > 0 || !!deadline.wallDeliveryPolicy,
       exactContentPolicy: original ? original.configuration.tools.some(tool => tool.exactContentPolicy) : true,
+      ...((original ? original.configuration.tools.find(tool => tool.directoryObservationPolicy)?.directoryObservationPolicy : 'studio-directory-observation/v3')
+        ? { directoryObservationPolicy: original ? original.configuration.tools.find(tool => tool.directoryObservationPolicy).directoryObservationPolicy
+          : 'studio-directory-observation/v3' } : {}),
       ...((original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy)
         ? { wallDeliveryPolicy: original ? original.configuration.wallDeliveryPolicy : deadline.wallDeliveryPolicy } : {}) };
-      const tools = binding.nativeTools.definitions(agent, input.assembly.tools, toolOptions);
+      const boundToolDefinitions = binding.nativeTools.definitions(agent, input.assembly.tools, toolOptions);
+      const tools = [...boundToolDefinitions, ...(recoveryPolicies.artifactPolicy ? artifactToolDefinitions() : [])];
+      const artifactFactory = childScope => typeof binding.nativeTools.artifactsFor === 'function'
+        ? binding.nativeTools.artifactsFor(childScope) : createNativeArtifactStore({ directory: join(storeDir, 'native-harness', 'result-artifacts'), scope: childScope });
       const taskPolicy = bindNativeTaskPolicy({ tools, nativeLimits: record.spec.execution?.nativeLimits, vision: !!visionDescription, execution: deadlineExecution });
       const materialized = original ? { memoryWrite: false } : await prepareLocalResourceContext({ record, input: admission.objective, resourceAdapter: resources,
         toolAdapter: {}, agent, agentId: binding.agentId, userId: scope.userId, resourceMode: 'context-only' });
@@ -386,6 +393,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           return modelBinding(profiles[index], id);
         },
         bindTools: authority => binding.nativeTools.forChild(agent, authority),
+        ...(recoveryPolicies.artifactPolicy ? { artifactPolicy: recoveryPolicies.artifactPolicy, artifactFactory } : {}),
         verificationFactory: child => createNativeVerification({ ...child, workspaceRoot: child.workspaceRoot ?? workspaceRoot,
           evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence') }),
       });
@@ -521,7 +529,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             ...tools.filter(tool => tool.name === 'browser_inspect_workspace').map(tool => tool.timeoutMs + visionDescription.requestTimeoutMs + 10000)] : []),
           (hooks?.requiredEffectTimeoutMs ?? 0) + 1,
           ...roles.map(role => role.timeoutSeconds * 1000 + 15000), ...tools.map(tool => tool.timeoutMs + 10000)) } },
-        ports: { ...toolPorts,
+        ports: { ...toolPorts, ...(recoveryPolicies.artifactPolicy ? { artifacts: await artifactFactory(scope) } : {}),
           ...(hooks ? { hooks } : {}),
           ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
           context: { ...context.port, ...(contextSources.length ? { readSource: readContextSource } : {}) }, input: { prepare: async request => {
@@ -538,7 +546,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             'studio_native_input_model_binding_changed');
           invariant(renderPrompt(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly) === systemPrompt,
             'studio_native_input_prompt_binding_changed');
-          invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools, toolOptions)) === canonical(tools),
+          invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools, toolOptions)) === canonical(boundToolDefinitions),
             'studio_native_input_tool_binding_changed');
           invariant(Array.isArray(next.messages), 'studio_native_prepared_input_invalid');
           // The post-candidate drain must still catch real queued work. SDK

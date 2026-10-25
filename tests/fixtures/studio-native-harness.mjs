@@ -64,7 +64,7 @@ async function applyProof(ctx, options) {
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'] } : { tools: options.memory ? [] : options.web ? ['web_fetch', 'web_search']
-          : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
+          : options.artifactPolicy ? ['list_workspace_files'] : options.deadlinePolicy ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
@@ -179,7 +179,7 @@ async function applyProof(ctx, options) {
           if (admitted.presetId !== presetId) throw Error('Mounted Host admitted a different preset');
         }
         await appendFile(join(options.directory, 'mounted-host-http.jsonl'), JSON.stringify({ source,
-          agentId: record.metadata.id, presetId, unauthorizedStatus: unauthorized.status, compatible: true }) + '\n');
+          hostPid: process.pid, agentId: record.metadata.id, presetId, unauthorizedStatus: unauthorized.status, compatible: true }) + '\n');
         // The SDK handshake precedes optional Host reconciliation. Wait for the
         // real registration; do not install a substitute preset in this fixture.
         const deadline = Date.now() + 15000;
@@ -216,7 +216,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview || options.deadlinePolicy) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.

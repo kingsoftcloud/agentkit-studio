@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { canonical, MemoryRunStore } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, MemoryRunStore, artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
@@ -82,7 +82,8 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         await beforeChildModel?.(childModels, body);
         assert.equal(url, 'https://child.invalid/v1/chat/completions');
         const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? mcp.contracts.map(item => item.name).sort() : []),
-          ...(roles[0].inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : [])];
+          ...(roles[0].inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : []),
+          ...artifactToolDefinitions().map(tool => tool.name)];
         const offeredTools = body.tools ?? [];
         assert.deepEqual(offeredTools.map(item => item.function.name).filter(name => name !== 'submit_final_output'),
           childModels > 1 && !offeredTools.length ? [] : expectedTools);
@@ -396,7 +397,8 @@ for (const managed of [false, true]) for (const foreground of [false, true]) for
   const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
   const child = selectedStore.load(reservation.childScope, reservation.childRunId);
   assert.equal(child.snapshot.phase, 'completed'); assert.notEqual(child.snapshot.sessionId, 'parent-session');
-  assert.equal(child.configuration.tools.length, 1); assert.equal(child.configuration.tools[0].name, 'call_a2a_agent');
+  assert.deepEqual(child.configuration.tools.map(tool => tool.name),
+    ['call_a2a_agent', ...artifactToolDefinitions().map(tool => tool.name)]);
   assert.equal(child.events.filter(event => event.kind === 'tool.receipt_reconciled').length, 1);
   const recovered = structuredClone(child), originalIntent = recovered.intents.find(row => row.kind === 'tool');
   recovered.receipts.find(row => row.operationKey === originalIntent.operationKey).status = 'uncertain';
@@ -646,7 +648,8 @@ test('Host inheritSkills false omits formal Skills and discovery metadata from t
   const [child] = f.ledger.list({ ...f.scope, agentId: `${f.scope.agentId}:child:reader` });
   assert.equal(child.phase, 'completed');
   const saved = f.ledger.load(child.scope, child.runId);
-  assert.deepEqual(saved.configuration.tools, []);
+  assert.deepEqual(saved.configuration.tools, artifactToolDefinitions());
+  assert.equal(saved.configuration.limits.maxToolCalls, 0);
   assert.equal(saved.configuration.hostRecoveryBinding?.childSkills, undefined);
 });
 
@@ -715,8 +718,8 @@ test('SQLite Host grants inherited MCP through each child intent and rejects for
   const child = f.ledger.list(childScope)[0], saved = f.ledger.load(childScope, child.runId);
   assert.equal(child.phase, 'completed'); assert.equal(effects.length, 2);
   assert.ok(saved.configuration.limits.maxToolCalls >= 2 && saved.configuration.limits.maxToolCalls <= 12);
-  assert.deepEqual(saved.configuration.tools.map(tool => tool.name), ['remote_lookup']);
-  assert.ok(saved.configuration.tools.every(tool => !tool.readOnly && !tool.concurrentSafe));
+  assert.deepEqual(saved.configuration.tools.map(tool => tool.name), ['remote_lookup', ...artifactToolDefinitions().map(tool => tool.name)]);
+  assert.ok(saved.configuration.tools.filter(tool => tool.name === 'remote_lookup').every(tool => !tool.readOnly && !tool.concurrentSafe));
   assert.ok(effects.every(input => input.agentId === f.record.metadata.id && input.resourceId === 'bound-catalog'
     && input.agent === f.payload.agent && input.resultFormat === 'mcp-result/v1'));
   assert.equal(f.dispatches.filter(item => item.name === 'remote_lookup').length, 2);
@@ -732,6 +735,39 @@ test('SQLite Host grants inherited MCP through each child intent and rejects for
     toolNames: ['remote_lookup'], mcpBinding: { ...f.gateway.childMcpBinding, bindingDigest: '0'.repeat(64) } }), /mcp_binding_changed/);
 });
 
+test('shared Host child reads its own large MCP archive while the parent earns no child-scoped reference', async t => {
+  let remoteCalls = 0, childUri;
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', boundTools: [],
+    role: { tools: [], inheritMcp: true }, mcp: { contracts: [childMcpContract], execute: async input => {
+      input.assertCurrent(); remoteCalls++;
+      return { content: [{ type: 'text', text: 'CHILD_SOURCE_BEGIN_' + 'x'.repeat(100000) + '_CHILD_SOURCE_END' }] };
+    } }, childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'remote_lookup', arguments: { id: 1 } } };
+      const message = body.messages.filter(message => message.role === 'tool').at(-1);
+      if (index === 2) {
+        assert.ok(!message.content.includes('x'.repeat(100000)));
+        childUri = JSON.parse(message.content).artifact_uri; assert.ok(childUri);
+        return { call: { name: 'ArtifactRead', arguments: { uri: childUri, limit_chars: 128 } } };
+      }
+      assert.match(message.content, /CHILD_SOURCE_BEGIN_/);
+      return { text: 'Child read its scoped archive.' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const parent = f.ledger.load(f.scope, f.ledger.sessionHead(f.scope, 'parent-session').runId);
+  const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` }, child = f.ledger.list(childScope)[0];
+  assert.equal(child.phase, 'completed'); assert.equal(parent.snapshot.phase, 'completed'); assert.equal(remoteCalls, 1);
+  assert.equal(f.childModels(), 3); assert.equal(typeof childUri, 'string');
+  assert.deepEqual(child.artifactRefs.map(ref => ref.uri), [childUri]);
+  assert.ok(!parent.snapshot.artifactRefs.some(ref => ref.uri === childUri));
+  const parentArtifacts = await f.gateway.artifactsFor(f.scope);
+  await assert.rejects(parentArtifacts.read({ ...parent.snapshot, signal: new AbortController().signal,
+    operationKey: 'parent-probe', ref: child.artifactRefs[0], offset: 0, limit: 30 }));
+  const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
+  try { assert.deepEqual(reopened.load(childScope, child.runId).snapshot.artifactRefs, child.artifactRefs); }
+  finally { reopened.close(); }
+  assert.equal(f.dispatches.some(call => call.name === 'ArtifactRead'), false, 'reserved reads bypass the external registry');
+});
+
 test('MCP inheritance is opt-in and rejects concurrent-safe roles with unknown remote effects before model work', async t => {
   const mcp = { contracts: [childMcpContract], execute: async () => assert.fail('No MCP dispatch') };
   const f = await setup(t, { sqlite: true, childTool: 'native_delegate', mcp,
@@ -739,7 +775,8 @@ test('MCP inheritance is opt-in and rejects concurrent-safe roles with unknown r
       ? { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } } : { text: 'Read only local evidence' } });
   await f.host.executeTurn(f.payload);
   const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
-  assert.deepEqual(f.ledger.load(childScope, f.ledger.list(childScope)[0].runId).configuration.tools.map(tool => tool.name), ['read_workspace_file']);
+  assert.deepEqual(f.ledger.load(childScope, f.ledger.list(childScope)[0].runId).configuration.tools.map(tool => tool.name),
+    ['read_workspace_file', ...artifactToolDefinitions().map(tool => tool.name)]);
   const unsafe = await setup(t, { mcp, role: { inheritMcp: true, concurrentSafe: true } });
   await assert.rejects(unsafe.host.executeTurn(unsafe.payload), /child_mcp_role_unsafe/);
   assert.equal(unsafe.requests.length, 0);

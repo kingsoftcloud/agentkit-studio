@@ -12,6 +12,8 @@ export function createNativeToolAuthority({ scope, sessionId, store, isClosed = 
       if (isClosed() || !(request.signal instanceof AbortSignal) || request.signal.aborted
         || canonical(request.scope) !== canonical(fixedScope) || request.sessionId !== sessionId) return false;
       const current = store.load(fixedScope, request.runId), snapshot = current.snapshot;
+      if (request.resultGovernance !== (current.configuration.artifactPolicy === 'runtime-artifacts/v1'
+        ? 'runtime-artifacts/v1' : undefined)) return false;
       if (!snapshot || snapshot.phase !== 'executing_tools'
         || !['sessionId', 'runId', 'turnId', 'buildId', 'parentRunId', 'taskChainId'].every(key => request[key] === snapshot[key])
         || !current.lease || current.lease.expiresAt <= Date.now()

@@ -1,5 +1,7 @@
 export * from './contracts.mjs';
 export * from './artifact-runtime.mjs';
+export * from './captured-source.mjs';
+export * from './directory-progress.mjs';
 export * from './values.mjs';
 export * from './store.mjs';
 export * from './configuration.mjs';

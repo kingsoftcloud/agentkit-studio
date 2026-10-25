@@ -1,6 +1,7 @@
 import type { ArtifactPort, ArtifactRef, Json, ObjectValue, PortContext, RunConfiguration, RunSnapshot,
   ToolCall, ToolDefinition, ToolResult } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
+import { toolContext } from './tool-context.mjs';
 
 export const RUNTIME_ARTIFACT_POLICY = 'runtime-artifacts/v1' as const;
 export const ARTIFACT_RESULT_MEDIA_TYPE = 'application/vnd.agentkit.tool-result+json';
@@ -93,6 +94,11 @@ export async function governArtifactResult(context: PortContext, definition: Too
   const result = copy(input);
   // Tool payloads and callback-provided locators cannot mint capabilities. Only the runtime's write return is admitted.
   delete result.artifactRefs; delete result.artifactObservationDigest;
+  if (definition.resultArchivePolicy === 'archived-model-view/v4' && result.archiveContext)
+    result.archiveContext = toolContext(result.archiveContext);
+  else delete result.archiveContext;
+  if (definition.directoryObservationPolicy && !input.context && !result.archiveContext)
+    result.archiveContext = { content: canonical(result.content) };
   result.artifactObservationDigest = await sha256(canonical({ status: result.status, content: result.content,
     context: result.context ?? null, additionalContexts: result.additionalContexts ?? [] }));
   if (isArtifactTool(definition.name)) return result;
@@ -101,8 +107,9 @@ export async function governArtifactResult(context: PortContext, definition: Too
   if (!tooLarge && !force) return result;
   // Preserve the canonical receipt in SQLite. The readable archive follows the actual post-policy model view;
   // hidden/raw Host facts must not become visible merely by asking ArtifactRead for the overflow.
+  const observation = result.archiveContext ?? result.context;
   const content = canonical({ status: result.status,
-    content: result.context ? { model_content: result.context.content, media: result.context.media ?? [] } : result.content,
+    content: observation ? { model_content: observation.content, media: observation.media ?? [] } : result.content,
     additional_contexts: result.additionalContexts ?? [] });
   let ref: ArtifactRef | null = null;
   try {

@@ -10,6 +10,8 @@ import { scope, fixture, digest } from '../packages/agentkit-harness-core/test/f
 import { NativeKernel, MemoryRunStore, emptyUsage, BACKGROUND_COMMAND_CONTRACT, BACKGROUND_NOTIFICATION_ADMISSION } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { snapshotNativeMcpSchema } from '../src/providers/native-mcp-schema.mjs';
 import { NATIVE_PYTHON_SYNTAX } from '../packages/agentkit-harness/src/native/python-syntax.mjs';
+import { artifactToolDefinitions, canonical, parseNativeJson, directoryProgressQuote } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { createNativeArtifactStore } from '../packages/agentkit-harness/src/native/artifact-store.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createSkillDiscovery } from '../src/skill-discovery.mjs';
 import { createStudioSkillManagement, SKILL_MANAGEMENT_CONTRACT } from '../src/skill-management.mjs';
@@ -798,3 +800,110 @@ test('gateway close disposes a bound Memory owner registration without leaking',
   memoryHost2.close();
 });
 
+
+for (const version of [1, 2, 3]) test(`directory v${version}: actual Node listing and DSH pipeline keep full canonical/authorized archive while bounding the model view`, async t => {
+  const h = setup(t, ['list_workspace_files']), root = join(h.workspaceRoot, '..');
+  mkdirSync(join(h.workspaceRoot, 'aaa')); mkdirSync(join(h.workspaceRoot, 'late'));
+  for (let i = 0; i < 240; i++) writeFileSync(join(h.workspaceRoot, 'aaa', `file-${String(i).padStart(3, '0')}.txt`), String(i));
+  const store = new SqliteRunStore(join(root, 'directory.sqlite')); t.after(() => store.close());
+  const artifacts = await createNativeArtifactStore({ directory: join(root, 'result-artifacts'), scope });
+  const directoryObservationPolicy = `studio-directory-observation/v${version}`;
+  const tools = [...h.gateway.definitions(h.agent, [...h.registry.values()], { directoryObservationPolicy }), ...artifactToolDefinitions()];
+  const { config, snapshot } = fixture({ artifactPolicy: 'runtime-artifacts/v1', tools, limits: { effectTimeoutMs: 200000, maxToolResultBytes: 8192 } });
+  const ports = h.gateway.forAgent(h.agent, { scope, store }); let turns = 0, observed, firstPage;
+  const kernel = new NativeKernel({ store, owner: 'directory-node', digest, ports: { ...ports, artifacts,
+    model: { generate: async request => {
+      if (++turns === 1) return { kind: 'tool_calls', text: '', toolCalls: [{ callId: 'directory', name: 'list_workspace_files',
+        arguments: { path: '.', recursive: true, max_results: 5000, sort_by: version === 3 ? 'mtime' : 'name' } }], usage: emptyUsage() };
+      if (turns === 2) {
+        const wrapper = parseNativeJson(request.messages.at(-1).content); observed = wrapper;
+        if (typeof wrapper.artifact_uri === 'string') return { kind: 'tool_calls', text: '', toolCalls: [{ callId: 'page', name: 'ArtifactRead',
+          arguments: { uri: wrapper.artifact_uri, limit_chars: 64 } }], usage: emptyUsage() };
+      } else firstPage = parseNativeJson(request.messages.at(-1).content);
+      return { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() };
+    } } } });
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run'), record = store.load(scope, 'run');
+  assert.equal(end.phase, 'completed'); assert.equal(turns, 3); assert.equal(firstPage.returned_chars, 64);
+  const view = parseNativeJson(observed.observed_content).content;
+  assert.equal(view.returned_entries, 242); assert.ok(view.paths.length > 0 && view.paths.length <= 100);
+  assert.equal(view.shown_entries + view.omitted_entries, 242);
+  const original = record.receipts.find(receipt => receipt.result.results).result.results[0];
+  assert.equal(original.content.entries.length, 242); assert.ok(original.archiveContext.content.length > 10000);
+  if (version === 3) { assert.equal(view.listing_scope.path, '.'); assert.equal(view.listing_scope.recursive, true);
+    assert.ok(view.paths.every(item => typeof item.mtime_ns === 'bigint')); }
+  const ref = end.artifactRefs[0]; let offset = 0, full = '';
+  do { const page = await artifacts.read({ ...h.request(), ref, offset, limit: 32000 }); full += page.content; offset = page.nextOffset; } while (offset !== null);
+  const archived = parseNativeJson(parseNativeJson(full).content.model_content);
+  assert.equal(archived.entries.length, 242); assert.deepEqual(archived.entries.map(entry => entry.path), original.content.entries.map(entry => entry.path));
+  const progress = directoryProgressQuote(end); assert.deepEqual(new Set(progress.entries[0].child_directories), new Set(['aaa', 'late']));
+  assert.equal(h.calls.length, 1, 'reserved artifact tools execute in Kernel, not the DSH tool loop');
+});
+
+test('directory post-policy redaction is respected by both full archives and receipt navigation', async t => {
+  const h = setup(t, ['list_workspace_files']), root = join(h.workspaceRoot, '..');
+  mkdirSync(join(h.workspaceRoot, 'private')); mkdirSync(join(h.workspaceRoot, 'public'));
+  const execute = h.ctx.tools.execute;
+  h.ctx.tools.execute = async input => {
+    const result = await execute(input), raw = parseNativeJson(result.content[0].text);
+    raw.entries = raw.entries.filter(entry => entry.path !== 'private');
+    return { ...result, content: [{ type: 'text', text: canonical(raw) }] };
+  };
+  const store = new SqliteRunStore(join(root, 'directory.sqlite')); t.after(() => store.close());
+  const artifacts = await createNativeArtifactStore({ directory: join(root, 'result-artifacts'), scope });
+  const tools = [...h.gateway.definitions(h.agent, [...h.registry.values()], { directoryObservationPolicy: 'studio-directory-observation/v3' }), ...artifactToolDefinitions()];
+  const { config, snapshot } = fixture({ artifactPolicy: 'runtime-artifacts/v1', tools, limits: { effectTimeoutMs: 200000 } }); let turns = 0;
+  const kernel = new NativeKernel({ store, owner: 'post-policy', digest, ports: { ...h.gateway.forAgent(h.agent, { scope, store }), artifacts,
+    model: { generate: async () => ++turns === 1 ? { kind: 'tool_calls', text: '', toolCalls: [{ callId: 'listing', name: 'list_workspace_files', arguments: { path: '.' } }], usage: emptyUsage() }
+      : { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() } } } });
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run');
+  assert.equal(end.phase, 'completed'); assert.deepEqual(directoryProgressQuote(end).entries[0].child_directories, ['public']);
+  const page = await artifacts.read({ ...h.request(), ref: end.artifactRefs[0], offset: 0, limit: 32000 });
+  assert.ok(!page.content.includes('private')); assert.ok(page.content.includes('public'));
+  assert.ok(store.load(scope, 'run').receipts.find(receipt => receipt.result.results).result.results[0].content.entries.some(entry => entry.path === 'private'));
+});
+
+for (const governed of [false, true]) test(`real local command keeps full retained output through ${governed ? 'Kernel governance' : 'legacy archive fallback'}`, async t => {
+  const h = setup(t, ['run_command']), store = new SqliteRunStore(join(h.workspaceRoot, '..', 'command-runs.sqlite'));
+  t.after(() => store.close());
+  const definitions = h.gateway.definitions(h.agent, [...h.registry.values()]);
+  const { config, snapshot } = fixture({ tools: [...definitions, ...(governed ? artifactToolDefinitions() : [])],
+    ...(governed ? { artifactPolicy: 'runtime-artifacts/v1' } : {}),
+    limits: { maxModelCalls: 3, maxToolCalls: 3, maxToolResultBytes: 4096, effectTimeoutMs: 1000000 } });
+  const artifacts = await h.gateway.artifactsFor(scope); let models = 0, archive, modelFailure;
+  const kernel = new NativeKernel({ store, digest, owner: 'full-command', ports: { ...h.gateway.forAgent(h.agent, { scope, store }), artifacts,
+    model: { generate: async request => {
+      try {
+      models++;
+      if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'command', name: 'run_command',
+        arguments: { command: `"${process.execPath}" -e "process.stdout.write('x'.repeat(40000)+'TAIL_完整😀')"` } }] };
+      const saved = store.load(scope, snapshot.runId), result = saved.receipts.flatMap(row => row.result.results ?? [])[0];
+      assert.equal(result.status, 'ok'); assert.equal(saved.snapshot.artifactRefs.length, 1);
+      archive = { content: '' }; let offset = 0;
+      for (;;) {
+        const page = await artifacts.read({ ...h.request(), ref: saved.snapshot.artifactRefs[0], offset, limit: 32000 });
+        archive.content += page.content;
+        if (page.nextOffset === null) break;
+        offset = page.nextOffset;
+      }
+      assert.match(archive.content, /TAIL_完整😀/);
+      if (governed && models === 2) {
+        assert.match(result.content.stdout, /TAIL_完整😀$/);
+        assert.ok(Buffer.byteLength(result.context.content) <= 4096);
+        assert.equal(result.content.output_budget, undefined);
+        assert.ok(!JSON.stringify(request.messages).includes('x'.repeat(40000)));
+        const tailOffset = [...archive.content.slice(0, archive.content.indexOf('TAIL_完整😀'))].length;
+        return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'read-archive', name: 'ArtifactRead',
+          arguments: { uri: saved.snapshot.artifactRefs[0].uri, offset_chars: tailOffset, limit_chars: 30 } }] };
+      }
+      if (governed) assert.match(request.messages.filter(message => message.role === 'tool').at(-1).content, /TAIL_完整😀/);
+      else { assert.ok(result.content.stdout.length < 40000); assert.ok(result.content.output_budget.artifact_uri); }
+      return { kind: 'final_candidate', text: 'Retained output read.', toolCalls: [], usage: emptyUsage() };
+      } catch (error) { modelFailure = error; throw error; }
+    } } } });
+  kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, snapshot.runId);
+  if (modelFailure) throw modelFailure;
+  assert.equal(end.phase, 'completed'); assert.equal(h.calls.filter(call => call.name === 'run_command').length, 1);
+  assert.equal(models, governed ? 3 : 2);
+  const otherScope = { ...scope, userId: 'other-user' }, otherArtifacts = await h.gateway.artifactsFor(otherScope);
+  await assert.rejects(otherArtifacts.read({ ...h.request(), scope: otherScope, ref: end.artifactRefs[0], offset: 0, limit: 10 }));
+});

@@ -75,6 +75,7 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
     invariant(lstatSync(cwd).isDirectory(), 'command_cwd_not_directory'); return cwd;
   }
   async function budget(result, request) {
+    if (request.resultGovernance === 'runtime-artifacts/v1') return result;
     const text = canonical(result.content);
     if (Buffer.byteLength(text) <= 24000) return result;
     invariant(typeof artifacts?.write === 'function', 'command_output_artifact_store_missing');

@@ -54,6 +54,7 @@ export interface ToolDefinition {
   exactContentPolicy?: 'current-goal-utf8/v1' | 'complete-write-only/v1';
   /** Archive the model-visible observation even when it fits inline. */
   resultArchivePolicy?: 'archived-model-view/v4';
+  directoryObservationPolicy?: 'studio-directory-observation/v1' | 'studio-directory-observation/v2' | 'studio-directory-observation/v3';
   /** safe-read permits a fresh repeatable read; receipt-observation waits for a
    * separately persisted lookup of the original effect and never re-executes it. */
   recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1';
@@ -211,6 +212,8 @@ export interface ToolResult {
   status: 'ok' | 'error' | 'approval_required' | 'uncertain'; content: Json;
   /** Explicit model view of the committed receipt; absent keeps legacy JSON encoding. */
   context?: ToolContextMessage;
+  /** Host-authorized full post-policy observation before a bounded source projection. */
+  archiveContext?: ToolContextMessage;
   /** Deferred until every call in the model's tool batch has a result. */
   additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
@@ -398,6 +401,7 @@ export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta'; te
 export interface ModelStreamRecord { time: number; event: ModelStreamEvent }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }
 export interface ToolRequest extends PortContext {
+  resultGovernance?: 'runtime-artifacts/v1';
   call: ToolCall; definition: ToolDefinition; interaction: ObjectValue | null;
   /** Host-derived allowance after the invoking call and parent finalization reserve. */
   budget: ToolBudget;

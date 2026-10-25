@@ -1,4 +1,5 @@
 import { emptyUsage } from './contracts.mjs';
+import { advanceDirectoryProgress } from './directory-progress.mjs';
 import type { CommitBatch, EffectIntent, EffectReceipt, Message, ModelResult, ObjectValue, RunConfiguration, RunSnapshot, ToolCall, ToolResult, Usage } from './contracts.mjs';
 import { copy, invariant, canonical } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
@@ -443,6 +444,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       updated.context.lastDeliveryWriteReceipt = { runId: updated.runId, goalRevision: updated.goalRevision,
         toolCalls: updated.usage.toolCalls, callId: call.callId, receiptDigest: canonical(updated.messages.at(-1)) };
     updated.queuedGuidance.push(...deferredToolContexts(result.additionalContexts));
+    const directoryProgress = advanceDirectoryProgress(updated, call, result, definition, intent);
+    if (directoryProgress) updated.context = { ...updated.context, directoryProgress };
     if (result.status === 'ok' && definition && ['workspace_read', 'workspace_search', 'workspace_list', 'artifact_read'].includes(definition.contextRole)) {
       const prior = updated.context.observedSourceDigests;
       const observed: ObjectValue = prior && typeof prior === 'object' && !Array.isArray(prior) ? copy(prior) : {};

@@ -12,6 +12,7 @@ import { buildScriptEnvironment, localControlSettings, LOCAL_PROCESS_CONTRACT } 
 import { LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from '../../packages/agentkit-harness/src/native/local-command-policy.mjs';
 import { projectNativeDshContent } from './native-input.mjs';
 import { requestedExactWorkspaceFile, exactByteDifference } from './native-final-shape.mjs';
+import { directoryModelReply, DIRECTORY_MODEL_DESCRIPTION, DIRECTORY_SCOPE_MODEL_DESCRIPTION } from './native-directory-observation.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { createNativeDshWebTools } from './native-dsh-web.mjs';
@@ -671,7 +672,21 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         } finally { calls.delete(callId); }
       } });
     },
-    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false } = {}) {
+    async artifactsFor(scope) {
+      const primary = await createNativeArtifactStore({ directory: join(stateDir, 'result-artifacts'), scope });
+      let commands;
+      return { ...primary, read: async request => {
+        try { return await primary.read(request); }
+        catch (error) {
+          if (error.code !== 'artifact_ref_unknown') throw error;
+          commands ??= await createNativeArtifactStore({ directory: join(stateDir, 'command-artifacts'), scope });
+          return commands.read(request);
+        }
+      } };
+    },
+    definitions(agent, assemblyTools, { deadlineDelivery = false, wallDeliveryPolicy, exactContentPolicy = false, directoryObservationPolicy } = {}) {
+      invariant(directoryObservationPolicy === undefined || /^studio-directory-observation\/v[1-3]$/.test(directoryObservationPolicy),
+        'studio_native_directory_policy_invalid');
       invariant(wallDeliveryPolicy === undefined || typeof wallDeliveryPolicy === 'string'
         && /^deadline-delivery\/v[1-7]$/.test(wallDeliveryPolicy), 'studio_native_deadline_policy_invalid');
       const schemas = new Map((assemblyTools ?? []).map(schema => [schema.name, schema]));
@@ -703,6 +718,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         }
         const exact = builtinNames.has(name) ? formal.get(name) : null;
         if (exact) return { ...structuredClone(exact),
+          ...(directoryObservationPolicy && exact.readOnly && exact.contextRole === 'workspace_list' ? {
+            directoryObservationPolicy, resultArchivePolicy: 'archived-model-view/v4',
+            description: exact.description + (directoryObservationPolicy.endsWith('/v3') ? DIRECTORY_SCOPE_MODEL_DESCRIPTION : DIRECTORY_MODEL_DESCRIPTION),
+          } : {}),
           ...(exactContentPolicy && !exact.readOnly && (name === 'write_workspace_file' || name === 'edit_workspace_file' && deadlineDelivery && deliveryEditor)
             ? { exactContentPolicy: name === 'write_workspace_file' ? 'current-goal-utf8/v1' : 'complete-write-only/v1' } : {}),
           ...(deadlineDelivery && formal.has(name)
@@ -927,7 +946,19 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               invariant(typeof llm?.fileRequestText === 'function', 'STUDIO_FILE_ATTACHMENT_UNAVAILABLE');
               return llm.fileRequestText(ref);
             } };
-          const context = await projectNativeDshContent(result.content, options), additionalContexts = [];
+          let context = await projectNativeDshContent(result.content, options); const additionalContexts = [];
+          let archiveContext;
+          if (status === 'ok' && request.definition.directoryObservationPolicy && builtinNames.has(request.call.name)
+            && formal.get(request.call.name)?.contextRole === 'workspace_list' && !context.media?.length) {
+            let projected = null;
+            try {
+              projected = directoryModelReply(parseNativeJson(context.content), request.call.arguments, {
+                policy: request.definition.directoryObservationPolicy,
+                resultBytes: commandAuthority.store.load(request.scope, request.runId).configuration.limits.maxToolResultBytes,
+              });
+            } catch { /* Unfamiliar post-policy output keeps normal result governance. */ }
+            if (projected !== null) { archiveContext = context; context = { ...context, content: projected }; }
+          }
           for (const message of result.additionalContexts ?? []) {
             invariant(message?.role === 'user', 'studio_native_tool_context_invalid');
             const projected = await projectNativeDshContent(message.content, options);
@@ -942,7 +973,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             ? { content: result.content, additionalContexts: result.additionalContexts } : result.content;
           if (assertMcpCurrent) { try { assertMcpCurrent(); } catch { status = 'uncertain'; } }
           return { ...invocation.outcome, status, content,
-          context, ...(additionalContexts.length ? { additionalContexts } : {}) };
+          context, ...(archiveContext ? { archiveContext } : {}), ...(additionalContexts.length ? { additionalContexts } : {}) };
         } finally { calls.delete(callId); }
       } } };
     },

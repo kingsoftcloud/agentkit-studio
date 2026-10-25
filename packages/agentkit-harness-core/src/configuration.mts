@@ -157,6 +157,9 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(tool.deliveryWrite === undefined || typeof tool.deliveryWrite === 'boolean', 'invalid_delivery_writer');
     invariant(tool.deliveryArtifactRole === undefined || ['none', 'read', 'write'].includes(tool.deliveryArtifactRole), 'invalid_delivery_artifact_role');
     invariant(tool.resultArchivePolicy === undefined || tool.resultArchivePolicy === 'archived-model-view/v4', 'invalid_result_archive_policy');
+    invariant(tool.directoryObservationPolicy === undefined || /^studio-directory-observation\/v[1-3]$/.test(tool.directoryObservationPolicy)
+      && config.artifactPolicy === 'runtime-artifacts/v1' && tool.resultArchivePolicy === 'archived-model-view/v4'
+      && tool.readOnly && tool.contextRole === 'workspace_list', 'invalid_directory_observation_policy');
     invariant(tool.childBudgetPolicy === undefined || ['start/v1', 'settle/v1', 'delegate/v1'].includes(tool.childBudgetPolicy), 'invalid_child_budget_policy');
     invariant(!tool.childBudgetPolicy || !tool.concurrentSafe, 'invalid_child_budget_concurrency');
     invariant(!tool.backgroundCommandPolicy || !tool.readOnly && !tool.concurrentSafe, 'invalid_background_launcher');

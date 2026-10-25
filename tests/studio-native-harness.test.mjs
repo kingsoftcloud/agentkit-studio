@@ -188,7 +188,8 @@ for (const frozen of [false, true]) test(`shared Native ${frozen ? 'Frozen Build
   assert.equal(record.snapshot.deliveryReview.rounds, 2); assert.equal(await readFile(file, 'utf8'), 'fixed zero case');
   assert.deepEqual(record.configuration.deliveryReviewPolicy, { pathSuffixes: ['.ts'], maxRounds: 2, maxReadRounds: 2, reviewUnknownPaths: true });
   assert.deepEqual(f.requests.map(request => JSON.parse(request.options.body).tools?.map(definition => definition.function.name))
-    .filter((_tools, index) => [2, 5].includes(index)), [['submit_delivery_review'], ['submit_delivery_review']]);
+    .filter((_tools, index) => [2, 5].includes(index)),
+    Array.from({ length: 2 }, () => ['ArtifactRead', 'ArtifactSearch', 'ArtifactList', 'submit_delivery_review']));
   assert.equal(f.events.filter(event => event.type === 'tool/result').length, 2);
   assert.equal(JSON.stringify(f.events).includes('PRIVATE_REVIEW_BODY'), false);
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'review-build'));
