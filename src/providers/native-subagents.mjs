@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { canonical, configure, invariant, submissionOutputFormat, artifactToolDefinitions, isArtifactTool, toolDiscoveryDefinitions,
-  TOOL_SEARCH, DEFERRED_TOOL_CALL } from '../../packages/agentkit-harness-core/dist/index.mjs';
+  TOOL_SEARCH, DEFERRED_TOOL_CALL, TODO_READ, TODO_WRITE, RESPOND_TO_COORDINATOR, CHILD_TASK_POLICY,
+  COORDINATOR_RESPONSE_POLICY, todoToolDefinitions, coordinatorResponseDefinition } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeChildOwner } from '../../packages/agentkit-harness/src/native/child-owner.mjs';
 import { createNativeChildResultTools } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeGoalContract } from './native-verification.mjs';
@@ -16,8 +17,9 @@ const workspaceTools = new Set(['workspace_status', 'list_workspace_files', 'rea
   'multi_edit_workspace_file', 'delete_workspace_file']);
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const isDiscoveryControl = name => name === TOOL_SEARCH || name === DEFERRED_TOOL_CALL;
-const gatewayToolNames = (tools, artifactPolicy, toolDiscoveryPolicy) => tools.filter(tool => (!artifactPolicy || !isArtifactTool(tool.name))
-  && (!toolDiscoveryPolicy || !isDiscoveryControl(tool.name))).map(tool => tool.name);
+const gatewayToolNames = (tools, artifactPolicy, toolDiscoveryPolicy, childTaskPolicy) => tools.filter(tool => (!artifactPolicy || !isArtifactTool(tool.name))
+  && (!toolDiscoveryPolicy || !isDiscoveryControl(tool.name))
+  && (!childTaskPolicy || ![TODO_READ, TODO_WRITE, RESPOND_TO_COORDINATOR].includes(tool.name))).map(tool => tool.name);
 const parentOutputSchema = contract => {
   const schema = contract?.finalSubmissionSchema, key = contract?.finalSubmissionPayloadKey;
   const output = key ? schema?.properties?.[key] : schema;
@@ -78,8 +80,9 @@ export function nativeChildRoles(spec = {}) {
 
 /** Bind every child to a declared role and its own scoped tool state. */
 export async function createStudioNativeChildren({ roles, scope, sessionId, store, tools, hasSkills, hasMcp, mcpBinding, skillBinding, skillInstructions,
-  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory, sourceReadPolicy }) {
+  resolveModel, bindTools, verificationFactory, fileWorkspaces, isClosed, a2aBinding, waitForChildReceipt, mediaSources = new Map(), artifactPolicy, artifactFactory, sourceReadPolicy, childTaskPolicy }) {
   if (!roles.length) return null;
+  invariant(childTaskPolicy === undefined || childTaskPolicy === CHILD_TASK_POLICY, 'studio_native_child_task_policy_invalid');
   invariant(artifactPolicy == null || artifactPolicy === 'runtime-artifacts/v1' && typeof artifactFactory === 'function',
     'studio_native_child_artifact_binding_invalid');
   invariant(sourceReadPolicy == null || sourceReadPolicy === 'studio-source-read/v1' && artifactPolicy === 'runtime-artifacts/v1',
@@ -115,7 +118,11 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       && !granted.some(item => item.name === tool.name) && !mcpTools.some(item => item.name === tool.name)),
     'studio_native_child_skill_binding_unavailable');
     const toolDiscoveryPolicy = [...granted, ...mcpTools, ...skillTools].some(tool => tool.discovery) ? 'local-tool-search/v1' : undefined;
+    const controls = childTaskPolicy ? [...todoToolDefinitions(!!toolDiscoveryPolicy), coordinatorResponseDefinition(!!toolDiscoveryPolicy)] : [];
+    invariant(![...granted, ...mcpTools, ...skillTools].some(tool => controls.some(control => control.name === tool.name)),
+      'studio_native_child_control_name_conflict');
     bindings.set(role.name, { model, ...(toolDiscoveryPolicy ? { toolDiscoveryPolicy } : {}), tools: [...granted, ...mcpTools, ...skillTools,
+      ...controls,
       ...(toolDiscoveryPolicy ? toolDiscoveryDefinitions() : []),
       ...(artifactPolicy ? artifactToolDefinitions() : [])], isolatedWrite,
       ...(childA2a ? { a2aBinding: structuredClone(childA2a) } : {}),
@@ -159,7 +166,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       invariant(!source || !bound.isolatedWrite || source.configuration.hostRecoveryBinding?.childWorkspace,
         'studio_native_child_workspace_binding_changed');
       const ports = bindTools({ scope: child, store, sessionId: request.childSessionId,
-        toolNames: gatewayToolNames(bound.tools, artifactPolicy, bound.toolDiscoveryPolicy),
+        toolNames: gatewayToolNames(bound.tools, artifactPolicy, bound.toolDiscoveryPolicy, childTaskPolicy),
         ...(bound.a2aBinding ? { a2aBinding: bound.a2aBinding } : {}),
         ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),
@@ -168,6 +175,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         ...(isolated ? { workspaceRoot: isolated.root } : {}) });
       request.signal.throwIfAborted();
       return { scope: child, configuration: configure({ profile: bound.model.profile, contextPolicy: bound.model.contextPolicy,
+        ...(childTaskPolicy ? { todoPolicy: 'session-todos/v1', coordinatorResponsePolicy: COORDINATOR_RESPONSE_POLICY } : {}),
         ...(bound.toolDiscoveryPolicy ? { toolDiscoveryPolicy: bound.toolDiscoveryPolicy } : {}),
         ...(artifactPolicy ? { artifactPolicy } : {}),
         ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
@@ -179,6 +187,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
           ...(isolated ? { childWorkspace: isolated.binding } : {}), ...(childSkills ? { childSkills } : {}),
         } } : {}),
         hostBindingDigest: hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role, profile: bound.model.profile, scope: child, tools: bound.tools,
+          ...(childTaskPolicy ? { childTaskPolicy } : {}),
           ...(artifactPolicy ? { artifactPolicy } : {}),
           ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
@@ -213,6 +222,8 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
       const profile = bound && configure({ profile: bound.model.profile, contract: configuration.contract,
         hostBindingDigest: configuration.hostBindingDigest }).profile;
       invariant(bound && role && canonical(configuration.tools) === canonical(bound.tools)
+        && configuration.todoPolicy === (childTaskPolicy ? 'session-todos/v1' : undefined)
+        && configuration.coordinatorResponsePolicy === (childTaskPolicy ? COORDINATOR_RESPONSE_POLICY : undefined)
         && configuration.toolDiscoveryPolicy === bound.toolDiscoveryPolicy
         && (configuration.artifactPolicy ?? null) === (artifactPolicy ?? null)
         && (configuration.sourceReadPolicy ?? null) === (sourceReadPolicy ?? null)
@@ -220,6 +231,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
         && configuration.modelRecoveryPolicy === (bound.model.modelRecoveryPolicy ?? 'manual')
         && configuration.hostBindingDigest === hash({ contract: STUDIO_NATIVE_CHILD_CONTRACT, role,
           profile: bound.model.profile, scope: childScope(role), tools: bound.tools,
+          ...(childTaskPolicy ? { childTaskPolicy } : {}),
           ...(artifactPolicy ? { artifactPolicy } : {}),
           ...(sourceReadPolicy ? { sourceReadPolicy } : {}),
           ...(bound.mcpBinding ? { inheritedMcp: bound.mcpBinding } : {}),
@@ -228,7 +240,7 @@ export async function createStudioNativeChildren({ roles, scope, sessionId, stor
           ...(isolated ? { childWorkspace: isolated.binding } : {}),
           ...(parentOutputDigest ? { parentOutputDigest } : {}) }), 'studio_native_child_restore_binding_changed');
       return { ...bindTools({ scope: identity.scope, store, sessionId: identity.sessionId,
-        toolNames: gatewayToolNames(bound.tools, artifactPolicy, bound.toolDiscoveryPolicy),
+        toolNames: gatewayToolNames(bound.tools, artifactPolicy, bound.toolDiscoveryPolicy, childTaskPolicy),
         ...(bound.a2aBinding ? { a2aBinding: bound.a2aBinding } : {}),
         ...(childSkills ? { childSkills } : {}),
         ...(bound.mcpBinding ? { mcpBinding: bound.mcpBinding } : {}),

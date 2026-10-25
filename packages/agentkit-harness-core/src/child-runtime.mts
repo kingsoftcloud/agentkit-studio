@@ -5,6 +5,7 @@ import { admittedToolBudget, reduceChildBudget } from './child-budget.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
 import { toolUsageIncomplete } from './tool-resource-usage.mjs';
+import { CHILD_TASK_POLICY, reduceCoordinatorResponses } from './coordinator-response.mjs';
 
 const settlementAuthority: ToolDefinition = { name: 'host_child_collection', description: 'Collect already owned children',
   parameters: { type: 'object' }, readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1,
@@ -48,6 +49,7 @@ export function prepareChildLifecycle(snapshot: RunSnapshot, config: RunConfigur
   if (action === 'poll' && (snapshot.phase !== 'preparing_context'
     || snapshot.childLifecycleCursor === childLifecycleCursor(snapshot) && !snapshot.childApproval)) return null;
   return prepareEffect(snapshot, 'child', snapshot.phase, { action, reservations: copy(unsettledChildren(snapshot)) as never,
+    ...(config.childTaskPolicy === CHILD_TASK_POLICY ? { responseCursors: copy(snapshot.childResponseCursors ?? {}) } : {}),
     ...(barrier ? { waitForChildRunIds: foreground } : {}),
     childApproval: action === 'cancel' ? null : copy(snapshot.childApproval ?? null) as never,
     interaction: action === 'cancel' ? null : copy(snapshot.interaction) });
@@ -64,6 +66,7 @@ export function childLifecycleRequest(snapshot: RunSnapshot, intent: EffectInten
     operationKey: intent.operationKey, signal, action: selected && !waitFor!.length ? 'poll' : intent.payload.action as ChildLifecycleRequest['action'],
     ...(intent.claimedFence === undefined ? {} : { executionFence: intent.claimedFence }),
     reservations: copy(unsettledChildren(snapshot)), childApproval: copy(intent.payload.childApproval) as unknown as ChildApproval | null,
+    ...(intent.payload.responseCursors === undefined ? {} : { responseCursors: copy(intent.payload.responseCursors) as Record<string, number> }),
     ...(waitFor?.length ? { waitForChildRunIds: copy(waitFor) } : {}),
     interaction: copy(intent.payload.interaction) as ChildLifecycleRequest['interaction'] };
 }
@@ -80,6 +83,8 @@ export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfigura
   result: ChildLifecycleResult, digest: (value: unknown) => string, { observationOnly = false } = {}): Partial<RunSnapshot> {
   invariant(request.runId === snapshot.runId && canonical(request.scope) === canonical(snapshot.scope)
     && request.operationKey === snapshot.pendingIntent && canonical(request.reservations) === canonical(unsettledChildren(snapshot)), 'child_observation_identity_conflict');
+  invariant(canonical(request.responseCursors ?? null) === canonical(config.childTaskPolicy === CHILD_TASK_POLICY
+    ? snapshot.childResponseCursors ?? {} : null), 'coordinator_response_cursor_conflict');
   if (request.waitForChildRunIds) invariant(request.action === 'wait' && request.waitForChildRunIds.length > 0
     && new Set(request.waitForChildRunIds).size === request.waitForChildRunIds.length
     && request.waitForChildRunIds.every(id => request.reservations.some(item => item.childRunId === id && item.deliveryMode === 'foreground')),
@@ -138,6 +143,8 @@ export function reduceChildLifecycle(snapshot: RunSnapshot, config: RunConfigura
       if (index < 0) updated.children.push(projected); else updated.children[index] = projected;
     }
   }
+  if (request.action !== 'cancel') Object.assign(updated, reduceCoordinatorResponses(updated, config, result.responses,
+    request.reservations.map(item => item.childRunId), digest));
   if (result.approvals.length && !result.errorCode) {
     invariant(config.childApprovalPolicy === 'owned-child-approval/v1', 'child_approval_policy_unavailable');
     const approval = copy(result.approvals[0]!);
@@ -164,7 +171,8 @@ export function childReadyProbe(snapshot: RunSnapshot, config: RunConfiguration,
   const reservations = unsettledChildren(snapshot);
   return reservations.length ? { scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId,
     turnId: snapshot.turnId, buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId,
-    reservations: copy(reservations), includeApprovals: config.childApprovalPolicy === 'owned-child-approval/v1' } : null;
+    reservations: copy(reservations), includeApprovals: config.childApprovalPolicy === 'owned-child-approval/v1',
+    ...(config.childTaskPolicy === CHILD_TASK_POLICY ? { responseCursors: copy(snapshot.childResponseCursors ?? {}) } : {}) } : null;
 }
 export function stageChildReady(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent,
   request: ChildReadyRequest, ids: string[]): CommitBatch | null {

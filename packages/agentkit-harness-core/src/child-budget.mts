@@ -19,6 +19,10 @@ export function validateChildBudgetTransition(previous: RunSnapshot, next: RunSn
   invariant(promoted.length >= previousPromoted.length && previousPromoted.every((id, index) => promoted[index] === id)
     && new Set(promoted).size === promoted.length && promoted.every(id => after.some(item => item.childRunId === id
       && item.deliveryMode === 'foreground')), 'child_promotions_are_append_only');
+  const cursors = next.childResponseCursors ?? {};
+  invariant(Object.entries(previous.childResponseCursors ?? {}).every(([id, sequence]) => (cursors[id] ?? -1) >= sequence)
+    && Object.entries(cursors).every(([id, sequence]) => after.some(item => item.childRunId === id)
+      && Number.isSafeInteger(sequence) && sequence > 0), 'child_response_cursors_are_monotonic');
 }
 
 export function outstandingChildCalls(snapshot: RunSnapshot, kind: 'model' | 'tool'): number {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { canonical, MemoryRunStore, artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { canonical, MemoryRunStore, artifactToolDefinitions, todoToolDefinitions, coordinatorResponseDefinition } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
@@ -86,6 +86,8 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
           && !mcp.contracts.some(tool => ['ToolSearch', 'DeferredToolCall'].includes(tool.name))
           ? ['ToolSearch', 'DeferredToolCall'] : mcp.contracts.map(item => item.name).sort() : []),
           ...(roles[0].inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : []),
+          ...(roles[0].inheritMcp && mcp && toolSearch && !mcp.contracts.some(tool => ['ToolSearch', 'DeferredToolCall'].includes(tool.name))
+            ? [] : [...todoToolDefinitions().map(tool => tool.name), coordinatorResponseDefinition().name]),
           ...artifactToolDefinitions().map(tool => tool.name)];
         const offeredTools = body.tools ?? [];
         assert.deepEqual(offeredTools.map(item => item.function.name).filter(name => name !== 'submit_final_output'),
@@ -188,6 +190,54 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
 
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
+
+for (const childTool of ['native_start_child', 'native_delegate']) test(`Studio ${childTool}: child Todo and coordinator reply stay on the owned execution chain`, async t => {
+  const f = await setup(t, { sqlite: true, childTool, role: { maxTurns: 5, maxToolCalls: 4 },
+    childPlan: (_body, index) => {
+      if (index === 1) return { call: { name: 'TodoWrite', arguments: { todos: [{ content: 'Child-local inspection', status: 'in_progress', priority: 'high' }] } } };
+      if (index === 2) return { call: { name: 'RespondToCoordinator', arguments: { summary: 'Inspecting', message: 'Child work continues after this progress report.' } } };
+      if (index === 3) return { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } };
+      return { text: 'Final inspected workspace evidence' };
+    } });
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    assert.deepEqual(authority.toolNames, ['read_workspace_file']); return bind(agent, authority);
+  };
+  const execution = await f.host.executeTurn(f.payload);
+  assert.equal(execution.reason.kind, 'completed', JSON.stringify({ execution, parents: f.ledger.list(f.scope, 'parent-session') }));
+  const parent = f.ledger.list(f.scope, 'parent-session')[0], reservation = parent.childBudgetReservations[0];
+  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(f.ledger.load(f.scope, parent.runId).configuration.childTaskPolicy, 'session-controls/v1');
+  assert.equal(child.configuration.coordinatorResponsePolicy, 'owned-parent-response/v1');
+  assert.equal(child.snapshot.todos.items[0].content, 'Child-local inspection'); assert.deepEqual(parent.todos?.items ?? [], []);
+  assert.equal(child.snapshot.phase, 'completed'); assert.equal(f.childModels(), 4);
+  assert.equal(child.configuration.tools.some(tool => ['EnterPlanMode', 'ExitPlanMode'].includes(tool.name)), false);
+  assert.equal(child.events.filter(event => event.kind === 'coordinator.response_queued').length, 1);
+  assert.equal(parent.messages.filter(message => message.kind === 'child_response').length, 1);
+  assert.match(parent.messages.find(message => message.kind === 'child_response').content, /continues after/);
+  assert.equal(f.dispatches.some(item => ['TodoRead', 'TodoWrite', 'RespondToCoordinator'].includes(item.name)), false);
+  const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
+  try { assert.deepEqual(reopened.load(f.scope, parent.runId).snapshot.childResponseCursors, parent.childResponseCursors); }
+  finally { reopened.close(); }
+});
+
+test('Studio deferred child controls resolve to its own Todo and durable parent response, without gateway authority', async t => {
+  const f = await setup(t, { sqlite: true, toolSearch: true, childTool: 'native_delegate', boundTools: [],
+    role: { tools: [], inheritMcp: true, maxTurns: 5, maxToolCalls: 4 },
+    mcp: { contracts: [childMcpContract], execute: async () => assert.fail('MCP not needed for child-local controls') },
+    childPlan: (_body, index) => {
+      if (index === 1) return { call: { name: 'ToolSearch', arguments: { query: 'select:TodoWrite,RespondToCoordinator' } } };
+      if (index === 2) return { call: { name: 'DeferredToolCall', arguments: { name: 'TodoWrite', input: { todos: [] } } } };
+      if (index === 3) return { call: { name: 'DeferredToolCall', arguments: { name: 'RespondToCoordinator', input: { summary: 'Ready', message: 'Progress report via deferred control' } } } };
+      return { text: 'Final deferred-control delivery' };
+    } });
+  assert.equal((await f.host.executeTurn(f.payload)).reason.kind, 'completed');
+  const parent = f.ledger.list(f.scope, 'parent-session')[0], reservation = parent.childBudgetReservations[0];
+  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(child.snapshot.todos.revision, 1); assert.equal(parent.messages.filter(message => message.kind === 'child_response').length, 1);
+  assert.equal(child.events.filter(event => event.kind === 'coordinator.response_queued').length, 1);
+  assert.equal(f.dispatches.some(item => ['TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ToolSearch', 'DeferredToolCall', 'remote_lookup'].includes(item.name)), false);
+});
 
 test('shared Host child captures its complete source with an independently bound page budget and scoped reference', async t => {
   let childUri;
@@ -429,7 +479,7 @@ for (const managed of [false, true]) for (const foreground of [false, true]) for
   const child = selectedStore.load(reservation.childScope, reservation.childRunId);
   assert.equal(child.snapshot.phase, 'completed'); assert.notEqual(child.snapshot.sessionId, 'parent-session');
   assert.deepEqual(child.configuration.tools.map(tool => tool.name),
-    ['call_a2a_agent', ...artifactToolDefinitions().map(tool => tool.name)]);
+    ['call_a2a_agent', ...todoToolDefinitions().map(tool => tool.name), coordinatorResponseDefinition().name, ...artifactToolDefinitions().map(tool => tool.name)]);
   assert.equal(child.events.filter(event => event.kind === 'tool.receipt_reconciled').length, 1);
   const recovered = structuredClone(child), originalIntent = recovered.intents.find(row => row.kind === 'tool');
   recovered.receipts.find(row => row.operationKey === originalIntent.operationKey).status = 'uncertain';
@@ -679,7 +729,7 @@ test('Host inheritSkills false omits formal Skills and discovery metadata from t
   const [child] = f.ledger.list({ ...f.scope, agentId: `${f.scope.agentId}:child:reader` });
   assert.equal(child.phase, 'completed');
   const saved = f.ledger.load(child.scope, child.runId);
-  assert.deepEqual(saved.configuration.tools, artifactToolDefinitions());
+  assert.deepEqual(saved.configuration.tools, [...todoToolDefinitions(), coordinatorResponseDefinition(), ...artifactToolDefinitions()]);
   assert.equal(saved.configuration.limits.maxToolCalls, 0);
   assert.equal(saved.configuration.hostRecoveryBinding?.childSkills, undefined);
 });
@@ -749,7 +799,8 @@ test('SQLite Host grants inherited MCP through each child intent and rejects for
   const child = f.ledger.list(childScope)[0], saved = f.ledger.load(childScope, child.runId);
   assert.equal(child.phase, 'completed'); assert.equal(effects.length, 2);
   assert.ok(saved.configuration.limits.maxToolCalls >= 2 && saved.configuration.limits.maxToolCalls <= 12);
-  assert.deepEqual(saved.configuration.tools.map(tool => tool.name), ['remote_lookup', ...artifactToolDefinitions().map(tool => tool.name)]);
+  assert.deepEqual(saved.configuration.tools.map(tool => tool.name), ['remote_lookup', ...todoToolDefinitions().map(tool => tool.name),
+    coordinatorResponseDefinition().name, ...artifactToolDefinitions().map(tool => tool.name)]);
   assert.ok(saved.configuration.tools.filter(tool => tool.name === 'remote_lookup').every(tool => !tool.readOnly && !tool.concurrentSafe));
   assert.ok(effects.every(input => input.agentId === f.record.metadata.id && input.resourceId === 'bound-catalog'
     && input.agent === f.payload.agent && input.resultFormat === 'mcp-result/v1'));
@@ -807,7 +858,7 @@ test('MCP inheritance is opt-in and rejects concurrent-safe roles with unknown r
   await f.host.executeTurn(f.payload);
   const childScope = { ...f.scope, agentId: `${f.scope.agentId}:child:reader` };
   assert.deepEqual(f.ledger.load(childScope, f.ledger.list(childScope)[0].runId).configuration.tools.map(tool => tool.name),
-    ['read_workspace_file', ...artifactToolDefinitions().map(tool => tool.name)]);
+    ['read_workspace_file', ...todoToolDefinitions().map(tool => tool.name), coordinatorResponseDefinition().name, ...artifactToolDefinitions().map(tool => tool.name)]);
   const unsafe = await setup(t, { mcp, role: { inheritMcp: true, concurrentSafe: true } });
   await assert.rejects(unsafe.host.executeTurn(unsafe.payload), /child_mcp_role_unsafe/);
   assert.equal(unsafe.requests.length, 0);

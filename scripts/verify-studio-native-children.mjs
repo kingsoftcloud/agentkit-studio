@@ -11,10 +11,11 @@ import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' },
-  'guidance-fifo': { type: 'boolean' } } });
+  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 if (values['child-controls']) assert.ok(values.promote && values.history && values['continue-child'], '--child-controls requires --promote --history --continue-child');
 if (values['guidance-fifo']) assert.ok(values['child-controls'], '--guidance-fifo requires --child-controls');
+if (values['task-controls']) assert.ok(!values.promote && !values['child-controls'], '--task-controls runs its own bounded child workflow');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
 const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
 console.log(`Studio child evidence: ${root}`);
@@ -40,8 +41,9 @@ const server = createServer(async (request, response) => {
     assert.ok(child || body.model === 'parent-proof');
     let call, calls, text;
     if (child) {
-      const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2;
-      assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? [] : ['read_workspace_file']);
+      const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3;
+      assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? []
+        : ['read_workspace_file', 'TodoRead', 'TodoWrite', 'RespondToCoordinator', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
       assert.match(body.messages[0].content, /CHILD_WORKSPACE_READER/);
       const results = body.messages.filter(message => message.role === 'tool');
       if (values['child-controls'] && childStep > 0 && turn === 1) assert.match(JSON.stringify(body.messages), /SDK child guidance/);
@@ -52,7 +54,13 @@ const server = createServer(async (request, response) => {
           assert.match(JSON.stringify(body.messages), /First guided draft/);
         }
       }
-      if (childStep++ === 0) {
+      if (values['task-controls'] && childStep < 2) {
+        if (childStep++ === 0) {
+          if (turn === 2 && values['continue-child']) assert.match(JSON.stringify(body.messages), /Child checklist 1/);
+          call = { name: 'TodoWrite', arguments: { todos: [{ content: `Child checklist ${turn}`, status: 'in_progress', priority: 'high' }] } };
+        } else call = { name: 'RespondToCoordinator', arguments: { summary: `Inspecting ${turn}`, message: `SDK child progress ${turn}; continuing work.` } };
+      }
+      else if (childStep++ === (values['task-controls'] ? 2 : 0)) {
         if (values['continue-child'] && turn === 2) {
           assert.ok(results.length, 'follow-up must carry the original child protocol history');
           assert.match(JSON.stringify(body.messages), /Child evidence 1/);
@@ -164,7 +172,8 @@ try {
     '    - id: child-proof-model-selection', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
     '    - id: child-proof-presets', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: standard',
     '    - id: child-proof-fixture', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-native-children.mjs')).href)}`,
-    '      config:', `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`, '',
+    '      config:', `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
+    ...(values['task-controls'] ? ['        taskControls: true'] : []), '',
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -211,7 +220,7 @@ try {
   }
   await harness.close(); harness = null;
   assert.deepEqual(failures, []); assert.equal(requests.filter(body => body.model === 'child-proof').length,
-    values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
+    values['task-controls'] ? 8 : values['child-controls'] ? values['guidance-fifo'] ? 4 : 3 : 4);
   const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
   const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
   const { readNativeRecoveryBinding } = await import(pathToFileURL(join(installed, 'src/providers/native-recovery-binding.mjs')).href);
@@ -231,7 +240,8 @@ try {
       assert.equal(JSON.stringify(recovery).includes('child-proof-secret'), false);
       const canceled = values['child-controls'] && !parent.childRunIds.includes(firstChildId);
       assert.equal(parent.phase, 'completed'); assert.equal(parent.childBudgetReservations.length, 1);
-      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['guidance-fifo'] ? 3 : 2); assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : 1);
+      assert.equal(parent.descendantUsage.modelCalls, canceled ? 1 : values['task-controls'] ? 4 : values['guidance-fifo'] ? 3 : 2);
+      assert.equal(parent.descendantUsage.toolCalls, canceled ? 0 : values['task-controls'] ? 3 : 1);
       const reservation = parent.childBudgetReservations[0]; assert.ok(reservation.settledUsageDigest);
       if (reservation.deliveryMode === 'foreground') {
         assert.equal(parent.messages.filter(message => message.kind === 'background_child_observation').length, 0);
@@ -240,17 +250,29 @@ try {
       const child = store.load(reservation.childScope, reservation.childRunId);
       assert.equal(child.snapshot.phase, canceled ? 'canceled' : 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId);
+      if (values['task-controls']) {
+        assert.equal(record.configuration.childTaskPolicy, 'session-controls/v1');
+        assert.equal(child.configuration.coordinatorResponsePolicy, 'owned-parent-response/v1');
+        assert.equal(child.configuration.tools.some(tool => ['EnterPlanMode', 'ExitPlanMode'].includes(tool.name)), false);
+        assert.equal(child.events.filter(event => event.kind === 'coordinator.response_queued').length, 1);
+        const reports = parent.messages.filter(message => message.kind === 'child_response');
+        assert.equal(reports.length, 1); assert.match(reports[0].content, /SDK child progress/);
+        assert.equal(JSON.parse(reports[0].content).trust, 'data');
+        assert.equal(parent.childResponseCursors[child.snapshot.runId], child.events.find(event => event.kind === 'coordinator.response_queued').seq);
+        assert.equal(child.snapshot.todos.items[0].content, `Child checklist ${parent.turnId}`);
+        assert.equal(child.snapshot.todos.revision, values['continue-child'] && child.snapshot.runId !== firstChildId ? 2 : 1);
+      }
       if (values['continue-child'] && child.snapshot.runId !== firstChildId) {
         const firstParent = parents.find(item => item.childRunIds.includes(firstChildId));
         const original = store.load(reservation.childScope, firstChildId);
         assert.equal(child.snapshot.parentRunId, firstChildId); assert.equal(child.snapshot.sessionId, original.snapshot.sessionId);
         assert.equal(child.configuration.childOwnerBinding.continuationOf, firstChildId);
         assert.equal(child.configuration.childOwnerBinding.continuationParentRunId, firstParent.runId);
-        assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['guidance-fifo'] ? 3 : 2);
-        assert.equal(original.snapshot.usage.toolCalls, 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
+        assert.equal(original.snapshot.phase, 'completed'); assert.equal(original.snapshot.usage.modelCalls, values['task-controls'] ? 4 : values['guidance-fifo'] ? 3 : 2);
+        assert.equal(original.snapshot.usage.toolCalls, values['task-controls'] ? 3 : 1); assert.equal(original.snapshot.finalText, 'Child evidence 1');
         assert.equal(store.sessionHead(reservation.childScope, original.snapshot.sessionId).runId, child.snapshot.runId);
       } else assert.equal(child.snapshot.parentRunId, null);
-      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : 1);
+      assert.equal(child.snapshot.usage.toolCalls, canceled ? 0 : values['task-controls'] ? 3 : 1);
       if (values['child-controls']) {
         const commandKind = canceled ? 'cancel' : 'guide';
         const count = !canceled && values['guidance-fifo'] ? 2 : 1;
@@ -285,8 +307,17 @@ try {
     }
     assert.equal(JSON.stringify(parents).includes('child-proof-secret'), false);
   } finally { store.close(); }
+  if (values['task-controls']) {
+    const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(new Set(hosts.map(host => host.pid)).size, 2);
+    await writeFile(join(root, 'task-controls-proof.json'), JSON.stringify({ contract: 'agentkit.native-child-task-proof/v1',
+      hostProcesses: hosts, parentModelRequests: requests.filter(body => body.model === 'parent-proof').length,
+      childModelRequests: requests.filter(body => body.model === 'child-proof').length,
+      parentTurns: 2, queuedResponses: 2, deliveredResponses: 2, actualWorkspaceReads: 2,
+      continuedChildSession: Boolean(values['continue-child']), noPython: true }, null, 2));
+  }
   const controlsProof = values['child-controls'] ? `authenticated same-ID guidance and child cancellation, no tool after cancellation, ${values['guidance-fifo'] ? 'two FIFO guidance commands consumed by distinct model receipts' : 'one original child inbox command'}, ` : '';
-  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${controlsProof}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
+  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${controlsProof}${values['task-controls'] ? 'child-local Todo continuity and exactly-once coordinator reports across two Host PIDs, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
 } finally {
   releaseChild();
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

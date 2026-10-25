@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeKernel, NativeError, CHILD_OWNER_CONTRACT, canonical, copy, configure,
-  addUsage, admittedToolBudget, childLifecycleRequest, childReadyProbe, scopeKey, terminal } from '../../../agentkit-harness-core/dist/index.mjs';
+  addUsage, admittedToolBudget, childLifecycleRequest, childReadyProbe, scopeKey, terminal,
+  CHILD_TASK_POLICY, COORDINATOR_RESPONSE_POLICY } from '../../../agentkit-harness-core/dist/index.mjs';
 import { loadSessionChild, accountedChildDelivery, hasUnsafeChildReceipt } from './owned-child.mjs';
 
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
@@ -166,12 +167,19 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
     check(accountedChildDelivery(resolved.parent, resolved.child), 'child_followup_requires_result_collection');
     return resolved;
   };
-  const terminalReceipt = (record, reservation) => {
+  const responses = (record, cursors) => record.configuration.coordinatorResponsePolicy === COORDINATOR_RESPONSE_POLICY
+    ? record.events.filter(event => event.kind === 'coordinator.response_queued'
+      && event.seq > (cursors?.[record.snapshot.runId] ?? 0)).map(event => ({ childRunId: record.snapshot.runId,
+        sequence: event.seq, ...copy(event.payload) })) : [];
+  const terminalReceipt = (record, reservation, includeResponses = true) => {
     check(terminal(record.snapshot.phase) && record.snapshot.phase !== 'interrupted' && !unsafeReceipt(record), 'child_receipt_unavailable');
+    const parent = store.load(record.configuration.childOwnerBinding.parent.scope, record.configuration.childOwnerBinding.parent.runId);
     return { status: record.snapshot.phase === 'completed' ? 'ok' : 'error', content: {
       child_run_id: record.snapshot.runId, status: record.snapshot.phase, outcome: record.snapshot.outcome,
       reason: record.snapshot.reason, result: record.snapshot.finalText, parent_acceptance: 'not_evaluated' },
     resourceUsage: addUsage(record.snapshot.usage, record.snapshot.descendantUsage),
+    ...(includeResponses && parent.configuration.childTaskPolicy === CHILD_TASK_POLICY
+      ? { coordinatorResponses: responses(record, parent.snapshot.childResponseCursors) } : {}),
     childRunIds: [record.snapshot.runId, ...(record.snapshot.childRunIds ?? [])],
     childBudgetSettlement: { childRunId: record.snapshot.runId, parentOperationKey: reservation.parentOperationKey,
       childRequestDigest: reservation.childRequestDigest, terminalSnapshotDigest: hash(record.snapshot) },
@@ -477,10 +485,12 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       }
       request.signal.throwIfAborted();
       const result = { operationKey: request.operationKey, results: [], pendingChildRunIds: [], approvals: [], errorCode: null, children: [] };
+      if (request.responseCursors !== undefined) result.responses = [];
       for (const reservation of request.reservations) {
         const record = ownedChild(request, reservation);
+        if (result.responses) result.responses.push(...responses(record, request.responseCursors));
         result.children.push(projection(record, reservation));
-        if (terminal(record.snapshot.phase) && record.snapshot.phase !== 'interrupted' && !unsafeReceipt(record)) result.results.push(terminalReceipt(record, reservation));
+        if (terminal(record.snapshot.phase) && record.snapshot.phase !== 'interrupted' && !unsafeReceipt(record)) result.results.push(terminalReceipt(record, reservation, false));
         else {
           result.pendingChildRunIds.push(record.snapshot.runId);
           if (record.snapshot.phase === 'awaiting_interaction' && request.action !== 'cancel') result.approvals.push(childApproval(record, reservation));
@@ -498,7 +508,8 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
       const ids = [];
       for (const reservation of request.reservations) {
         const record = ownedChild(request, reservation);
-        if (terminal(record.snapshot.phase) || request.includeApprovals && record.snapshot.phase === 'awaiting_interaction') ids.push(record.snapshot.runId);
+        if (terminal(record.snapshot.phase) || request.includeApprovals && record.snapshot.phase === 'awaiting_interaction'
+          || request.responseCursors !== undefined && responses(record, request.responseCursors).length) ids.push(record.snapshot.runId);
       }
       return { childRunIds: ids };
     },
@@ -518,7 +529,8 @@ export function createNativeChildOwner({ scope, childScopes = [scope], store, re
         ? record.snapshot.phase === 'interrupted' || unsafeReceipt(record)
         : request.action === 'cancel' || !canWaitForReceipt?.(record))) return null;
       return { operationKey: request.operationKey,
-        results: records.flatMap((record, index) => terminal(record.snapshot.phase) ? [terminalReceipt(record, request.reservations[index])] : []),
+        results: records.flatMap((record, index) => terminal(record.snapshot.phase) ? [terminalReceipt(record, request.reservations[index], false)] : []),
+        ...(request.responseCursors === undefined ? {} : { responses: records.flatMap(record => responses(record, request.responseCursors)) }),
         pendingChildRunIds: records.filter(record => !terminal(record.snapshot.phase)).map(record => record.snapshot.runId),
         approvals: [], errorCode: null, children: records.map((record, index) => projection(record, request.reservations[index])) };
     },

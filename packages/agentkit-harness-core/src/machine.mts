@@ -25,6 +25,7 @@ import { captureAnthropicContext, stageOperatorGuidance } from './anthropic-cont
 import { contextContinuity } from './context-planning.mjs';
 import { discoveryModelTools, resolveDiscoveredCalls, discoveredCallExposed, TOOL_SEARCH } from './tool-discovery.mjs';
 import { reduceTodo, todoReminder, todoUpdateFact } from './todos.mjs';
+import { reduceCoordinatorResponses } from './coordinator-response.mjs';
 import { reducePlanMode, planModeFact } from './plan-mode.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
@@ -450,6 +451,11 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       admittedToolBudget(snapshot, config, calls.length), digest);
     updated.childBudgetReservations = childBudget.childBudgetReservations;
     updated.childRunIds = childBudget.childRunIds;
+    if (result.coordinatorResponses !== undefined) {
+      invariant(definition?.childBudgetPolicy && (result.childBudgetReservation || result.childBudgetSettlement), 'coordinator_response_not_owned');
+      Object.assign(updated, reduceCoordinatorResponses(updated, config, result.coordinatorResponses,
+        [result.childBudgetSettlement?.childRunId ?? result.childBudgetReservation!.childRunId], digest));
+    }
     updated.descendantUsage = addUsage(updated.descendantUsage, childBudget.usage);
     if (toolUsageIncomplete(result)) updated.diagnostics.descendantUsageIncomplete = true;
     updated.backgroundCommands = rememberCommand(updated, result, definition);
@@ -518,6 +524,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     ...(updated.toolDiscovery ? { toolDiscovery: updated.toolDiscovery } : {}),
     ...(updated.todos ? { todos: updated.todos } : {}),
     ...(updated.planMode ? { planMode: updated.planMode } : {}),
+    ...(updated.childResponseCursors ? { childResponseCursors: updated.childResponseCursors } : {}),
     context: updated.context,
     ...(updated.deliveryArtifacts ? { deliveryArtifacts: updated.deliveryArtifacts } : {}),
     descendantUsage: updated.descendantUsage, messages: updated.messages, artifactRefs: updated.artifactRefs,

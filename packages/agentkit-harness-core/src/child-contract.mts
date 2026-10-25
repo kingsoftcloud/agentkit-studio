@@ -14,18 +14,25 @@ export interface ChildApproval {
   childRunId: string; childScope: RunScope; parentOperationKey: string; parentToolCallId: string;
   interactionId: string; hostInteractionId: string; toolCall: ToolCall; definitionDigest: string;
 }
+export interface CoordinatorResponse {
+  childRunId: string; sequence: number; childToolCallId: string;
+  responseId: string; summary: string; message: string;
+}
 export interface ChildLifecycleRequest extends PortContext {
   action: 'poll' | 'wait' | 'cancel'; reservations: ChildBudgetReservation[];
   childApproval: ChildApproval | null; interaction: ObjectValue | null;
   waitForChildRunIds?: string[];
+  responseCursors?: Record<string, number>;
 }
 export interface ChildLifecycleResult {
   operationKey: string; results: ToolResult[]; pendingChildRunIds: string[];
   approvals: ChildApproval[]; errorCode: 'child_owner_unavailable' | 'child_receipt_unavailable' | null;
   children?: ChildState[];
+  responses?: CoordinatorResponse[];
 }
 export interface ChildReadyRequest extends RunIdentity {
   reservations: ChildBudgetReservation[]; includeApprovals: boolean;
+  responseCursors?: Record<string, number>;
 }
 export interface ChildTaskControlState {
   childRunId: string; sessionId: string; role: string; phase: string;

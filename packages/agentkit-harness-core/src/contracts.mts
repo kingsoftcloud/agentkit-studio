@@ -209,6 +209,8 @@ export interface ContextSourceDefinition {
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
 }
 export interface RunConfiguration {
+  childTaskPolicy?: 'session-controls/v1';
+  coordinatorResponsePolicy?: 'owned-parent-response/v1';
   todoPolicy?: 'session-todos/v1';
   planModePolicy?: 'session-plan/v1';
   planModeInitialActive?: boolean;
@@ -278,6 +280,7 @@ export interface ToolResult {
    * zero never implies that an unreported nested model request was free. */
   resourceUsageReported?: boolean;
   childBudgetReservation?: ChildBudgetReservation; childBudgetSettlement?: ChildBudgetSettlement;
+  coordinatorResponses?: import('./child-contract.mjs').CoordinatorResponse[];
   /** Only a tool pinned with observationRole=browser can admit these host capabilities. */
   browserSessionRef?: BrowserSessionRef; browserSessionClosed?: boolean;
   browserObservation?: BrowserObservation;
@@ -384,6 +387,7 @@ export interface RunSnapshot extends RunIdentity {
   childBudgetReservations: ChildBudgetReservation[]; childRunIds: string[];
   promotedChildRunIds?: string[];
   childLifecycleCursor?: string | null; childLifecycleFailure?: 'poll' | 'wait' | 'cancel' | null;
+  childResponseCursors?: Record<string, number>;
   childApproval?: ChildApproval | null; childTerminalPhase?: 'canceled' | 'failed' | null;
   context: ObjectValue; diagnostics: ObjectValue; stopHookContinuations: number;
   hookState: HookState | null;

@@ -9,6 +9,7 @@ import { normalizeDeliveryReviewPolicy, REVIEW_SUBMISSION_TOOL } from './deliver
 import { validateArtifactConfiguration } from './artifact-runtime.mjs';
 import { validateToolDiscovery } from './tool-discovery.mjs';
 import { validateTodoConfiguration } from './todos.mjs';
+import { validateCoordinatorConfiguration } from './coordinator-response.mjs';
 import { validatePlanModeConfiguration } from './plan-mode.mjs';
 
 export interface ConfigurationInput {
@@ -26,6 +27,8 @@ export interface ConfigurationInput {
   toolErrorRecoveryPolicy?: RunConfiguration['toolErrorRecoveryPolicy'];
   toolDiscoveryPolicy?: RunConfiguration['toolDiscoveryPolicy'];
   todoPolicy?: RunConfiguration['todoPolicy'];
+  childTaskPolicy?: RunConfiguration['childTaskPolicy'];
+  coordinatorResponsePolicy?: RunConfiguration['coordinatorResponsePolicy'];
   planModePolicy?: RunConfiguration['planModePolicy'];
   planModeInitialActive?: boolean;
   toolErrorRecoveryModelCalls?: RunConfiguration['toolErrorRecoveryModelCalls'];
@@ -69,6 +72,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     ...(input.toolErrorRecoveryPolicy === undefined ? {} : { toolErrorRecoveryPolicy: input.toolErrorRecoveryPolicy }),
     ...(input.toolDiscoveryPolicy === undefined ? {} : { toolDiscoveryPolicy: input.toolDiscoveryPolicy }),
     ...(input.todoPolicy === undefined ? {} : { todoPolicy: input.todoPolicy }),
+    ...(input.childTaskPolicy === undefined ? {} : { childTaskPolicy: input.childTaskPolicy }),
+    ...(input.coordinatorResponsePolicy === undefined ? {} : { coordinatorResponsePolicy: input.coordinatorResponsePolicy }),
     ...(input.planModePolicy === undefined ? {} : { planModePolicy: input.planModePolicy }),
     ...(input.planModeInitialActive === undefined ? {} : { planModeInitialActive: input.planModeInitialActive }),
     ...(input.toolErrorRecoveryModelCalls === undefined ? {} : { toolErrorRecoveryModelCalls: input.toolErrorRecoveryModelCalls }),
@@ -205,6 +210,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   invariant(profile.topP === undefined || Number.isFinite(profile.topP) && profile.topP > 0 && profile.topP <= 1, 'invalid_top_p');
   validateToolDiscovery(config);
   validateTodoConfiguration(config);
+  validateCoordinatorConfiguration(config);
   validatePlanModeConfiguration(config);
   const names = new Set<string>();
   for (const tool of config.tools) {

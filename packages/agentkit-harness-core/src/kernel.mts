@@ -6,6 +6,7 @@ import { initialSnapshot } from './configuration.mjs';
 import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL_CALL } from './tool-discovery.mjs';
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
 import { executeTodo, isTodoCall, todoUpdateFact, TODO_WRITE } from './todos.mjs';
+import { coordinatorResponseFacts, executeCoordinatorResponse, isCoordinatorResponse, COORDINATOR_RESPONSE_POLICY } from './coordinator-response.mjs';
 import { executePlanMode, isPlanModeCall, planModeDenial, planModeFact, planModeGuidance, planModeWriteDenial, PLAN_MODE_POLICY } from './plan-mode.mjs';
 import { runnableCommands } from './store.mjs';
 import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
@@ -78,6 +79,7 @@ export class NativeKernel {
   }
   start(identity: RunIdentity, configuration: RunConfiguration,
     options: { expectedParentRunId?: string | null } = {}): RunSnapshot {
+    invariant(!configuration.coordinatorResponsePolicy || configuration.childOwnerBinding, 'coordinator_response_parent_unavailable');
     const configDigest = this.digest(configuration);
     let existing: RunSnapshot | null = null;
     try { existing = this.store.load(identity.scope, identity.runId).snapshot; }
@@ -455,18 +457,21 @@ export class NativeKernel {
   }
   private async recoverEffect(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent, elapsedMs = 0): Promise<CommitBatch> {
     const stagedCalls = intent.payload.calls as unknown as ToolCall[] | undefined;
-    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => isTodoCall(config, call) || isPlanModeCall(config, call))) {
+    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => isTodoCall(config, call) || isPlanModeCall(config, call) || isCoordinatorResponse(config, call))) {
       // These controls stage pure values. The fenced receipt commit is the only
       // state mutation, so a lost claim cannot have changed external state.
       const results = stagedCalls.map(call => deniedByHook(snapshot, call)
         ? { status: 'error' as const, content: { code: 'pre_tool_hook_denied', executed: false } }
+        : isCoordinatorResponse(config, call) ? executeCoordinatorResponse(snapshot, config, call, this.digest)
         : isPlanModeCall(config, call)
           ? executePlanMode(snapshot, config, call, (intent.payload.interaction ?? null) as ObjectValue | null) : executeTodo(snapshot, config, call));
       const changes = stagePostHooks(snapshot, reduceTools(snapshot, results, stagedCalls, intent, config, this.digest), config, stagedCalls, results);
-      const recoveryPolicy = stagedCalls.some(call => isPlanModeCall(config, call)) ? PLAN_MODE_POLICY : 'session-todos/v1';
+      const recoveryPolicy = stagedCalls.some(call => isCoordinatorResponse(config, call)) ? COORDINATOR_RESPONSE_POLICY
+        : stagedCalls.some(call => isPlanModeCall(config, call)) ? PLAN_MODE_POLICY : 'session-todos/v1';
       return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed',
         result: { results: results as never, recoveryPolicy } }, changes, elapsedMs,
       [{ kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: recoveryPolicy } },
+        ...coordinatorResponseFacts(snapshot, config, stagedCalls, results, this.digest),
         ...stagedCalls.map((call, index) => ({ kind: results[index]!.status === 'approval_required' ? 'approval.requested' : 'tool.completed', payload: { callId: call.callId,
           name: call.name, status: results[index]!.status, content: results[index]!.content,
           ...(results[index]!.status === 'approval_required' ? { interactionId: `${intent.operationKey}:approval` } : {}) } })),
@@ -672,6 +677,7 @@ export class NativeKernel {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
           changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, configuration, this.digest), configuration, calls, results);
+          facts.push(...coordinatorResponseFacts(snapshot, configuration, calls, results, this.digest));
           if (changes.todos && changes.todos.revision !== snapshot.todos?.revision)
             facts.push({ kind: 'todo.updated', payload: todoUpdateFact({ ...snapshot, ...changes }, changes.messages!.length) });
           if (changes.planMode && changes.planMode.revision !== snapshot.planMode?.revision)
@@ -956,6 +962,8 @@ export class NativeKernel {
               ? Promise.resolve(executePlanMode(snapshot, configuration, call, (intent.payload.interaction ?? null) as ObjectValue | null))
               : isTodoCall(configuration, call)
               ? Promise.resolve(executeTodo(snapshot, configuration, call))
+              : isCoordinatorResponse(configuration, call)
+              ? Promise.resolve(executeCoordinatorResponse(snapshot, configuration, call, this.digest))
               : configuration.toolDiscoveryPolicy && [TOOL_SEARCH, DEFERRED_TOOL_CALL].includes(call.name)
               ? Promise.resolve(executeToolDiscovery(snapshot, configuration, call))
               : configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)

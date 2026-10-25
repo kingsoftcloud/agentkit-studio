@@ -2,6 +2,7 @@ import type { ObjectValue, RunConfiguration, RunSnapshot, ToolCall, ToolDefiniti
 import { canonical, copy, invariant } from './values.mjs';
 import { toolInputRejection } from './tool-input.mjs';
 import { isTodoCall } from './todos.mjs';
+import { isCoordinatorResponse } from './coordinator-response.mjs';
 
 export const PLAN_MODE_POLICY = 'session-plan/v1';
 export const ENTER_PLAN_MODE = 'EnterPlanMode';
@@ -40,7 +41,7 @@ export function validatePlanModeConfiguration(config: RunConfiguration): void {
 
 export function planModeDenial(snapshot: RunSnapshot, config: RunConfiguration, call: ToolCall, definition: ToolDefinition): ToolResult | null {
   if (!snapshot.planMode?.active || config.planModePolicy !== PLAN_MODE_POLICY || isPlanModeCall(config, call)
-    || isTodoCall(config, call) || definition.readOnly || definition.planModeCommandPolicy === 'zcode-posix-readonly/v1'
+    || isTodoCall(config, call) || isCoordinatorResponse(config, call) || definition.readOnly || definition.planModeCommandPolicy === 'zcode-posix-readonly/v1'
     || definition.planModeAccess?.contract === 'zcode-mcp-plan/v1' && !definition.planModeAccess.destructive) return null;
   return planModeWriteDenial();
 }

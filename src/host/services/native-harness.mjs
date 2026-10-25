@@ -320,9 +320,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(nativePlanAssembly(input.assembly, planModePolicy));
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive']
+      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
         : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
+          ...(nativeChildRoles(record.spec).length ? { childTaskPolicy: 'session-controls/v1' } : {}),
           ...(planModePolicy ? { planModePolicy, planModeInitialActive: currentPlanActive() } : {}),
           ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
           ...(record.spec.execution?.toolErrorRecoveryModelCalls === undefined ? {}
@@ -460,6 +461,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const childQuestionPreset = roles.length && binding.nativeTools.a2aBinding
         ? ctx.get('sessionProjections')?.stateOf?.(agent.session, 'agentPreset') : undefined;
       const children = await createStudioNativeChildren({ roles, scope, sessionId, store, tools, mediaSources: childMediaSources,
+        ...(recoveryPolicies.childTaskPolicy ? { childTaskPolicy: recoveryPolicies.childTaskPolicy } : {}),
         isClosed: () => lifetime.signal.aborted,
         fileWorkspaces: roles.length ? createStudioNativeChildWorkspaces({ workspaceRoot,
           stateDir: join(storeDir, 'native-harness') }) : null,

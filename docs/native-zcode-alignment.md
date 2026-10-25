@@ -36,15 +36,18 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **18/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **20/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity), M3 2/20
-(successful context-window truncation and durable cache usage accounting), M4 6/20
+(successful context-window truncation and durable cache usage accounting), M4 8/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
-local POSIX command Plan permission through the actual Host execution path).
+local POSIX command Plan permission through the actual Host execution path,
+plus child-local Todo continuity and durable coordinator responses through the
+actual packed Studio Host). The two new M4 points cover those two integrated
+behaviors, not the whole child control or planning capability group.
 M5–M6 have no earned points yet. The denominator is unchanged; session/child Plan
 exceptions and the remaining M4 controls are not
 certified completely aligned.
@@ -67,7 +70,7 @@ audited and integrated.
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, detailed review, cold-turn continuity, MCP and local POSIX command exceptions are integrated. Session-control exceptions, child planning and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
-| Background / children | subagent handlers, `src/runtime/methods/turn-loop.ts`, background tests | core child/background modules, Node owned child/command, Host watcher | Native implementations exist. Audit completed-batch delivery, budgets, cancellation, workspaces and restart behavior. Pending. |
+| Background / children | subagent handlers, `src/subagent/{profile,tool-policy,coordinator-response}.ts`, `src/tool/handlers/respond-to-coordinator.ts`, `src/runtime/methods/{subagent,subagent-messages,turn-loop}.ts`, background tests | core child/background modules and `coordinator-response.mts`, Node owned child/command, Host watcher / `native-subagents.mjs` | Child-local Todo and coordinator progress are integrated with receipt-backed facts, post-batch data delivery and cold cursors. Child Plan tools are deliberately absent as in reference. Parent Plan delegation/permission inheritance and remaining background, cancellation/workspace/restart comparison are pending. |
 | Retry / permissions | `src/runtime/methods/streaming-recovery.ts`, tool executor/permission policy | core `retry.mts`, tool error recovery, Host DSH permission pipeline | Preserve bounded retries and no blind replay of unknown effects; compare denied-call feedback and retry termination. Pending. |
 | Recovery / runtime boundaries | runtime persistence and session fork implementation | core store/recovery, Node SQLite, `src/runtime-contract.mjs`, Host recovery | Keep engine/build pin, single effective executor, private checkpoint boundaries. Audit neutral handoff and execution placement separately; no cloud scheduler in this phase. Pending. |
 | Artifacts / delivery / usage | tool-result persistence, turn-stop, model-step usage | core artifact/delivery/verification, Host trace and Session delivery | Compare user-visible completion, partial output, result references and complete task cost. Pending. |
@@ -628,6 +631,98 @@ median for the bundled reference function and 26.3 ms for a fresh bounded worker
 An admitted Plan command uses two worker checks, plus the existing execution
 checks. No model call is added; this is classifier overhead only, not a task-level
 speed, Token saving or ZCode quality comparison. Full task comparison stays in M6.
+
+### Child-local Todo and coordinator progress
+
+Reference paths at the pinned ZCode commit:
+
+- `src/subagent/profile.ts`: Explore includes TodoWrite; the general-purpose
+  profile permits the broader tool set.
+- `src/subagent/tool-policy.ts`: every child forcibly excludes EnterPlanMode and
+  ExitPlanMode, because children lack an independent Plan approval recovery UI.
+- `../contracts/src/tools/respond-to-coordinator.ts`,
+  `src/tool/handlers/respond-to-coordinator.ts`,
+  `src/subagent/coordinator-response.ts`, and
+  `src/runtime/methods/subagent-messages.ts`: a child-only, optionally deferred
+  RespondToCoordinator enqueues progress/replies, acknowledges queueing, and
+  tells the child to continue. It is not a final result or parent acceptance.
+  The input is strict, with summary 1–200 and message 1–20,000 UTF-16 units.
+
+For new Studio Runs with child roles, the frozen `session-controls/v1` parent
+policy admits child-local TodoRead/TodoWrite and RespondToCoordinator. The child
+uses the existing Todo ledger, reminders and session continuity; it cannot alter
+the parent's Todo. Controls follow the child's existing discovery mode, and are
+excluded from the external gateway authority. External tools cannot impersonate
+them. Plan tools remain absent. Parent Plan-mode delegation/child permission
+inheritance is still pending; this change grants no blanket child-launch or
+steering exception in Plan mode.
+
+RespondToCoordinator stages a small acknowledgement. Its deterministic response
+identity and immutable queue fact are committed with the child's tool receipt.
+Lost pure-control claims recompute that same receipt rather than invoking an
+external publisher. Child ownership is required at Kernel start and execution.
+The parent owner reads only owned child facts; collection/readiness uses frozen
+per-child event cursors, and the parent atomically commits consumption and its
+cursor. Foreground/control settlement also carries outstanding responses. A
+repeated receipt cannot append the same response twice. Snapshot transition
+validation prevents cursor rollback and foreign-child cursors.
+
+Responses enter the parent as `child_response` data with
+`parentAcceptance=not_evaluated`, rather than a human guidance command. If a
+model tool batch is still open, the existing post-batch observation queue holds
+the response until every tool result is sealed. Actual Studio context validation
+exposed and now covers the otherwise-invalid assistant-call/user-notice/tool-
+result ordering. A background response can arrive while its child is still
+working, without settling its budget. Terminal delivery and usage settlement
+remain separate. Canceling/retiring a parent can leave queued child facts
+undelivered, rather than transferring them to a replacement parent.
+
+Intentional differences and costs:
+
+- Native keeps the response control serialized and non-read-only, while the
+  reference marks it concurrent-safe. Native's read-only/concurrency facts also
+  govern replay authority; atomic durable receipt semantics are retained.
+- Queue facts and cursors replace the reference's in-memory synchronous enqueue
+  and random response UUID. No second execution loop or publisher is introduced.
+- Responses are private agent context. A dedicated visible Studio child-progress
+  surface is not certified by this batch; existing child history/results remain.
+- Three resident Native tool definitions occupy 1,980 UTF-8 JSON bytes before
+  provider projection; with discovery enabled, they are deferred. Unused controls
+  add no model round trip or runtime dependency. Requested Todo/report calls
+  consume ordinary model/tool budgets; they are not free. Full task cost and
+  quality comparison remains in M6.
+- Original parent Runs retain absence of `childTaskPolicy`; child restoration
+  reconstructs the original tools/policies/digest. Cold legacy and opt-in owner
+  restoration both pass, rather than upgrading an old Run implicitly.
+
+Local checks for this batch:
+
+```sh
+node scripts/build-native-harness.mjs
+node --test packages/agentkit-harness-core/test/coordinator-response.test.mjs packages/agentkit-harness-core/test/todos.test.mjs packages/agentkit-harness-core/test/plan-mode.test.mjs packages/agentkit-harness-core/test/child-budget-kernel.test.mjs packages/agentkit-harness/test/native-child-owner.test.mjs packages/agentkit-harness/test/native-coordinator-response.test.mjs tests/native-child-task-policy.test.mjs
+node --test tests/studio-native-children.test.mjs
+node --test --test-name-pattern='inheritSkills false|grants inherited MCP' tests/studio-native-children.test.mjs
+node node_modules/typescript/bin/tsc -p tsconfig.contracts.json
+pnpm pack --pack-destination /tmp/agentkit-child-task-pack
+node scripts/verify-studio-native-children.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-child-task-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --task-controls --continue-child --history --keep
+```
+
+The 99-case focused core/owner/recovery group passed. The 76-case Studio child
+group passed 74 cases initially; two old tool-inventory expectations were updated
+for the added controls and rechecked successfully (the explicitly zero-tool
+budget remains zero). The new Studio cases cover foreground, background and
+deferred controls, actual gateway exclusion, parent Todo separation and SQLite
+cursors. No full repository suite ran.
+
+The final packed proof is recorded in `/tmp/agentkit-child-task-sdk-final.log`,
+with evidence directory
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-children-sdk-lSzKe6`.
+Its `task-controls-proof.json` records two actual Host PIDs, eight child model
+requests, two real workspace reads, two queued/delivered reports, separate parent
+acceptance, and Todo revision continuity in the same child session after a cold
+Host restart. Each parent receives exactly one report and one descendant usage
+settlement. PATH contains Node only and Python paths are deliberately unusable.
+These controlled requests prove execution behavior, not live-model coding parity.
 
 ## Local evidence and comparison protocol
 
