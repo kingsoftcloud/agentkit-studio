@@ -372,8 +372,9 @@ Evidence: `tests/harness/native/test_kernel.py`,
 TS integration evidence: `scripts/verify-native-dsh-numeric.mjs` exercises the
 shipped SDK profile and real MCP HTTP transport with exact numeric arguments,
 DSH policy, durable receipts, and a subsequent model request. Inbound MCP
-`structuredContent` numbers still require lossless decoding; the text-result
-fixture does not prove that direction complete.
+`structuredContent` and input/output schemas now have their own opt-in exact
+decoder, validator and mounted-Host evidence described below; the earlier
+text-result fixture alone did not prove that direction.
 
 Evidence: `tests/harness/native/test_openai_stream.py`,
 `tests/harness/native/test_retry_jitter.py`,
@@ -458,8 +459,10 @@ project Studio Build/Gateway facts into the Native ports.
   Explicit tools/approval, acceptance and completed-turn consumption are now
   bound to the actual Native Host and DSH permission pipeline. Existing Studio
   `memory-instance` cloud turn submission uses a separate durable owner; see
-  [cloud conversation submission](native-cloud-memory.md). Explicit product
-  reconciliation and final product acceptance remain open; see
+  [cloud conversation submission](native-cloud-memory.md). The existing Run
+  dialog now exposes original cloud submission IDs and explicit manual
+  inspection; automatic remote receipt reconciliation is not available.
+  Final product acceptance remains open; see
   [Native Memory migration status](native-memory.md). Cloud transcript writes
   do not satisfy this local capability.
 - `native_model_recovery.py` — explicit host grant for the narrow ordinary
@@ -509,35 +512,34 @@ rebind on reattach; SQLite durable restart. These are documented above with
 source/test evidence and are good candidates for a follow-up fixture batch
 that wires the corresponding optional ports.
 
-**Contract questions for the TS core owner (not blocking, flagged for
-review):**
+**Resolved contract questions (current source, 2026-10-25):**
 
-1. The TS `RunStore` contract lists `acquire/renew/release` lease methods and
-   `acknowledge(projection)`. The Python `MemoryRunStore` exposes `acquire`
-   (returns a fence token) but lease renew/release live in `RunLeaseController`
-   (`lease.py`), and projection acknowledgement is on the SQLite store. Should
-   the TS `RunStore` keep lease on the store or split it like Python?
-2. The TS `ToolDefinition` carries `permissions: string[]` and `timeoutMs`,
-   which have no direct Python field (Python uses `execution_policy_digest`
-   and `RunLimits.effect_timeout_seconds`). Confirm the TS side maps these to
-   host-owned execution policy, not model-visible fields.
-3. The TS `ModelPort.generate(request, emit)` takes a streaming `emit`
-   callback; Python splits `complete` (one shot) and `stream` (async
-   iterator). Confirm whether the TS port is always streaming or whether a
-   non-streaming fast path is allowed.
-4. Python `ModelResult`/`ModelTurnResult` has `text_commit_version
-   "provider-finished-text/v1"` attesting a bounded text-only output-limit;
-   the TS `ModelResult` has no equivalent field. Is the bounded-text
-   distinction folded into `kind: "output_limit"` plus `text` on the TS side?
-5. Python `RunSnapshot.outcome` includes `partial` and `blocked` (in addition
-   to `verified`/`unverified`/`failed`); the TS `Outcome` is
-   `verified | unverified | blocked | failed` (no `partial`). Confirm whether
-   `partial` is folded into `unverified` on the TS side or dropped.
-6. Python `final_submission_schema` reuses the model tool surface
-   (`submit_final_output`); the TS `TaskContract.finalSubmissionSchema` +
-   `finalSubmissionPayloadKey` mirror this. Confirm the TS kernel also refuses
-   a mixed batch and seals non-execution receipts for the model-declared
-   calls.
+1. TS keeps `acquire/renew/release/acknowledge` on `RunStore`
+   (`contracts.mts`); the Kernel owns lease maintenance and fence checks.
+   This is an interface organization difference from Python's lease controller.
+2. Permissions remain in DSH's actual execution pipeline
+   (`src/providers/native-dsh-tools.mjs`). The three model wire builders
+   project name/description/parameters only; Host tool metadata and timeout
+   controls are not advertised as model arguments.
+3. TS `ModelPort.generate(request, emit)` is the common interface.
+   `native/model-port.mjs` performs one HTTP request per attempt and accepts
+   streaming or JSON responses; the callback is an optional observer, not
+   another execution loop.
+4. `ModelResult.textCommitVersion` explicitly supports
+   `provider-finished-text/v1` in `contracts.mts`; this is not inferred from
+   the mere presence of output text.
+5. TS `Outcome` explicitly includes `partial` and `blocked`, alongside
+   verified/unverified/failed and its explicit `budget_exhausted` outcome.
+6. `machine.mts::reduceModel` admits a final submission only when it is the
+   sole call and validates the candidate. Mixed batches seal `not_dispatched`
+   receipts for every call without executing a workspace mutation. See
+   `agentkit-harness-core/test/final-submission.test.mjs`.
+
+All original command priorities remain identical to the frozen Python oracle.
+Node additionally defines `reconcile_tool: 75` for explicit receipt inspection,
+between pause/resume and promotion. The parity check compares every original
+priority and order and separately asserts that extension; it does not rewrite
+the captured reference fixture.
 
 ---
 
@@ -552,7 +554,9 @@ are explicit platform differences. Its strict parse boundary preserves
 decimal integer, nesting, indentation and NUL limits retained. Actual kernel
 repair and SQLite reopen, affected Host/tool tests, and a cold installation
 of this component from the packed files are covered on Node 26 and 22.
-This does not remove the old builtin bridge or prove a full Studio install.
+That component check alone does not prove removal of the old builtin bridge or
+a full Studio install. The bridge has since been removed and separate normal
+Node-only Host installation evidence is recorded in `native-node-installation.md`.
 
 The reference inventory above remains the migration scope. The TS Host now
 composes the terminal delivery verifier (`native-verification.mjs`) with

@@ -11,6 +11,7 @@ import {
   ChildWorkspaceError,
 } from '../src/native/child-workspaces.mjs';
 import { createNativeWorkspaceTools } from '../src/native/workspace-tools.mjs';
+import { acquireWorkspaceMutationLock } from '../src/native/workspace-mutation-lock.mjs';
 
 const sha256Hex = value => createHash('sha256').update(value).digest('hex');
 const HEX = () => sha256Hex(String(Math.random())).slice(0, 64);
@@ -528,6 +529,11 @@ test('a lock held by a child process blocks and is released on process exit (rea
   const identity = HEX();
   const lockModulePath = pathResolve('packages/agentkit-harness/src/native/workspace-mutation-lock.mjs');
   const sourceResolved = pathResolve(source);
+  // Preparing the baseline also takes the source lock. Do it before the
+  // competing child holds that lock, rather than deadlocking the setup.
+  const ws = new DirectoryChildWorkspaces({ source, storage });
+  const w = ws.prepare(identity);
+  writeFileSync(join(w.root, 'file.txt'), 'parent-edit');
   // Spawn a child that holds the source lock, then is killed. The parent must
   // then be able to acquire it (OS auto-release on process exit).
   const child = spawn(process.execPath, ['--input-type=module', '-e', `
@@ -536,6 +542,9 @@ test('a lock held by a child process blocks and is released on process exit (rea
     console.log('LOCKED');
     setInterval(() => {}, 1000);
   `], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
+  void exited.catch(() => {});
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await exited; });
   // Wait for the child to hold the lock.
   let childStderr = '', childStdout = '', childExit = null;
   child.stdout.on('data', d => { childStdout += d.toString(); });
@@ -543,20 +552,20 @@ test('a lock held by a child process blocks and is released on process exit (rea
   child.on('exit', code => { childExit = code; });
   // Poll for LOCKED in the child's stdout (simple, avoids handler/Promise race).
   const held = await new Promise((resolve) => {
+    let timer;
+    const finish = value => { clearInterval(interval); clearTimeout(timer); resolve(value); };
     const interval = setInterval(() => {
-      if (childStdout.includes('LOCKED')) { clearInterval(interval); resolve(true); }
-      else if (childExit !== null) { clearInterval(interval); resolve(false); }
+      if (childStdout.includes('LOCKED')) finish(true);
+      else if (child.exitCode !== null || child.signalCode !== null) finish(false);
     }, 20);
-    setTimeout(() => { clearInterval(interval); resolve(false); }, 8000);
+    timer = setTimeout(() => finish(false), 8000);
   });
   if (!held) { child.kill(); assert.fail('child did not acquire the lock. exit: ' + childExit + ' stdout: ' + childStdout + ' stderr: ' + childStderr); return; }
-  // Now the parent tries to merge — it should block on the lock (busy_timeout
-  // is short), then the child is killed and the OS releases the lock.
-  const ws = new DirectoryChildWorkspaces({ source, storage });
-  const w = ws.prepare(identity); // idempotent — reuses existing child
-  writeFileSync(join(w.root, 'file.txt'), 'parent-edit');
+  assert.throws(() => acquireWorkspaceMutationLock(sourceResolved, { timeoutMs: 50 }), /workspace_mutation_busy/);
+  assert.equal(readFileSync(join(source, 'file.txt'), 'utf8'), 'v1', 'contention cannot publish a child edit');
   // Kill the child — the OS releases the SQLite lock.
   child.kill('SIGKILL');
+  await exited;
   // The merge should now succeed (the lock was released by process exit).
   const result = ws.merge(w, { expectedRevision: observe(ws, w).revision });
   assert.equal(result.ok, true, 'merge succeeded after the child process was killed (lock auto-released)');

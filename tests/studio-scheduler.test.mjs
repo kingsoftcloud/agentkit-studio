@@ -118,6 +118,9 @@ test('independent due tasks start together while repeated ticks cannot duplicate
 test('SIGKILL releases exclusive scheduler ownership and exposes the original unknown occurrence without replay', async () => {
   const store = await makeStore(), source = new URL('../src/studio-scheduler.mjs', import.meta.url).href;
   const code = `import {createStudioScheduler} from ${JSON.stringify(source)};
+    // A real Host has ref'ed HTTP/IPC handles. A pending Promise alone would
+    // let this fixture exit and release its lock before the parent checks it.
+    setInterval(()=>{},1000);
     const scheduler=createStudioScheduler({storeDir:${JSON.stringify(store)},tickIntervalMs:600000,
       runner:async()=>{process.stdout.write('CLAIMED\\n');await new Promise(()=>{});}});
     await scheduler.createSchedule('a',{taskId:'original-once',kind:'once',at:'2099-01-01T00:00:00Z',prompt:'original work'});

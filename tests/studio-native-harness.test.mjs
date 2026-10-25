@@ -31,7 +31,7 @@ import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs'
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../src/providers/native-cloud-memory-turn.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 
-async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false, resources } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false, resources, inspection = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
   const storeDir = storeAlias ? join(root, 'configured-home') : root;
   if (storeAlias) await symlink(root, storeDir, 'dir');
@@ -75,7 +75,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
       nativeEngineContract: 'agentkit.native-dsh-turn/v1',
       nativeTools: { definitions: () => [], forAgent: () => ({ tools: { execute: async () => assert.fail('No tool dispatched') } }) } } };
   if (recovery) services.systemPrompt = { assemble: async () => payload.input.assembly };
-  services.sessionController = { resolveAgent: async id => {
+  if (inspection) services.sessionController = { resolveAgent: async id => {
     assert.equal(id, session.id); return { agent: payload.agent };
   } };
   const head = () => {
@@ -103,7 +103,7 @@ for (const frozen of [false, true]) test(`cloud Memory completion saves its exac
   const client = createAgentEngineClient({ configuration: { resolve: async () => ({ values: { cloudServerUrl: `http://127.0.0.1:${server.address().port}` } }) },
     fetchImpl: async (url, options) => { if (new URL(url).pathname.endsWith('/CreateMemorySdk')) beforeWrite(options); return fetch(url, options); } });
   const resources = createLocalResourceAdapters({ serverClient: client }); t.after(() => resources.close());
-  const f = await setup(t, { sqlite: true, resources, spec: { memory: { enabled: true, recall: { enabled: false }, write: { mode: 'candidate' } },
+  const f = await setup(t, { sqlite: true, resources, inspection: true, spec: { memory: { enabled: true, recall: { enabled: false }, write: { mode: 'candidate' } },
     bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'mem-native' } } } }] } } });
   if (frozen) f.payload.binding.buildId = 'build_cloud_memory';
   const effectsPath = () => join(f.root, 'native-harness/cloud-memory-turns',
@@ -163,7 +163,7 @@ test('cloud Memory lost response leaves an unknown durable receipt without faili
     fetchImpl: async () => { sends++; throw Error('connection lost after submission'); },
   }) });
   t.after(() => resources.close());
-  const f = await setup(t, { sqlite: true, resources, spec: { memory: { enabled: true, recall: { enabled: false }, write: { mode: 'candidate' } },
+  const f = await setup(t, { sqlite: true, resources, inspection: true, spec: { memory: { enabled: true, recall: { enabled: false }, write: { mode: 'candidate' } },
     bindings: { plugins: [{ config: { binding: { resource: { kind: 'memory-instance', id: 'mem-native' } } } }] } } });
   await f.host.executeTurn(f.payload); assert.equal(f.head().phase, 'completed'); assert.equal(sends, 1);
   await f.host.executeTurn(f.payload); assert.equal(f.head().phase, 'completed'); assert.equal(sends, 1);
@@ -202,7 +202,7 @@ test('cloud Memory lost response leaves an unknown durable receipt without faili
 });
 
 test('cloud Memory inspection does not create a journal when the original turn has no cloud submission', async t => {
-  const f = await setup(t, { sqlite: true });
+  const f = await setup(t, { sqlite: true, inspection: true });
   await f.host.executeTurn(f.payload);
   const identity = { agentId: f.record.metadata.id, sessionId: 'session', runId: f.head().runId };
   assert.equal((await f.host.recoveryStatus(identity)).cloudMemory, null);
@@ -1584,7 +1584,7 @@ for (const [context, code] of [
   [{ maxInputTokens: 1000, reserveOutputTokens: 1000 }, 'studio_native_context_budget_conflict'],
   [{ maxInputTokens: '4000' }, 'studio_native_context_budget_invalid'],
   [{ compaction: { thresholdRatio: 0 } }, 'invalid_context_policy'],
-  [{ compaction: { pruneToolResults: true } }, 'studio_native_compaction_option_unsupported'],
+  [{ compaction: { unknownPruningOption: true } }, 'studio_native_compaction_option_unsupported'],
 ]) test(`Studio Native rejects an invalid or unsupported context contract: ${JSON.stringify(context)}`, async t => {
   const fixture = await setup(t, { spec: { context } });
   await assert.rejects(fixture.host.executeTurn(fixture.payload), { code });

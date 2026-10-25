@@ -26,8 +26,8 @@ function fakeServiceClient(spaces = {}) {
     listSkillsBySpaceId: async (spaceId) => { calls.push(`list:${spaceId}`); return { activeSkills: spaces[spaceId] || [] }; },
     listAvailablePremadeSkills: async () => {
       calls.push('premade');
-      const publicSkills = Object.entries(spaces).filter(([k]) => k === 'public' || k.startsWith('public')).flatMap(([, v]) => v);
-      return { activeSkills: publicSkills, spaceId: 'public' };
+      const publicSpaces = Object.entries(spaces).filter(([k]) => k === 'public' || k.startsWith('public'));
+      return { activeSkills: publicSpaces.flatMap(([, v]) => v), spaceId: publicSpaces[0]?.[0] || 'public' };
     },
   };
 }

@@ -508,6 +508,10 @@ export class NativeKernel {
       if (effectSignal.aborted) abortListener();
       else effectSignal.addEventListener('abort', abortListener, { once: true });
     });
+    // A checkpoint command may have canceled this claimed effect before we
+    // enter the dispatch race. Observe that rejection immediately; the race
+    // below still receives the original rejection and settles it normally.
+    void aborted.catch(() => {});
     let raw: ObjectValue, status: EffectReceipt['status'] = 'committed', changes: Partial<RunSnapshot>;
     let consumedCommandId: string | null = null;
     const facts: { kind: string; payload: ObjectValue }[] = [];

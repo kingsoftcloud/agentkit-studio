@@ -248,9 +248,12 @@ test('cold rebuild expectedBinding reproduces, content change rejects', t => {
   throwsCode(() => createStudioNativeSkillSource({ definitions: [def], expectedBinding: restored }), 'skill_source_binding_mismatch');
 });
 
-test('empty name/content rejected', () => {
+test('empty name and missing/non-string content rejected; an empty local manifest stays a pinned empty string', async () => {
   throwsCode(() => createStudioNativeSkillSource({ definitions: [{ name: '', content: 'c' }] }), 'skill_source_name_missing');
-  throwsCode(() => createStudioNativeSkillSource({ definitions: [{ name: 't', content: '' }] }), 'skill_source_content_missing');
+  for (const content of [undefined, null, 0, {}])
+    throwsCode(() => createStudioNativeSkillSource({ definitions: [{ name: 't', content }] }), 'skill_source_content_missing');
+  const empty = createStudioNativeSkillSource({ definitions: [{ name: 't', content: '' }] });
+  assert.equal(await empty.source.fullText('skill://t@1.0.0'), '');
 });
 
 test('summary from frontmatter or first body line', async t => {

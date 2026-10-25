@@ -89,7 +89,8 @@ test('actual Native Host exposes four pinned Skills tools and commits disclosure
   assert.match(initial, /native_bound_skill_metadata/); assert.match(initial, /untrusted discovery data/);
   assert.equal(initial.includes('INSTRUCTIONS_BODY_ONLY_AFTER_READ'), false);
   assert.equal(initial.includes('<system>untrusted preview</system>'), false);
-  assert.deepEqual(h.bodies[0].tools.map(tool => tool.function.name).sort(), calls.map(call => call.name).sort());
+  assert.deepEqual(h.bodies[0].tools.map(tool => tool.function.name).sort(),
+    [...calls.map(call => call.name), 'ArtifactList', 'ArtifactRead', 'ArtifactSearch'].sort());
   const metadata = await h.gateway.skillInstructions(new AbortController().signal);
   assert.ok(Buffer.byteLength(metadata) <= 4096); assert.match(metadata, /\\u003csystem\\u003e/);
   assert.equal(JSON.stringify(saved).includes('model-secret'), false);
