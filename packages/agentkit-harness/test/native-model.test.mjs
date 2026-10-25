@@ -11,6 +11,24 @@ import http from 'node:http';
 import { createNativeModelPort } from '../src/native/model-port.mjs';
 import { readModelSse } from '../src/native/model-sse.mjs';
 import { admitInlineReasoningPolicy, inlineReasoningMarker, projectInlineReasoning } from '../src/native/model-inline-reasoning.mjs';
+import { admitProviderCompatibilityPolicy } from '../src/native/model-provider-compat.mjs';
+
+test('provider compatibility HTTP: pinned options reach the actual buffered request without retries', async t => {
+  for (const [model, rule, effort, thinking] of [
+    ['glm-5.3-flash', 'zai', 'high', { type: 'disabled' }],
+    ['kimi-k2.7-code', 'kspmas-gateway', undefined, undefined],
+    ['gpt-fixture', 'strict-openai', 'medium', undefined],
+  ]) await t.test(model, async () => {
+    const { result, requests } = await collect(null, 'openai-chat', () => ({ headers: JSON_HEADERS,
+      body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Done' } }] }) }),
+    makeRequest({ profile: makeProfile({ streaming: false, parallelToolCalls: false, reasoningEffort: 'medium',
+      providerCompatibilityPolicy: admitProviderCompatibilityPolicy(rule) }) }), { bindingExtra: { model } });
+    assert.equal(result.kind, 'final_candidate'); assert.equal(result.text, 'Done'); assert.equal(requests.length, 1);
+    const body = JSON.parse(requests[0].body);
+    assert.equal(body.stream, false); assert.equal(body.parallel_tool_calls, false);
+    assert.equal(body.reasoning_effort, effort); assert.deepEqual(body.thinking, thinking);
+  });
+});
 
 test('inline reasoning: reference provider selection preserves unrelated and legacy content', () => {
   const text = 'private</think>public', auto = admitInlineReasoningPolicy();

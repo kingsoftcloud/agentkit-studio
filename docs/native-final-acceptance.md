@@ -125,3 +125,11 @@ chunk、无标记正文、未闭合推理及中断不释放 pending 内容；Hos
 日志位于 `.artifacts/native-migration/inline-reasoning-{model,host}.log`。
 未重跑全量、双 Node、安装或打包，亦未调用线上模型。厂商请求参数的完整兼容
 不能从这项结果推定，剩余边界见能力主表。
+
+## 厂商请求兼容收尾
+
+正式 OpenAI request 的 effort/thinking、压缩用途、usage、回放清洗及工具选择
+策略接入冻结配置；三协议配置开关进入实际请求。编译及 25 项相关检查通过，
+包括 15 组实际 Python 纯策略固定结果、真实本地 HTTP 和原配置恢复。
+具体命令、生成器及明确未闭环项见[模型请求兼容](native-provider-compatibility.md)。
+未重跑全仓、安装或打包；长活动流的 idle 续期及独立 thinking 显示仍有具体差异。

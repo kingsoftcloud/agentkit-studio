@@ -72,6 +72,11 @@ export interface ModelProfile {
   /** Absent on older Runs; projection policy is frozen at admission. */
   inlineReasoningPolicy?: { contract: 'profiled-content/v1'; rule: 'auto' | 'permissive' | 'openai'
     | 'strict-openai' | 'cerebras' | 'groq' | 'deepseek' | 'zai' | 'kspmas-gateway' | 'moonshot' | 'mimo' };
+  providerCompatibilityPolicy?: { contract: 'provider-compat/v1'; rule: NonNullable<ModelProfile['inlineReasoningPolicy']>['rule'] };
+  streaming?: boolean; outputTokenParameter?: 'max_tokens' | 'max_completion_tokens';
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  thinkingMode?: 'enabled' | 'disabled'; parallelToolCalls?: boolean;
+  temperature?: number; topP?: number;
 }
 export interface RunLimits {
   maxWallMs: number | null; maxModelCalls: number | null; maxToolCalls: number | null;
@@ -418,6 +423,7 @@ export interface PortContext extends RunIdentity {
 export interface ModelRequest extends PortContext {
   purpose?: 'task' | 'compaction' | 'delivery_review';
   profile: ModelProfile; messages: Message[]; tools: ToolDefinition[]; finalizationOnly: boolean;
+  toolChoice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
   maxInlineImageBytes: number;
 }
 export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta'; text: string; metadata?: ObjectValue }

@@ -14,6 +14,7 @@ import {
 import { sealModelReplay, openAIReplayFields } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaOpenAI, MediaError } from './model-media.mjs';
 import { inlineReasoningMarker, projectInlineReasoning, createInlineReasoningProjector } from './model-inline-reasoning.mjs';
+import { applyProviderChatCompatibility } from './model-provider-compat.mjs';
 // parseModelJson is the kernel's strict finite JSON parser: it rejects
 // duplicate object keys and non-finite numbers (e.g. 1e400). Using it here keeps
 // provider-envelope and tool-argument decoding consistent with the kernel's
@@ -56,7 +57,7 @@ export function buildOpenAIRequest(binding, request) {
   const profile = request.profile;
   const url = resolveUrl(binding.baseUrl, 'chat/completions');
 
-  const headers = { Accept: 'text/event-stream' };
+  const headers = { Accept: profile.streaming === false ? 'application/json' : 'text/event-stream' };
   const skip = securityHeaders();
   for (const [name, value] of Object.entries(binding.headers || {})) {
     if (skip.has(name.toLowerCase())) continue;
@@ -69,7 +70,7 @@ export function buildOpenAIRequest(binding, request) {
   const payload = {
     model: binding.model,
     messages: projectMessagesOpenAI(request, request.maxInlineImageBytes),
-    stream: true,
+    stream: profile.streaming ?? true,
     n: 1,
   };
   payload.max_tokens = boundOutputTokens(undefined, profile.maxOutputTokens);
@@ -81,7 +82,8 @@ export function buildOpenAIRequest(binding, request) {
   }
   // max_completion_tokens replaces max_tokens; a binding that selects the newer
   // chat parameter must not send both.
-  if ('max_completion_tokens' in parameters) {
+  if (profile.outputTokenParameter === 'max_completion_tokens'
+    || profile.outputTokenParameter === undefined && 'max_completion_tokens' in parameters) {
     payload.max_completion_tokens = boundOutputTokens(parameters.max_completion_tokens, profile.maxOutputTokens);
     delete payload.max_tokens;
   } else if ('max_tokens' in parameters) {
@@ -101,10 +103,15 @@ export function buildOpenAIRequest(binding, request) {
       type: 'function',
       function: { name: tool.name, description: tool.description, parameters: tool.parameters || { type: 'object', properties: {} } },
     }));
-    payload.tool_choice = 'auto';
+    payload.tool_choice = request.toolChoice ?? (profile.providerCompatibilityPolicy && request.finalizationOnly
+      ? { type: 'function', function: { name: FINAL_SUBMISSION_TOOL } } : 'auto');
   }
-
-  return { url, headers, body: stringifyModelJson(payload) };
+  if (profile.parallelToolCalls !== undefined) payload.parallel_tool_calls = profile.parallelToolCalls;
+  if (profile.temperature !== undefined) payload.temperature = profile.temperature;
+  if (profile.topP !== undefined) payload.top_p = profile.topP;
+  if (profile.reasoningEffort !== undefined) payload.reasoning_effort = profile.reasoningEffort;
+  if (profile.thinkingMode !== undefined) payload.thinking = { type: profile.thinkingMode };
+  return { url, headers, body: stringifyModelJson(applyProviderChatCompatibility(payload, request, binding)) };
 }
 
 // Project host messages onto the chat wire, admitting media only on user/tool

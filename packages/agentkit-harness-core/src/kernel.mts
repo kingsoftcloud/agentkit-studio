@@ -820,7 +820,7 @@ export class NativeKernel {
           const chunk = snapshot.contextState?.compaction?.chunk;
           invariant(chunk && chunk.projectionDigest === this.digest(chunk.messages), 'context_summary_quote_changed');
           return this.ports.model.generate({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens: chunk.maxOutputTokens },
-            messages: copy(chunk.messages), tools: [], finalizationOnly: false, maxInlineImageBytes: configuration.limits.maxInlineImageBytes }, () => {});
+            purpose: 'compaction', messages: copy(chunk.messages), tools: [], finalizationOnly: false, maxInlineImageBytes: configuration.limits.maxInlineImageBytes }, () => {});
         }
         assertGuidanceRetained(snapshot, modelContextMessages(snapshot, this.digest));
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };

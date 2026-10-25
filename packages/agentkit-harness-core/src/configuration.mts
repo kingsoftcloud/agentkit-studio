@@ -158,6 +158,21 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && ['auto', 'permissive', 'openai', 'strict-openai', 'cerebras', 'groq', 'deepseek',
         'zai', 'kspmas-gateway', 'moonshot', 'mimo'].includes(policy.rule), 'invalid_inline_reasoning_policy');
   }
+  if (profile.providerCompatibilityPolicy !== undefined) {
+    const policy = profile.providerCompatibilityPolicy;
+    invariant(policy !== null && typeof policy === 'object' && !Array.isArray(policy)
+      && Object.keys(policy).every(key => ['contract', 'rule'].includes(key))
+      && policy.contract === 'provider-compat/v1'
+      && ['auto', 'permissive', 'openai', 'strict-openai', 'cerebras', 'groq', 'deepseek',
+        'zai', 'kspmas-gateway', 'moonshot', 'mimo'].includes(policy.rule), 'invalid_provider_compatibility_policy');
+  }
+  for (const key of ['streaming', 'parallelToolCalls'] as const)
+    invariant(profile[key] === undefined || typeof profile[key] === 'boolean', `invalid_profile:${key}`);
+  invariant(profile.outputTokenParameter === undefined || ['max_tokens', 'max_completion_tokens'].includes(profile.outputTokenParameter), 'invalid_output_token_parameter');
+  invariant(profile.reasoningEffort === undefined || ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(profile.reasoningEffort), 'invalid_reasoning_effort');
+  invariant(profile.thinkingMode === undefined || ['enabled', 'disabled'].includes(profile.thinkingMode), 'invalid_thinking_mode');
+  invariant(profile.temperature === undefined || Number.isFinite(profile.temperature) && profile.temperature >= 0 && profile.temperature <= 2, 'invalid_temperature');
+  invariant(profile.topP === undefined || Number.isFinite(profile.topP) && profile.topP > 0 && profile.topP <= 1, 'invalid_top_p');
   const names = new Set<string>();
   for (const tool of config.tools) {
     invariant(tool.name.trim() && !names.has(tool.name), 'duplicate_or_invalid_tool');

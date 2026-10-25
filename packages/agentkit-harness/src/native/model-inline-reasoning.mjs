@@ -22,15 +22,19 @@ export function inlineReasoningMarker(policy, binding = {}) {
   if (policy.contract !== 'profiled-content/v1' || (policy.rule !== 'auto' && !rules.has(policy.rule))) {
     throw new Error('invalid_inline_reasoning_policy');
   }
-  const model = normalizeModel(binding.model);
-  const url = String(binding.baseUrl ?? '').toLowerCase();
-  const rule = policy.rule === 'auto'
-    ? urlHints.find(([hint]) => url.includes(hint))?.[1]
-      ?? modelHints.find(([hint]) => model.includes(hint))?.[1] ?? 'permissive'
-    : policy.rule;
+  const rule = resolveCompatibilityRule(policy.rule, binding);
   if (['kspmas-gateway', 'moonshot'].includes(rule)
     && ['kimi-k2.7-code', 'kimi-k2.7-code-highspeed'].includes(String(binding.model ?? '').trim().toLowerCase())) return null;
   return ['zai', 'kspmas-gateway'].includes(rule) ? '</think>' : null;
+}
+
+export function resolveCompatibilityRule(selected, binding = {}) {
+  if (selected !== 'auto' && !rules.has(selected)) throw new Error('invalid_provider_compatibility_policy');
+  const model = normalizeModel(binding.model), url = String(binding.baseUrl ?? '').toLowerCase();
+  return selected === 'auto'
+    ? urlHints.find(([hint]) => url.includes(hint))?.[1]
+      ?? modelHints.find(([hint]) => model.includes(hint))?.[1] ?? 'permissive'
+    : selected;
 }
 
 export function projectInlineReasoning(text, marker) {

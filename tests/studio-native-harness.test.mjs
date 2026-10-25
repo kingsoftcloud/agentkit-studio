@@ -245,6 +245,7 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(
   const scope = bound.scope;
   assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v1', rule: 'auto' });
+  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v1', rule: 'auto' });
   assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
   assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
   if (deliveryReviewPolicy) assert.deepEqual(bound.configuration.deliveryReviewPolicy,
@@ -1086,6 +1087,14 @@ test('production Host refreshes actual SQLite Memory before each model request a
   assert.equal(run.snapshot.messages.some(message => message.kind === 'context_contribution'), false);
   assert.ok(run.receipts.filter(receipt => receipt.result.contributions).every(receipt => receipt.result.contributions.sources[0].status === 'ok'));
 });
+test('Studio provider compatibility rejects unsupported explicit Kimi reasoning before HTTP', async t => {
+  const f = await setup(t, { profile: { modelName: 'kimi-k2.7-code', baseUrl: 'https://kspmas.invalid/v1',
+    parameters: { reasoning_effort: 'high' } } });
+  f.payload.agent.options.model = 'kimi-k2.7-code';
+  await assert.rejects(f.host.executeTurn(f.payload), /native_model_profile_reasoning_effort_unsupported/);
+  assert.equal(f.requests.length, 0); assert.equal(f.head(), null);
+});
+
 test('Studio Native Host pins revision/input/model while refreshing credentials outside its ledger', async t => {
   const fixture = await setup(t);
   await fixture.host.executeTurn(fixture.payload);

@@ -22,6 +22,7 @@ import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-m
 // keys and non-finite numbers); using it keeps provider-envelope and tool-input
 // decoding consistent with the kernel's own validation.
 import { parseModelJson, stringifyModelJson, parseNativeJson, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
+import { projectProviderToolChoice, resolveProviderCompatibility } from './model-provider-compat.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -67,7 +68,7 @@ export function buildAnthropicRequest(binding, request) {
   const profile = request.profile;
   const url = resolveUrl(binding.baseUrl, 'messages');
 
-  const headers = { Accept: 'text/event-stream' };
+  const headers = { Accept: profile.streaming === false ? 'application/json' : 'text/event-stream' };
   const skip = securityHeaders();
   for (const [name, value] of Object.entries(binding.headers || {})) {
     if (skip.has(name.toLowerCase())) continue;
@@ -85,7 +86,7 @@ export function buildAnthropicRequest(binding, request) {
   const payload = {
     model: binding.model,
     messages: items,
-    stream: true,
+    stream: profile.streaming ?? true,
     max_tokens: boundOutputTokens(binding.parameters?.max_tokens, profile.maxOutputTokens),
   };
   if (system) payload.system = system;
@@ -110,8 +111,15 @@ export function buildAnthropicRequest(binding, request) {
       description: tool.description,
       input_schema: tool.parameters || { type: 'object', properties: {} },
     }));
-    payload.tool_choice = { type: 'auto' };
+    const choice = projectProviderToolChoice(request.toolChoice ?? (profile.providerCompatibilityPolicy && request.finalizationOnly
+      ? { type: 'function', function: { name: FINAL_SUBMISSION_TOOL } } : 'auto'),
+    resolveProviderCompatibility(profile.providerCompatibilityPolicy, binding));
+    payload.tool_choice = typeof choice === 'string' ? { type: choice === 'required' ? 'any' : choice }
+      : { type: 'tool', name: choice.function.name };
   }
+  if (profile.temperature !== undefined) payload.temperature = profile.temperature;
+  if (profile.topP !== undefined) payload.top_p = profile.topP;
+  if (profile.parallelToolCalls !== undefined && payload.tool_choice) payload.tool_choice.disable_parallel_tool_use = !profile.parallelToolCalls;
 
   return { url, headers, body: stringifyModelJson(payload) };
 }

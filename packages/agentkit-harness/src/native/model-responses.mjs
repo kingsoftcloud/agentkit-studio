@@ -145,7 +145,7 @@ export function buildResponsesRequest(binding, request) {
   }
   const url = resolveUrl(binding.baseUrl, 'responses');
 
-  const headers = { Accept: 'text/event-stream' };
+  const headers = { Accept: profile.streaming === false ? 'application/json' : 'text/event-stream' };
   const skip = securityHeaders();
   for (const [name, value] of Object.entries(binding.headers || {})) {
     if (skip.has(name.toLowerCase())) continue;
@@ -159,7 +159,7 @@ export function buildResponsesRequest(binding, request) {
   const payload = {
     model: binding.model,
     input: items,
-    stream: true,
+    stream: profile.streaming ?? true,
     truncation: 'disabled',
   };
   if (instructions) payload.instructions = instructions;
@@ -191,9 +191,14 @@ export function buildResponsesRequest(binding, request) {
                      parameters: tool.parameters || { type: 'object', properties: {} } };
       return flat;
     });
-    payload.tool_choice = 'auto';
-    payload.parallel_tool_calls = true;
+    const choice = request.toolChoice ?? (profile.providerCompatibilityPolicy && request.finalizationOnly
+      ? { type: 'function', function: { name: FINAL_SUBMISSION_TOOL } } : 'auto');
+    payload.tool_choice = typeof choice === 'string' ? choice : { type: 'function', name: choice.function.name };
+    payload.parallel_tool_calls = profile.parallelToolCalls ?? true;
   }
+  if (profile.temperature !== undefined) payload.temperature = profile.temperature;
+  if (profile.topP !== undefined) payload.top_p = profile.topP;
+  if (profile.reasoningEffort !== undefined) payload.reasoning = { ...(payload.reasoning ?? {}), effort: profile.reasoningEffort };
 
   return { url, headers, body: stringifyModelJson(payload) };
 }

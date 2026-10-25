@@ -38,6 +38,7 @@ import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../p
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 import { readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 import { admitInlineReasoningPolicy } from '../../../packages/agentkit-harness/src/native/model-inline-reasoning.mjs';
+import { admitProviderCompatibilityPolicy, resolveProviderCompatibility } from '../../../packages/agentkit-harness/src/native/model-provider-compat.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -364,12 +365,27 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         const desc = profileDescription(profile), digest = hash(desc);
         const inlineReasoningPolicy = original ? original.configuration.profile.inlineReasoningPolicy
           : admitInlineReasoningPolicy(modelCompatibilityRule);
+        const providerCompatibilityPolicy = original ? original.configuration.profile.providerCompatibilityPolicy
+          : admitProviderCompatibilityPolicy(modelCompatibilityRule);
+        const modelOptions = providerCompatibilityPolicy ? Object.fromEntries([
+          ['streaming', desc.parameters.stream], ['reasoningEffort', desc.protocol === 'openai-chat' ? desc.parameters.reasoning_effort : undefined],
+          ['thinkingMode', desc.protocol === 'openai-chat' ? desc.parameters.thinking?.type : undefined], ['parallelToolCalls', desc.parameters.parallel_tool_calls],
+          ['temperature', desc.parameters.temperature], ['topP', desc.parameters.top_p],
+        ].filter(([, value]) => value !== undefined)) : {};
+        const compat = providerCompatibilityPolicy && resolveProviderCompatibility(providerCompatibilityPolicy,
+          { model: desc.modelName, baseUrl: desc.baseUrl });
+        invariant(!compat || modelOptions.reasoningEffort === undefined || compat.supportsEffort,
+          'native_model_profile_reasoning_effort_unsupported');
+        invariant(!compat || modelOptions.thinkingMode === undefined || compat.supportsThinking,
+          'native_model_profile_thinking_mode_unsupported');
         const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context,
           readWorkingSetDefaults, recentToolBatchDefaults });
         return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
         profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
-          compatibilityDigest: inlineReasoningPolicy ? hash({ description: desc, inlineReasoningPolicy }) : digest,
+          compatibilityDigest: providerCompatibilityPolicy ? hash({ description: desc, inlineReasoningPolicy, providerCompatibilityPolicy })
+            : inlineReasoningPolicy ? hash({ description: desc, inlineReasoningPolicy }) : digest,
           ...(inlineReasoningPolicy ? { inlineReasoningPolicy } : {}),
+          ...(providerCompatibilityPolicy ? { providerCompatibilityPolicy, ...modelOptions } : {}),
           ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
           providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,

@@ -125,7 +125,9 @@ test('PreCompact binds actual admitted original source and feedback remains visi
     return hookResult(request, 'ok', { action: 'continue', additionalContext: ['Keep the exact evidence scope'], updatedArguments: null });
   } };
   run.ports.model.generate = async request => {
-    if (request.messages[0]?.kind === 'compaction_instructions') { summaries++; assert.equal(hooks, 1); return final('Untrusted historical notes'); }
+    if (request.messages[0]?.kind === 'compaction_instructions') {
+      summaries++; assert.equal(hooks, 1); assert.equal(request.purpose, 'compaction'); return final('Untrusted historical notes');
+    }
     if (++tasks === 1) return toolResponse();
     assert.ok(request.messages.some(message => message.kind === 'hook_context' && message.content.includes('Keep the exact evidence scope')));
     return final();
