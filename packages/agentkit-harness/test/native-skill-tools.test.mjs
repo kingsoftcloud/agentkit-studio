@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeSkillNames, matchSkillRefs, skillManifestItem, selectPublicSkillRefs, createNativeSkillTools, SKILL_TOOL_CONTRACT } from '../src/native/skill-tools.mjs';
 import { createStudioNativeSkills } from '../../../src/providers/native-dsh-skills.mjs';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence } from '../src/native/skill-events.mjs';
 
 const SCOPE = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };
 const IDENTITY = { scope: SCOPE, runId: 'r1', sessionId: 's1', turnId: 't1', buildId: 'b1', parentRunId: null, taskChainId: 'c1', operationKey: 'op1', executionFence: 1 };
@@ -152,11 +153,14 @@ test('missing callId → rejected', async () => {
 // --- fix #4: uncertain after workflow, approval_required ---
 
 test('uncertain backend result → status uncertain, not error', async () => {
-  const { tools } = makeTools({ executeWorkflow: async () => ({ uncertain: true, error_type: 'timeout' }) });
+  const events = [], journal = createNativeSkillEventJournal({ runtimeId: 'original-runtime', request: { runId: 'r1' }, bindingDigest: 'binding', events });
+  journal.emit('skill.workflow.failed', 'uncertain', { errorCategory: 'outcome_unknown' });
+  const { tools } = makeTools({ executeWorkflow: async () => ({ uncertain: true, error_type: 'timeout', ...nativeSkillEventEvidence(events) }) });
   const r = await exec(tools, 'execute_skills', { workflow_prompt: 'test' });
   assert.equal(r.status, 'uncertain');
   assert.equal(r.content.uncertain, true);
   assert.equal(r.content.executed, undefined);
+  assert.deepEqual(r.content.skill_events, events);
 });
 
 test('backend throw after effectStarted → uncertain', async () => {

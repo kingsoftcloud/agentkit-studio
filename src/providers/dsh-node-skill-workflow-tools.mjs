@@ -70,7 +70,7 @@ export function createDshNodeSkillWorkflowTools({ ctx, agentId, agentRevision = 
       const runtime = (e2b ? createDshE2BSkillRuntime : createDshLocalSkillRuntime)({ stateRoot: join(cache.cacheDir, 'runtime'), workspaceRoot,
         agentId, sessionId, bindingDigest, settings, env: environment, assertStorage: cache.assertStorage,
         ...(e2b ? { prepared: e2b, inProcessTransport: Boolean(loadSdk) } : {}),
-        loadPackages: request => loadSkillRuntimePackages({ request, localSource, localDefinitions,
+        loadPackages: (request, events) => loadSkillRuntimePackages({ request, events, localSource, localDefinitions,
           userSpaces, publicSpaces, publicAllowlist, service, load, assertStorage: cache.assertStorage }) });
       sessions.set(sessionId, { ...cache, runtime });
     }

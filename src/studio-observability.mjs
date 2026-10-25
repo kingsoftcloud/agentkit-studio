@@ -7,6 +7,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { NATIVE_SKILL_EVENTS, selectNativeSkillEvents } from '../packages/agentkit-harness/src/native/skill-events.mjs';
 
 export class StudioObservabilityError extends Error {
   constructor(code, message, details = {}) {
@@ -24,6 +25,7 @@ function parseRange(range) {
 
 function projectSpans(events) {
   const spans = [];
+  const skillIds = new Set();
   const rootSpanId = randomUUID().replace(/-/g, '').slice(0, 16);
   const rootStart = events.length ? new Date(events[0].at).getTime() : Date.now();
   const rootEnd = events.length ? new Date(events[events.length - 1].at).getTime() : rootStart;
@@ -32,6 +34,26 @@ function projectSpans(events) {
     const type = String(event.event_type || event.type || '');
     if (type.startsWith('tool.') || type.startsWith('turn.') || type.startsWith('model.') || type === 'resource.checked') {
       spans.push({ spanId: randomUUID().replace(/-/g, '').slice(0, 16), parentSpanId: rootSpanId, name: type, kind: 'INTERNAL', startedAt: event.at, endedAt: event.at, attributes: { seq: event.seq || 0, ...event.payload } });
+    }
+    if (type === 'tool.completed' && event.payload?.name === 'execute_skills') {
+      let result = event.payload.content;
+      try { if (typeof result === 'string' && Buffer.byteLength(result) <= 2 * 1024 ** 2) result = JSON.parse(result); } catch { continue; }
+      if (result?.skill_event_contract !== NATIVE_SKILL_EVENTS) continue;
+      for (const fact of selectNativeSkillEvents(result.skill_events)) {
+        if (skillIds.has(fact.event_id)) continue;
+        skillIds.add(fact.event_id);
+        spans.push({ spanId: createHash('sha256').update(fact.event_id).digest('hex').slice(0, 16),
+          parentSpanId: rootSpanId, name: fact.event_type, kind: 'INTERNAL',
+          startedAt: new Date(fact.started_at * 1000).toISOString(), endedAt: new Date((fact.ended_at ?? fact.started_at) * 1000).toISOString(),
+          attributes: { 'ksadk.skill.event_id': fact.event_id, 'ksadk.skill.status': fact.status,
+            'ksadk.skill.event_type': fact.event_type, 'ksadk.skill.trace_id': fact.trace_id,
+            'ksadk.skill.invocation_id': fact.skill_invocation_id, 'ksadk.skill.runtime_id': fact.runtime_id,
+            'ksadk.skill.run_id': fact.run_id, 'ksadk.skill.binding_snapshot_id': fact.binding_snapshot_id,
+            'ksadk.skill.decision_id': fact.decision_id, 'ksadk.skill.error_code': fact.error_code,
+            'ksadk.skill.error_category': fact.error_category,
+            ...(fact.skill_ref ? { 'ksadk.skill.id': fact.skill_ref.skill_id,
+              'ksadk.skill.version_id': fact.skill_ref.version_id, 'ksadk.skill.name': fact.skill_ref.name } : {}), ...fact.attributes } });
+      }
     }
   }
   return spans;

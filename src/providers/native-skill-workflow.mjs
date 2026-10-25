@@ -3,6 +3,7 @@
  * dispatch and artifact publication. This module never imports a Skill module. */
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, opendirSync, readSync } from 'node:fs';
+import { SKILL_EVENT_FILE } from '../../packages/agentkit-harness/src/native/skill-events.mjs';
 
 export const NATIVE_SKILL_WORKFLOW = 'agentkit.native-skill-workflow/v1';
 const TEXT_SUFFIXES = new Set(['csv', 'json', 'jsonl', 'log', 'md', 'rst', 'tsv', 'txt', 'xml', 'yaml', 'yml']);
@@ -89,7 +90,7 @@ function collectText(files, root) {
 const commandRecord = (label, cwd, result) => ({ command: label, cwd, exit_code: result.exit_code,
   stdout: tail(result.stdout), stderr: tail(result.stderr), ...(result.timed_out ? { timed_out: true } : {}) });
 
-export function createNativeSkillWorkflowExecutor({ runCommand, workDir, projectName = 'ksadk-artifact' } = {}) {
+export function createNativeSkillWorkflowExecutor({ runCommand, workDir, projectName = 'ksadk-artifact', events } = {}) {
   if (typeof runCommand !== 'function') throw new Error('runCommand required');
   if (typeof workDir !== 'string' || !workDir) throw new Error('workDir required');
   const root = resolve(workDir), project = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(projectName) ? projectName : 'ksadk-artifact';
@@ -112,6 +113,17 @@ export function createNativeSkillWorkflowExecutor({ runCommand, workDir, project
     const selected = skillNames.map(name => String(name).trim()).filter(Boolean), loaded = packages.map(pkg => pkg.name);
     const base = { selected_skills: selected, loaded_skills: loaded };
     const candidates = packages.filter(pkg => !selected.length || selected.some(name => name.toLowerCase() === pkg.name.toLowerCase()));
+    events?.emit('skill.candidates.resolved', 'completed', { attributes: { candidate_count: packages.length,
+      candidate_skill_ids: packages.map(pkg => pkg.skillId || pkg.name) } });
+    events?.emit(candidates.length ? 'skill.selection.completed' : 'skill.selection.skipped', candidates.length ? 'completed' : 'skipped',
+      { attributes: { selected_skill_ids: candidates.map(pkg => pkg.skillId || pkg.name) } });
+    const finish = (result, pkg) => {
+      guard();
+      events?.emit(result.status === 'failed' ? 'skill.execution.failed' : 'skill.execution.completed',
+        result.status === 'failed' ? 'failed' : 'completed', { pkg,
+          ...(result.status === 'failed' ? { errorCategory: result.commands?.some(command => command.timed_out) ? 'timeout' : 'execution_failed' } : {}) });
+      return result;
+    };
     let pkg = candidates.find(pkg => pkg.name === 'web-artifacts-builder' && ['web-artifacts-builder', 'artifact', 'bundle', 'html', 'react'].some(word => prompt.toLowerCase().includes(word))
       && safeFile('scripts/init-artifact.sh', pkg.rootDir) && safeFile('scripts/bundle-artifact.sh', pkg.rootDir));
     const web = Boolean(pkg);
@@ -119,11 +131,13 @@ export function createNativeSkillWorkflowExecutor({ runCommand, workDir, project
     if (!pkg) {
       const instructions = candidates.find(pkg => !existsSync(join(pkg.rootDir, 'scripts')) && pkg.body?.trim());
       guard();
-      return instructions ? { ...base, status: 'instructions', executed_skill: instructions.name, instructions: instructions.body,
-        warnings: ['This Skill provides instructions. Follow them using your available tools.'] }
+      if (instructions) events?.emit('skill.execution.started', 'running', { pkg: instructions });
+      return instructions ? finish({ ...base, status: 'instructions', executed_skill: instructions.name, instructions: instructions.body,
+        warnings: ['This Skill provides instructions. Follow them using your available tools.'] }, instructions)
         : { ...base, status: packages.length ? 'skipped' : 'no_skills', warnings: ['No selected Skill exposes an executable workflow entrypoint.'] };
     }
     guard();
+    events?.emit('skill.execution.started', 'running', { pkg });
     // The Host supplies one private workdir per original invocation. Existing
     // projects are never deleted; a duplicate invocation belongs to its ledger.
     if (!existsSync(root)) { directory(dirname(root)); guard(); mkdirSync(root, { mode: 0o700 }); }
@@ -132,15 +146,17 @@ export function createNativeSkillWorkflowExecutor({ runCommand, workDir, project
       requireValue(stat.ino === rootStat.ino && stat.dev === rootStat.dev, 'SW_DIRECTORY_CHANGED'); return true; };
     const commands = [];
     async function run(argv, cwd, env = {}) {
-      check(); const result = await runCommand({ argv, cwd, env, timeoutSeconds: 300, signal, assertCurrent: check }); check();
+      check(); const result = await runCommand({ argv, cwd,
+        env: { ...env, ...(events ? events.commandEnvironment(pkg, join(root, SKILL_EVENT_FILE)) : {}) },
+        timeoutSeconds: 300, signal, assertCurrent: check }); check();
       requireValue(result && !result.uncertain && result.status !== 'uncertain' && Number.isSafeInteger(result.exit_code), 'SW_COMMAND_OUTCOME_UNKNOWN');
       commands.push(commandRecord(argv.map(value => basename(value)).join(' '), cwd, result)); return result;
     }
     let result, outputDir;
     if (web) {
       outputDir = join(root, project); check();
-      if (existsSync(outputDir)) return { ...base, status: 'failed', executed_skill: pkg.name, commands: [],
-        error: 'Artifact project already exists; reconcile the original workflow.', error_type: 'SW_PROJECT_EXISTS' };
+      if (existsSync(outputDir)) return finish({ ...base, status: 'failed', executed_skill: pkg.name, commands: [],
+        error: 'Artifact project already exists; reconcile the original workflow.', error_type: 'SW_PROJECT_EXISTS' }, pkg);
       result = await run(['bash', join(pkg.rootDir, 'scripts/init-artifact.sh'), project], root);
       if (result.exit_code === 0) { directory(outputDir); result = await run(['bash', join(pkg.rootDir, 'scripts/bundle-artifact.sh')], outputDir); }
     } else {
@@ -156,8 +172,8 @@ export function createNativeSkillWorkflowExecutor({ runCommand, workDir, project
     const outputFiles = web ? artifacts.files.filter(path => path === join(outputDir, 'bundle.html')) : artifacts.files;
     const text = collectText(artifacts.files, root); check();
     const status = result.exit_code === 0 && (!web || outputFiles.length) ? 'ok' : 'failed';
-    return { ...base, status, executed_skill: pkg.name, commands, artifacts: artifacts.files, output_files: outputFiles,
-      artifacts_truncated: artifacts.truncated, ...text, ...(status === 'failed' ? { error: `Command failed with exit code ${result.exit_code}` } : {}) };
+    return finish({ ...base, status, executed_skill: pkg.name, commands, artifacts: artifacts.files, output_files: outputFiles,
+      artifacts_truncated: artifacts.truncated, ...text, ...(status === 'failed' ? { error: `Command failed with exit code ${result.exit_code}` } : {}) }, pkg);
   }
   return { execute };
 }

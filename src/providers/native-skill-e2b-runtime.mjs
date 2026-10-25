@@ -13,6 +13,7 @@ import { stagePackages, publishArtifacts, NATIVE_SKILL_RUNTIME } from './native-
 import { createNativeSkillWorkflowExecutor, readSkillWorkflowArtifact } from './native-skill-workflow.mjs';
 import { createNativeSkillE2BFiles, NATIVE_SKILL_E2B_FILES } from './native-skill-e2b-files.mjs';
 import { NATIVE_SKILL_INPUT_FILES, SKILL_INPUT_ROOT, normalizeSkillInputFiles, stageSkillInputFiles } from './native-skill-inputs.mjs';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence, SKILL_EVENT_FILE, SKILL_EVENT_BYTES } from '../../packages/agentkit-harness/src/native/skill-events.mjs';
 
 export const NATIVE_SKILL_E2B_RUNTIME = 'agentkit.native-skill-e2b-runtime/v1';
 
@@ -106,7 +107,7 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
         const value = await Promise.race([Promise.resolve().then(() => { guard(); return effect(); }), canceled]); guard(); return value;
       } finally { signal.removeEventListener('abort', abort); }
     }
-    let release, intent, recordPath, host, remoteId, ownerRequest, dispatched = false, cleanupAttempted = false;
+    let release, intent, events, recordPath, host, remoteId, ownerRequest, dispatched = false, cleanupAttempted = false;
     const unknown = error => ({ ok: false, status: 'uncertain', uncertain: true, runtime_id: runtimeId, task_id: taskId,
       backend: 'e2b', isolated: true, error_type: error, exit_code: null,
       ...(remoteId ? { remote_runtime_id: remoteId, sandbox_id: remoteId } : {}),
@@ -119,18 +120,22 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
       release = tryLock(join(directory, 'owner.sqlite'));
       if (!release || existsSync(recordPath)) {
         const previous = read(recordPath); matches(previous); guard(); intent = previous; remoteId = previous.sandboxId;
-        return previous.phase === 'finished' ? copy(previous.result) : unknown(release ? 'skill_runtime_outcome_unknown' : 'skill_runtime_in_progress');
+        return previous.phase === 'finished' ? copy(previous.result) : { ...unknown(release ? 'skill_runtime_outcome_unknown' : 'skill_runtime_in_progress'),
+          ...nativeSkillEventEvidence(previous.skillEvents) };
       }
       intent = { contract: owner.contract, binding, request: body(request), runtimeId, taskId,
-        phase: 'executing', commands: [], sandboxId: null, createdAt: Date.now() };
+        phase: 'executing', commands: [], skillEvents: [], sandboxId: null, createdAt: Date.now() };
       guard(); save(recordPath, intent); dispatched = true;
+      events = createNativeSkillEventJournal({ runtimeId, request, bindingDigest, events: intent.skillEvents,
+        persist: () => { storage(); save(recordPath, intent); } });
+      events.emit('skill.workflow.started', 'running', { attributes: { backend: 'e2b' } });
       const packageRequest = { ...body(request), signal };
       const packageGuard = () => {
         guard(); invariant(packageRequest.signal === signal && packageRequest.assertCurrent === packageGuard
           && canonical(body(packageRequest)) === original, 'SKILL_RUNTIME_PACKAGE_REQUEST_CHANGED'); return true;
       };
       packageRequest.assertCurrent = packageGuard;
-      const loaded = await boundary(() => loadPackages(packageRequest)); packageGuard();
+      const loaded = await boundary(() => loadPackages(packageRequest, events)); packageGuard();
       const packages = stagePackages(loaded, join(directory, 'packages'), guard), workDir = join(directory, 'work');
       privateDirectory(workDir, true); guard();
       intent.packages = packages.map(pkg => Object.fromEntries(Object.entries({ name: pkg.name, skillId: pkg.skillId,
@@ -146,6 +151,7 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
       ownerRequest = Object.freeze({ ...freeze(body(request)), definition: freeze(copy(request.lockedDefinition)), signal });
       const created = await boundary(() => host.owner.ensure(ownerRequest)); remoteId = created.sandboxId;
       intent.sandboxId = remoteId; save(recordPath, intent); guard();
+      events.emit('sandbox.session.created', 'completed', { attributes: { backend: 'e2b', scope: 'invocation' } });
       const processes = new E2BCommandStore({ stateRoot: join(directory, 'processes'), workspaceRoot: workspace, sessionId,
         sandboxId: remoteId, authority: guard,
         ...(inProcessTransport ? { transport: await boundary(() => host.createTransport()) }
@@ -248,7 +254,7 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
           else { invariant(item.type === 'file', 'SKILL_RUNTIME_REMOTE_ARTIFACT_INVALID'); await mirrorFile(item.path); }
         }
       }
-      const workflow = await createNativeSkillWorkflowExecutor({ workDir, projectName: fixedSettings.projectName,
+      const workflow = await createNativeSkillWorkflowExecutor({ workDir, projectName: fixedSettings.projectName, events,
         async runCommand({ argv, cwd, env, timeoutSeconds, assertCurrent }) {
           const check = () => { guard(); invariant(assertCurrent() === true, 'SKILL_RUNTIME_WORKFLOW_CHANGED'); return true; };
           const remoteArgs = argv.map(value => value.startsWith('/') ? mapPath(value) : value);
@@ -257,12 +263,20 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
             ...(inputs.length ? { KSADK_SKILL_INPUT_DIR: SKILL_INPUT_ROOT,
               KSADK_SKILL_INPUT_FILES: canonical(inputs.map(item => item.targetPath)) } : {}),
             ...Object.fromEntries(Object.entries(env).map(([key, value]) => [key,
-            ['KSADK_SKILL_WORKDIR', 'KSADK_SKILL_OUTPUT_DIR', 'KSADK_SKILL_ROOT_DIR'].includes(key) ? mapPath(value) : value])) };
+            ['KSADK_SKILL_WORKDIR', 'KSADK_SKILL_OUTPUT_DIR', 'KSADK_SKILL_ROOT_DIR', 'KSADK_SKILL_EVENT_FILE'].includes(key) ? mapPath(value) : value])) };
           const output = await runRemote(remoteArgs.map(quote).join(' '), mapPath(cwd), remoteEnvironment, check, timeoutSeconds); check();
           const generic = argv[1].endsWith('/scripts/run-workflow.sh');
           if (generic) await mirrorDirectory(`${remoteWork}/artifacts`); check();
           // The reference web workflow exports bundle.html, never node_modules.
           const listing = await boundary(() => files.list(fileRequest({ path: remoteWork })));
+          if (listing.entries.some(item => item.type === 'file' && item.name === SKILL_EVENT_FILE)) {
+            try {
+              const data = await boundary(() => files.read(fileRequest({ path: `${remoteWork}/${SKILL_EVENT_FILE}`, maxBytes: SKILL_EVENT_BYTES })));
+              check();
+              if (!Buffer.isBuffer(data.bytes) || data.truncated || data.size !== data.bytes.length || hash(data.bytes) !== data.sha256) events.reject();
+              else events.accept(new TextDecoder('utf-8', { fatal: true }).decode(data.bytes));
+            } catch { check(); events.reject(); }
+          }
           const project = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(fixedSettings.projectName) ? fixedSettings.projectName : 'ksadk-artifact';
           if (listing.entries.some(item => item.type === 'dir' && item.name === project)) {
             check(); privateDirectory(join(workDir, project), true);
@@ -281,11 +295,15 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
           check(); return { ...output, stdout: translated.join('\n') };
         } }).execute({ workflowPrompt: request.workflowPrompt, skillNames: request.skillNames, packages, signal, assertCurrent: guard });
       guard(); const published = publishArtifacts(workflow, workDir, workspace, runtimeId, guard);
+      events.artifacts(published, packages);
       intent.workflow = published; save(recordPath, intent); guard();
       cleanupAttempted = true;
       const closed = await boundary(() => host.owner.close(ownerRequest));
       invariant(closed.confirmed === true, 'SKILL_RUNTIME_CLEANUP_UNKNOWN'); guard();
+      events.emit('sandbox.session.cleaned_up', 'completed', { attributes: { backend: 'e2b', cleanup_scope: 'invocation' } });
+      events.emit(workflow.status === 'failed' ? 'skill.workflow.failed' : 'skill.workflow.completed', workflow.status === 'failed' ? 'failed' : 'completed');
       const result = { ...published, ...(published.commands ? { commands: published.commands.map(command => ({ ...command, cwd: mapPath(command.cwd) })) } : {}),
+        ...nativeSkillEventEvidence(intent.skillEvents),
         workflow_status: workflow.status, exit_code: 0, executed: true, ok: workflow.status !== 'failed',
         ...(workflow.status === 'failed' ? { error_type: workflow.error_type ?? 'skill_workflow_failed' } : {}),
         runtime_id: runtimeId, task_id: taskId, remote_runtime_id: remoteId, sandbox_id: remoteId, backend: 'e2b', isolated: true,
@@ -309,6 +327,11 @@ function createE2BSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, bin
         }
       } catch { /* durable lifecycle record retains the original uncertain effect */ }
       const result = unknown(error.code ?? 'skill_runtime_outcome_unknown');
+      if (remoteId && cleanupAttempted) events?.emit(cleanup === 'completed' ? 'sandbox.session.cleaned_up' : 'sandbox.session.cleanup_failed',
+        cleanup === 'completed' ? 'completed' : 'uncertain', { attributes: { backend: 'e2b', cleanup_scope: 'invocation' },
+          ...(cleanup === 'completed' ? {} : { errorCategory: 'cleanup_not_confirmed' }) });
+      events?.failOpen(); events?.emit('skill.workflow.failed', 'uncertain', { errorCategory: 'outcome_unknown' });
+      Object.assign(result, nativeSkillEventEvidence(intent.skillEvents));
       result.sandbox = { creation_status: remoteId ? 'completed' : 'unknown', instance_status: remoteId ? 'created' : 'unknown', cleanup_status: cleanup };
       storage(); save(recordPath, { ...intent, sandboxId: remoteId ?? null, phase: 'finished', result, completedAt: Date.now() }); return result;
     } finally { clearTimeout(timer); release?.(); }

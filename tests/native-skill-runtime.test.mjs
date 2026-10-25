@@ -65,6 +65,31 @@ test('instruction-only Skills execute the Node runtime without inventing a scrip
   assert.equal(result.executed, true, 'the Node runtime did execute'); assert.equal(result.commands, undefined);
 });
 
+test('real Skill sidecar facts are bound, redacted and restored with the original workflow receipt', async t => {
+  const script = `${JSON.stringify(process.execPath)} <<'JS'
+const fs = require('fs');
+const event = {schema_version: 1, event_id: 'script-one', event_type: 'skill.manifest.parsed', status: 'completed',
+ started_at: 10, skill_invocation_id: process.env.KSADK_SKILL_INVOCATION_ID,
+ skill_ref: JSON.parse(process.env.KSADK_SKILL_REF_JSON), run_id: 'forged-run',
+ attributes: {has_description: true, password: 'never-export-canary'}};
+fs.writeFileSync(process.env.KSADK_SKILL_EVENT_FILE, JSON.stringify(event)+'\\n'+JSON.stringify({...event,event_id:'forged',event_type:'skill.workflow.completed'})+'\\n');
+JS
+printf 'sidecar result' > "$KSADK_SKILL_OUTPUT_DIR/result.txt"`;
+  const h = setup(t, script), result = await h.runtime.execute(request());
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const events = result.skill_events;
+  assert.equal(events.filter(event => event.attributes.source === 'sandbox').length, 1);
+  assert.equal(events.find(event => event.attributes.source === 'sandbox').run_id, 'run');
+  assert.equal(events.filter(event => event.event_type === 'sandbox.envelope.rejected').length, 1);
+  assert.equal(events.filter(event => event.event_type === 'skill.workflow.completed').length, 1);
+  assert.ok(events.some(event => event.event_type === 'skill.artifact.created'));
+  assert.ok(!events.some(event => event.event_type === 'skill.result.consumed'));
+  assert.doesNotMatch(JSON.stringify(events), /never-export-canary|forged-run/);
+  const cold = createNativeLocalSkillRuntime({ ...h.options, loadPackages: () => assert.fail('events must replay without executing') });
+  assert.deepEqual(await cold.execute(request()), result);
+  assert.deepEqual(JSON.parse(readFileSync(join(entry(h), 'record.json'), 'utf8')).skillEvents, events);
+});
+
 test('a failed Skill command is a recorded workflow failure, never a successful result', async t => {
   const h = setup(t, 'printf "failed" >&2\nexit 7'); const result = await h.runtime.execute(request());
   assert.equal(result.ok, false); assert.equal(result.workflow_status, 'failed');

@@ -63,6 +63,9 @@ test('real DSH owner executes exact local bytes once, persists no fabricated Nat
   assert.equal(first.status, 'ok', canonical(first)); assert.equal(first.content.isolated, false);
   assert.equal(first.content.backend, 'local_process'); assert.match(first.content.runtime_id, /^dsh-local-skill:/u);
   assert.equal(first.content.command_ids.length, 1);
+  assert.equal(first.content.skill_events.at(-1).event_type, 'skill.workflow.completed');
+  assert.ok(first.content.skill_events.every(event => event.run_id === '' && event.runtime_id.startsWith('dsh-local-skill:')),
+    'DSH diagnostics preserve the real DSH owner and never invent a Native Run');
   const [saved] = h.records(); assert.equal(saved.record.contract, DSH_LOCAL_SKILL_RUNTIME);
   assert.equal(saved.record.request.agentId, 'agent'); assert.equal(saved.record.request.sessionId, 'session');
   assert.equal(saved.record.request.callId, 'call'); assert.equal(saved.record.binding.agentId, 'agent');

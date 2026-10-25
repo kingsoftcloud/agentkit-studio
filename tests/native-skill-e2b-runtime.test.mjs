@@ -174,6 +174,10 @@ test('E2B workflow uses production lifecycle/SDK adapter/command store, exact bi
   assert.equal(h.peer.calls.filter(call => call.method === 'create').length, 1);
   assert.equal(h.peer.calls.filter(call => call.method === 'run').length, 3);
   assert.equal(h.peer.calls.filter(call => call.method === 'kill').length, 1);
+  assert.ok(first.skill_events.some(event => event.event_type === 'sandbox.session.created'));
+  assert.ok(first.skill_events.some(event => event.event_type === 'sandbox.session.cleaned_up'));
+  assert.ok(first.skill_events.some(event => event.event_type === 'skill.artifact.created'));
+  assert.equal(first.skill_events.at(-1).event_type, 'skill.workflow.completed');
   const count = h.peer.calls.length;
   const reopened = createNativeE2BSkillRuntime({ ...h.options, loadPackages: () => assert.fail('finished invocation must not reload') });
   assert.deepEqual(await reopened.execute(request()), first); assert.equal(h.peer.calls.length, count);
@@ -201,8 +205,25 @@ test('an unconfirmed cleanup never becomes workflow success and keeps the actual
   const h = setup(t, { killResult: 'true' }), result = await h.runtime.execute(request());
   assert.equal(result.status, 'uncertain'); assert.equal(result.ok, false); assert.equal(result.remote_runtime_id, 'skill-peer-1');
   assert.equal(result.command_ids.length, 3); assert.equal(result.sandbox.cleanup_status, 'not_confirmed');
+  assert.ok(result.skill_events.some(event => event.event_type === 'sandbox.session.cleanup_failed' && event.status === 'uncertain'));
+  assert.ok(!result.skill_events.some(event => event.event_type === 'skill.workflow.completed'));
   assert.deepEqual(await createNativeE2BSkillRuntime(h.options).execute(request()), result);
   assert.equal(h.peer.calls.filter(call => call.method === 'kill').length, 1, 'unknown cleanup must not be attempted again automatically');
+});
+
+test('E2B sidecar uses the original remote file port and cannot forge Host completion or correlation', async t => {
+  const h = setup(t);
+  writeFileSync(join(h.pkg, 'scripts/run-workflow.sh'),
+    `printf '{"schema_version":1,"event_id":"peer-one","event_type":"skill.manifest.parsed","status":"completed","started_at":10,"skill_invocation_id":"%s","skill_ref":%s,"run_id":"forged-run","attributes":{"password":"never-export"}}\\n' "$KSADK_SKILL_INVOCATION_ID" "$KSADK_SKILL_REF_JSON" > "$KSADK_SKILL_EVENT_FILE"\nprintf 'remote sidecar' > "$KSADK_SKILL_OUTPUT_DIR/result.txt"`);
+  const first = await h.runtime.execute(request()); assert.equal(first.ok, true, canonical(first));
+  const child = first.skill_events.filter(event => event.attributes.source === 'sandbox');
+  assert.equal(child.length, 1); assert.equal(child[0].run_id, 'run');
+  assert.equal(child[0].attributes.password, undefined);
+  assert.ok(h.peer.calls.some(call => call.method === 'read' && call.path.endsWith('.agentkit-skill-events.jsonl')));
+  assert.equal(first.skill_events.at(-1).event_type, 'skill.workflow.completed');
+  const count = h.peer.calls.length;
+  assert.deepEqual(await createNativeE2BSkillRuntime({ ...h.options, loadPackages: () => assert.fail('no replay') }).execute(request()), first);
+  assert.equal(h.peer.calls.length, count);
 });
 
 test('authority loss after remote init prevents the bundle command and cleanup from using stale authority', async t => {

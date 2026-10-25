@@ -10,6 +10,7 @@ import { LocalCommandStore } from '../../packages/agentkit-harness/src/native/lo
 import { buildScriptEnvironment, localControlSettings } from '../../packages/agentkit-harness/src/native/local-process.mjs';
 import { readSkillWorkflowArtifact, NATIVE_SKILL_WORKFLOW, createNativeSkillWorkflowExecutor } from './native-skill-workflow.mjs';
 import { checkGovernedCommand } from '../../packages/agentkit-harness/src/native/local-command-policy.mjs';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence, SKILL_EVENT_FILE, SKILL_EVENT_BYTES } from '../../packages/agentkit-harness/src/native/skill-events.mjs';
 
 export const NATIVE_SKILL_RUNTIME = 'agentkit.native-skill-runtime/v1';
 const RECORD_LIMIT = 16 * 1024 ** 2, REQUEST_LIMIT = 2 * 1024 ** 2;
@@ -184,21 +185,26 @@ function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, b
     if (!release) {
       guard(); const previous = readJson(recordPath); matches(previous); guard();
       return previous.phase === 'finished' ? copy(previous.result) : { ...unknown(runtimeId, taskId, 'skill_runtime_in_progress'),
+        ...nativeSkillEventEvidence(previous.skillEvents),
         command_ids: previous.commands.map(command => command.taskId) };
     }
-    let intent, dispatched = false;
+    let intent, events, dispatched = false;
     try {
       guard();
       if (existsSync(recordPath)) {
         const previous = readJson(recordPath);
         matches(previous);
         return previous.phase === 'finished' ? copy(previous.result) : { ...unknown(runtimeId, taskId),
+          ...nativeSkillEventEvidence(previous.skillEvents),
           command_ids: previous.commands.map(command => command.taskId) };
       }
       intent = { contract: owner.contract, binding, request: requestBody(request), runtimeId, taskId,
-        phase: 'executing', commands: [], createdAt: Date.now() };
+        phase: 'executing', commands: [], skillEvents: [], createdAt: Date.now() };
       guard(); saveRecord(recordPath, intent); dispatched = true;
-      const loaded = await loadPackages(request); guard();
+      events = createNativeSkillEventJournal({ runtimeId, request, bindingDigest, events: intent.skillEvents,
+        persist: () => { storage(); saveRecord(recordPath, intent); } });
+      events.emit('skill.workflow.started', 'running', { attributes: { backend: 'local_process' } });
+      const loaded = await loadPackages(request, events); guard();
       const packages = stagePackages(loaded, join(directory, 'packages'), guard), workDir = join(directory, 'work');
       privateDirectory(workDir, true); guard();
       intent.packages = packages.map(pkg => Object.fromEntries(Object.entries({ name: pkg.name, skillId: pkg.skillId,
@@ -206,7 +212,8 @@ function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, b
         manifestHash: hash(pkg.body), files: pkg.stagedManifest }).filter(([, value]) => value !== undefined)));
       saveRecord(recordPath, intent); guard();
       const started = performance.now();
-      const workflow = await createNativeSkillWorkflowExecutor({ workDir, projectName: fixedSettings.projectName,
+      let processCreated = false;
+      const workflow = await createNativeSkillWorkflowExecutor({ workDir, projectName: fixedSettings.projectName, events,
         async runCommand({ argv, cwd, env: commandEnv, timeoutSeconds, assertCurrent }) {
           const check = () => { guard(); invariant(assertCurrent() === true, 'SKILL_RUNTIME_WORKFLOW_CHANGED'); return true; };
           check();
@@ -223,6 +230,9 @@ function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, b
           const handle = await processes.start({ operationKey: commandKey, command, cwd,
             env: buildScriptEnvironment(environment, { settings: controls, required: commandEnv }),
             settings: controls, timeoutMs: Math.floor(timeoutMs), assertCurrent: check });
+          check();
+          if (!processCreated) { events.emit('sandbox.session.created', 'completed', {
+            attributes: { backend: 'local_process', scope: 'process_group' } }); processCreated = true; }
           const cancel = () => { try { handle.requestCancel(); } catch { /* original locator retained */ } };
           signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) cancel();
           let observed;
@@ -233,10 +243,21 @@ function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, b
           } catch (error) { cancel(); throw error; }
           finally { signal.removeEventListener('abort', cancel); }
           invariant(!observed.evidenceIncomplete && !observed.outputMayBeTruncated && Number.isSafeInteger(observed.exitCode), 'SKILL_RUNTIME_OUTPUT_INCOMPLETE');
+          const sidecar = join(workDir, SKILL_EVENT_FILE);
+          if (existsSync(sidecar)) {
+            try { const data = readSkillWorkflowArtifact(sidecar, workDir, SKILL_EVENT_BYTES);
+              if (data.truncated) events.reject('event_budget_exceeded');
+              else events.accept(new TextDecoder('utf-8', { fatal: true }).decode(data.bytes));
+            } catch { check(); events.reject(); }
+          }
+          check();
           return { exit_code: observed.exitCode, stdout: observed.stdout, stderr: observed.stderr, timed_out: observed.status === 'timed_out' };
         } }).execute({ workflowPrompt: request.workflowPrompt, skillNames: request.skillNames, packages, signal, assertCurrent: guard });
       guard();
+      if (processCreated) events.emit('sandbox.session.cleaned_up', 'completed', {
+        attributes: { backend: 'local_process', cleanup_scope: 'process_group' } });
       let result = publishArtifacts(workflow, workDir, workspace, runtimeId, guard);
+      events.artifacts(result, packages);
       // executed refers to completion of this Node workflow evaluator. Script
       // effects are reported separately in commands; instruction-only results
       // deliberately have no invented command or process receipt.
@@ -247,10 +268,15 @@ function createLocalSkillRuntime({ stateRoot, workspaceRoot, owner, sessionId, b
         sandbox: { creation_status: intent.commands.length ? 'completed' : 'not_required',
           instance_status: intent.commands.length ? 'created' : 'not_created',
           cleanup_status: intent.commands.length ? 'completed' : 'not_required' } };
+      events.emit(workflow.status === 'failed' ? 'skill.workflow.failed' : 'skill.workflow.completed',
+        workflow.status === 'failed' ? 'failed' : 'completed');
+      result = { ...result, ...nativeSkillEventEvidence(intent.skillEvents) };
       storage(); saveRecord(recordPath, { ...intent, phase: 'finished', result, completedAt: Date.now() }); return result;
     } catch (error) {
       if (!dispatched) throw error;
+      events?.failOpen(); events?.emit('skill.workflow.failed', 'uncertain', { errorCategory: 'outcome_unknown' });
       const result = { ...unknown(runtimeId, taskId, error.code ?? 'skill_runtime_outcome_unknown'),
+        ...nativeSkillEventEvidence(intent.skillEvents),
         command_ids: intent.commands.map(command => command.taskId) };
       storage(); saveRecord(recordPath, { ...intent, phase: 'finished', result, completedAt: Date.now() }); return result;
     } finally { release(); }

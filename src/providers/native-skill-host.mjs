@@ -79,7 +79,7 @@ export function prepareNativeSkillHost({ config, env = {}, connection, fetchImpl
     const runtime = runtimeSettings.enabled ? createRuntime({ stateRoot: join(cacheDir, 'runtime'),
       workspaceRoot: workspace, scope, sessionId, bindingDigest, settings: runtimeSettings, env: environment,
       ...(e2b ? { prepared: e2b, inProcessTransport: Boolean(loadSdk) } : {}),
-      assertStorage, loadPackages: request => loadSkillRuntimePackages({ request, localSource, localDefinitions,
+      assertStorage, loadPackages: (request, events) => loadSkillRuntimePackages({ request, events, localSource, localDefinitions,
         userSpaces, publicSpaces, publicAllowlist, service, load, assertStorage }) }) : null;
     const bound = provider(load && (request => {
       assertStorage();
@@ -129,7 +129,7 @@ export function nativeSkillSpaceSettings(config = {}, env = {}) {
 
 /** Shared package selection under the caller's actual runtime authority. */
 export async function loadSkillRuntimePackages({ request, localSource, localDefinitions = [], userSpaces = [], publicSpaces = [],
-  publicAllowlist = [], service, load, assertStorage }) {
+  publicAllowlist = [], service, load, assertStorage, events }) {
   const check = () => { assertStorage(); return request.assertCurrent(); };
   // Reuse the admitted SkillSource's complete content/mode digest. A
   // later edit cannot silently change an already pinned workflow.
@@ -145,8 +145,13 @@ export async function loadSkillRuntimePackages({ request, localSource, localDefi
     for (const { skill } of matches) {
       if (seen.has(skill.name.toLowerCase())) continue;
       check();
-      const loaded = await load({ skillId: skill.skillId, versionId: skill.versionId, name: skill.name,
-        spaceId, contentHash: skill.contentHash ?? '', signal: request.signal, assertCurrent: check });
+      const pkg = { skillId: skill.skillId, versionId: skill.versionId, name: skill.name, contentHash: skill.contentHash ?? '' };
+      events?.emit('skill.load.started', 'running', { pkg });
+      let loaded;
+      try {
+        loaded = await load({ ...pkg, spaceId, signal: request.signal, assertCurrent: check }, { events });
+        check(); events?.emit('skill.load.completed', 'completed', { pkg: { ...pkg, archiveHash: loaded.archiveHash } });
+      } catch (error) { events?.emit('skill.load.failed', 'failed', { pkg, errorCategory: 'load_failed' }); throw error; }
       check(); seen.add(skill.name.toLowerCase());
       packages.push({ name: loaded.name, body: loaded.content, rootDir: loaded.rootDir,
         skillId: loaded.skillId, versionId: loaded.versionId, spaceId: loaded.spaceId, archiveHash: loaded.archiveHash });

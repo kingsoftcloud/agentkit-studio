@@ -157,8 +157,10 @@ These differences remain mandatory audit items before lossless parity:
   transport differences still require a final compatibility decision.
 - Candidate/path sorting uses JavaScript string order; supplementary Unicode
   ordering has not been proven equivalent to Python's ordering.
-- Local runtime configuration is implemented above. Dedicated Skill events,
-  reference-aware garbage collection and the complete product flows remain audit items.
+- Local runtime configuration is implemented above. Typed Skill diagnostics and
+  sidecar admission now use the original durable workflows; see
+  [Skill events and evidence boundaries](native-skill-events.md).
+  Reference-aware garbage collection and the complete product flows remain audit items.
   The optional custom remote Skill Service configuration is a separate path.
   URL `/tree/<ref>/<subdir>` uses a single ref segment; slash-bearing refs use
   the explicit `ref` argument with a plain repository URL.

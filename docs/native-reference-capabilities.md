@@ -631,6 +631,18 @@ only; Studio rejects tool input requiring the exact numeric codec before
 dispatch with an explicit unsupported result. That host boundary remains an open migration requirement,
 so this does not establish completed lossless migration.
 
+## Optional typed Skill diagnostics
+
+`ksadk/skills/events.py` and the shared runtime loader/executor/backends implement
+typed diagnostics and explicit committed-step consumption receipts. The Node
+counterpart is `packages/agentkit-harness/src/native/skill-events.mjs`, wired to
+the production shared package loader and both independent workflow runtimes.
+Sidecar facts are correlated to admitted packages and cannot replace Host-owned
+lifecycle facts or authorize tools. Facts replay from original durable receipts;
+the Studio trace read model consumes the additive result contract. Exact scope,
+directed checks and remaining full product delivery verification are recorded in
+[Skill diagnostics](native-skill-events.md).
+
 ## Optional shared Skill workflow inputs
 
 The reference backend interface `ksadk/skills/runtime/base.py` accepts

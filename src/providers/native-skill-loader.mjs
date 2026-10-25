@@ -17,7 +17,7 @@ export function createNativeSkillLoader({ serviceClient, cacheDir, fetchImpl = h
   invariant(Number.isSafeInteger(maxArchiveBytes) && maxArchiveBytes > 0 && maxArchiveBytes <= 20 * 1024 * 1024,
     'native_skill_archive_limit_invalid');
   const directory = resolve(cacheDir);
-  return async function load(request) {
+  return async function load(request, { events } = {}) {
     const { skillId, versionId, name, spaceId, contentHash = '', signal, assertCurrent } = request;
     invariant([skillId, name, spaceId].every(value => typeof value === 'string' && value.trim())
       && typeof versionId === 'string' && typeof contentHash === 'string', 'native_skill_load_identity_invalid');
@@ -40,12 +40,18 @@ export function createNativeSkillLoader({ serviceClient, cacheDir, fetchImpl = h
     check();
     const { archive, archiveHash } = await fetchNativeSkillArchive({ url: download?.url, contentHash,
       signal, assertCurrent: check, fetchImpl, maxArchiveBytes });
+    check();
+    const pkg = { ...selected, archiveHash };
+    events?.emit('skill.package.downloaded', 'completed', { pkg, attributes: { size_bytes: archive.length } });
+    if (expected) events?.emit('skill.package.hash_verified', 'completed', { pkg });
     const manifests = await materializeCloudSkill(archive, directory, name, { assertCurrent: check });
     check();
+    events?.emit('skill.package.extracted', 'completed', { pkg });
     const matches = manifests.filter(item => String(parseFrontmatter(item.content).name || name).toLowerCase() === name.toLowerCase());
     if (matches.length !== 1) throw fail(matches.length ? 'SKILL_MANIFEST_AMBIGUOUS' : 'SKILL_MANIFEST_IDENTITY_MISMATCH');
     const manifest = matches[0];
     if (manifest.invocation.modelInvocable === false) throw fail('SKILL_MODEL_INVOCATION_DISABLED');
+    events?.emit('skill.manifest.parsed', 'completed', { pkg, attributes: { has_description: Boolean(manifest.description) } });
     return { ...selected, content: manifest.content, rootDir: manifest.resourceBase.path,
       manifestPath: manifest.path, definition: copy(manifest),
       archiveHash, manifestHash: createHash('sha256').update(manifest.content).digest('hex'),

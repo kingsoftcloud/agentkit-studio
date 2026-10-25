@@ -1,5 +1,10 @@
 # Native 迁移当前验收状态
 
+Skill 类型化诊断已接入共用 Node 加载器、本地/E2B 持久工作流及原 ToolRegistry 结果，
+原身份的 JSONL sidecar 校验、错误/清理事实、冷重放及显式消费凭据 API 已实现；Studio
+Trace/OTLP 消费器也能展开这些事实。22 项不同的直接用例通过，未跑全量。完整挂载
+Host/UI 的 trace 投递仍待最终验收，详见 [Skill 事件](native-skill-events.md)。
+
 Host 的 `KSADK_LOCAL_SKILLS_DIR` 已接入 Native Revision/Frozen 资源准入，按参考实现
 读取直接子目录，通过原 SkillSource、权限和持久工作流执行；同名冲突和内容变化明确
 拒绝。直接检查覆盖发现、资源摘要、实际 Native/SQLite 执行及重开，未跑全量。

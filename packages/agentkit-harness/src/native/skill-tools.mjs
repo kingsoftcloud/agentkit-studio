@@ -11,6 +11,7 @@
 // 'uncertain', never 'error' with executed:false.
 
 import { canonical, copy, invariant, scopeKey, toolInputRejection } from '../../../agentkit-harness-core/dist/index.mjs';
+import { nativeSkillEventEvidence } from './skill-events.mjs';
 import { realpath, lstat, stat, readdir } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
@@ -338,11 +339,13 @@ export function createNativeSkillTools({
     // the result is uncertain (side effects may have happened).
     const g3 = guard.check();
     if (g3) return { ...runtimeLocator, ok: false, status: 'uncertain', error_type: g3.code, error_message: g3.message, uncertain: true,
+      ...nativeSkillEventEvidence(result?.skill_events),
       runtime_id: typeof result?.runtime_id === 'string' ? result.runtime_id : runtimeLocator.runtime_id ?? '', exit_code: result?.exit_code ?? null };
 
     // Post-workflow abort: uncertain, not error+executed:false.
     if (guard.signal.aborted) {
       return { ok: false, status: 'uncertain', error_type: 'skill_runtime_uncertain',
+        ...nativeSkillEventEvidence(result?.skill_events),
         error_message: 'Skill workflow completed but the request was cancelled; the outcome may be unknown.',
         uncertain: true, runtime_id: result?.runtime_id || '', exit_code: result?.exit_code ?? null };
     }
@@ -368,6 +371,7 @@ export function createNativeSkillTools({
       return { ...runtimeLocator, ok: false, status: 'uncertain', error_type: 'skill_runtime_uncertain',
         error_message: result.error_message || 'Skill runtime outcome is unknown.',
         uncertain: true, runtime_id: result.runtime_id || '', exit_code: result.exit_code ?? null,
+        ...nativeSkillEventEvidence(result.skill_events),
         ...(Array.isArray(result.command_ids) && result.command_ids.length <= 1000
           && result.command_ids.every(id => typeof id === 'string' && /^[a-f0-9]{64}$/u.test(id))
           ? { command_ids: copy(result.command_ids) } : {}) };
