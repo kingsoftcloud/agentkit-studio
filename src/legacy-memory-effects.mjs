@@ -14,6 +14,35 @@ const digest = value => createHash('sha256').update(canonical(value)).digest('he
 const identityOf = path => { const stat = lstatSync(path); return `${stat.dev}:${stat.ino}`; };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 
+/** Inspect an existing original intent. Never create a journal or dispatch work. */
+export function readLegacyMemoryEffect(root, owner) {
+  invariant(object(owner) && ['native', 'dsh'].includes(owner.kind) && object(owner.identity), 'legacy_memory_effect_unbound');
+  try { privateDirectory(root); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const file = join(root, 'effects.sqlite');
+  if (!privateFile(file, true)) return null;
+  const directoryIdentity = identityOf(root), fileIdentity = identityOf(file);
+  const guard = () => {
+    privateDirectory(root); privateFile(file);
+    invariant(identityOf(root) === directoryIdentity && identityOf(file) === fileIdentity, 'legacy_memory_effect_store_changed');
+    for (const suffix of ['-journal', '-wal', '-shm']) privateFile(file + suffix, true);
+  };
+  guard(); const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    guard(); db.exec('PRAGMA busy_timeout=5000; PRAGMA query_only=ON;');
+    const versions = db.prepare('SELECT version FROM legacy_memory_schema').all();
+    invariant(versions.length === 1 && versions[0].version === 1, 'legacy_memory_effect_schema_unsupported');
+    const identity = digest({ kind: owner.kind, identity: owner.identity });
+    const row = db.prepare('SELECT * FROM legacy_memory_effects WHERE identity=?').get(identity);
+    guard(); if (!row) return null;
+    const sealed = parseNativeJson(row.request);
+    invariant(sealed.contract === LEGACY_MEMORY_EFFECTS && canonical(sealed.owner) === canonical(owner)
+      && ['prepared', 'finished'].includes(row.phase), 'legacy_memory_effect_identity_conflict');
+    return { identity, request: sealed.request, binding: sealed.binding, phase: row.phase,
+      prepared: parseNativeJson(row.prepared), result: row.phase === 'finished' ? parseNativeJson(row.result) : null,
+      createdAt: row.created_at, completedAt: row.completed_at };
+  } finally { db.close(); }
+}
+
 export class LegacyMemoryEffects {
   constructor(root) {
     privateDirectory(root, true);

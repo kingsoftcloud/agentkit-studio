@@ -36,6 +36,7 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
     }, [open, controller, recovery]);
     const page = state.page, detail = state.detail;
     const accounting = recoveryState.status?.accounting;
+    const cloudMemory = recoveryState.status?.cloudMemory;
     const executionGrant = recoveryState.status?.managed?.executionGrant;
     return h(Fragment, null,
       h('button', { type: 'button', style: buttonStyle(), onClick: () => setOpen(true) }, '运行与子任务'),
@@ -45,6 +46,19 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
         accounting ? h('section', { 'aria-label': 'Native 运行用量' },
           h('p', null, `运行用量${accounting.incomplete ? '（统计不完整，显示已知用量）' : accounting.final ? '' : '（截至目前）'}：模型 ${accounting.total.modelCalls} 次 · 工具 ${accounting.total.toolCalls} 次 · 输入 ${accounting.total.inputTokens} / 输出 ${accounting.total.outputTokens} tokens。`),
           h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,
+        cloudMemory ? h('section', { 'aria-label': '云记忆提交' },
+          h('p', { role: cloudMemory.state === 'accepted' ? 'status' : 'alert' },
+            cloudMemory.state === 'accepted' ? '云记忆服务已受理；记忆抽取和索引尚未确认。'
+              : cloudMemory.state === 'unavailable' ? '云记忆提交记录暂时无法读取，请刷新核对。'
+                : cloudMemory.state === 'unconfirmed' ? '云记忆原提交尚无确认回执，可能仍在处理或已中断。'
+                  : '云记忆原提交结果未知。'),
+          cloudMemory.state !== 'unavailable' ? h(Fragment, null,
+            cloudMemory.state !== 'accepted' ? h('p', null, '请携带原提交标识到云记忆服务核对。刷新只读取本地记录，不会重新提交。') : null,
+            h('details', { style: { overflowWrap: 'anywhere' } }, h('summary', null, '云记忆原提交标识'),
+              h('p', null, `记忆库：${cloudMemory.resourceId}`), h('p', null, `原请求：${cloudMemory.requestId}`),
+              cloudMemory.receiptRequestId ? h('p', null, `服务回执：${cloudMemory.receiptRequestId}`) : null,
+              ...cloudMemory.messageIds.map(id => h('p', { key: id }, `原消息：${id}`)),
+              h('p', null, `运行：${cloudMemory.runId}`), h('p', null, `本地提交记录：${cloudMemory.operationId}`))) : null) : null,
         executionGrant && (executionGrant.blockedReason || recoveryState.status.managed.commandState === 'discarded')
           ? h('section', { 'aria-label': '任务执行授权' }, h('p', null,
             recoveryState.status.managed.commandState === 'discarded' ? '排队任务已因执行授权撤销而关闭。'

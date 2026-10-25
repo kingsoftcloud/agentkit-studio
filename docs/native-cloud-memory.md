@@ -54,6 +54,46 @@ event; replay does not create another submission or resource-check event.
 
 ## Directed evidence and remaining work
 
+### Read-only product inspection
+
+The existing authenticated `sessions/native-recovery-status` route now includes
+an optional `agentkit.studio-native-cloud-memory-status/v1` projection of the
+original Run's submission. The existing **运行与子任务** dialog displays it even
+after the Native answer has completed. It shows the original request UUID,
+message UUIDs, resource, Run and local operation identity, and the original
+service receipt ID when accepted. Conversation text, credentials and the
+private transport descriptor are not returned.
+
+`prepared` means **unconfirmed**: the request can still be in flight or the
+process may have stopped. A finished uncertain receipt remains **outcome_unknown**.
+Accepted means service acceptance only; extraction and indexing remain
+`not_confirmed`. Unreadable or incompatible journals show **unavailable** rather
+than fabricated acceptance, rejection or absence, and do not disable the Run's
+other recovery controls. The reader opens only an existing private SQLite
+journal in read-only mode; inspecting an absent journal creates nothing.
+
+For unknown submissions the dialog explicitly directs the operator to check
+the original IDs with the cloud Memory service. Refresh reads local evidence
+only. There is no resubmit action or manual “mark successful” override. Current
+recall/list APIs do not prove acceptance of that exact original request, so a
+matching memory phrase is not promoted to an acceptance receipt. This is an
+explicit manual inspection flow, not automated remote receipt reconciliation.
+
+The affected checks were run once:
+
+```
+node --test --test-name-pattern 'cloud Memory|the recovery client|production recovery rebinds' tests/studio-native-harness.test.mjs tests/studio-native-recovery.test.mjs
+node scripts/build-client.mjs
+```
+
+Eight selected cases passed. These cover Revision/Frozen intent inspection
+before dispatch and acceptance after completion, a new Host over the reopened
+SQLite Run journal reading the same IDs without cloud credentials, lost-response
+inspection without resend, rejection of foreign/invalid client projections,
+absence without journal creation, and existing affected recovery controls.
+Evidence: `.artifacts/native-migration/cloud-memory-inspection.log`. The browser
+bundle built successfully; this does not claim a rendered-browser acceptance.
+
 Only the affected paths were checked on Node 26, with syntax checks and:
 
 ```
@@ -75,6 +115,6 @@ Logs are `.artifacts/native-migration/cloud-memory-{turn,turn-targeted,turn-comp
 
 The Host-service fixtures double the DSH registry/session services. This is not
 a fresh fully mounted Host, browser, online AICP or new process-kill proof.
-Product-level explicit reconciliation for uncertain cloud submissions remains
-open; automatic retry is not a substitute. Final capability/entrypoint
+Automatic remote receipt reconciliation is not available without a service API
+that proves the original submission identity. Final capability/entrypoint
 acceptance and the Native default switch remain separate migration gates.

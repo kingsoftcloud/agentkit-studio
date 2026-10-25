@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
-import { bindStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
+import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions } from '../../../packages/agentkit-harness-core/dist/index.mjs';
@@ -664,7 +664,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resolveRecoveryTurn: resolveRestoredBinding,
     resolveBackgroundTurn: resolveBackgroundBinding,
   });
-  const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents });
+  const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents,
+    cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, storeDir }) });
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents,
     childRecord: request => childHistory(request).record(request) });
   const managedScopeControl = createStudioNativeManagedScopeControl({ ctx, workspaceId, lifetime, active, agentEvents, readChildren });

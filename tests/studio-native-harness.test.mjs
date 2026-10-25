@@ -28,7 +28,8 @@ import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 import { createAgentEngineClient } from '../src/server-client.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
-import { bindStudioNativeCloudMemoryTurn } from '../src/providers/native-cloud-memory-turn.mjs';
+import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../src/providers/native-cloud-memory-turn.mjs';
+import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 
 async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false, resources } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
@@ -74,6 +75,9 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
       nativeEngineContract: 'agentkit.native-dsh-turn/v1',
       nativeTools: { definitions: () => [], forAgent: () => ({ tools: { execute: async () => assert.fail('No tool dispatched') } }) } } };
   if (recovery) services.systemPrompt = { assemble: async () => payload.input.assembly };
+  services.sessionController = { resolveAgent: async id => {
+    assert.equal(id, session.id); return { agent: payload.agent };
+  } };
   const head = () => {
     const scope = { tenantId: 'local', workspaceId: ledgerScope(), userId: 'local-user', agentId: record.metadata.id };
     return ledger.sessionHead(scope, 'session');
@@ -111,6 +115,9 @@ for (const frozen of [false, true]) test(`cloud Memory completion saves its exac
       assert.equal(row.phase, 'prepared'); const intent = JSON.parse(row.prepared);
       assert.deepEqual(intent.payload, JSON.parse(options.body)); assert.equal(intent.requestId, options.headers['X-Ksc-Request-Id']);
       assert.equal(f.head().phase, 'completed', 'Cloud submission cannot manufacture the canonical task terminal');
+      const pending = readStudioNativeCloudMemoryTurn({ record: f.ledger.load(f.head().scope, f.head().runId), storeDir: f.root });
+      assert.equal(pending.state, 'unconfirmed'); assert.equal(pending.requestId, intent.requestId);
+      assert.equal(pending.receiptRequestId, null); assert.equal(pending.completedAt, null);
     } finally { db.close(); }
   };
   await f.host.executeTurn(f.payload);
@@ -120,18 +127,33 @@ for (const frozen of [false, true]) test(`cloud Memory completion saves its exac
   assert.equal(submitted.MemoryCollectionId, 'mem-native'); assert.match(submitted.AgentUserId, /^mp1-/);
   assert.deepEqual(submitted.Data.Conversation.map(value => value.Content[0].Text), ['Finish', 'Complete']);
   const stored = f.ledger.load(f.head().scope, f.head().runId);
+  const identity = { agentId: f.record.metadata.id, sessionId: 'session', runId: stored.snapshot.runId };
+  const route = createSessionRoutes({ getNativeHost: async () => f.host });
+  const originalStatus = (await route('sessions/native-recovery-status', identity)).value;
+  assert.equal(originalStatus.cloudMemory.state, 'accepted');
+  assert.equal(originalStatus.cloudMemory.extraction, 'not_confirmed');
+  assert.equal(originalStatus.cloudMemory.receiptRequestId, 'memory-service-receipt');
+  assert.deepEqual(originalStatus.cloudMemory.messageIds, submitted.Data.Conversation.map(message => message.MessageId));
+  assert.equal(JSON.stringify(originalStatus.cloudMemory).includes('Complete'), false, 'inspection discloses IDs, not conversation text');
   await f.host.close();
   const reopened = new SqliteRunStore(join(f.root, 'runs.sqlite'));
   const cold = await bindStudioNativeCloudMemoryTurn({ record: f.record, scope: stored.snapshot.scope, sessionId: 'session',
     store: reopened, storeDir: f.root, resources, sealedCapsule: stored.configuration.hostRecoveryBinding, input: stored.snapshot.goal,
     agent: f.payload.agent });
+  let coldHost;
   try {
+    coldHost = await createStudioNativeHarness({ ctx: { get: id => f.services[id] }, storeDir: f.root,
+      workspaceRoot: join(f.root, 'workspace'), agents: f.agents, models: f.models, ledger: reopened,
+      renderPrompt: () => assert.fail('Inspection cannot reassemble a prompt'),
+      fetchImpl: () => assert.fail('Inspection cannot execute a model') });
+    const coldStatus = await coldHost.recoveryStatus(identity);
+    assert.deepEqual(coldStatus.cloudMemory, originalStatus.cloudMemory, 'a new Host reads the original IDs without resource credentials');
     const result = await cold.consume(reopened.load(stored.snapshot.scope, stored.snapshot.runId).snapshot,
       { signal: new AbortController().signal, hostBindingDigest: stored.configuration.hostBindingDigest });
     assert.equal(result.status, 'ok'); assert.equal(result.content.extraction, 'not_confirmed');
     assert.equal(result.content.requestId, 'memory-service-receipt');
     assert.equal(requests.filter(value => value.name === 'CreateMemorySdk').length, 1); assert.equal(f.requests.length, 1);
-  } finally { cold.close(); reopened.close(); }
+  } finally { await coldHost?.close(); cold.close(); reopened.close(); }
 });
 
 test('cloud Memory lost response leaves an unknown durable receipt without failing or resending the original Native turn', async t => {
@@ -151,6 +173,41 @@ test('cloud Memory lost response leaves an unknown durable receipt without faili
   try { const row = db.prepare('SELECT phase,result FROM legacy_memory_effects').get();
     assert.equal(row.phase, 'finished'); assert.equal(JSON.parse(row.result).status, 'uncertain');
   } finally { db.close(); }
+  const identity = { agentId: f.record.metadata.id, sessionId: 'session', runId: f.head().runId };
+  const route = createSessionRoutes({ getNativeHost: async () => f.host });
+  let response = (await route('sessions/native-recovery-status', identity)).value;
+  const original = structuredClone(response);
+  assert.equal(response.cloudMemory.state, 'outcome_unknown'); assert.equal(response.cloudMemory.receiptRequestId, null);
+  assert.equal(response.cloudMemory.messageIds.length, 2); assert.equal(response.cloudMemory.extraction, 'not_confirmed');
+  const state = createNativeRecoveryState({ ...identity, hostRemote: {
+    nativeRecoveryStatus: async () => response,
+    resumeNativeRun: () => assert.fail('Inspection cannot resume'), reconcileNativeTool: () => assert.fail('Inspection cannot reconcile a tool'),
+  } });
+  try {
+    await state.refresh(); assert.deepEqual(state.getSnapshot().status, original);
+    for (const alter of [value => { value.runId = 'foreign'; }, value => { value.sessionId = 'foreign'; },
+      value => { value.state = 'accepted'; }, value => { value.extraction = 'indexed'; },
+      value => { value.contract = 'future/v2'; }, value => { value.credentials = 'secret'; }]) {
+      response = structuredClone(original); alter(response.cloudMemory); await state.refresh();
+      assert.deepEqual(state.getSnapshot().status, original); assert.ok(state.getSnapshot().error);
+    }
+    response = (await route('sessions/native-recovery-status', identity)).value;
+    await state.refresh(); assert.equal(state.getSnapshot().error, '');
+    assert.deepEqual(state.getSnapshot().status.cloudMemory, original.cloudMemory);
+  } finally { state.dispose(); }
+  assert.equal(sends, 1); assert.equal(f.requests.length, 1);
+  const check = new DatabaseSync(path, { readOnly: true });
+  try { assert.equal(check.prepare('SELECT COUNT(*) AS n FROM legacy_memory_effects').get().n, 1); }
+  finally { check.close(); }
+});
+
+test('cloud Memory inspection does not create a journal when the original turn has no cloud submission', async t => {
+  const f = await setup(t, { sqlite: true });
+  await f.host.executeTurn(f.payload);
+  const identity = { agentId: f.record.metadata.id, sessionId: 'session', runId: f.head().runId };
+  assert.equal((await f.host.recoveryStatus(identity)).cloudMemory, null);
+  await assert.rejects(access(join(f.root, 'native-harness/cloud-memory-turns')), { code: 'ENOENT' });
+  assert.equal(f.requests.length, 1);
 });
 
 test('actual Native Host projects its SQLite Run into Studio traces and replay cannot repeat inference or rewrite timings', async t => {

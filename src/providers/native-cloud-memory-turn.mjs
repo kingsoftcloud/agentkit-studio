@@ -1,16 +1,51 @@
 /** Durable post-turn cloud conversation submission, independent of Native inference. */
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, copy, invariant, NATIVE_GOAL_CONTRACT_BINDING, NATIVE_JSON_CODEC } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
-import { LegacyMemoryEffects } from '../legacy-memory-effects.mjs';
+import { LegacyMemoryEffects, readLegacyMemoryEffect } from '../legacy-memory-effects.mjs';
 import { boundMemoryWritePolicy } from '../local-runtime.mjs';
 import { RESOURCE_CHECK_EVENT } from '../resource-checks.mjs';
 import { readNativeRecoveryBinding } from './native-recovery-binding.mjs';
 
 export const STUDIO_NATIVE_CLOUD_MEMORY_TURN = 'agentkit.studio-native-cloud-memory-turn/v1';
+export const STUDIO_NATIVE_CLOUD_MEMORY_STATUS = 'agentkit.studio-native-cloud-memory-status/v1';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+
+/** Called only after the recovery service resolves the original Session/Run. */
+export function readStudioNativeCloudMemoryTurn({ record, storeDir }) {
+  const { scope, sessionId, runId, configDigest } = record.snapshot;
+  const identity = { contract: STUDIO_NATIVE_CLOUD_MEMORY_STATUS, sessionId, runId };
+  try {
+    const effect = readLegacyMemoryEffect(join(realpathSync(storeDir), 'native-harness', 'cloud-memory-turns', hash(scope)),
+      { kind: 'native', identity: { contract: STUDIO_NATIVE_CLOUD_MEMORY_TURN, scope, sessionId, runId } });
+    if (!effect) return null;
+    const capsule = readNativeRecoveryBinding(record, { agentId: scope.agentId, sessionId, runId });
+    const { binding, prepared, result } = effect;
+    invariant(effect.request?.configDigest === configDigest && effect.request.finalText === record.snapshot.finalText
+      && binding?.contract === STUDIO_NATIVE_CLOUD_MEMORY_TURN && binding.agentRevision === capsule.agentRevision
+      && binding.buildId === capsule.buildId && binding.policy?.resourceId === prepared?.payload?.MemoryCollectionId
+      && typeof prepared.requestId === 'string' && prepared.requestId.length > 0 && prepared.requestId.length <= 256
+      && Array.isArray(prepared.payload.Data?.Conversation) && prepared.payload.Data.Conversation.length > 0 && prepared.payload.Data.Conversation.length <= 20
+      && prepared.payload.Data.Conversation.every(message => typeof message.MessageId === 'string' && message.MessageId.length > 0 && message.MessageId.length <= 256)
+      && Number.isSafeInteger(effect.createdAt) && effect.createdAt >= 0
+      && (effect.phase === 'prepared' ? effect.completedAt === null : Number.isSafeInteger(effect.completedAt) && effect.completedAt >= 0),
+    'native_cloud_memory_status_unbound');
+    const accepted = effect.phase === 'finished' && result?.status === 'ok' && result.content?.accepted === true
+      && typeof result.content.requestId === 'string' && result.content.requestId.length > 0 && result.content.requestId.length <= 256;
+    return { ...identity, resourceId: binding.policy.resourceId, operationId: effect.identity,
+      requestId: prepared.requestId, messageIds: prepared.payload.Data.Conversation.map(message => message.MessageId),
+      phase: effect.phase, state: accepted ? 'accepted' : effect.phase === 'prepared' ? 'unconfirmed' : 'outcome_unknown',
+      receiptRequestId: accepted ? result.content.requestId : null, extraction: 'not_confirmed',
+      createdAt: effect.createdAt, completedAt: effect.completedAt };
+  } catch {
+    // Optional Memory inspection must not disable the original Run's controls.
+    // An unreadable journal is not evidence of acceptance, rejection or absence.
+    return { ...identity, state: 'unavailable' };
+  }
+}
 
 export async function bindStudioNativeCloudMemoryTurn({ record, scope, sessionId, store, storeDir, resources, sealedCapsule, input, agent }) {
   const fixedScope = copy(scope), capsule = copy(sealedCapsule), policy = boundMemoryWritePolicy(record, input);

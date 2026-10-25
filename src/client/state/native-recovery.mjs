@@ -56,6 +56,23 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
       && value.a2aTasks.every(task => task?.runId === value.runId && ['runId', 'operationKey', 'callId']
         .every(key => typeof task[key] === 'string' && task[key].trim() && task[key].length <= 256)),
     '远端任务清单与原运行不一致，请刷新核对。');
+    const memory = value.cloudMemory;
+    if (memory != null) {
+      const id = text => typeof text === 'string' && text.trim().length > 0 && text.length <= 256;
+      const base = ['contract', 'sessionId', 'runId', 'state'];
+      const fields = [...base, 'resourceId', 'operationId', 'requestId', 'messageIds', 'phase', 'receiptRequestId', 'extraction', 'createdAt', 'completedAt'];
+      check(memory.contract === 'agentkit.studio-native-cloud-memory-status/v1' && memory.runId === value.runId
+        && memory.sessionId === sessionId && ['accepted', 'unconfirmed', 'outcome_unknown', 'unavailable'].includes(memory.state)
+        && Object.keys(memory).every(key => (memory.state === 'unavailable' ? base : fields).includes(key))
+        && (memory.state === 'unavailable' || id(memory.resourceId) && /^[0-9a-f]{64}$/.test(memory.operationId)
+          && id(memory.requestId) && Array.isArray(memory.messageIds) && memory.messageIds.length > 0 && memory.messageIds.length <= 20
+          && memory.messageIds.every(id) && memory.extraction === 'not_confirmed'
+          && memory.phase === (memory.state === 'unconfirmed' ? 'prepared' : 'finished')
+          && (memory.state === 'accepted' ? id(memory.receiptRequestId) : memory.receiptRequestId === null)
+          && Number.isSafeInteger(memory.createdAt) && memory.createdAt >= 0
+          && (memory.phase === 'prepared' ? memory.completedAt === null : Number.isSafeInteger(memory.completedAt) && memory.completedAt >= 0)),
+      '云记忆提交记录与原运行不一致，请刷新核对。');
+    }
     const accounting = value.accounting;
     if (accounting != null) {
       check(accounting.contract === 'agentkit.studio-native-usage/v1' && accounting.runId === value.runId
