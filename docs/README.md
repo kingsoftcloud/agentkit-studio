@@ -5,6 +5,8 @@
 
 - [Getting started](getting-started.md): installation, models and local development.
 - [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
+- [Native Harness handoff](native-handoff.md): default engine, Node installation, recovery and delivery status.
+- [Native capability status](native-capability-status.md): reference mapping, implemented behavior and remaining differences.
 - [Lifecycle implementation](refactor-lifecycle.md): scope ownership changes, real DSH evidence and remaining acceptance work.
 - [Sidebar implementation](refactor-sidebar.md): native DSH list reuse, removed filtering and acceptance evidence.
 - [前端模块化实施与验收](refactor-client.md)

@@ -106,7 +106,8 @@ node scripts/verify-studio-native-a2a.mjs \
 流式输出、历史续接、取消和子进程退出。它复用生产适配器与 Chat Completions 代理，
 不使用假 CLI；不替代完整挂载 Host 或真实云模型验收。
 
-这仍不等于完整迁移验收。真实云模型、线上 E2B/云服务、全部自动化/Frozen/
-部署/恢复界面组合及最终默认切换分别验收；完整 Desktop/Electron 及其他平台的
-纯 Node 安装仍待闭环。当前实际结论以
-[验收状态](native-migration-status.md) 和保留的具体验证记录为准。
+新 Revision / Build 的默认 Native 切换及两条无开关的完整 Host 路径已验证，见
+[默认策略](native-default-runtime.md)及[集中验收](native-final-acceptance.md)。这些安装
+证据仍不等于全部线上服务或产品界面组合已经验收；完整 Desktop/Electron 及其他
+平台的纯 Node 安装也尚未闭环。当前结论和保留差异以
+[能力对照](native-capability-status.md)为准。
