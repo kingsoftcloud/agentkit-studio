@@ -166,8 +166,12 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       && ['auto', 'permissive', 'openai', 'strict-openai', 'cerebras', 'groq', 'deepseek',
         'zai', 'kspmas-gateway', 'moonshot', 'mimo'].includes(policy.rule), 'invalid_provider_compatibility_policy');
   }
-  for (const key of ['streaming', 'parallelToolCalls'] as const)
+  for (const key of ['streaming', 'parallelToolCalls', 'providerThinkingDisplay'] as const)
     invariant(profile[key] === undefined || typeof profile[key] === 'boolean', `invalid_profile:${key}`);
+  invariant(profile.streamTimeoutPolicy === undefined || profile.streamTimeoutPolicy === 'idle/v1' && profile.streaming !== false,
+    'invalid_stream_timeout_policy');
+  invariant(profile.controllerReasoningPolicy === undefined || profile.controllerReasoningPolicy === 'disclosed-delegate/v1',
+    'invalid_controller_reasoning_policy');
   invariant(profile.outputTokenParameter === undefined || ['max_tokens', 'max_completion_tokens'].includes(profile.outputTokenParameter), 'invalid_output_token_parameter');
   invariant(profile.reasoningEffort === undefined || ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(profile.reasoningEffort), 'invalid_reasoning_effort');
   invariant(profile.thinkingMode === undefined || ['enabled', 'disabled'].includes(profile.thinkingMode), 'invalid_thinking_mode');

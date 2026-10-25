@@ -48,6 +48,7 @@ const FORBIDDEN_BODY_KEYS = new Set([
   'model', 'input', 'tools', 'stream', 'tool_choice', 'parallel_tool_calls',
   'max_output_tokens', 'instructions', 'n',
   'previous_response_id', 'conversation', 'background', 'truncation',
+  'provider_thinking_display',
 ]);
 
 // Hosted provider effects that must not be silently dropped as client prose.
@@ -954,7 +955,7 @@ function createWireIdentity() {
 // failed/error/cancelled) seals the attempt.
 export function createResponsesStreamState(profile) {
   const captureReplay = profile.providerReplayMode !== 'none';
-  const emitThinking = profile.providerReplayMode !== 'none';
+  const emitThinking = profile.providerThinkingDisplay ?? profile.providerReplayMode !== 'none';
   const toolItems = createResponsesToolCalls();
   const contentItems = createResponsesContent(toolItems.items);
   const identity = createWireIdentity();
@@ -1005,7 +1006,10 @@ export function createResponsesStreamState(profile) {
       }
 
       if (text) { this.text += text; emit({ kind: 'text', text }); }
-      if (reasoning && emitThinking) { this.reasoning += reasoning; emit({ kind: 'thinking', text: reasoning }); }
+      if (reasoning) {
+        this.reasoning += reasoning;
+        if (emitThinking) emit({ kind: 'thinking', text: reasoning });
+      }
       // Emit display-only tool argument fragments. The sealed batch in the
       // ModelResult is authoritative; this never executes a tool.
       if (type === 'response.function_call_arguments.delta' && event.delta) {
@@ -1099,8 +1103,11 @@ export function createResponsesStreamState(profile) {
       // Emit the reconciled tails.
       if (textTail) { this.text += drainText + textTail; emit({ kind: 'text', text: drainText + textTail }); }
       else if (drainText) { this.text += drainText; emit({ kind: 'text', text: drainText }); }
-      if (reasoningTail && emitThinking) { this.reasoning += drainReasoning + reasoningTail; emit({ kind: 'thinking', text: drainReasoning + reasoningTail }); }
-      else if (drainReasoning && emitThinking) { this.reasoning += drainReasoning; emit({ kind: 'thinking', text: drainReasoning }); }
+      const privateTail = drainReasoning + reasoningTail;
+      if (privateTail) {
+        this.reasoning += privateTail;
+        if (emitThinking) emit({ kind: 'thinking', text: privateTail });
+      }
 
       // Determine the finish reason.
       let finish;

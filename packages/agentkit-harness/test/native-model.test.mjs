@@ -12,6 +12,48 @@ import { createNativeModelPort } from '../src/native/model-port.mjs';
 import { readModelSse } from '../src/native/model-sse.mjs';
 import { admitInlineReasoningPolicy, inlineReasoningMarker, projectInlineReasoning } from '../src/native/model-inline-reasoning.mjs';
 import { admitProviderCompatibilityPolicy } from '../src/native/model-provider-compat.mjs';
+import { NativeKernel, MemoryRunStore } from '../../agentkit-harness-core/dist/index.mjs';
+import { fixture as coreFixture, scope as coreScope, digest as coreDigest } from '../../agentkit-harness-core/test/fixtures.mjs';
+
+test('idle policy HTTP: hidden reasoning keeps a long real stream alive across adapter and kernel deadlines', async () => {
+  const handler = () => ({ headers: SSE_HEADERS, body: (async function* () {
+    for (let index = 0; index < 14; index++) { yield sse(ochunk({ reasoning_content: 'private ' })); yield { delay: 60 }; }
+    yield sse(ochunk({ content: 'Answer' }, 'stop')); yield sseDone();
+  })() });
+  await withServer(handler, async server => {
+    const { config, snapshot } = coreFixture({ profile: makeProfile({ compatibilityDigest: 'http-stream/v1', requestTimeoutMs: 250, streaming: true,
+      streamTimeoutPolicy: 'idle/v1', providerReplayMode: 'reasoning_content', providerThinkingDisplay: false, maxProviderRetries: 0 }),
+    limits: { effectTimeoutMs: 600, maxWallMs: 5000 } });
+    const store = new MemoryRunStore(); store.create(config, snapshot); const seen = [];
+    const kernel = new NativeKernel({ store, digest: coreDigest, owner: 'http-stream',
+      ports: { model: makePort({ port: server.port, protocol: 'openai-chat' }) }, onStream: (_, event) => seen.push(event) });
+    const result = await kernel.runUntilIdle(coreScope, 'run');
+    assert.equal(result.finalText, 'Answer'); assert.equal(result.usage.modelCalls, 1); assert.equal(server.requests.length, 1);
+    assert.deepEqual(seen, [{ kind: 'text', text: 'Answer' }]);
+    const receipt = store.load(coreScope, 'run').receipts[0];
+    assert.equal(receipt.result.providerReplay.reasoningContent, 'private '.repeat(14));
+    assert.deepEqual(receipt.result.displayStream.records.map(record => record.event), seen);
+  });
+});
+
+test('idle policy HTTP: comments cannot keep a silent provider alive', async () => {
+  const { result, events, requests } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS,
+    body: [': heartbeat\n\n', sse(''), { delay: 180 }, ': heartbeat\n\n', sse(ochunk({ content: 'late' }, 'stop')), sseDone()] }),
+  makeRequest({ profile: makeProfile({ streaming: true, streamTimeoutPolicy: 'idle/v1', requestTimeoutMs: 80 }) }));
+  assert.equal(result.kind, 'provider_retryable_error'); assert.equal(result.failureKind, 'request_timeout');
+  assert.equal(events.length, 0); assert.equal(requests.length, 1);
+});
+
+test('thinking display HTTP: OpenAI display and private replay are independent', async t => {
+  for (const [display, replay] of [[false, 'reasoning_content'], [true, 'reasoning_content'], [true, 'none']]) await t.test(`${display}/${replay}`, async () => {
+    const { result, events } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS,
+      body: [sse(ochunk({ reasoning_content: 'PRIVATE' })), sse(ochunk({ content: 'Answer' }, 'stop')), sseDone()] }),
+    makeRequest({ profile: makeProfile({ providerReplayMode: replay, providerThinkingDisplay: display }) }));
+    assert.equal(result.kind, 'final_candidate'); assert.equal(result.text, 'Answer');
+    assert.equal(events.some(event => event.kind === 'thinking' && event.text === 'PRIVATE'), display);
+    assert.equal(result.providerReplay?.reasoningContent, replay === 'none' ? undefined : 'PRIVATE');
+  });
+});
 
 test('provider compatibility HTTP: pinned options reach the actual buffered request without retries', async t => {
   for (const [model, rule, effort, thinking] of [
@@ -569,7 +611,7 @@ test('anthropic: tool_use assembles from input_json_delta', async () => {
   assert.ok(events.some((e) => e.kind === 'tool_delta'));
 });
 
-test('anthropic: signed thinking captured into anthropic_content replay', async () => {
+for (const providerThinkingDisplay of [undefined, false, true]) test(`anthropic: signed thinking captured into anthropic_content replay (thinking display ${providerThinkingDisplay ?? 'legacy'})`, async () => {
   const handler = () => ({
     status: 200, headers: SSE_HEADERS,
     body: [
@@ -586,7 +628,8 @@ test('anthropic: signed thinking captured into anthropic_content replay', async 
     ],
   });
   const { result, events } = await collect(0, 'anthropic-messages', handler,
-    makeRequest({ profile: makeProfile({ providerReplayMode: 'anthropic_content' }) }));
+    makeRequest({ profile: makeProfile({ providerReplayMode: 'anthropic_content',
+      ...(providerThinkingDisplay === undefined ? {} : { providerThinkingDisplay }) }) }));
   assert.equal(result.kind, 'final_candidate');
   assert.equal(result.text, 'Answer');
   assert.ok(result.providerReplay);
@@ -595,7 +638,7 @@ test('anthropic: signed thinking captured into anthropic_content replay', async 
   assert.equal(thinkingBlock.thinking, 'PRIVATE_THINKING');
   assert.equal(thinkingBlock.signature, 'sig123');
   // thinking emitted for display; signature never in stream metadata
-  assert.ok(events.some((e) => e.kind === 'thinking' && e.text === 'PRIVATE_THINKING'));
+  assert.equal(events.some((e) => e.kind === 'thinking' && e.text === 'PRIVATE_THINKING'), providerThinkingDisplay ?? true);
   assert.ok(events.every((e) => !e.metadata || !e.metadata.signature));
 });
 

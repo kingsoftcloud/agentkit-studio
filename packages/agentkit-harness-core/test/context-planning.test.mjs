@@ -109,6 +109,25 @@ for (const failure of ['missing', 'changed', 'invalid', 'disabled', 'mandatory']
     invalid: 'context_token_count_invalid', disabled: 'context_compaction_disabled', mandatory: 'context_mandatory_state_over_budget' }[failure]);
 });
 
+test('idle policy: compaction renews its wait without publishing summary or activity frames', async t => {
+  let clock = 0, tasks = 0, summaries = 0; const seen = [];
+  const run = setup(t, { tools: [tool({ timeoutMs: 50 })], profile: { profileId: 'summary-idle', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'summary-idle/v1',
+    contextWindow: 2400, maxOutputTokens: 128, requestTimeoutMs: 30, streaming: true, streamTimeoutPolicy: 'idle/v1',
+    maxProviderRetries: 0, retryInitialDelayMs: 0 }, limits: { effectTimeoutMs: 100, maxWallMs: 10000 } });
+  run.ports.model.generate = async (request, emit) => {
+    if (request.purpose === 'compaction') {
+      summaries++;
+      for (let index = 0; index < 3; index++) { clock += 90; emit({ kind: 'activity', text: '' }); }
+      emit({ kind: 'text', text: 'Hidden summary draft' }); return final('Archived notes');
+    }
+    if (++tasks === 1) return toolResponse();
+    emit({ kind: 'text', text: 'Answer' }); return final('Answer');
+  };
+  const result = await run.worker({ monotonicNow: () => clock, onStream: (_, event) => seen.push(event) }).runUntilIdle(scope, 'run');
+  assert.equal(result.finalText, 'Answer'); assert.ok(summaries > 0);
+  assert.deepEqual(seen, [{ kind: 'text', text: 'Answer' }]);
+});
+
 test('PreCompact binds actual admitted original source and feedback remains visible to the task model', async t => {
   const hook = { hookId: 'precompact', sourceRef: 'host://precompact', bindingDigest: `sha256:${'a'.repeat(64)}`,
     executionPolicyDigest: `sha256:${'b'.repeat(64)}`, events: ['PreCompact'], readOnly: true, timeoutMs: 100,

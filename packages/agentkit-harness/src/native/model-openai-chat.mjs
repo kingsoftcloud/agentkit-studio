@@ -33,6 +33,7 @@ function strictParseJson(text) {
 // transport values that belong to the adapter, not the binding parameters.
 const FORBIDDEN_BODY_KEYS = new Set([
   'model', 'messages', 'tools', 'stream', 'n', 'tool_choice', 'parallel_tool_calls', 'max_tokens', 'max_completion_tokens',
+  'provider_thinking_display',
 ]);
 
 // Validate the host binding shape before any HTTP attempt.
@@ -335,7 +336,7 @@ function chatReasoning(message) {
 // accumulated text/usage and classifies the attempt.
 export function createOpenAIStreamTurn(profile, binding) {
   const captureReplay = profile.providerReplayMode !== 'none';
-  const emitThinking = profile.providerReplayMode !== 'none';
+  const emitThinking = profile.providerThinkingDisplay ?? profile.providerReplayMode !== 'none';
   const marker = inlineReasoningMarker(profile.inlineReasoningPolicy, binding);
   const projector = createInlineReasoningProjector(marker);
   let emitContent;

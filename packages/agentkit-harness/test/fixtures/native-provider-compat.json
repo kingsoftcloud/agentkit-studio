@@ -911,6 +911,215 @@
         ],
         "tool_choice": "required"
       }
+    },
+    {
+      "id": "delegate-glm",
+      "rule": "kspmas-gateway",
+      "model": "glm-5.3-flash",
+      "purpose": "task",
+      "profile": {
+        "controllerReasoningPolicy": "disclosed-delegate/v1"
+      },
+      "payload": {
+        "model": "glm-5.3-flash",
+        "stream": true,
+        "n": 1,
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "old answer",
+            "reasoning_content": "private replay"
+          }
+        ],
+        "stream_options": {
+          "include_usage": true,
+          "other": true
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "delegate_task",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      },
+      "expected": {
+        "model": "glm-5.3-flash",
+        "stream": true,
+        "n": 1,
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "old answer",
+            "reasoning_content": "private replay"
+          }
+        ],
+        "stream_options": {
+          "include_usage": true,
+          "other": true
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "delegate_task",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "required",
+        "reasoning_effort": "low",
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    {
+      "id": "delegate-explicit",
+      "rule": "zai",
+      "model": "glm-5.3-flash",
+      "purpose": "task",
+      "profile": {
+        "controllerReasoningPolicy": "disclosed-delegate/v1",
+        "reasoningEffort": "high"
+      },
+      "payload": {
+        "model": "glm-5.3-flash",
+        "stream": true,
+        "n": 1,
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "old answer",
+            "reasoning_content": "private replay"
+          }
+        ],
+        "stream_options": {
+          "include_usage": true,
+          "other": true
+        },
+        "reasoning_effort": "high",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "delegate_task",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      },
+      "expected": {
+        "model": "glm-5.3-flash",
+        "stream": true,
+        "n": 1,
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "old answer",
+            "reasoning_content": "private replay"
+          }
+        ],
+        "stream_options": {
+          "include_usage": true,
+          "other": true
+        },
+        "reasoning_effort": "high",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "delegate_task",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "required",
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    {
+      "id": "delegate-strict",
+      "rule": "strict-openai",
+      "model": "glm-5.3-flash",
+      "purpose": "task",
+      "profile": {
+        "controllerReasoningPolicy": "disclosed-delegate/v1"
+      },
+      "payload": {
+        "model": "glm-5.3-flash",
+        "stream": true,
+        "n": 1,
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "old answer",
+            "reasoning_content": "private replay"
+          }
+        ],
+        "stream_options": {
+          "include_usage": true,
+          "other": true
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "delegate_task",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      },
+      "expected": {
+        "model": "glm-5.3-flash",
+        "stream": true,
+        "n": 1,
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "old answer"
+          }
+        ],
+        "stream_options": {
+          "other": true
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "delegate_task",
+              "parameters": {
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      }
     }
   ]
 }

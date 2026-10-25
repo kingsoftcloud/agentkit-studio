@@ -33,6 +33,7 @@ const ANTHROPIC_VERSION = '2023-06-01';
 
 const FORBIDDEN_BODY_KEYS = new Set([
   'model', 'messages', 'tools', 'stream', 'system', 'tool_choice', 'max_tokens',
+  'provider_thinking_display',
 ]);
 
 const CLIENT_ITEM_TYPES = new Set([
@@ -335,7 +336,7 @@ export function classifyAnthropicStreamError(errorObj) {
 // content_block_* and message_* events. Frame errors throw ProtocolError.
 export function createAnthropicStreamState(profile) {
   const captureReplay = profile.providerReplayMode !== 'none';
-  const emitThinking = profile.providerReplayMode !== 'none';
+  const emitThinking = profile.providerThinkingDisplay ?? profile.providerReplayMode !== 'none';
   return {
     text: '',
     reasoning: '',

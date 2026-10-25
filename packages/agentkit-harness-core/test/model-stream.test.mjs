@@ -12,6 +12,50 @@ function setup(generate, options = {}, overrides = {}) {
   }, ...options });
   return { store, kernel, run: () => kernel.runUntilIdle(scope, 'run') };
 }
+const idleProfile = { profileId: 'idle', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'idle/v1',
+  streaming: true, streamTimeoutPolicy: 'idle/v1', requestTimeoutMs: 30, maxProviderRetries: 0 };
+test('idle policy: activity renews effect wait without a public or durable display fact', async () => {
+  let clock = 0; const seen = [];
+  const host = setup(async (_, emit) => {
+    for (const time of [90, 180, 270]) { clock = time; emit({ kind: 'activity', text: '' }); }
+    clock = 300; emit({ kind: 'text', text: 'Answer' }); return final('Answer');
+  }, { monotonicNow: () => clock, onStream: (_, event) => seen.push(event) },
+  { profile: idleProfile, limits: { effectTimeoutMs: 100, maxWallMs: 1000 } });
+  assert.equal((await host.run()).finalText, 'Answer');
+  assert.deepEqual(seen, [{ kind: 'text', text: 'Answer' }]);
+  const display = host.store.load(scope, 'run').receipts[0].result.displayStream;
+  assert.equal(display.records.length, 1); assert.equal(display.discarded, 0);
+});
+test('idle policy: an expired deadline cannot be revived by late activity', async () => {
+  let clock = 0, late; const seen = [];
+  const host = setup(async (_, emit) => {
+    late = emit; clock = 100; emit({ kind: 'activity', text: '' }); return final('Must not settle');
+  }, { monotonicNow: () => clock, onStream: (_, event) => seen.push(event) },
+  { profile: idleProfile, limits: { effectTimeoutMs: 100, maxWallMs: 1000 } });
+  await host.run();
+  const receipt = host.store.load(scope, 'run').receipts[0];
+  assert.equal(receipt.result.kind, 'provider_retryable_error'); assert.equal(receipt.result.failureKind, 'request_timeout');
+  late({ kind: 'activity', text: '' }); late({ kind: 'text', text: 'late' }); assert.deepEqual(seen, []);
+});
+test('idle policy: progress cannot extend the Run wall budget', async () => {
+  let clock = 0;
+  const host = setup(async (_, emit) => {
+    clock = 80; emit({ kind: 'activity', text: '' }); clock = 150; emit({ kind: 'activity', text: '' });
+    clock = 161; return final('Must not settle');
+  }, { monotonicNow: () => clock }, { profile: idleProfile, limits: { effectTimeoutMs: 100, maxWallMs: 160 } });
+  const result = await host.run();
+  assert.equal(result.outcome, 'budget_exhausted'); assert.equal(result.reason, 'wall_time_hard_limit');
+  assert.equal(host.store.load(scope, 'run').receipts[0].result.code, 'wall_time_hard_limit');
+});
+test('idle policy: canceled streams reject subsequent activity and late results', async () => {
+  let late; const entered = gate(), seen = [];
+  const host = setup(async (_, emit) => { late = emit; emit({ kind: 'activity', text: '' }); entered.resolve(); await new Promise(() => {}); },
+    { onStream: (_, event) => seen.push(event) }, { profile: idleProfile, limits: { effectTimeoutMs: 100, maxWallMs: 1000 } });
+  const running = host.run(); await entered.promise;
+  host.kernel.submit(scope, 'run', { kind: 'cancel', commandId: 'idle-cancel', payload: {} }); await running;
+  late({ kind: 'activity', text: '' }); late({ kind: 'text', text: 'late' }); assert.deepEqual(seen, []);
+  assert.equal(host.store.load(scope, 'run').snapshot.phase, 'canceled');
+});
 test('live public prefix precedes model settlement and is copied into its durable receipt', async () => {
   const seen = [], entered = gate(), finish = gate();
   const host = setup(async (request, emit) => {

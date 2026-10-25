@@ -55,6 +55,9 @@ export function applyProviderChatCompatibility(payload, request, binding) {
   const model = binding.model, name = normalized(model);
   const requested = options.reasoningEffort ?? result.reasoning_effort ?? null;
   let effort = requested;
+  if (requested === null && options.controllerReasoningPolicy === 'disclosed-delegate/v1'
+    && ['zai', 'kspmas-gateway'].includes(compat.rule) && name.startsWith('glm-5.3')
+    && result.tools?.some(tool => tool.type === 'function' && tool.function?.name === 'delegate_task')) effort = 'low';
   if (requested === null && request.purpose === 'compaction' && compat.rule === 'kspmas-gateway'
     && ['glm-5.2', 'deepseek-v4-flash'].includes(name)) effort = 'none';
   effort = compat.supportsEffort ? clampReasoningEffort(model, effort) : null;

@@ -74,6 +74,8 @@ export interface ModelProfile {
     | 'strict-openai' | 'cerebras' | 'groq' | 'deepseek' | 'zai' | 'kspmas-gateway' | 'moonshot' | 'mimo' };
   providerCompatibilityPolicy?: { contract: 'provider-compat/v1'; rule: NonNullable<ModelProfile['inlineReasoningPolicy']>['rule'] };
   streaming?: boolean; outputTokenParameter?: 'max_tokens' | 'max_completion_tokens';
+  streamTimeoutPolicy?: 'idle/v1'; providerThinkingDisplay?: boolean;
+  controllerReasoningPolicy?: 'disclosed-delegate/v1';
   reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   thinkingMode?: 'enabled' | 'disabled'; parallelToolCalls?: boolean;
   temperature?: number; topP?: number;
@@ -426,7 +428,7 @@ export interface ModelRequest extends PortContext {
   toolChoice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
   maxInlineImageBytes: number;
 }
-export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta'; text: string; metadata?: ObjectValue }
+export interface ModelStreamEvent { kind: 'text' | 'thinking' | 'tool_delta' | 'activity'; text: string; metadata?: ObjectValue }
 export interface ModelStreamRecord { time: number; event: ModelStreamEvent }
 export interface ModelPort { generate(request: ModelRequest, emit: (event: ModelStreamEvent) => void): Promise<ModelResult> }
 export interface ToolRequest extends PortContext {

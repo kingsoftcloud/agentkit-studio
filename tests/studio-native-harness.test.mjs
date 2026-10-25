@@ -246,6 +246,9 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(
   assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v1', rule: 'auto' });
   assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v1', rule: 'auto' });
+  assert.equal(bound.configuration.profile.streamTimeoutPolicy, 'idle/v1');
+  assert.equal(bound.configuration.profile.providerThinkingDisplay, false);
+  assert.equal(bound.configuration.profile.controllerReasoningPolicy, 'disclosed-delegate/v1');
   assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
   assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
   if (deliveryReviewPolicy) assert.deepEqual(bound.configuration.deliveryReviewPolicy,

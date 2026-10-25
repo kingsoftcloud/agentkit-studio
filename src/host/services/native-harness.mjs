@@ -372,6 +372,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ['thinkingMode', desc.protocol === 'openai-chat' ? desc.parameters.thinking?.type : undefined], ['parallelToolCalls', desc.parameters.parallel_tool_calls],
           ['temperature', desc.parameters.temperature], ['topP', desc.parameters.top_p],
         ].filter(([, value]) => value !== undefined)) : {};
+        // Presence versions the new display/idle defaults. Restore old Runs
+        // without activating them, and let each child use its own parameters.
+        const runtimePolicy = !original || Object.hasOwn(original.configuration.profile, 'providerThinkingDisplay');
+        const controllerReasoningPolicy = original ? original.configuration.profile.controllerReasoningPolicy : 'disclosed-delegate/v1';
+        const modelRuntimeOptions = runtimePolicy ? {
+          providerThinkingDisplay: desc.parameters.provider_thinking_display ?? false,
+          ...(modelOptions.streaming !== false ? { streamTimeoutPolicy: 'idle/v1' } : {}),
+          ...(controllerReasoningPolicy ? { controllerReasoningPolicy } : {}),
+        } : {};
         const compat = providerCompatibilityPolicy && resolveProviderCompatibility(providerCompatibilityPolicy,
           { model: desc.modelName, baseUrl: desc.baseUrl });
         invariant(!compat || modelOptions.reasoningEffort === undefined || compat.supportsEffort,
@@ -382,10 +391,12 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           readWorkingSetDefaults, recentToolBatchDefaults });
         return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
         profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
-          compatibilityDigest: providerCompatibilityPolicy ? hash({ description: desc, inlineReasoningPolicy, providerCompatibilityPolicy })
+          compatibilityDigest: providerCompatibilityPolicy ? hash({ description: desc, inlineReasoningPolicy, providerCompatibilityPolicy,
+            ...(runtimePolicy ? { modelRuntimeOptions } : {}) })
             : inlineReasoningPolicy ? hash({ description: desc, inlineReasoningPolicy }) : digest,
           ...(inlineReasoningPolicy ? { inlineReasoningPolicy } : {}),
           ...(providerCompatibilityPolicy ? { providerCompatibilityPolicy, ...modelOptions } : {}),
+          ...modelRuntimeOptions,
           ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
           providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
         context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,

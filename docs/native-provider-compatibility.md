@@ -44,10 +44,7 @@ node --test --test-name-pattern 'PreCompact binds actual admitted original sourc
 
 ## 仍需收尾的模型语义
 
-1. 原 Studio `idle/v1` 流式超时随活动续期；Node 仍有请求总时限，长活动流语义
-   不同。需要同时处理 adapter 和核心 effect 超时，不能只去掉一个计时器。
-2. 原 `provider_thinking_display` 是独立开关；当前 thinking 显示与私有回放模式
-   绑定，尚未提供同等独立控制。
-3. Studio Gateway 的 disclosed `delegate_task` controller 默认 effort，以及
-   高级 Anthropic block-binding / 中途 system 投影尚未逐项闭环。本轮完成的是
-   上述正式 OpenAI Native 请求策略，不借此推定其他投影已完成。
+长流 `idle/v1`、独立 thinking 显示和 disclosed `delegate_task` controller 默认
+effort 现已实现并接入冻结配置，具体行为和新增证据见[流式等待](native-stream-timeouts.md)。
+高级 Anthropic block-binding / 中途 system 投影尚未逐项闭环；不能从普通请求及
+上述定向结果推定这些投影已经完成。

@@ -37,6 +37,9 @@ specs = [
     ("fable", "permissive", "claude-fable-5-1", "task", "low", "disabled", True),
     ("haiku", "permissive", "claude-haiku-5-5", "task", "medium", "disabled", True),
     ("deepseek", "deepseek", "deepseek-v4-flash", "task", None, None, True),
+    ("delegate-glm", "kspmas-gateway", "glm-5.3-flash", "task", None, None, True),
+    ("delegate-explicit", "zai", "glm-5.3-flash", "task", "high", None, True),
+    ("delegate-strict", "strict-openai", "glm-5.3-flash", "task", None, None, True),
 ]
 cases = []
 for case_id, rule, model, purpose, requested, mode, tools in specs:
@@ -48,13 +51,21 @@ for case_id, rule, model, purpose, requested, mode, tools in specs:
         payload["reasoning_effort"] = requested
     if tools:
         payload.update(tools=[dict(type="function", function=dict(name="read", parameters=dict(type="object")))], tool_choice="required")
+    controller = case_id.startswith("delegate-")
+    if controller:
+        payload["tools"][0]["function"]["name"] = "delegate_task"
     before = json.loads(json.dumps(payload))
     profile = {}
+    if controller:
+        profile["controllerReasoningPolicy"] = "disclosed-delegate/v1"
     if requested is not None:
         profile["reasoningEffort"] = requested
     if mode is not None:
         profile["thinkingMode"] = mode
-    effort = compat.request_reasoning_effort(p, model=model, purpose=purpose, requested=requested)
+    effective_requested = requested
+    if controller and requested is None:
+        effective_requested = compat.default_delegation_reasoning_effort(p, model=model)
+    effort = compat.request_reasoning_effort(p, model=model, purpose=purpose, requested=effective_requested)
     if effort is not None:
         payload["reasoning_effort"] = effort
     if tools:

@@ -972,7 +972,7 @@ test('responses: host parameters cannot enable hidden conversation history, back
 test('responses: indexed reasoning summary does not require an optional reasoning content array', async () => {
   const reasoning = { type: 'reasoning', id: 'reason-1', summary: [{ type: 'summary_text', text: 'PRIVATE' }] };
   const message = { type: 'message', id: 'message-1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'done' }] };
-  for (const providerReplayMode of ['none', 'reasoning_content']) {
+  for (const providerReplayMode of ['none', 'reasoning_content']) for (const providerThinkingDisplay of [undefined, false, true]) {
     const { result, events } = await collect(() => ({ headers: SSE_HEADERS, body: [
       sse(rcreated()),
       sse({ type: 'response.output_item.added', output_index: 0, item: { type: 'reasoning', id: 'reason-1', summary: [] } }),
@@ -980,10 +980,13 @@ test('responses: indexed reasoning summary does not require an optional reasonin
       sse({ type: 'response.reasoning_summary_text.done', output_index: 0, item_id: 'reason-1', summary_index: 0, text: 'PRIVATE' }),
       sse(fcallDone(0, reasoning)), sse(fcallDone(1, message)),
       sse(rcompleted('resp-1', 'fake-model', undefined, [reasoning, message])),
-    ] }), makeRequest({ profile: makeProfile({ providerReplayMode }) }));
+    ] }), makeRequest({ profile: makeProfile({ providerReplayMode,
+      ...(providerThinkingDisplay === undefined ? {} : { providerThinkingDisplay }) }) }));
     assert.equal(result.kind, 'final_candidate');
     assert.equal(result.text, 'done');
     assert.deepEqual(result.toolCalls, []);
-    assert.equal(events.filter(e => e.kind === 'thinking').map(e => e.text).join(''), providerReplayMode === 'none' ? '' : 'PRIVATE');
+    assert.equal(events.filter(e => e.kind === 'thinking').map(e => e.text).join(''),
+      (providerThinkingDisplay ?? providerReplayMode !== 'none') ? 'PRIVATE' : '');
+    assert.equal(result.providerReplay?.reasoningContent, providerReplayMode === 'none' ? undefined : 'PRIVATE');
   }
 });

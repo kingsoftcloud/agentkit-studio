@@ -133,3 +133,11 @@ chunk、无标记正文、未闭合推理及中断不释放 pending 内容；Hos
 包括 15 组实际 Python 纯策略固定结果、真实本地 HTTP 和原配置恢复。
 具体命令、生成器及明确未闭环项见[模型请求兼容](native-provider-compatibility.md)。
 未重跑全仓、安装或打包；长活动流的 idle 续期及独立 thinking 显示仍有具体差异。
+
+## 长流等待和独立显示收尾
+
+上述 idle/显示差异已补齐，controller 默认 effort 也进入显式策略。编译通过，
+累计 28 项独立定向检查通过；包含一次真实 HTTP 长流跨过 adapter 和核心原期限
+完成，以及压缩、取消、wall budget、原配置恢复和三协议私有回放保留。
+初次 fixture 配置错误及单项重查、所有命令和剩余边界见[流式等待](native-stream-timeouts.md)。
+本轮未重新执行全仓、双 Node、安装或打包。

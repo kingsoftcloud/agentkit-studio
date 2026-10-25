@@ -497,11 +497,27 @@ export class NativeKernel {
     const context: PortContext = { scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId,
       turnId: snapshot.turnId, buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId,
       operationKey: intent.operationKey, signal: effectSignal, executionFence };
-    const portTimeout = intent.kind === 'model' ? configuration.profile.requestTimeoutMs : configuration.limits.effectTimeoutMs;
+    const idleModel = intent.kind === 'model' && configuration.profile.streaming !== false
+      && configuration.profile.streamTimeoutPolicy === 'idle/v1';
+    const portTimeout = intent.kind === 'model' && !idleModel ? configuration.profile.requestTimeoutMs : configuration.limits.effectTimeoutMs;
     const wallRemaining = configuration.limits.maxWallMs === null ? Infinity : Math.max(0, configuration.limits.maxWallMs - this.elapsed(snapshot));
-    const timeoutMs = Math.min(portTimeout, wallRemaining), wallBounded = wallRemaining <= portTimeout;
-    const timeoutCode = wallBounded ? 'wall_time_hard_limit' : 'effect_timeout';
-    const timer = setTimeout(() => abort.abort(new NativeError(timeoutCode)), timeoutMs);
+    const timeoutMs = Math.min(portTimeout, wallRemaining), wallDeadline = started + wallRemaining;
+    let deadline = started + timeoutMs;
+    let timeoutCode = wallRemaining <= portTimeout ? 'wall_time_hard_limit' : 'effect_timeout';
+    let timer = setTimeout(() => abort.abort(new NativeError(timeoutCode)), timeoutMs);
+    const renewActivity = (event: ModelStreamEvent) => {
+      if (!idleModel) return;
+      const valid = event && typeof event.text === 'string' && (event.kind === 'activity'
+        ? event.text === '' && event.metadata === undefined : ['text', 'thinking', 'tool_delta'].includes(event.kind));
+      if (!valid) return;
+      const now = this.monotonicNow();
+      // Late progress cannot revive the expired attempt or its wall allowance.
+      if (now >= deadline) { abort.abort(new NativeError(timeoutCode)); return; }
+      deadline = Math.min(now + portTimeout, wallDeadline);
+      timeoutCode = wallDeadline <= now + portTimeout ? 'wall_time_hard_limit' : 'effect_timeout';
+      clearTimeout(timer);
+      timer = setTimeout(() => abort.abort(new NativeError(timeoutCode)), Math.max(0, deadline - now));
+    };
     let abortListener: () => void = () => {};
     const aborted = new Promise<never>((_, reject) => {
       abortListener = () => reject(effectSignal.reason ?? new NativeError('effect_aborted'));
@@ -524,11 +540,14 @@ export class NativeKernel {
       if (timeoutMs <= 0) abort.abort(new NativeError(timeoutCode));
       effectSignal.throwIfAborted();
       const operation = this.dispatch(context, snapshot, configuration, intent, event => {
-        if (receiving && !effectSignal.aborted) capture?.emit(event);
+        if (!receiving || effectSignal.aborted) return;
+        renewActivity(event);
+        // Liveness has no transcript, display, or execution authority.
+        if (!effectSignal.aborted && event.kind !== 'activity') capture?.emit(event);
       });
       raw = objectValue(await Promise.race([operation, aborted]));
       effectSignal.throwIfAborted();
-      invariant(this.monotonicNow() - started < timeoutMs, timeoutCode);
+      invariant(this.monotonicNow() < deadline, timeoutCode);
       switch (intent.kind) {
         case 'child': {
           const request = childLifecycleRequest(snapshot, intent, effectSignal);
@@ -820,7 +839,7 @@ export class NativeKernel {
           const chunk = snapshot.contextState?.compaction?.chunk;
           invariant(chunk && chunk.projectionDigest === this.digest(chunk.messages), 'context_summary_quote_changed');
           return this.ports.model.generate({ ...context, profile: { ...copy(configuration.profile), maxOutputTokens: chunk.maxOutputTokens },
-            purpose: 'compaction', messages: copy(chunk.messages), tools: [], finalizationOnly: false, maxInlineImageBytes: configuration.limits.maxInlineImageBytes }, () => {});
+            purpose: 'compaction', messages: copy(chunk.messages), tools: [], finalizationOnly: false, maxInlineImageBytes: configuration.limits.maxInlineImageBytes }, emit);
         }
         assertGuidanceRetained(snapshot, modelContextMessages(snapshot, this.digest));
         const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };

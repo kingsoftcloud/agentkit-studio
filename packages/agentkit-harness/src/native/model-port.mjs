@@ -140,7 +140,10 @@ export function createNativeModelPort({
         }
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('text/event-stream')) {
-          return await streamResponse(response, request, binding, emitEvent, internal, maxBytes, idleTimeout);
+          const idlePolicy = request.profile.streaming !== false && request.profile.streamTimeoutPolicy === 'idle/v1';
+          if (idlePolicy) { clearTimer(overallTimer); overallTimer = null; }
+          return await streamResponse(response, request, binding, emitEvent, internal, maxBytes,
+            idlePolicy && overallMs > 0 ? Math.min(idleTimeout, overallMs) : idleTimeout);
         }
         return await bufferedResponse(response, request, binding, maxBytes);
       } catch (error) {
@@ -161,6 +164,7 @@ export function createNativeModelPort({
 
 async function streamResponse(response, request, binding, emit, internal, maxBytes, idleTimeoutMs) {
   const profile = request.profile;
+  const idlePolicy = profile.streaming !== false && profile.streamTimeoutPolicy === 'idle/v1';
   const state = binding.protocol === 'anthropic-messages'
     ? createAnthropicStreamState(profile)
     : binding.protocol === 'openai-responses'
@@ -171,7 +175,9 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
   const abort = (reason) => internal.abort(reason);
   try {
     for await (const frame of readModelSse(response.body, { maxBytes, idleTimeoutMs, abort })) {
+      if (idlePolicy && !frame.data.trim()) continue;
       state.consume(frame, emit);
+      if (idlePolicy) emit({ kind: 'activity', text: '' });
       if (state.done) break;
     }
   } catch (error) {
