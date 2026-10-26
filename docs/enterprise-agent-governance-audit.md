@@ -69,6 +69,16 @@ Studio UI's cancel path remains a separate product acceptance gate.
 is still Host capability metadata, not a one-shot permission grant; its labels
 must not be presented as authorization proof.
 
+Actual Claude Code's focused read-only follow-up found no concrete bypass in
+`native-bound-policy.mjs`, `native-dsh-tools.mjs`, `native-child-tools.mjs` and
+`agent-preset-admission.mjs` plus their direct dispatch helpers. Main review
+confirmed that the production parent constructs `forAgent` with `{ scope,
+store }` in `src/host/services/native-harness.mjs`; the audit's caveat about an
+unbound parent MCP call does not describe that production path. Child-owner
+internals, injected MCP execution, several capability ports and DSH Skill shell
+implementations were outside this focused audit, so it does not close the
+remaining extension/resource authority point.
+
 ## Fixed: parent MCP retained authority across asynchronous waits
 
 The Native gateway previously supplied an exact current-intent checker only for
