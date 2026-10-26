@@ -93,13 +93,13 @@ line counts or test totals. Do not increment for producing another plan.
 
 | Milestone | Weight | Required evidence | Earned |
 | --- | ---: | --- | ---: |
-| P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
+| P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete Native-migration reference/duplication/license inventory (5, earned) | 15 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds, cancellation and combined Host sources earned 3); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 19 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke, paired direct-model comparison and paired tool task 4 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 13 |
 
-Current assessed progress: **86/100**, approximately 86%. P4's remaining credit
+Current assessed progress: **91/100**, approximately 91%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -169,6 +169,18 @@ Baseline commit before new platform fixes: `22a47d8`. Reference ZCode checkout
 was revalidated at `3c5b227649371507ddc4eb46ac5133afe6db1cab`. The previous
 coding-alignment record contains pinned pi/OpenCode inputs and source findings;
 new platform claims still require their own relevant source audit.
+
+The [reference and provenance audit](enterprise-agent-reference-audit.md) now
+accounts for each identified retained ZCode source, the original Apache-2.0
+KsADK Python ports, DSH MIT maintenance bundles, two separately licensed Node
+bundles and local-process redistribution texts. It compared the pinned source
+shapes, classified behavior-only references, verified 23 vendored original
+hashes, 18 MCP bundle dependency notices and both DSH patch manifests, and
+found one NativeKernel shared by product, managed, child and auxiliary paths.
+The separate Claude Code license review found the two task-tool attribution
+gaps, which were corrected and included in the previously checked archive.
+This closes P1's five-point audit inventory for this migration scope. The
+final post-change archive and requirement check remain P5 work.
 
 Local initial baseline, completed with **66 passing** assertions (not full suite):
 

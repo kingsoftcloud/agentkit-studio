@@ -50,6 +50,8 @@ const expected = [
   'packages/agentkit-harness/test/native-memory-recall.test.mjs',
   'packages/agentkit-harness-core/dist/context-contributions.mjs',
   'packages/agentkit-harness-core/dist/context-source-refresh.mjs',
+  'host-source/dsh-v0.2.0-rc.2/maintenance.bundle',
+  'host-source/dsh-v0.2.0-rc.2/LICENSE',
   'host-source/dsh-v0.2.1-rc.2/maintenance.bundle',
   'host-source/dsh-v0.2.1-rc.2/LICENSE',
   'scripts/verify-native-recovery-capability.mjs',
@@ -106,10 +108,12 @@ if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.versio
 if (manifest.requiredDsh !== '0.2.1-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
 if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
 const harnessPackage = JSON.parse(read('packages/agentkit-harness/package.json'));
-const maintenance = JSON.parse(read('patches/dsh-v0.2.1-rc.2/source.json'));
-const bundledSource = execFileSync('tar', ['-xOzf', tarball, 'package/host-source/dsh-v0.2.1-rc.2/maintenance.bundle']);
-if (createHash('sha256').update(bundledSource).digest('hex') !== maintenance.bundle.sha256) {
-  throw new Error('packaged maintenance source differs from its reviewed descriptor');
+for (const version of ['0.2.0-rc.2', '0.2.1-rc.2']) {
+  const maintenance = JSON.parse(read(`patches/dsh-v${version}/source.json`));
+  const bundledSource = execFileSync('tar', ['-xOzf', tarball, `package/host-source/dsh-v${version}/maintenance.bundle`]);
+  if (createHash('sha256').update(bundledSource).digest('hex') !== maintenance.bundle.sha256) {
+    throw new Error(`packaged ${version} maintenance source differs from its reviewed descriptor`);
+  }
 }
 const harnessManifest = JSON.parse(read('packages/agentkit-harness/agentkit-harness.plugin.json'));
 if (harnessPackage.name !== '@kingsoftcloud/agentkit-harness' || harnessPackage.private === true) throw new Error('Harness package must be independently packable');

@@ -3,15 +3,16 @@
 Reviewed 2026-10-26 against the enterprise platform objective. Actual Claude
 Code supplied a draft and independently checked the declared ports; main review
 checked the pinned checkout, corrected the two missing port notices and removed
-conclusions unsupported by the bounded search. This is an engineering
-source/provenance inventory, not a complete license or architecture acceptance
-gate.
+conclusions unsupported by the bounded search. This is the source/provenance
+and license inventory for the Native migration scope. The final archive must
+still be checked after all implementation changes.
 
 ## Reference inputs and limits
 
 | Reference | Evidence inspected | Scope |
 | --- | --- | --- |
-| ZCode | `/tmp/agentkit-zcode-reference`, HEAD `3c5b227649371507ddc4eb46ac5133afe6db1cab`; its `LICENSE`, `NOTICE.md`, named source files and command-plan manifest | Pinned source and attributed code below. Final license/dependency review remains open. |
+| ZCode | `/tmp/agentkit-zcode-reference`, HEAD `3c5b227649371507ddc4eb46ac5133afe6db1cab`; its `LICENSE`, `NOTICE.md`, named source files and command-plan manifest | Pinned source and attributed code below. |
+| KsADK Python | `/Users/zhangxiuqi/kc/ksadk-python`, `feat-ksadk-harness-2` at `355059d78e47ed764bbdb3606304cdf34e9838a3`; root `LICENSE` | Original Apache-2.0 migration source for named Native browser, web, workspace, A2A, model and Studio metadata ports. It is source lineage, not a Python runtime dependency. |
 | pi-durable | `/tmp/agentkit-pi-durable-reference-d5b3de22` holds the pinned README, specification, tool, submission, scheduler, Session and CLI sources at `d5b3de22d0e24a3e9c38a9410d3329b099717283` | The bounded [pi-durable assessment](native-pi-durable-reference.md) checks specific recovery, submission, ownership and host boundaries. It is not a complete conformance or license audit. |
 | OpenCode | `/tmp/agentkit-opencode-reference-f669c46`, HEAD `f669c46c9604ea3d70b8a7ed1f0c10f3a5ac1f61`; `packages/server/src/{handlers/event.ts,event-feed.ts,handlers/session.ts,handlers/message.ts,auth.ts}` | Bounded review of headless server, session APIs, event feed and authentication. It is an architecture reference, not imported code. |
 | AgentCore / Volcano AgentKit | [AWS AgentCore overview](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/), [AWS observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html), [Volcano AgentKit overview](https://docs.volcengine.com/docs/agentkit/What_is_AgentKit?lang=zh), [Volcano Runtime overview](https://docs.volcengine.com/docs/agentkit/Agent_runtime_overview?lang=en), reviewed 2026-10-26 | Official product boundary reference only. Current Studio local implementation is not certified to offer the cloud services described there. |
@@ -44,9 +45,12 @@ The explicit port of `memory/extraction.ts` and adaptation of
 `context/builder.ts` plus `provider-request-messages.ts` are now attributed in
 the notice inventory. The local scheduler retains reference algorithm and
 control flow but adds Host-owned durable cursor commit; the Anthropic adapter
-projects cache breakpoints only onto provider wire messages. Other comments
-that call an implementation a behavioral reference still require source/diff
-review before the final attribution inventory is certified.
+projects cache breakpoints only onto provider wire messages. Remaining ZCode
+citations under `src/` and `packages/` were classified against the pinned
+sources: plan mode, destructive MCP hints, EOL choice, context-pruning
+thresholds, model continuation and workspace rewind use policy facts or
+behavior, with Native-owned state, ports and receipts. No second copied
+implementation was found in that bounded search.
 
 A separate Claude Code read-only license review identified `todos.mts` and
 `coordinator-response.mts` as uncategorized ZCode citations. Primary review
@@ -60,8 +64,15 @@ Upstream `NOTICE.md` contains product/security/privacy statements rather than
 an attribution list for these retained files. Do not present upstream product
 policy as Studio policy. The local package dry-run includes the root LICENSE,
 this notice, ZCode's license, the command-plan bundled license, and both newly
-attributed source files. Dependency and bundled-license coverage remains a final
-gate; this inventory is not proof that the project has no other third-party code.
+attributed source files. The command-plan bundle records 23 pinned original
+file hashes and `unbash@4.0.1` ISC text. The MCP bundle records 18 dependencies;
+all 18 names and versions were checked against its bundled notice text. The
+four local-process launchers passed source-binding and musl/GCC redistribution
+license checks. Both archived DSH maintenance bundles have MIT licenses and
+verified patch manifests. The browser client bundle's esbuild input manifest
+rejects `node_modules` and backend imports. These checks cover the identified
+bundled external code, not future third-party additions. The final built
+archive check belongs to P5.
 
 ## Responsibility findings in current sources
 
@@ -91,6 +102,12 @@ gate; this inventory is not proof that the project has no other third-party code
 - Harness identities remain `harness` (Studio Native), `dsh-native` (separate DSH
   engine), and `codex`. Published Build identity, live revision digest, Session
   identity and execution environment are separate concepts.
+- Product, managed and child entry points instantiate the same `NativeKernel`;
+  `auxiliary-run.mts` delegates to it instead of implementing another
+  model/tool loop. Tool and context capability modules stage effects through
+  original intents and receipts. This source scan found no duplicate Native
+  execution-state authority; P2 separately checks authority through external
+  I/O and asynchronous waits.
 
 ## OpenCode headless boundary comparison
 
@@ -131,10 +148,11 @@ engine. They do not prove that Studio already supplies managed cloud scaling,
 isolation, network or identity services. This phase verifies local Host
 boundaries and leaves cloud deployment as an explicit later implementation.
 
-## Remaining audit work
+## Final artifact boundary
 
-Complete source/diff/notice and bundled dependency review; and examine kernel
-branches for actual duplicated state or bypasses before restructuring.
+Re-run archive integrity/license checks after all edits, then examine the
+actual diff against the acceptance checklist before pushing. This P5 release
+gate is separate from the source inventory above.
 
 Route-driven business/coding and retry evidence is recorded separately in
 `enterprise-agent-platform-plan.md` and
