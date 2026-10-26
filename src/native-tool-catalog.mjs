@@ -1,19 +1,23 @@
 /** Native-owned additions to the legacy tool catalog. Catalog rows describe
  * capabilities; execution still requires an explicitly bound Native Build. */
-import { workspacePatchDefinition, workspaceRewindDefinitions } from '../packages/agentkit-harness/src/native/workspace-tools.mjs';
+import { workspacePatchDefinition, workspaceRewindDefinitions, workspaceToolDefinitions } from '../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { paginateResources } from './resource-catalog.mjs';
+const definitions = () => [workspacePatchDefinition(), ...workspaceRewindDefinitions(), ...workspaceToolDefinitions()];
 
 export function nativeLocalToolContract(name) {
-  const definition = [workspacePatchDefinition(), ...workspaceRewindDefinitions()].find(tool => tool.name === name);
+  const definition = definitions().find(tool => tool.name === name);
   if (!definition) return undefined;
-  return { resourceId: name, name, description: definition.description,
+  return contractForDefinition(definition);
+}
+function contractForDefinition(definition) {
+  return { resourceId: definition.name, name: definition.name, description: definition.description,
     parameters: definition.parameters, executor: 'builtin', enabled: true,
     timeoutSeconds: definition.timeoutMs / 1000, sideEffect: definition.readOnly ? 'none' : 'workspace', permissions: definition.permissions };
 }
 
 export function nativeLocalToolResources() {
-  return [workspacePatchDefinition(), ...workspaceRewindDefinitions()].map(tool => {
-    const contract = nativeLocalToolContract(tool.name), { parameters, ...metadata } = contract;
+  return definitions().map(tool => {
+    const contract = contractForDefinition(tool), { parameters, ...metadata } = contract;
     return { resourceId: contract.resourceId, name: contract.name,
       displayName: tool.name === 'apply_workspace_patch' ? '结构化文件补丁 · Native' : `${tool.name} · Native`, description: contract.description,
       kind: 'tool', source: 'studio-native', status: 'available', contract: { ...metadata, inputSchema: parameters } };

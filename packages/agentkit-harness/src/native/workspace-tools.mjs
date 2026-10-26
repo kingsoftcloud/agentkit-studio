@@ -970,7 +970,7 @@ export function createNativeWorkspaceTools({
 
   // ---- definitions ----------------------------------------------------------
 
-  const definitions = buildDefinitions();
+  const definitions = workspaceToolDefinitions();
   if (enablePatches) definitions.push(workspacePatchDefinition());
   if (enableRewind) {
     for (const definition of definitions) if (MUTATING.has(definition.name)) {
@@ -1567,7 +1567,8 @@ async function defaultAuthorize(request) {
 
 // ---- ToolDefinition[] -------------------------------------------------------
 
-function buildDefinitions() {
+/** Shared execution/catalog definitions. Reading metadata performs no I/O. */
+export function workspaceToolDefinitions() {
   return [
     def('workspace_status', 'Return the current AgentEngine workspace status.', {
       type: 'object', properties: {}, additionalProperties: false,

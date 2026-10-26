@@ -86,10 +86,10 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 10 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 8 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries earned 1); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 1 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 13 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1 earned); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 2 |
 
-Current assessed progress: **54/100**, approximately 54%. P4's remaining credit
+Current assessed progress: **60/100**, approximately 60%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -262,12 +262,44 @@ they prove shared compaction model-call budget and separate token events,
 bounded malformed summaries, cancellation, original-source retention and no
 extra HTTP work after a terminal exhausted-budget reopen. This earns 2 of P4's
 4 remaining context/budget points. Broader Host/context-source and cross-capability
-budget acceptance remain unearned; background/child and task interaction
-milestones are not certified by these checks.
+budget acceptance remain unearned. Background/child lifecycle now has the
+separate evidence below; broader task interaction remains unearned.
 
 Focused affected files: **47 passed**, plus **1 existing actual-HTTP compaction
 and cold-continuation check** passed separately. No full suite was run. The
 pre-fix rewind failure was reproduced against HEAD before the production patch.
+
+### Native role authoring, mounted child controls and background cold recovery
+
+See [reviewed lifecycle evidence](enterprise-agent-child-lifecycle.md) and the
+[durable report](enterprise-agent-child-lifecycle-evidence.json). Native role
+creation/configuration is now available through the real Agent form. The mounted
+browser proof reproduced and fixed missing base workspace tools when the optional
+legacy catalog is absent. The local catalog now shares actual execution definitions.
+The Host's authority, isolated-write checks and child tool allowlist are retained.
+
+Actual Chrome on a fresh packed production Host creates the role, submits real
+turns, exercises strict approvals, guides/promotes the original child, reads its
+settled result, cancels a second active child before a late write response, and
+reloads both histories. SQLite proves original parent/revision/engine binding,
+one-time usage settlement, an actual read receipt and no canceled tool intent or
+file effect. Actual Claude Code's 25 focused Host cases independently cover
+original controls, late A2A answers, authority loss and foreground/background
+settlement. These together earn P4's background/child lifecycle 5 points.
+
+A separate real packed-Host/SDK proof SIGKILLs the Host while its background
+command runs and starts a new Host. Cold discovery delivers the completion with
+no new prompt; the real command starts exactly once. Original frozen Build
+instructions survive live edits. This earns 1 further P5 fault point. The
+verifier's stale one-tool expectation was updated to the current exact six-tool
+Build contract; no production authority was weakened.
+
+Primary's affected form/catalog/Build cases (38) and three named workspace cases
+pass, along with contract TypeScript and client build. Claude Code reviewed the
+production changes; primary fixed its concurrent-safety authoring finding and
+removed repeated catalog-definition allocation. No full suite was run. Controlled
+model fixtures do not establish quality, token savings or performance; broader
+task interaction, fault coverage and final acceptance remain open.
 
 ### Route-driven local business and coding verticals
 
@@ -333,12 +365,12 @@ node --test --test-timeout=10000 packages/agentkit-harness/test/native-retry-bud
 
 ## Next delivery order
 
-1. Finish automatic Memory trusted source/job/cursor/lifetime integration.
-   Do not report it complete merely because isolated scheduling or execution
-   modules build. Preserve manual consent and prevent duplicate consumers.
-2. Audit and close remaining context/background/children/governance gaps against
-   both verticals, preserving existing invariants and relevant prior evidence.
-3. Verify product UI interaction and management, collect honest actual-model
+1. Close remaining context/source and cross-capability budget integration,
+   preserving the now-proven Memory and child lifecycle invariants.
+2. Finish product interaction and management against both verticals, including
+   Native default selection, version/conflict behavior, allowed public reasoning,
+   cancellation/errors and reconnect. Preserve distinct Harness boundaries.
+3. Collect honest actual-model
    measurements separately from controlled fixtures, then perform final
    integrated acceptance and explicit requirement/license audit.
 

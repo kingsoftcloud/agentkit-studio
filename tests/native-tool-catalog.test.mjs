@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { listStudioTools, nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
-import { workspacePatchDefinition } from '../packages/agentkit-harness/src/native/workspace-tools.mjs';
+import { workspacePatchDefinition, workspaceToolDefinitions } from '../packages/agentkit-harness/src/native/workspace-tools.mjs';
 import { createResourceRoutes } from '../src/host/routes/resources.mjs';
 
 test('Native catalog merges all legacy pages before paging and keeps the local writer contract', async () => {
@@ -14,9 +14,10 @@ test('Native catalog merges all legacy pages before paging and keeps the local w
   const query = { kind: 'tool', runtimeType: 'harness', limit: 1 };
   const rows = []; let cursor;
   do { const page = await listStudioTools({ query: { ...query, cursor }, serverClient });
-    assert.equal(page.items.length, 1); assert.equal(page.total, 6); rows.push(...page.items); cursor = page.nextCursor;
+    assert.equal(page.items.length, 1); assert.equal(page.total, 16); rows.push(...page.items); cursor = page.nextCursor;
   } while (cursor);
-  assert.deepEqual(rows.map(row => row.resourceId), ['apply_workspace_patch', 'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files', 'first', 'second']);
+  assert.deepEqual(rows.map(row => row.resourceId), ['apply_workspace_patch', 'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files',
+    ...workspaceToolDefinitions().map(tool => tool.name), 'first', 'second']);
   assert.equal(rows[0].contract.executor, 'builtin');
   assert.deepEqual(rows[0].contract.inputSchema, workspacePatchDefinition().parameters);
   assert.ok(calls.every(call => call.limit === 200));
@@ -32,6 +33,14 @@ test('resource route exposes the local Native tool when the optional old catalog
   const result = await routes('resources/list', { kind: 'tool', runtimeType: 'harness', query: '结构化', source: 'local' });
   assert.equal(result.ok, true); assert.equal(result.value.items[0].resourceId, 'apply_workspace_patch');
   assert.equal(result.value.warnings[0].code, 'CATALOG_UNAVAILABLE');
+  for (const name of ['read_workspace_file', 'write_workspace_file']) {
+    const native = await routes('resources/list', { kind: 'tool', runtimeType: 'harness', query: name, source: 'local' });
+    const tool = native.value.items.find(item => item.resourceId === name); assert.ok(tool);
+    assert.equal(tool.resourceId, name); assert.equal(tool.source, 'studio-native');
+    assert.equal(tool.contract.executor, 'builtin');
+    assert.equal(tool.contract.sideEffect, name.startsWith('read_') ? 'none' : 'workspace');
+    assert.deepEqual(tool.contract.inputSchema, workspaceToolDefinitions().find(definition => definition.name === name).parameters);
+  }
   const cloud = await routes('resources/list', { kind: 'tool', runtimeType: 'harness', source: 'cloud' });
   assert.equal(cloud.value.items.length, 0);
   const unavailable = await routes('resources/list', { kind: 'tool', runtimeType: 'harness', status: 'disabled' });

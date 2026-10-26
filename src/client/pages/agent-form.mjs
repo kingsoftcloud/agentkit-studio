@@ -1,9 +1,11 @@
 import { memorySourceContext, readAgentMemoryConfig, writeAgentMemoryConfig, validateAgentMemoryConfig, memoryRequiresCloudBinding, clampInt, clampFloat, MEMORY_WRITE_MODES, MEMORY_ROLLOUTS, MEMORY_PROVIDER_CLOUD } from '../state/agent-memory-config.mjs';
+import { createNativeRoleFields, readNativeRoleDrafts, validateNativeRoleDrafts } from './native-role-fields.mjs';
 
 export function createAgentForm({
   ui: { React: { createElement: h, useState, useEffect, Fragment }, BRAND, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill },
   hostRemote
 }) {
+  const nativeRoleFields = createNativeRoleFields({ React: { createElement: h }, buttonStyle, inputStyle });
   function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated }) {
     const editing = Boolean(initialAgent);
     const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
@@ -28,6 +30,7 @@ export function createAgentForm({
     const updateMemory = patch => setMemoryConfig(previous => ({ ...previous, ...patch }));
     const memoryEnabled = memoryConfig.enabled;
     const [taskPrompt, setTaskPrompt] = useState(originalSpec.instructions?.task || '');
+    const [nativeRoles, setNativeRoles] = useState(() => initialRuntime === 'harness' && !cloudEditing ? readNativeRoleDrafts(originalSpec) : []);
     const [policy, setPolicy] = useState(originalBindings.policyTemplate || 'strict');
     const [form, setForm] = useState({
       id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || creationSeed?.name || '我的第一个 Agent', runtime: originalSpec.runtime?.type || 'dsh-native',
@@ -107,6 +110,11 @@ export function createAgentForm({
       if (!cloudEditing && !bindingReady) { setError(requiresCloudBinding && !memoryInstanceBound ? '启用云记忆前，请在「绑定能力」步骤选择记忆库。' : (missingRequirements.map(item => item.label).join('、') || '启用长期记忆前请选择记忆库')); setStep(1); return; }
       const memoryValidation = validateAgentMemoryConfig({ ...memoryConfig, source: effectiveMemorySource });
       if (!memoryValidation.ok) { setError(memoryValidation.errors.map(item => item.message).join('；')); setStep(2); return; }
+      if (form.runtime === 'harness' && !cloudEditing) {
+        const roleError = validateNativeRoleDrafts(nativeRoles, { modelIds: selectedModels.length ? selectedModels : [selectedModel],
+          toolIds: selectedTools, hasMcp: selectedMcp.length > 0, toolResources: catalog.tool });
+        if (roleError) { setError(roleError); setStep(2); return; }
+      }
       if (saving || !form.id.trim() || !form.name.trim() || (!cloudEditing && (catalogStatus !== 'ready' || !selectedModel))) return;
       setSaving(true); setError('');
       const id = form.id.trim().toLowerCase();
@@ -143,6 +151,7 @@ export function createAgentForm({
             ? { ...originalSpec.context, rollout: { ...originalSpec.context?.rollout, memoryWrite: builtMemory.rollout } }
             : originalSpec.context,
         };
+        if (form.runtime === 'harness' && !cloudEditing) { delete spec.sub_agents; spec.subAgents = nativeRoles; }
         const created = editing ? await hostRemote.updateAgent(id, spec, initialAgent.metadata.revision, form.name.trim()) : await hostRemote.quickAuthorAgent({
           name: form.name.trim(), slug: id, runtimeType: form.runtime,
           template: form.template, ...(creationSeed ? { templateSource: creationSeed.templateSource } : {}),
@@ -260,10 +269,14 @@ export function createAgentForm({
         h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '权限策略', h('select', { value: policy, onChange: event => setPolicy(event.target.value), style: inputStyle() }, h('option', { value: 'strict' }, '严格权限'), h('option', { value: 'loose' }, '宽松权限'), h('option', { value: 'custom' }, '自定义权限'))),
         h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '23px', color: BRAND.ink, fontSize: '12px', fontWeight: 700 } }, h('input', { type: 'checkbox', 'aria-label': '启用跨会话记忆', checked: memoryEnabled, disabled: cloudEditing, onChange: event => updateMemory({ enabled: event.target.checked }) }), '启用跨会话记忆')),
       memoryConfigPanel(),
+      form.runtime === 'harness' && !cloudEditing ? nativeRoleFields({ roles: nativeRoles, onChange: setNativeRoles,
+        models: catalog.model, selectedModels: selectedModels.length ? selectedModels : [selectedModel],
+        tools: catalog.tool, selectedTools, hasMcp: selectedMcp.length > 0 }) : null,
       h('div', { style: { marginTop: '18px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '运行目标属于 Agent Revision；权限策略和记忆配置会随本次创建一起保存。'),
     ) : h(Fragment, null,
       h('h3', { style: { margin: '0 0 14px', color: BRAND.ink, fontSize: '16px' } }, '检查并创建'),
       h('div', { style: { display: 'grid', borderTop: '1px solid ' + BRAND.border } }, [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行目标', runtimeLabel], ['默认模型', catalog.model.find(item => item.resourceId === selectedModel)?.displayName || selectedModel || '未选择'], ['模型白名单', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项（知识库 / 记忆库 / Skill Center）`], ['记忆', memoryEnabled ? (effectiveMemorySource === 'local' ? '本地记忆' : '云记忆库') : '未启用'], ['模板', creationSeed?.name || templateSource?.id || templates.find(item => item[0] === form.template)?.[1]]].map(([label, value]) => h('div', { key: label, style: { display: 'flex', justifyContent: 'space-between', gap: '20px', padding: '12px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: '12px' } }, h('span', { style: { color: BRAND.inkMuted } }, label), h('strong', { style: { color: BRAND.ink, textAlign: 'right' } }, value)))),
+      form.runtime === 'harness' && !cloudEditing ? h('p', null, `子任务角色：${nativeRoles.length ? nativeRoles.map(role => role.name).join('、') : '未启用'}`) : null,
       h('div', { style: { marginTop: '16px', padding: '12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, editing ? (cloudEditing ? '保存后调用 AgentEngine UpdateAgent；云端已有会话继续使用旧快照，新运行使用更新后的组件绑定。' : `保存后创建新的配置版本；当前版本为 r${initialAgent.metadata.revision}。已有会话和构建不会被自动切换。`) : '创建后保存 Prompt、模型和资源绑定，随后可构建并开始对话。'),
     );
     return h('div', { 'data-studio-agent-form': true },

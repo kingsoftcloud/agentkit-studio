@@ -30,7 +30,9 @@ const server = createServer(async (request, response) => {
     const body = JSON.parse(raw); requests.push(body);
     await writeFile(join(root, 'model-requests.json'), JSON.stringify(requests, null, 2));
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(body.model, 'pinned');
-    assert.deepEqual(body.tools.map(tool => tool.function.name), ['run_command']);
+    // Current Native Builds also pin discovery and read-only artifact controls.
+    // Keep this exact: the background proof must not gain another effect tool.
+    assert.deepEqual(body.tools.map(tool => tool.function.name), ['run_command', 'ToolSearch', 'DeferredToolCall', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList']);
     if (values.frozen) {
       assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('FROZEN_BACKGROUND_SYSTEM')));
       assert.equal(JSON.stringify(body.messages).includes('LIVE_BACKGROUND_SYSTEM_CHANGED'), false);
@@ -95,6 +97,7 @@ try {
   harness = new DeepSeekHarness(options);
   const result = await harness.session('native-background-session').run('Start the owned background command and report when it completes.');
   await writeFile(join(root, 'source-result.json'), JSON.stringify(result, null, 2));
+  assert.deepEqual(failures, [], 'Controlled model requests must satisfy the pinned Build contract');
   assert.equal(result.finalResponse, 'Background command started.');
   assert.equal(requests.length, 2); assert.equal(result.events.filter(event => event.type === 'tool/call').length, 1);
   await until('actual background command start', async () => {
