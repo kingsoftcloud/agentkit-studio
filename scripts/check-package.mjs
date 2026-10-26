@@ -19,7 +19,12 @@ const packageJson = JSON.parse(read('package.json'));
 const manifest = JSON.parse(read('studio.plugin.json'));
 const expected = [
   'package.json', 'studio.plugin.json', 'README.md', 'CHANGELOG.md',
-  'LICENSE',
+  'LICENSE', 'THIRD_PARTY_NOTICES.md', 'third-party/ZCode-LICENSE',
+  'third-party/zcode-command-plan/source.json',
+  'dist/native-command-plan.mjs', 'dist/native-command-plan.LICENSE.txt',
+  ...['patch-parser', 'patch-apply', 'edit-matchers', 'tool-search-ranking', 'memory-extraction-scheduler']
+    .map(name => `packages/agentkit-harness-core/src/${name}.mts`),
+  'packages/agentkit-harness/src/native/model-anthropic-cache.mjs',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
   'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
   'packages/agentkit-harness/src/native/python-syntax.mjs',
