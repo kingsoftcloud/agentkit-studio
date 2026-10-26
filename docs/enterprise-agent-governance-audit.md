@@ -4,6 +4,46 @@ Status: partial, 2026-10-26. P2's complete trusted extension/resource authority
 acceptance remains open. This record distinguishes versioned policy enforcement
 from historical display-only labels and areas still lacking end-to-end proof.
 
+## Fixed: Skill shell checks Native ownership after policy waits
+
+The maintained DSH ToolRegistry evaluates monotonic guards after its ordered
+pre-execute/approval stage and before the tool body. Native's builtin and MCP
+wrappers already checked current ledger authority, but a bound Skill's DSH-owned
+`skill`/`bash`/`pwsh` body did not have that wrapper. If a Native lease was
+released while the registry policy waited, its body could start under an old
+tool intent. `createNativeDshTools` now registers a live guard for every owned
+registry call; it checks the original Agent/call, signal and current Native
+intent after the wait. For Skill shell calls it also checks the exact name and
+arguments. A production Native preset fails closed if its ToolRegistry lacks
+the guard API. This does not claim to interrupt an already-started arbitrary
+third-party body after a lease expires; such an outcome still needs uncertain
+effect reconciliation rather than blind replay.
+
+The targeted real SQLite/NativeKernel test releases the lease during the
+simulated registry policy wait and proves the shell body has zero effects and
+no tool receipt. It also tests that a production preset rejects a registry
+without guards. The fresh packed Host and maintained DSH Skill workflow still
+complete with exact text/binary artifacts and durable ownership. The local
+check used controlled model responses and a local Skill service:
+
+```sh
+node --test --test-timeout=15000 tests/native-mcp-dispatch-authority.test.mjs
+node --test --test-timeout=15000 tests/studio-native-skills-disclosure.test.mjs
+node scripts/verify-studio-native-skill-workflow.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz
+```
+
+Claude Code's independent read-only audit confirmed the frozen Build and
+ToolRegistry boundaries, but its broad “no ordinary extension bypasses”
+conclusion missed this Skill shell lease window. It also found that direct API
+creation could omit `nativeAgentPolicy`: an MCP effect under a permissive
+Session then had no Revision-bound approval. The AgentStore now pins `strict`
+when creating any new local Native Revision without an explicit versioned
+policy, including an update to a historical record. Reading an existing
+Revision and Build retains its old behavior; an explicitly saved `loose` or
+`custom` policy is preserved. Focused store, admission and policy checks pass.
+The remaining full Skill/child/extension and resource-authority matrix still
+needs review before P2 is certified.
+
 ## Optional Skill workflow locator review
 
 Actual Claude Code's bounded read-only review noticed that

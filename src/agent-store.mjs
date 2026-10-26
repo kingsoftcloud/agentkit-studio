@@ -14,7 +14,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
-import { nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
+import { NATIVE_AGENT_POLICY_CONTRACT, nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -52,6 +52,17 @@ function normalizeRecord(record) {
   if (!record || typeof record !== 'object') return record;
   const bindings = normalizeAgentBindings(record.spec?.bindings || record.bindings || {});
   return { ...record, spec: { ...(record.spec || {}), bindings }, bindings };
+}
+
+/** New local Native Revisions always carry an explicit policy. Reading a
+ * historical Revision does not synthesize one or change its frozen behavior. */
+function bindNewNativePolicy(record) {
+  if (record.spec.runtime?.type !== 'harness') return;
+  const policy = nativeAgentPolicyFromSpec(record.spec) ?? {
+    contract: NATIVE_AGENT_POLICY_CONTRACT, mode: 'strict', rules: {},
+  };
+  record.spec.bindings = { ...record.spec.bindings, nativeAgentPolicy: policy };
+  record.bindings = record.spec.bindings;
 }
 
 export function createAgentStore({ storeDir } = {}) {
@@ -141,7 +152,7 @@ export function createAgentStore({ storeDir } = {}) {
       spec: { ...spec, bindings: normalizedBindings, runtime: { ...spec.runtime, type: runtimeType ?? spec.runtime?.type ?? STUDIO_DEFAULT_AUTHORING_RUNTIME } },
       bindings: normalizedBindings,
     };
-    if (record.spec.runtime.type === 'harness') nativeAgentPolicyFromSpec(record.spec);
+    bindNewNativePolicy(record);
     const target = pathFor(agentId);
     await captureRevision(record);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
@@ -214,7 +225,7 @@ export function createAgentStore({ storeDir } = {}) {
     const normalized = normalizeAgentBindings(record.spec.bindings || record.bindings || {});
     record.spec.bindings = normalized;
     record.bindings = normalized;
-    if (record.spec.runtime?.type === 'harness') nativeAgentPolicyFromSpec(record.spec);
+    bindNewNativePolicy(record);
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
     // No await between the final live-authority check and durable publication.

@@ -29,7 +29,11 @@ async function mountProof(ctx, options) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (!record) {
     record = await agents.create({ name: 'Native Skill workflow proof', runtimeType: 'harness',
-      bindings: { modelProfileIds: ['fixture'], tools: ['execute_skills'] } });
+      // This fixture isolates Skill workflow behavior; strict approval is
+      // covered by the dedicated bound-policy and browser acceptance paths.
+      bindings: { modelProfileIds: ['fixture'], tools: ['execute_skills'], nativeAgentPolicy: {
+        contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {},
+      } } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
   }
   const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');

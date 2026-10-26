@@ -71,7 +71,9 @@ async function applyProof(ctx, options) {
           recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: !options.memoryManaged, flushAfterTurn: Boolean(options.memoryManaged) } },
           context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
-      bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
+      bindings: { modelProfileIds: ['fixture'], nativeAgentPolicy: {
+        contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {},
+      }, ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
           : options.workspaceRepair ? ['apply_workspace_patch'] : options.contextPruning ? ['run_command'] : options.editCreate ? ['read_workspace_file', 'edit_workspace_file'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files']
           : options.conversationCommandRewind ? ['run_command', 'read_command_output', 'stop_command'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']

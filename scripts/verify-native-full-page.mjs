@@ -128,7 +128,8 @@ try {
   };
   const record = await rpc('agents/create-local', { name: 'Native full-page proof', runtimeType: 'harness', spec: {
     execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' },
-  }, bindings: { modelProfileIds: ['fixture'], tools: ['write_workspace_file'] } });
+  }, bindings: { modelProfileIds: ['fixture'], tools: ['write_workspace_file'],
+    nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} } } });
   const admission = await rpc('agents/ensure-preset', { agentId: record.metadata.id });
   assert.ok(admission.presetId);
   await page.reload();

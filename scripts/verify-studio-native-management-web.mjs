@@ -346,10 +346,10 @@ try {
   const approvalAgent = await rpc('agents/create-local', { name: 'Approval Web proof', runtimeType: 'harness',
     spec: { runtime: { type: 'harness' }, instructions: { system: 'APPROVAL_WEB_PROOF: write the requested scratch file.' },
       execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' },
-      bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'],
-        nativeAgentPolicy: approvalPolicy } },
-    bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'],
-      nativeAgentPolicy: approvalPolicy } });
+      bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'] } },
+    bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'] } });
+  assert.deepEqual(approvalAgent.spec.bindings.nativeAgentPolicy, approvalPolicy,
+    'the authenticated create route pins the default strict Native policy');
   const approvalAgentId = approvalAgent.metadata.id;
   await page.reload();
   await page.getByText('智能体', { exact: true }).first().click();

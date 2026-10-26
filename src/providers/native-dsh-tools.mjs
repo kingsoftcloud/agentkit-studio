@@ -32,6 +32,7 @@ import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../p
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeChildRoles, STUDIO_NATIVE_CHILD_SKILLS_CONTRACT } from './native-subagents.mjs';
 import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from './native-tool-authority.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/native/dsh-turn-contract.mjs';
 import { WORKSPACE_MUTATION_LOCK } from '../../packages/agentkit-harness/src/native/workspace-mutation-lock.mjs';
 import { STUDIO_NATIVE_CHILD_WORKSPACE_BINDING } from './native-child-workspace-host.mjs';
 import { nativeChildMergeDefinition } from './native-child-merge.mjs';
@@ -62,6 +63,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk, a2aFetch, a2aSessionEvents,
   skillConnection, skillFetch, skillInputFiles = [], getSkillManagement, getKnowledgeTools, getLegacyMemoryTools }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
+  invariant(config.nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT || typeof ctx.tools.guard === 'function',
+    'studio_native_tool_guard_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const workspace = resolve(workspaceRoot), states = new WeakMap(), calls = new Map();
   const visionTimeouts = new Map();
@@ -375,6 +378,26 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         invocation.outcome = repaired.result;
         return nativeDshBuiltinOutput(repaired.result, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
       },
+    }));
+    // A Skill's DSH-owned shell body is outside our builtin/MCP wrappers. The
+    // registry guard runs after approval waits and immediately before dispatch,
+    // so a retired Native intent cannot enter that body on a stale lease.
+    if (typeof ctx.tools.guard === 'function') disposers.push(ctx.tools.guard(exec => {
+      const invocation = calls.get(String(exec.callId));
+      if (!invocation) return undefined;
+      if (invocation.agent !== exec.agent) return 'Native tool execution authority expired';
+      if (closed || exec.signal.aborted || invocation.request.signal?.aborted)
+        return 'Native tool execution authority expired';
+      if (hasSkills && ['skill', 'bash', 'pwsh'].includes(exec.name)
+        && (invocation.request.call?.name !== exec.name
+          || canonical(exec.arguments) !== canonical(invocation.request.call.arguments)))
+        return 'Native tool execution authority expired';
+      try {
+        if (typeof invocation.assertCurrent === 'function'
+          && invocation.assertCurrent(invocation.request) !== true)
+          return 'Native tool execution authority expired';
+      } catch { return 'Native tool execution authority expired'; }
+      return undefined;
     }));
     return close;
   };

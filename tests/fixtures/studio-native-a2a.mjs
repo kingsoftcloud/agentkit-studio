@@ -85,6 +85,7 @@ async function applyProof(ctx, options) {
           tools: ['call_a2a_agent'], modelProfileId: 'child-fixture', maxTurns: 3, maxToolCalls: 2, timeoutSeconds: 300 }] } : {}) },
       bindings: {
         modelProfileIds: ['fixture', ...(options.childQuestion ? ['child-fixture'] : [])],
+        nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} },
         tools: ['call_a2a_agent'],
         a2a: typeof options.a2aBindings === 'string' ? JSON.parse(options.a2aBindings) : options.a2aBindings,
       },
@@ -101,7 +102,8 @@ async function applyProof(ctx, options) {
     if (!managedRecord) {
       managedRecord = await agents.create({ name: 'Managed formal Native Agent', runtimeType: 'harness',
         spec: { context: { maxInputTokens: 8000, reserveOutputTokens: 256 } },
-        bindings: { modelProfileIds: ['inbound-fixture'], tools: ['write_workspace_file'] } });
+        bindings: { modelProfileIds: ['inbound-fixture'], tools: ['write_workspace_file'],
+          nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} } } });
       await writeFile(identityPath, JSON.stringify({ id: managedRecord.metadata.id }));
     }
     inboundProof.targetBinding.agentId = managedRecord.metadata.id;

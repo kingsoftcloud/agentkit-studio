@@ -13,6 +13,14 @@ import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-s
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 
+test('a production Native preset rejects a ToolRegistry without the monotonic guard', t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-guard-contract-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => createNativeDshTools({ ctx: { tools: { register() {}, execute() {} } },
+    config: { nativeEngineContract: 'agentkit.native-dsh-turn/v1', toolBindings: [] },
+    workspaceRoot, stateDir: join(root, 'state') }), /studio_native_tool_guard_unavailable/);
+});
+
 for (const lossAt of ['none', 'registry', 'credentials', 'connection']) test(`parent MCP authority survives asynchronous admission (${lossAt})`, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-parent-mcp-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -91,4 +99,48 @@ for (const lossAt of ['none', 'registry', 'credentials', 'connection']) test(`pa
     assert.equal(intent.kind, 'tool'); assert.equal(intent.status, 'running');
     assert.equal(record.receipts.some(receipt => receipt.operationKey === intent.operationKey), false);
   }
+});
+
+test('a bound Skill shell cannot dispatch after Native ownership expires during policy wait', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-skill-authority-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
+  const registry = new Map(), guards = new Set(), agent = { session: { id: 'session' } };
+  let effects = 0, released = false;
+  const ctx = { effect: install => install(), tools: {
+    register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
+    guard: guard => { guards.add(guard); return () => guards.delete(guard); },
+    execute: async input => {
+      if (input.name === 'bash' && !released) {
+        const current = store.load(scope, 'run');
+        assert.equal(current.snapshot.phase, 'executing_tools');
+        store.release(scope, 'run', current.lease); released = true;
+      }
+      // DSH evaluates monotonic guards after its asynchronous pre-execute gate.
+      const denial = [...guards].map(guard => guard(input)).find(Boolean);
+      if (denial) return { isError: true, content: [{ type: 'text', text: denial }] };
+      const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
+      return { isError: false, value, content: tool.output.render(input.arguments, value) };
+    },
+  } };
+  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: [], toolContracts: [],
+    skillDefinitions: [{ name: 'authority-skill', content: '---\nname: authority-skill\ndescription: Authority check\n---\nUse bash.' }] },
+    workspaceRoot, stateDir: join(root, 'state') });
+  t.after(() => gateway.close());
+  registry.set('bash', { name: 'bash', description: 'Skill shell', parameters: { type: 'object', properties: { command: { type: 'string' } } },
+    execute: async () => { effects++; return { ok: true }; }, output: { render: () => [{ type: 'text', text: 'executed' }] } });
+  const tools = gateway.definitions(agent, [...registry.values()]);
+  assert.ok(tools.some(tool => tool.name === 'bash'));
+  const data = fixture({ tools }); data.snapshot.sessionId = 'session';
+  let models = 0;
+  const kernel = new NativeKernel({ store, owner: 'skill-owner', digest, ports: { ...gateway.forAgent(agent, { scope, store }),
+    model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'skill-shell', name: 'bash', arguments: { command: 'touch should-not-exist' } }] }
+      : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] } } } });
+  kernel.start(data.snapshot, data.config);
+  await assert.rejects(kernel.runUntilIdle(scope, 'run'), { code: 'stale_fence' });
+  assert.equal(released, true); assert.equal(effects, 0);
+  const record = store.load(scope, 'run');
+  const toolIntent = record.intents.find(intent => intent.kind === 'tool');
+  assert.ok(toolIntent); assert.equal(record.receipts.some(receipt => receipt.operationKey === toolIntent.operationKey), false);
 });

@@ -69,7 +69,9 @@ The proof covers:
     shows the fixed public explanation before and after a browser reload; the
     private response body never appears in the UI. The canonical failure event
     uses the same safe explanation.
-11. A separate coding Agent with a frozen strict policy calls the bound
+11. A separate coding Agent is created through the authenticated route without
+    supplying a policy; the saved Revision receives the default frozen strict
+    policy and calls the bound
     `write_workspace_file` tool. Chrome shows the pending DSH approval, reloads,
     then answers “allow once” in the original Session. The file is written
     once; the SQLite Run has two model calls and one tool call. Persisted Session
@@ -142,6 +144,10 @@ Session logs confirmed the disabled profile's private text was absent. Actual
 Claude Code supplied the tool-call fixture shape; its suggested cloud personal
 assistant approval UI path was rejected after checking the maintained DSH
 `ui-approval` source and the successful Native browser flow.
+The verifier was rerun after the AgentStore default-policy change: the browser
+created the approval Agent without supplying `nativeAgentPolicy`, confirmed the
+returned Revision was strict, and completed the same one-approval/one-effect
+path. The refreshed machine-readable report records the packed source hashes.
 The build guard caught and prompted removal of an accidental browser dependency
 on the runtime contract; the default now lives in `src/authoring-defaults.mjs`.
 Initial verifier corrections used the actual separate Build-list route and a

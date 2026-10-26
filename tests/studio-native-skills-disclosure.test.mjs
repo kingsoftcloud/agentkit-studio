@@ -33,7 +33,8 @@ async function setup(t, plan = calls, intercept = async () => {}) {
   const definitions = new Map(), registry = new Map(), events = [];
   const services = { sessions: { flush: async () => true }, llm: {}, sessionProjections: {
     register(definition) { definitions.set(definition.key, definition); return () => definitions.delete(definition.key); },
-    stateOf(_session, key) { const definition = definitions.get(key); return events.reduce(definition.apply, definition.init()); },
+    stateOf(_session, key) { const definition = definitions.get(key);
+      return definition ? events.reduce(definition.apply, definition.init()) : undefined; },
   } };
   const ctx = { get: key => services[key], effect: install => install(), tools: {
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },

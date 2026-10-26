@@ -21,6 +21,29 @@ test('new local Agents default to Native while explicit runtimes and saved revis
   }
 });
 
+test('new Native Revisions pin strict policy while historical frozen revisions retain their old behavior', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-native-policy-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const store = createAgentStore({ storeDir: root });
+  const created = await store.create({ name: 'New Native', runtimeType: 'harness' });
+  assert.deepEqual(created.spec.bindings.nativeAgentPolicy,
+    { contract: 'agentkit.native-agent-policy/v1', mode: 'strict', rules: {} });
+  assert.deepEqual(created.bindings.nativeAgentPolicy, created.spec.bindings.nativeAgentPolicy);
+  const custom = { contract: 'agentkit.native-agent-policy/v1', mode: 'custom', rules: { save_crm: 'ask' } };
+  const explicit = await store.create({ name: 'Custom Native', runtimeType: 'harness', bindings: { nativeAgentPolicy: custom } });
+  assert.deepEqual(explicit.spec.bindings.nativeAgentPolicy, custom);
+
+  const agentId = 'ar-local-aaaaaaaaaaaaaaaa';
+  await writeFile(join(root, `${agentId}.json`), JSON.stringify({
+    metadata: { id: agentId, name: 'Historical Native', revision: 1 },
+    spec: { runtime: { type: 'harness' }, bindings: { policyTemplate: 'strict' } },
+    bindings: { policyTemplate: 'strict' },
+  }));
+  assert.equal((await store.get(agentId)).spec.bindings.nativeAgentPolicy, undefined);
+  const updated = await store.update(agentId, { name: 'New Revision', expectedRevision: 1 });
+  assert.equal((await store.getRevision(agentId, 1)).spec.bindings.nativeAgentPolicy, undefined);
+  assert.deepEqual(updated.spec.bindings.nativeAgentPolicy, created.spec.bindings.nativeAgentPolicy);
+});
+
 test('editing and reopening preserve immutable Agent revisions for older native Sessions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-revisions-'));
   try {

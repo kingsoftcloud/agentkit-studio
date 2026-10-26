@@ -15,12 +15,12 @@
     "profile-disabled-provider-reasoning-stays-private-before-and-after-reload",
     "new-session-runs-current-r3-with-independent-native-ledger-and-history"
   ],
-  "archiveSha256": "33e52328b7975a84df8aa2c4f7effbabccd582ea3ddbe9b988c4e3551dee79d5",
+  "archiveSha256": "b3784b28c0bf2eb69a5d515a33238122cbf5f88f97a3de0109064f67b5f2268d",
   "sourceSha256": {
     "dist/client.js": "a00c96a916fb238fde0edc499347efa67403ebef5a00a055e88442f323a0873a",
     "src/runtime-contract.mjs": "ad88514601078a538dd3bede8e65482abf38db5f4d359ddcd5ea416e61cd2986",
     "src/authoring-defaults.mjs": "977b3b972763307aba2f6ee701469a1157693f947d287b876dd13f3f7882694a",
-    "src/agent-store.mjs": "4170d34d6175051025cf1c172af351ba245cab919b39931a24d6e032dea5d014",
+    "src/agent-store.mjs": "227c49b1d8dda41c3e67def1b6976f900592a1473adfd192a3b35527363f0093",
     "src/authoring-tools.mjs": "24e8c7906933a5c7e6a1ca510c840f3399c86f72244e53682508e6541537611c",
     "src/host/routes/agents.mjs": "068e72becbf98e022424a42bc4f88726bce7d5e0cb3f1873e1afe14438502dfd",
     "src/client/pages/agent-form.mjs": "83be84f16899247e2a9c2eb1fb13d463859ea5f0c75e5227738017bc78940f7f",
@@ -53,13 +53,13 @@
       1,
       1
     ],
-    "buildId": "build_74a7ddaff08ce57a7ce6",
-    "frozenSessionId": "session-aa15a27d-388b-4747-ae02-ca784fb39722",
-    "currentSessionId": "session-b8ec3fb6-b1c8-4bb0-a426-977c6af020fc",
+    "buildId": "build_b807080ebb0c81eb1bbc",
+    "frozenSessionId": "session-f430f0c1-be6b-4cc9-9b55-1366efab895b",
+    "currentSessionId": "session-0af5045a-cea1-479c-a3b8-2243d102f083",
     "settledWhileBrowserOffline": true,
     "approval": {
-      "agentId": "ar-local-fa16e4cc57c64e3d",
-      "sessionId": "session-1c5addc9-a522-4440-9417-1bfe669698a2",
+      "agentId": "ar-local-763e8b443cb04b2a",
+      "sessionId": "session-6e08d5de-2687-4a21-be24-7db8c126503c",
       "phase": "completed",
       "modelCalls": 2,
       "toolCalls": 1,
@@ -68,14 +68,14 @@
       "outcome": "allowed-once"
     },
     "hiddenReasoning": {
-      "agentId": "ar-local-5674bca173674d60",
-      "sessionId": "session-3e34f19f-5d8d-4a1c-8b21-da7b11745493",
+      "agentId": "ar-local-c296fcf5677745fd",
+      "sessionId": "session-efa0aacc-0916-42a6-bd9a-f2d67034c974",
       "phase": "completed",
       "modelCalls": 1,
       "displayed": false
     }
   },
-  "agentId": "ar-local-d482572bb2a74337",
+  "agentId": "ar-local-3f8aa38dd7f3461d",
   "requests": [
     {
       "marker": "MANAGEMENT_REVISION_ONE",

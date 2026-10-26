@@ -82,6 +82,7 @@ async function applyProof(ctx, options) {
       spec: { context: { maxInputTokens: 8000, reserveOutputTokens: 256 } },
       bindings: {
         modelProfileIds: ['fixture'],
+        nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} },
         visionModelProfileId: 'observer',
         tools: ['browser_inspect_workspace'],
       },
