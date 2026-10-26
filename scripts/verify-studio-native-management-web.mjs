@@ -23,6 +23,8 @@ await mkdir(root, { recursive: true });
 const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 const requests = [], modelFailures = [], rendererErrors = [];
+const heldRequests = [Promise.withResolvers(), Promise.withResolvers()];
+const heldReleases = [Promise.withResolvers(), Promise.withResolvers()];
 let browser, page, child, stopped, phase = 'prepare';
 const report = { evidence: 'full-mounted-studio-management-controlled-model', passed: false, checks: [] };
 const server = createServer(async (req, res) => {
@@ -38,10 +40,15 @@ const server = createServer(async (req, res) => {
     const marker = system.includes('MANAGEMENT_REVISION_THREE') ? 'MANAGEMENT_REVISION_THREE' : 'MANAGEMENT_REVISION_ONE';
     assert.ok(system.includes(marker));
     requests.push({ marker, inputTokens: 11, outputTokens: 7 });
-    assert.ok(requests.length <= 3, 'Unexpected repeated model request');
+    assert.ok(requests.length <= 4, 'Unexpected repeated model request');
+    const heldIndex = requests.length - 3;
+    if (heldIndex >= 0 && heldIndex < heldRequests.length) {
+      heldRequests[heldIndex].resolve(); await heldReleases[heldIndex].promise;
+    }
     res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     res.end('data: ' + JSON.stringify({ id: 'management-' + requests.length,
-      choices: [{ index: 0, delta: { content: marker + '_DONE' }, finish_reason: 'stop' }],
+      choices: [{ index: 0, delta: { content: marker + (requests.length === 3 ? '_RECONNECTED'
+        : requests.length === 4 ? '_NETWORK_RECONNECTED' : '_DONE') }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 11, completion_tokens: 7 } }) + '\n\ndata: [DONE]\n\n');
   } catch (error) { modelFailures.push(error.message); res.writeHead(500); res.end('Local management fixture failed'); }
 });
@@ -148,6 +155,8 @@ try {
   await rowFor(page).waitFor({ state: 'visible' });
   const list = await rpc('agents/list', { query: 'Management Web proof', source: 'local', page: 1, limit: 10 });
   assert.equal(list.items.length, 1); const agentId = list.items[0].metadata.id;
+  const scope = { tenantId: 'local', userId: 'local-user', agentId,
+    workspaceId: createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex') };
   const original = await rpc('agents/local-get', { agentId });
   assert.equal(original.spec.runtime.type, 'harness'); assert.equal(original.metadata.revision, 1);
   report.checks.push('new-form-defaults-to-native-and-retains-explicit-runtime-options');
@@ -214,27 +223,74 @@ try {
   await page.getByText('MANAGEMENT_REVISION_THREE_DONE', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.reload(); await page.getByText('MANAGEMENT_REVISION_THREE_DONE', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.screenshot({ path: join(root, 'current-run.png'), fullPage: true });
+  phase = 'live-reconnect';
+  await composer.fill('Continue this session after I reopen the page.'); await composer.press('Enter');
+  let heldTimer;
+  try {
+    await Promise.race([heldRequests[0].promise, new Promise((_, reject) => {
+      heldTimer = setTimeout(() => reject(Error('Third model request did not start')), 30000);
+    })]);
+  } finally { clearTimeout(heldTimer); }
+  await page.reload();
+  await page.getByText('Continue this session after I reopen the page.', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByText('Management Web proof', { exact: true }).first().waitFor({ state: 'visible', timeout: 30000 });
+  assert.equal(await page.getByText('MANAGEMENT_REVISION_THREE_RECONNECTED', { exact: true }).count(), 0,
+    'The held model response has not yet arrived');
+  heldReleases[0].resolve();
+  await page.getByText('MANAGEMENT_REVISION_THREE_RECONNECTED', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.reload();
+  await page.getByText('MANAGEMENT_REVISION_THREE_RECONNECTED', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.screenshot({ path: join(root, 'live-reconnected-run.png'), fullPage: true });
+  report.checks.push('running-native-turn-survives-browser-reload-and-resumes-in-same-session');
+  phase = 'network-reconnect';
+  await composer.fill('Continue this session after a temporary network outage.'); await composer.press('Enter');
+  let networkTimer;
+  try {
+    await Promise.race([heldRequests[1].promise, new Promise((_, reject) => {
+      networkTimer = setTimeout(() => reject(Error('Fourth model request did not start')), 30000);
+    })]);
+  } finally { clearTimeout(networkTimer); }
+  await page.context().setOffline(true);
+  assert.equal(await page.evaluate(() => navigator.onLine), false);
+  heldReleases[1].resolve();
+  const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')));
+  let completedOffline = false;
+  for (let attempt = 0; attempt < 100 && !completedOffline; attempt++) {
+    const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
+    try {
+      const rows = store.list(scope, currentSessionId);
+      completedOffline = rows.length === 3 && rows.every(row => store.load(scope, row.runId).snapshot.phase === 'completed');
+    } finally { store.close(); }
+    if (!completedOffline) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(completedOffline, true, 'The Native turn must settle durably while the browser is offline');
+  await page.context().setOffline(false);
+  await page.getByText('MANAGEMENT_REVISION_THREE_NETWORK_RECONNECTED', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.reload();
+  await page.getByText('MANAGEMENT_REVISION_THREE_NETWORK_RECONNECTED', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.screenshot({ path: join(root, 'network-reconnected-run.png'), fullPage: true });
+  report.checks.push('physical-browser-network-outage-recovers-durable-native-answer-without-reexecution');
   assert.deepEqual(modelFailures, []); assert.deepEqual(rendererErrors, []);
-  assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE']);
+  assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE']);
   assert.equal(await readFile(join(root, 'legacy-loop.jsonl'), 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; }), '');
   phase = 'durable-version-bindings';
-  const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')));
-  const scope = { tenantId: 'local', userId: 'local-user', agentId,
-    workspaceId: createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex') };
   const ledger = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   try {
-    const runs = [frozenSessionId, currentSessionId].map(sessionId => {
-      const snapshots = ledger.list(scope, sessionId); assert.equal(snapshots.length, 1);
-      return ledger.load(scope, snapshots[0].runId);
-    });
-    assert.deepEqual(runs.map(run => run.configuration.hostRecoveryBinding.agentRevision), [1, 3]);
+    const frozenRows = ledger.list(scope, frozenSessionId), currentRows = ledger.list(scope, currentSessionId);
+    assert.equal(frozenRows.length, 1); assert.equal(currentRows.length, 3, 'Both reconnected turns have independent durable Runs');
+    const runs = [...frozenRows, ...currentRows].map(row => ledger.load(scope, row.runId));
+    assert.deepEqual(runs.map(run => run.configuration.hostRecoveryBinding.agentRevision), [1, 3, 3, 3]);
     assert.ok(runs.every(run => run.snapshot.phase === 'completed' && run.configuration.engine === 'agentkit.native/v1'));
-    assert.deepEqual(runs.map(run => run.snapshot.usage.modelCalls), [1, 1]);
+    assert.deepEqual(runs.map(run => run.snapshot.usage.modelCalls), [1, 1, 1, 1]);
     assert.equal(runs[0].snapshot.buildId, buildId);
     assert.equal(runs[0].configuration.hostRecoveryBinding.buildId, buildId);
     assert.equal(runs[1].configuration.hostRecoveryBinding.buildId, null);
     assert.match(runs[1].snapshot.buildId, /^revision-[a-f0-9]{64}$/);
-    report.durable = { revisions: [1, 3], engine: 'agentkit.native/v1', modelCalls: [1, 1], buildId, frozenSessionId, currentSessionId };
+    assert.equal(runs[2].configuration.hostRecoveryBinding.buildId, null);
+    assert.equal(runs[2].snapshot.parentRunId, runs[1].snapshot.runId, 'Reconnected continuation retains the original Run');
+    assert.equal(runs[3].snapshot.parentRunId, runs[2].snapshot.runId, 'Network-reconnected continuation retains the prior Run');
+    report.durable = { revisions: [1, 3, 3, 3], engine: 'agentkit.native/v1', modelCalls: [1, 1, 1, 1], buildId, frozenSessionId, currentSessionId,
+      settledWhileBrowserOffline: completedOffline };
   } finally { ledger.close(); }
   report.checks.push('new-session-runs-current-r3-with-independent-native-ledger-and-history');
   report.passed = true; report.agentId = agentId;
@@ -242,6 +298,8 @@ try {
   report.failure = { phase, message: String(error.message).replace(/token=[A-Za-z0-9_-]+/g, 'token=[redacted]').slice(0, 1500) };
   await page?.screenshot({ path: join(root, 'failure.png'), fullPage: true }).catch(() => {}); process.exitCode = 1;
 } finally {
+  for (const release of heldReleases) release.resolve();
+  await page?.context().setOffline(false).catch(() => {});
   await browser?.close();
   if (child) { child.kill('SIGTERM'); const timer = setTimeout(() => child.kill('SIGKILL'), 5000); await stopped; clearTimeout(timer); }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

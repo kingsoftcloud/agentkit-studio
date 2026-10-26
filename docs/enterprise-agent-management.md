@@ -49,19 +49,31 @@ The proof covers:
    survive full page reload. SQLite records two completed Native runs with
    original revisions 1/3 and one model call each. The legacy loop sentinel is
    never entered.
+7. A second revision-3 turn holds its model response while the actual browser
+   reloads. The reopened page shows the in-progress user message; releasing the
+   response displays the answer in that same Session, and another reload keeps
+   it. SQLite records a completed continuation Run linked to the earlier Run.
+   The model endpoint observes one request for this turn, with no duplicate.
+8. A third revision-3 turn starts before Chrome is put offline. The model
+   response is released while the browser remains offline; SQLite confirms all
+   three current-Session Runs completed before reconnection. Returning Chrome
+   online restores the answer without another model request, and another reload
+   retains it.
 
 The local model is a controlled HTTP/SSE fixture, not a quality/token/latency
-benchmark. A reload proves history restoration, not abrupt Host crash recovery
-or live-stream network reconnection. Those have separate acceptance scopes.
+benchmark. A reload during an active turn proves page-level reconnection. A
+Playwright network outage proves the browser can recover a result that the Host
+committed while offline. Neither proves abrupt Host crash recovery or a range
+of real-world network failure patterns; those remain separate acceptance scopes.
 The verifier uses a reused dependency graph, not a clean dependency install.
 Its Node-only PATH deliberately excludes OS document-directory helpers; the
 shipped workspace controller is configured with a scratch Documents directory.
 It does not replace the Host or bypass execution/permission gates.
 
-The machine-readable report is `enterprise-agent-management-evidence.json`.
+The refreshed machine-readable report is `enterprise-agent-management-evidence.json`.
 Its archive and production source hashes identify the evaluated implementation.
 The local evidence directory also contains screenshots of conflict recovery,
-revision status and both revision executions.
+revision status, both revision executions, page reload and network recovery.
 
 Reproduction:
 

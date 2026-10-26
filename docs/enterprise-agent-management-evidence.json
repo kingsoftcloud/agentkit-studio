@@ -7,35 +7,42 @@
     "stale-editor-cannot-overwrite-and-unsaved-draft-is-preserved",
     "explicit-refresh-loads-latest-revision-and-reapplied-edit-publishes-r3",
     "old-build-runs-frozen-r1-after-r3-edit-and-history-survives-reload",
+    "running-native-turn-survives-browser-reload-and-resumes-in-same-session",
+    "physical-browser-network-outage-recovers-durable-native-answer-without-reexecution",
     "new-session-runs-current-r3-with-independent-native-ledger-and-history"
   ],
-  "archiveSha256": "0775f24290d82c9ad74fc95bf64170eca8ebd4de3d6d7eee07c703612f98c0a2",
+  "archiveSha256": "64256c3b294f4f244b863c13d861875a33475418a2bff1001ad2cb0ad1a00bfb",
   "sourceSha256": {
-    "dist/client.js": "598ffe0f8d21f826bfccc076abad48fbac85343b254d39408d9d917f4eb3a8d0",
+    "dist/client.js": "f24924fca7b3fcd95a5f4c3f5e0d94da902bc09b6f4bcc9bdb389679aed01fdd",
     "src/runtime-contract.mjs": "ad88514601078a538dd3bede8e65482abf38db5f4d359ddcd5ea416e61cd2986",
     "src/authoring-defaults.mjs": "977b3b972763307aba2f6ee701469a1157693f947d287b876dd13f3f7882694a",
-    "src/agent-store.mjs": "4446d3e5f7c81da800dc556be19b323236802f938dbbeb788ae97d42fa41d369",
-    "src/authoring-tools.mjs": "5741ebb09ca21190a086fdc43a94956872053037a7674f82e3a93dd140a0de28",
+    "src/agent-store.mjs": "4170d34d6175051025cf1c172af351ba245cab919b39931a24d6e032dea5d014",
+    "src/authoring-tools.mjs": "24e8c7906933a5c7e6a1ca510c840f3399c86f72244e53682508e6541537611c",
     "src/host/routes/agents.mjs": "068e72becbf98e022424a42bc4f88726bce7d5e0cb3f1873e1afe14438502dfd",
-    "src/client/pages/agent-form.mjs": "cb700938fe7bab51c0df5b8d50a47a67e505b1f53f970fcdb24478ec24314f9a",
+    "src/client/pages/agent-form.mjs": "83be84f16899247e2a9c2eb1fb13d463859ea5f0c75e5227738017bc78940f7f",
     "src/client/pages/agent-edit.mjs": "3b37b653d1df3ad93eb2f29e0f18f4bc5d9b59eeaa548b741fa805b1c815317c",
     "src/client/pages/delivery.mjs": "9d1194b4c75f889fdb85a017a3eaec6783c7449f7597a7846fa40b660a5da7c6"
   },
   "durable": {
     "revisions": [
       1,
+      3,
+      3,
       3
     ],
     "engine": "agentkit.native/v1",
     "modelCalls": [
       1,
+      1,
+      1,
       1
     ],
-    "buildId": "build_2b6fe6060b05c3269f29",
-    "frozenSessionId": "session-f83d991d-5153-406e-b235-8cd3dfa885a2",
-    "currentSessionId": "session-fb328258-f822-405e-b6d2-a54032c4af62"
+    "buildId": "build_baf9c39964b66fef4484",
+    "frozenSessionId": "session-84ed6104-25fd-4e9b-b904-44a05785336e",
+    "currentSessionId": "session-5959cac5-7e9f-47da-b83a-df1e412e5152",
+    "settledWhileBrowserOffline": true
   },
-  "agentId": "ar-local-58485775d9344dec",
+  "agentId": "ar-local-f09114a3d2254533",
   "requests": [
     {
       "marker": "MANAGEMENT_REVISION_ONE",
@@ -46,19 +53,18 @@
       "marker": "MANAGEMENT_REVISION_THREE",
       "inputTokens": 11,
       "outputTokens": 7
+    },
+    {
+      "marker": "MANAGEMENT_REVISION_THREE",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "marker": "MANAGEMENT_REVISION_THREE",
+      "inputTokens": 11,
+      "outputTokens": 7
     }
   ],
   "rendererErrors": [],
-  "modelFailures": [],
-  "postRunInspection": {
-    "frozenBuildIdentityVerified": true,
-    "currentRevisionIdentity": "revision-507bf8d00d3e711baa40cf06761facf5309b4bdcf202f146f105fd3eeb71eb50",
-    "method": "Read the same completed SQLite runs; no execution repeated."
-  },
-  "localEvidenceDirectory": "/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-management-web-xkhHAK",
-  "limits": [
-    "Controlled model fixture; no real-model quality or performance claim.",
-    "Page reload is history restoration, not live-stream reconnect or Host crash recovery.",
-    "Reused dependencies; no fresh install."
-  ]
+  "modelFailures": []
 }
