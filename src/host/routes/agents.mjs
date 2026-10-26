@@ -34,10 +34,12 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
                 const record = await store.update(String(payload?.agentId || ''), {
                     name: payload?.name, description: payload?.description,
                     spec: payload?.spec, bindings: payload?.bindings,
-                });
+                    ...(payload?.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
+                }, { assertCurrent: () => !signal?.aborted });
                 return { ok: true, value: { ...record, builds: [] } };
             }
             catch (error) {
+                signal?.throwIfAborted();
                 return { ok: false, error: { code: error?.code || 'LOCAL_AGENT_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
             }
         }

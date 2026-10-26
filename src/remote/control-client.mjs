@@ -305,7 +305,7 @@ export function createProductClient(connection, { window = globalThis.window } =
             ? studioBridgeOperation('agents/create-local', payload)
             : request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
         updateAgent: (id, spec, revision, name) => directServer() && String(id).startsWith('ar-local-')
-            ? studioBridgeOperation('agents/update-local', { agentId: id, spec, name })
+            ? studioBridgeOperation('agents/update-local', { agentId: id, spec, name, expectedRevision: revision })
             : directServer()
                 ? studioBridgeOperation('agents/update-cloud', { agentId: id, spec, revision, name })
                 : request('/api/v1/agents/' + encodeURIComponent(id) + (name ? '?name=' + encodeURIComponent(name) : ''), {

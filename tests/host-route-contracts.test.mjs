@@ -7,6 +7,9 @@ import { STUDIO_OPERATION_IDS } from '../src/contracts/operations.mjs';
 import { createHostRouteFixture, normalizeRouteValue, compactRouteCalls } from './fixtures/host-route-fixture.mjs';
 
 const recording = JSON.parse(await readFile(new URL('./fixtures/host-route-contracts.json', import.meta.url), 'utf8'));
+// The legacy server-only tool catalog explicitly selects dsh-native; the new
+// harness merged catalog has its own native-tool-catalog.test.mjs assertions.
+// Local update recordings additionally require live publication authority.
 assert.equal(recording.baselineCommit, 'c6f97fbf36351875967fbb2ce30dc0097a8ebf63');
 const legacyIds = [...new Set(recording.cases.map(item => item.endpoint))].sort();
 // Native and DSH task controls are new operations with separate product-route
