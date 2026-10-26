@@ -26,7 +26,7 @@ export function createStudioNativeSkills({
   invariant(typeof authorize === 'function', 'studio_native_skills_authorize_required');
   invariant(typeof agentId === 'string' && agentId.trim(), 'studio_native_skills_agent_id_required');
   invariant(Number.isSafeInteger(agentRevision) && agentRevision > 0, 'studio_native_skills_agent_revision_required');
-  invariant(!(loadSkillFn || executeWorkflow) || typeof backendBindingDigest === 'string' && backendBindingDigest.trim(),
+  invariant(!(loadSkillFn || executeWorkflow || locateWorkflow) || typeof backendBindingDigest === 'string' && backendBindingDigest.trim(),
     'studio_native_skills_backend_binding_required');
 
   const sealedSkillSpaceIds = copy(skillSpaceIds);
@@ -44,7 +44,8 @@ export function createStudioNativeSkills({
     contract: STUDIO_NATIVE_SKILLS_BINDING, toolContract: SKILL_TOOL_CONTRACT, agentId, agentRevision, buildId,
     skillSpaceIds: sealedSkillSpaceIds, publicSpaceIds: sealedPublicSpaceIds,
     publicAllowlist: sealedPublicAllowlist, boundSkillNames: sealedBoundSkillNames,
-    manifestLimit, hasExecuteWorkflow: typeof executeWorkflow === 'function',
+    manifestLimit, hasLoadSkill: typeof loadSkillFn === 'function',
+    hasExecuteWorkflow: typeof executeWorkflow === 'function', hasLocateWorkflow: typeof locateWorkflow === 'function',
     backendBindingDigest: backendBindingDigest || null,
     sealedBinding: sealedBindingCopy,
   })).digest('hex');

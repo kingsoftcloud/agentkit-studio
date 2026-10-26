@@ -4,6 +4,24 @@ Status: partial, 2026-10-26. P2's complete trusted extension/resource authority
 acceptance remains open. This record distinguishes versioned policy enforcement
 from historical display-only labels and areas still lacking end-to-end proof.
 
+## Optional Skill workflow locator review
+
+Actual Claude Code's bounded read-only review noticed that
+`createStudioNativeSkills` required a backend digest for the Skill loader and
+workflow executor but did not include the optional workflow locator in that
+guard or the provider digest. The direct provider now requires the same backend
+digest when a locator is supplied, and its digest records loader, executor and
+locator availability. Three focused Skill/provider files passed 53 checks.
+
+The review's claim that this alone bypassed the production permission boundary
+was not supported by the Host assembly: `prepareNativeSkillHost` always supplies
+the frozen backend digest, creates the locator and executor from the same
+session runtime, and the tool returns before invoking a locator when no
+executor is bound. The Host's frozen remote Skill binding comes from that
+runtime/connection configuration, not the direct provider's optional-capability
+digest. This change makes the provider contract explicit; it does not certify
+all Skill or extension authority, so P2 remains at 19/20.
+
 ## Implemented: versioned Native Agent tool policy
 
 Newly authored Native Agents save `agentkit.native-agent-policy/v1` in their

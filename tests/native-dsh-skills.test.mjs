@@ -372,6 +372,15 @@ test('bindingDigest changes with backendBindingDigest', () => {
   assert.notEqual(p1.bindingDigest, p2.bindingDigest);
 });
 
+test('workflow locator availability is pinned beside its backend binding', () => {
+  const base = { authorize: async () => 'allow', agentId: 'a', agentRevision: 1, backendBindingDigest: 'backend-v1' };
+  assert.throws(() => createStudioNativeSkills({ ...base, backendBindingDigest: '', locateWorkflow: () => ({}) }),
+    /studio_native_skills_backend_binding_required/);
+  const absent = createStudioNativeSkills(base);
+  const present = createStudioNativeSkills({ ...base, locateWorkflow: () => ({}) });
+  assert.notEqual(absent.bindingDigest, present.bindingDigest);
+});
+
 test('no service client → list_skills error', async () => {
   const tools = createNativeSkillTools({ authorize: async () => 'allow', skillSpaceIds: ['user-1'] });
   const r = await tools.forAgent(AGENT, AUTHORITY).tools.execute({
