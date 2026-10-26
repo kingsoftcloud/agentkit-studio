@@ -22,7 +22,28 @@ export function estimateNativeText(text) {
 export function estimateNativeWireInput(body, protocol = Array.isArray(body.input) && !body.messages ? 'openai-responses' : 'openai-chat') {
   const wire = structuredClone(body);
   for (const key of ['model', 'stream', 'stream_options', 'max_tokens', 'max_completion_tokens', 'max_output_tokens']) delete wire[key];
+  if (protocol === 'anthropic-messages') {
+    expandToolReferences(wire.messages, wire.tools);
+    // Deferred definitions are HTTP catalog data, not initial model context.
+    if (wire.tools) wire.tools = wire.tools.filter(tool => tool.defer_loading !== true);
+  }
   return priceWireSurface(wire, protocol === 'openai-responses' ? wire.input : wire.messages);
+}
+function expandToolReferences(messages = [], tools = []) {
+  const catalog = new Map(tools.map(tool => [tool.name, tool]));
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const result of message.content) {
+      if (result.type !== 'tool_result' || !Array.isArray(result.content)) continue;
+      result.content = result.content.map(block => {
+        if (block.type !== 'tool_reference') return block;
+        const definition = catalog.get(block.tool_name);
+        invariant(definition, 'context_counter_tool_reference_unknown');
+        const { defer_loading: _deferred, cache_control: _cache, ...expanded } = definition;
+        return { type: 'text', text: canonical(expanded) };
+      });
+    }
+  }
 }
 function priceWireSurface(surface, messages = []) {
   let images = 0;
@@ -67,9 +88,11 @@ export function estimateNativeMessage(binding, request) {
     messages.push(...message.toolCalls.map(call => ({ role: 'tool', name: call.name, callId: call.callId, content: '' })));
   } else if (message.role === 'tool') {
     messages.unshift({ role: 'assistant', content: '', toolCalls: [{ callId: message.callId,
-      name: message.name || 'source', arguments: {} }] });
+      name: request.profile.providerToolSearchPolicy === 'anthropic-deferred/v1' && message.discoveredToolNames !== undefined
+        ? 'ToolSearch' : message.name || 'source', arguments: {} }] });
   }
-  const built = buildNativeModelRequest(binding, { ...request, messages, tools: [], finalizationOnly: false });
+  const tools = request.profile.providerToolSearchPolicy === 'anthropic-deferred/v1' ? request.tools ?? [] : [];
+  const built = buildNativeModelRequest(binding, { ...request, messages, tools, finalizationOnly: false });
   const body = JSON.parse(built.body);
   let projected;
   if (binding.protocol === 'openai-responses') {
@@ -83,6 +106,7 @@ export function estimateNativeMessage(binding, request) {
       : message.role === 'assistant' ? item.role === 'assistant' : true);
   }
   invariant(projected.length > 0, 'context_counter_message_invalid');
+  if (binding.protocol === 'anthropic-messages') expandToolReferences(projected, body.tools);
   return priceWireSurface(projected.length === 1 ? projected[0] : projected, projected);
 }
 

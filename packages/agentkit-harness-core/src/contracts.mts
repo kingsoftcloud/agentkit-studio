@@ -99,6 +99,8 @@ export interface ModelProfile {
   streamTimeoutPolicy?: 'idle/v1'; providerThinkingDisplay?: boolean;
   /** Version the Host's visible-provider-reasoning default without upgrading admitted Runs. */
   providerThinkingDisplayPolicy?: 'provider-visible/v1';
+  /** Absence retains old local discovery; each new model binding freezes its own mode. */
+  providerToolSearchPolicy?: 'local-only/v1' | 'anthropic-deferred/v1';
   controllerReasoningPolicy?: 'disclosed-delegate/v1';
   anthropicPolicy?: { contract: 'anthropic-wire/v1'; midSystem: boolean; blockBinding: 'drop_block' | 'disabled' };
   promptCachePolicy?: 'anthropic-prefix/v1';
@@ -555,7 +557,7 @@ export interface ContextPort {
     countRequest(request: PortContext & { profile: ModelProfile; messages: Message[]; tools: ToolDefinition[];
       purpose: 'task' | 'compaction' | 'delivery_review'; maxOutputTokens: number; maxInlineImageBytes: number }): Promise<number>;
     countText(request: PortContext & { text: string }): Promise<number>;
-    countMessage?(request: PortContext & { profile: ModelProfile; message: Message;
+    countMessage?(request: PortContext & { profile: ModelProfile; message: Message; tools?: ToolDefinition[];
       purpose: 'task' | 'delivery_review'; maxInlineImageBytes: number }): Promise<number>;
   };
 }

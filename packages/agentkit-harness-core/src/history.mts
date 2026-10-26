@@ -55,6 +55,13 @@ function projectHistory(parent: StoredRun, transcript: Message[], configuration:
     if (message.role === 'tool') {
       const pair = message.callId ? pending.get(message.callId) : undefined;
       if (pair) {
+        // The source receipt is immutable. A new binding may remove tools;
+        // imported references must not require or advertise their old schemas.
+        if (configuration.profile.providerToolSearchPolicy === 'anthropic-deferred/v1' && message.discoveredToolNames !== undefined) {
+          const allowed = new Set(configuration.tools.filter(tool => configuration.contract.allowedToolNames === null
+            || configuration.contract.allowedToolNames.includes(tool.name)).map(tool => tool.name));
+          message.discoveredToolNames = message.discoveredToolNames.filter(name => allowed.has(name));
+        }
         pending.delete(message.callId!); message.callId = pair.mapped; output.push(message);
       } else {
         flush(); output.push({ role: 'user', kind: 'historical_tool_observation', history: source,

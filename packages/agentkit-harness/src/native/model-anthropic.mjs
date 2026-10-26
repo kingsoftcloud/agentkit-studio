@@ -24,6 +24,9 @@ import { validateMediaBlock, projectMediaAnthropic, MediaError } from './model-m
 import { parseModelJson, stringifyModelJson, parseNativeJson, modelWireToolCall, FINAL_SUBMISSION_TOOL } from '../../../agentkit-harness-core/dist/index.mjs';
 import { applyAnthropicThinking, projectProviderToolChoice, resolveProviderCompatibility } from './model-provider-compat.mjs';
 import { projectAnthropicPromptCache } from './model-anthropic-cache.mjs';
+import {
+  anthropicToolEntry, isNativeToolSearch, mergeNativeToolSearchBeta, nativeToolReferenceContent,
+} from './model-anthropic-tool-search.mjs';
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
@@ -34,7 +37,7 @@ const ANTHROPIC_VERSION = '2023-06-01';
 
 const FORBIDDEN_BODY_KEYS = new Set([
   'model', 'messages', 'tools', 'stream', 'system', 'tool_choice', 'max_tokens',
-  'provider_thinking_display',
+  'provider_thinking_display', 'provider_tool_search',
 ]);
 
 const CLIENT_ITEM_TYPES = new Set([
@@ -68,6 +71,7 @@ export function validateAnthropicBinding(binding) {
 export function buildAnthropicRequest(binding, request) {
   validateAnthropicBinding(binding);
   const profile = request.profile;
+  const native = isNativeToolSearch(profile) && !['compaction', 'delivery_review'].includes(request.purpose);
   const url = resolveUrl(binding.baseUrl, 'messages');
 
   const headers = { Accept: profile.streaming === false ? 'application/json' : 'text/event-stream' };
@@ -105,11 +109,11 @@ export function buildAnthropicRequest(binding, request) {
   // keeps the internal submit_final_output tool so the model can submit its
   // final answer. Normal tools are never sent during finalization.
   const tools = request.tools || [];
-  const advertised = request.finalizationOnly && profile.toolCatalogPolicy !== 'stable-task/v1'
+  const advertised = request.finalizationOnly && profile.toolCatalogPolicy !== 'stable-task/v1' && !native
     ? tools.filter((tool) => tool.name === FINAL_SUBMISSION_TOOL)
     : tools;
   if (advertised.length) {
-    payload.tools = advertised.map((tool) => ({
+    payload.tools = advertised.map((tool) => (native ? anthropicToolEntry(tool) : {
       name: tool.name,
       description: tool.description,
       input_schema: tool.parameters || { type: 'object', properties: {} },
@@ -133,6 +137,9 @@ export function buildAnthropicRequest(binding, request) {
     betas.add('thinking-binding-controls-2026-08-01');
     headers['anthropic-beta'] = [...betas].join(',');
   }
+  // Native deferred-tool-search advertises defer_loading; add its beta once,
+  // case-insensitive-deduped against any Host-selected betas above.
+  if (native) mergeNativeToolSearchBeta(headers);
   return { url, headers, body: stringifyModelJson(projectAnthropicPromptCache(projected, systemParts, request)) };
 }
 
@@ -148,20 +155,33 @@ export function projectMessagesAnthropic(request, maxInlineImageBytes) {
 
 function projectAnthropicMessages(request, maxInlineImageBytes) {
   const profile = request.profile;
+  // Summary/review models receive source prose, not task tool capabilities.
+  const native = isNativeToolSearch(profile) && !['compaction', 'delivery_review'].includes(request.purpose);
   const systemParts = [];
   const items = [];
   const pending = new Set();
+  // Pending call name per receipt callId, so native tool_reference metadata
+  // pairs only with a ToolSearch call. The wire id still keys the receipt.
+  const pendingNames = new Map();
   const wireIds = new Map();
   const midSystem = profile.anthropicPolicy?.midSystem === true;
   for (const message of request.messages || []) {
     const role = message.role;
+    if (native && message.discoveredToolNames !== undefined && role !== 'tool')
+      throw new ProtocolError('tool_reference metadata requires a paired tool receipt');
     if (role !== 'tool' && pending.size) throw new ProtocolError('incomplete assistant tool batch before next message');
     if (role === 'assistant' && message.toolCalls?.length) {
       validateAssistantToolIds(message.toolCalls);
-      for (const call of message.toolCalls) pending.add(call.callId);
+      for (const call of message.toolCalls) {
+        pending.add(call.callId);
+        pendingNames.set(call.callId, modelWireToolCall(call).name);
+      }
     }
+    let pairedName;
     if (role === 'tool') {
       if (!pending.delete(message.callId)) throw new ProtocolError('tool receipt does not match the pending assistant batch');
+      pairedName = pendingNames.get(message.callId);
+      pendingNames.delete(message.callId);
     }
     if (role === 'system' || role === 'developer') {
       if (midSystem && items.length) items.push({ role: 'system', content: message.content || '' });
@@ -170,10 +190,17 @@ function projectAnthropicMessages(request, maxInlineImageBytes) {
     }
     let item;
     if (role === 'tool') {
+      // Native deferred-tool-search: project tool_reference blocks only from
+      // kernel-owned discoveredToolNames on a ToolSearch receipt. Undefined
+      // (no metadata) or empty names keep the ordinary text/media projection;
+      // malformed or unpaired metadata fails preflight rather than widening
+      // authority. Non-native policy ignores the metadata entirely.
+      const references = native ? nativeToolReferenceContent(message, pairedName, request.tools) : undefined;
       const media = message.media ? message.media.map((b) => validateMediaBlock(b, maxInlineImageBytes)) : null;
-      const content = media && media.length
-        ? [{ type: 'text', text: message.content || '' }, ...projectMediaAnthropic(media)]
-        : (message.content || '');
+      let content;
+      if (references) content = [...references, ...(media?.length ? projectMediaAnthropic(media) : [])];
+      else if (media && media.length) content = [{ type: 'text', text: message.content || '' }, ...projectMediaAnthropic(media)];
+      else content = (message.content || '');
       item = {
         role: 'user',
         content: [{

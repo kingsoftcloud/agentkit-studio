@@ -1,4 +1,6 @@
-/** Real full Studio web profile, controlled local provider, browser reconnect and history. */
+/** Real full Studio web profile, controlled local provider, browser reconnect and history.
+ * Retains its isolated temporary root as evidence; the final report prints its path.
+ */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -82,6 +84,7 @@ const { runProfile } = await import(pathToFileURL(join(source, 'apps/cli/lib/pro
 const { chromium } = createRequire(import.meta.url)('playwright-core');
 let launch, running, browser, page, stage = 'boot';
 const networkFrames = [], sockets = [];
+const publicFrames = [];
 const stdout = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk, ...args) => {
   const match = String(chunk).match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/);
@@ -93,6 +96,9 @@ const check = name => report.checks.push(name);
 try {
   running = await runProfile({ profile: 'native-full-page', environment: loadLayeredEnv('dsh', source), patchFiles: [],
     args: ['--no-open', '--port', '0', '--host', '127.0.0.1'] });
+  running.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+    publicFrames.push({ sessionId: agent.session.id, frame });
+  }, { global: true });
   await running.ctx.workspaceRegistry.initializeDefault(async () => join(root, 'workspace'));
   assert.ok(launch, 'real web profile launch');
   browser = await chromium.launch({ executablePath: values.chromium || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
@@ -164,10 +170,15 @@ try {
   assert.ok(gates.has('offline')); gates.get('offline')();
   // Observe the provider-side prefix write while the browser transport is disabled.
   const gateDeadline = Date.now() + 5000;
-  while (!gates.has('online')) {
-    assert.ok(Date.now() < gateDeadline, 'provider emitted the offline prefix');
+  let publishedOffline;
+  while (!(publishedOffline = publicFrames.find(({ sessionId: id, frame }) => id === sessionId
+    && frame.chunk?.text?.includes('FULL_PAGE_THINK_WHILE_OFFLINE')))) {
+    // Host history folds this event synchronously. Provider write completion
+    // alone would race its accumulator and the reconnect opening snapshot.
+    assert.ok(Date.now() < gateDeadline, 'Native published the offline prefix before reconnect');
     await new Promise(resolve => setTimeout(resolve, 10));
   }
+  assert.ok(gates.has('online'));
   offline = false; await context.setOffline(false);
   stage = 'reconnect';
   await page.getByText('FULL_PAGE_THINK_WHILE_OFFLINE', { exact: false }).first().waitFor({ state: 'visible', timeout: 20000 });
@@ -219,10 +230,13 @@ try {
   const follows = messages.filter(frame => frame.direction === 'client' && frame.body.endpoint === 'session/follow');
   const followIds = new Set(follows.map(frame => frame.body.streamId));
   const snapshots = messages.filter(frame => frame.direction === 'host' && followIds.has(frame.body.streamId) && frame.body.value?.type === 'snapshot');
+  assert.ok(follows.length > 0 && snapshots.length > 0, 'real Gateway session/follow opens and snapshots captured');
   const restored = snapshots.find(frame => frame.connection > connectionsBeforeLoss
     && JSON.stringify(frame.body.value.assistantStream?.activeAttempt?.stream ?? []).includes('FULL_PAGE_THINK_WHILE_OFFLINE'));
   assert.ok(restored, 'actual post-disconnect network baseline contains the missed reasoning chunk');
+  assert.ok(restored.body.value.assistantStream.revision >= publishedOffline.frame.revision);
   const final = snapshots.at(-1).body.value;
+  assert.ok(final.assistantStream, 'reload has an assistant-stream baseline');
   assert.equal(final.assistantStream.activeAttempt, undefined);
   assert.ok(final.records.some(record => record.event?.type === 'turn/end' && record.event.data.reason.kind === 'completed'));
   report.reconnect = { revision: restored.body.value.assistantStream.revision,
@@ -232,7 +246,6 @@ try {
   check('captured real Gateway baseline restores active attempt and reload retires it');
   assert.equal(report.providerError, undefined);
   assert.deepEqual(report.pageErrors ?? [], []);
-  await writeFile(join(root, 'gateway-frames.json'), JSON.stringify(networkFrames, null, 2));
   report.passed = true;
 } catch (error) {
   report.failure = { stage, message: error.message.replace(/token=[A-Za-z0-9_-]+/g, 'token=REDACTED').slice(0, 1300) }; process.exitCode = 1;

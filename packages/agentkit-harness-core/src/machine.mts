@@ -76,7 +76,8 @@ export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration)
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean; input?: boolean }
 /** Stable declaration is distinct from the per-turn execution admission above. */
 export function modelToolCatalog(snapshot: RunSnapshot, config: RunConfiguration) {
-  if (config.profile.toolCatalogPolicy !== 'stable-task/v1' || reviewPending(snapshot)) return discoveryModelTools(snapshot, config, advertisedTools(snapshot, config));
+  if ((config.profile.toolCatalogPolicy !== 'stable-task/v1' && config.profile.providerToolSearchPolicy !== 'anthropic-deferred/v1')
+    || reviewPending(snapshot)) return discoveryModelTools(snapshot, config, advertisedTools(snapshot, config));
   const submission = finalSubmissionTool(config);
   return discoveryModelTools(snapshot, config, [...config.tools.filter(tool => config.contract.allowedToolNames === null || config.contract.allowedToolNames.includes(tool.name)),
     ...(submission ? [submission] : [])]);

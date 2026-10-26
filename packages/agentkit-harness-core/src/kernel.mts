@@ -1038,6 +1038,8 @@ export class NativeKernel {
             ...(counter.countMessage ? { countMessage: async (message: Message) => {
               context.signal.throwIfAborted(); assertBinding();
               const count = await counter.countMessage!({ ...context, profile: copy(configuration.profile), message: copy(message),
+                ...(configuration.profile.providerToolSearchPolicy === 'anthropic-deferred/v1'
+                  ? { tools: copy(modelToolCatalog(snapshot, configuration)) } : {}),
                 purpose: 'task', maxInlineImageBytes: configuration.limits.maxInlineImageBytes });
               context.signal.throwIfAborted(); assertBinding(); return count;
             } } : {}),

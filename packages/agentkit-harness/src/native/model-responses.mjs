@@ -49,6 +49,7 @@ const FORBIDDEN_BODY_KEYS = new Set([
   'max_output_tokens', 'instructions', 'n',
   'previous_response_id', 'conversation', 'background', 'truncation',
   'provider_thinking_display',
+  'provider_tool_search',
 ]);
 
 // Hosted provider effects that must not be silently dropped as client prose.

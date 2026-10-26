@@ -6,9 +6,51 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonical, parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 
-export function createToolSearchProof() {
+export function createToolSearchProof({ native = false } = {}) {
   const target = 'write_workspace_file', integer = 9007199254740993n;
+  async function respondNative({ request, response, raw, requests }) {
+    assert.equal(request.url, '/v1/messages');
+    assert.ok(request.headers['anthropic-beta'].split(',').includes('advanced-tool-use-2025-11-20'));
+    const body = parseNativeJson(raw); requests.push(body);
+    const count = requests.length, names = body.tools.map(tool => tool.name);
+    assert.ok(count <= 5); assert.ok(names.includes('ToolSearch')); assert.equal(names.includes('DeferredToolCall'), false);
+    assert.equal(Object.hasOwn(body, 'provider_tool_search'), false);
+    const definition = body.tools.find(tool => tool.name === target);
+    assert.equal(definition.input_schema.properties.id.minimum, integer);
+    assert.equal(definition.input_schema.properties.id.maximum, integer);
+    assert.equal(definition.defer_loading, count <= 3 ? true : undefined);
+    assert.equal(canonical(body.messages).includes('private-mcp-schema-audit'), false);
+    const blocks = body.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
+    if (count >= 2) {
+      const receipt = blocks.find(block => block.type === 'tool_result'
+        && Array.isArray(block.content) && block.content.some(item => item.type === 'tool_reference'));
+      assert.ok(receipt, 'kernel search receipt must become actual provider references');
+      assert.deepEqual(receipt.content, [{ type: 'tool_reference', tool_name: target }]);
+    }
+    if (count >= 3) {
+      const call = blocks.find(block => block.type === 'tool_use' && block.name === target);
+      assert.equal(call.input.id, integer);
+    }
+    const input = turn => ({ path: `published-${turn}.txt`, content: `marker ${turn}`, id: integer });
+    const call = count === 1 ? { name: 'ToolSearch', input: { query: `select:${target}` } }
+      : count === 2 ? { name: target, input: input(1) }
+      : count === 4 ? { name: target, input: input(2) } : null;
+    const event = (type, payload) => `event: ${type}\ndata: ${canonical({ type, ...payload })}\n\n`;
+    const events = [event('message_start', { message: { id: `tool-search-${count}`, role: 'assistant',
+      model: 'pinned', content: [], usage: { input_tokens: 5, output_tokens: 0 } } }),
+    event('content_block_start', { index: 0, content_block: call
+      ? { type: 'tool_use', id: `search-proof-${count}`, name: call.name, input: {} }
+      : { type: 'text', text: '' } }),
+    event('content_block_delta', { index: 0, delta: call
+      ? { type: 'input_json_delta', partial_json: canonical(call.input) }
+      : { type: 'text_delta', text: `Published marker ${count === 3 ? 1 : 2}.` } }),
+    event('content_block_stop', { index: 0 }),
+    event('message_delta', { delta: { stop_reason: call ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 7 } }),
+    event('message_stop', {})];
+    response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' }); response.end(events.join(''));
+  }
   async function respond({ request, response, raw, requests }) {
+    if (native) return respondNative({ request, response, raw, requests });
     assert.equal(request.url, '/v1/chat/completions');
     const body = parseNativeJson(raw); requests.push(body);
     const count = requests.length, names = body.tools.map(tool => tool.function.name);
@@ -67,6 +109,7 @@ export function createToolSearchProof() {
       assert.equal(records.length, 2);
       for (const record of records) {
         assert.equal(record.configuration.toolDiscoveryPolicy, 'local-tool-search/v1');
+        assert.equal(record.configuration.profile.providerToolSearchPolicy, native ? 'anthropic-deferred/v1' : 'local-only/v1');
         assert.ok(record.snapshot.toolDiscovery.discovered.includes(target));
         const toolCalls = record.intents.filter(intent => intent.kind === 'tool').flatMap(intent => intent.payload.calls);
         assert.equal(toolCalls.some(call => call.name === 'DeferredToolCall'), false);
@@ -79,10 +122,10 @@ export function createToolSearchProof() {
     assert.deepEqual(admissions.map(item => item.name), [target, target]);
     const probes = (await readFile(join(root, 'mounted-host-http.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
     assert.equal(new Set(probes.map(probe => probe.hostPid)).size, 2);
-    await writeFile(join(root, 'tool-search-proof.json'), JSON.stringify({ passed: true, modelRequests: 5,
+    await writeFile(join(root, 'tool-search-proof.json'), JSON.stringify({ passed: true, native, modelRequests: 5,
       mcpEffects, hostPids: [...new Set(probes.map(probe => probe.hostPid))],
-      scope: 'Packed Studio + maintained Host + SDK, default deferred MCP schema, exact integer, real tool policy/intent/effects, history wrapper, cold Host next-turn promotion. Controlled model; no live model quality or savings claim.' }, null, 2));
-    console.log('Studio Native tool search PASS: default discovery, exact MCP schema, actual-target execution and policy, cold Host next-turn promotion.');
+      scope: `Packed Studio + maintained Host + SDK, default deferred MCP schema, exact integer, real tool policy/intent/effects, ${native ? 'Anthropic references and direct calls' : 'history wrapper'}, cold Host next-turn promotion. Controlled model; no live model quality or savings claim.` }, null, 2));
+    console.log(`Studio Native tool search PASS: ${native ? 'Anthropic references' : 'local discovery'}, exact MCP schema, actual-target execution and policy, cold Host next-turn promotion.`);
   }
   return { respond, run };
 }

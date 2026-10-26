@@ -113,3 +113,34 @@ for (const protocol of ['openai-chat', 'anthropic-messages']) test(`${protocol}:
   input.profile.providerReplayMode = 'none';
   assert.equal(await port.tokens.countRequest(input), baseline);
 });
+
+test('Anthropic deferred catalogs price resident schemas and expand actual references without mutating the wire', () => {
+  const definition = { name: 'publish', description: 'Large schema '.repeat(2000), input_schema: { type: 'object' }, defer_loading: true };
+  const base = { messages: [{ role: 'user', content: 'Publish a marker' }], tools: [] };
+  const deferred = { ...structuredClone(base), tools: [definition] }, original = structuredClone(deferred);
+  assert.equal(estimateNativeWireInput(deferred, 'anthropic-messages'), estimateNativeWireInput(base, 'anthropic-messages'));
+  assert.deepEqual(deferred, original);
+  const resident = { ...structuredClone(deferred), tools: [{ ...definition, defer_loading: false }] };
+  assert.ok(estimateNativeWireInput(resident, 'anthropic-messages') > estimateNativeWireInput(deferred, 'anthropic-messages') + 1000);
+  deferred.messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'search',
+    content: [{ type: 'tool_reference', tool_name: 'publish' }] }] });
+  const before = structuredClone(deferred);
+  assert.ok(estimateNativeWireInput(deferred, 'anthropic-messages') > estimateNativeWireInput(base, 'anthropic-messages') + 1000);
+  assert.deepEqual(deferred, before);
+  deferred.messages.at(-1).content[0].content[0].tool_name = 'unknown';
+  assert.throws(() => estimateNativeWireInput(deferred, 'anthropic-messages'), /context_counter_tool_reference_unknown/);
+});
+
+test('Anthropic logical ToolSearch source costs include expanded schemas instead of result prose alone', async () => {
+  const input = request('anthropic-messages'), port = createNativeContextPort({ protocol: 'anthropic-messages', model: 'pinned' });
+  input.profile.providerToolSearchPolicy = 'anthropic-deferred/v1';
+  input.tools = [tool({ name: 'publish', description: 'Large definition '.repeat(2000), discovery: { deferred: true } })];
+  const message = { role: 'tool', name: 'ToolSearch', callId: 'search', content: 'Loaded publish', discoveredToolNames: ['publish'] };
+  const original = structuredClone(message);
+  const count = await port.tokens.countMessage({ ...input, purpose: 'task', message });
+  assert.deepEqual(message, original);
+  input.tools[0].description = 'Publish';
+  assert.ok(count > await port.tokens.countMessage({ ...input, purpose: 'task', message }) + 1000);
+  input.tools = [];
+  await assert.rejects(port.tokens.countMessage({ ...input, purpose: 'task', message }), /not an admitted tool/);
+});

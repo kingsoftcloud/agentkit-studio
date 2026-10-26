@@ -103,7 +103,8 @@ async function applyProof(ctx, options) {
     console.warn = captureWarning;
     ctx.effect(() => () => { if (console.warn === captureWarning) console.warn = warn; }, 'Studio verification warnings');
     await writeFile(join(home, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'fixture', provider: 'openai-compatible',
-      modelName: 'pinned', baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_FIXTURE_KEY' }],
+      modelName: 'pinned', baseUrl: options.modelUrl, default: true, credentialName: 'STUDIO_NATIVE_FIXTURE_KEY',
+      ...(options.providerToolSearch ? { protocol: 'anthropic-messages', parameters: { provider_tool_search: true } } : {}) }],
       modelProfileKeys: { STUDIO_NATIVE_FIXTURE_KEY: 'sk-studio-fixture-secret' } }), { mode: 0o600 });
     const { mountStudioHost } = await import('@kingsoftcloud/agentkit-studio/host-bootstrap');
     await mountStudioHost(ctx, { configurationHome: home,

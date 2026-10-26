@@ -26,6 +26,10 @@ export function toolDiscoveryDefinitions(): ToolDefinition[] {
 
 export function validateToolDiscovery(config: RunConfiguration): void {
   invariant(config.toolDiscoveryPolicy === undefined || config.toolDiscoveryPolicy === TOOL_DISCOVERY_POLICY, 'invalid_tool_discovery_policy');
+  invariant(config.profile.providerToolSearchPolicy === undefined || config.profile.providerToolSearchPolicy === 'local-only/v1'
+    || config.profile.providerToolSearchPolicy === 'anthropic-deferred/v1'
+      && config.profile.providerFamily === 'anthropic-messages' && config.toolDiscoveryPolicy === TOOL_DISCOVERY_POLICY,
+  'invalid_provider_tool_search_policy');
   for (const tool of config.tools) {
     if (tool.discovery === undefined) continue;
     const value = tool.discovery;
@@ -58,6 +62,15 @@ export function toolDiscoveryCatalog(snapshot: RunSnapshot, config: RunConfigura
 /** The complete execution catalog stays fixed; only model-visible declarations vary. */
 export function discoveryModelTools(snapshot: RunSnapshot, config: RunConfiguration, tools: ToolDefinition[]): ToolDefinition[] {
   if (config.toolDiscoveryPolicy !== TOOL_DISCOVERY_POLICY) return tools;
+  if (config.profile.providerToolSearchPolicy === 'anthropic-deferred/v1') return tools
+    .filter(tool => tool.name !== DEFERRED_TOOL_CALL)
+    .map(tool => {
+      if (tool.name === TOOL_SEARCH) return { ...tool,
+        description: 'Search available tools by keywords, +required terms, an MCP prefix, or select:ExactName,OtherName. Matching tool references load their definitions. Call the discovered tools directly by their exact names.' };
+      if (!tool.discovery || !snapshot.toolDiscovery?.promoted.includes(tool.name)) return tool;
+      const { discovery: _discovery, ...resident } = tool;
+      return resident;
+    });
   // Keep names discoverable without sending every schema. The frozen scope makes
   // this a stable declaration prefix rather than another mutable guidance turn.
   const names: string[] = [];
@@ -93,7 +106,9 @@ export function discoveredCallExposed(snapshot: RunSnapshot, config: RunConfigur
   if (config.toolDiscoveryPolicy !== TOOL_DISCOVERY_POLICY) return true;
   const tool = config.tools.find(tool => tool.name === call.name);
   if (call.modelCallWrapper) return deferredTarget(snapshot, config, call.name) !== undefined;
-  return !tool?.discovery || snapshot.toolDiscovery?.promoted.includes(call.name) === true;
+  return !tool?.discovery || snapshot.toolDiscovery?.promoted.includes(call.name) === true
+    || config.profile.providerToolSearchPolicy === 'anthropic-deferred/v1'
+      && snapshot.toolDiscovery?.discovered.includes(call.name) === true;
 }
 
 /** Reconstitute the provider's original call; execution records keep the real target. */
@@ -110,19 +125,22 @@ export function executeToolDiscovery(snapshot: RunSnapshot, config: RunConfigura
   const names = searchTools(String(call.arguments.query), toolDiscoveryCatalog(snapshot, config), Number(call.arguments.max_results ?? 5)).slice(0, 20);
   const definitions: { name: string; description: string; parameters: ToolDefinition['parameters']; call: string }[] = [];
   const loaded: string[] = [];
+  const native = config.profile.providerToolSearchPolicy === 'anthropic-deferred/v1';
   let omitted = 0;
   const content = () => ({ tool_names: loaded, definitions, omitted_count: omitted,
-    instruction: 'Use DeferredToolCall with {name,input} for deferred tools. Call resident tools directly.' });
+    instruction: native ? 'Matching tool references load their definitions. Call discovered tools directly by their exact names.'
+      : 'Use DeferredToolCall with {name,input} for deferred tools. Call resident tools directly.' });
   // Match result governance's model-view envelope, including escaped JSON text.
   const modelBytes = () => new TextEncoder().encode(canonical({ content: canonical(content()), media: [], additionalContexts: [] })).length;
   for (const name of names) {
     const tool = allowedTools(config).find(tool => tool.name === name)!;
     const entry = { name, description: tool.description, parameters: copy(tool.parameters),
       call: tool.discovery && !snapshot.toolDiscovery?.promoted.includes(name) ? DEFERRED_TOOL_CALL : 'direct' };
-    definitions.push(entry);
+    const includeDefinition = !native || !tool.discovery;
+    if (includeDefinition) definitions.push(entry);
     if (tool.discovery) loaded.push(name);
     if (modelBytes() + 32 > config.limits.maxToolResultBytes) {
-      definitions.pop(); if (tool.discovery) loaded.pop(); omitted++;
+      if (includeDefinition) definitions.pop(); if (tool.discovery) loaded.pop(); omitted++;
     }
   }
   const value = content();

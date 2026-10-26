@@ -52,7 +52,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'memory-parallel': { type: 'boolean', default: false }, archive: { type: 'string' },
   'studio-dependencies': { type: 'string' }, web: { type: 'boolean', default: false }, 'delivery-review': { type: 'boolean', default: false },
   'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false },
-  'tool-search': { type: 'boolean', default: false }, todos: { type: 'boolean', default: false },
+  'tool-search': { type: 'boolean', default: false }, 'provider-tool-search': { type: 'boolean', default: false }, todos: { type: 'boolean', default: false },
   'plan-mode': { type: 'boolean', default: false }, 'plan-mcp': { type: 'boolean', default: false },
   'plan-commands': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
@@ -95,7 +95,8 @@ assert.ok(!values.instructions || values['mount-host'] && !values.frozen && !art
   '--instructions is a separate mounted Host instruction proof');
 const instructionsProof = values.instructions ? createInstructionsProof() : null;
 assert.ok(!values['tool-search'] || values['mount-host'] && values['mcp-schema'] && !values.frozen && !values.trace && !values.recovery, '--tool-search requires --mount-host --mcp-schema');
-const toolSearchProof = values['tool-search'] ? createToolSearchProof() : null;
+assert.ok(!values['provider-tool-search'] || values['tool-search'], '--provider-tool-search requires --tool-search');
+const toolSearchProof = values['tool-search'] ? createToolSearchProof({ native: values['provider-tool-search'] }) : null;
 assert.ok(!values.todos || values['mount-host'] && !values['mcp-schema'] && !values.instructions && !values.frozen
   && !values.memory && !values.commands && !values.recovery && !values.trace && !deliveryReviewProof && !deadlinePolicyProof
   && !artifactPolicyProof && !webProof && !managedMemory && !parallelMemory && !values.automation && !values.hooks,
@@ -362,6 +363,7 @@ try {
     `        artifactPolicy: ${values['artifact-policy']}`,
     `        instructions: ${values.instructions}`,
     `        toolSearch: ${values['tool-search']}`,
+    `        providerToolSearch: ${values['provider-tool-search']}`,
     `        todos: ${values.todos}`,
     `        planMode: ${values['plan-mode']}`,
     `        planMcp: ${values['plan-mcp']}`,

@@ -34,6 +34,7 @@ function strictParseJson(text) {
 const FORBIDDEN_BODY_KEYS = new Set([
   'model', 'messages', 'tools', 'stream', 'n', 'tool_choice', 'parallel_tool_calls', 'max_tokens', 'max_completion_tokens',
   'provider_thinking_display',
+  'provider_tool_search',
 ]);
 
 // Validate the host binding shape before any HTTP attempt.

@@ -1666,6 +1666,7 @@ for (const legacyDisplay of [undefined, false]) test(`restored admitted thinking
     protocol: p.protocol || 'openai-chat', contextWindow: p.contextWindow ?? 128000, maxOutputTokens: p.maxOutputTokens ?? 8192,
     parameters: p.parameters ?? {}, requestTimeoutMs: p.requestTimeoutMs ?? 110000, input: modelInput(p) };
   delete profile.providerThinkingDisplayPolicy;
+  delete profile.providerToolSearchPolicy;
   const oldRuntime = { providerThinkingDisplay: false, streamTimeoutPolicy: 'idle/v1', controllerReasoningPolicy: 'disclosed-delegate/v1' };
   if (legacyDisplay === undefined) for (const key of Object.keys(oldRuntime)) delete profile[key];
   else profile.providerThinkingDisplay = false;
@@ -1677,6 +1678,23 @@ for (const legacyDisplay of [undefined, false]) test(`restored admitted thinking
   assert.deepEqual(restored.configuration, configuration);
   assert.equal(restored.configuration.profile.providerThinkingDisplay, legacyDisplay);
   assert.equal(restored.configuration.profile.providerThinkingDisplayPolicy, undefined);
+  assert.equal(Object.hasOwn(restored.configuration.profile, 'providerToolSearchPolicy'), false);
+  assert.equal(f.requests.length, 0);
+  await restored.releaseResources?.({ scope: restored.scope, runId: args.runId, sessionId: f.payload.agent.session.id });
+});
+
+for (const native of [false, true]) test(`provider tool search binding freezes ${native ? 'native references' : 'local discovery'} and preserves the original policy on restore`, async t => {
+  const f = await setup(t, { recovery: true, profile: { protocol: 'anthropic-messages', parameters: { provider_tool_search: native } } });
+  f.payload.binding.nativeTools.definitions = () => [tool({ name: 'remote_search', discovery: { deferred: true } })];
+  const args = { store: new MemoryRunStore(), admission: null, runId: 'provider-search-binding',
+    target: { tenantId: 'tenant', agentInstanceId: f.record.metadata.id }, principal: { userId: 'user' } };
+  const bound = await f.host.resolveManagedBinding(f.payload, args);
+  assert.equal(bound.configuration.profile.providerToolSearchPolicy, native ? 'anthropic-deferred/v1' : 'local-only/v1');
+  assert.equal(bound.configuration.toolDiscoveryPolicy, 'local-tool-search/v1');
+  await bound.releaseResources?.({ scope: bound.scope, runId: args.runId, sessionId: f.payload.agent.session.id });
+  const restored = await f.host.resolveManagedBinding(f.payload, { ...args,
+    admission: { scope: bound.scope, buildId: bound.buildId, configuration: bound.configuration } });
+  assert.deepEqual(restored.configuration, bound.configuration);
   assert.equal(f.requests.length, 0);
   await restored.releaseResources?.({ scope: restored.scope, runId: args.runId, sessionId: f.payload.agent.session.id });
 });

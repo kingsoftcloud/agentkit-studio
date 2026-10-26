@@ -42,6 +42,7 @@ import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.
 import { readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
 import { admitInlineReasoningPolicy } from '../../../packages/agentkit-harness/src/native/model-inline-reasoning.mjs';
 import { admitAnthropicPolicies, admitProviderCompatibilityPolicy, resolveProviderCompatibility } from '../../../packages/agentkit-harness/src/native/model-provider-compat.mjs';
+import { admitProviderToolSearchPolicy } from '../../../packages/agentkit-harness/src/native/model-tool-search-policy.mjs';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
@@ -426,6 +427,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         const runtimePolicy = !original || Object.hasOwn(original.configuration.profile, 'providerThinkingDisplay');
         const providerThinkingDisplayPolicy = original ? original.configuration.profile.providerThinkingDisplayPolicy : 'provider-visible/v1';
         const controllerReasoningPolicy = original ? original.configuration.profile.controllerReasoningPolicy : 'disclosed-delegate/v1';
+        const toolSearchEpoch = !original || Object.hasOwn(original.configuration.profile, 'providerToolSearchPolicy');
+        const providerToolSearchPolicy = toolSearchEpoch ? original && primary
+          ? original.configuration.profile.providerToolSearchPolicy
+          : admitProviderToolSearchPolicy({ protocol: desc.protocol, model: desc.modelName,
+            requested: desc.parameters.provider_tool_search, discovery: !!recoveryPolicies.toolDiscoveryPolicy }) : undefined;
         const anthropicKeys = ['anthropicPolicy', 'promptCachePolicy', 'operatorGuidancePolicy', 'toolCatalogPolicy', 'providerReplayProjectionPolicy'];
         const anthropicPolicies = original && primary
           ? Object.fromEntries(anthropicKeys.filter(key => original.configuration.profile[key] !== undefined)
@@ -436,6 +442,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(providerThinkingDisplayPolicy ? { providerThinkingDisplayPolicy } : {}),
           ...(modelOptions.streaming !== false ? { streamTimeoutPolicy: 'idle/v1' } : {}),
           ...(controllerReasoningPolicy ? { controllerReasoningPolicy } : {}),
+          ...(providerToolSearchPolicy ? { providerToolSearchPolicy } : {}),
           ...anthropicPolicies,
         } : {};
         const compat = providerCompatibilityPolicy && resolveProviderCompatibility(providerCompatibilityPolicy,

@@ -26,6 +26,15 @@ interaction/presentation needed to use that Harness inside the existing Studio.
   modules and unrelated plugins, pages or visual redesign. Reuse Studio's current
   Session/UI ownership and presentation components where possible.
 
+User clarification: automatic memory extraction, layered retries and the
+workflow/background/telemetry/session coordination required by coding tasks
+remain capability targets. Lightweight means reuse existing Studio services,
+separate modules and avoid unnecessary execution; it does not authorize removing
+these capabilities. Automatic memory extraction must retain automatic triggers,
+and retries must cover distinct failure layers within shared task budgets.
+Source presence is not evidence that an optional background feature runs by
+default; in particular the pinned Dream handler is not automatically wired.
+
 This clarification makes conversation presentation explicit within M3/M4 and
 its end-to-end checks within M6. Unrelated product modules were already outside
 the coding Harness target; excluding them earns no extra progress. The
@@ -64,13 +73,14 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **42/100**: M1 4/15 (inputs, initial matrix and reviewed
-source findings), M2 9/15 (explicit earlier cleanup, admitted Anthropic cache
+Current earned progress: **43/100**: M1 4/15 (inputs, initial matrix and reviewed
+source findings), M2 10/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity, plus versioned
 reference-default earlier cleanup through the actual Studio counter/command path,
 authenticated cleaned-source summaries with SQLite recovery and actual Studio integration,
-and admitted idle cleanup with persistent assistant clocks and cold Studio continuity), M3 8/20
+and admitted idle cleanup with persistent assistant clocks and cold Studio continuity,
+plus native Anthropic deferred schemas/references with actual Host execution, context accounting and cold continuity), M3 8/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
 plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
@@ -128,7 +138,7 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | New explicitly enabled admissions derive the reference earlier threshold, use cleaned sources for still-needed summaries and support idle-triggered cleanup through persistent assistant completion clocks. Actual Host/counter/cold-continuation evidence is recorded below; original policies and explicit thresholds remain. Result-count versus batch recency, exact budget strategy and full context acceptance remain pending. |
 | Local task conversation / thinking display | `src/runtime/methods/model.ts:278-330,515`, `tests/runtime-reasoning-history.test.ts`, model streaming Session events | Node `assistant-stream.mjs`, `session-delivery.mjs`, Host `native-harness.mjs`, maintained DSH `api/session-controller` and conversation UI | New admissions enable public provider reasoning by default, retain it in durable message content, and publish readable interrupted prefixes without partial tool authority. Explicit hiding and old Run defaults remain. SSE/JSON checks, packed Frozen Host disconnect/cold continuation, persisted history and component clicks pass. Full installed Studio now passes a physical Gateway disconnect, actual active-attempt baseline restoration, tool parameters/results, completed task status and browser history reload without extra model calls. Other conversation controls and complete parity remain open. The cloud Assistant path stays separate. |
-| Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
+| Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path enters actual packed Host, real MCP, child authority, SQLite and cleanup. Native Anthropic deferred schemas/references now pass packed Host, exact MCP input, actual target policy/effects and cold promotion; logical/request estimates account for expanded references. Skills retain existing progressive disclosure. Complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. New admitted v2 Edit supports absent-file creation and full-fresh-read whitespace replacement, actual Host denial and cold editing; v1/legacy behavior is preserved. Large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
@@ -2703,3 +2713,82 @@ steering/cancellation UI certification, a complete Markdown-formatting audit,
 or a quality/token/latency benchmark. Those remaining objective items retain
 their original scope. Earned progress is **42/100**, M3 **8/20**, denominator
 unchanged; other milestone scores remain unchanged.
+
+### Native Anthropic deferred tools and references (43/100)
+
+Pinned reference: `tool/handlers/tool-search.ts:46-51`,
+`tool/search/{exposure,history}.ts`, and adapters
+`src/model/{tool-search,tool-transform,transform}.ts`. The provider's official
+[custom search contract](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)
+requires full schemas in the HTTP `tools` catalog, even when marked
+`defer_loading`; a successful client search returns `tool_reference` blocks.
+
+New Host admissions freeze `profile.providerToolSearchPolicy` as
+`anthropic-deferred/v1` or `local-only/v1`. Native mode is automatic only for
+exact supported Anthropic model IDs with discovery enabled. A compatible custom
+Anthropic profile can set `parameters.provider_tool_search: true`; `false` opts
+out. The boolean is Host-only and is filtered from all three provider bodies.
+Old admissions lacking the policy retain that absence and their original digest;
+restored admissions keep the original mode. Each new child model binding admits
+its own protocol capability. This is an intentional fresh-admission default,
+not a reinterpretation of admitted Runs.
+
+The existing kernel still owns search, allowed names, discovery, actual target
+permissions, intents and receipts. Deferred schemas alone do not authorize a
+call. Native search returns metadata-backed references and authorizes discovered
+targets directly, without advertising `DeferredToolCall`. Promoted tools become
+resident. The HTTP catalog retains schemas needed by historical references even
+when execution budgets are exhausted; execution admission remains independent.
+Compaction/review use source prose rather than task references/capabilities.
+Historical import drops references to removed tools on its copied view without
+rewriting the original receipt or restoring removed execution authority.
+
+Wire preflight checks paired ToolSearch identity, names, uniqueness, membership
+and the 20-reference bound, never result prose. Media and signed replay retain
+their existing paths. The reference beta is merged with existing thinking betas.
+Context estimation excludes deferred schemas from initial context and charges
+expanded referenced schemas; logical source pricing receives the actual scoped
+catalog. These remain conservative estimates, not provider token measurements.
+
+Evidence (targeted only, no full-suite rerun):
+
+- Core/discovery/counter/admission batch: `/tmp/native-provider-tool-search-related.log`,
+  39 passing checks. Final native core/history/budget checks:
+  `/tmp/native-provider-tool-search-history.log`, 6 passing; existing history/cut/
+  seed checks: `/tmp/native-provider-tool-search-history-regression.log`, 17 passing.
+- Real wire builders and previous local/signed-wrapper projection:
+  `/tmp/native-provider-tool-search-wire.log`, 15 passing. Related Anthropic
+  protocol checks: `/tmp/native-provider-tool-search-anthropic-regression.log`,
+  35 passing. Host admission/restore/old-default checks:
+  `/tmp/native-provider-tool-search-host-binding.log`, 8 passing.
+- Core build and public contracts compile pass. Actual Claude Code implementation
+  and read-only review session `f9463083-1c53-40d0-849e-fdc5a892d863` is terminal;
+  reports are `/tmp/native-anthropic-tool-reference-finish.json` and
+  `/tmp/native-provider-tool-search-review.json`. Main confirmed the review's
+  fresh-default question as intentional, and separately fixed finalization,
+  auxiliary requests and removed historical references.
+- Final packed Native proof: `/tmp/native-provider-tool-search-packed-final.log`,
+  root `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-Cd7Lod`.
+  Five actual Anthropic SSE requests, full deferred exact-integer MCP schema,
+  metadata-backed references, direct real MCP writes, two Host processes and
+  cold next-turn resident promotion pass. Actual SQLite tool intents and Host
+  permission admission each name the real target; there are exactly two writes.
+- The same final archive's local search/wrapper path also passes:
+  `/tmp/native-local-tool-search-packed-final.log`, root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-Hv2ZYx`.
+  Archive `/tmp/agentkit-native-tool-search-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz`,
+  SHA-256 `d5f6057236e99510bc416d463fde6c9e720456cafc3a39bc8a90e2fade024f8c`.
+
+The earlier full-browser reconnect verifier was separately hardened to wait for
+the actual public Native chunk, not merely the provider's HTTP write, before
+reopening transport. `/tmp/native-full-page-published-prefix-proof.log` passes
+all seven original full-page checks, root
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-full-page-AXmaUi`.
+That verifier check used the earlier `21191f...` archive; it does not certify this
+new Anthropic capability in the browser and earns no additional point.
+
+Earned progress: **43/100**, M2 **10/15**; other scores and denominator unchanged.
+This point covers native tool-reference integration and accounting, not complete
+search/Skills parity or actual quality, token-saving and latency benchmarks.
+Automatic memory extraction, layered retry coordination and coding workflow/
+background/telemetry/session capability audits remain required as clarified above.
