@@ -432,6 +432,10 @@ export function createOpenAIStreamTurn(profile, binding) {
         for (const field of ['id', 'type']) {
           if (field in fragment) {
             const value = fragment[field];
+            // Some OpenAI-compatible SSE providers emit null for unchanged
+            // identity fields in later fragments. Only non-null deltas can
+            // establish or conflict with the original tool identity.
+            if (value == null) continue;
             if (typeof value !== 'string' || !value || (call[field] != null && call[field] !== value)) {
               throw new ProtocolError('conflicting tool identity');
             }
@@ -443,6 +447,7 @@ export function createOpenAIStreamTurn(profile, binding) {
           if (typeof fn !== 'object' || Array.isArray(fn)) throw new ProtocolError('invalid function delta');
           for (const field of ['name', 'arguments']) {
             if (field in fn) {
+              if (fn[field] == null) continue;
               if (typeof fn[field] !== 'string') throw new ProtocolError('function fragment must be text');
               call.function[field] += fn[field];
             }

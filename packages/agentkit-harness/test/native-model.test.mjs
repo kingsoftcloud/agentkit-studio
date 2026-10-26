@@ -315,6 +315,36 @@ test('openai: tool fragments assemble into a sealed batch with tool_delta deltas
   assert.ok(events.some((e) => e.kind === 'tool_delta'));
 });
 
+test('openai: null fields in later tool fragments do not erase a prior identity', async () => {
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [
+    sse(ochunk({ tool_calls: [{ index: 0, id: 'policy-call', type: 'function',
+      function: { name: 'lookup_policy', arguments: '' } }] })),
+    sse(ochunk({ tool_calls: [{ index: 0, id: null, type: 'function',
+      function: { name: null, arguments: '{}' } }] })),
+    sse(ochunk({}, 'tool_calls', { usage: { prompt_tokens: 12, completion_tokens: 3 } })), sseDone(),
+  ] });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'tool_calls');
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].callId, 'policy-call');
+  assert.equal(result.toolCalls[0].name, 'lookup_policy');
+  looseEqual(result.toolCalls[0].arguments, {});
+  assert.equal(result.usage.inputTokens, 12);
+});
+
+test('openai: a different non-null identity after a null fragment still rejects the batch', async () => {
+  const handler = () => ({ status: 200, headers: SSE_HEADERS, body: [
+    sse(ochunk({ tool_calls: [{ index: 0, id: 'original', type: 'function',
+      function: { name: 'read', arguments: '' } }] })),
+    sse(ochunk({ tool_calls: [{ index: 0, id: null, function: { name: null, arguments: '{}' } }] })),
+    sse(ochunk({ tool_calls: [{ index: 0, id: 'different' }] })),
+    sse(ochunk({}, 'tool_calls')), sseDone(),
+  ] });
+  const { result } = await collect(0, 'openai-chat', handler, makeRequest());
+  assert.equal(result.kind, 'malformed_tool_call');
+  assert.deepEqual(result.toolCalls, []);
+});
+
 test('openai: length truncation never executes partial tool calls', async () => {
   const handler = () => ({
     status: 200, headers: SSE_HEADERS,

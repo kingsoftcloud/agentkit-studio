@@ -97,9 +97,9 @@ line counts or test totals. Do not increment for producing another plan.
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds, cancellation and combined Host sources earned 3); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 19 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke and paired direct-model comparison 3 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 12 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke, paired direct-model comparison and paired tool task 4 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 13 |
 
-Current assessed progress: **85/100**, approximately 85%. P4's remaining credit
+Current assessed progress: **86/100**, approximately 86%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -487,6 +487,24 @@ sample does **not** establish Native
 quality, speed or token savings; it exposes a business prompt needing better
 instruction/result evaluation. P5 adds two measurement points for actual
 side-by-side data; tool-using and reference-Harness comparisons remain open.
+
+The [paired tool-task report](enterprise-agent-real-model-tool-comparison.json)
+uses a fixed read-only travel-policy tool with the same model for a minimal
+direct two-call loop and NativeKernel/SQLite. Two rounds per variant, with
+alternating order, each called the tool once and calculated 860 against a
+900-unit cap. Provider-reported token counts and local elapsed times are
+recorded per sample. The first streamed attempt exposed a real OpenAI-compatible
+SSE variation: a later tool fragment carries `id: null` and `name: null`
+after an earlier fragment supplied both. Native's parser incorrectly marked the
+whole batch malformed. It now ignores null *continuation* fields while still
+rejecting a different non-null identity. The focused adapter suite passed
+123/123 before the final negative identity check; that check then passed with
+the new null-fragment case (2/2). A buffered two-round run and a streamed
+two-round run after the fix both passed their arithmetic and exact-tool checks.
+This earns one more P5 measurement point for a real tool-using task. The
+samples are too small to establish latency or token advantage, and the direct
+baseline has a different system context; a comparable reference-Harness or
+broader task-quality benchmark remains open.
 
 Two additional existing fault fixtures were re-run for this objective, rather
 than inferred from their filenames. `tests/native-workspace-receipt-process.test.mjs`
