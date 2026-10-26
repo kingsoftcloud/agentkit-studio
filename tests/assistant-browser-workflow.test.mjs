@@ -11,7 +11,7 @@ test('assistant browser acceptance runs on pull requests without publication cre
   assert.deepEqual(workflow.on.pull_request.branches, ['main']);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.doesNotMatch(source, /secrets\.|workflow_dispatch|continue-on-error|gh release/);
-  assert.deepEqual(workflow.jobs['patched-host'].strategy.matrix.os, ['ubuntu-latest']);
+  assert.deepEqual(workflow.jobs['patched-host'].strategy.matrix.os, ['ubuntu-24.04']);
 });
 
 test('browser gate reuses the installed maintained Host and preserves automatic startup coverage', () => {

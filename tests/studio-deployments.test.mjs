@@ -9,13 +9,14 @@ import { createOperationManager } from '../src/studio-operations.mjs';
 import { createStudioDeployments } from '../src/studio-deployments.mjs';
 import { createDeploymentStore } from '../src/deployment-store.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
+import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
-async function fixture(t, { runtime = 'harness', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
+async function fixture(t, { runtime = 'harness', credentialName = 'MODEL_KEY', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
   const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: 'private-test' };
   const configuration = { resolve: async () => ({ values }) };
-  const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName: 'MODEL_KEY', apiKey: 'model-private' };
+  const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName, apiKey: 'model-private' };
   const mcp = { resourceId: 'search', endpoint: 'https://search.example/mcp', apiKey: 'search-private' };
   const models = { profile: async () => profile }, adapters = { describeMcp: async () => mcp };
   const build = createStudioBuild({ storeDir: root }), bindings = { modelProfileId: 'model', mcpServers: ['search'] };
@@ -103,6 +104,18 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
   }
   return { root, service, options, input, preview, request, calls, remote, profile, mcp, values, settled, release, access, control };
 }
+
+test('generated model credentials survive deployment preflight and container creation', async t => {
+  for (const credentialName of ['AGENTKIT_MODEL_API_KEY_MH7E4S', modelCredentialName({ id: 'custom:vision' })]) {
+    const f = await fixture(t, { credentialName });
+    assert.equal(f.calls.length, 0, 'preflight cannot create billable resources');
+    await f.service.create(f.request); await f.settled();
+    const payload = f.calls.find(([action]) => action === 'create')[1];
+    for (const name of [credentialName, 'OPENAI_API_KEY']) {
+      assert.deepEqual(payload.Advanced.EnvironmentVariables.find(row => row.Key === name), { Key: name, Value: 'model-private', IsSensitive: true });
+    }
+  }
+});
 
 test('deployment checks wait for background uploads before asserting the final state', async t => {
   const f = await fixture(t, { uploadDelayMs: 1700 });

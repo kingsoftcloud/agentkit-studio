@@ -10,6 +10,7 @@ import { createPortableBundles } from '../src/portable-bundle.mjs';
 import { parse as parseYaml } from 'yaml';
 import { FROZEN_RUNTIME_READY } from '../src/host/frozen-runtime-lifecycle.mjs';
 import { prepareBundleHost, acquireBundleProfileLock } from '../src/bundle-host.mjs';
+import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
 async function fixture(t, credentialName = 'MODEL_KEY') {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'bundle-host-')));
@@ -101,12 +102,17 @@ test('missing credentials, invalid identity and reserved credential names fail b
   assert.equal(plan.env.AGENTKIT_BUNDLE_MODEL_1234567890AB, 'generated-target-secret');
 });
 
-test('a normal Studio model credential survives export and cold Host boot', async t => {
-  const f = await fixture(t, 'AGENTKIT_MODEL_API_KEY');
-  const plan = await prepareBundleHost({ ...f, env: { ...f.env, AGENTKIT_MODEL_API_KEY: 'fake-key' } });
-  assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, 'fake-key');
-  assert.equal(plan.env.OPENAI_API_KEY, undefined);
-  assert.equal(JSON.stringify(plan.identity).includes('fake-key'), false);
+test('default and generated Studio model credentials survive export, cold Host boot and restart', async t => {
+  for (const name of ['AGENTKIT_MODEL_API_KEY', 'AGENTKIT_MODEL_API_KEY_MH7E4S', modelCredentialName({ id: 'custom:vision' })]) {
+    const f = await fixture(t, name), options = { ...f, env: { ...f.env, [name]: 'fake-key' } };
+    const plan = await prepareBundleHost(options);
+    assert.equal(plan.env[name], 'fake-key');
+    assert.equal(plan.env.OPENAI_API_KEY, undefined);
+    assert.equal(JSON.stringify(plan.identity).includes('fake-key'), false);
+    const restarted = await prepareBundleHost(options);
+    assert.deepEqual(restarted.identity, plan.identity);
+    assert.equal(restarted.env[name], 'fake-key');
+  }
 });
 
 test('personal directory links and foreign DSH profiles cannot become deployment state', async t => {
