@@ -49,8 +49,9 @@ permission, audit or resource enforcement.
    prompts, allowed tool names and default limits now live in Node's
    `memory-extraction-run.mjs` capability module. The TypeScript
    `auxiliary-run.mts` only invokes NativeKernel with the admitted configuration
-   and exact-call/receipt guards. Complete Host scheduling/lifetime/job/cursor
-   integration is still outstanding; this is not automatic Memory acceptance.
+   and exact-call/receipt guards. Host scheduling, independent resource lifetime,
+   persisted jobs/cursors and scoped usage are now implemented and have focused
+   production-Host evidence. Full mounted-product/UI and crash acceptance remain.
 3. **Route-driven local vertical evidence now passes.** Existing mounted Host proofs
    already authenticate HTTP and call `agents/local-get` and
    `agents/ensure-preset`. Their initial record is created directly through the
@@ -83,10 +84,10 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 10 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 2 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 5 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 0 |
 
-Current assessed progress: **47/100**, approximately 47%. P4's remaining credit
+Current assessed progress: **50/100**, approximately 50%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -97,6 +98,57 @@ the definition of completion. 100 means every row is achieved with no required
 work outstanding.
 
 ## Evidence and reproducible commands
+
+The pinned [pi-durable assessment](native-pi-durable-reference.md) prioritizes its
+durable-task and public-host-library boundaries without replacing NativeKernel,
+removing Native's leases/receipts, or adding cloud deployment to this phase.
+
+### Durable automatic Memory integration
+
+Opt-in `memory.extraction = { enabled: true, minUserCharacters: 64 }` uses the
+frozen Agent/Build policy, candidate mode, after-turn flush and shadow/enabled
+rollout. Default is off. Short multilingual user windows accumulate without
+model calls or cursor advancement. Original explicit-user extraction remains;
+the legacy automatic strategy is suppressed when model extraction is active.
+Consumed source markers and verified direct-write receipts prevent duplicate
+automatic consumption. Auxiliary runs have separate Sessions, identities and
+usage; main-turn resources may close while Host-owned extraction continues.
+
+SQLite jobs persist the original prepared configuration, public source window
+and Memory manifest before dispatch. Exact duplicates reuse them; queued windows
+coalesce. Job leases/fences and current original-source checks gate tools and
+the Memory owner's actual commit. A successful/no-op finish atomically advances
+the stream cursor; failures/aborts do not. Reopening resumes queued/expired jobs.
+The authenticated recovery response includes scoped job usage; Agent form and
+task panel expose activation, status and extra model calls/tokens.
+
+Focused integration command (137 passing; no full suite):
+
+```sh
+node --test --test-timeout=15000 tests/native-memory-extraction-host.test.mjs tests/native-memory-extraction-store.test.mjs tests/native-memory-extraction-source.test.mjs tests/studio-native-memory-host.test.mjs tests/studio-native-memory-host-guard.test.mjs tests/studio-native-memory-turn.test.mjs tests/studio-native-recovery.test.mjs tests/agent-memory-form.test.mjs packages/agentkit-harness/test/native-memory.test.mjs packages/agentkit-harness/test/native-memory-extraction.test.mjs
+```
+
+Production Host completion triggers actual Native auxiliary execution against
+SQLite Memory and a controlled streaming model response; the main usage remains
+separate. Service tests use actual localhost HTTP, source-ledger NativeKernel,
+file SQLite, cold reopen, failed/short/shadow windows, stale head rejection and
+frozen-manifest recovery. Job-store tests use two real SQLite handles and expired
+owner fencing. Form creation persists the setting and the recovery client
+rejects foreign/malformed job usage. Claude Code produced the store draft and
+its focused tests; primary reviewed and integrated it. Its first invocation hit
+its turn limit; the follow-up completed with 10 passing store tests.
+
+Client bundle and TypeScript contracts pass. After strengthening the owner
+commit guard, the affected Host/service tests were rerun separately. Transient
+logs: `/tmp/enterprise-agent-memory-final-integration.log`,
+`/tmp/enterprise-agent-memory-commit-guard-validation.log`.
+
+P4 earned +3 (durable jobs/cursor 2, production Host trigger/lifetime 1). The
+remaining usage/status point awaits mounted-product/rendered UI acceptance;
+implementation alone is not that evidence. Abrupt process-kill/unknown-effect
+experiments, compaction/rewind cursor lineage, and the crash gap between a
+completed parent and job enqueue still require broader acceptance/hardening.
+Controlled model usage is not evidence of real-model quality or token savings.
 
 Baseline commit before new platform fixes: `22a47d8`. Reference ZCode checkout
 was revalidated at `3c5b227649371507ddc4eb46ac5133afe6db1cab`. The previous

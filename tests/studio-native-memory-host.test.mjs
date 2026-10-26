@@ -14,6 +14,7 @@ import { createStudioNativeHarness } from '../src/host/services/native-harness.m
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
+import { StudioNativeMemoryExtractionStore } from '../src/host/services/native-memory-extraction-store.mjs';
 
 // Host-level Memory integration. Real SqliteRunStore, real Memory provider
 // opened by the Host, and the production createNativeDshTools gateway. The DSH
@@ -75,7 +76,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
   }
   const services = { sessions: { flush: async () => true }, llm: {},
     sessionProjections: { register(definition) { definitions.set(definition.key, definition); return () => definitions.delete(definition.key); },
-      stateOf(_session, id) { const definition = definitions.get(id); return events.reduce(definition.apply, definition.init()); } } };
+      stateOf(_session, id) { const definition = definitions.get(id); return definition ? events.reduce(definition.apply, definition.init()) : undefined; } } };
   // One ctx serves the harness services, the DSH tool pipeline and the Memory
   // consent (the real approval service), exactly as production bootstrap wires.
   const ctx = { get: id => services[id] ?? toolCtx.get(id), effect: toolCtx.effect,
@@ -105,6 +106,43 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
   const memoryProvider = scope => new SqliteNativeMemoryProvider(memoryPath(root, scope), { principal: scope });
   return { root, host, record, ledger, run, head, payload, memoryProvider, requests, events, toolRegistry };
 }
+
+test('production Host completion persists and dispatches opt-in model Memory after the main turn', async t => {
+  let auxiliaryCalls = 0;
+  const h = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+    write: { mode: 'candidate' }, extraction: { enabled: true, minUserCharacters: 8 }, recall: { enabled: false, maxTokens: 0 } },
+    context: { rollout: { memoryWrite: 'enabled' } } }, respond: (_count, body) => {
+      const automatic = body.tools?.some(tool => tool.function?.parameters?.properties?.source_event_ids);
+      if (!automatic) return finish('Main answer delivered.');
+      auxiliaryCalls++;
+      if (body.messages.some(message => message.role === 'tool')) return finish('Memory extraction finished.');
+      const input = JSON.parse(body.messages.find(message => message.role === 'user').content);
+      const source = input.source.messages.find(message => message.role === 'user' && !message.modelOnly);
+      return toolCall('automatic-fact', 'manage_memory', { action: 'remember', scope: 'user',
+        content: 'Company invoices use UTC.', memory_type: 'fact', source_event_ids: [source.id] });
+    } });
+  const snapshot = await h.run('公司财务报表和发票日期统一使用协调世界时。');
+  assert.equal(snapshot.phase, 'completed');
+  const jobs = new StudioNativeMemoryExtractionStore(join(h.root, 'native-harness', 'memory-extraction.sqlite'));
+  try {
+    const deadline = Date.now() + 5000;
+    let rows;
+    do {
+      rows = jobs.list({ scope: snapshot.scope, sessionId: snapshot.sessionId });
+      if (rows.some(row => ['success', 'error', 'aborted'].includes(row.status))) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    } while (Date.now() < deadline);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'success', JSON.stringify(rows.map(row => ({ status: row.status, error: row.errorCode }))));
+    assert.equal(rows[0].usage.modelCalls, 2); assert.equal(auxiliaryCalls, 2);
+    assert.equal(h.ledger.load(snapshot.scope, snapshot.runId).snapshot.usage.modelCalls, 1);
+    assert.equal(rows[0].prepared.identity.buildId, snapshot.buildId);
+    assert.equal(rows[0].source.parent.buildId, null, 'live revision and published Build identities remain distinct');
+    const provider = h.memoryProvider(snapshot.scope);
+    try { assert.equal(provider.list().length, 1); assert.equal(provider.list()[0].memoryType, 'fact'); }
+    finally { provider.close(); }
+  } finally { jobs.close(); }
+});
 
 test('an enabled Memory Build exposes read/search/manage tools through the real DSH pipeline', async t => {
   const h = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],

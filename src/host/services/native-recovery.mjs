@@ -35,7 +35,7 @@ async function live(operation, signal) {
 }
 
 /** Authenticated product recovery. No queued prompt, replacement Run or defaults. */
-export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents, cloudMemoryStatus }) {
+export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents, cloudMemoryStatus, memoryExtractionStatus }) {
   const attempts = new Map();
   const inspectManaged = (request, agent, owner, localRecord) => {
     const pending = owner?.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT;
@@ -147,6 +147,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
         retryAcceptedCommand: managed.retryable } } : {}),
       ...(a2aTasks.length ? { a2aTasks } : {}),
       ...(record && cloudMemoryStatus ? { cloudMemory: cloudMemoryStatus(record) } : {}),
+      ...(record && memoryExtractionStatus ? { memoryExtraction: memoryExtractionStatus(record) } : {}),
       ...(reconciliation ? { reconciliation: copy(reconciliation) } : {}),
       ...(receiptWait ? { receiptWait: { contract: NATIVE_A2A_RECEIPT_WAIT,
         operationKey: reconciliation.operationKey, callId: receiptWait.call.callId } } : {}),

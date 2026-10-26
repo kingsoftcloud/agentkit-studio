@@ -3,7 +3,7 @@ import { canonical, invariant } from '../../packages/agentkit-harness-core/dist/
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate, evaluateNativeMemoryCandidate,
   NATIVE_USER_EXTRACTION_POLICY, isExplicitMemoryInstruction } from '../../packages/agentkit-harness/src/native/memory-candidate.mjs';
 import { SqliteNativeMemoryProvider } from '../../packages/agentkit-harness/src/native/memory-store.mjs';
-import { studioNativeMemoryPolicy, studioOriginalUserMemorySources } from './native-memory.mjs';
+import { studioNativeMemoryPolicy, studioOriginalUserMemorySources, studioNativeModelMemoryEnabled } from './native-memory.mjs';
 import { readNativeRecoveryBinding } from './native-recovery-binding.mjs';
 
 /** Optional completed-Turn consumption by the selected DSH Memory owner.
@@ -207,6 +207,7 @@ export function bindStudioNativeMemoryTurn({ record, buildId = null, scope, sess
   manageMemoryToolNames = DEFAULT_MANAGE_MEMORY_TOOL_NAMES,
   explicitMemoryVerifiers = DEFAULT_EXPLICIT_MEMORY_VERIFIERS } = {}) {
   const policy = studioNativeMemoryPolicy(record.spec);
+  if (studioNativeModelMemoryEnabled(record.spec)) policy.write.mode = 'explicit_only';
   // Default shadow-only evaluation. Disabled entirely when writes are off, the
   // after-turn flush is off, the provider is not local, the user scope is absent,
   // or the rollout is off.

@@ -76,6 +76,21 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
           && (memory.phase === 'prepared' ? memory.completedAt === null : Number.isSafeInteger(memory.completedAt) && memory.completedAt >= 0)),
       '云记忆提交记录与原运行不一致，请刷新核对。');
     }
+    const extraction = value.memoryExtraction;
+    if (extraction !== undefined) {
+      const id = text => typeof text === 'string' && text.trim().length > 0 && text.length <= 256;
+      check(extraction?.contract === 'agentkit.studio-native-memory-extraction/v1'
+        && extraction.agentId === agentId && extraction.sessionId === sessionId
+        && (extraction.cursor === null || id(extraction.cursor))
+        && Array.isArray(extraction.jobs) && extraction.jobs.length <= 100
+        && extraction.jobs.every(job => id(job.jobId) && id(job.parentRunId)
+          && ['queued', 'running', 'success', 'no-op', 'error', 'aborted', 'superseded'].includes(job.status)
+          && (job.usage === null || validUsage(job.usage))
+          && (job.errorCode === null || id(job.errorCode))
+          && Number.isSafeInteger(job.createdAt) && job.createdAt >= 0
+          && Number.isSafeInteger(job.updatedAt) && job.updatedAt >= job.createdAt),
+      '自动记忆提炼记录与原会话不一致，请刷新核对。');
+    }
     const accounting = value.accounting;
     if (accounting != null) {
       check(accounting.contract === 'agentkit.studio-native-usage/v1' && accounting.runId === value.runId

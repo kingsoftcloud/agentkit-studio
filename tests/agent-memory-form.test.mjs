@@ -379,6 +379,25 @@ test('form create(): disabling memory does not fabricate a rollout or a cloud bi
   assert.equal((spec.bindings.plugins || []).some(b => b?.config?.binding?.resource?.kind === 'memory-instance'), false);
 });
 
+test('form create persists opt-in model extraction and restores it for editing without cloud bindings', async () => {
+  const captured = {};
+  const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });
+  let tree = harness.render(); await harness.flush(); tree = harness.render();
+  tree = switchToHarness(harness, tree); await harness.flush(); tree = harness.render();
+  tree = advance(harness, tree); tree = advance(harness, tree);
+  findBy(tree, byAria('启用跨会话记忆')).props.onChange({ target: { checked: true } }); tree = harness.render();
+  assert.equal(findBy(tree, byAria('启用模型记忆提炼')).props.checked, false);
+  findBy(tree, byAria('启用模型记忆提炼')).props.onChange({ target: { checked: true } }); tree = harness.render();
+  findBy(tree, byAria('记忆提炼累计字符数')).props.onChange({ target: { value: '128' } });
+  findBy(tree, byAria('记忆写入方式')).props.onChange({ target: { value: 'candidate' } });
+  tree = harness.render(); tree = advance(harness, tree);
+  await findBy(tree, byButtonText('创建 Agent')).props.onClick();
+  assert.deepEqual(captured.create.spec.memory.extraction, { enabled: true, minUserCharacters: 128 });
+  const restored = readAgentMemoryConfig({ spec: captured.create.spec, runtime: 'harness', editing: true });
+  assert.equal(restored.extractionEnabled, true); assert.equal(restored.extractionMinUserCharacters, 128);
+  assert.equal(captured.create.spec.context.rollout.memoryWrite, 'shadow');
+});
+
 test('form create(): local memory with shadow rollout never claims a write', async () => {
   const captured = {};
   const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });

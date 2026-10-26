@@ -10,6 +10,25 @@ export const STUDIO_NATIVE_MEMORY = 'agentkit.studio-native-memory/v1';
 const hash = value => memoryDigest(canonical(value));
 const user = message => message?.role === 'user' && (message.kind === undefined || message.kind === 'user_input');
 
+export function studioNativeMemoryExtractionPolicy(spec) {
+  const raw = spec.memory?.extraction;
+  invariant(raw === undefined || raw && typeof raw === 'object' && !Array.isArray(raw)
+    && Object.keys(raw).every(key => ['enabled', 'minUserCharacters'].includes(key)),
+  'studio_native_memory_extraction_policy_invalid');
+  const policy = { enabled: raw?.enabled ?? false, minUserCharacters: raw?.minUserCharacters ?? 64 };
+  invariant(typeof policy.enabled === 'boolean' && Number.isSafeInteger(policy.minUserCharacters)
+    && policy.minUserCharacters >= 1 && policy.minUserCharacters <= 100000,
+  'studio_native_memory_extraction_policy_invalid');
+  return policy;
+}
+
+export function studioNativeModelMemoryEnabled(spec) {
+  const policy = studioNativeMemoryPolicy(spec);
+  return studioNativeMemoryExtractionPolicy(spec).enabled && policy.enabled
+    && policy.providerRef === 'local-default' && policy.scopes.length > 0
+    && policy.write.mode === 'candidate' && policy.write.flushAfterTurn && policy.rollout !== 'off';
+}
+
 export function studioNativeMemoryPolicy(spec) {
   const memory = spec.memory ?? {};
   const policy = { enabled: memory.enabled ?? false, providerRef: memory.providerRef ?? 'local-default',
@@ -27,6 +46,8 @@ export function studioNativeMemoryPolicy(spec) {
     && ['off', 'explicit_only', 'candidate'].includes(policy.write.mode)
     && typeof policy.write.flushBeforeCompaction === 'boolean' && typeof policy.write.flushAfterTurn === 'boolean'
     && ['off', 'shadow', 'enabled'].includes(policy.rollout), 'studio_native_memory_policy_invalid');
+  // Preserve the exact legacy policy identity when this opt-in field is absent.
+  if (memory.extraction !== undefined) policy.extraction = studioNativeMemoryExtractionPolicy(spec);
   return copy(policy);
 }
 
@@ -84,6 +105,9 @@ export function studioOriginalUserMemorySources({ store, scope, runId, messages,
 export function bindStudioNativeMemoryFlush({ record, buildId = null, scope, sessionId, store, storeDir, contextWindow,
   effectTimeoutMs = 120000, providerFactory = (filename, options) => new SqliteNativeMemoryProvider(filename, options) }) {
   const policy = studioNativeMemoryPolicy(record.spec);
+  // Model extraction owns automatic candidates; the original user-requested
+  // path stays available without a second automatic extraction strategy.
+  if (studioNativeModelMemoryEnabled(record.spec)) policy.write.mode = 'explicit_only';
   if (!policy.enabled || policy.providerRef !== 'local-default' || !policy.scopes.includes('user')
     || policy.write.mode === 'off' || !policy.write.flushBeforeCompaction || policy.rollout === 'off') return null;
   invariant(Number.isSafeInteger(contextWindow) && contextWindow > 0 && Number.isSafeInteger(contextWindow * 8)

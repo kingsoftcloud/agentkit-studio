@@ -39,6 +39,7 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
     const page = state.page, detail = state.detail;
     const accounting = recoveryState.status?.accounting;
     const cloudMemory = recoveryState.status?.cloudMemory;
+    const memoryJobs = recoveryState.status?.memoryExtraction?.jobs ?? [];
     const executionGrant = recoveryState.status?.managed?.executionGrant;
     return h(Fragment, null,
       h('button', { type: 'button', style: buttonStyle(), onClick: () => setOpen(true) }, '运行与子任务'),
@@ -48,6 +49,14 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
         accounting ? h('section', { 'aria-label': 'Native 运行用量' },
           h('p', null, `运行用量${accounting.incomplete ? '（统计不完整，显示已知用量）' : accounting.final ? '' : '（截至目前）'}：模型 ${accounting.total.modelCalls} 次 · 工具 ${accounting.total.toolCalls} 次 · 输入 ${accounting.total.inputTokens} / 输出 ${accounting.total.outputTokens} tokens。`),
           h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,
+        memoryJobs.length ? h('section', { 'aria-label': '自动记忆提炼' },
+          h('p', null, '自动记忆提炼的额外用量单独列出。成功表示提炼流程结束，是否写入以记忆工具回执为准。'),
+          ...memoryJobs.slice(-5).reverse().map(job => h('p', { key: job.jobId,
+            role: job.status === 'error' ? 'alert' : 'status' },
+            `记忆提炼：${({ queued: '排队中', running: '运行中', success: '已完成', 'no-op': '无需提炼',
+              error: '未完成', aborted: '已停止', superseded: '已合并到新窗口' })[job.status]}`,
+            job.usage ? ` · 模型 ${job.usage.modelCalls} 次 · 输入 ${job.usage.inputTokens} / 输出 ${job.usage.outputTokens} tokens` : '',
+            job.errorCode ? ` · ${job.errorCode}` : ''))) : null,
         cloudMemory ? h('section', { 'aria-label': '云记忆提交' },
           h('p', { role: cloudMemory.state === 'accepted' ? 'status' : 'alert' },
             cloudMemory.state === 'accepted' ? '云记忆服务已受理；记忆抽取和索引尚未确认。'

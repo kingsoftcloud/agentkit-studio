@@ -227,6 +227,13 @@ export class SqliteNativeMemoryProvider {
     // forgeable here, and the host supplies the exact call requestDigest. Shadow
     // rollout never reaches this path; the tool layer rejects writes upstream.
     const authorityValid = value => ['explicit_user', 'approved_call', 'candidate'].includes(value);
+    // Read-only source consumption check for the Host's model extraction
+    // window. Principal-selected namespaces are the only query authority.
+    this.hasConsumedSource = ({ sourceEventId, sourceDigest }) => {
+      open();
+      invariant(text(sourceEventId) && sha(sourceDigest), 'native_memory_candidate_source_invalid');
+      return selected.some(binding => source({ ...binding, sourceEventIds: [sourceEventId] }, sourceDigest).consumed);
+    };
     this.applyMutation = request => {
       const input = copy(request), { action, scope, scopeId, content, memoryId, expectedVersion,
         operationKey, requestDigest, authority, sourceSessionId, sourceEventId,

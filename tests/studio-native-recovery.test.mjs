@@ -17,6 +17,26 @@ import { readNativeDshOwnership } from '../packages/agentkit-harness/src/native/
 const gate = () => Promise.withResolvers();
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('recovery client admits scoped auxiliary Memory usage and rejects foreign or malformed job status', async () => {
+  const job = { jobId: 'memory-job', parentRunId: 'original-run', status: 'success', errorCode: null,
+    createdAt: 1, updatedAt: 2, usage: { modelCalls: 2, toolCalls: 1, inputTokens: 22, outputTokens: 14, cost: 0 } };
+  const extraction = { contract: 'agentkit.studio-native-memory-extraction/v1', agentId: 'agent', sessionId: 'session',
+    cursor: 'native-message://run#message=2', jobs: [job] };
+  const response = { contract: 'agentkit.studio-native-recovery/v1', agentId: 'agent', sessionId: 'session',
+    runId: 'original-run', state: 'closed', canResume: false, memoryExtraction: extraction };
+  let value = response;
+  const client = createNativeRecoveryState({ agentId: 'agent', sessionId: 'session',
+    hostRemote: { nativeRecoveryStatus: async () => structuredClone(value) } });
+  try {
+    await client.refresh(); assert.deepEqual(client.getSnapshot().status.memoryExtraction, extraction);
+    for (const broken of [{ ...extraction, sessionId: 'foreign' }, { ...extraction, jobs: [{ ...job, status: 'forged' }] },
+      { ...extraction, jobs: [{ ...job, usage: { ...job.usage, modelCalls: -1 } }] }]) {
+      value = { ...response, memoryExtraction: broken }; await client.refresh();
+      assert.ok(client.getSnapshot().error); assert.deepEqual(client.getSnapshot().status.memoryExtraction, extraction);
+    }
+  } finally { client.dispose(); }
+});
+
 // Product assembly units deliberately use a narrow Agent double. The separate
 // mounted-Host proof uses official SessionController, real Agents and HTTP RPC.
 async function fixture(t, { fetchModel, maxTokens = 500 } = {}) {

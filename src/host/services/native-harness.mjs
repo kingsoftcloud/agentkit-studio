@@ -26,6 +26,7 @@ import { createStudioNativeChildWorkspaces } from '../../providers/native-child-
 import { modelInput } from '../../model-service.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
+import { createStudioNativeMemoryExtraction } from './native-memory-extraction.mjs';
 import { createStudioNativeConversation } from './native-conversation.mjs';
 import { nativeConversationRewindAdmission } from '../../providers/native-conversation-rewind.mjs';
 import { createStudioNativeA2aControl } from './native-a2a-control.mjs';
@@ -557,7 +558,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         // original current-Run human inputs after the committed terminal. It
         // never rewrites the main answer/usage/verification; the executor wraps
         // it so a failure cannot replace the task terminal.
-        consumeCompletedTurn: memoryHost?.memoryTurn ? async (snapshot, { signal } = {}) => {
+        consumeCompletedTurn: async (snapshot, { signal } = {}) => {
           // The completed-Turn consumer passes the full call context
           // ({scope, runId, operationKey, call, definition, toolResultContent,
           // signal}); forward all of it to the locked tool port so the bound
@@ -566,14 +567,21 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // locked port requires. The owner receipt the port returns is the raw
           // sealed result, deep-equal to the ledger tool result content — never a
           // forged JSON body.
-          const directWriteReceipt = memoryHost.port ? async ({ scope: receiptScope, runId, operationKey, call, definition, signal }) => {
+          const directWriteReceipt = memoryHost?.port ? async ({ scope: receiptScope, runId, operationKey, call, definition, signal }) => {
             if (receiptScope !== undefined && canonical(receiptScope) !== canonical(scope)) return null;
             const result = await memoryHost.port.reconcile({ call, definition, scope: copy(scope), operationKey, signal });
             if (result.status === 'ok' && result.content.receipt?.committed === true) return result.content.receipt;
             return null;
           } : undefined;
-          return memoryHost.memoryTurn.consume(snapshot, { signal, directWriteReceipt });
-        } : undefined,
+          const result = await memoryHost?.memoryTurn?.consume(snapshot, { signal, directWriteReceipt });
+          // Persist before releasing this turn's ports; dispatch owns fresh
+          // model/Memory bindings and does not delay delivery of the main answer.
+          // Managed receivers use their own ledger/lifetime and are not granted
+          // access to this local Host's auxiliary dispatcher.
+          if (store === localStore) memoryExtraction.schedule({ scope, sessionId, runId: snapshot.runId,
+            record, buildId: binding.buildId ?? null });
+          return result;
+        },
         releaseResources: async request => {
           // The Memory consumer/tool owner and its database are released in a
           // finally so a failure in hooks/children/nativeTools release cannot
@@ -786,8 +794,39 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resolveRecoveryTurn: resolveRestoredBinding,
     resolveBackgroundTurn: resolveBackgroundBinding,
   });
+  const memoryExtraction = createStudioNativeMemoryExtraction({ store, storeDir, signal: lifetime.signal,
+    resolveRecord: parent => parent.buildId ? builds.resolve(parent.scope.agentId, parent.buildId)
+      : agents.getRevision(parent.scope.agentId, parent.revision),
+    resolveModel: async ({ parent, prepared, signal }) => {
+      const original = store.load(parent.scope, parent.runId);
+      const capsule = readNativeRecoveryBinding(original, { agentId: parent.scope.agentId,
+        sessionId: parent.sessionId, runId: parent.runId });
+      const bound = original.configuration.profile;
+      const id = bound.profileId === 'default' ? '' : bound.profileId;
+      const resolveProfile = async () => {
+        signal.throwIfAborted();
+        const current = { ...await models.profile(id), modelName: capsule.source.model };
+        signal.throwIfAborted();
+        invariant(hash(profileDescription(current)) === bound.profileVersion,
+          'studio_native_memory_model_binding_changed');
+        const description = profileDescription(current);
+        return { protocol: description.protocol, model: current.modelName,
+          baseUrl: current.baseUrl, apiKey: current.apiKey, parameters: description.parameters };
+      };
+      const current = await resolveProfile();
+      const context = bindNativeContext({ description: { protocol: current.protocol, modelName: current.model,
+        parameters: current.parameters, contextWindow: prepared.configuration.profile.contextWindow,
+        maxOutputTokens: prepared.configuration.profile.maxOutputTokens } });
+      return { model: createNativeModelPort({ fetchImpl, resolveProfile }),
+        countRequest: request => context.port.tokens.countRequest(request),
+        planner: { countMessage: message => context.port.tokens.countMessage({ profile: prepared.configuration.profile,
+          message, signal }) } };
+    },
+    onError: error => console.warn('[agentkit-studio] Native Memory extraction:', error.code ?? 'failed') });
+  memoryExtraction.recover();
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, active, controls, controlKey, execute, agentEvents,
-    cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, storeDir }) });
+    cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, storeDir }),
+    memoryExtractionStatus: record => memoryExtraction.status({ scope: record.snapshot.scope, sessionId: record.snapshot.sessionId }) });
   const conversation = createStudioNativeConversation({ ctx, store, workspaceId, lifetime, agentEvents,
     activeControl: request => controls.get(controlKey(request.agentId, request.sessionId)) });
   const controlA2aTask = createStudioNativeA2aControl({ ctx, store, workspaceId, lifetime, active, agentEvents,
@@ -1042,7 +1081,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       closed = true; lifetime.abort(new Error('Studio Native host closed'));
       return closing = (async () => {
         await Promise.all([backgroundStart, waitRecoveryStart]);
-        const background = await Promise.allSettled([backgroundOwner?.close(), waitRecoveryOwner?.close()]);
+        const background = await Promise.allSettled([backgroundOwner?.close(), waitRecoveryOwner?.close(), memoryExtraction.close()]);
         await Promise.allSettled([...active]);
         const children = await Promise.allSettled([...childOwners].flatMap(item => [...item.runIds]
           .map(runId => item.owner.releaseRun({ scope: item.scope, runId }))));

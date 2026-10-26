@@ -20,8 +20,9 @@
 //   context.rollout.memoryWrite: 'off' | 'shadow' | 'enabled', default 'shadow'.
 //     'shadow' only evaluates candidate decisions and never writes. 'enabled'
 //     is the only value that actually persists candidates.
-//   flushAfterTurn is carried in the policy binding but its consumer is not yet
-//     implemented; the UI must not claim after-turn auto-save works.
+//   flushAfterTurn consumes original user sources after the committed turn.
+//   extraction.enabled opts into bounded model extraction with separate usage;
+//     short windows accumulate without model calls or cursor advancement.
 
 export const MEMORY_PROVIDER_LOCAL = 'local-default';
 export const MEMORY_PROVIDER_CLOUD = 'binding://platform-memory-instance';
@@ -75,6 +76,8 @@ export function readAgentMemoryConfig({ spec = {}, runtime, cloudEditing, creati
     writeMode: write.mode || (editing ? MEMORY_WRITE_DEFAULTS.mode : 'explicit_only'),
     writeFlushBeforeCompaction: write.flushBeforeCompaction ?? MEMORY_WRITE_DEFAULTS.flushBeforeCompaction,
     writeFlushAfterTurn: write.flushAfterTurn ?? MEMORY_WRITE_DEFAULTS.flushAfterTurn,
+    extractionEnabled: memory.extraction?.enabled ?? false,
+    extractionMinUserCharacters: memory.extraction?.minUserCharacters ?? 64,
     rollout: rollout || MEMORY_ROLLOUT_DEFAULT,
     memoryInstanceBound,
   };
@@ -115,6 +118,9 @@ export function validateAgentMemoryConfig(state) {
     errors.push({ field: 'writeMode', message: '记忆写入方式无效。' });
   if (!MEMORY_ROLLOUTS.includes(state.rollout))
     errors.push({ field: 'rollout', message: '记忆写入开关无效。' });
+  if (state.extractionMinUserCharacters !== undefined && (!Number.isSafeInteger(state.extractionMinUserCharacters)
+    || state.extractionMinUserCharacters < 1 || state.extractionMinUserCharacters > 100000))
+    errors.push({ field: 'extractionMinUserCharacters', message: '自动提炼累计字符数需为 1–100000 的整数。' });
   return { ok: errors.length === 0, errors };
 }
 
@@ -170,6 +176,10 @@ export function writeAgentMemoryConfig({ state, originalSpec = {}, platformBindi
       mode: state.writeMode,
       flushBeforeCompaction: Boolean(state.writeFlushBeforeCompaction),
       flushAfterTurn: Boolean(state.writeFlushAfterTurn),
+    };
+    if (state.extractionEnabled || originalMemory.extraction !== undefined) memory.extraction = {
+      enabled: Boolean(state.extractionEnabled),
+      minUserCharacters: clampInt(state.extractionMinUserCharacters, 1, 100000, 64),
     };
   } else {
     // Cloud / non-local path preserves the original recall/write shape; only
