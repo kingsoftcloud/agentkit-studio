@@ -2,6 +2,7 @@
  * model callbacks. Projection receipts/cursors are committed by the owner. */
 import { createHash } from 'node:crypto';
 import { canonical } from '../../packages/agentkit-harness-core/dist/index.mjs';
+import { nativePublicTerminalError } from './native-terminal-failure.mjs';
 
 export function nativeKernelFactId(source, index) {
   const hex = createHash('sha256').update(canonical([source, index])).digest('hex');
@@ -94,8 +95,8 @@ export function projectNativeKernelEvent(event, { scopeId, commandId } = {}) {
     runtime(state === 'completed' ? { event_type: 'run.completed', status: 'completed', output_refs: output }
       : state === 'cancelled' ? { event_type: 'run.canceled', status: 'canceled', reason: 'Execution canceled' }
       : state === 'interrupted' ? { event_type: 'run.interrupted', status: 'interrupted', reason: payload.reason ?? null }
-        : { event_type: 'run.failed', status: 'failed', error: { code: 'NATIVE_EXECUTION_NOT_COMPLETED',
-          message: 'Native execution did not complete', source: 'agentkit-native', scope_id: scopeId } });
+        : { event_type: 'run.failed', status: 'failed', error: {
+          ...nativePublicTerminalError('failed', payload.reason), source: 'agentkit-native', scope_id: scopeId } });
     transition(state);
   }
   return facts.map((fact, index) => ({ ...fact, event_id: nativeKernelFactId(event.eventId, index), run_id: runId }));

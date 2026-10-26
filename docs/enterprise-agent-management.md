@@ -63,6 +63,11 @@ The proof covers:
    Stop button is clicked. The UI shows a stopped terminal after reload, SQLite
    records a `canceled` Native Run linked to its parent, and a late model answer
    does not appear. The fixture observes one model request for that turn.
+10. A fifth revision-3 turn receives a provider 401 with a private response
+    body. SQLite records one failed Native Run and one model call. The Run panel
+    shows the fixed public explanation before and after a browser reload; the
+    private response body never appears in the UI. The canonical failure event
+    uses the same safe explanation.
 
 The local model is a controlled HTTP/SSE fixture, not a quality/token/latency
 benchmark. A reload during an active turn proves page-level reconnection. A
@@ -71,6 +76,8 @@ committed while offline. Neither proves abrupt Host crash recovery or a range
 of real-world network failure patterns; those remain separate acceptance scopes.
 The Stop check covers a held model request; cancellation during an external
 tool's unknown side effect has its own Native receipt/recovery acceptance.
+The 401 check covers a terminal provider error; approval and permitted public
+reasoning still need mounted task-interaction acceptance.
 The verifier uses a reused dependency graph, not a clean dependency install.
 Its Node-only PATH deliberately excludes OS document-directory helpers; the
 shipped workspace controller is configured with a scratch Documents directory.
@@ -79,14 +86,13 @@ It does not replace the Host or bypass execution/permission gates.
 The refreshed machine-readable report is `enterprise-agent-management-evidence.json`.
 Its archive and production source hashes identify the evaluated implementation.
 The local evidence directory also contains screenshots of conflict recovery,
-revision status, both revision executions, page reload, network recovery and
-the stopped terminal.
+revision status, both revision executions, page reload, network recovery, the
+stopped terminal and the provider failure.
 
 Reproduction:
 
 ```sh
-node scripts/build-client.mjs
-npm pack --ignore-scripts --pack-destination /tmp --json
+npm pack --pack-destination /tmp --json > /tmp/agentkit-studio-pack.json
 node scripts/verify-studio-native-management-web.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz
 ```
 
@@ -108,6 +114,11 @@ node --test --test-timeout=15000 tests/host-route-contracts.test.mjs tests/local
 ```
 
 Contract TypeScript and the guarded client build passed. No full suite was run.
+The provider-error extension passed 45 focused Host/projection/panel checks,
+then 21 affected recovery checks after a validation-assertion correction.
+The mounted Chrome verifier passed with six model requests, including the one
+failed request; it used a fresh production archive. These checks do not measure
+real-model answer quality or latency.
 The build guard caught and prompted removal of an accidental browser dependency
 on the runtime contract; the default now lives in `src/authoring-defaults.mjs`.
 Initial verifier corrections used the actual separate Build-list route and a

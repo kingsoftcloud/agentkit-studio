@@ -34,6 +34,9 @@ test('recovery client admits scoped auxiliary Memory usage and rejects foreign o
       value = { ...response, memoryExtraction: broken }; await client.refresh();
       assert.ok(client.getSnapshot().error); assert.deepEqual(client.getSnapshot().status.memoryExtraction, extraction);
     }
+    value = { ...response, error: { code: 'INVALID ERROR', message: 'untrusted status' } };
+    await client.refresh(); assert.match(client.getSnapshot().error, /恢复状态读取失败/);
+    assert.deepEqual(client.getSnapshot().status.memoryExtraction, extraction);
   } finally { client.dispose(); }
 });
 
@@ -110,6 +113,17 @@ test('production recovery rebinds the original route/budget and refreshed creden
   assert.equal((await f.host.resumeTurn(f.request)).state, 'closed', 'a reply lost after completion confirms the original Run');
   await tick(); assert.equal(f.requests.length, 1); assert.equal(f.events.filter(e => e.type === 'turn/end').length, 1);
   await assert.rejects(f.host.resumeTurn({ ...f.request, runId: 'foreign-completed-run' }), /studio_native_recovery_turn_not_open/);
+});
+
+test('a terminal provider failure remains visible through read-only recovery status without exposing its raw response', async t => {
+  const f = await fixture(t, { fetchModel: async () => new Response('secret-provider-response', { status: 401 }) });
+  await f.host.resumeTurn(f.request); await f.agent.whenIdle();
+  const status = await f.host.recoveryStatus(f.request);
+  assert.equal(status.state, 'closed'); assert.equal(status.phase, 'failed');
+  assert.equal(status.error.code, 'NATIVE_EXECUTION_NOT_COMPLETED');
+  assert.match(status.error.message, /模型服务/);
+  assert.doesNotMatch(JSON.stringify(status), /secret-provider-response/);
+  assert.equal(f.requests.length, 1, 'reading the failure cannot issue another model request');
 });
 
 test('recovery refuses an explicit pending model switch instead of treating it as a changed default', async t => {

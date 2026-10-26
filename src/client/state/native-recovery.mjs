@@ -16,6 +16,9 @@ export function createNativeRecoveryState({ hostRemote, agentId, sessionId, newC
       && ['available', 'recovering', 'reconciliation_required', 'failed', 'closed'].includes(value.state)
       && typeof value.canResume === 'boolean' && (!value.canResume || typeof value.runId === 'string' && value.runId.trim())
       && (!runId || value.runId === runId), '恢复记录与原会话或运行不一致，请刷新核对。');
+    if (value.error != null) check(typeof value.error?.code === 'string' && /^[A-Za-z0-9_.:/-]{1,256}$/.test(value.error.code)
+      && typeof value.error.message === 'string' && value.error.message.length > 0 && value.error.message.length <= 512,
+    '运行错误记录无法识别，请刷新核对。');
     const receiptWait = value.receiptWait;
     if (value.managed !== undefined) check(value.managed?.contract === 'agentkit.studio-managed-native-recovery/v1'
       && value.managed.controlAuthority === 'server' && ['open', 'closed', 'pending'].includes(value.managed.owner)

@@ -1,0 +1,31 @@
+/** Public explanations for stable Native terminal reasons. Never copy a raw
+ * provider, tool or exception message into the task conversation. */
+const messages = Object.freeze({
+  effect_outcome_unknown: '操作结果尚未确认。请核对原操作，不会自动重复执行。',
+  provider_terminal_error: '模型服务返回不可恢复的错误，请检查模型配置和凭据。',
+  model_policy_abort: '模型请求被服务端策略拒绝，请检查模型与任务配置。',
+  model_budget_exhausted: '本次运行已达到模型调用预算。',
+  execution_budget_exhausted: '本次运行已达到执行时间预算。',
+  tool_call_after_budget_exhaustion: '工具调用超过本次运行预算。',
+  tool_call_after_finalization_reserve: '工具调用占用了收尾预留预算。',
+  continuation_budget_exhausted: '本次运行没有足够预算继续完成任务。',
+  context_port_missing: '上下文服务不可用，请检查运行配置。',
+  context_compaction_unavailable: '上下文整理未能完成，请检查模型与上下文配置。',
+  repeated_tool_error_no_progress: '工具连续失败且任务没有进展，请检查工具配置或输入。',
+  verification_report_missing: '任务验证没有返回结果，无法确认完成。',
+  child_owner_unavailable: '子任务执行端不可用，请核对原子任务状态。',
+  child_receipt_unavailable: '子任务结果尚未确认，请核对原子任务。',
+  background_children_unsettled: '后台子任务尚未结算，请核对后继续。',
+  browser_session_unavailable: '浏览器会话不可用，请重新建立浏览器连接。',
+  recovery_retry_exhausted: '原运行的恢复预算已耗尽，请核对执行记录。',
+});
+
+export function nativePublicTerminalError(phase, reason) {
+  if (phase !== 'failed' && phase !== 'interrupted') return null;
+  return {
+    code: phase === 'interrupted' ? 'NATIVE_EXECUTION_INTERRUPTED' : 'NATIVE_EXECUTION_NOT_COMPLETED',
+    message: Object.hasOwn(messages, reason) ? messages[reason] : (phase === 'interrupted'
+      ? '原运行需要核对后才能继续，不会自动重复可能产生副作用的操作。'
+      : 'Native 运行未完成，请检查运行记录和配置。'),
+  };
+}

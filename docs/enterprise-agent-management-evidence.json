@@ -10,11 +10,12 @@
     "running-native-turn-survives-browser-reload-and-resumes-in-same-session",
     "physical-browser-network-outage-recovers-durable-native-answer-without-reexecution",
     "product-stop-button-cancels-native-run-and-history-retains-terminal",
+    "provider-failure-is-durable-and-shows-only-public-terminal-message-after-reload",
     "new-session-runs-current-r3-with-independent-native-ledger-and-history"
   ],
-  "archiveSha256": "64256c3b294f4f244b863c13d861875a33475418a2bff1001ad2cb0ad1a00bfb",
+  "archiveSha256": "8694665df913e029a29effdba96a684ef83f2382327e903a6fd45059f50aa283",
   "sourceSha256": {
-    "dist/client.js": "f24924fca7b3fcd95a5f4c3f5e0d94da902bc09b6f4bcc9bdb389679aed01fdd",
+    "dist/client.js": "a00c96a916fb238fde0edc499347efa67403ebef5a00a055e88442f323a0873a",
     "src/runtime-contract.mjs": "ad88514601078a538dd3bede8e65482abf38db5f4d359ddcd5ea416e61cd2986",
     "src/authoring-defaults.mjs": "977b3b972763307aba2f6ee701469a1157693f947d287b876dd13f3f7882694a",
     "src/agent-store.mjs": "4170d34d6175051025cf1c172af351ba245cab919b39931a24d6e032dea5d014",
@@ -30,6 +31,7 @@
       3,
       3,
       3,
+      3,
       3
     ],
     "engine": "agentkit.native/v1",
@@ -38,24 +40,31 @@
       "completed",
       "completed",
       "completed",
-      "canceled"
+      "canceled",
+      "failed"
     ],
     "modelCalls": [
       1,
       1,
       1,
       1,
+      1,
       1
     ],
-    "buildId": "build_c00c373bb9f3d2a0de10",
-    "frozenSessionId": "session-b1934030-d792-4c38-ae46-a3988baae90d",
-    "currentSessionId": "session-164a15b8-3055-4cae-b2c4-211733aaa30a",
+    "buildId": "build_2ef7f11e0f590fe364c3",
+    "frozenSessionId": "session-d6326ff4-897b-4bb3-b219-84a419296832",
+    "currentSessionId": "session-f8cd5ea3-f285-48ae-8185-df2e3bb7f352",
     "settledWhileBrowserOffline": true
   },
-  "agentId": "ar-local-a107aa89872e457a",
+  "agentId": "ar-local-a64f7960780244bb",
   "requests": [
     {
       "marker": "MANAGEMENT_REVISION_ONE",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "marker": "MANAGEMENT_REVISION_THREE",
       "inputTokens": 11,
       "outputTokens": 7
     },

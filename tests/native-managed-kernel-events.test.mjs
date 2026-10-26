@@ -310,5 +310,12 @@ test('unit: run.terminal completed/canceled/failed keep their existing mappings'
     { phase: 'failed', outcome: 'failed', reason: 'provider_terminal_error', finalText: '', usage: {} }), { scopeId: 'run-1', commandId: 'cmd-1' });
   assert.equal(failed[0].event_type, 'run.failed');
   assert.equal(failed[0].payload.error.code, 'NATIVE_EXECUTION_NOT_COMPLETED');
+  assert.match(failed[0].payload.error.message, /模型服务/);
+  const privateFailure = projectNativeKernelEvent(nativeEvent('run.terminal',
+    { phase: 'failed', outcome: 'failed', reason: 'secret-token-from-provider', finalText: '', usage: {} }), { scopeId: 'run-1', commandId: 'cmd-1' });
+  assert.doesNotMatch(JSON.stringify(privateFailure), /secret-token-from-provider/);
+  const inheritedName = projectNativeKernelEvent(nativeEvent('run.terminal',
+    { phase: 'failed', outcome: 'failed', reason: 'constructor', finalText: '', usage: {} }), { scopeId: 'run-1', commandId: 'cmd-1' });
+  assert.equal(typeof inheritedName[0].payload.error.message, 'string');
   assertManagedRuntimeFacts(withEnvelope([...completed, ...canceled, ...failed]));
 });

@@ -2,6 +2,7 @@ import { addUsage, canonical, copy, invariant, terminal } from '../../../package
 import { readNativeDshOwnership } from '../../../packages/agentkit-harness/src/native/dsh-turn-ownership.mjs';
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, verifyNativeDshBackgroundOwnership } from '../../../packages/agentkit-harness/src/native/dsh-background-ownership.mjs';
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
+import { nativePublicTerminalError } from '../../providers/native-terminal-failure.mjs';
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_RECEIPT_WAIT, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 import { NATIVE_DSH_MANAGED_TURN_CONTRACT, readNativeDshManagedOwnership } from '../../../packages/agentkit-harness/src/native/dsh-managed-ownership.mjs';
@@ -164,7 +165,8 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, lifetime, 
         && record.configuration.tools.some(tool => tool.name === snapshot.pendingTools[0]?.name
           && tool.workspaceRepairPolicy === 'preimage-compensation/v1')),
       error: applicable?.error ?? (managed?.workerError && !grantBlocked && !discarded ? { code: managed.workerError,
-        message: '原托管运行尚未恢复，请核对配置或恢复状态。' } : null) };
+        message: '原托管运行尚未恢复，请核对配置或恢复状态。' }
+        : nativePublicTerminalError(snapshot?.phase, snapshot?.reason)) };
   };
   const status = async (request, signal) => summary(request, await inspect(request, signal));
   const resume = (request, signal, admit) => {

@@ -50,6 +50,7 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
       open ? h(ResourceDialog, { title: '本会话的运行与子任务', detail: '查看运行用量、恢复状态及各轮子任务。子任务结果仍需父任务验收。', wide: true, onClose: () => setOpen(false) },
         h('button', { type: 'button', style: buttonStyle(), disabled: !controller || state.loading, onClick: () => { void controller?.refresh(); void recovery?.refresh(); } }, state.loading ? '读取中…' : '刷新'),
         recoveryState.error ? h('p', { role: 'alert' }, recoveryState.error) : null,
+        recoveryState.status?.error ? h('p', { role: 'alert' }, recoveryState.status.error.message) : null,
         accounting ? h('section', { 'aria-label': 'Native 运行用量' },
           h('p', null, `运行用量${accounting.incomplete ? '（统计不完整，显示已知用量）' : accounting.final ? '' : '（截至目前）'}：模型 ${accounting.total.modelCalls} 次 · 工具 ${accounting.total.toolCalls} 次 · 输入 ${accounting.total.inputTokens} / 输出 ${accounting.total.outputTokens} tokens。`),
           h('p', { style: { fontSize: '12px' } }, '包含本运行、工具内模型调用及已结算的子任务用量。')) : null,

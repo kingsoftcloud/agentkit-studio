@@ -233,6 +233,13 @@ test('the actual header panel renders saved history, reads results and exposes o
   assert.match(memoryText, /模型 5 次.*输入 55 \/ 输出 35 tokens/);
   assert.match(memoryText, /已达到提炼预算上限/);
   assert.doesNotMatch(memoryText, /native_memory_extraction_budget_exhausted/);
+  recovery.error = { code: 'NATIVE_EXECUTION_NOT_COMPLETED', message: '模型服务返回不可恢复的错误，请检查模型配置和凭据。' };
+  walk(tree).find(node => node.type === 'button' && node.children.includes('刷新')).props.onClick();
+  await tick(); tree = child.render(mounted.props);
+  assert.ok(walk(tree).some(node => node.props.role === 'alert' && node.children.includes(recovery.error.message)));
+  delete recovery.error;
+  walk(tree).find(node => node.type === 'button' && node.children.includes('刷新')).props.onClick();
+  await tick(); tree = child.render(mounted.props);
   walk(tree).find(node => node.type === 'button' && node.children.includes('恢复原运行')).props.onClick(); await tick(); tree = child.render(mounted.props);
   assert.deepEqual(recoveries, [{ agentId: 'local-agent', sessionId: 'session', runId: 'original-run' }]);
   assert.equal(walk(tree).filter(node => node.type === 'button' && node.children.includes('转为后台')).length, 1);

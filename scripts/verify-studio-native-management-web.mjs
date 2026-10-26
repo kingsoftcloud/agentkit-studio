@@ -40,7 +40,11 @@ const server = createServer(async (req, res) => {
     const marker = system.includes('MANAGEMENT_REVISION_THREE') ? 'MANAGEMENT_REVISION_THREE' : 'MANAGEMENT_REVISION_ONE';
     assert.ok(system.includes(marker));
     requests.push({ marker, inputTokens: 11, outputTokens: 7 });
-    assert.ok(requests.length <= 5, 'Unexpected repeated model request');
+    assert.ok(requests.length <= 6, 'Unexpected repeated model request');
+    if (requests.length === 6) {
+      res.writeHead(401, { 'content-type': 'text/plain' });
+      res.end('private-provider-error-body'); return;
+    }
     const heldIndex = requests.length - 3;
     if (heldIndex >= 0 && heldIndex < heldRequests.length) {
       heldRequests[heldIndex].resolve(); await heldReleases[heldIndex].promise;
@@ -290,18 +294,40 @@ try {
   await page.getByText('已停止', { exact: true }).first().waitFor({ state: 'visible', timeout: 30000 });
   await page.screenshot({ path: join(root, 'stopped-native-run.png'), fullPage: true });
   report.checks.push('product-stop-button-cancels-native-run-and-history-retains-terminal');
+  phase = 'product-failure-visibility';
+  await composer.fill('Show the configured model failure safely.'); await composer.press('Enter');
+  let failedRun = false;
+  for (let attempt = 0; attempt < 100 && !failedRun; attempt++) {
+    const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
+    try {
+      const rows = store.list(scope, currentSessionId);
+      failedRun = rows.length === 5 && store.load(scope, rows.at(-1).runId).snapshot.phase === 'failed';
+    } finally { store.close(); }
+    if (!failedRun) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(failedRun, true, 'The failed Run must be durable before displaying its public error');
+  const inspectRun = async () => {
+    await page.getByRole('button', { name: '运行与子任务', exact: true }).click();
+    await page.getByText('模型服务返回不可恢复的错误，请检查模型配置和凭据。', { exact: true })
+      .waitFor({ state: 'visible', timeout: 30000 });
+    assert.equal(await page.getByText('private-provider-error-body', { exact: false }).count(), 0);
+  };
+  await inspectRun(); await page.screenshot({ path: join(root, 'failed-native-run.png'), fullPage: true });
+  await page.reload(); await inspectRun();
+  report.checks.push('provider-failure-is-durable-and-shows-only-public-terminal-message-after-reload');
   assert.deepEqual(modelFailures, []); assert.deepEqual(rendererErrors, []);
-  assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE']);
+  assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE',
+    'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE']);
   assert.equal(await readFile(join(root, 'legacy-loop.jsonl'), 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; }), '');
   phase = 'durable-version-bindings';
   const ledger = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   try {
     const frozenRows = ledger.list(scope, frozenSessionId), currentRows = ledger.list(scope, currentSessionId);
-    assert.equal(frozenRows.length, 1); assert.equal(currentRows.length, 4, 'Reconnect and cancellation have independent durable Runs');
+    assert.equal(frozenRows.length, 1); assert.equal(currentRows.length, 5, 'Reconnect, cancellation and failure have independent durable Runs');
     const runs = [...frozenRows, ...currentRows].map(row => ledger.load(scope, row.runId));
-    assert.deepEqual(runs.map(run => run.configuration.hostRecoveryBinding.agentRevision), [1, 3, 3, 3, 3]);
+    assert.deepEqual(runs.map(run => run.configuration.hostRecoveryBinding.agentRevision), [1, 3, 3, 3, 3, 3]);
     assert.ok(runs.every(run => run.configuration.engine === 'agentkit.native/v1'));
-    assert.deepEqual(runs.map(run => run.snapshot.phase), ['completed', 'completed', 'completed', 'completed', 'canceled']);
+    assert.deepEqual(runs.map(run => run.snapshot.phase), ['completed', 'completed', 'completed', 'completed', 'canceled', 'failed']);
     assert.deepEqual(runs.slice(0, 4).map(run => run.snapshot.usage.modelCalls), [1, 1, 1, 1]);
     assert.ok(runs[4].snapshot.usage.modelCalls <= 1, 'Cancelled request does not issue a second model call');
     assert.equal(runs[0].snapshot.buildId, buildId);
@@ -312,7 +338,10 @@ try {
     assert.equal(runs[2].snapshot.parentRunId, runs[1].snapshot.runId, 'Reconnected continuation retains the original Run');
     assert.equal(runs[3].snapshot.parentRunId, runs[2].snapshot.runId, 'Network-reconnected continuation retains the prior Run');
     assert.equal(runs[4].snapshot.parentRunId, runs[3].snapshot.runId, 'Cancelled Run retains its parent');
-    report.durable = { revisions: [1, 3, 3, 3, 3], engine: 'agentkit.native/v1', phases: runs.map(run => run.snapshot.phase),
+    assert.equal(runs[5].snapshot.parentRunId, runs[4].snapshot.runId, 'Failed Run retains its parent');
+    assert.equal(runs[5].snapshot.reason, 'provider_terminal_error');
+    assert.equal(runs[5].snapshot.usage.modelCalls, 1, 'Failed request is accounted once');
+    report.durable = { revisions: [1, 3, 3, 3, 3, 3], engine: 'agentkit.native/v1', phases: runs.map(run => run.snapshot.phase),
       modelCalls: runs.map(run => run.snapshot.usage.modelCalls), buildId, frozenSessionId, currentSessionId,
       settledWhileBrowserOffline: completedOffline };
   } finally { ledger.close(); }
