@@ -97,9 +97,9 @@ line counts or test totals. Do not increment for producing another plan.
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds, cancellation and combined Host sources earned 3); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 19 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke and paired direct-model comparison 3 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1, Skill shell policy-wait lease loss 1 earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 10 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke and paired direct-model comparison 3 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 12 |
 
-Current assessed progress: **83/100**, approximately 83%. P4's remaining credit
+Current assessed progress: **85/100**, approximately 85%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -487,6 +487,19 @@ sample does **not** establish Native
 quality, speed or token savings; it exposes a business prompt needing better
 instruction/result evaluation. P5 adds two measurement points for actual
 side-by-side data; tool-using and reference-Harness comparisons remain open.
+
+Two additional existing fault fixtures were re-run for this objective, rather
+than inferred from their filenames. `tests/native-workspace-receipt-process.test.mjs`
+passed 2/2: a real SIGKILL after one workspace publication is followed by a
+different Host process, which reads the original fenced receipt without a
+second write; a rejected post-policy output cannot launder the raw write into
+success. `tests/native-a2a-control-process.test.mjs` passed 4/4: SIGKILL while
+remote continue/cancel responses are held, both when the remote effect applied
+and when it did not, leaves one original send and no cold resend. Read-only
+observation reports the unknown outcome and preserves the original intent.
+These are local controlled-model/HTTP fault experiments, not proof of exactly
+once execution by every external service. They earn P5's two remaining fault
+points; the six-point fault category is now complete.
 
 1. Finish the bound-policy extension/resource matrix, then close remaining
    context/source and cross-capability budget integration while preserving
