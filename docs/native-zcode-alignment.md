@@ -35,6 +35,32 @@ and retries must cover distinct failure layers within shared task budgets.
 Source presence is not evidence that an optional background feature runs by
 default; in particular the pinned Dream handler is not automatically wired.
 
+Implementation boundary: use ZCode as the capability/behavior reference and Pi
+as a composition reference, without replacing the existing Native kernel. One
+durable driver remains authoritative for model/tool effects, authorization,
+cancellation, budgets, ordering and recovery. Memory extraction, coding
+workflow, collaboration policy and tool integrations can be separate first-party
+modules, enabled through the admitted configuration. Their auxiliary work must
+use that same execution authority, persist its own identity/usage and retain
+the existing effect-reconciliation protections. Module separation does not
+remove required capabilities or make mandatory execution guards optional.
+Studio continues to own task presentation and Session transport/projections.
+Runtime switching and a future cloud owner build on these boundaries, not on
+an assumption that provider-private replay or in-flight effects are portable.
+
+Memory source audit (ZCode pin above): `src/memory/extraction.ts` supplies
+single-flight/latest-pending coalescing and an **in-memory** extraction cursor;
+it does not prove durable cursor storage. The real model loop is in
+`src/memory/memory-agent-loop.ts`; `src/runtime/helpers/project-memory-extraction.ts`
+binds automatic triggers, active conversation branch and a five-turn bound.
+Native already projects active conversation branches. Its current completed-turn
+Memory consumer uses original-user pattern candidates, not an equivalent model
+extraction loop. A generic scheduler alone does not close this gap: the Host
+still needs an owned auxiliary execution, trusted source/policy binding, durable
+cursor/job receipts and independent usage/status reporting. Do not relabel
+model-inferred project facts as the existing original-user profile policy or
+reuse a candidate operation key for a different mutation payload.
+
 This clarification makes conversation presentation explicit within M3/M4 and
 its end-to-end checks within M6. Unrelated product modules were already outside
 the coding Harness target; excluding them earns no extra progress. The
@@ -2792,3 +2818,22 @@ This point covers native tool-reference integration and accounting, not complete
 search/Skills parity or actual quality, token-saving and latency benchmarks.
 Automatic memory extraction, layered retry coordination and coding workflow/
 background/telemetry/session capability audits remain required as clarified above.
+
+## Automatic memory extraction: scheduler foundation (not yet Host-integrated)
+
+The core now exports the source-aligned extraction eligibility and a
+single-flight/latest-pending scheduler. A Host can supply an initial cursor and
+an awaited cursor persistence callback. Execution failure, acquisition failure,
+failed cursor persistence, or shutdown does not advance its in-memory cursor;
+coalesced and post-shutdown rejected snapshot promises remain observed. The
+Host still owns durable cursor storage, source authority, auxiliary execution
+and lifecycle; this helper is not an automatic model-extraction feature by itself.
+
+Actual Claude Code session `f9463083-1c53-40d0-849e-fdc5a892d863` authored the
+primitive/tests and made a bounded correction pass. Both CLI attempts terminated
+at their tool-turn limit, so neither is a successful completion report. Main
+review found and fixed a coalescing test that blocked both executions instead of
+only the first. The final core build and the scheduler's 19 targeted checks pass:
+`/tmp/native-memory-extraction-scheduler-main.log`. No full suite was run.
+Earned progress remains **43/100** until actual execution/Host evidence closes a
+capability checklist item.
