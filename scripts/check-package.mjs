@@ -22,7 +22,8 @@ const expected = [
   'LICENSE', 'THIRD_PARTY_NOTICES.md', 'third-party/ZCode-LICENSE',
   'third-party/zcode-command-plan/source.json',
   'dist/native-command-plan.mjs', 'dist/native-command-plan.LICENSE.txt',
-  ...['patch-parser', 'patch-apply', 'edit-matchers', 'tool-search-ranking', 'memory-extraction-scheduler']
+  ...['patch-parser', 'patch-apply', 'edit-matchers', 'tool-search-ranking', 'memory-extraction-scheduler',
+    'todos', 'coordinator-response']
     .map(name => `packages/agentkit-harness-core/src/${name}.mts`),
   'packages/agentkit-harness/src/native/model-anthropic-cache.mjs',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',

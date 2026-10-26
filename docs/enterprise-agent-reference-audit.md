@@ -33,6 +33,8 @@ identify the upstream paths and local adaptations:
 - `memory-extraction-scheduler.mts`: eligibility and coalesced scheduling,
   extended with a Host-persisted cursor callback.
 - `model-anthropic-cache.mjs`: provider-wire cache breakpoint projection.
+- `todos.mts` and `coordinator-response.mts`: adapted ZCode tool shapes and
+  result behavior with Native-owned receipt and child authority.
 - `third-party/zcode-command-plan/`: parser, read-only argument policies and Git
   checks; `source.json` records per-file original digests. All 23 recorded
   SHA-256 hashes match both the pinned upstream files and the retained local

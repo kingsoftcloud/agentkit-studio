@@ -50,3 +50,17 @@ commit's `apps/zcode-cli/packages/core/src/context/builder.ts` and
 Native projects provider wire messages without changing its durable transcript.
 The ZCode reference is Apache-2.0 and its license is preserved in
 `third-party/ZCode-LICENSE`.
+
+`packages/agentkit-harness-core/src/todos.mts` and
+`coordinator-response.mts` adapt ZCode's `TodoRead`/`TodoWrite` and
+`RespondToCoordinator` tool shapes and result behavior from the same pinned
+commit: `apps/zcode-cli/packages/contracts/src/tools/{todo,respond-to-coordinator}.ts`
+and `apps/zcode-cli/packages/core/src/tool/handlers/{todo,respond-to-coordinator}.ts`.
+Native implements its own receipt commit and child-owner checks. These adapted
+Apache-2.0 interfaces and behaviors are covered by `third-party/ZCode-LICENSE`.
+
+Other modules refer to ZCode as a behavioral benchmark without importing its
+source layout, including plan-mode rules, MCP destructive hints, local context
+pruning thresholds, model continuation and workspace rewind. Their comments
+identify the relevant reference; the attribution above names retained or
+adapted source more directly.
