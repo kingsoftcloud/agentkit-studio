@@ -34,6 +34,8 @@ export interface Message extends ToolContextMessage {
   providerReplay?: ObjectValue; media?: Json[]; persistent?: boolean;
   /** Runtime-owned receipt outcome for optional request pruning; never inferred from model prose. */
   toolOutcome?: ToolResult['status'];
+  /** Kernel-owned completion clock for admitted idle cleanup; no model/permission authority. */
+  completedAtMs?: number;
   /** Kernel-owned complete definitions delivered by this successful search. */
   discoveredToolNames?: string[];
   /** Stable provenance for imported history; never grants current-run authority. */
@@ -177,6 +179,8 @@ export interface ContextPlanningPolicy {
   pruneThresholdPolicy?: 'zcode-local/v1';
   /** Admit cleaned historical tool output as the source of a still-needed summary. */
   pruneSummaryPolicy?: 'zcode-local/v1';
+  /** Omitted on legacy Runs. Zero triggers after any positive idle interval. */
+  pruneIdleThresholdMinutes?: number;
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;
@@ -214,6 +218,7 @@ export interface ContextPlanningResult {
 export interface ToolResultPruning {
   sourceMessageRefs: string[]; toolCallIds: string[];
   preInputTokens: number; postInputTokens: number; savedTokens: number;
+  trigger?: 'idle' | 'token_pressure'; idleElapsedMs?: number;
 }
 export interface ContextSourceDefinition {
   contract: 'agentkit.native-context-source/v1'; sourceId: string; bindingDigest: string;

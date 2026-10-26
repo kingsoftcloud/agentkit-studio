@@ -8,6 +8,15 @@ const object = (value: Json | undefined): value is ObjectValue => !!value && typ
 export function defaultToolPruningThreshold(fullCompactThreshold: number): number {
   return Math.max(0, Math.min(Math.floor(fullCompactThreshold * .9), fullCompactThreshold - 2000));
 }
+/** The last assistant frame is decisive: unknown or future clocks cannot supply idle evidence. */
+export function toolPruningIdleElapsed(messages: Message[], minutes: number | undefined, nowMs: number | undefined): number | undefined {
+  if (minutes === undefined || !Number.isSafeInteger(nowMs) || nowMs! < 0) return undefined;
+  const last = [...messages].reverse().find(message => message.role === 'assistant');
+  const completed = last?.completedAtMs;
+  if (!Number.isSafeInteger(completed) || completed! < 0) return undefined;
+  const elapsed = nowMs! - completed!;
+  return elapsed > minutes * 60_000 ? elapsed : undefined;
+}
 function failedObservation(content: string): boolean {
   try {
     const receipt = parseNativeJson(content);

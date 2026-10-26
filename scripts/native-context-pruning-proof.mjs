@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseNativeJson } from '../packages/agentkit-harness-core/dist/index.mjs';
 
-export function createContextPruningProof({ summary = false } = {}) {
+export function createContextPruningProof({ summary = false, idle = false } = {}) {
   let issued = 0, firstCleared = null, cold = false, summaryCalls = 0;
   const summarySources = [];
   async function respond({ request, response, raw, requests }) {
@@ -50,8 +50,10 @@ export function createContextPruningProof({ summary = false } = {}) {
       assert.equal(firstTurn.finalResponse, summary ? 'Cleaned summary verified' : 'Early cleanup verified');
       const identity = parseNativeJson(firstTurn.events.find(event => event.type === 'turn/owner').data.binding).identity;
       const original = load(identity.scope, identity.runId), policy = original.configuration.contextPolicy;
-      assert.equal(policy.pruneThresholdPolicy, 'zcode-local/v1'); assert.equal(policy.pruneThresholdTokens, undefined);
+      assert.equal(policy.pruneThresholdPolicy, idle ? undefined : 'zcode-local/v1');
+      assert.equal(policy.pruneThresholdTokens, idle ? 100000 : undefined);
       assert.equal(policy.pruneSummaryPolicy, 'zcode-local/v1');
+      assert.equal(policy.pruneIdleThresholdMinutes, idle ? 0 : 60);
       const full = (original.configuration.profile.contextWindow - original.configuration.profile.maxOutputTokens) * policy.triggerRatio;
       const facts = original.events.filter(event => event.kind === 'context.tool_results_pruned');
       if (summary) {
@@ -64,6 +66,13 @@ export function createContextPruningProof({ summary = false } = {}) {
         assert.ok(facts.some(event => event.payload.preInputTokens < full && event.payload.savedTokens >= policy.pruneMinSavedTokens),
           'Actual request counter proves cleanup occurred before the full summary threshold');
         assert.equal(original.snapshot.contextState.compactions, 0);
+        if (idle) {
+          assert.equal(issued, 2);
+          assert.ok(facts.some(event => event.payload.trigger === 'idle' && event.payload.idleElapsedMs > 0
+            && event.payload.preInputTokens < policy.pruneThresholdTokens), 'Idle observation triggers cleanup without token pressure');
+          assert.ok(original.snapshot.messages.filter(message => message.role === 'assistant').every(message => Number.isSafeInteger(message.completedAtMs)));
+          assert.ok(!JSON.stringify(requests).includes('completedAtMs'), 'Internal completion clocks never become provider protocol fields');
+        }
       }
       assert.ok(original.snapshot.messages.some(message => message.role === 'tool' && message.content.includes('EVIDENCE_1_')), 'Original transcript remains available');
       assert.equal(original.intents.filter(intent => intent.kind === 'tool').length, issued);
@@ -72,10 +81,17 @@ export function createContextPruningProof({ summary = false } = {}) {
       await writeFile(join(root, 'context-pruning-http-evidence.json'), JSON.stringify({ requests, failures }, null, 2));
       assert.equal(continued.finalResponse, 'Cold cleanup verified');
       assert.deepEqual(load(identity.scope, identity.runId), original);
-      assert.equal(load(identity.scope).intents.filter(intent => intent.kind === 'tool').length, 0);
+      const followup = load(identity.scope);
+      assert.equal(followup.intents.filter(intent => intent.kind === 'tool').length, 0);
+      const coldPruning = followup.events.filter(event => event.kind === 'context.tool_results_pruned').map(event => event.payload);
+      if (idle) {
+        assert.equal(followup.configuration.contextPolicy.pruneIdleThresholdMinutes, 0);
+        assert.ok(coldPruning.some(fact => fact.trigger === 'idle' && fact.idleElapsedMs > 0));
+        assert.ok(followup.snapshot.messages.some(message => message.history && Number.isSafeInteger(message.completedAtMs)));
+      }
       assert.deepEqual(failures, []);
-      await writeFile(join(root, 'context-pruning-proof.json'), JSON.stringify({ passed: true, summary, summaryCalls, modelCalls: requests.length,
-        commandCalls: issued, firstClearedRequest: firstCleared, fullCompactThreshold: full, pruning: facts.map(event => event.payload),
+      await writeFile(join(root, 'context-pruning-proof.json'), JSON.stringify({ passed: true, summary, idle, summaryCalls, modelCalls: requests.length,
+        commandCalls: issued, firstClearedRequest: firstCleared, fullCompactThreshold: full, pruning: facts.map(event => event.payload), coldPruning,
         scope: 'Actual packed Frozen Build Host, local command output, normal tokenizer/request counter, default cleanup and optional still-needed summary, cold continuation; controlled model, no quality or cost benchmark.' }, null, 2));
       console.log(`Studio Native context cleanup PASS: real commands/counter, ${summaryCalls} summary calls, cold continuation without replay.`);
     } finally { await harness.close(); }

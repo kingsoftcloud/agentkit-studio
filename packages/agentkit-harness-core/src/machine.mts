@@ -302,6 +302,8 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
   if (snapshot.hookState && ['tool_calls', 'final_candidate', 'output_limit'].includes(result.kind)
     && (result.toolCalls.length > 0 || result.text.trim())) base.hookState = { ...currentHookState(snapshot), feedback: [] };
   const message: Message = { role: 'assistant', content: result.text,
+    ...(config.contextPolicy?.pruneIdleThresholdMinutes !== undefined && Number.isSafeInteger(now) && now >= 0
+      && ['tool_calls', 'final_candidate', 'output_limit'].includes(result.kind) ? { completedAtMs: now } : {}),
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
   switch (result.kind) {
     case 'tool_calls':

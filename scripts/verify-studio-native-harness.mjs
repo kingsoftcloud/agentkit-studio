@@ -39,6 +39,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'edit-create': { type: 'boolean', default: false },
   'context-pruning': { type: 'boolean', default: false },
   'context-pruning-summary': { type: 'boolean', default: false },
+  'context-pruning-idle': { type: 'boolean', default: false },
   'conversation-fork': { type: 'boolean', default: false },
   'conversation-rewind': { type: 'boolean', default: false },
   'conversation-active-rewind': { type: 'boolean', default: false },
@@ -115,8 +116,10 @@ assert.ok(!values['context-pruning'] || values['mount-host'] && !Object.entries(
   && !['context-pruning', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning is a separate mounted Host proof');
 assert.ok(!values['context-pruning-summary'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['context-pruning-summary', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning-summary is a separate mounted Host proof');
-const contextPruningProof = values['context-pruning'] || values['context-pruning-summary']
-  ? createContextPruningProof({ summary: values['context-pruning-summary'] }) : null;
+assert.ok(!values['context-pruning-idle'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
+  && !['context-pruning-idle', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning-idle is a separate mounted Host proof');
+const contextPruningProof = values['context-pruning'] || values['context-pruning-summary'] || values['context-pruning-idle']
+  ? createContextPruningProof({ summary: values['context-pruning-summary'], idle: values['context-pruning-idle'] }) : null;
 assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;
@@ -337,6 +340,7 @@ try {
     `        workspaceRepair: ${Boolean(workspaceRepairProof)}`,
     `        editCreate: ${Boolean(editCreationProof)}`,
     `        contextPruning: ${Boolean(contextPruningProof)}`,
+    `        contextPruningIdle: ${Boolean(values['context-pruning-idle'])}`,
     `        conversationFork: ${Boolean(conversationForkProof || conversationRewindProof)}`,
     `        conversationRewind: ${Boolean(conversationRewindProof)}`,
     `        conversationCommandRewind: ${values['conversation-command-rewind']}`,

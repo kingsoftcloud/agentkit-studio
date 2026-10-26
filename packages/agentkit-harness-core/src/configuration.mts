@@ -310,6 +310,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     invariant(policy.pruneToolResults === undefined || typeof policy.pruneToolResults === 'boolean', 'invalid_context_pruning_policy');
     invariant(policy.pruneThresholdPolicy === undefined || policy.pruneThresholdPolicy === 'zcode-local/v1', 'invalid_context_pruning_policy');
     invariant(policy.pruneSummaryPolicy === undefined || policy.pruneSummaryPolicy === 'zcode-local/v1', 'invalid_context_pruning_policy');
+    invariant(policy.pruneIdleThresholdMinutes === undefined || Number.isSafeInteger(policy.pruneIdleThresholdMinutes)
+      && policy.pruneIdleThresholdMinutes >= 0, 'invalid_context_pruning_policy');
     invariant([policy.pruneKeepRecentBatches, policy.pruneMinSavedTokens, policy.pruneThresholdTokens].every(value => value === undefined
       || Number.isSafeInteger(value) && value! >= 1), 'invalid_context_pruning_policy');
   }

@@ -18,6 +18,8 @@ export function validateContextMessages(input: unknown): Message[] {
   for (const message of messages) {
     invariant(message && ['system', 'user', 'assistant', 'tool'].includes(message.role)
       && typeof message.content === 'string', 'invalid_context_messages');
+    invariant(message.completedAtMs === undefined || message.role === 'assistant'
+      && Number.isSafeInteger(message.completedAtMs) && message.completedAtMs >= 0, 'invalid_context_completion_time');
     if (message.role === 'tool') {
       invariant(typeof message.callId === 'string' && pending.delete(message.callId)
         && message.toolCalls === undefined, 'invalid_context_tool_pairing');

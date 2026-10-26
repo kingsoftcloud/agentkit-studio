@@ -1034,6 +1034,7 @@ export class NativeKernel {
           assertBinding();
           invariant(counter, 'context_tokenizer_binding_mismatch');
           const counters: ContextCounters = {
+            ...(policy.pruneIdleThresholdMinutes === undefined ? {} : { nowMs: this.now() }),
             ...(counter.countMessage ? { countMessage: async (message: Message) => {
               context.signal.throwIfAborted(); assertBinding();
               const count = await counter.countMessage!({ ...context, profile: copy(configuration.profile), message: copy(message),

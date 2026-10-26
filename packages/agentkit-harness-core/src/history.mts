@@ -85,6 +85,7 @@ function projectHistory(parent: StoredRun, transcript: Message[], configuration:
       const candidate = [...snapshot.messages].reverse().find(message => message.role === 'assistant'
         && !message.toolCalls?.length && message.content === snapshot.finalText);
       output.push({ role: 'assistant', content: snapshot.finalText,
+        ...(candidate?.completedAtMs === undefined ? {} : { completedAtMs: candidate.completedAtMs }),
         history: candidate?.history ?? { sourceRunId: snapshot.runId, sourceIndex: snapshot.messages.length },
         ...(replayAllowed && candidate?.providerReplay ? { providerReplay: copy(candidate.providerReplay) } : {}) });
     }

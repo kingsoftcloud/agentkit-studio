@@ -64,12 +64,13 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **39/100**: M1 4/15 (inputs, initial matrix and reviewed
-source findings), M2 8/15 (explicit earlier cleanup, admitted Anthropic cache
+Current earned progress: **40/100**: M1 4/15 (inputs, initial matrix and reviewed
+source findings), M2 9/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity, plus versioned
 reference-default earlier cleanup through the actual Studio counter/command path,
-and authenticated cleaned-source summaries with SQLite recovery and actual Studio integration), M3 6/20
+authenticated cleaned-source summaries with SQLite recovery and actual Studio integration,
+and admitted idle cleanup with persistent assistant clocks and cold Studio continuity), M3 6/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
 plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
@@ -122,7 +123,8 @@ audited and integrated.
 | Prompt and instructions | `src/context/builder.ts`, `sections/identity.ts`, `tests/context-builder.test.ts` | `src/host/services/native-harness.mjs`, `src/providers/native-context.mjs`, core `guidance.mts` | Stable/dynamic sections exist in reference. Audit actual Host assembly, project instruction discovery and provider cache layout; preserve admitted recovery prompt. Pending. |
 | Model and stream | `src/runtime/methods/turn-model-step.ts`, `model-streaming-event.ts`, `../adapters/src/model/` | Node `model-{openai-chat,responses,anthropic,normalize}.mjs`, core `model-stream.mts`, `machine.mts` | Native already rejects truncated tool batches. Successful `model_context_window_exceeded` now enters bounded output continuation; buffered/SSE/local HTTP→kernel cases pass. Remaining protocol/stream audit pending. |
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
-| Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. New explicitly enabled admissions derive the reference earlier threshold and pass actual Host/counter/cold-continuation evidence; legacy timing and explicit thresholds remain. Idle trigger and applying cleanup before a still-required summary remain pending. |
+| Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | New explicitly enabled admissions derive the reference earlier threshold, use cleaned sources for still-needed summaries and support idle-triggered cleanup through persistent assistant completion clocks. Actual Host/counter/cold-continuation evidence is recorded below; original policies and explicit thresholds remain. Result-count versus batch recency, exact budget strategy and full context acceptance remain pending. |
+| Local task conversation / thinking display | `src/runtime/methods/model.ts:278-330`, model streaming Session events | Node `assistant-stream.mjs`, `session-delivery.mjs`, Host `native-harness.mjs`, maintained DSH `api/session-controller` and conversation UI | Local Session stream consumption exists in maintained DSH; absence of a consumer in Studio `src/client` does not establish a local display gap. Native currently defaults `providerThinkingDisplay` to false; opt-in streaming, persisted display, reconnect/cancel/error ordering and rendered main-view parity still need acceptance. The cloud Assistant history/renderer filtering is a separate path. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. New admitted v2 Edit supports absent-file creation and full-fresh-read whitespace replacement, actual Host denial and cold editing; v1/legacy behavior is preserved. Large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
@@ -2431,3 +2433,93 @@ Earned progress: **39/100**, M2 **8/15**, unchanged denominator. This point cove
 cleaned-source summary integration and its recovery/Host evidence. Idle-triggered
 cleanup, result-count versus batch recency, complete context/protocol/interaction
 alignment and M6's before/reference/after task/performance comparison remain open.
+
+## Idle-triggered local cleanup (40/100)
+
+The pinned ZCode source uses a strict elapsed comparison, not a timer job:
+`compact/microcompact.ts:15,177-200` defaults to 60 minutes and triggers when
+`now - lastAssistantCompletedAtMs > minutes * 60000`. Zero is valid. Idle takes
+precedence over token pressure. `runtime/methods/turn-model-step.ts:695` updates
+the last completion after a main model response, and `resume.ts:187-195` restores
+the latest assistant completion from active history.
+
+New Studio bindings with explicit `pruneToolResults: true` now admit
+`pruneIdleThresholdMinutes: 60`; explicit nonnegative integer values, including
+zero, win. Restored configurations preserve original absence/value. Pruning is
+still opt-in, and disabled compaction/pruning does not become enabled. Each child
+model binding receives the same admission selection while using its own model.
+
+Successful admitted task assistant messages carry Kernel-owned `completedAtMs`.
+Imported ordinary/fork history keeps that metadata; historical final-message
+projection carries an available original completion rather than inventing a new
+one. Provider errors, summary responses and old Runs do not acquire a fabricated
+completion clock. The planner uses only the latest assistant frame and one clock
+observation captured for the journaled context effect. An unknown/latest missing
+clock or a clock in the future cannot trigger idle cleanup. Strict equality at
+60 minutes does not trigger it. No scheduler, background poll or extra model call
+is added. Completion metadata is validated as assistant-only and remains separate
+from provider protocol fields and execution/permission authority.
+
+The existing cleanup eligibility, complete protocol groups, protected working
+sets, minimum savings, context counting and cleaned-summary binding remain in
+force. New cleanup facts distinguish `idle` from `token_pressure` and record the
+observed elapsed interval. Old policies retain their prior absent trigger fields.
+
+Acceptance:
+
+- `/tmp/native-pruning-idle-tests.log`: 5 passed: strict/default/zero boundary,
+  missing/future/backward clocks, below-pressure planner admission, disabled and
+  legacy policies, successful-response stamping, and SQLite reopen followed by
+  an ordinary same-Session follow-up Run with inherited completion time. The test
+  clock advances only after a settled tool receipt, under an explicitly long
+  test lease; it does not discard tool completion by jumping across its deadline.
+- `/tmp/native-pruning-idle-related.log`: 31 passed (microcompact, history and
+  context view). `/tmp/native-pruning-idle-conversation.log`: 16 passed (conversation
+  seed/cut/rewind and actual model HTTP integration). Build/pack and whitespace
+  checks pass. No full repository suite ran.
+- Actual Frozen packed Studio:
+  `node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-pruning-idle-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --context-pruning-idle --frozen --keep`.
+  `/tmp/native-pruning-idle-proof-final.log` passes; root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-14BIeV`.
+  This uses explicit zero minutes and a 100000-token pressure threshold to
+  exercise real idle admission without waiting an hour. Two real Node commands,
+  four controlled model requests across two Host instances, zero summaries and
+  no command replay. Initial idle fact: **944 ms**, estimated request **6270 ->
+  4537** tokens; cold ordinary follow-up: **2881 ms**, **6300 -> 4567**, with
+  inherited completion clocks and the original zero-minute policy. Original Run
+  remains unchanged. First-turn wire requests contain no `completedAtMs` fields.
+  The default 60-minute boundary is established by controlled-clock core tests,
+  not by claiming this short Host test waited an hour.
+- Runtime archive SHA-256:
+  `fb57096fa505f466e8092a0c5f1c66e2f225f5b9cd08ca2654a1f6241fab890b`.
+  Token figures are normal Native wire estimates, not provider billing or
+  successful-task performance/quality comparisons.
+
+Source-review follow-up for the next conversation/display batch:
+
+Real Claude Code read-only session `e9fcad46-bbdb-4616-8d99-ba3982e23a93`
+reached its bounded 25-turn inspection limit, then completed the same session's
+report in `/tmp/native-conversation-reasoning-audit-final.json`. No files were
+changed and no tests were run by that audit. No audit process remains live.
+Its Native thinking -> `assistant-stream.mjs` -> Session stream trace is useful,
+but its claim that Studio has no live reasoning consumer is **not accepted**:
+it inspected the cloud-only Assistant view and did not inspect the local DSH
+Session consumer. Main review verified maintained
+`packages/api/session-controller/src/history.ts:54-61` accumulates
+`agent/assistant-stream`; `client/sessions/session.ts:653-677` consumes frames
+and durable entries, and the conversation contract supports reasoning blocks.
+The cloud adapter deliberately strips streams and its renderer filters reasoning;
+those observations do not establish the local main-view behavior.
+
+The directly verified local admission gap to audit next is
+`src/host/services/native-harness.mjs:426-438`: `providerThinkingDisplay` defaults
+to false, independently of private replay. Source ZCode
+`runtime/methods/model.ts:278-330` handles reasoning start/delta/end as streaming
+Session events. Full local rendered acceptance, display configuration, persisted
+stream settlement, cancellation/reconnect and protocol-specific reasoning remain
+pending. Cloud Assistant features are not substituted for this local task.
+
+Earned progress: **40/100**, M2 **9/15**, unchanged denominator. This point covers
+idle cleanup admission, completion-clock persistence and the actual Studio path.
+It does not certify full context alignment or the conversation display group;
+result versus batch recency, the remaining capability matrix and M6 are open.

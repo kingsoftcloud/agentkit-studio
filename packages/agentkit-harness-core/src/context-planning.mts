@@ -9,9 +9,11 @@ import { retryDelay } from './retry.mjs';
 import { deliveryReviewMessages, reviewPending } from './delivery-review.mjs';
 import { artifactProgressIdentity } from './artifact-runtime.mjs';
 import { sourceWorkingSetGroup } from './source-working-set-group.mjs';
-import { defaultToolPruningThreshold, projectOldToolResults } from './context-microcompact.mjs';
+import { defaultToolPruningThreshold, projectOldToolResults, toolPruningIdleElapsed } from './context-microcompact.mjs';
 
 export interface ContextCounters {
+  /** Clock observation for this journaled context effect; never recomputed during counting. */
+  nowMs?: number;
   countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number): Promise<number>;
   countText(text: string): Promise<number>;
   countMessage?(message: Message): Promise<number>;
@@ -366,7 +368,8 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   const pruningThreshold = policy.pruneThresholdTokens ?? (policy.pruneThresholdPolicy === 'zcode-local/v1'
     ? defaultToolPruningThreshold((config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio)
     : (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio);
-  if (policy.enabled && policy.pruneToolResults && !forceCompaction && counted >= pruningThreshold) {
+  const idleElapsedMs = toolPruningIdleElapsed(snapshot.messages, policy.pruneIdleThresholdMinutes, counters.nowMs);
+  if (policy.enabled && policy.pruneToolResults && !forceCompaction && (idleElapsedMs !== undefined || counted >= pruningThreshold)) {
     const protectedIndexes = new Set([...mandatoryIndexes(snapshot, groups, config), ...workingSet.flat()]);
     const projected = projectOldToolResults(snapshot.messages, refs, groups, config.tools, protectedIndexes,
       policy.pruneKeepRecentBatches ?? 5, digest);
@@ -380,6 +383,8 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
         acceptedPruning = {
           sourceMessageRefs: projected.clearedIndexes.map(index => refs[index]!), toolCallIds: projected.clearedCallIds,
           preInputTokens: counted, postInputTokens: post, savedTokens: counted - post,
+          ...(policy.pruneIdleThresholdMinutes !== undefined ? { trigger: idleElapsedMs === undefined ? 'token_pressure' as const : 'idle' as const,
+            ...(idleElapsedMs === undefined ? {} : { idleElapsedMs }) } : {}),
         };
         if (post < (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio)
           return result('ready', 'historical_tool_results_within_budget', prunedMessages, { ...admission, countedInputTokens: post });
