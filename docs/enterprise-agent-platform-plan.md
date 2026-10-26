@@ -51,12 +51,13 @@ permission, audit or resource enforcement.
    `auxiliary-run.mts` only invokes NativeKernel with the admitted configuration
    and exact-call/receipt guards. Complete Host scheduling/lifetime/job/cursor
    integration is still outstanding; this is not automatic Memory acceptance.
-3. **Vertical product evidence is incomplete.** Existing mounted Host proofs
+3. **Route-driven local vertical evidence now passes.** Existing mounted Host proofs
    already authenticate HTTP and call `agents/local-get` and
    `agents/ensure-preset`. Their initial record is created directly through the
-   store. Add complete route-driven create/edit/Build/admit/run scenarios for
-   both a business and a coding Agent. Do not label the existing evidence absent
-   merely because its setup bypasses the create route.
+   store. The new verifier creates/edits/builds/admits both Agents through real
+   authenticated HTTP routes, executes real MCP/workspace effects and cold
+   continuation through SDK/controller. Model output is controlled fixture data;
+   real-model task quality and UI acceptance remain separate requirements.
 4. **Do not infer missing UI features from a single verifier.** Prior thinking,
    reconnect and history evidence exists in the coding-alignment record. Audit
    its actual scope and rerun relevant product paths under the new verticals.
@@ -80,12 +81,12 @@ line counts or test totals. Do not increment for producing another plan.
 | Milestone | Weight | Required evidence | Earned |
 | --- | ---: | --- | ---: |
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
-| P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 5 |
-| P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 0 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); context and shared retry budget (5); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 1 |
+| P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 10 |
+| P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 2 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 0 |
 
-Current assessed progress: **16/100**, approximately 16%. P4's remaining credit
+Current assessed progress: **47/100**, approximately 47%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -180,19 +181,78 @@ scope, retain automatic triggers and multilingual eligibility, and expose
 independent job status/usage. Until those are integrated and verified through
 Studio, automatic model extraction remains incomplete.
 
+### Route-driven local business and coding verticals
+
+Verified by `scripts/verify-enterprise-agent-platform.mjs` and the production-Host
+instrumentation fixture `tests/fixtures/studio-enterprise-agent-platform.mjs`.
+The maintained DSH CLI/SDK loads the packed Studio production modules. A sentinel
+DSH adapter throws if the legacy model loop is entered. Agents are created and
+edited through authenticated `/agentkit` RPC; Builds are submitted/listed and
+observed `succeeded`; presets are admitted through the real route. Session/turn
+creation is through the SDK/controller, never a fabricated ledger record.
+
+The business Agent reads a real scratch CRM record and appends one approval via
+local MCP. The coding Agent reads a seed and writes a real workspace file.
+Editing the business Agent after Build changes both its instruction and MCP
+endpoint binding. The immutable Build still calls its original endpoint with
+its original instruction. SQLite records confirm the same `agentkit.native/v1`
+engine, distinct Agent/Session/Run identities and frozen revision/Build bindings.
+Live admissions pin a `revision-<digest>` identity; they do not have a published
+Build ID in their Host capsule.
+
+After closing/reopening the actual Host, both histories continue with original
+parent Run references. Tool admission count remains five (two business, two
+coding, one frozen-resource read), and the single CRM mutation is not repeated.
+The verifier fails if required restart evidence fails; it cannot silently pass
+with a best-effort recovery gap. Original runs observe 3/3/2 model requests;
+including two continuations gives 10. Token values and measured latency are
+explicitly **controlled fixture/local measurements**, not real-model quality,
+savings or performance claims. No UI or abrupt-crash acceptance is implied.
+
+Reproducible package and focused verification:
+
+```sh
+npm pack --ignore-scripts --pack-destination /tmp --json
+node scripts/verify-enterprise-agent-platform.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz --keep
+```
+
+Reviewed metadata, source/archive/fixture/verifier hashes, observed usage and
+limitations are retained in `enterprise-agent-platform-local-evidence.json`.
+The verifier uses a reused symlinked dependency graph, not a fresh install.
+Actual Claude Code produced an unrun draft and reached its turn limit; main
+review fixed bootstrap configuration, real operation status and retry polling,
+revision-digest identity expectations and Session source names. Main review
+also made restart mandatory and added changed-resource/frozen-Build evidence
+before running acceptance. No production authority was bypassed to make it pass.
+
+### Shared retry budget through real HTTP and cold SQLite reopen
+
+`packages/agentkit-harness/test/native-retry-budget.test.mjs` drives the actual
+model adapter, NativeKernel and SQLite with localhost HTTP responses. Provider
+rate limits and empty responses share one three-call task cap even though their
+error counters differ. A cold worker honors the persisted next-attempt time and
+consumption; the adapter issues one HTTP attempt at a time. During an active
+retry wait, wall-budget exhaustion prevents another request; cancelling a
+persisted wait also prevents another request. Worker downtime is not claimed as
+active execution time. These are mechanism tests, not latency benchmarks.
+
+Seven focused cases passed (retry integration plus existing protocol integration
+and pure retry policy), without a full suite:
+
+```sh
+node --test --test-timeout=10000 packages/agentkit-harness/test/native-retry-budget.test.mjs packages/agentkit-harness/test/native-model-integration.test.mjs packages/agentkit-harness-core/test/retry.test.mjs
+```
+
 ## Next delivery order
 
-1. Complete actual route-driven business/coding local verticals. Actual Claude
-   Code owns their independent verifier/fixture; main agent reviews and fixes
-   product behavior if the integration exposes a gap.
-2. Separate pending automatic Memory policy from generic execution and finish
-   trusted source/job/cursor/lifetime integration. Do not report it complete
-   merely because the scheduler or isolated model runner builds.
-3. Audit and close shared-budget/context/background/children/governance gaps
-   against both verticals, preserving old invariants and existing evidence.
-4. Verify product interaction and management, collect honest actual-model
-   measurements separately from deterministic protocol fixtures, then perform
-   final integrated acceptance and explicit requirement audit.
+1. Finish automatic Memory trusted source/job/cursor/lifetime integration.
+   Do not report it complete merely because isolated scheduling or execution
+   modules build. Preserve manual consent and prevent duplicate consumers.
+2. Audit and close remaining context/background/children/governance gaps against
+   both verticals, preserving existing invariants and relevant prior evidence.
+3. Verify product UI interaction and management, collect honest actual-model
+   measurements separately from controlled fixtures, then perform final
+   integrated acceptance and explicit requirement/license audit.
 
 Each batch runs targeted checks; broad checks happen at final/stage integration
 or when new evidence warrants them. No full-suite rerun after every merge.
