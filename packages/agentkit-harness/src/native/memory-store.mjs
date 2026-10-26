@@ -230,7 +230,7 @@ export class SqliteNativeMemoryProvider {
     this.applyMutation = request => {
       const input = copy(request), { action, scope, scopeId, content, memoryId, expectedVersion,
         operationKey, requestDigest, authority, sourceSessionId, sourceEventId,
-        sourceGoalRevision, sourceGoalDigest, horizon: entries = [] } = input;
+        sourceGoalRevision, sourceGoalDigest, horizon: entries = [], extraction } = input;
       invariant(['remember', 'correct', 'forget'].includes(action) && text(operationKey) && sha(requestDigest)
         && authorityValid(authority) && text(sourceSessionId) && text(sourceEventId)
         && typeof sourceGoalRevision === 'string' && text(sourceGoalRevision) && sha(sourceGoalDigest)
@@ -241,6 +241,18 @@ export class SqliteNativeMemoryProvider {
           : text(memoryId) && Number.isSafeInteger(expectedVersion) && expectedVersion > 0
             && (action === 'forget' ? content === undefined : text(content) && [...content].length <= 8192)),
         'native_memory_apply_mutation_invalid');
+      // Model-derived project memories have their own versioned provenance.
+      // Never relabel them as the original-user profile candidate policy.
+      invariant(extraction === undefined || extraction
+        && extraction.policy === 'native-model-memory/v1' && authority === 'candidate'
+        && ['profile', 'fact', 'episode'].includes(extraction.memoryType)
+        && sha(extraction.sourceWindowDigest) && Array.isArray(extraction.sourceEventIds)
+        && extraction.sourceEventIds.length > 0 && extraction.sourceEventIds.length <= 16
+        && extraction.sourceEventIds.every(text) && extraction.sourceEventIds.includes(sourceEventId),
+      'native_memory_extraction_provenance_invalid');
+      const eventIds = extraction ? [...new Set(extraction.sourceEventIds)] : [sourceEventId];
+      const extractionMetadata = extraction ? { extractionPolicy: extraction.policy,
+        sourceWindowDigest: extraction.sourceWindowDigest } : {};
       const horizonEntries = entries.map(entry => candidateInput({ ...entry, sourceSessionId, operationKey }));
       return transaction(() => {
         const prior = receipt(operationKey, requestDigest); if (prior) return prior;
@@ -249,12 +261,12 @@ export class SqliteNativeMemoryProvider {
         if (action === 'remember') {
           invariant(!nativeMemorySensitiveLabels(content).length, 'native_memory_content_rejected');
           record = { memoryId: 'memory_' + randomUUID(), tenantId: owner.tenantId, workspaceId: owner.workspaceId,
-            scope, scopeId, memoryType: 'profile', content, summary: content, contentHash: memoryDigest(content),
-            status: 'active', confidence: 1, importance: authority === 'explicit_user' ? .9 : .8, sensitivity: 'none',
-            sourceSessionId, sourceEventIds: [sourceEventId], version: 1, validFrom: now, validTo: '', expiresAt: '',
+            scope, scopeId, memoryType: extraction?.memoryType ?? 'profile', content, summary: content, contentHash: memoryDigest(content),
+            status: 'active', confidence: extraction ? .8 : 1, importance: authority === 'explicit_user' ? .9 : .8, sensitivity: 'none',
+            sourceSessionId, sourceEventIds: eventIds, version: 1, validFrom: now, validTo: '', expiresAt: '',
             createdAt: now, updatedAt: now, writePolicy: authority === 'explicit_user' ? 'user_confirm' : 'auto',
             metadata: { slotKey: deriveMemoryProfileSlotKey(content), extractionPolicy: NATIVE_USER_EXTRACTION_POLICY,
-              mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
+              ...extractionMetadata, mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
           // Consume the original user sources in the same transaction (reference
           // local_sqlite.apply_mutation consumes the horizon for remember too), so
           // an explicit write supersedes the auto profile candidate for that slot
@@ -271,13 +283,17 @@ export class SqliteNativeMemoryProvider {
             && (original.scope === 'org' || original.workspaceId === owner.workspaceId),
             'native_memory_version_or_identity_conflict');
           invariant(original.writePolicy !== 'locked', 'native_memory_slot_locked');
+          // Automatic extraction does not replace/delete manually confirmed
+          // facts. Such a change still uses the ordinary exact-call consent path.
+          invariant(!extraction || original.writePolicy === 'auto'
+            && original.memoryType === extraction.memoryType, 'native_memory_slot_locked');
           if (action === 'correct') invariant(!nativeMemorySensitiveLabels(content).length, 'native_memory_content_rejected');
           record = { ...original, content: action === 'forget' ? '' : content,
             summary: action === 'forget' ? '' : content, contentHash: memoryDigest(action === 'forget' ? '' : content),
             status: action === 'forget' ? 'deleted' : 'active', version: original.version + 1, updatedAt: now,
-            sourceEventIds: [...new Set([...original.sourceEventIds, sourceEventId])],
+            sourceEventIds: [...new Set([...original.sourceEventIds, ...eventIds])],
             metadata: action === 'forget' ? {} : { ...original.metadata, slotKey: deriveMemoryProfileSlotKey(content),
-              mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
+              ...extractionMetadata, mutationSessionId: sourceSessionId, authority, sourceGoalRevision, sourceGoalDigest } };
           horizon(record, original, horizonEntries);
           if (action === 'forget') discardObservations(original);
         }

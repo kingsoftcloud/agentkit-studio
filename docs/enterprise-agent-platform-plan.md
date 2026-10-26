@@ -45,10 +45,12 @@ permission, audit or resource enforcement.
    synchronous live cancellation guard into the storage publication lock.
    Legacy callers omitting a revision retain their existing semantics; this is
    not a claim that every external caller now requires CAS.
-2. **Memory policy in general core (work in progress).** The uncommitted
-   `memory-extraction-run.mts` currently includes concrete extraction prompts,
-   tool names and default policy limits. Put those in a capability module while
-   retaining NativeKernel execution, leases, budgets, receipts and source checks.
+2. **Memory policy separated from general execution.** Memory extraction
+   prompts, allowed tool names and default limits now live in Node's
+   `memory-extraction-run.mjs` capability module. The TypeScript
+   `auxiliary-run.mts` only invokes NativeKernel with the admitted configuration
+   and exact-call/receipt guards. Complete Host scheduling/lifetime/job/cursor
+   integration is still outstanding; this is not automatic Memory acceptance.
 3. **Vertical product evidence is incomplete.** Existing mounted Host proofs
    already authenticate HTTP and call `agents/local-get` and
    `agents/ensure-preset`. Their initial record is created directly through the
@@ -80,11 +82,11 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 5 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 0 |
-| P4: capability and task interaction | 20 | Automatic Memory ownership/trigger/persistence/usage (5); context and shared retry budget (5); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 0 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); context and shared retry budget (5); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 1 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 0 |
 
-Current assessed progress: **15/100**, approximately 15%. P4 zero means its
-existing capabilities are not yet re-certified as a group for this objective;
+Current assessed progress: **16/100**, approximately 16%. P4's remaining credit
+means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
 
@@ -131,6 +133,52 @@ Native catalog retains its separate source/binding assertions.
 Transient full outputs are in `/tmp/enterprise-agent-platform-initial-baseline.log`
 and `/tmp/enterprise-agent-local-edit-validation.log`; commands and inspected
 coverage above remain the reproducible record after temporary files disappear.
+
+### Memory module and shared execution foundation
+
+The core's generic auxiliary runner is tested against actual MemoryRunStore and
+SQLite NativeKernel execution: independent Session/Run and usage, unchanged
+parent ledger, exact call/definition/fence checks, context budget admission,
+cancellation and cold lookup of an original effect's owner receipt without
+executing it twice. The capability module composes restricted Memory tools and
+the existing SQLite Memory owner; model-derived profile/fact/episode records
+carry `native-model-memory/v1` provenance, distinct from explicit user profiles.
+Manual/locked records retain their existing consent requirement. Shadow mode
+never writes. This does not install a second model/tool loop.
+
+Trusted source projection uses the actual Host capsule, configuration digest,
+original user ledger messages and kernel history projection. Its message cursor
+survives continuation, including the kernel's virtual final-answer source index.
+Assistant/system/tool/media/private replay data never becomes a human citation.
+Direct writes require both the actual scoped ledger result and the original
+Memory owner's matching receipt; unconfirmed attempts fail closed. Tests use
+real NativeKernel, MemoryRunStore/SQLite and Memory tools/owner receipts, not
+invented intents attached to a product record.
+
+Focused module/recovery/legacy Memory checks: **106 passed**:
+
+```sh
+node --test --test-timeout=10000 packages/agentkit-harness-core/test/auxiliary-run.test.mjs packages/agentkit-harness-core/test/memory-extraction-scheduler.test.mjs packages/agentkit-harness-core/test/tool-receipt.test.mjs packages/agentkit-harness/test/native-memory-extraction.test.mjs packages/agentkit-harness/test/native-memory.test.mjs packages/agentkit-harness/test/native-memory-tools.test.mjs
+```
+
+Source capture's focused checks: **8 passed** (`node --test --test-timeout=10000
+tests/native-memory-extraction-source.test.mjs`). Actual Claude Code's initial
+source implementation reached its turn limit and did not establish acceptance;
+main review replaced its product-record receipt fabrication and corrected its
+history cursor, trusted-source checks and synchronous authority contract before
+running these checks. Source and memory policy tests remain controlled-model
+mechanism evidence, not an actual-model quality or performance benchmark.
+
+Core TypeScript build, contract TypeScript check and client bundle build passed.
+No full test suite was run in this batch.
+
+Remaining Memory integration constraints: persist the prepared auxiliary
+identity/configuration and original manifest before model dispatch; reusing a
+new manifest to derive a new job on recovery could duplicate writes. Slice the
+trusted input after the durable cursor, own provider/model resources at Host
+scope, retain automatic triggers and multilingual eligibility, and expose
+independent job status/usage. Until those are integrated and verified through
+Studio, automatic model extraction remains incomplete.
 
 ## Next delivery order
 

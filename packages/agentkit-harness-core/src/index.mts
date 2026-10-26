@@ -45,3 +45,4 @@ export * from './tool-receipt.mjs';
 export * from './output-recovery.mjs';
 export * from './tool-error-recovery.mjs';
 export * from './memory-extraction-scheduler.mjs';
+export * from './auxiliary-run.mjs';
