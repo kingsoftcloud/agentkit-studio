@@ -96,10 +96,10 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 18 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds, cancellation and combined Host sources earned 3); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 19 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke and paired direct-model comparison 3 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1, Skill shell policy-wait lease loss 1 earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 10 |
 
-Current assessed progress: **82/100**, approximately 82%. P4's remaining credit
+Current assessed progress: **83/100**, approximately 83%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -271,8 +271,13 @@ with the revalidated existing successful compaction/cold-continuation case,
 they prove shared compaction model-call budget and separate token events,
 bounded malformed summaries, cancellation, original-source retention and no
 extra HTTP work after a terminal exhausted-budget reopen. This earns 2 of P4's
-4 remaining context/budget points. Broader Host/context-source and cross-capability
-budget acceptance remain unearned. Background/child lifecycle now has the
+4 remaining context/budget points. The actual Host/SQLite combined source check
+then earned one more point: a saved user fact and a registered Host source are
+read in the same context effect; an oversized optional source item is excluded,
+the smaller source item and original user input reach the model, and the
+production wire counter keeps input plus reserved output inside the frozen
+6,000-token window. Its focused test passes with one model call. Cross-capability
+budget acceptance remains unearned. Background/child lifecycle now has the
 separate evidence below; broader task interaction remains unearned.
 
 Focused affected files: **47 passed**, plus **1 existing actual-HTTP compaction

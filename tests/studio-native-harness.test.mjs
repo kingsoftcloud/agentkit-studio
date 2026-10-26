@@ -24,6 +24,7 @@ import { studioBrowserDefinition } from '../packages/agentkit-harness/src/native
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
+import { estimateNativeWireInput } from '../packages/agentkit-harness/src/native/context-counter.mjs';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { STUDIO_NATIVE_CONTEXT_SOURCES_CONTRACT } from '../src/providers/native-context-sources.mjs';
 import { createAgentEngineClient } from '../src/server-client.mjs';
@@ -1035,6 +1036,39 @@ test('actual Host composes registered context and local Memory recall in the SQL
   assert.equal(body.messages.filter(message => message.role === 'system').some(message => message.content.includes('SOURCE_DATA_')), false);
   await assert.rejects(h.bridge.nativeContextSources.bind({ scope: snapshot.scope, sessionId: snapshot.sessionId,
     record: h.record, store: h.ledger, expectedRuntimeBuildId: snapshot.buildId }).readSource(sourceRequest), /phase_unbound/);
+});
+
+test('Host budgets Memory and registered context sources together before the model request', async t => {
+  const largeMarker = 'OPTIONAL_SOURCE_TOO_LARGE_'.repeat(1000);
+  const h = await setup(t, { sqlite: true, profile: { contextWindow: 6000, maxOutputTokens: 256 },
+    spec: { context: { maxInputTokens: 6000, reserveOutputTokens: 256, compaction: { enabled: false } },
+      memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+        write: { mode: 'off' }, recall: { enabled: true, maxTokens: 1600, minScore: 1 } } },
+    contextSources: record => [contextRegistration(record, { callback: async () => ({ items: [
+      { content: largeMarker }, { content: 'POLICY_SOURCE_SMALL' },
+    ] }) })] });
+  const principal = { tenantId: 'local', workspaceId: createHash('sha256').update(JSON.stringify(join(h.root, 'workspace'))).digest('hex'),
+    userId: 'local-user', agentId: h.record.metadata.id };
+  const memory = new SqliteNativeMemoryProvider(join(h.root, 'native-harness/memory-v1', memoryDigest('local').slice(7), 'memory.sqlite'),
+    { principal });
+  try {
+    const candidate = nativeUserMemoryCandidate({ text: '记住：My preferred editor is Vim', sourceEventId: 'budget-seed-user',
+      ...nativeMemoryScopeBindings(principal)[0] });
+    memory.applyCandidate({ candidate, operationKey: 'budget-seed', sourceSessionId: 'other-session',
+      sourceDigest: memoryDigest(candidate.content) });
+  } finally { memory.close(); }
+  h.payload.input.messages[0].content[0].text = 'preferred editor';
+  await h.host.executeTurn(h.payload);
+  const run = h.head(), body = JSON.parse(h.requests[0].options.body);
+  assert.equal(run.phase, 'completed'); assert.equal(run.usage.modelCalls, 1);
+  assert.ok(estimateNativeWireInput(body) + body.max_tokens <= 6000);
+  assert.ok(body.messages.some(message => typeof message.content === 'string' && message.content.includes('My preferred editor is Vim')));
+  assert.ok(body.messages.some(message => typeof message.content === 'string' && message.content.includes('POLICY_SOURCE_SMALL')));
+  assert.ok(body.messages.some(message => typeof message.content === 'string' && message.content.includes('preferred editor')));
+  assert.equal(JSON.stringify(body).includes('OPTIONAL_SOURCE_TOO_LARGE_'), false);
+  const receipts = h.ledger.load(run.scope, run.runId).receipts.filter(row => row.result?.contributions);
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0].result.contributions.sources.map(source => source.status), ['ok', 'ok']);
 });
 
 for (const required of [true, false]) test(`actual Host respects ${required ? 'required' : 'optional'} context authorization denial`, async t => {
