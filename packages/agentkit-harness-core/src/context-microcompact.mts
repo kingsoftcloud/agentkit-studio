@@ -3,6 +3,11 @@ import { canonical, copy } from './values.mjs';
 import { parseNativeJson } from './model-json.mjs';
 
 const object = (value: Json | undefined): value is ObjectValue => !!value && typeof value === 'object' && !Array.isArray(value);
+/** Pinned ZCode local cleanup precedes full summary by 10% or 2,000 tokens.
+ * Zero remains a valid immediate trigger in the reference's positiveInt. */
+export function defaultToolPruningThreshold(fullCompactThreshold: number): number {
+  return Math.max(0, Math.min(Math.floor(fullCompactThreshold * .9), fullCompactThreshold - 2000));
+}
 function failedObservation(content: string): boolean {
   try {
     const receipt = parseNativeJson(content);

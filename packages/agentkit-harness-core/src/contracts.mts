@@ -173,6 +173,8 @@ export interface ContextPlanningPolicy {
   pruneToolResults?: boolean; pruneKeepRecentBatches?: number; pruneMinSavedTokens?: number;
   /** Optional earlier local cleanup boundary; absence preserves the original full-compaction threshold. */
   pruneThresholdTokens?: number;
+  /** New admissions derive an earlier ZCode boundary; absence preserves legacy timing. */
+  pruneThresholdPolicy?: 'zcode-local/v1';
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;

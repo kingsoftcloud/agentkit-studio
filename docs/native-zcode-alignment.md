@@ -36,10 +36,11 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **37/100**: M1 4/15 (inputs, initial matrix and reviewed
-source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
+Current earned progress: **38/100**: M1 4/15 (inputs, initial matrix and reviewed
+source findings), M2 7/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
-deferred-tool discovery with durable cleanup/Session continuity), M3 6/20
+deferred-tool discovery with durable cleanup/Session continuity, plus versioned
+reference-default earlier cleanup through the actual Studio counter/command path), M3 6/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
 plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
@@ -92,7 +93,7 @@ audited and integrated.
 | Prompt and instructions | `src/context/builder.ts`, `sections/identity.ts`, `tests/context-builder.test.ts` | `src/host/services/native-harness.mjs`, `src/providers/native-context.mjs`, core `guidance.mts` | Stable/dynamic sections exist in reference. Audit actual Host assembly, project instruction discovery and provider cache layout; preserve admitted recovery prompt. Pending. |
 | Model and stream | `src/runtime/methods/turn-model-step.ts`, `model-streaming-event.ts`, `../adapters/src/model/` | Node `model-{openai-chat,responses,anthropic,normalize}.mjs`, core `model-stream.mts`, `machine.mts` | Native already rejects truncated tool batches. Successful `model_context_window_exceeded` now enters bounded output continuation; buffered/SSE/local HTTP→kernel cases pass. Remaining protocol/stream audit pending. |
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
-| Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
+| Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. New explicitly enabled admissions derive the reference earlier threshold and pass actual Host/counter/cold-continuation evidence; legacy timing and explicit thresholds remain. Idle trigger and applying cleanup before a still-required summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. New admitted v2 Edit supports absent-file creation and full-fresh-read whitespace replacement, actual Host denial and cold editing; v1/legacy behavior is preserved. Large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
@@ -298,7 +299,9 @@ media, planning, persistent context and minimum-savings protections remain.
 The representative counter fixture now cleans old observations below the full
 summary threshold without a summary request or transcript mutation. This is
 estimated request-token evidence, not a measured live-provider cost saving.
-Idle-triggered/default-reference threshold alignment remains open.
+New Studio admissions now derive the reference default boundary when pruning is
+explicitly enabled (see the later 38/100 entry). Idle-triggered cleanup remains
+open; restored legacy policies retain their original boundary.
 
 ### Anthropic cache projection
 
@@ -2236,3 +2239,86 @@ Earned progress: **37/100**, M3 **6/20**, unchanged denominator. Native retains
 the existing bounded UTF-8 file path (2 MiB source reads); ZCode's much larger
 and legacy-encoding paths remain an explicit unaccepted difference. Full
 read/write policy comparison, other matrix gaps and M6 comparisons remain.
+
+## Earlier default local cleanup through Studio (38/100)
+
+Pinned official `src/compact/microcompact.ts:77-81` derives a token boundary as
+`max(0, min(floor(fullCompactThreshold * 0.9), fullCompactThreshold - 2000))`.
+The actual runtime `src/runtime/methods/microcompact.ts` resolves that default
+only inside its explicitly enabled local microcompact configuration. Despite
+its name, `positiveInt` accepts zero, which immediately triggers token cleanup.
+Native's
+previous optional pruning path defaulted to its full-summary boundary whenever
+the operator omitted `pruneThresholdTokens`.
+
+New Studio admissions with explicitly enabled `pruneToolResults` and no explicit
+threshold now pin `contextPolicy.pruneThresholdPolicy: zcode-local/v1`. The core
+derives the reference earlier boundary from the admitted Native full-summary
+budget. This preserves Native's existing complete wire-request counter and
+reserved output budget rather than replacing them with a reference estimate.
+An explicit positive `pruneThresholdTokens` still wins. Small derived zero
+boundaries immediately trigger eligible cleanup. Omitted/disabled pruning does not become
+enabled. Original legacy Runs retain their previous absent policy and timing;
+recovered new Runs and child model bindings retain the admitted selection.
+
+The implementation reuses the current deterministic projection, protected
+working sets, recent batches, trustworthy-success filtering, media/planning
+protection and minimum-savings check. It adds no model, dependency or alternate
+context loop. The original transcript and receipts remain intact; the normal
+context effect journals the admitted pruned request and token-count fact.
+One existing post-projection counter call verifies savings; no model summary is
+needed when that request is already below the full-summary boundary. CPU and
+wall-clock overhead have not been benchmarked.
+
+Acceptance:
+
+- `/tmp/native-pruning-default-tests.log`: **7 passed**, including default
+  formula and zero edge, actual planner early-boundary behavior, explicit
+  override, disabled/legacy binding, unchanged original messages and existing
+  SQLite sealed-view recovery. `/tmp/native-pruning-default-related.log`:
+  **33 passed**, related planning and actual HTTP/context-counter integration.
+  Build/pack, syntax and whitespace checks pass; no full repository suite.
+- Actual packed Studio command:
+  `--mount-host --context-pruning --frozen --keep`, log
+  `/tmp/native-pruning-default-proof-final.log`, evidence root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-7dQOL8`.
+  `context-pruning-proof.json` records **3 real local foreground commands**,
+  five controlled HTTP task requests across two Host instances and the first
+  cleared request at step 4. The normal Node counter measured **8195 -> 4728**
+  input tokens (3467 fewer estimated tokens in that request), before the full
+  threshold **8455.68**. Old results 1 and 2 were cleared, recent result 3 was
+  retained. There was no summary call or compaction. Cold ordinary continuation
+  executes no command and leaves the original source Run identical.
+- Archive `/tmp/agentkit-native-pruning-default-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz`,
+  SHA-256 `dd6343ae0397fbbd8383aa49f5b38149fc124541c94a7841b5bb3a236658eae3`.
+  Counts above are Native wire estimates with a controlled peer reporting fixed
+  usage, not actual provider billing, successful-task cost or quality evidence.
+
+The first larger-output fixture, evidence root
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-ATcp7X`,
+also confirmed a separate existing gap: after two ~20 KiB results, projected
+cleanup was still above the full-summary boundary, so the current planner
+discarded it and entered summary using original history. That fixture's peer
+deliberately rejects summaries, ending in `context_summary_retry_exhausted`.
+The final smaller-batch task isolates the earlier-default behavior; it does
+**not** establish that cleanup is applied before a still-required summary.
+Idle-triggered cleanup, result-count/batch-recency comparison and that summary
+integration remain unaccepted, alongside other matrix items. M6 remains 0/15.
+
+Real Claude Code read-only audit session
+`6a59b2f4-e25e-4ef7-9afd-4c4949bb5cce` completed its formula, gating and
+recovery-selection review in `/tmp/native-pruning-default-audit.json` (terminal
+success). It correctly found that reference `positiveInt(0)` is zero rather
+than undefined; main review checked lines 288-291 and the token trigger at
+195-197, fixed the initial zero suppression, and added the real planner edge
+case. Its claim that explicit negative Native inputs merely disable cleanup
+was not adopted: existing configuration validation rejects those values.
+Its numeric-recency-default comparison does not prove semantic parity: Native
+keeps batches and ZCode counts results, a difference still open above. No Claude
+task remains live for this batch. Exact reference model-context-budget strategy
+matching remains unaccepted; this implementation explicitly retains Native's
+admitted input/output budget and counts the whole wire request.
+
+Earned progress: **38/100**, M2 **7/15**, denominator unchanged. This point is
+the default reference timing/admission and its actual Studio evidence; it does
+not certify full context/microcompact alignment or task-level savings.

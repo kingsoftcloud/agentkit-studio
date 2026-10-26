@@ -9,7 +9,7 @@ import { retryDelay } from './retry.mjs';
 import { deliveryReviewMessages, reviewPending } from './delivery-review.mjs';
 import { artifactProgressIdentity } from './artifact-runtime.mjs';
 import { sourceWorkingSetGroup } from './source-working-set-group.mjs';
-import { projectOldToolResults } from './context-microcompact.mjs';
+import { defaultToolPruningThreshold, projectOldToolResults } from './context-microcompact.mjs';
 
 export interface ContextCounters {
   countRequest(messages: Message[], tools: ToolDefinition[], purpose: 'task' | 'compaction' | 'delivery_review', maxOutputTokens: number): Promise<number>;
@@ -341,8 +341,10 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     maxOutputTokens: config.profile.maxOutputTokens, contextWindow: config.profile.contextWindow };
   assertHookFeedbackRetained(snapshot, messages);
   const workingSet = forceCompaction ? [] : workingSetGroups(snapshot, state, config, groups, indexes, refs);
-  if (policy.enabled && policy.pruneToolResults && !forceCompaction
-    && counted >= (policy.pruneThresholdTokens ?? (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio)) {
+  const pruningThreshold = policy.pruneThresholdTokens ?? (policy.pruneThresholdPolicy === 'zcode-local/v1'
+    ? defaultToolPruningThreshold((config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio)
+    : (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio);
+  if (policy.enabled && policy.pruneToolResults && !forceCompaction && counted >= pruningThreshold) {
     const protectedIndexes = new Set([...mandatoryIndexes(snapshot, groups, config), ...workingSet.flat()]);
     const projected = projectOldToolResults(snapshot.messages, refs, groups, config.tools, protectedIndexes,
       policy.pruneKeepRecentBatches ?? 5, digest);

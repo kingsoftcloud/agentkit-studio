@@ -60,17 +60,19 @@ async function applyProof(ctx, options) {
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         execution: { ...(options.todos || options.planMode || options.conversationFork ? {} : { nativeTodoMode: 'off' }),
           ...(options.planMode ? {} : { nativePlanMode: 'off' }),
-          ...(options.workspaceRepair ? { nativeToolSearchMode: 'off' } : {}),
+          ...(options.workspaceRepair || options.contextPruning ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.mcpUrl && !options.toolSearch && !options.planMcp ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.deliveryReview ? { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } : {}),
           ...(options.deadlinePolicy ? { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } : {}) },
+        ...(options.contextPruning ? { context: { maxInputTokens: 12000, reserveOutputTokens: 256,
+          compaction: { pruneToolResults: true, pruneKeepRecentBatches: 1, recentToolBatchCount: 1 } } } : {}),
         ...(options.memory ? { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
           recall: { enabled: true }, write: { mode: 'candidate', flushBeforeCompaction: !options.memoryManaged, flushAfterTurn: Boolean(options.memoryManaged) } },
           context: { maxInputTokens: options.memoryManaged ? 16000 : 6000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
             compaction: { thresholdRatio: options.memoryManaged ? .9 : .55, targetRatio: .2, summaryMaxTokens: 80 } } } : {}) },
       bindings: { modelProfileIds: ['fixture'], ...(options.mcpUrl
         ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
-          : options.workspaceRepair ? ['apply_workspace_patch'] : options.editCreate ? ['read_workspace_file', 'edit_workspace_file'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files']
+          : options.workspaceRepair ? ['apply_workspace_patch'] : options.contextPruning ? ['run_command'] : options.editCreate ? ['read_workspace_file', 'edit_workspace_file'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files']
           : options.conversationCommandRewind ? ['run_command', 'read_command_output', 'stop_command'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
     await writeFile(identity, JSON.stringify({ id: record.metadata.id }));
@@ -234,7 +236,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.editCreate || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.contextPruning || options.editCreate || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.

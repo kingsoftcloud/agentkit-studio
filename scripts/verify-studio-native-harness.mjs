@@ -29,6 +29,7 @@ import { createConversationRewindProof } from './native-conversation-rewind-proo
 import { createConversationCommandRewindProof } from './native-conversation-command-rewind-proof.mjs';
 import { createConversationWorkspaceRewindProof } from './native-conversation-workspace-rewind-proof.mjs';
 import { createEditCreationProof } from './native-edit-creation-proof.mjs';
+import { createContextPruningProof } from './native-context-pruning-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -36,6 +37,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
   'workspace-repair': { type: 'boolean', default: false },
   'edit-create': { type: 'boolean', default: false },
+  'context-pruning': { type: 'boolean', default: false },
   'conversation-fork': { type: 'boolean', default: false },
   'conversation-rewind': { type: 'boolean', default: false },
   'conversation-active-rewind': { type: 'boolean', default: false },
@@ -108,6 +110,9 @@ const workspaceRepairProof = values['workspace-repair'] ? createWorkspaceRepairP
 assert.ok(!values['edit-create'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['edit-create', 'mount-host', 'frozen', 'keep'].includes(key)), '--edit-create is a separate mounted Host proof');
 const editCreationProof = values['edit-create'] ? createEditCreationProof() : null;
+assert.ok(!values['context-pruning'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
+  && !['context-pruning', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning is a separate mounted Host proof');
+const contextPruningProof = values['context-pruning'] ? createContextPruningProof() : null;
 assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;
@@ -160,6 +165,7 @@ const server = createServer(async (request, response) => {
     if (conversationRewindProof) { await conversationRewindProof.respond({ request, response, raw, requests }); return; }
     if (workspaceRepairProof) { await workspaceRepairProof.respond({ request, response, raw, requests }); return; }
     if (editCreationProof) { await editCreationProof.respond({ request, response, raw, requests }); return; }
+    if (contextPruningProof) { await contextPruningProof.respond({ request, response, raw, requests }); return; }
     if (todosProof) { await todosProof.respond({ request, response, raw, requests }); return; }
     if (planModeProof) { await planModeProof.respond({ request, response, raw, requests }); return; }
     if (instructionsProof) { await instructionsProof.respond({ request, response, raw, requests }); return; }
@@ -326,6 +332,7 @@ try {
     `        recovery: ${values.recovery}`,
     `        workspaceRepair: ${Boolean(workspaceRepairProof)}`,
     `        editCreate: ${Boolean(editCreationProof)}`,
+    `        contextPruning: ${Boolean(contextPruningProof)}`,
     `        conversationFork: ${Boolean(conversationForkProof || conversationRewindProof)}`,
     `        conversationRewind: ${Boolean(conversationRewindProof)}`,
     `        conversationCommandRewind: ${values['conversation-command-rewind']}`,
@@ -367,6 +374,9 @@ try {
     harness = null;
   } else if (editCreationProof) {
     await editCreationProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
+    harness = null;
+  } else if (contextPruningProof) {
+    await contextPruningProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
     harness = null;
   } else if (planModeProof) {
     await planModeProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });

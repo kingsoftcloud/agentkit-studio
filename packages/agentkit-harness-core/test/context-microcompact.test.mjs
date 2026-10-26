@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonical, contextMessageRef, emptyUsage, NativeKernel, planNativeContext, validateContextMessages } from '../dist/index.mjs';
-import { projectOldToolResults } from '../dist/context-microcompact.mjs';
+import { defaultToolPruningThreshold, projectOldToolResults } from '../dist/context-microcompact.mjs';
 import { SqliteRunStore } from '../../agentkit-harness/src/native/sqlite-store.mjs';
 import { bindNativeContext } from '../../../src/providers/native-context.mjs';
 import { digest, fixture, scope, tool } from './fixtures.mjs';
@@ -160,4 +160,35 @@ test('Studio pins an explicit local cleanup threshold without adding one to rest
     assert.throws(() => fixture({ contextPolicy: { ...policy, pruneThresholdTokens: value } }), /invalid_context_pruning_policy/);
   for (const value of [NaN, Infinity])
     assert.throws(() => fixture({ contextPolicy: { ...policy, pruneThresholdTokens: value } }), /non_json_number/);
+});
+
+test('new admitted defaults use the reference earlier boundary, preserving legacy and explicit thresholds', async () => {
+  assert.deepEqual([100000, 8000, 2000, 1000].map(defaultToolPruningThreshold), [90000, 6000, 0, 0]);
+  const { config, snapshot } = scenario();
+  append(snapshot.messages, 'old', 'read', 'OLD_EVIDENCE:'.repeat(1300)); append(snapshot.messages, 'recent');
+  snapshot.messages.push({ role: 'assistant', content: 'Continue the task.' });
+  const original = structuredClone(snapshot.messages);
+  const legacy = await planNativeContext(snapshot, config, config.tools, counters, digest, false, true);
+  const full = (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio;
+  assert.ok(legacy.admission.countedInputTokens < full && legacy.admission.countedInputTokens >= defaultToolPruningThreshold(full));
+  assert.equal(legacy.toolResultPruning, undefined);
+  const current = fixture({ ...config, contextPolicy: { ...config.contextPolicy, pruneThresholdPolicy: 'zcode-local/v1' } }).config;
+  const early = await planNativeContext(snapshot, current, current.tools, counters, digest, false, true);
+  assert.equal(early.reason, 'historical_tool_results_within_budget'); assert.deepEqual(early.toolResultPruning.toolCallIds, ['old']);
+  assert.deepEqual(snapshot.messages, original);
+  const explicit = { ...current, contextPolicy: { ...current.contextPolicy, pruneThresholdTokens: 100000 } };
+  assert.equal((await planNativeContext(snapshot, explicit, explicit.tools, counters, digest, false, true)).toolResultPruning, undefined);
+  const description = { protocol: 'openai-chat', modelName: 'test', contextWindow: 32000, maxOutputTokens: 1000 };
+  const bind = (raw = {}, enabled = true) => bindNativeContext({ description, context: { compaction: raw }, pruningThresholdDefaults: enabled }).policy;
+  assert.equal(bind({ pruneToolResults: true }).pruneThresholdPolicy, 'zcode-local/v1');
+  assert.equal(bind({ pruneToolResults: true }, false).pruneThresholdPolicy, undefined);
+  assert.equal(bind({ pruneToolResults: true, pruneThresholdTokens: 12000 }).pruneThresholdPolicy, undefined);
+  assert.equal(bind().pruneThresholdPolicy, undefined, 'new timing does not enable pruning itself');
+  assert.equal(bind({ pruneToolResults: false }).pruneThresholdPolicy, undefined);
+  assert.throws(() => fixture({ contextPolicy: { ...policy, pruneThresholdPolicy: 'unknown' } }), /invalid_context_pruning_policy/);
+  const small = fixture({ tools: config.tools, profile: { ...config.profile, contextWindow: 2000 },
+    contextPolicy: current.contextPolicy });
+  append(small.snapshot.messages, 'small-old', 'read', 'data '.repeat(400)); append(small.snapshot.messages, 'small-recent');
+  const smallPlan = await planNativeContext(small.snapshot, small.config, small.config.tools, counters, digest, false, true);
+  assert.deepEqual(smallPlan.toolResultPruning.toolCallIds, ['small-old'], 'zero derived threshold immediately triggers eligible cleanup');
 });
