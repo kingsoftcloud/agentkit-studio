@@ -172,3 +172,19 @@ test('an already canceled request allocates no browser owner', async t => {
   })), /canceled before admission/);
   assert.deepEqual(trace, []);
 });
+
+test('a retired Native owner cannot dispatch after asynchronous browser creation', async t => {
+  let release, started, effects = 0;
+  const ready = new Promise(resolve => { started = resolve; });
+  const { gateway } = setup(t, () => {
+    started(); return new Promise(resolve => { release = () => resolve({
+      execute: async () => { effects++; return { status: 'ok' }; }, close: async () => {},
+    }); });
+  });
+  let current = true;
+  const pending = assert.rejects(gateway.forSession('session').execute(request('session', {
+    assertCurrent: () => current,
+  })), /studio_native_browser_authority_stale/);
+  await ready; current = false; release(); await pending;
+  assert.equal(effects, 0);
+});

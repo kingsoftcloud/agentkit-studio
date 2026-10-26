@@ -4,6 +4,32 @@ Status: partial, 2026-10-26. P2's complete trusted extension/resource authority
 acceptance remains open. This record distinguishes versioned policy enforcement
 from historical display-only labels and areas still lacking end-to-end proof.
 
+## Fixed: browser authority after approval and owner initialization
+
+An actual Claude Code read-only review found that browser and Web builtins did
+not re-check Native authority inside their registered bodies. It described the
+browser approval window as theoretical; primary review disagreed with that
+classification. The DSH registry guard runs before the builtin body, while
+`authorizeNativeBuiltin` can await a read-only Session approval. A lease may
+end during that wait. Browser owner creation is also asynchronous and previously
+could continue to dispatch after a stale lease.
+
+The registered Native builtin now re-reads exact current-intent authority
+after the approval wait. Web dispatch re-checks after constructing its adapter.
+The browser adapter accepts the bound Native authority callback and checks it
+before owner allocation and after asynchronous owner creation, immediately
+before entering the browser workspace port. The trusted browser verifier does
+not carry a Native tool intent and keeps its existing separate contract.
+
+`tests/native-dsh-tools.test.mjs` reproduces the actual NativeKernel/SQLite
+approval wait: releasing the lease during approval yields `stale_fence`, with
+zero browser launches and only the original model call. A separate browser
+adapter test releases authority during owner creation and observes zero owner
+executions. Focused checks passed: browser adapter 13/13 and the one exact
+Native approval case 1/1. This closes those two pre-dispatch windows, not every
+possible lease change during a long-running browser action or an arbitrary
+third-party effect; the full extension/resource matrix remains open.
+
 ## Fixed: Skill shell checks Native ownership after policy waits
 
 The maintained DSH ToolRegistry evaluates monotonic guards after its ordered

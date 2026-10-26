@@ -182,7 +182,10 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
     },
   } };
   if (options.argumentEncodings) ctx.tools.argumentEncodings = options.argumentEncodings;
-  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: names, toolContracts: contracts }, workspaceRoot, stateDir: join(root, 'state'), ...options });
+  if (options.nativeEngineContract) ctx.tools.guard = () => () => {};
+  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: names, toolContracts: contracts,
+    ...(options.nativeEngineContract ? { nativeEngineContract: options.nativeEngineContract } : {}) },
+    workspaceRoot, stateDir: join(root, 'state'), ...options });
   t.after(() => gateway.close());
   const agent = { session: { id: 'session' } };
   const definitions = () => gateway.definitions(agent, [...registry.values()]);
@@ -585,6 +588,37 @@ test('an allowed registry pipeline cannot bypass read-only Native writes or reus
   await assert.rejects(tool.execute(host.request({ path: 'second.txt', content: 'forbidden' })), { code: 'STUDIO_NATIVE_PERMISSION_DENIED' });
   assert.equal(existsSync(join(host.workspaceRoot, 'second.txt')), false);
   assert.equal(requests.length, 3); assert.ok(requests.every(request => request.agent === host.agent && request.toolName === 'write_workspace_file'));
+});
+
+test('browser approval cannot outlive the Native tool lease', async t => {
+  let launches = 0, released = false;
+  const host = setup(t, ['browser_inspect_workspace'], [], {
+    nativeEngineContract: 'agentkit.native-dsh-turn/v1',
+    createBrowser: () => { launches++; throw new Error('stale browser must not launch'); },
+  });
+  const store = new SqliteRunStore(join(host.workspaceRoot, '..', 'browser-approval.sqlite'));
+  t.after(() => store.close());
+  host.ctx.sandboxPolicy.resolve = () => ({ mode: 'read-only' });
+  host.ctx.approval = { request: async () => {
+    const current = store.load(scope, 'run');
+    store.release(scope, 'run', current.lease); released = true;
+    return 'allowed-once';
+  } };
+  const tools = host.gateway.definitions(host.agent, [...host.registry.values()]);
+  const { config, snapshot } = fixture({ tools });
+  let modelCalls = 0;
+  const kernel = new NativeKernel({ store, digest, owner: 'browser-approval-worker', ports: {
+    ...host.gateway.forAgent(host.agent, { scope, store }),
+    model: { generate: async () => ++modelCalls === 1
+      ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'browser-call',
+        name: 'browser_inspect_workspace', arguments: { path: 'index.html' } }] }
+      : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] } },
+  } });
+  kernel.start(snapshot, config);
+  await assert.rejects(kernel.runUntilIdle(scope, 'run'), { code: 'stale_fence' });
+  assert.equal(released, true);
+  assert.equal(launches, 0);
+  assert.equal(modelCalls, 1);
 });
 
 for (const invalidOutput of [false, true]) test(`Native MCP pins exact input/output schemas through the ledger (invalid output: ${invalidOutput})`, async t => {

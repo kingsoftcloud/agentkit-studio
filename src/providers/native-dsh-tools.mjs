@@ -273,6 +273,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             }
           }
           exec.signal.throwIfAborted();
+          // The registry guard ran before this body. A separate builtin
+          // approval may have waited long enough for the Native lease to end.
+          if (config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT)
+            invariant(invocation.assertCurrent?.(invocation.request) === true, 'studio_native_tool_authority_stale');
           invocation.assertMcpCurrent?.();
           invocation.dispatched = true;
           let outcome;
@@ -304,7 +308,10 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
               : { status: 'error', content: { ok: false, error_type: 'isolated_sandbox_required', backend: 'local_process',
                 executed: false, boundary: 'run_code requires an isolated sandbox; local snippet execution is disabled.' } };
           } else if (webNames.has(name)) {
-            outcome = await (await invocation.web()).execute({ ...invocation.request, signal: exec.signal });
+            const web = await invocation.web();
+            if (config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT)
+              invariant(invocation.assertCurrent?.(invocation.request) === true, 'studio_native_tool_authority_stale');
+            outcome = await web.execute({ ...invocation.request, signal: exec.signal });
           } else if (a2aNames.has(name)) {
             invariant(invocation.a2a, 'studio_native_a2a_binding_missing');
             outcome = await invocation.a2a.execute({ ...invocation.request, signal: exec.signal });
@@ -346,7 +353,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
           } else if (disclosureNames.has(name)) {
             invariant(invocation.disclosure, 'studio_native_skill_binding_missing');
             outcome = await invocation.disclosure.execute({ ...invocation.request, signal: exec.signal });
-          } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal })
+          } else outcome = name === browserName ? await browserTools.forSession(String(exec.agent.session.id)).execute({ ...invocation.request, signal: exec.signal,
+            ...(config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT
+              ? { assertCurrent: () => invocation.assertCurrent?.(invocation.request) === true } : {}) })
             : formal.has(name) ? await invocation.workspaceTools.execute({ ...invocation.request, signal: exec.signal },
               { assertCurrent: invocation.assertCurrent, checkpointCommitted: invocation.checkpointCommitted })
             : { status: 'error', content: { code: 'STUDIO_NATIVE_BUILTIN_UNAVAILABLE', name } };

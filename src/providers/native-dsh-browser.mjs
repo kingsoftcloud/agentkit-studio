@@ -70,14 +70,19 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
       const invoke = async (request, method) => {
         invariant(!closed, 'studio_native_browser_closed');
         invariant(request.sessionId === sessionId, 'studio_native_tool_not_bound');
+        const assertOwned = () => {
+          if (request.assertCurrent) invariant(request.assertCurrent() === true, 'studio_native_browser_authority_stale');
+        };
         const admission = AbortSignal.any([request.signal, lifetime.signal]);
         admission.throwIfAborted();
+        assertOwned();
         const record = owner(sessionId, request.scope);
         const signal = AbortSignal.any([admission, record.lifetime.signal]);
         signal.throwIfAborted();
         const pending = (async () => {
           const port = await record.pending;
           signal.throwIfAborted();
+          assertOwned();
           return port[method]({ ...request, signal });
         })();
         record.active.add(pending);
