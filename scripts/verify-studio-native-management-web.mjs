@@ -23,8 +23,8 @@ await mkdir(root, { recursive: true });
 const require = createRequire(import.meta.url);
 const { chromium } = require(require.resolve('playwright', { paths: [dirname(require.resolve('@playwright/test/package.json'))] }));
 const requests = [], modelFailures = [], rendererErrors = [];
-const heldRequests = [Promise.withResolvers(), Promise.withResolvers()];
-const heldReleases = [Promise.withResolvers(), Promise.withResolvers()];
+const heldRequests = [Promise.withResolvers(), Promise.withResolvers(), Promise.withResolvers()];
+const heldReleases = [Promise.withResolvers(), Promise.withResolvers(), Promise.withResolvers()];
 let browser, page, child, stopped, phase = 'prepare';
 const report = { evidence: 'full-mounted-studio-management-controlled-model', passed: false, checks: [] };
 const server = createServer(async (req, res) => {
@@ -40,7 +40,7 @@ const server = createServer(async (req, res) => {
     const marker = system.includes('MANAGEMENT_REVISION_THREE') ? 'MANAGEMENT_REVISION_THREE' : 'MANAGEMENT_REVISION_ONE';
     assert.ok(system.includes(marker));
     requests.push({ marker, inputTokens: 11, outputTokens: 7 });
-    assert.ok(requests.length <= 4, 'Unexpected repeated model request');
+    assert.ok(requests.length <= 5, 'Unexpected repeated model request');
     const heldIndex = requests.length - 3;
     if (heldIndex >= 0 && heldIndex < heldRequests.length) {
       heldRequests[heldIndex].resolve(); await heldReleases[heldIndex].promise;
@@ -48,7 +48,8 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     res.end('data: ' + JSON.stringify({ id: 'management-' + requests.length,
       choices: [{ index: 0, delta: { content: marker + (requests.length === 3 ? '_RECONNECTED'
-        : requests.length === 4 ? '_NETWORK_RECONNECTED' : '_DONE') }, finish_reason: 'stop' }],
+        : requests.length === 4 ? '_NETWORK_RECONNECTED'
+          : requests.length === 5 ? '_SHOULD_NOT_APPEAR' : '_DONE') }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 11, completion_tokens: 7 } }) + '\n\ndata: [DONE]\n\n');
   } catch (error) { modelFailures.push(error.message); res.writeHead(500); res.end('Local management fixture failed'); }
 });
@@ -270,18 +271,39 @@ try {
   await page.getByText('MANAGEMENT_REVISION_THREE_NETWORK_RECONNECTED', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.screenshot({ path: join(root, 'network-reconnected-run.png'), fullPage: true });
   report.checks.push('physical-browser-network-outage-recovers-durable-native-answer-without-reexecution');
+  phase = 'product-cancel';
+  await composer.fill('Stop this active task before the model responds.'); await composer.press('Enter');
+  let cancelTimer;
+  try {
+    await Promise.race([heldRequests[2].promise, new Promise((_, reject) => {
+      cancelTimer = setTimeout(() => reject(Error('Fifth model request did not start')), 30000);
+    })]);
+  } finally { clearTimeout(cancelTimer); }
+  const stopButton = page.getByRole('button', { name: '停止生成', exact: true });
+  await stopButton.waitFor({ state: 'visible', timeout: 30000 });
+  await stopButton.click();
+  await page.getByText('已停止', { exact: true }).first().waitFor({ state: 'visible', timeout: 30000 });
+  heldReleases[2].resolve();
+  await stopButton.waitFor({ state: 'hidden', timeout: 30000 });
+  assert.equal(await page.getByText('MANAGEMENT_REVISION_THREE_SHOULD_NOT_APPEAR', { exact: true }).count(), 0);
+  await page.reload();
+  await page.getByText('已停止', { exact: true }).first().waitFor({ state: 'visible', timeout: 30000 });
+  await page.screenshot({ path: join(root, 'stopped-native-run.png'), fullPage: true });
+  report.checks.push('product-stop-button-cancels-native-run-and-history-retains-terminal');
   assert.deepEqual(modelFailures, []); assert.deepEqual(rendererErrors, []);
-  assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE']);
+  assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE']);
   assert.equal(await readFile(join(root, 'legacy-loop.jsonl'), 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; }), '');
   phase = 'durable-version-bindings';
   const ledger = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
   try {
     const frozenRows = ledger.list(scope, frozenSessionId), currentRows = ledger.list(scope, currentSessionId);
-    assert.equal(frozenRows.length, 1); assert.equal(currentRows.length, 3, 'Both reconnected turns have independent durable Runs');
+    assert.equal(frozenRows.length, 1); assert.equal(currentRows.length, 4, 'Reconnect and cancellation have independent durable Runs');
     const runs = [...frozenRows, ...currentRows].map(row => ledger.load(scope, row.runId));
-    assert.deepEqual(runs.map(run => run.configuration.hostRecoveryBinding.agentRevision), [1, 3, 3, 3]);
-    assert.ok(runs.every(run => run.snapshot.phase === 'completed' && run.configuration.engine === 'agentkit.native/v1'));
-    assert.deepEqual(runs.map(run => run.snapshot.usage.modelCalls), [1, 1, 1, 1]);
+    assert.deepEqual(runs.map(run => run.configuration.hostRecoveryBinding.agentRevision), [1, 3, 3, 3, 3]);
+    assert.ok(runs.every(run => run.configuration.engine === 'agentkit.native/v1'));
+    assert.deepEqual(runs.map(run => run.snapshot.phase), ['completed', 'completed', 'completed', 'completed', 'canceled']);
+    assert.deepEqual(runs.slice(0, 4).map(run => run.snapshot.usage.modelCalls), [1, 1, 1, 1]);
+    assert.ok(runs[4].snapshot.usage.modelCalls <= 1, 'Cancelled request does not issue a second model call');
     assert.equal(runs[0].snapshot.buildId, buildId);
     assert.equal(runs[0].configuration.hostRecoveryBinding.buildId, buildId);
     assert.equal(runs[1].configuration.hostRecoveryBinding.buildId, null);
@@ -289,7 +311,9 @@ try {
     assert.equal(runs[2].configuration.hostRecoveryBinding.buildId, null);
     assert.equal(runs[2].snapshot.parentRunId, runs[1].snapshot.runId, 'Reconnected continuation retains the original Run');
     assert.equal(runs[3].snapshot.parentRunId, runs[2].snapshot.runId, 'Network-reconnected continuation retains the prior Run');
-    report.durable = { revisions: [1, 3, 3, 3], engine: 'agentkit.native/v1', modelCalls: [1, 1, 1, 1], buildId, frozenSessionId, currentSessionId,
+    assert.equal(runs[4].snapshot.parentRunId, runs[3].snapshot.runId, 'Cancelled Run retains its parent');
+    report.durable = { revisions: [1, 3, 3, 3, 3], engine: 'agentkit.native/v1', phases: runs.map(run => run.snapshot.phase),
+      modelCalls: runs.map(run => run.snapshot.usage.modelCalls), buildId, frozenSessionId, currentSessionId,
       settledWhileBrowserOffline: completedOffline };
   } finally { ledger.close(); }
   report.checks.push('new-session-runs-current-r3-with-independent-native-ledger-and-history');

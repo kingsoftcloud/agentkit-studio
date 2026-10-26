@@ -59,12 +59,18 @@ The proof covers:
    three current-Session Runs completed before reconnection. Returning Chrome
    online restores the answer without another model request, and another reload
    retains it.
+9. A fourth revision-3 turn holds its model response until the real conversation
+   Stop button is clicked. The UI shows a stopped terminal after reload, SQLite
+   records a `canceled` Native Run linked to its parent, and a late model answer
+   does not appear. The fixture observes one model request for that turn.
 
 The local model is a controlled HTTP/SSE fixture, not a quality/token/latency
 benchmark. A reload during an active turn proves page-level reconnection. A
 Playwright network outage proves the browser can recover a result that the Host
 committed while offline. Neither proves abrupt Host crash recovery or a range
 of real-world network failure patterns; those remain separate acceptance scopes.
+The Stop check covers a held model request; cancellation during an external
+tool's unknown side effect has its own Native receipt/recovery acceptance.
 The verifier uses a reused dependency graph, not a clean dependency install.
 Its Node-only PATH deliberately excludes OS document-directory helpers; the
 shipped workspace controller is configured with a scratch Documents directory.
@@ -73,7 +79,8 @@ It does not replace the Host or bypass execution/permission gates.
 The refreshed machine-readable report is `enterprise-agent-management-evidence.json`.
 Its archive and production source hashes identify the evaluated implementation.
 The local evidence directory also contains screenshots of conflict recovery,
-revision status, both revision executions, page reload and network recovery.
+revision status, both revision executions, page reload, network recovery and
+the stopped terminal.
 
 Reproduction:
 

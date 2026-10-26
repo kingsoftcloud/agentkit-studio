@@ -96,10 +96,10 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5; live page and browser-network reconnect earned 2) | 15 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5; live page, browser-network reconnect and product stop earned 3) | 16 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1 earned); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 3 |
 
-Current assessed progress: **72/100**, approximately 72%. P4's remaining credit
+Current assessed progress: **73/100**, approximately 73%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -393,7 +393,10 @@ visible after reload, the released answer appears in the same Session, and its
 continuation Run is linked to the earlier Run with one model call. A further
 turn completes durably while Chrome is offline, then the answer appears when
 Chrome reconnects with no duplicate model call. These earn two P4 interaction
-points. Host-crash recovery remains a separate gate. Actual Claude Code audited
+points. A further held model request is stopped from the actual conversation UI;
+the canceled Native Run and stopped history survive reload, and a late answer is
+not shown. This earns one more P4 interaction point. Host-crash recovery remains
+a separate gate. Actual Claude Code audited
 explicit runtime preservation and ran 66 focused checks; primary's affected
 Host/form checks (204), contract TypeScript and client build pass. No full suite
 was run.
