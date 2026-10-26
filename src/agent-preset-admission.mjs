@@ -16,6 +16,7 @@ import { nativeChildRoles } from './providers/native-subagents.mjs';
 import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
 import { knowledgeBindings } from './knowledge-tools.mjs';
 import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
+import { nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
 function encodedId(value) {
   return encodeURIComponent(String(value))
@@ -280,6 +281,8 @@ export class DshPresetAdmission {
       const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function'
         ? await recoverResources(() => this.getSkillDefinitions(agent))
         : [];
+      const boundToolPolicy = eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
+        ? nativeAgentPolicyFromSpec(agent.spec) : null;
       if (skillDefinitions.length) {
         const shell = process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash';
         if (!plugins.some(row => row.name === '@deepseek-ai/dsh-tool-skill')) plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
@@ -298,6 +301,7 @@ export class DshPresetAdmission {
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
           ...(eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
             ? { nativeEngineContract } : {}),
+          ...(boundToolPolicy ? { boundToolPolicy: structuredClone(boundToolPolicy) } : {}),
           ...(!eligibility.local ? { cloudVersionId: agent.deployment?.versionId || 'initial' } : {}),
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),

@@ -1,5 +1,6 @@
 /** Templates enter the same Agent store and creation contract as ordinary Agents. */
 import { platformBinding } from './platform-resource-bindings.mjs';
+import { nativeAgentPolicyFromSpec, NATIVE_AGENT_POLICY_CONTRACT } from './native-agent-policy.mjs';
 const fail = (code, message) => { throw Object.assign(new Error(message), { code, status: 400 }); };
 const idOf = value => typeof value === 'string' ? value : value?.resourceId;
 export function createTemplateAuthoring({ catalog, store, resources, platformResources, dependencies }) {
@@ -54,6 +55,11 @@ export function createTemplateAuthoring({ catalog, store, resources, platformRes
       const validWriteModes = localProvider ? ['off', 'explicit_only', 'candidate'] : ['candidate', 'explicit_only'];
       if (!validWriteModes.includes(mode)) fail('TEMPLATE_MEMORY_POLICY_INVALID', '记忆写入策略无效');
       spec.bindings = { ...bindings, modelProfileIds: modelIds, plugins };
+      if (runtimeType === 'harness') {
+        const bound = nativeAgentPolicyFromSpec(spec) ?? { contract: NATIVE_AGENT_POLICY_CONTRACT, mode: 'strict', rules: {} };
+        spec.bindings.nativeAgentPolicy = bound;
+        spec.bindings.policyTemplate = bound.mode;
+      }
       // Disabled memory preserves the original block exactly (only the enabled
       // flag is normalized to false); enabled memory normalizes providerRef,
       // recall and write.mode. An explicit scopes:[] and an independent

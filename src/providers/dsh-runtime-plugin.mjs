@@ -15,6 +15,8 @@ import { NATIVE_DSH_TURN_CONTRACT } from '../../packages/agentkit-harness/src/na
 import { nativeA2aToolDefinitions } from '../../packages/agentkit-harness/src/native/a2a-tools.mjs';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
 import { assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
+import { installNativeBoundPolicy } from './native-bound-policy.mjs';
+import { normalizeNativeAgentPolicy } from '../native-agent-policy.mjs';
 
 function builtinError(code, message, details = {}) {
   return Object.assign(new Error(message), { code, details });
@@ -212,6 +214,13 @@ export function apply(ctx, config = {}) {
   }
   const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
   const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
+  const boundToolPolicy = wholeNativeTurn ? normalizeNativeAgentPolicy(config.boundToolPolicy) : null;
+  if (boundToolPolicy) {
+    const install = () => installNativeBoundPolicy(ctx, boundToolPolicy,
+      (agent, toolName) => nativeToolBindings.policyDefinition(agent, toolName));
+    if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound Native policy');
+    else install();
+  }
   const builtinToolBindings = !wholeNativeTurn ? registerBuiltinTools(ctx, config.toolContracts, config, bridge) : null;
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
@@ -225,7 +234,8 @@ export function apply(ctx, config = {}) {
     if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return bridge.executeNativeTurn({ ...payload, binding: { agentId, runtime: config.runtime, local: true,
-      buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract, nativeTools: nativeToolBindings } });
+      buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract,
+      boundToolPolicy, nativeTools: nativeToolBindings } });
   });
   // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
   // Durable ownership grants no tools or permissions by itself.
@@ -234,7 +244,7 @@ export function apply(ctx, config = {}) {
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return { agentId, runtime: config.runtime, local: true,
       agentRevision: config.agentRevision, ...(config.buildId ? { buildId: config.buildId } : {}),
-      nativeEngineContract: config.nativeEngineContract, nativeTools: nativeToolBindings };
+      nativeEngineContract: config.nativeEngineContract, boundToolPolicy, nativeTools: nativeToolBindings };
   });
   if (!wholeNativeTurn && config.local === true && config.a2aBindings?.length) ctx.on('agentkit/dsh-a2a-binding', async () => {
     if (config.resourcesUnavailable) throw Object.assign(new Error('A2A resources unavailable'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });

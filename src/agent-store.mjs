@@ -14,6 +14,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
+import { nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -140,6 +141,7 @@ export function createAgentStore({ storeDir } = {}) {
       spec: { ...spec, bindings: normalizedBindings, runtime: { ...spec.runtime, type: runtimeType ?? spec.runtime?.type ?? STUDIO_DEFAULT_AUTHORING_RUNTIME } },
       bindings: normalizedBindings,
     };
+    if (record.spec.runtime.type === 'harness') nativeAgentPolicyFromSpec(record.spec);
     const target = pathFor(agentId);
     await captureRevision(record);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
@@ -212,6 +214,7 @@ export function createAgentStore({ storeDir } = {}) {
     const normalized = normalizeAgentBindings(record.spec.bindings || record.bindings || {});
     record.spec.bindings = normalized;
     record.bindings = normalized;
+    if (record.spec.runtime?.type === 'harness') nativeAgentPolicyFromSpec(record.spec);
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
     // No await between the final live-authority check and durable publication.

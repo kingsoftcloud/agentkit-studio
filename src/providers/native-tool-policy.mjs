@@ -1,4 +1,5 @@
 export const STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT = 'agentkit.native-tool-permission/v1';
+import { hasNativeBoundApproval } from './native-bound-policy.mjs';
 /** Permission scopes a Node builtin may declare. A ``memory:write`` tool
  * mutates the scoped Memory store, not the workspace filesystem, so the
  * workspace standing policy never gates it; its own exact-call consent (the
@@ -29,6 +30,10 @@ export async function authorizeNativeBuiltin(ctx, exec, definition, { requireApp
     return mode;
   };
   if (resolve() !== 'read-only' && !requireApproval) return;
+  // The same ToolRegistry execution was approved by the bound Agent policy
+  // before its monotonic guard. Reuse that live approval for this exact body;
+  // an original receipt or a matching call ID alone is never sufficient.
+  if (hasNativeBoundApproval(ctx, exec)) return;
   const approval = ctx.get?.('approval') ?? ctx.approval;
   if (typeof approval?.request !== 'function') throw denied('STUDIO_NATIVE_PERMISSION_DENIED');
   const outcome = await approval.request({ agent: exec.agent, toolName: exec.name, callId: exec.callId, signal: exec.signal,

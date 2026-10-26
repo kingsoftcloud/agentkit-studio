@@ -10,6 +10,7 @@ const text = value => typeof value === 'string' && value.trim().length > 0;
 export function nativeRecoveryBinding({ binding, input, source, selection, systemPrompt }) {
   const capsule = { contract: STUDIO_NATIVE_RECOVERY_BINDING, agentId: binding.agentId,
     agentRevision: binding.agentRevision, buildId: binding.buildId ?? null,
+    ...(binding.boundToolPolicy ? { policyDigest: hash(binding.boundToolPolicy) } : {}),
     source: structuredClone(source), maxTokens: selection.maxTokens ?? null,
     messages: structuredClone(input.messages), systemPrompt };
   validate(capsule);
@@ -18,10 +19,13 @@ export function nativeRecoveryBinding({ binding, input, source, selection, syste
 
 function validate(capsule) {
   invariant(capsule && typeof capsule === 'object' && !Array.isArray(capsule)
-    && Object.keys(capsule).sort().join(',') === 'agentId,agentRevision,buildId,contract,maxTokens,messages,source,systemPrompt'
+    && Object.keys(capsule).sort().join(',') === (capsule.policyDigest === undefined
+      ? 'agentId,agentRevision,buildId,contract,maxTokens,messages,source,systemPrompt'
+      : 'agentId,agentRevision,buildId,contract,maxTokens,messages,policyDigest,source,systemPrompt')
     && capsule.contract === STUDIO_NATIVE_RECOVERY_BINDING && text(capsule.agentId)
     && Number.isSafeInteger(capsule.agentRevision) && capsule.agentRevision > 0
     && (capsule.buildId === null || text(capsule.buildId))
+    && (capsule.policyDigest === undefined || /^[a-f0-9]{64}$/.test(capsule.policyDigest))
     && (capsule.maxTokens === null || Number.isSafeInteger(capsule.maxTokens) && capsule.maxTokens > 0)
     && typeof capsule.systemPrompt === 'string'
     && capsule.source && Object.keys(capsule.source).sort().join(',') === 'model,provider'
@@ -50,6 +54,7 @@ export function assertNativeRecoveryPreset(capsule, binding) {
   invariant(binding?.runtime === 'harness' && binding.local === true
     && binding.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT
     && binding.agentId === capsule.agentId && binding.agentRevision === capsule.agentRevision
-    && (binding.buildId ?? null) === capsule.buildId,
+    && (binding.buildId ?? null) === capsule.buildId
+    && (binding.boundToolPolicy ? hash(binding.boundToolPolicy) : undefined) === capsule.policyDigest,
   'studio_native_recovery_preset_changed');
 }

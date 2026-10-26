@@ -17,6 +17,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLocalResourceAdapters } from '../../src/local-resource-adapters.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';
+import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
 
 export const name = 'studio-enterprise-agent-platform-proof';
 export const inject = ['llm', 'sessions', 'sessionProjections', 'agents', 'agentPresets', 'connection', 'webServer'];
@@ -27,6 +28,7 @@ const CODING_SESSION = 'enterprise-coding';
 const BUSINESS_ORIGINAL_SYSTEM = 'BUSINESS_ORIGINAL_SYSTEM';
 const BUSINESS_EDITED_SYSTEM = 'BUSINESS_EDITED_SYSTEM';
 const CODING_SYSTEM = 'CODING_AGENT_SYSTEM';
+const strictPolicy = { contract: 'agentkit.native-agent-policy/v1', mode: 'strict', rules: {} };
 
 export async function apply(ctx, options) {
   const root = options.directory;
@@ -125,14 +127,14 @@ export async function apply(ctx, options) {
     const business = await rpc('agents/create-local', { name: 'Enterprise CRM approval Agent', runtimeType: 'harness',
       description: 'Enterprise business agent bound to a real local CRM MCP tool',
       spec: { execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' }, instructions: { system: BUSINESS_ORIGINAL_SYSTEM }, runtime: { type: 'harness' },
-        bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm'] } },
-      bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm'] } });
+        bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm'], nativeAgentPolicy: strictPolicy } },
+      bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm'], nativeAgentPolicy: strictPolicy } });
     const businessAgentId = business.metadata.id;
     const coding = await rpc('agents/create-local', { name: 'Enterprise coding Agent', runtimeType: 'harness',
       description: 'Enterprise coding agent bound to workspace read/write tools',
       spec: { execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' }, instructions: { system: CODING_SYSTEM }, runtime: { type: 'harness' },
-        bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'] } },
-      bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'] } });
+        bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'], nativeAgentPolicy: strictPolicy } },
+      bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'], nativeAgentPolicy: strictPolicy } });
     const codingAgentId = coding.metadata.id;
 
     // 2) Create an immutable Build of the business Agent at revision 1 (captures
@@ -163,8 +165,8 @@ export async function apply(ctx, options) {
     //    revision 2 with BUSINESS_EDITED_SYSTEM; the Build keeps the original.
     const updated = await rpc('agents/update-local', { agentId: businessAgentId, expectedRevision: 1,
       spec: { execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' }, instructions: { system: BUSINESS_EDITED_SYSTEM }, runtime: { type: 'harness' },
-        bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm-live'] } },
-      bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm-live'] } });
+        bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm-live'], nativeAgentPolicy: strictPolicy } },
+      bindings: { modelProfileIds: ['fixture'], mcpServers: ['enterprise-crm-live'], nativeAgentPolicy: strictPolicy } });
     if (Number(updated.metadata.revision) !== 2) throw Error(`update-local did not advance revision: ${updated.metadata.revision}`);
 
     // 4) Admit three presets via the real ensure-preset route: business-live (no
@@ -219,6 +221,9 @@ export async function apply(ctx, options) {
       await ctx.agentPresets.recompose(agent.ctx, entry.presetId);
     } else {
       await ctx.agentPresets.select(agent, entry.presetId);
+      // A mutable permissive Session must not erase the frozen strict Agent
+      // policy. The real ToolRegistry still produces one approval per effect.
+      setSandboxMode(agent.session, 'danger-full-access');
     }
     appendFileSync(join(root, 'session-loads.jsonl'), JSON.stringify({ role: entry.role, source, sessionId: agent.session.id, presetId: entry.presetId, pid: process.pid }) + '\n');
   });

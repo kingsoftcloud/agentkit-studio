@@ -1,8 +1,55 @@
 # Native governance boundary follow-up
 
 Status: partial, 2026-10-26. P2's complete trusted extension/resource authority
-acceptance remains open. This record distinguishes proven execution boundaries
-from Agent configuration that currently only expresses intent.
+acceptance remains open. This record distinguishes versioned policy enforcement
+from historical display-only labels and areas still lacking end-to-end proof.
+
+## Implemented: versioned Native Agent tool policy
+
+Newly authored Native Agents save `agentkit.native-agent-policy/v1` in their
+Revision. `strict` asks once for every effectful or unknown tool, including
+workspace, MCP, commands, Skill shell and child tools. `loose` inherits the
+mutable Session/Host policy: verified Node builtins keep their existing body
+authorizer; unknown external effects in a read-only Session require approval.
+`custom` has exact tool-name `inherit`/`ask`/`deny` rules and denies unlisted
+effectful tools. `inherit` cannot bypass the Host's own denial. Historical
+`policyTemplate` labels without the versioned object retain their original
+behavior; saving them in the form creates a new explicit policy Revision.
+
+The admitted preset installs one `tools/pre-execute` listener plus a monotonic
+`tools.guard`. A private WeakMap binds a successful `allowed-once` outcome to
+the exact ToolRegistry execution and its sealed arguments. The Node builtin
+authorizer and Memory's own consent reuse that same live grant, avoiding a
+second approval for the same call; no durable receipt or matching call ID can
+recreate it. Raw tool arguments stay out of the approval reason; the UI sees a
+call ID and argument digest. AgentStore validates the versioned contract on
+create/update. The policy is snapshotted in the admitted preset, included in
+the Host binding digest and checked by a digest in the Native recovery capsule.
+If another declarative pre-execute policy also asks for the same call, the
+listener combines the constraints into one ApprovalService request; a later
+denial wins before an approval is requested.
+
+The [packed Host evidence](enterprise-agent-bound-policy-evidence.json) runs
+business and coding Agents through production routes and the maintained DSH
+ToolRegistry under deliberately permissive `danger-full-access` Sessions. It
+observed four unique `approval/asked` events for three MCP calls and one
+workspace write, one CRM mutation, frozen Build behavior and cold continuation
+without repeated effects. This is controlled-model local integration evidence,
+not a real-model quality benchmark. Focused form, store, admission, policy and
+recovery tests pass; the full suite was not rerun for this batch.
+
+Actual Claude Code reviewed the implementation independently. Its first two
+legacy-recovery findings were based on a stale source snapshot: current code
+activates only an explicit versioned object, and focused tests check old labels.
+Its third finding exposed a possible second ask from another pre-execute
+listener; the listener now coalesces declarative asks. Claude did not rerun the
+packed Host verifier.
+
+Remaining governance evidence: actual denied/cancelled approval paths under a
+packed Host, all named Skill/child/extension surfaces under a versioned policy,
+and complete resource-authority and license audit. `security.allowedPermissions`
+is still Host capability metadata, not a one-shot permission grant; its labels
+must not be presented as authorization proof.
 
 ## Fixed: parent MCP retained authority across asynchronous waits
 
@@ -57,7 +104,7 @@ frozen Build resource/instruction binding and cold continuation. The packed
 changed production modules were byte-compared with the worktree. This is the
 existing bounded vertical verifier, not a full suite or real-model benchmark.
 
-## Remaining: Agent policy choices are not an execution contract
+## Prior finding: display-only policy labels
 
 Actual Claude Code's read-only audit found that new-authoring
 `spec.security.allowedPermissions` / `toolPolicy` are written as metadata but
@@ -83,7 +130,7 @@ also not an immutable enterprise ceiling. Its assertion of a separate,
 unconditionally bypassed Native workspace permission loop contradicted
 `src/providers/native-dsh-tools.mjs` and the mounted evidence.
 
-Required next implementation:
+The original implementation checklist (now partially fulfilled):
 
 1. Define precise, user-visible semantics for the Agent's bound policy and its
    relationship to mutable session settings. Resolve legacy/custom values

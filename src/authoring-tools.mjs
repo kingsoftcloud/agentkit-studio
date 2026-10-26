@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioHostRemote } from './host-remote.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
+import { NATIVE_AGENT_POLICY_CONTRACT } from './native-agent-policy.mjs';
 
 const RUNTIMES = ['dsh-native', 'harness', 'codex'];
 const KINDS = ['model', 'mcp', 'skill'];
@@ -145,7 +146,9 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
               security: { toolPolicy: 'deny-by-default', allowedPermissions: draft.runtimeType === 'harness'
                 ? ['process:host-user', ...(draft.mcpResourceIds.length ? ['network:mcp'] : [])] : [] },
               instructions: { system: draft.systemPrompt, task: draft.taskPrompt },
-              bindings: { modelProfileId: draft.modelProfileIds[0], modelProfileIds: draft.modelProfileIds, tools: [], mcpServers: draft.mcpResourceIds.map(resourceId => ({ resourceId })), skills: draft.skillResourceIds.map(resourceId => ({ resourceId })), policyTemplate: 'strict' },
+              bindings: { modelProfileId: draft.modelProfileIds[0], modelProfileIds: draft.modelProfileIds, tools: [], mcpServers: draft.mcpResourceIds.map(resourceId => ({ resourceId })), skills: draft.skillResourceIds.map(resourceId => ({ resourceId })),
+                ...(draft.runtimeType === 'harness' ? { policyTemplate: 'strict', nativeAgentPolicy: {
+                  contract: NATIVE_AGENT_POLICY_CONTRACT, mode: 'strict', rules: {} } } : {}) },
             } });
           } catch (error) {
             state.status = error.status >= 400 && error.status < 500 ? 'draft' : 'unknown';

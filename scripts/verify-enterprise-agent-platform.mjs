@@ -242,6 +242,8 @@ try {
     assert.equal(record.configuration.engine, 'agentkit.native/v1');
     assert.equal(record.configuration.hostRecoveryBinding.agentId, entry.agentId);
     assert.equal(record.configuration.hostRecoveryBinding.agentRevision, entry.revision);
+    assert.match(record.configuration.hostRecoveryBinding.policyDigest, /^[a-f0-9]{64}$/,
+      'A Native Run binds its Agent tool policy to its original Revision or Build');
   }
   const runIds = [businessRuns[0].snapshot.runId, frozenRuns[0].snapshot.runId, codingRuns[0].snapshot.runId];
   assert.equal(new Set(runIds).size, 3, 'Three distinct Run identities');
@@ -258,7 +260,12 @@ try {
   assert.equal(allEvents.filter(e => e.type === 'turn/end').length, 3);
   assert.equal(allEvents.filter(e => e.type === 'tool/call').length, 5, '2 business + 2 coding + 1 frozen original-resource tool call');
   assert.equal(allEvents.filter(e => e.type === 'tool/result').length, 5);
+  const asked = allEvents.filter(e => e.type === 'approval/asked');
+  assert.equal(asked.length, 4, 'Three unknown MCP calls and one workspace write receive one audited approval each');
+  assert.equal(new Set(asked.map(e => e.data.callId)).size, 4, 'No tool call is approved twice');
   assert.equal(allEvents.filter(e => e.type === 'user/message' && e.data.source.kind === 'user').length, 3);
+  assert.equal(allEvents.filter(e => e.type === 'sandbox/mode' && e.data.mode === 'danger-full-access').length, 3,
+    'All three Sessions are deliberately permissive while their strict Agent policy stays active');
   const loads = await jsonl(join(root, 'session-loads.jsonl'));
   assert.equal(loads.length, 3);
   assert.ok(loads.every(l => l.source === 'startup'));

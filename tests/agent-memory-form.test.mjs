@@ -349,6 +349,7 @@ test('form create(): harness local memory with recall off, candidate write, enab
   await save.props.onClick();
   assert.ok(captured.create, 'quickAuthorAgent was invoked');
   const spec = captured.create.spec;
+  assert.deepEqual(spec.bindings.nativeAgentPolicy, { contract: 'agentkit.native-agent-policy/v1', mode: 'strict', rules: {} });
   assert.equal(spec.memory.enabled, true);
   assert.equal(spec.memory.providerRef, MEMORY_PROVIDER_LOCAL);
   assert.equal(spec.memory.recall.enabled, false, 'recall.enabled independent of memory.enabled');
@@ -359,6 +360,28 @@ test('form create(): harness local memory with recall off, candidate write, enab
   assert.equal(spec.memory.write.flushAfterTurn, true);
   assert.equal(spec.context.rollout.memoryWrite, 'enabled');
   assert.equal((spec.bindings.plugins || []).some(b => b?.config?.binding?.resource?.kind === 'memory-instance'), false, 'no memory-instance binding carried for local memory');
+});
+
+test('form saves exact custom Native rules and refuses malformed rules before creating an Agent', async () => {
+  const captured = {};
+  const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });
+  let tree = harness.render(); await harness.flush(); tree = harness.render();
+  tree = advance(harness, tree); tree = advance(harness, tree);
+  findBy(tree, node => node.type === 'select' && node.children.some(child => child?.props?.value === 'custom'))
+    .props.onChange({ target: { value: 'custom' } });
+  tree = harness.render();
+  const rules = findBy(tree, byAria('逐工具权限规则'));
+  rules.props.onChange({ target: { value: '{"save_crm":"allow"}' } });
+  tree = advance(harness, harness.render());
+  await findBy(tree, byButtonText('创建 Agent')).props.onClick();
+  assert.equal(captured.create, undefined);
+  assert.ok(findBy(harness.render(), node => node.props?.role === 'alert'));
+  harness.render().find(node => node.props?.['aria-label'] === '逐工具权限规则')
+    .props.onChange({ target: { value: '{"save_crm":"ask","read_workspace_file":"inherit"}' } });
+  tree = advance(harness, harness.render());
+  await findBy(tree, byButtonText('创建 Agent')).props.onClick();
+  assert.deepEqual(captured.create.spec.bindings.nativeAgentPolicy.rules,
+    { read_workspace_file: 'inherit', save_crm: 'ask' });
 });
 
 test('form create(): disabling memory does not fabricate a rollout or a cloud binding', async () => {

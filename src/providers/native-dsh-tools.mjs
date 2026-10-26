@@ -27,6 +27,7 @@ import { nativeMcpOutcome } from './native-mcp-output.mjs';
 import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 import { bindNativeMcpSchema, bindNativeMcpPlanAccess, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
 import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
+import { hasNativeBoundApproval } from './native-bound-policy.mjs';
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT } from '../../packages/agentkit-harness/src/native/child-tools.mjs';
 import { nativeChildReaderDefinitions } from '../../packages/agentkit-harness/src/native/child-readers.mjs';
 import { nativeChildRoles, STUDIO_NATIVE_CHILD_SKILLS_CONTRACT } from './native-subagents.mjs';
@@ -465,7 +466,8 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             // planner and the ledger guard observe THIS call's agent / original
             // signal / complete request, not a shared mutable ref. The Memory tool
             // body runs entirely inside this dispatch bound to THIS session's owner.
-            return memoryHost.withDispatch({ request: invocation.request, agent: exec.agent, signal: exec.signal },
+            return memoryHost.withDispatch({ request: invocation.request, agent: exec.agent, signal: exec.signal,
+              boundPolicyApproved: hasNativeBoundApproval(ctx, exec) },
               async () => {
                 try {
                   const outcome = await memoryHost.port.execute({ ...invocation.request, signal: exec.signal });
@@ -556,6 +558,14 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       artifacts, isClosed: () => closed, inProcessTransport: Boolean(e2bLoadSdk) });
   };
   return {
+    policyDefinition(agent, registryName) {
+      const name = registryName === sandboxRegistryName('run_code') ? 'run_code' : registryName;
+      if (name === WORKSPACE_REPAIR_TOOL) return repairDefinition;
+      // External and Skill shell tools have unknown effects. A catalog hint
+      // cannot turn them into verified reads for the enterprise policy.
+      if (mcpContracts.has(name)) return null;
+      return memoryOwners.get(String(agent?.session?.id))?.definitions.get(name) ?? formal.get(name) ?? null;
+    },
     close,
     bindMemory,
     bindVision({ sessionId, requestTimeoutMs }) {

@@ -1,6 +1,7 @@
 import { memorySourceContext, readAgentMemoryConfig, writeAgentMemoryConfig, validateAgentMemoryConfig, memoryRequiresCloudBinding, clampInt, clampFloat, MEMORY_WRITE_MODES, MEMORY_ROLLOUTS, MEMORY_PROVIDER_CLOUD } from '../state/agent-memory-config.mjs';
 import { createNativeRoleFields, readNativeRoleDrafts, validateNativeRoleDrafts } from './native-role-fields.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
+import { NATIVE_AGENT_POLICY_CONTRACT, normalizeNativeAgentPolicy } from '../../native-agent-policy.mjs';
 
 export function createAgentForm({
   ui: { React: { createElement: h, useState, useEffect, Fragment }, BRAND, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill },
@@ -33,7 +34,8 @@ export function createAgentForm({
     const memoryEnabled = memoryConfig.enabled;
     const [taskPrompt, setTaskPrompt] = useState(originalSpec.instructions?.task || '');
     const [nativeRoles, setNativeRoles] = useState(() => initialRuntime === 'harness' && !cloudEditing ? readNativeRoleDrafts(originalSpec) : []);
-    const [policy, setPolicy] = useState(originalBindings.policyTemplate || 'strict');
+    const [policy, setPolicy] = useState(originalBindings.nativeAgentPolicy?.mode || originalBindings.policyTemplate || 'strict');
+    const [policyRules, setPolicyRules] = useState(() => JSON.stringify(originalBindings.nativeAgentPolicy?.rules || originalBindings.policyRules || {}, null, 2));
     const [form, setForm] = useState({
       id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || creationSeed?.name || '我的第一个 Agent', runtime: initialRuntime,
       description: originalSpec.description || creationSeed?.description || '', prompt: originalSpec.instructions?.system || '', template: 'blank',
@@ -117,6 +119,12 @@ export function createAgentForm({
           toolIds: selectedTools, hasMcp: selectedMcp.length > 0, toolResources: catalog.tool });
         if (roleError) { setError(roleError); setStep(2); return; }
       }
+      let boundPolicy = null;
+      if (form.runtime === 'harness' && !cloudEditing) {
+        try { boundPolicy = normalizeNativeAgentPolicy({ contract: NATIVE_AGENT_POLICY_CONTRACT, mode: policy,
+          rules: policy === 'custom' ? JSON.parse(policyRules) : {} }); }
+        catch { setError('自定义权限规则必须是 JSON 对象：工具名对应 inherit、ask 或 deny。'); setStep(2); return; }
+      }
       if (saving || !form.id.trim() || !form.name.trim() || (!cloudEditing && (catalogStatus !== 'ready' || !selectedModel))) return;
       setSaving(true); setError(''); setConflict(false);
       const id = form.id.trim().toLowerCase();
@@ -142,7 +150,7 @@ export function createAgentForm({
           bindings: {
             ...originalBindings,
             ...(!cloudEditing ? { modelProfileId: selectedModel, modelProfileIds: selectedModels.length ? selectedModels : [selectedModel] } : {}),
-            policyTemplate: policy,
+            ...(boundPolicy ? { policyTemplate: policy, nativeAgentPolicy: boundPolicy } : {}),
             tools: selectedTools.map(resourceId => (originalBindings.tools || []).find(item => item.resourceId === resourceId) || { resourceId }),
             mcpServers: selectedMcp.map(resourceId => (originalBindings.mcpServers || []).find(item => item.resourceId === resourceId) || { resourceId }),
             skills: selectedSkills.map(resourceId => (originalBindings.skills || []).find(item => item.resourceId === resourceId) || { resourceId }),
@@ -273,8 +281,16 @@ export function createAgentForm({
       h('p', { style: { margin: '0 0 16px', color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.55 } }, '运行目标会写入 Agent Revision。DSH Native 使用本地原生循环，AgentKit Harness 和 Codex 由各自运行端执行。'),
       h('div', { style: { display: 'grid', gap: '8px' } }, runtimeOptions.map(item => h('button', { key: item.runtimeType, type: 'button', onClick: () => update('runtime', item.runtimeType), style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', border: '1px solid ' + (form.runtime === item.runtimeType ? BRAND.accentStrong : BRAND.border), borderRadius: '10px', padding: '14px', background: form.runtime === item.runtimeType ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' } }, h('span', null, h('strong', { style: { display: 'block', fontSize: '13px' } }, item.displayName), h('span', { style: { display: 'block', marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px' } }, item.runtimeType)), form.runtime === item.runtimeType ? h(Pill, { tone: 'accent' }, '已选择') : null))),
       h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '16px' } },
-        h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '权限策略', h('select', { value: policy, onChange: event => setPolicy(event.target.value), style: inputStyle() }, h('option', { value: 'strict' }, '严格权限'), h('option', { value: 'loose' }, '宽松权限'), h('option', { value: 'custom' }, '自定义权限'))),
+        form.runtime === 'harness' && !cloudEditing ? h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Agent 工具约束', h('select', { value: policy, onChange: event => setPolicy(event.target.value), style: inputStyle() }, h('option', { value: 'strict' }, '严格：写入和未知副作用需审批'), h('option', { value: 'loose' }, '遵循会话与 Host 权限'), h('option', { value: 'custom' }, '自定义：默认拒绝未知副作用')))
+          : h('span', { style: { color: BRAND.inkMuted, fontSize: '12px', alignSelf: 'center' } }, '权限由当前运行端和 Host 管理'),
         h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '23px', color: BRAND.ink, fontSize: '12px', fontWeight: 700 } }, h('input', { type: 'checkbox', 'aria-label': '启用跨会话记忆', checked: memoryEnabled, disabled: cloudEditing, onChange: event => updateMemory({ enabled: event.target.checked }) }), '启用跨会话记忆')),
+      form.runtime === 'harness' && !cloudEditing ? h('p', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, 'Agent 规则随 Revision 与 Build 固定；会话权限和 Host 审批仍可进一步拒绝。') : null,
+      form.runtime === 'harness' && editing && !originalBindings.nativeAgentPolicy && originalBindings.policyTemplate
+        ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '11px' } }, '旧版本的权限策略只保存了名称；本次保存会创建正式生效的策略。') : null,
+      form.runtime === 'harness' && !cloudEditing && policy === 'custom' ? h('label', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } },
+        '逐工具规则（JSON，对应实际 Tool 名称）', h('textarea', { value: policyRules, onChange: event => setPolicyRules(event.target.value), rows: 5,
+          style: { ...inputStyle(), fontFamily: 'monospace', width: '100%' }, 'aria-label': '逐工具权限规则' }),
+        h('span', null, '例如 {"read_workspace_file":"inherit","save_crm":"ask"}；未列出的只读工具遵循 Host，其他工具拒绝。')) : null,
       memoryConfigPanel(),
       form.runtime === 'harness' && !cloudEditing ? nativeRoleFields({ roles: nativeRoles, onChange: setNativeRoles,
         models: catalog.model, selectedModels: selectedModels.length ? selectedModels : [selectedModel],

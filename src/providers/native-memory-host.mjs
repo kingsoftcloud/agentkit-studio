@@ -167,6 +167,11 @@ export function bindStudioNativeMemoryHost({ record, scope, sessionId, store, st
     const dispatch = currentDispatch();
     if (!dispatch) return denial('memory_dispatch_unbound');
     const signal = dispatch.signal ?? lifetime.signal;
+    if (dispatch.boundPolicyApproved === true) {
+      signal?.throwIfAborted?.();
+      const code = verifyToolExecution(dispatch.request);
+      return code ? denial(code) : 'allow';
+    }
     const approval = ctx?.get?.('approval') ?? ctx?.approval;
     if (typeof approval?.request !== 'function') return denial('policy_denied');
     let outcome;
