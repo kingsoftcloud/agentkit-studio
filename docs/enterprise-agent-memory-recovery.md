@@ -41,7 +41,9 @@ budget error code. No lease was shortened and no fake clock was used.
 
 P5 earns **1 of its 6 fault-acceptance points** for these Memory boundaries.
 Business-tool, background/child, cancellation and broader recovery experiments
-remain required. The fixed overall denominator now records **51/100**.
+remain required. This batch recorded **51/100**; the later
+[lineage/context/mounted-UI batch](enterprise-agent-memory-lineage-context.md)
+advances the same denominator to **54/100**.
 
 ## Status and rendered component
 
@@ -94,5 +96,7 @@ Internal watcher/worker health accessors have no dedicated product RPC. This is
 an observability audit item, not evidence that per-task recovery status is
 missing. No background/child acceptance credit is claimed from this audit.
 
-Remaining: compaction/rewind cursor lineage, full mounted-product interaction,
-representative real-model extraction quality and broader platform acceptance.
+The subsequent [lineage and mounted-UI evidence](enterprise-agent-memory-lineage-context.md)
+closes the cursor/compaction and Memory usage/status gaps described above.
+Representative real-model extraction quality, broader task interaction and
+platform acceptance remain.

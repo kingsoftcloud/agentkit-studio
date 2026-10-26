@@ -52,12 +52,30 @@ export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRec
         directWriteReceipt: receiptReader(provider) });
       const expectedCursor = jobs.getCursor({ scope, sessionId });
       if (expectedCursor === full.boundaryId) return { status: 'already_consumed' };
-      const existing = jobs.list({ scope, sessionId }).find(job => job.expectedCursor === expectedCursor
+      const streamJobs = jobs.list({ scope, sessionId });
+      const existing = streamJobs.find(job => job.expectedCursor === expectedCursor
         && job.source.sourceDigest === full.sourceDigest && job.policyDigest === policyDigest(policy));
       if (existing) { kick(); return publicJob(existing); }
       const position = expectedCursor === null ? -1 : full.messages.findIndex(message => message.id === expectedCursor);
-      invariant(expectedCursor === null || position >= 0, 'studio_native_memory_extraction_cursor_not_in_history');
-      const messages = full.messages.slice(position + 1), ids = new Set(messages.map(message => message.id));
+      let messages = full.messages.slice(position + 1);
+      if (expectedCursor !== null) {
+        const completed = streamJobs.filter(job => ['success', 'no-op'].includes(job.status));
+        const previous = completed.find(job => job.boundaryId === expectedCursor);
+        invariant(previous, 'studio_native_memory_extraction_cursor_unbound');
+        const generation = store.load(scope, runId).snapshot.conversationBranch?.generation ?? 0;
+        const priorGeneration = store.load(scope, previous.source.parent.runId).snapshot.conversationBranch?.generation ?? 0;
+        invariant(generation >= priorGeneration, 'studio_native_memory_extraction_branch_regressed');
+        if (generation > priorGeneration) {
+          // Rewind replaces the active transcript, not the immutable execution
+          // chain. Keep only that new branch's messages. A retained/reintroduced
+          // original message already considered by a successful extraction (even
+          // a no-op) is not a fresh grant; never reset the cursor or load prose
+          // from the discarded branch to make its old boundary reappear.
+          const considered = new Set(completed.flatMap(job => job.source.messages.map(message => message.id)));
+          messages = full.messages.filter(message => !considered.has(message.id));
+        } else invariant(position >= 0, 'studio_native_memory_extraction_cursor_not_in_history');
+      }
+      const ids = new Set(messages.map(message => message.id));
       const direct = messages.some(message => message.directMemoryWrite);
       const sources = direct ? [] : full.sources.filter(source => ids.has(source.sourceEventId) && !provider.hasConsumedSource(source));
       const permitted = new Set(sources.map(source => source.sourceEventId));

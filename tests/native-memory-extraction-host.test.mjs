@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { NativeKernel, configure, emptyUsage, canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
+import { NativeKernel, configure, emptyUsage, canonical, projectSessionHistory } from '../packages/agentkit-harness-core/dist/index.mjs';
 import { fixture, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
@@ -62,14 +62,26 @@ async function setup(t, { minUserCharacters = 64, mode = 'write', rollout = 'ena
   let service = open();
   t.after(async () => { await service.close(); ledger.close(); await new Promise(resolve => server.close(resolve));
     rmSync(root, { recursive: true, force: true }); });
-  const run = async (runId, text = prose, runScope = scope) => {
+  const run = async (runId, text = prose, runScope = scope, overrides = {}) => {
     const kernel = new NativeKernel({ store: ledger, owner: 'parent', digest, ports: { model: { generate: async () => final() } } });
     kernel.start({ scope: runScope, runId, sessionId: 'session', turnId: runId, buildId: 'revision-frozen', parentRunId: null,
-      taskChainId: 'chain' }, config(text));
+      taskChainId: 'chain' }, configure({ ...config(text), ...overrides }));
     return kernel.runUntilIdle(runScope, runId);
   };
   const request = runId => ({ scope, sessionId: 'session', runId, record });
-  return { root, run, request, bodies, errors, record, store: () => ledger, service: () => service,
+  const rewind = async (runId, sourceRunId, text) => {
+    const source = ledger.load(scope, sourceRunId), head = ledger.sessionHead(scope, 'session');
+    const seed = { contract: 'native-conversation-fork/v1', source: {
+      parentSessionId: 'session', sessionId: 'session', runId: sourceRunId, turnId: source.snapshot.turnId,
+      boundarySeq: source.events.length, snapshotRevision: source.snapshot.revision,
+      configDigest: source.snapshot.configDigest, snapshotDigest: digest(source.snapshot),
+      transcriptDigest: digest(source.events) },
+    messages: projectSessionHistory(source, config(text), digest, { identityNamespace: runId }) };
+    return run(runId, text, scope, { conversationSeed: seed, conversationRewind: {
+      contract: 'native-conversation-rewind/v1', commandId: `rewind-${runId}`, expectedHeadRunId: head.runId,
+      generation: (head.conversationBranch?.generation ?? 0) + 1, markerDigest: digest(seed) } });
+  };
+  return { root, run, rewind, request, bodies, errors, record, store: () => ledger, service: () => service,
     memory: () => new SqliteNativeMemoryProvider(join(root, 'native-harness', 'memory-v1', memoryDigest(scope.tenantId).slice(7), 'memory.sqlite'),
       { principal: scope, scopes: ['user'] }),
     async reopen() { await service.close(); ledger.close(); ledger = new SqliteRunStore(join(root, 'runs.sqlite')); service = open(); },
@@ -121,6 +133,52 @@ test('short multilingual windows accumulate without a model call or premature cu
   const input = JSON.parse(f.bodies[0].messages.find(message => message.role === 'user').content);
   assert.equal(input.source.messages.filter(message => message.role === 'user' && !message.modelOnly).length, 2);
   assert.equal(f.service().status(f.request('two')).jobs[0].status, 'success');
+});
+
+test('rewind and repeated branch changes preserve processed no-op sources without reviving discarded input', async t => {
+  const f = await setup(t, { minUserCharacters: 1, mode: 'no-op' });
+  for (const [runId, text] of [['one', 'Original retained preference.'], ['two', 'Previously considered branch preference.']]) {
+    await f.run(runId, text); f.service().schedule(f.request(runId)); await f.service().drain();
+  }
+  const prior = f.store().load(scope, 'two');
+  await f.run('discarded', 'Discarded unprocessed input must not be extracted.');
+  await f.rewind('replacement', 'one', 'New replacement preference.');
+  f.service().schedule(f.request('replacement')); await f.service().drain();
+  const replacement = JSON.parse(f.bodies[2].messages.find(message => message.role === 'user').content);
+  assert.deepEqual(replacement.source.messages.filter(message => message.role === 'user' && !message.modelOnly)
+    .map(message => message.text), ['New replacement preference.']);
+  assert.doesNotMatch(canonical(replacement.source), /Discarded unprocessed|Previously considered|Original retained/);
+  assert.deepEqual(f.store().load(scope, 'two'), prior, 'rewind cannot rewrite the original ledger');
+  await f.reopen(); await f.service().recover(); await f.service().drain();
+  assert.equal(f.bodies.length, 3, 'a consumed rewound head is not extracted on reopen');
+  // Reintroduce an older branch. Even a prior extraction which chose not to
+  // write Memory has considered these original messages already.
+  await f.rewind('second-branch', 'two', 'New second branch preference.');
+  f.service().schedule(f.request('second-branch')); await f.service().drain();
+  const second = JSON.parse(f.bodies[3].messages.find(message => message.role === 'user').content);
+  assert.deepEqual(second.source.messages.filter(message => message.role === 'user' && !message.modelOnly)
+    .map(message => message.text), ['New second branch preference.']);
+  const state = f.service().status(f.request('second-branch'));
+  assert.ok(state.jobs.every(job => job.status === 'success'), canonical(state));
+  assert.match(state.cursor, /second-branch#message=/);
+  assert.equal(f.bodies.length, 4); assert.deepEqual(f.errors, []);
+});
+
+test('rewind retains unprocessed short-window sources but excludes discarded branch sources', async t => {
+  const f = await setup(t, { minUserCharacters: 64, mode: 'no-op' });
+  const retained = '财务报表统一使用协调世界时。';
+  await f.run('short', retained);
+  assert.equal(f.service().schedule(f.request('short')).status, 'deferred');
+  await f.run('discarded', 'Discarded text must never be used as a Memory source.');
+  await f.rewind('replacement', 'short', prose);
+  await f.reopen(); await f.service().recover(); await f.service().drain();
+  assert.equal(f.bodies.length, 1);
+  const input = JSON.parse(f.bodies[0].messages.find(message => message.role === 'user').content);
+  assert.deepEqual(input.source.messages.filter(message => message.role === 'user' && !message.modelOnly)
+    .map(message => message.text), [retained, prose]);
+  assert.doesNotMatch(canonical(input.source), /Discarded text/);
+  assert.equal(f.service().status(f.request('replacement')).jobs[0].status, 'success');
+  assert.deepEqual(f.errors, []);
 });
 
 test('cold discovery admits a completed parent missed before enqueue and does not repeat it on the next reopen', async t => {

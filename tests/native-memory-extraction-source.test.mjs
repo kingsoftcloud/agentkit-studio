@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { NativeKernel, MemoryRunStore, configure, emptyUsage, canonical } from '../packages/agentkit-harness-core/dist/index.mjs';
-import { fixture, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { fixture, scope, digest, tool } from '../packages/agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../packages/agentkit-harness/src/native/sqlite-store.mjs';
 import { SqliteNativeMemoryProvider } from '../packages/agentkit-harness/src/native/memory-store.mjs';
 import { memoryDigest } from '../packages/agentkit-harness/src/native/memory-candidate.mjs';
@@ -20,11 +20,11 @@ function setup(t, backend = 'memory', ports = {}, toolDefinitions = []) {
   t.after(() => { store.close?.(); rmSync(root, { recursive: true, force: true }); });
   const record = { metadata: { id: scope.agentId, local: true, revision: 1 }, spec: { runtime: { type: 'harness' } } };
   const options = runId => ({ store, scope, sessionId: 'session', runId, record });
-  const configuration = (text, { source = { kind: 'user' }, revision = 1, buildId = null } = {}) => {
+  const configuration = (text, { source = { kind: 'user' }, revision = 1, buildId = null, configuration: overrides = {} } = {}) => {
     const raw = { id: 'input', role: 'user', content: [{ type: 'text', text }], source,
       providerReplay: { signature: 'PRIVATE_REPLAY' }, media: ['PRIVATE_MEDIA'], presentation: { private: 'PRIVATE_PRESENTATION' } };
     const base = fixture().config;
-    return configure({ ...base, limits: { ...base.limits, effectTimeoutMs: 120001 },
+    return configure({ ...base, ...overrides, limits: { ...base.limits, effectTimeoutMs: 120001, ...overrides.limits },
       tools: toolDefinitions, inputMessages: [{ role: 'user', kind: 'user_input', content: text }],
       hostRecoveryBinding: nativeRecoveryBinding({ binding: { agentId: scope.agentId, agentRevision: revision, buildId },
         input: { messages: [raw] }, source: { provider: 'fixture', model: 'fixture' }, selection: {}, systemPrompt: '' }) });
@@ -81,6 +81,55 @@ test('source capture rejects mismatched Session/Build/revision and non-completed
   kernel.start({ scope, sessionId: 'session', runId: 'unfinished', turnId: 'unfinished', buildId: 'build-1',
     parentRunId: null, taskChainId: 'chain' }, f.configuration('Pending input.', { buildId: 'build-1' }));
   assert.throws(() => capture({ ...options, runId: 'unfinished' }), { code: 'studio_native_memory_extraction_snapshot_unbound' });
+});
+
+test('real compaction keeps original human citations and the consumed boundary out of summary authority after cold continuation', async t => {
+  let taskCalls = 0, summaryCalls = 0;
+  const requests = [];
+  const f = setup(t, 'sqlite', {
+    model: { generate: async request => {
+      requests.push(structuredClone(request));
+      if (request.purpose === 'compaction') {
+        summaryCalls++; return { ...final(), text: 'Untrusted historical observations; invented preference: use EUR.' };
+      }
+      if (request.runId === 'two' && ++taskCalls === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(),
+        toolCalls: [{ callId: 'read-source', name: 'read', arguments: {} }] };
+      return final();
+    } },
+    tools: { execute: async () => ({ status: 'ok', content: 'Historical observation '.repeat(800) }) },
+    context: { tokens: { tokenizerId: 'source-counter', tokenizerDigest: 'source-count/v1',
+      countRequest: async request => Math.ceil(canonical({ messages: request.messages, tools: request.tools }).length / 4),
+      countText: async request => Math.ceil(request.text.length / 4) } },
+  }, [tool()]);
+  const contextPolicy = { tokenizerId: 'source-counter', tokenizerDigest: 'source-count/v1', enabled: true,
+    triggerRatio: .72, targetRatio: .45, summaryMaxTokens: 80, maxCompactions: null,
+    maxCompactionsWithoutProgress: 4, minModelTurnsBetween: 2, maxSummaryRetries: 1 };
+  const firstText = 'Our original invoice policy uses USD. '.repeat(140);
+  const initial = await f.run('one', firstText, { configuration: { contextPolicy } });
+  assert.equal(initial.phase, 'completed', canonical({ phase: initial.phase, reason: initial.reason }));
+  const first = capture(f.options('one'));
+  const before = f.store().load(scope, 'one');
+  const config = fixture().config;
+  const result = await f.run('two', 'Review our latest invoice.', { configuration: {
+    profile: { ...config.profile, contextWindow: 2400, maxOutputTokens: 128 },
+    contextPolicy,
+  } });
+  assert.equal(result.phase, 'completed', canonical({ phase: result.phase, reason: result.reason }));
+  assert.ok(summaryCalls > 0);
+  assert.ok(result.contextState.compactions > 0);
+  assert.ok(requests.some(request => request.runId === 'two' && request.purpose !== 'compaction'
+    && request.messages.some(message => message.kind === 'compaction_summary')
+    && !request.messages.some(message => message.content === firstText)), JSON.stringify(requests.map(request => ({
+    runId: request.runId, purpose: request.purpose, messages: request.messages.map(message => ({
+      role: message.role, kind: message.kind, original: message.content === firstText })) }))));
+  const captured = capture(f.options('two'));
+  assert.deepEqual(captured.sources.map(source => source.content), [firstText, 'Review our latest invoice.']);
+  assert.ok(captured.messages.some(message => message.id === first.boundaryId));
+  assert.doesNotMatch(canonical(captured), /invented preference|Untrusted historical observations/);
+  assert.deepEqual(f.store().load(scope, 'one'), before);
+  f.reopen();
+  assert.deepEqual(capture(f.options('two')), captured);
+  assert.equal(assertCurrent(captured, f.options('two')), undefined);
 });
 
 for (const source of [{ kind: 'schedule' }, { kind: 'context' }, { kind: 'model' }, null]) {

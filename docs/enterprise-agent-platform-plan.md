@@ -51,7 +51,9 @@ permission, audit or resource enforcement.
    `auxiliary-run.mts` only invokes NativeKernel with the admitted configuration
    and exact-call/receipt guards. Host scheduling, independent resource lifetime,
    persisted jobs/cursors and scoped usage are now implemented and have focused
-   production-Host evidence. Full mounted-product/UI and crash acceptance remain.
+   production-Host evidence. Mounted-product usage/status, source lineage and
+   selected process-crash boundaries now have evidence; actual-model quality and
+   broader fault acceptance remain.
 3. **Route-driven local vertical evidence now passes.** Existing mounted Host proofs
    already authenticate HTTP and call `agents/local-get` and
    `agents/ensure-preset`. Their initial record is created directly through the
@@ -84,10 +86,10 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 10 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 5 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 8 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries earned 1); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 1 |
 
-Current assessed progress: **51/100**, approximately 51%. P4's remaining credit
+Current assessed progress: **54/100**, approximately 54%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -144,12 +146,13 @@ logs: `/tmp/enterprise-agent-memory-final-integration.log`,
 `/tmp/enterprise-agent-memory-commit-guard-validation.log`.
 
 P4 earned +3 (durable jobs/cursor 2, production Host trigger/lifetime 1). The
-remaining usage/status point awaits full mounted-product/UI acceptance;
-an isolated component alone is not that evidence. The completed-parent/enqueue
+usage/status point was subsequently earned through full mounted-product/UI
+acceptance (see below); an isolated component alone was not that evidence. The completed-parent/enqueue
 gap and Memory process-kill boundaries now have focused evidence in the
 [Memory recovery record](enterprise-agent-memory-recovery.md), earning 1 of
-P5's 6 fault-acceptance points. Compaction/rewind cursor lineage and broader
-failure/cancel/recovery acceptance remain open.
+P5's 6 fault-acceptance points. Compaction/rewind cursor lineage is now verified
+and the rewind cursor defect fixed; broader failure/cancel/recovery acceptance
+remains open.
 Controlled model usage is not evidence of real-model quality or token savings.
 
 Baseline commit before new platform fixes: `22a47d8`. Reference ZCode checkout
@@ -229,9 +232,42 @@ No full test suite was run in this batch.
 
 The prepared identity/configuration, original manifest, cursor, independent
 Host resources and automatic trigger are now integrated as described above.
-Remaining Memory acceptance includes compaction/rewind lineage and the full
-mounted product flow; controlled model fixtures do not establish extraction
-quality or token savings.
+Memory lineage and mounted-product usage now have the follow-up evidence below;
+controlled model fixtures do not establish extraction quality or token savings.
+
+### Memory lineage, mounted Studio and context budget follow-up
+
+See [reviewed evidence and reproduction](enterprise-agent-memory-lineage-context.md)
+and [mounted browser report](enterprise-agent-memory-ui-evidence.json).
+Rewind now reuses successful extraction history only as a set of considered
+original message identities, never as resurrected prose. Current branch
+generation and the persisted successful cursor owner must agree. Multiple
+rewinds do not re-extract earlier no-op sources; retained unprocessed short
+windows still accumulate. A real compaction run proves original human sources
+and the previous cursor survive even when absent from the model request view;
+summary text never becomes citation authority.
+
+The fresh packed production Host and full maintained DSH Web UI create a Native
+Agent through the real form, enable model extraction, bind and run a real
+Session, inspect separate main/auxiliary usage, and reload both successful and
+budget-exhausted outcomes. Actual SQLite retains two main Runs (one model call
+each), two auxiliary Runs, the original revision and one version-1 fact. Model
+responses/tokens are controlled fixtures. This earns P4's remaining Memory
+usage/status point (+1).
+
+Actual Claude Code delivered three independent context/HTTP/SQLite checks;
+primary reviewed and strengthened usage/count and cleanup assertions. Together
+with the revalidated existing successful compaction/cold-continuation case,
+they prove shared compaction model-call budget and separate token events,
+bounded malformed summaries, cancellation, original-source retention and no
+extra HTTP work after a terminal exhausted-budget reopen. This earns 2 of P4's
+4 remaining context/budget points. Broader Host/context-source and cross-capability
+budget acceptance remain unearned; background/child and task interaction
+milestones are not certified by these checks.
+
+Focused affected files: **47 passed**, plus **1 existing actual-HTTP compaction
+and cold-continuation check** passed separately. No full suite was run. The
+pre-fix rewind failure was reproduced against HEAD before the production patch.
 
 ### Route-driven local business and coding verticals
 
