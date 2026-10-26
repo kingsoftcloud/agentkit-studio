@@ -97,9 +97,9 @@ line counts or test totals. Do not increment for producing another plan.
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 18 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke 1 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1, Skill shell policy-wait lease loss 1 earned); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 5 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke 1 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1, Skill shell policy-wait lease loss 1 earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 8 |
 
-Current assessed progress: **77/100**, approximately 77%. P4's remaining credit
+Current assessed progress: **80/100**, approximately 80%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -462,12 +462,19 @@ or Native runtime failure. The context/budget SQLite integration check passed
 3/3 after the compaction retry correction; its existing scope remains the two
 points already earned in P4.
 
+The [runtime boundary audit](enterprise-agent-runtime-audit.md) records the
+three engine choices, local/cloud route separation, product Session ownership,
+frozen Build/portable deployment boundary and the mounted local management
+evidence. Focused runtime, Build and portable checks passed 28/28. This earns
+P5's three audit points; it does not claim cloud Native deployment or
+cross-engine in-flight state migration.
+
 1. Finish the bound-policy extension/resource matrix, then close remaining
    context/source and cross-capability budget integration while preserving
    Memory and child lifecycle invariants. The Skill shell lease-loss check and
    default strict policy for newly saved Native Revisions are complete.
-2. Collect honest actual-model measurements separately from controlled fixtures,
-   then audit runtime differences, local management and deployment boundaries.
+2. Expand the bounded actual-model smoke into a representative result/token/
+   latency comparison with a fixed baseline and explicit task-quality checks.
 3. Perform final integrated acceptance and explicit requirement/license audit.
 
 Each batch runs targeted checks; broad checks happen at final/stage integration
