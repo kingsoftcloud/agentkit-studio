@@ -4,6 +4,11 @@ AgentKit Studio is a DSH product plugin. The host owns Agent composition, Sessio
 transcript persistence, stream events, tools, file delivery and desktop/browser surfaces.
 Studio adds Agent editing, resource bindings, product settings and release wiring.
 
+The active enterprise-platform objective, responsibility audit and local
+acceptance checklist live in [the implementation plan](enterprise-agent-platform-plan.md).
+Native serves business and coding Agents through the same execution authority;
+specific capability policies compose above the general execution mechanisms.
+
 ## Packages and source
 
 | Path | Responsibility |

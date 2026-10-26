@@ -1,7 +1,11 @@
 # Native / ZCode coding Harness alignment
 
-Status: in progress. This is a new source-alignment task, not a reopening or a
-replacement of the earlier Python-to-TypeScript migration acceptance.
+Status: retained coding-alignment work and evidence. The active thread goal is
+now [Enterprise Agent Studio implementation and local acceptance](enterprise-agent-platform-plan.md).
+This document remains the coding capability/source reference; its 43/100 is not
+the new platform progress denominator. Outstanding useful capabilities remain
+in scope through that plan, without requiring complete ZCode product parity.
+The earlier Python-to-TypeScript migration acceptance is separate.
 
 ## Confirmed scope
 
