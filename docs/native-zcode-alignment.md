@@ -36,13 +36,14 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **36/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **37/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 6/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
-deferred-tool discovery with durable cleanup/Session continuity), M3 5/20
+deferred-tool discovery with durable cleanup/Session continuity), M3 6/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
-plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes), M4 9/20
+plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
+and versioned creation/whitespace replacement through Edit with actual Host cold continuity), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
@@ -51,8 +52,8 @@ plus child-local Todo continuity and durable coordinator responses through the
 actual packed Studio Host, plus owned Plan delegation/wait with immutable child
 mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
-The latest M3 point covers the new tool's ordinary Agent authoring/catalog and
-frozen-Build admission, not the whole editing/undo or tool execution group.
+The latest M3 point covers versioned empty-old-text Edit creation and whitespace
+replacement, not the whole editing/undo or tool execution group.
 M5 12/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
@@ -93,7 +94,7 @@ audited and integrated.
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | Both have old-output projection; reference runtime explicitly enables microcompact only when configured. Explicit `pruneThresholdTokens` now enables earlier cleanup, preserving legacy absence. Default derivation, idle trigger and cleanup that still requires summary remain pending. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
-| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. Creation-via-Edit, large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
+| File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. New admitted v2 Edit supports absent-file creation and full-fresh-read whitespace replacement, actual Host denial and cold editing; v1/legacy behavior is preserved. Large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
 | Plan / Todo | `src/tool/handlers/{todo,plan-mode,plan-mode-prompts}.ts`, `../contracts/src/tools/{todo,plan-mode}.ts`, `src/permission/{service,plan-mode-policy}.ts`, `src/runtime/helpers/{runtime-reminders,plan-file-continuity}.ts`, `src/runtime/methods/turn-loop.ts` | core `todos.mts`, `plan-mode.mts`, `kernel.mts`, Node `session-delivery.mjs`, Host Native composition/interaction | Todo/Plan controls, Studio projections, review, cold-turn continuity, MCP/local command exceptions and owned child delegation/wait with default mode inheritance are integrated. Explicit child modes, remaining session exceptions and full reminder/control comparisons remain pending. |
 | Steering / cancellation | `src/runtime/methods/{turn-guide-drain,runtime-command-active-loop}.ts`, `tests/runtime-command-queue.test.ts` | core `guidance.mts`, `kernel.mts`, Host interaction bridge | Compare interruption timing, queued input ownership, priority and restored commands. Pending. |
@@ -2151,3 +2152,87 @@ matrix gaps remain. No new dependency or model round trip was added for preview
 or file restoration; local hashing, SQLite and file I/O costs are unbenchmarked.
 M6 remains **0/15**: real-model quality, Token/latency comparison and the final
 requirement audit have not been completed.
+
+## Versioned creation through Edit (37/100)
+
+Official pinned `src/tool/handlers/edit.ts:125-141` creates a missing file when
+`old_string` is empty. Lines 168-193 permit replacing existing whitespace-only
+content after a valid read; `writeEditResult` preserves revision/encoding/newline
+information and updates full read authority. The actual reference
+`tests/edit-tool-contract.test.ts:110-137` covers missing-file creation and
+filling an already-read empty file. Native previously rejected every empty
+`old_text` request, even when its ordinary Write path could create the file.
+
+New Studio Native admissions now bind `workspaceEditPolicy: zcode-match/v2`.
+Its single-file Edit creates a missing file using the existing race-safe
+create-only publisher, records an absent preimage, publishes a normal committed
+tool result and establishes the same full read observation used by subsequent
+edits and cold continuation. Existing whitespace-only files require a full,
+fresh read; nonblank content is never overwritten by empty-old-text Edit.
+No-change input and incompatible replacement counts reject before publication.
+Missing-file creation normalizes CRLF input to LF, as ZCode's real filesystem
+adapter does; existing-file replacement uses dominant CRLF/LF, with LF on ties.
+The nonblank refusal also precedes read-state validation as in the reference.
+
+The execution path retains ordinary Host permission checks, cancellation,
+physical-root/path checks, mutation exclusion, checkpoint intent/result and
+post-publication unknown-effect handling. A creator that appears after absence
+was observed cannot be overwritten: both a locked recheck and the final
+create-only hard-link publication protect that boundary. Multi-edit retains its
+nonempty-match rule; ZCode's single Edit creation does not imply inventing new
+multi-edit semantics.
+
+The policy is explicit in the core tool contract and configuration validator.
+Original v1 and legacy-absence Runs retain their admitted behavior. Host recovery
+rebinds the original policy version instead of mapping every stored policy to
+v1 or upgrading old Runs. Only v2 tool descriptions advertise the new behavior.
+This reuses the current loop and workspace publisher; no dependency, alternate
+executor or extra model step is added for creation. Normal nonempty matching
+continues to use the existing bounded worker. Local I/O costs are unbenchmarked.
+
+Acceptance:
+
+- `/tmp/native-edit-create-tests-final.log`: **23 passed**, focused existing
+  matchers and new empty-old-text behavior, newline handling, stale/partial
+  reads, nonblank refusal, incompatible count, denial, abort, path escape and
+  two external-creation windows. The existing v1 SQLite approval/cold-reopen
+  scenario still commits its original matcher once.
+- `/tmp/native-edit-create-integration-tests.log`: **186 passed**, related
+  workspace rewind, real Native gateway and Studio Host groups. The added
+  SQLite/kernel case proves a committed v2 creation has an absent preimage,
+  survives cold reopen, and can be removed by ordinary ledger-authorized file
+  rewind without changing its source Run. No full repository suite was run.
+  After the final newline/error-ordering adjustment, the 23-case edit group
+  passed again, as did that targeted creation/preimage case in
+  `/tmp/native-edit-create-preimage-final.log`; the 186-case group was not
+  repeated for those isolated empty-old-text changes.
+- Final archive
+  `/tmp/agentkit-native-edit-create-pack-final/kingsoftcloud-agentkit-studio-0.0.2.tgz`,
+  SHA-256 `4edf22c1d776f2139afc531c9eb50a93d1dda2d985453f633e6453a95872bc8c`.
+  Build/pack, syntax and whitespace checks passed.
+- `/tmp/native-edit-create-proof-final.log`: PASS with
+  `--mount-host --edit-create --frozen --keep`; evidence root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-y3rwfQ`.
+  `edit-creation-proof.json` records eight controlled HTTP model requests and
+  the original creation checkpoint. Two actual Host instances prove admitted
+  v2 creation in a Frozen Build, CRLF-input-to-LF normalization, immediate next edit without another
+  read, nonblank refusal, actual outer Host policy denial and cold editing.
+  The prior Run remains identical after the second Host executes.
+
+Real Claude Code read-only audit session
+`4dd1fe62-90ee-4780-aeb4-6a696f32ee30` completed its separate source/authority
+audit in `/tmp/native-edit-create-audit.json` (terminal success). Main review
+confirmed its newline findings against the real
+`../adapters/src/fs/index.ts:291-295` and `fs/text-metadata.ts:213-242`, then
+aligned creation, mixed-EOL majority/tie behavior and nonblank error precedence.
+The report's admission warning used an older read of the file: current Host
+admission and the packed proof already bind new v2 and recover the original
+stored version. Its suggestion to reject whitespace-only nonempty match text
+was not adopted: a nonempty whitespace snippet remains a valid exact edit.
+The audit did not read reference tests; main review read the contract cases
+cited above. No Claude task remains live for this batch.
+
+Earned progress: **37/100**, M3 **6/20**, unchanged denominator. Native retains
+the existing bounded UTF-8 file path (2 MiB source reads); ZCode's much larger
+and legacy-encoding paths remain an explicit unaccepted difference. Full
+read/write policy comparison, other matrix gaps and M6 comparisons remain.

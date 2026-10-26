@@ -227,7 +227,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
     compileToolInput(tool.parameters);
     invariant(Number.isFinite(tool.timeoutMs) && tool.timeoutMs > 0 && tool.timeoutMs < limits.effectTimeoutMs, 'invalid_tool_timeout');
     invariant(!tool.concurrentSafe || tool.readOnly && tool.observationRole === 'none', 'invalid_tool_concurrency');
-    invariant(tool.workspaceEditPolicy === undefined || tool.workspaceEditPolicy === 'zcode-match/v1'
+    invariant(tool.workspaceEditPolicy === undefined || ['zcode-match/v1', 'zcode-match/v2'].includes(tool.workspaceEditPolicy)
       && ['edit_workspace_file', 'multi_edit_workspace_file'].includes(tool.name)
       && !tool.readOnly && !tool.concurrentSafe && tool.recoveryPolicy !== 'safe-read/v1', 'invalid_workspace_edit_policy');
     invariant(tool.workspacePatchPolicy === undefined || tool.workspacePatchPolicy === 'zcode-patch/v1'

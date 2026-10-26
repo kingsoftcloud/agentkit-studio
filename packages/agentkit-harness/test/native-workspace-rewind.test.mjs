@@ -43,6 +43,23 @@ function setup(t, authorize = async () => 'allow') {
 }
 const patch = (...lines) => ['*** Begin Patch', ...lines, '*** End Patch'].join('\n');
 
+test('v2 Edit creation has a durable absent preimage and cold file rewind removes only that creation', async t => {
+  const f = setup(t);
+  const tools = f.tools.definitions.map(tool => tool.name === 'edit_workspace_file' ? { ...tool, workspaceEditPolicy: 'zcode-match/v2' } : tool);
+  const created = await f.run('edit_workspace_file', { path: 'created.txt', old_text: '', new_text: 'created through Edit\n' }, { tools });
+  assert.equal(created.output.status, 'ok', JSON.stringify(created.output));
+  assert.ok(created.output.content.checkpoint_id); assert.deepEqual(created.output.workspaceChangedPaths, ['created.txt']);
+  assert.equal(f.read('created.txt'), 'created through Edit\n');
+  f.reopen();
+  const preview = await f.run('preview_workspace_rewind', { checkpoint_id: created.output.content.checkpoint_id });
+  assert.equal(preview.output.content.can_apply, true, JSON.stringify(preview.output));
+  assert.deepEqual(preview.output.content.files.map(file => [file.path, file.action]), [['created.txt', 'delete']]);
+  const undone = await f.run('rewind_workspace_files', { checkpoint_id: created.output.content.checkpoint_id, preview_token: preview.output.content.preview_token });
+  assert.equal(undone.output.status, 'ok', JSON.stringify(undone.output));
+  assert.equal(existsSync(join(f.workspace, 'created.txt')), false);
+  assert.deepEqual(f.store.load(scope, created.runId), created.record, 'rewind does not change the admitted v2 Run');
+});
+
 function conversationControl(record, commandId = 'combined') {
   return { contract: 'agentkit.native-conversation-workspace-control/v1', scope, sessionId: 'session',
     commandId, requestDigest: `request-${commandId}`, sourceDigest: digest(record),

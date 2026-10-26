@@ -500,8 +500,22 @@ export function createNativeWorkspaceTools({
     const replaceAll = Boolean(args.replace_all);
     const target = resolvePath(path);
     const rel = relativeOf(target);
-    const requestError = validateSingleEditRequest(oldText, rel);
+    const requestError = preparedEdit?.emptyOldText ? null : validateSingleEditRequest(oldText, rel);
     if (requestError) return requestError;
+    if (preparedEdit?.create) {
+      // Preparation observed absence. Recheck under the mutation lock, then use
+      // create-only publication to refuse a concurrent external creation too.
+      if (!absent(target)) return stalePreparedEdit(rel);
+      const createdText = preparedEdit.createdText;
+      try { publish(target, Buffer.from(createdText, 'utf-8'), { createOnly: true }); }
+      catch (error) { return { ok: false, path: rel, error_type: error.code === 'EEXIST' ? 'file_modified_since_read' : error.code || 'publish_failed',
+        error_message: error.message, suggested_action: 'Read the current file and retry.' }; }
+      const stat = statSync(target, { bigint: true }); refreshReadState(rel, stat, createdText, target);
+      const diff = buildDiff(rel, '', createdText);
+      return { ok: true, path: rel, absolute_path: target, replacements: 1, used_quote_normalization: false,
+        diff, diff_sha256: sha256(Buffer.from(diff)), diff_line_count: diffLineCount(diff), ...changeCounts('', createdText),
+        size: Number(stat.size), mtime_ns: Number(stat.mtimeNs) };
+    }
     const observed = preparedEdit?.pinned ?? store.getReadState(rel);
     const pinned = observed ? { ...observed } : null;
     let readError = validateReadState(target, rel, { state: pinned });
@@ -601,18 +615,50 @@ export function createNativeWorkspaceTools({
       error_message: 'workspace file changed while preparing the edit', suggested_action: 'Read the current file and retry.' };
   }
 
+  function emptyEditContent(text, replacement) {
+    let crlf = 0, total = 0;
+    for (let index = 0; index < text.length; index++) if (text[index] === '\n') {
+      total++; if (text[index - 1] === '\r') crlf++;
+    }
+    // ZCode's actual filesystem adapter uses dominant EOL, with LF on ties
+    // and new files. Keep v1/nonempty editing semantics unchanged.
+    const ending = crlf > total - crlf ? '\r\n' : '\n';
+    return replacement.replace(/\r\n/g, '\n').replace(/\n/g, ending);
+  }
+
   async function prepareEdit(request, guard) {
     const args = request.call.arguments, target = resolvePath(args.path), relative = relativeOf(target);
     const edits = request.call.name === 'edit_workspace_file' ? [args] : args.edits;
     if (!Array.isArray(edits) || !edits.length || edits.some(edit => !edit || typeof edit.old_text !== 'string' || typeof edit.new_text !== 'string'))
       return { error: { ok: false, path: relative, error_type: 'invalid_edits', error_message: 'Non-empty edits with old_text and new_text strings are required.' } };
+    const emptyOldText = request.definition.workspaceEditPolicy === 'zcode-match/v2'
+      && request.call.name === 'edit_workspace_file' && args.old_text === '';
+    if (emptyOldText) {
+      if (args.new_text === '') return { error: { ok: false, path: relative, error_type: 'no_change', error_message: 'old_text and new_text are identical' } };
+      if (!args.replace_all && Number(args.expected_replacements ?? 1) !== 1) return { error: { ok: false, path: relative,
+        error_type: 'ambiguous_edit', error_message: 'Empty old_text replaces one file, but expected_replacements is not 1.',
+        occurrences: 1, expected_replacements: args.expected_replacements } };
+      if (absent(target)) { guard(); return { create: true, emptyOldText: true, createdText: emptyEditContent('', args.new_text) }; }
+    }
+    const creationRead = emptyOldText ? readWorkspaceText(target) : null;
+    if (creationRead?.error) return { error: { ...creationRead.error, path: relative } };
+    if (creationRead && creationRead.text.trim() !== '') return { error: { ok: false, path: relative, error_type: 'file_exists_no_old_text',
+      error_message: 'Cannot create a new file: the existing file contains nonblank text.' } };
     const state = store.getReadState(relative), pinned = state ? { ...state } : null;
+    if (emptyOldText && pinned?.partial) return { error: { ok: false, path: relative, error_type: 'file_not_fully_read',
+      error_message: 'An existing whitespace-only file must be read completely before replacing it.' } };
     let error = validateReadState(target, relative, { state: pinned });
     if (error) return { error };
-    const read = readWorkspaceText(target);
+    const read = creationRead ?? readWorkspaceText(target);
     if (read.error) return { error: { ...read.error, path: relative } };
     error = validateReadState(target, relative, { state: pinned, content: read.text });
     if (error) return { error };
+    if (emptyOldText) {
+      // Existing empty files still require the same full, fresh read authority.
+      const updated = emptyEditContent(read.text, args.new_text);
+      guard(); return { text: read.text, pinned, emptyOldText: true,
+        results: [{ ok: true, updated, replacements: 1, used_quote_normalization: false }] };
+    }
     const results = await prepareWorkspaceEdits({ text: read.text, relative, edits, replaceAll: Boolean(args.replace_all) }, { signal: request.signal });
     guard();
     if (!results) return { error: { ok: false, path: relative, error_type: 'edit_match_budget_exceeded', executed: false,
@@ -1069,7 +1115,7 @@ export function createNativeWorkspaceTools({
     // Matching runs before the publication lock, with strings only. The locked
     // commit rechecks the captured read state and content after this await.
     if (request.definition?.workspaceEditPolicy !== undefined) {
-      if (request.definition.workspaceEditPolicy !== 'zcode-match/v1' || !['edit_workspace_file', 'multi_edit_workspace_file'].includes(name))
+      if (!['zcode-match/v1', 'zcode-match/v2'].includes(request.definition.workspaceEditPolicy) || !['edit_workspace_file', 'multi_edit_workspace_file'].includes(name))
         return { status: 'error', content: { code: 'invalid_workspace_edit_policy' } };
       try {
         preparedEdit = await prepareEdit(request, guard);

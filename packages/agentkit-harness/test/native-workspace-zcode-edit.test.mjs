@@ -11,7 +11,7 @@ import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 
 function setup(t, text, { policy = true, authorize = async () => 'allow' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'native-zcode-edit-')), workspace = join(root, 'workspace');
-  mkdirSync(workspace); const path = join(workspace, 'a.txt'); writeFileSync(path, text);
+  mkdirSync(workspace); const path = join(workspace, 'a.txt'); if (text !== undefined) writeFileSync(path, text);
   const create = () => createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(root, 'state'), sessionId: 'session', authorize });
   const port = create();
   let seq = 0;
@@ -19,7 +19,7 @@ function setup(t, text, { policy = true, authorize = async () => 'allow' } = {})
   const call = (name, args, options = {}) => port.execute({ sessionId: 'session', operationKey: `op-${++seq}`,
     call: { name, callId: `call-${seq}`, arguments: { path: 'a.txt', ...args } },
     definition: { ...port.definitions.find(item => item.name === name),
-      ...(policy && ['edit_workspace_file', 'multi_edit_workspace_file'].includes(name) ? { workspaceEditPolicy: 'zcode-match/v1' } : {}) },
+      ...(policy && ['edit_workspace_file', 'multi_edit_workspace_file'].includes(name) ? { workspaceEditPolicy: typeof policy === 'string' ? policy : 'zcode-match/v1' } : {}) },
     signal: new AbortController().signal, ...options });
   return { root, port, create, path, call, read: () => readFileSync(path, 'utf8') };
 }
@@ -42,6 +42,84 @@ for (const [strategy, content, old_text, new_text, expected] of cases) test(`own
   const result = await f.call('edit_workspace_file', { old_text, new_text });
   assert.equal(result.status, 'ok', JSON.stringify(result)); assert.equal(f.read(), expected);
   assert.equal(result.content.match_strategy, strategy === 'indentation_flexible' ? 'line_trimmed' : strategy);
+});
+
+test('v2 empty-old-text edit creates an absent nested file and establishes full read authority', async t => {
+  const f = setup(t, undefined, { policy: 'zcode-match/v2' });
+  const args = { path: 'nested/new.txt', old_text: '', new_text: 'first\r\nsecond\r\n' };
+  const created = await f.call('edit_workspace_file', args);
+  assert.equal(created.status, 'ok', JSON.stringify(created));
+  assert.equal(readFileSync(join(f.root, 'workspace/nested/new.txt'), 'utf8'), 'first\nsecond\n');
+  assert.equal(created.content.diff_additions, 2);
+  const next = await f.call('edit_workspace_file', { ...args, old_text: 'second', new_text: 'updated' });
+  assert.equal(next.status, 'ok', 'a committed creation supplies the next edit read state');
+  assert.equal(readFileSync(join(f.root, 'workspace/nested/new.txt'), 'utf8'), 'first\nupdated\n');
+});
+
+test('v2 observed absence never authorizes overwriting a file created before publication', async t => {
+  for (const afterCheck of [1, 3]) {
+    const f = setup(t, undefined, { policy: 'zcode-match/v2' }); let checks = 0;
+    const definition = { ...f.port.definitions.find(tool => tool.name === 'edit_workspace_file'), workspaceEditPolicy: 'zcode-match/v2' };
+    const request = { sessionId: 'session', operationKey: 'race', call: { name: definition.name, callId: 'race',
+      arguments: { path: 'a.txt', old_text: '', new_text: 'must not publish' } }, definition, signal: new AbortController().signal };
+    const result = await f.port.execute(request, { assertCurrent() {
+      if (++checks === afterCheck) writeFileSync(f.path, 'external creator');
+      return true;
+    } });
+    assert.equal(result.status, 'error'); assert.equal(result.content.error_type, 'file_modified_since_read');
+    assert.equal(f.read(), 'external creator');
+  }
+});
+
+test('v2 fills only full-fresh-read whitespace files and preserves their newline convention', async t => {
+  for (const [before, expected] of [['', 'new\nline\n'], [' \r\n\t\r\n', 'new\r\nline\r\n'],
+    ['\r\n\n\n', 'new\nline\n'], ['\r\n\n', 'new\nline\n']]) {
+    const f = setup(t, before, { policy: 'zcode-match/v2' });
+    const args = { old_text: '', new_text: 'new\nline\n' };
+    assert.equal((await f.call('edit_workspace_file', args)).content.error_type, 'file_not_read');
+    await f.call('read_workspace_file', {});
+    const result = await f.call('edit_workspace_file', args); assert.equal(result.status, 'ok', JSON.stringify(result));
+    assert.equal(f.read(), expected);
+    assert.equal((await f.call('edit_workspace_file', args)).content.error_type, 'file_exists_no_old_text');
+    assert.equal(f.read(), expected);
+  }
+});
+
+test('v2 retains stale, partial, no-change and nonblank protections for empty-old-text edits', async t => {
+  const f = setup(t, ' \n\n', { policy: 'zcode-match/v2' }), args = { old_text: '', new_text: 'new' };
+  await f.call('read_workspace_file', { start_line: 1, end_line: 1 });
+  assert.equal((await f.call('edit_workspace_file', args)).content.error_type, 'file_not_fully_read');
+  await f.call('read_workspace_file', {}); writeFileSync(f.path, '\t\n');
+  assert.equal((await f.call('edit_workspace_file', args)).content.error_type, 'file_modified_since_read');
+  const none = setup(t, undefined, { policy: 'zcode-match/v2' });
+  assert.equal((await none.call('edit_workspace_file', { old_text: '', new_text: 'new', expected_replacements: 2 })).content.error_type, 'ambiguous_edit');
+  assert.equal((await none.call('edit_workspace_file', { old_text: '', new_text: '' })).content.error_type, 'no_change');
+  assert.throws(() => none.read(), { code: 'ENOENT' });
+  const existing = setup(t, 'source code', { policy: 'zcode-match/v2' });
+  assert.equal((await existing.call('edit_workspace_file', args)).content.error_type, 'file_exists_no_old_text', 'nonblank refusal precedes read-state validation as in ZCode');
+  await existing.call('read_workspace_file', {});
+  assert.equal((await existing.call('edit_workspace_file', args)).content.error_type, 'file_exists_no_old_text');
+  assert.equal(existing.read(), 'source code');
+});
+
+test('v1 and legacy Runs never acquire empty-old-text creation and v2 multi-edit is unchanged', async t => {
+  for (const policy of [false, 'zcode-match/v1']) {
+    const f = setup(t, '', { policy }); await f.call('read_workspace_file', {});
+    assert.equal((await f.call('edit_workspace_file', { old_text: '', new_text: 'new' })).content.error_type, 'missing_old_text');
+    assert.equal(f.read(), '');
+  }
+  const f = setup(t, '', { policy: 'zcode-match/v2' }); await f.call('read_workspace_file', {});
+  assert.equal((await f.call('multi_edit_workspace_file', { edits: [{ old_text: '', new_text: 'new' }] })).content.error_type, 'missing_old_text');
+  assert.equal(f.read(), '');
+});
+
+test('v2 creation rejects denial, abort and path escape without publication', async t => {
+  const f = setup(t, undefined, { policy: 'zcode-match/v2', authorize: async () => 'deny' }), args = { old_text: '', new_text: 'new' };
+  assert.equal((await f.call('edit_workspace_file', args)).content.code, 'policy_denied');
+  const allowed = setup(t, undefined, { policy: 'zcode-match/v2' }), controller = new AbortController(); controller.abort();
+  assert.equal((await allowed.call('edit_workspace_file', args, { signal: controller.signal })).content.code, 'canceled');
+  assert.equal((await allowed.call('edit_workspace_file', { ...args, path: '../escape.txt' })).content.error_type, 'path_escape');
+  assert.throws(() => allowed.read(), { code: 'ENOENT' }); assert.throws(() => f.read(), { code: 'ENOENT' });
 });
 
 test('legacy absence keeps quote replacement and missing-prefix behavior unchanged', async t => {
