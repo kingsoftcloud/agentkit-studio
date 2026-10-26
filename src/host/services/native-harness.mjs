@@ -795,6 +795,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     resolveBackgroundTurn: resolveBackgroundBinding,
   });
   const memoryExtraction = createStudioNativeMemoryExtraction({ store, storeDir, signal: lifetime.signal,
+    principal: { tenantId: 'local', workspaceId, userId: 'local-user' },
     resolveRecord: parent => parent.buildId ? builds.resolve(parent.scope.agentId, parent.buildId)
       : agents.getRevision(parent.scope.agentId, parent.revision),
     resolveModel: async ({ parent, prepared, signal }) => {

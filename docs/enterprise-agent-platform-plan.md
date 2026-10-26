@@ -85,9 +85,9 @@ line counts or test totals. Do not increment for producing another plan.
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5); user-facing version/conflict and management behavior (5) | 10 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4); background and child lifecycle (5); approval/cancel/error/public reasoning/history/reconnect product flow (5) | 5 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 0 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries earned 1); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 1 |
 
-Current assessed progress: **50/100**, approximately 50%. P4's remaining credit
+Current assessed progress: **51/100**, approximately 51%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -144,10 +144,12 @@ logs: `/tmp/enterprise-agent-memory-final-integration.log`,
 `/tmp/enterprise-agent-memory-commit-guard-validation.log`.
 
 P4 earned +3 (durable jobs/cursor 2, production Host trigger/lifetime 1). The
-remaining usage/status point awaits mounted-product/rendered UI acceptance;
-implementation alone is not that evidence. Abrupt process-kill/unknown-effect
-experiments, compaction/rewind cursor lineage, and the crash gap between a
-completed parent and job enqueue still require broader acceptance/hardening.
+remaining usage/status point awaits full mounted-product/UI acceptance;
+an isolated component alone is not that evidence. The completed-parent/enqueue
+gap and Memory process-kill boundaries now have focused evidence in the
+[Memory recovery record](enterprise-agent-memory-recovery.md), earning 1 of
+P5's 6 fault-acceptance points. Compaction/rewind cursor lineage and broader
+failure/cancel/recovery acceptance remain open.
 Controlled model usage is not evidence of real-model quality or token savings.
 
 Baseline commit before new platform fixes: `22a47d8`. Reference ZCode checkout
@@ -225,13 +227,11 @@ mechanism evidence, not an actual-model quality or performance benchmark.
 Core TypeScript build, contract TypeScript check and client bundle build passed.
 No full test suite was run in this batch.
 
-Remaining Memory integration constraints: persist the prepared auxiliary
-identity/configuration and original manifest before model dispatch; reusing a
-new manifest to derive a new job on recovery could duplicate writes. Slice the
-trusted input after the durable cursor, own provider/model resources at Host
-scope, retain automatic triggers and multilingual eligibility, and expose
-independent job status/usage. Until those are integrated and verified through
-Studio, automatic model extraction remains incomplete.
+The prepared identity/configuration, original manifest, cursor, independent
+Host resources and automatic trigger are now integrated as described above.
+Remaining Memory acceptance includes compaction/rewind lineage and the full
+mounted product flow; controlled model fixtures do not establish extraction
+quality or token savings.
 
 ### Route-driven local business and coding verticals
 

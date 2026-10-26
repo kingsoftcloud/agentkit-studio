@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +37,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
   const root = await mkdtemp(join(tmpdir(), 'studio-memory-host-'));
   const workspaceRoot = join(root, 'workspace'); await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root });
-  const ledger = new SqliteRunStore(join(root, 'runs.sqlite'));
+  let ledger = new SqliteRunStore(join(root, 'runs.sqlite'));
   const fullSpec = { ...spec, bindings: { modelProfileIds: ['fixture'] } };
   const record = await agents.create({ name: 'Native', runtimeType: 'harness', spec: fullSpec });
   const events = [], definitions = new Map(), requests = [];
@@ -75,6 +75,8 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
     nativeTools.bindMemory = memory => { observeMemory(memory); return bindMemory(memory); };
   }
   const services = { sessions: { flush: async () => true }, llm: {},
+    sessionController: { resolveAgent: async sessionId => ({ agent: sessionId === session.id
+      ? { session, externalTurns: nativeOwnershipHost(session, events) } : null }) },
     sessionProjections: { register(definition) { definitions.set(definition.key, definition); return () => definitions.delete(definition.key); },
       stateOf(_session, id) { const definition = definitions.get(id); return definition ? events.reduce(definition.apply, definition.init()) : undefined; } } };
   // One ctx serves the harness services, the DSH tool pipeline and the Memory
@@ -83,7 +85,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
     tools: toolCtx.tools, sandboxPolicy: toolCtx.sandboxPolicy, approval: approvalService };
   const builds = { resolve: async (agentId, buildId) => ({ ...structuredClone(record),
     executionEngine: buildExecutionEngine(record.spec, 'agentkit.native-dsh-turn/v1') }) };
-  const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
+  const openHost = () => createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, builds, models, ledger,
     renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
       modelCalls++;
       const body = JSON.parse(options.body);
@@ -91,6 +93,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
       return new Response(`data: ${JSON.stringify({ id: `response-${modelCalls}`, ...response,
         usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
     } });
+  let host = await openHost();
   t.after(async () => { await host.close(); await rm(root, { recursive: true, force: true }); });
   const payload = (text, turn = 1, buildId) => ({ agent: { session, externalTurns: nativeOwnershipHost(session, events),
     options: { provider: 'agentkit-studio-fixture', model: 'pinned' } },
@@ -104,7 +107,21 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
     userId: 'local-user', agentId: record.metadata.id }, 'session');
   const run = async (text, turn, buildId) => { await host.executeTurn(payload(text, turn, buildId)); return head(); };
   const memoryProvider = scope => new SqliteNativeMemoryProvider(memoryPath(root, scope), { principal: scope });
-  return { root, host, record, ledger, run, head, payload, memoryProvider, requests, events, toolRegistry };
+  return { root, get host() { return host; }, record, get ledger() { return ledger; }, agents,
+    run, head, payload, memoryProvider, requests, events, toolRegistry,
+    async reopenHost() { await host.close(); ledger = new SqliteRunStore(join(root, 'runs.sqlite')); host = await openHost(); } };
+}
+
+async function exportMemoryUiEvidence(name, h, snapshot) {
+  const status = await h.host.recoveryStatus({ agentId: h.record.metadata.id, sessionId: snapshot.sessionId });
+  assert.equal(status.accounting.own.modelCalls, 1);
+  assert.equal(status.memoryExtraction.jobs.length, 1);
+  if (process.env.AGENTKIT_NATIVE_MEMORY_UI_EVIDENCE_DIR) {
+    await mkdir(process.env.AGENTKIT_NATIVE_MEMORY_UI_EVIDENCE_DIR, { recursive: true });
+    await writeFile(join(process.env.AGENTKIT_NATIVE_MEMORY_UI_EVIDENCE_DIR, `${name}.json`),
+      JSON.stringify({ record: h.record, status }, null, 2));
+  }
+  return status;
 }
 
 test('production Host completion persists and dispatches opt-in model Memory after the main turn', async t => {
@@ -135,12 +152,80 @@ test('production Host completion persists and dispatches opt-in model Memory aft
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'success', JSON.stringify(rows.map(row => ({ status: row.status, error: row.errorCode }))));
     assert.equal(rows[0].usage.modelCalls, 2); assert.equal(auxiliaryCalls, 2);
+    const status = await exportMemoryUiEvidence('success', h, snapshot);
+    assert.equal(status.memoryExtraction.jobs[0].status, 'success');
+    assert.equal(status.memoryExtraction.jobs[0].usage.modelCalls, 2);
     assert.equal(h.ledger.load(snapshot.scope, snapshot.runId).snapshot.usage.modelCalls, 1);
     assert.equal(rows[0].prepared.identity.buildId, snapshot.buildId);
     assert.equal(rows[0].source.parent.buildId, null, 'live revision and published Build identities remain distinct');
     const provider = h.memoryProvider(snapshot.scope);
     try { assert.equal(provider.list().length, 1); assert.equal(provider.list()[0].memoryType, 'fact'); }
     finally { provider.close(); }
+  } finally { jobs.close(); }
+});
+
+test('production recovery status exposes exhausted auxiliary usage separately from the completed parent', async t => {
+  let auxiliaryCalls = 0;
+  const h = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+    write: { mode: 'candidate' }, extraction: { enabled: true, minUserCharacters: 8 }, recall: { enabled: false, maxTokens: 0 } },
+    context: { rollout: { memoryWrite: 'enabled' } } }, respond: (_count, body) => {
+      if (!body.tools?.some(tool => tool.function?.parameters?.properties?.source_event_ids)) return finish('Delivered.');
+      auxiliaryCalls++;
+      return toolCall(`read-${auxiliaryCalls}`, 'read_memory', { memory_id: 'missing-fact' });
+    } });
+  const snapshot = await h.run('公司的财务报表和发票日期统一使用协调世界时。');
+  const jobs = new StudioNativeMemoryExtractionStore(join(h.root, 'native-harness', 'memory-extraction.sqlite'));
+  try {
+    const deadline = Date.now() + 5000;
+    let rows;
+    do {
+      rows = jobs.list({ scope: snapshot.scope, sessionId: snapshot.sessionId });
+      if (rows[0]?.status === 'error') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    } while (Date.now() < deadline);
+    assert.equal(rows[0]?.status, 'error'); assert.equal(auxiliaryCalls, 5);
+    const status = await exportMemoryUiEvidence('budget', h, snapshot);
+    assert.equal(status.memoryExtraction.jobs[0].errorCode, 'native_memory_extraction_budget_exhausted');
+    assert.equal(status.memoryExtraction.jobs[0].usage.modelCalls, 5);
+    assert.equal(status.memoryExtraction.cursor, null);
+  } finally { jobs.close(); }
+});
+
+test('production Host startup recovers missed extraction from the frozen revision after the mutable draft disables Memory', async t => {
+  let auxiliaryCalls = 0;
+  const h = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
+    write: { mode: 'candidate' }, extraction: { enabled: true, minUserCharacters: 8 }, recall: { enabled: false, maxTokens: 0 } },
+    context: { rollout: { memoryWrite: 'enabled' } } },
+    observeMemory: memory => {
+      memory.memoryTurn.consume = async () => { throw Error('controlled failure before extraction enqueue'); };
+    },
+    respond: (_count, body) => {
+      if (!body.tools?.some(tool => tool.function?.parameters?.properties?.source_event_ids)) return finish('Delivered.');
+      auxiliaryCalls++;
+      return finish('No additional memory needed.');
+    } });
+  await h.run('公司的财务报表和发票日期统一使用协调世界时。');
+  const snapshot = h.head(); assert.equal(snapshot.phase, 'completed');
+  const jobs = new StudioNativeMemoryExtractionStore(join(h.root, 'native-harness', 'memory-extraction.sqlite'));
+  try {
+    assert.equal(jobs.list({ scope: snapshot.scope, sessionId: snapshot.sessionId }).length, 0);
+    await h.agents.update(h.record.metadata.id, { expectedRevision: 1,
+      spec: { ...h.record.spec, memory: { ...h.record.spec.memory, extraction: { enabled: false } } } });
+    await h.reopenHost();
+    let rows;
+    const deadline = Date.now() + 5000;
+    do {
+      rows = jobs.list({ scope: snapshot.scope, sessionId: snapshot.sessionId });
+      if (rows[0]?.status === 'success' || rows[0]?.status === 'error') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    } while (Date.now() < deadline);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].source.parent.revision, 1, 'startup must resolve the original immutable revision');
+    assert.equal(rows[0].status, 'success', JSON.stringify(rows.map(row => ({ status: row.status, error: row.errorCode }))));
+    assert.equal(auxiliaryCalls, 1);
+    await h.reopenHost(); await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(jobs.list({ scope: snapshot.scope, sessionId: snapshot.sessionId }).length, 1);
+    assert.equal(auxiliaryCalls, 1);
   } finally { jobs.close(); }
 });
 

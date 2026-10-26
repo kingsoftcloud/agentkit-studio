@@ -192,7 +192,11 @@ test('the actual header panel renders saved history, reads results and exposes o
       snapshotRevision: 4, own: { modelCalls: 2, toolCalls: 1, inputTokens: 4, outputTokens: 6, cost: 0 },
       descendant: { modelCalls: 1, toolCalls: 2, inputTokens: 7, outputTokens: 9, cost: .25 },
       total: { modelCalls: 3, toolCalls: 3, inputTokens: 11, outputTokens: 15, cost: .25 },
-      final: false, incomplete: true, complete: false } };
+      final: false, incomplete: true, complete: false },
+    memoryExtraction: { contract: 'agentkit.studio-native-memory-extraction/v1', agentId: 'local-agent', sessionId: 'session', cursor: null,
+      jobs: [{ jobId: 'memory-budget', parentRunId: 'original-run', status: 'error',
+        usage: { modelCalls: 5, toolCalls: 5, inputTokens: 55, outputTokens: 35, cost: 0 },
+        errorCode: 'native_memory_extraction_budget_exhausted', createdAt: 1, updatedAt: 2 }] } };
   const historic = { ...task, childRunId: 'old-child', parentRunId: 'old-parent', canPromote: false, resultAvailable: true, phase: 'completed' };
   const Panel = createNativeChildPanel({ ui: { React, ResourceDialog: 'dialog', buttonStyle: () => ({}) },
     setInterval: () => 1, clearInterval() {}, hostRemote: {
@@ -209,7 +213,10 @@ test('the actual header panel renders saved history, reads results and exposes o
   const outer = hooks(Panel, dispatcher), props = { sessionId: 'session', useSessions: select => select({ byId: { session: { projectionValues: { agentPreset: 'agentkit-studio-agent-local-agent-r1-hash' } } } }) };
   outer.render(props); await tick(); const header = outer.render(props);
   assert.equal(header.type, 'fragment'); assert.equal(header.children.length, 2);
-  const [mounted, remoteTasks] = header.children;
+  const [nativePanels, remoteTasks] = header.children;
+  assert.equal(nativePanels.type, 'fragment');
+  const [mounted, conversation] = nativePanels.children;
+  assert.equal(typeof conversation.type, 'function');
   assert.equal(typeof mounted.type, 'function'); assert.equal(typeof remoteTasks.type, 'function');
   assert.deepEqual([mounted.props.agentId, remoteTasks.props.agentId], ['local-agent', 'local-agent']);
   assert.deepEqual([mounted.props.sessionId, remoteTasks.props.sessionId], ['session', 'session']);
@@ -220,6 +227,12 @@ test('the actual header panel renders saved history, reads results and exposes o
   assert.ok(walk(tree).some(node => node.props['aria-label'] === 'Native 运行用量'));
   assert.ok(walk(tree).some(node => node.children.includes('运行用量（统计不完整，显示已知用量）：模型 3 次 · 工具 3 次 · 输入 11 / 输出 15 tokens。')));
   assert.ok(walk(tree).some(node => node.children.includes('包含本运行、工具内模型调用及已结算的子任务用量。')));
+  const memory = walk(tree).find(node => node.props['aria-label'] === '自动记忆提炼');
+  assert.ok(memory);
+  const memoryText = walk(memory).flatMap(node => node.children.filter(child => typeof child === 'string')).join('');
+  assert.match(memoryText, /模型 5 次.*输入 55 \/ 输出 35 tokens/);
+  assert.match(memoryText, /已达到提炼预算上限/);
+  assert.doesNotMatch(memoryText, /native_memory_extraction_budget_exhausted/);
   walk(tree).find(node => node.type === 'button' && node.children.includes('恢复原运行')).props.onClick(); await tick(); tree = child.render(mounted.props);
   assert.deepEqual(recoveries, [{ agentId: 'local-agent', sessionId: 'session', runId: 'original-run' }]);
   assert.equal(walk(tree).filter(node => node.type === 'button' && node.children.includes('转为后台')).length, 1);

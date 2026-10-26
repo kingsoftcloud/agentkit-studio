@@ -8,6 +8,7 @@ import { prepareMemoryExtractionRun, executeMemoryExtractionRun } from '../../..
 import { nativeMemoryExtractionToolDefinitions, createNativeMemoryExtractionTools } from '../../../packages/agentkit-harness/src/native/memory-extraction-tools.mjs';
 import { studioNativeMemoryPolicy, studioNativeMemoryExtractionPolicy, studioNativeModelMemoryEnabled } from '../../providers/native-memory.mjs';
 import { captureStudioNativeMemoryExtraction, assertStudioNativeMemoryExtractionCurrent } from '../../providers/native-memory-extraction-source.mjs';
+import { readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 import { StudioNativeMemoryExtractionStore } from './native-memory-extraction-store.mjs';
 
 export const STUDIO_NATIVE_MEMORY_EXTRACTION = 'agentkit.studio-native-memory-extraction/v1';
@@ -20,12 +21,18 @@ const safeCode = error => /^[a-zA-Z0-9_:-]{1,128}$/.test(error?.code) ? error.co
  * NativeKernel and its own principal-bound Memory connection; no parent turn's
  * tool port or credential is retained after that turn releases its resources. */
 export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRecord, resolveModel,
-  signal, onError = () => {}, jobs = new StudioNativeMemoryExtractionStore(join(storeDir, 'native-harness', 'memory-extraction.sqlite')) }) {
+  principal, signal, onError = () => {}, jobs = new StudioNativeMemoryExtractionStore(join(storeDir, 'native-harness', 'memory-extraction.sqlite')) }) {
   invariant(store && typeof resolveRecord === 'function' && typeof resolveModel === 'function',
     'studio_native_memory_extraction_host_unbound');
+  const trustedPrincipal = principal === undefined ? null : copy(principal);
+  invariant(trustedPrincipal === null || trustedPrincipal && Object.keys(trustedPrincipal).length === 3
+    && ['tenantId', 'workspaceId', 'userId'].every(key => typeof trustedPrincipal[key] === 'string'
+      && trustedPrincipal[key].trim()), 'studio_native_memory_extraction_principal_invalid');
+  const withinPrincipal = scope => trustedPrincipal === null || scope
+    && ['tenantId', 'workspaceId', 'userId'].every(key => scope[key] === trustedPrincipal[key]);
   const lifetime = new AbortController(), owner = `memory-host-${randomUUID()}`, leaseMs = 90_000;
   const stopped = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
-  let closed = false, pumping, timer, closing;
+  let closed = false, pumping, recovering, requested = false, timer, closing;
   const memory = (scope, policy, options = {}) => new SqliteNativeMemoryProvider(join(storeDir, 'native-harness', 'memory-v1',
     memoryDigest(scope.tenantId).slice(7), 'memory.sqlite'), { principal: scope, scopes: policy.scopes, ...options });
   const receiptReader = provider => ({ operationKey, call, definition }) => provider.reconcile({ operationKey,
@@ -36,6 +43,7 @@ export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRec
 
   function schedule({ scope, sessionId, runId, record, buildId = null }) {
     invariant(!closed && !stopped.aborted, 'studio_native_memory_extraction_closed');
+    invariant(withinPrincipal(scope), 'studio_native_memory_extraction_scope_unbound');
     if (!studioNativeModelMemoryEnabled(record.spec)) return { status: 'disabled' };
     const policy = studioNativeMemoryPolicy(record.spec), extraction = studioNativeMemoryExtractionPolicy(record.spec);
     const provider = memory(scope, policy);
@@ -114,7 +122,8 @@ export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRec
           ports: { model: binding.model, tools }, signal: jobSignal, assertSourceCurrent: check, countRequest: binding.countRequest });
         status = result.status;
         usage = copy(result.snapshot.usage);
-        if (status === 'error') errorCode = 'native_memory_extraction_run_incomplete';
+        if (status === 'error') errorCode = result.snapshot.outcome === 'budget_exhausted'
+          ? 'native_memory_extraction_budget_exhausted' : 'native_memory_extraction_run_incomplete';
       }
       if (status === 'success' || status === 'no-op') check();
     } catch (error) {
@@ -134,7 +143,7 @@ export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRec
     for (;;) {
       if (closed || stopped.aborted) return;
       let claimed;
-      const pending = jobs.list({ statuses: ['queued', 'running'] });
+      const pending = jobs.list({ statuses: ['queued', 'running'] }).filter(job => withinPrincipal(job.scope));
       for (const job of pending) {
         claimed = jobs.claim(job.jobId, { owner, now: Date.now(), leaseMs });
         if (claimed) break;
@@ -149,15 +158,48 @@ export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRec
     }
   }
   function kick() {
-    if (closed || stopped.aborted || pumping) return;
+    if (closed || stopped.aborted) return;
+    if (pumping) { requested = true; return; }
+    requested = false;
     clearTimeout(timer);
-    pumping = Promise.resolve().then(pump).catch(onError).finally(() => { pumping = undefined; });
+    pumping = Promise.resolve().then(pump).catch(onError).finally(() => {
+      pumping = undefined;
+      if (requested) kick();
+    });
+  }
+  function recover() {
+    if (closed || stopped.aborted) return Promise.resolve();
+    if (recovering) return recovering;
+    // The completed parent ledger is the durable trigger. A crash between its
+    // terminal commit and schedule() must not lose extraction. Discovery is
+    // restricted to the Host's trusted principal and current session heads;
+    // neither a mutable Agent default nor an auxiliary Run grants admission.
+    recovering = Promise.resolve().then(async () => {
+      if (!trustedPrincipal || typeof store.listScopes !== 'function') return;
+      for (const scope of store.listScopes(trustedPrincipal)) for (const snapshot of store.list(scope)) {
+        if (closed || stopped.aborted) return;
+        if (snapshot.phase !== 'completed' || store.sessionHead(scope, snapshot.sessionId)?.runId !== snapshot.runId) continue;
+        try {
+          const loaded = store.load(scope, snapshot.runId);
+          if (!loaded.configuration.hostRecoveryBinding || loaded.configuration.childOwnerBinding) continue;
+          const capsule = readNativeRecoveryBinding(loaded, { agentId: scope.agentId,
+            sessionId: snapshot.sessionId, runId: snapshot.runId });
+          const record = await resolveRecord({ scope, sessionId: snapshot.sessionId, runId: snapshot.runId,
+            buildId: capsule.buildId, revision: capsule.agentRevision });
+          if (closed || stopped.aborted) return;
+          schedule({ scope, sessionId: snapshot.sessionId, runId: snapshot.runId, record, buildId: capsule.buildId });
+        } catch (error) { if (!closed && !stopped.aborted) onError(error); }
+      }
+    }).catch(onError).finally(() => { recovering = undefined; kick(); });
+    kick();
+    return recovering;
   }
   return {
     schedule,
-    recover() { kick(); },
-    async drain() { while (pumping) await pumping; },
+    recover,
+    async drain() { while (recovering || pumping) await (recovering ?? pumping); },
     status({ scope, sessionId }) {
+      invariant(withinPrincipal(scope), 'studio_native_memory_extraction_scope_unbound');
       return { contract: STUDIO_NATIVE_MEMORY_EXTRACTION, agentId: scope.agentId, sessionId,
         cursor: jobs.getCursor({ scope, sessionId }),
         jobs: jobs.list({ scope, sessionId }).slice(-100).map(publicJob) };
@@ -165,7 +207,7 @@ export function createStudioNativeMemoryExtraction({ store, storeDir, resolveRec
     close() {
       if (closing) return closing;
       closed = true; clearTimeout(timer); lifetime.abort(new Error('Memory extraction Host closed'));
-      return closing = Promise.resolve(pumping).finally(() => jobs.close());
+      return closing = Promise.allSettled([recovering, pumping]).finally(() => jobs.close());
     },
   };
 }

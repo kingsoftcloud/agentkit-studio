@@ -28,13 +28,15 @@ async function setup(t, { minUserCharacters = 64, mode = 'write', rollout = 'ena
     if (mode === 'fail') { response.writeHead(400, { 'content-type': 'application/json' }); response.end('{"error":{"message":"controlled failure"}}'); return; }
     const input = JSON.parse(body.messages.find(message => message.role === 'user').content);
     const called = body.messages.some(message => message.role === 'tool');
-    const message = called || mode === 'no-op' ? { role: 'assistant', content: 'Nothing else to save.' }
+    const message = mode === 'exhaust' ? { role: 'assistant', content: null, tool_calls: [{ id: `read-${bodies.length}`, type: 'function',
+      function: { name: 'read_memory', arguments: JSON.stringify({ memory_id: 'missing-fact' }) } }] }
+      : called || mode === 'no-op' ? { role: 'assistant', content: 'Nothing else to save.' }
       : { role: 'assistant', content: null, tool_calls: [{ id: 'save-fact', type: 'function',
         function: { name: 'manage_memory', arguments: JSON.stringify({ action: 'remember', scope: 'user',
           content: 'Invoices and financial reports use UTC.', memory_type: 'fact',
           source_event_ids: [input.source.messages.find(message => message.role === 'user' && !message.modelOnly).id] }) } }] };
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ choices: [{ message, finish_reason: called || mode === 'no-op' ? 'stop' : 'tool_calls' }],
+    response.end(JSON.stringify({ choices: [{ message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }],
       usage: { prompt_tokens: 11, completion_tokens: 7 } }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -51,6 +53,7 @@ async function setup(t, { minUserCharacters = 64, mode = 'write', rollout = 'ena
       input: { messages: [{ id: 'human', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }] },
       source: { provider: 'fixture', model: 'fixture' }, selection: {}, systemPrompt: '' }) });
   const open = () => createStudioNativeMemoryExtraction({ store: ledger, storeDir: root, onError: error => errors.push(error),
+    principal: { tenantId: scope.tenantId, workspaceId: scope.workspaceId, userId: scope.userId },
     resolveRecord: async () => structuredClone(record), resolveModel: async ({ prepared, signal }) => ({
       model: createNativeModelPort({ resolveProfile: async () => binding }),
       countRequest: request => counter.tokens.countRequest(request),
@@ -59,11 +62,11 @@ async function setup(t, { minUserCharacters = 64, mode = 'write', rollout = 'ena
   let service = open();
   t.after(async () => { await service.close(); ledger.close(); await new Promise(resolve => server.close(resolve));
     rmSync(root, { recursive: true, force: true }); });
-  const run = async (runId, text = prose) => {
+  const run = async (runId, text = prose, runScope = scope) => {
     const kernel = new NativeKernel({ store: ledger, owner: 'parent', digest, ports: { model: { generate: async () => final() } } });
-    kernel.start({ scope, runId, sessionId: 'session', turnId: runId, buildId: 'revision-frozen', parentRunId: null,
+    kernel.start({ scope: runScope, runId, sessionId: 'session', turnId: runId, buildId: 'revision-frozen', parentRunId: null,
       taskChainId: 'chain' }, config(text));
-    return kernel.runUntilIdle(scope, runId);
+    return kernel.runUntilIdle(runScope, runId);
   };
   const request = runId => ({ scope, sessionId: 'session', runId, record });
   return { root, run, request, bodies, errors, record, store: () => ledger, service: () => service,
@@ -120,6 +123,58 @@ test('short multilingual windows accumulate without a model call or premature cu
   assert.equal(f.service().status(f.request('two')).jobs[0].status, 'success');
 });
 
+test('cold discovery admits a completed parent missed before enqueue and does not repeat it on the next reopen', async t => {
+  const f = await setup(t);
+  await f.run('missed');
+  assert.equal(f.service().status(f.request('missed')).jobs.length, 0);
+  await f.reopen();
+  await f.service().recover(); await f.service().drain();
+  const accepted = f.service().status(f.request('missed'));
+  assert.equal(accepted.jobs.length, 1);
+  assert.equal(accepted.jobs[0].status, 'success', canonical(accepted));
+  assert.equal(accepted.jobs[0].parentRunId, 'missed');
+  assert.equal(f.bodies.length, 2);
+  await f.reopen(); await f.service().recover(); await f.service().drain();
+  assert.deepEqual(f.service().status(f.request('missed')), accepted);
+  assert.equal(f.bodies.length, 2, 'auxiliary completed runs and consumed parents are not submitted again');
+  assert.deepEqual(f.errors, []);
+});
+
+test('cold discovery considers only the current completed parent and keeps failed extraction terminal', async t => {
+  const f = await setup(t, { mode: 'fail' });
+  await f.run('old'); await f.run('current');
+  await f.reopen(); await f.service().recover(); await f.service().drain();
+  const state = f.service().status(f.request('current'));
+  assert.equal(state.jobs.length, 1);
+  assert.equal(state.jobs[0].parentRunId, 'current');
+  assert.equal(state.jobs[0].status, 'error');
+  assert.equal(f.bodies.length, 1);
+  await f.reopen(); await f.service().recover(); await f.service().drain();
+  assert.deepEqual(f.service().status(f.request('current')), state);
+  assert.equal(f.bodies.length, 1, 'startup must not turn a terminal provider error into an unbounded retry');
+});
+
+test('a Host cannot discover, dispatch, inspect or schedule another principal in the same SQLite files', async t => {
+  const f = await setup(t);
+  const foreign = { ...scope, tenantId: 'another-tenant' };
+  await f.run('foreign-parent', prose, foreign);
+  const other = createStudioNativeMemoryExtraction({ store: f.store(), storeDir: f.root,
+    principal: { tenantId: foreign.tenantId, workspaceId: foreign.workspaceId, userId: foreign.userId },
+    resolveRecord: async () => f.record, resolveModel: async () => { throw Error('Foreign dispatch must not occur'); } });
+  const request = { scope: foreign, sessionId: 'session', runId: 'foreign-parent', record: f.record };
+  const queued = other.schedule(request); await other.close();
+  await f.run('ours'); await f.reopen();
+  await f.service().recover(); await f.service().drain();
+  assert.equal(f.service().status(f.request('ours')).jobs[0].status, 'success');
+  assert.equal(f.bodies.length, 2);
+  const jobs = new StudioNativeMemoryExtractionStore(join(f.root, 'native-harness', 'memory-extraction.sqlite'));
+  try { assert.equal(jobs.get(queued.jobId).status, 'queued'); assert.equal(jobs.get(queued.jobId).fence, 0); }
+  finally { jobs.close(); }
+  assert.throws(() => f.service().status(request), { code: 'studio_native_memory_extraction_scope_unbound' });
+  assert.throws(() => f.service().schedule(request), { code: 'studio_native_memory_extraction_scope_unbound' });
+  assert.deepEqual(f.errors, []);
+});
+
 test('a queued job cold-recovers its original prepared manifest, never a later memory snapshot', async t => {
   const f = await setup(t);
   await f.run('one'); const queued = f.service().schedule(f.request('one'));
@@ -141,16 +196,20 @@ test('a queued job cold-recovers its original prepared manifest, never a later m
   assert.equal(f.service().status(f.request('one')).jobs[0].status, 'success');
 });
 
-test('a newer parent head revokes a queued source before model dispatch and does not advance its cursor', async t => {
+test('a newer parent head revokes a queued source and cold discovery extracts only the current head', async t => {
   const f = await setup(t);
   await f.run('one'); f.service().schedule(f.request('one')); await f.reopen();
   await f.run('two'); f.service().recover(); await f.service().drain();
   const state = f.service().status(f.request('one'));
   assert.equal(state.jobs[0].status, 'error');
   assert.equal(state.jobs[0].errorCode, 'studio_native_memory_extraction_not_current_head');
-  assert.equal(state.cursor, null); assert.equal(f.bodies.length, 0);
-  f.service().schedule(f.request('two')); await f.service().drain();
-  assert.equal(f.service().status(f.request('two')).jobs[1].status, 'success');
+  assert.equal(state.jobs.length, 2);
+  assert.equal(state.jobs[1].parentRunId, 'two');
+  assert.equal(state.jobs[1].status, 'success');
+  assert.match(state.cursor, /two#message/);
+  assert.equal(f.bodies.length, 2);
+  const input = JSON.parse(f.bodies[0].messages.find(message => message.role === 'user').content);
+  assert.equal(input.parent.runId, 'two', 'the revoked job never called the model');
 });
 
 test('provider failure preserves the cursor and records auxiliary cost separately', async t => {
@@ -160,6 +219,17 @@ test('provider failure preserves the cursor and records auxiliary cost separatel
   assert.equal(state.jobs[0].status, 'error'); assert.equal(state.cursor, null);
   assert.equal(state.jobs[0].usage.modelCalls, 1); assert.equal(f.bodies.length, 1);
   assert.equal(f.store().load(scope, 'one').snapshot.usage.modelCalls, 1);
+});
+
+test('an extraction that spends its model budget stays incomplete with a visible budget reason', async t => {
+  const f = await setup(t, { mode: 'exhaust' });
+  await f.run('one'); f.service().schedule(f.request('one')); await f.service().drain();
+  const state = f.service().status(f.request('one'));
+  assert.equal(state.jobs[0].status, 'error');
+  assert.equal(state.jobs[0].errorCode, 'native_memory_extraction_budget_exhausted');
+  assert.equal(state.jobs[0].usage.modelCalls, 5); assert.equal(f.bodies.length, 5);
+  assert.equal(state.cursor, null);
+  const memory = f.memory(); assert.deepEqual(memory.list(), []); memory.close();
 });
 
 test('shadow performs bounded model evaluation without writing Memory', async t => {

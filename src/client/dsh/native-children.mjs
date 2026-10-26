@@ -9,6 +9,10 @@ const phases = { created: '已准备', preparing: '准备中', requesting_model:
   requesting_input: '读取输入', executing_tools: '执行工具', awaiting_interaction: '等待审批', paused: '已暂停',
   awaiting_reconciliation: '等待核对结果', reconciling_tool: '正在核对结果',
   completed: '已完成', failed: '已失败', interrupted: '需要恢复核对', canceled: '已取消', finalizing: '收尾中' };
+const memoryError = code => ({ native_memory_extraction_budget_exhausted: '已达到提炼预算上限',
+  studio_native_memory_extraction_not_current_head: '会话已有新进展，本次提炼已停止',
+  studio_native_memory_extraction_policy_changed: '记忆配置已变化，本次提炼已停止',
+  studio_native_memory_model_binding_changed: '原模型配置已变化，请检查配置' })[code] ?? '请检查模型与记忆配置';
 
 export function createNativeChildPanel({ ui: { React: { createElement: h, useEffect, useState, Fragment }, ResourceDialog, buttonStyle },
   hostRemote, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval }) {
@@ -56,7 +60,7 @@ export function createNativeChildPanel({ ui: { React: { createElement: h, useEff
             `记忆提炼：${({ queued: '排队中', running: '运行中', success: '已完成', 'no-op': '无需提炼',
               error: '未完成', aborted: '已停止', superseded: '已合并到新窗口' })[job.status]}`,
             job.usage ? ` · 模型 ${job.usage.modelCalls} 次 · 输入 ${job.usage.inputTokens} / 输出 ${job.usage.outputTokens} tokens` : '',
-            job.errorCode ? ` · ${job.errorCode}` : ''))) : null,
+            job.errorCode ? ` · ${memoryError(job.errorCode)}` : ''))) : null,
         cloudMemory ? h('section', { 'aria-label': '云记忆提交' },
           h('p', { role: cloudMemory.state === 'accepted' ? 'status' : 'alert' },
             cloudMemory.state === 'accepted' ? '云记忆服务已受理；记忆抽取和索引尚未确认。'
