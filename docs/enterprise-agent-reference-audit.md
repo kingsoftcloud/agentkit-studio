@@ -13,8 +13,8 @@ gate.
 | --- | --- | --- |
 | ZCode | `/tmp/agentkit-zcode-reference`, HEAD `3c5b227649371507ddc4eb46ac5133afe6db1cab`; its `LICENSE`, `NOTICE.md`, named source files and command-plan manifest | Pinned source and attributed code below. Final license/dependency review remains open. |
 | pi-durable | `/tmp/agentkit-pi-durable-reference-d5b3de22` holds the pinned README, specification, tool, submission, scheduler, Session and CLI sources at `d5b3de22d0e24a3e9c38a9410d3329b099717283` | The bounded [pi-durable assessment](native-pi-durable-reference.md) checks specific recovery, submission, ownership and host boundaries. It is not a complete conformance or license audit. |
-| OpenCode | Earlier conversation records `f669c46c9604ea3d70b8a7ed1f0c10f3a5ac1f61` | This audit did not inspect its source. Absence from one local document does not establish absence of a pin or checkout everywhere. |
-| AgentCore / Volcano AgentKit | Current plan's platform lifecycle/resource analogy | Current official product docs were not inspected. No claim of feature equivalence or imported implementation is established here. |
+| OpenCode | `/tmp/agentkit-opencode-reference-f669c46`, HEAD `f669c46c9604ea3d70b8a7ed1f0c10f3a5ac1f61`; `packages/server/src/{handlers/event.ts,event-feed.ts,handlers/session.ts,handlers/message.ts,auth.ts}` | Bounded review of headless server, session APIs, event feed and authentication. It is an architecture reference, not imported code. |
+| AgentCore / Volcano AgentKit | [AWS AgentCore overview](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/), [AWS observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html), [Volcano AgentKit overview](https://docs.volcengine.com/docs/agentkit/What_is_AgentKit?lang=zh), [Volcano Runtime overview](https://docs.volcengine.com/docs/agentkit/Agent_runtime_overview?lang=en), reviewed 2026-10-26 | Official product boundary reference only. Current Studio local implementation is not certified to offer the cloud services described there. |
 
 Searches were bounded to relevant local paths, not all disks. Not locating a
 checkout does not prove none exists. Product names alone do not establish a
@@ -82,11 +82,48 @@ gate; this inventory is not proof that the project has no other third-party code
   engine), and `codex`. Published Build identity, live revision digest, Session
   identity and execution environment are separate concepts.
 
+## OpenCode headless boundary comparison
+
+At the pinned OpenCode commit, `packages/server/src/handlers/session.ts`
+exposes session lifecycle and prompt operations; `handlers/message.ts` reads
+durable messages with a paginated cursor. `handlers/event.ts` streams events
+through `event-feed.ts`, whose subscribers use a bounded in-memory queue and
+receive a connection event plus heartbeats. This event stream does not itself
+replay events missed while disconnected; a client needs a durable session read
+to rebuild its view. `auth.ts` supports an optional server password and signed
+session cookies. These are source observations, not claims about every
+deployment's defaults.
+
+Studio already presents session snapshot/command, Build-bound conversation
+stream and recovery operations through `src/host-remote.mjs`. The Host's HTTP
+entry applies `connection.admit` before its registered routes. Native state and
+recovery remain owned by the Host plus NativeKernel; moving them into a second
+OpenCode-style server would duplicate authority. The useful pattern to retain
+is independent clients over authenticated APIs plus event delivery and durable
+readback. A future second client should be checked against the same Host
+identity, cursor and idempotency contract, not a separate runtime state store.
+
+The pinned OpenCode root `LICENSE` is MIT. No OpenCode source is copied into
+this project by the comparison above; if code is imported later, its copyright
+and license notice must accompany that source.
+
+## Platform reference boundary
+
+AWS's AgentCore overview describes a framework-agnostic Runtime combined with
+separate Memory, Gateway, Identity and Observability resources. Its
+observability documentation includes session, latency, token and error metrics.
+Volcano AgentKit's overview describes build/configuration, deployment,
+invocation/testing, observability and evaluation, while its Runtime overview
+distinguishes the hosted execution environment from Gateway, Knowledge, Memory
+and A2A resources. These official sources support the four-layer Studio
+responsibility map and the decision to keep Native a replaceable execution
+engine. They do not prove that Studio already supplies managed cloud scaling,
+isolation, network or identity services. This phase verifies local Host
+boundaries and leaves cloud deployment as an explicit later implementation.
+
 ## Remaining audit work
 
-Inspect pinned OpenCode implementation for the specific boundaries used;
-identify the intended AgentCore reference and verify relevant official docs;
-complete source/diff/notice and bundled dependency review; and examine kernel
+Complete source/diff/notice and bundled dependency review; and examine kernel
 branches for actual duplicated state or bypasses before restructuring.
 
 Route-driven business/coding and retry evidence is recorded separately in
