@@ -137,7 +137,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
   }
 
-  async function mcp(binding, jsonCodec, cacheId) {
+  async function mcp(binding, jsonCodec, cacheId, assertCurrent) {
     assertOpen();
     if (jsonCodec !== undefined && jsonCodec !== NATIVE_MCP_JSON_CODEC) throw new LocalResourceError('MCP_JSON_CODEC_INVALID', 'MCP JSON 解析契约无效');
     const exact = jsonCodec === NATIVE_MCP_JSON_CODEC;
@@ -150,6 +150,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       environment[name] = value;
     }
     assertOpen();
+    assertCurrent?.();
     // DSH credentials are mutable. Re-resolve them on every operation and
     // replace a cached client when the effective auth material changes. The
     // fingerprint is one-way and never leaves this process.
@@ -170,6 +171,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl, ...jsonOptions });
     const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' },
       exact ? { jsonSchemaValidator: nativeMcpSchemaValidator } : undefined);
+    assertCurrent?.();
     connectingClients.add(client);
     if (stdio) transport.stderr?.resume();
     try {
@@ -223,9 +225,9 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     if (!['content', 'mcp-result/v1'].includes(resultFormat)) throw new LocalResourceError('MCP_RESULT_FORMAT_INVALID', 'MCP 结果格式无效');
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
-    const entry = await mcp(id, resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined);
-    // Credentials and connection initialization may wait. Borrowing a parent
-    // connection cannot extend the child's original dispatch authority.
+    const entry = await mcp(id, resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined, undefined, check);
+    // Credentials and connection initialization may wait. A connected client
+    // cannot extend the original parent or child's Native dispatch authority.
     check();
     let result;
     try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }

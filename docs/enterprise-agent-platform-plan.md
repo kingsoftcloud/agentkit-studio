@@ -69,6 +69,13 @@ permission, audit or resource enforcement.
    actual local failure before changing this boundary; absence of cloud
    credentials does not itself prove constructor failure.
 
+6. **Governance follow-up remains open.** Parent MCP calls now receive the same
+   current-intent guard as child calls after a real SQLite/HTTP reproduction
+   proved stale dispatch through registry/credential waits. The existing form's
+   strict/loose/custom policy labels and security capability annotations have no
+   execution consumer; wiring an actual immutable bound policy is still required.
+   See [governance evidence and next contract](enterprise-agent-governance-audit.md).
+
 The actual Claude Code read-only audit was reviewed. Its useful finding was
 route-driven creation/Build coverage; its incorrect `Native=dsh-native` label,
 authentication placement and claims of absent preset HTTP coverage were rejected
@@ -384,7 +391,8 @@ was run.
 
 ## Next delivery order
 
-1. Close remaining context/source and cross-capability budget integration,
+1. Connect Agent policy configuration to the trusted execution boundary as
+   specified in the governance follow-up. Close remaining context/source and cross-capability budget integration,
    preserving the now-proven Memory and child lifecycle invariants.
 2. Finish product interaction and management against both verticals, building on the proven
    Native default and version/conflict management; finish allowed public reasoning,

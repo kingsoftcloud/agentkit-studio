@@ -897,6 +897,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       const childSkills = commandAuthority?.childSkills ? structuredClone(commandAuthority.childSkills) : null;
       const assertCurrent = ledgerAuthority ? request => {
         const allowed = ledgerAuthority(request);
+        if (!allowed) return false;
         const record = commandAuthority.store.load(commandAuthority.scope, request.runId);
         invariant(!childSkills || request.buildId === childSkills.buildId
           && canonical(record.configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills), 'studio_native_child_skill_binding_changed');
@@ -1062,15 +1063,17 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
                 instruction: 'Submit a new write_workspace_file call with the exact UTF-8 content requested in the current goal. No file was written.' } };
           }
         }
-        // A child borrows the parent's MCP transport, but dispatch is owned by
-        // the child's current Native intent, never by the parent DSH session.
-        const childMcp = commandAuthority?.childSessionId && mcpContracts.has(request.call.name);
+        // Both parent and child calls belong to the current Native intent.
+        // DSH policy and MCP credential/connection waits cannot extend that
+        // authority after its lease or immutable request has changed.
+        const ownedMcp = commandAuthority?.store && mcpContracts.has(request.call.name);
         const originalSignal = request.signal;
-        const sealed = childMcp ? canonical(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))) : null;
-        const assertMcpCurrent = childMcp ? () => {
+        const sealed = ownedMcp ? canonical(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))) : null;
+        const assertMcpCurrent = ownedMcp ? () => {
           invariant(request.signal === originalSignal && !originalSignal.aborted
             && canonical(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))) === sealed
-            && assertCurrent(request), 'studio_native_child_mcp_authority_stale');
+            && assertCurrent(request), commandAuthority.childSessionId
+              ? 'studio_native_child_mcp_authority_stale' : 'studio_native_mcp_authority_stale');
         } : undefined;
         assertMcpCurrent?.();
         const exactNumbers = requiresExactJsonWire(request.call.arguments);

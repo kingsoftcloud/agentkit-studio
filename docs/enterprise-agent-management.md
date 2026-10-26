@@ -22,8 +22,9 @@ was introduced.
 
 Conversational creation now uses its existing resolved Host factory when no
 custom factory is supplied, and declares the same minimal Native host/MCP
-capabilities as manual creation. Explicit non-Native drafts receive no Native
-host capability. Confirmation, exact draft revision, catalog validation and
+capability annotations as manual creation. These legacy annotations are not
+permission grants: the follow-up governance audit found no execution consumer.
+Explicit non-Native drafts receive no Native host annotation. Confirmation, exact draft revision, catalog validation and
 unknown-outcome guards remain in place.
 
 ## Mounted evidence
