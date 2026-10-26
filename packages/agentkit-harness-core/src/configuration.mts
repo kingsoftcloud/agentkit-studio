@@ -192,6 +192,8 @@ export function configure(input: ConfigurationInput): RunConfiguration {
   }
   for (const key of ['streaming', 'parallelToolCalls', 'providerThinkingDisplay'] as const)
     invariant(profile[key] === undefined || typeof profile[key] === 'boolean', `invalid_profile:${key}`);
+  invariant(profile.providerThinkingDisplayPolicy === undefined || profile.providerThinkingDisplayPolicy === 'provider-visible/v1'
+    && typeof profile.providerThinkingDisplay === 'boolean', 'invalid_provider_thinking_display_policy');
   invariant(profile.streamTimeoutPolicy === undefined || profile.streamTimeoutPolicy === 'idle/v1' && profile.streaming !== false,
     'invalid_stream_timeout_policy');
   invariant(profile.controllerReasoningPolicy === undefined || profile.controllerReasoningPolicy === 'disclosed-delegate/v1',

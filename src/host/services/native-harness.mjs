@@ -424,6 +424,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         // Presence versions the new display/idle defaults. Restore old Runs
         // without activating them, and let each child use its own parameters.
         const runtimePolicy = !original || Object.hasOwn(original.configuration.profile, 'providerThinkingDisplay');
+        const providerThinkingDisplayPolicy = original ? original.configuration.profile.providerThinkingDisplayPolicy : 'provider-visible/v1';
         const controllerReasoningPolicy = original ? original.configuration.profile.controllerReasoningPolicy : 'disclosed-delegate/v1';
         const anthropicKeys = ['anthropicPolicy', 'promptCachePolicy', 'operatorGuidancePolicy', 'toolCatalogPolicy', 'providerReplayProjectionPolicy'];
         const anthropicPolicies = original && primary
@@ -431,7 +432,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             .map(key => [key, original.configuration.profile[key]]))
           : !original || original.configuration.profile.anthropicPolicy ? admitAnthropicPolicies(desc.protocol, desc.modelName) : {};
         const modelRuntimeOptions = runtimePolicy ? {
-          providerThinkingDisplay: desc.parameters.provider_thinking_display ?? false,
+          providerThinkingDisplay: desc.parameters.provider_thinking_display ?? (providerThinkingDisplayPolicy === 'provider-visible/v1'),
+          ...(providerThinkingDisplayPolicy ? { providerThinkingDisplayPolicy } : {}),
           ...(modelOptions.streaming !== false ? { streamTimeoutPolicy: 'idle/v1' } : {}),
           ...(controllerReasoningPolicy ? { controllerReasoningPolicy } : {}),
           ...anthropicPolicies,

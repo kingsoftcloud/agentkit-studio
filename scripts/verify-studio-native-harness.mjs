@@ -30,6 +30,7 @@ import { createConversationCommandRewindProof } from './native-conversation-comm
 import { createConversationWorkspaceRewindProof } from './native-conversation-workspace-rewind-proof.mjs';
 import { createEditCreationProof } from './native-edit-creation-proof.mjs';
 import { createContextPruningProof } from './native-context-pruning-proof.mjs';
+import { createThinkingDisplayProof } from './native-thinking-display-proof.mjs';
 import { artifactToolDefinitions } from '../packages/agentkit-harness-core/dist/index.mjs';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
@@ -40,6 +41,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'context-pruning': { type: 'boolean', default: false },
   'context-pruning-summary': { type: 'boolean', default: false },
   'context-pruning-idle': { type: 'boolean', default: false },
+  'thinking-display': { type: 'boolean', default: false },
   'conversation-fork': { type: 'boolean', default: false },
   'conversation-rewind': { type: 'boolean', default: false },
   'conversation-active-rewind': { type: 'boolean', default: false },
@@ -120,6 +122,9 @@ assert.ok(!values['context-pruning-idle'] || values['mount-host'] && !Object.ent
   && !['context-pruning-idle', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning-idle is a separate mounted Host proof');
 const contextPruningProof = values['context-pruning'] || values['context-pruning-summary'] || values['context-pruning-idle']
   ? createContextPruningProof({ summary: values['context-pruning-summary'], idle: values['context-pruning-idle'] }) : null;
+assert.ok(!values['thinking-display'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
+  && !['thinking-display', 'mount-host', 'frozen', 'keep'].includes(key)), '--thinking-display is a separate mounted Host proof');
+const thinkingDisplayProof = values['thinking-display'] ? createThinkingDisplayProof() : null;
 assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;
@@ -173,6 +178,7 @@ const server = createServer(async (request, response) => {
     if (workspaceRepairProof) { await workspaceRepairProof.respond({ request, response, raw, requests }); return; }
     if (editCreationProof) { await editCreationProof.respond({ request, response, raw, requests }); return; }
     if (contextPruningProof) { await contextPruningProof.respond({ request, response, raw, requests }); return; }
+    if (thinkingDisplayProof) { await thinkingDisplayProof.respond({ request, response, raw, requests }); return; }
     if (todosProof) { await todosProof.respond({ request, response, raw, requests }); return; }
     if (planModeProof) { await planModeProof.respond({ request, response, raw, requests }); return; }
     if (instructionsProof) { await instructionsProof.respond({ request, response, raw, requests }); return; }
@@ -341,6 +347,7 @@ try {
     `        editCreate: ${Boolean(editCreationProof)}`,
     `        contextPruning: ${Boolean(contextPruningProof)}`,
     `        contextPruningIdle: ${Boolean(values['context-pruning-idle'])}`,
+    `        thinkingDisplay: ${Boolean(thinkingDisplayProof)}`,
     `        conversationFork: ${Boolean(conversationForkProof || conversationRewindProof)}`,
     `        conversationRewind: ${Boolean(conversationRewindProof)}`,
     `        conversationCommandRewind: ${values['conversation-command-rewind']}`,
@@ -385,6 +392,9 @@ try {
     harness = null;
   } else if (contextPruningProof) {
     await contextPruningProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
+    harness = null;
+  } else if (thinkingDisplayProof) {
+    await thinkingDisplayProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
     harness = null;
   } else if (planModeProof) {
     await planModeProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });

@@ -227,6 +227,40 @@ const ae = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 const SSE_HEADERS = { 'content-type': 'text/event-stream' };
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
+for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages']) test(`buffered thinking display HTTP: ${protocol} separates public content from replay and opaque bytes`, async t => {
+  const body = protocol === 'openai-chat' ? { choices: [{ finish_reason: 'stop', message: {
+    role: 'assistant', content: 'Answer', reasoning_content: 'DISPLAY_THOUGHT' } }] }
+    : protocol === 'openai-responses' ? { id: 'resp-buffered-thinking', model: 'fake-model', status: 'completed', output: [
+      { type: 'reasoning', id: 'reasoning-1', summary: [{ type: 'summary_text', text: 'DISPLAY_THOUGHT' }], encrypted_content: 'OPAQUE_PRIVATE_BYTES' },
+      { type: 'message', id: 'message-1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Answer' }] },
+    ] } : { type: 'message', content: [
+      { type: 'thinking', thinking: 'DISPLAY_THOUGHT', signature: 'PRIVATE_SIGNATURE' },
+      { type: 'redacted_thinking', data: 'OPAQUE_PRIVATE_BYTES' }, { type: 'text', text: 'Answer' },
+    ], stop_reason: 'end_turn' };
+  const replayMode = protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content';
+  for (const [policy, display, replay] of [[true, true, 'none'], [true, true, replayMode],
+    [true, false, replayMode], [false, true, replayMode]]) await t.test(`${policy ? 'new' : 'legacy'}/${display}/${replay}`, async () => {
+    const { result, events, requests } = await collect(null, protocol, () => ({ headers: JSON_HEADERS, body: JSON.stringify(body) }),
+      makeRequest({ profile: makeProfile({ streaming: false, providerReplayMode: replay, providerThinkingDisplay: display,
+        compatibilityDigest: 'b'.repeat(64), ...(policy ? { providerThinkingDisplayPolicy: 'provider-visible/v1' } : {}) }) }));
+    assert.equal(result.kind, 'final_candidate'); assert.equal(result.text, 'Answer'); assert.equal(requests.length, 1);
+    assert.deepEqual(events, policy && display ? [{ kind: 'thinking', text: 'DISPLAY_THOUGHT' }] : []);
+    assert.doesNotMatch(JSON.stringify(events), /OPAQUE_PRIVATE_BYTES|PRIVATE_SIGNATURE/);
+    assert.equal(Boolean(result.providerReplay), replay !== 'none');
+    const wire = JSON.parse(requests[0].body);
+    assert.equal(wire.provider_thinking_display, undefined); assert.equal(wire.providerThinkingDisplayPolicy, undefined);
+  });
+  const malformed = structuredClone(body);
+  if (protocol === 'openai-chat') malformed.choices[0].message.content = 4;
+  else if (protocol === 'openai-responses') malformed.output_text = 'Conflicting body';
+  else malformed.content.push({ type: 'tool_use', id: '', name: 'write', input: {} });
+  const invalid = await collect(null, protocol, () => ({ headers: JSON_HEADERS, body: JSON.stringify(malformed) }),
+    makeRequest({ profile: makeProfile({ streaming: false, providerReplayMode: 'none', providerThinkingDisplay: true,
+      providerThinkingDisplayPolicy: 'provider-visible/v1' }) }));
+  assert.equal(invalid.result.kind, 'provider_terminal_error'); assert.deepEqual(invalid.events, [],
+    'A buffered body must pass all envelope validation before publishing reasoning');
+});
+
 async function collect(port, protocol, handler, request, opts = {}) {
   return withServer(handler, async (server) => {
     const port = createNativeModelPort({

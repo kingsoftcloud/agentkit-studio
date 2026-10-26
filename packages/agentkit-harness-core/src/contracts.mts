@@ -97,6 +97,8 @@ export interface ModelProfile {
   providerCompatibilityPolicy?: { contract: 'provider-compat/v1'; rule: NonNullable<ModelProfile['inlineReasoningPolicy']>['rule'] };
   streaming?: boolean; outputTokenParameter?: 'max_tokens' | 'max_completion_tokens';
   streamTimeoutPolicy?: 'idle/v1'; providerThinkingDisplay?: boolean;
+  /** Version the Host's visible-provider-reasoning default without upgrading admitted Runs. */
+  providerThinkingDisplayPolicy?: 'provider-visible/v1';
   controllerReasoningPolicy?: 'disclosed-delegate/v1';
   anthropicPolicy?: { contract: 'anthropic-wire/v1'; midSystem: boolean; blockBinding: 'drop_block' | 'disabled' };
   promptCachePolicy?: 'anthropic-prefix/v1';

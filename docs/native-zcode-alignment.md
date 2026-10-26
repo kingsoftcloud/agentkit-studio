@@ -64,17 +64,18 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **40/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **41/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 9/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity, plus versioned
 reference-default earlier cleanup through the actual Studio counter/command path,
 authenticated cleaned-source summaries with SQLite recovery and actual Studio integration,
-and admitted idle cleanup with persistent assistant clocks and cold Studio continuity), M3 6/20
+and admitted idle cleanup with persistent assistant clocks and cold Studio continuity), M3 7/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
 plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
-and versioned creation/whitespace replacement through Edit with actual Host cold continuity), M4 9/20
+and versioned creation/whitespace replacement through Edit with actual Host cold continuity,
+plus admitted public reasoning display, durable interrupted prefixes and buffered responses with actual local Host/history/component checks), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
@@ -83,8 +84,9 @@ plus child-local Todo continuity and durable coordinator responses through the
 actual packed Studio Host, plus owned Plan delegation/wait with immutable child
 mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
-The latest M3 point covers versioned empty-old-text Edit creation and whitespace
-replacement, not the whole editing/undo or tool execution group.
+The latest M3 point covers public reasoning and incomplete-prefix persistence,
+including JSON fallback and the existing local reasoning disclosure. It does not
+certify the whole conversation/reconnect, protocol, editing or tool execution group.
 M5 12/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
@@ -124,7 +126,7 @@ audited and integrated.
 | Model and stream | `src/runtime/methods/turn-model-step.ts`, `model-streaming-event.ts`, `../adapters/src/model/` | Node `model-{openai-chat,responses,anthropic,normalize}.mjs`, core `model-stream.mts`, `machine.mts` | Native already rejects truncated tool batches. Successful `model_context_window_exceeded` now enters bounded output continuation; buffered/SSE/local HTTP→kernel cases pass. Remaining protocol/stream audit pending. |
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | New explicitly enabled admissions derive the reference earlier threshold, use cleaned sources for still-needed summaries and support idle-triggered cleanup through persistent assistant completion clocks. Actual Host/counter/cold-continuation evidence is recorded below; original policies and explicit thresholds remain. Result-count versus batch recency, exact budget strategy and full context acceptance remain pending. |
-| Local task conversation / thinking display | `src/runtime/methods/model.ts:278-330`, model streaming Session events | Node `assistant-stream.mjs`, `session-delivery.mjs`, Host `native-harness.mjs`, maintained DSH `api/session-controller` and conversation UI | Local Session stream consumption exists in maintained DSH; absence of a consumer in Studio `src/client` does not establish a local display gap. Native currently defaults `providerThinkingDisplay` to false; opt-in streaming, persisted display, reconnect/cancel/error ordering and rendered main-view parity still need acceptance. The cloud Assistant history/renderer filtering is a separate path. |
+| Local task conversation / thinking display | `src/runtime/methods/model.ts:278-330,515`, `tests/runtime-reasoning-history.test.ts`, model streaming Session events | Node `assistant-stream.mjs`, `session-delivery.mjs`, Host `native-harness.mjs`, maintained DSH `api/session-controller` and conversation UI | New admissions enable public provider reasoning by default, retain it in durable message content, and publish readable interrupted prefixes without partial tool authority. Explicit hiding and old Run defaults remain. SSE/JSON protocol checks, actual packed Frozen Host with disconnect/cold continuation, persisted history assembler and real component Chromium clicks pass. Full application follow/reconnect and complete conversation parity remain open. The cloud Assistant path stays separate. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. New admitted v2 Edit supports absent-file creation and full-fresh-read whitespace replacement, actual Host denial and cold editing; v1/legacy behavior is preserved. Large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
@@ -2523,3 +2525,112 @@ Earned progress: **40/100**, M2 **9/15**, unchanged denominator. This point cove
 idle cleanup admission, completion-clock persistence and the actual Studio path.
 It does not certify full context alignment or the conversation display group;
 result versus batch recency, the remaining capability matrix and M6 are open.
+
+### Public provider reasoning through local task history and disclosure
+
+Pinned ZCode `runtime/methods/model.ts:278-330` accumulates reasoning blocks,
+publishes reasoning lifecycle events and returns reasoning separately at line 515.
+`tests/runtime-reasoning-history.test.ts` checks reasoning before a tool result,
+including a delta without a start event. Native already separates display deltas
+from provider-private replay, but the actual local path had two gaps: Host
+admission defaulted display to false, and `session-delivery.mjs` retained reasoning
+only in `message.data.stream`. Maintained DSH
+`ui-chat/src/client/conversation-nodes/assistant.ts:164,195` replaces streaming
+blocks with `message.content` at settlement, so that stream-only reasoning vanished
+from settled/history rendering. A third gap affected complete JSON responses:
+the buffered parsers retained replay but emitted no public reasoning.
+
+Implementation:
+
+- New Host admissions carry `providerThinkingDisplayPolicy: 'provider-visible/v1'`
+  and default display to true. Explicit false still hides reasoning. Restored Runs
+  retain absence/old false defaults; the same admission epoch governs child/vision
+  binding defaults. Old admission digests are unchanged. New policy values and the
+  explicit boolean are validated and frozen in the configuration.
+- New delivery admissions copy only public reasoning deltas into DSH reasoning
+  content blocks. Readable failed/canceled prefixes become interrupted assistant
+  messages. Incomplete tool previews remain stream-only and cannot authorize
+  execution. Legacy admissions retain their previous projection/hashes.
+- Buffered Chat, Responses and Anthropic parsers publish explicitly supplied
+  reasoning only after full envelope validation. This uses neither private replay
+  extraction nor encrypted/redacted bytes/signatures, and works with replay off.
+  Old buffered admissions remain unchanged. Internal review/summary streams remain
+  private. No generation parameter, reasoning effort or model loop is added.
+- Conversation cuts at an interrupted message retain only its public prose and
+  the preceding canonical prefix, excluding display reasoning, partial tools,
+  unsealed result fields and later answers. No provider-private checkpoint is
+  imported into a new branch.
+- The existing local DSH reasoning disclosure is reused. No cloud Assistant view,
+  desktop shell or maintained DSH source was changed.
+
+Evidence (2026-10-26):
+
+- `/tmp/native-thinking-binding-tests.log`: six selected managed-binding and
+  restoration cases pass, including explicit hiding, old false/default absence,
+  exact configuration identity and no inference during restoration.
+- `/tmp/native-thinking-related-tests.log`: 87 local delivery/turn-runtime cases
+  pass. Four reasoning cases cover cold exact replay, provider retry, cancellation,
+  late-event fencing and no partial tool execution. Subsequent interrupted-cut
+  checks in `/tmp/native-thinking-cut-tests.log` pass both retry and cancel paths.
+- `/tmp/native-thinking-model-related-tests.log`: 190 checks in the two affected
+  model protocol files pass; this is not a full repository run.
+  `/tmp/native-thinking-buffered-tests.log` includes 15 selected buffered checks
+  across all three protocols, explicit hiding/replay-off/legacy and malformed-body
+  suppression. `/tmp/native-thinking-protocol-final-tests.log` contains the 23
+  selected JSON/SSE visibility and signed-thinking checks.
+- Actual packed Frozen Host:
+  `node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-thinking-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --thinking-display --frozen --keep`.
+  `/tmp/native-thinking-host-proof-final.log` passes, root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-AWOxBe`.
+  Public reasoning is observed before provider completion. Four controlled model
+  requests cover one real workspace write, a transport disconnect, JSON fallback
+  and cold ordinary continuation. The write executes once; no partial preview is
+  dispatched, and the original Run remains unchanged. All four attempts settle
+  against durable `assistant/message` entries; one is interrupted.
+- The actual maintained history assembler projects four reasoning-bearing
+  assistant nodes, exactly one interrupted, from that Host's persisted history
+  (`thinking-assembler-probe.json`). Actual `ClientAssistantStream` plus assembler
+  replay of the two captured live prefixes shows running reasoning, equal reconnect
+  baseline content, and one settled/interrupted node without duplicated thinking
+  or authoritative partial tools (`thinking-live-fold-probe.json`). These local
+  probes reconstruct `startedAfterSeq` from each pre-message durable prefix; they
+  do not claim complete browser follow-transport acceptance.
+- The committed repeatable check is
+  `node scripts/verify-native-thinking-view.mjs --source .artifacts/dsh-native-zcode --history-root /var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-AWOxBe --output-dir /var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-AWOxBe/thinking-view`.
+  `/tmp/native-thinking-view-proof.log` passes actual four-message history/cold
+  assembly, all four reasoning-bearing stream attempts with equal reconnect
+  baselines and exact real end receipts, normal Step retirement and interrupted
+  retirement without partial tools. It also checks actual `ReasoningRow` SSR
+  semantics; the separate Chromium proof covers real CSS and click interaction.
+- `scripts/verify-native-thinking-browser.mjs` runs actual maintained
+  `ReasoningRow`, primitives and CSS in Chromium against actual Host text.
+  `/tmp/native-thinking-browser-proof-final.log` passes default collapse, actual
+  expansion/collapse clicks and running/settled states. Screenshot and facts are
+  under the Host root's `thinking-browser/`. The injected body slot renders text;
+  full-app navigation and Markdown formatting remain separate acceptance.
+- Runtime archive SHA-256:
+  `21191f417a2db47769b8e0eb53637bebdd91838e86652b5cc4d18c984297f239`.
+  Real Claude Code read-only audit `fa36b037-8a7c-4278-a298-6457da151857`
+  completed in `/tmp/native-thinking-default-audit.json`; main review confirmed
+  its recovery/default warning and provider-display/replay separation. The new
+  optional policy is absent in old digests, avoiding the reported default-flip
+  hazard. Real Claude Code script-authoring session
+  `a4498f81-72f2-4111-9948-cc3626f84b2c` completed after 35 calls in
+  `/tmp/native-thinking-view-task-result.json`. Main review restricted history
+  reads to the actual Session folder, removed invented/mismatched receipt
+  fallbacks, required history/cold/interruption assertions, and expanded replay
+  to every captured reasoning attempt plus real reconnect baselines. Only the
+  reviewed script's actual Host results above count as acceptance; its original
+  synthetic self-check does not. Both Claude sessions are terminal.
+
+Cost/limits: display adds no model call or provider request field. The controlled
+four-call scenario is a correctness check, not a token-saving or latency/quality
+benchmark. Durable message content repeats public reasoning already present in
+the display stream; this adds local storage, not model prompt prose. Private
+provider replay remains separate. Complete UI follow transport/reconnect,
+conversation/steering controls and the fixed-task performance/quality comparison
+are still open.
+
+Earned progress: **41/100**, M3 **7/20**, unchanged denominator. This point covers
+admitted public reasoning persistence and actual local Host/history/disclosure
+behavior; it does not certify complete ZCode interaction parity.

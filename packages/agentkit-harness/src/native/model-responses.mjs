@@ -450,7 +450,7 @@ function partsText(value, types) {
 // response is not SSE (rare for stream:true); also the basis for envelope
 // validation. Throws ProtocolError on a malformed envelope or a failed/error
 // status (a 2xx body that claims failure is a protocol conflict, terminal).
-export function parseResponsesBuffered(bodyText, request, { captureReplay = false } = {}) {
+export function parseResponsesBuffered(bodyText, request, { captureReplay = false, onThinking } = {}) {
   let payload;
   try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -469,6 +469,7 @@ export function parseResponsesBuffered(bodyText, request, { captureReplay = fals
     text: projection.content, toolCalls: calls, finishReason: projection.finish, streamComplete: true,
   });
   const result = sealResult({ normalized, reportedUsage, request, reasoning: projection.reasoning, captureReplay });
+  onThinking?.(projection.reasoning);
   return result;
 }
 

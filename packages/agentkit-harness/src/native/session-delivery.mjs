@@ -10,6 +10,12 @@ export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const ownObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** Public display deltas only. Opaque replay/signatures and tool previews are never content. */
+function displayText(stream, type) {
+  return stream.filter(record => record.chunk?.type === type && typeof record.chunk.text === 'string')
+    .map(record => record.chunk.text).join('');
+}
+
 /** Native totals include cache input; DSH's input/cache buckets are disjoint. */
 function sessionUsage(usage) {
   const read = usage.cachedInputTokens ?? 0, write = usage.cacheWriteInputTokens ?? 0;
@@ -198,12 +204,14 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     const pending = new Map();
     let cursor = 0, step = 1, modelCount = 0, lastAssistant = null;
     const settlements = [];
-    const assistant = (key, text, calls, usage, stream = []) => {
-      const content = [...(text ? [{ type: 'text', text }] : []),
+    const visibleReasoning = record.configuration.profile.providerThinkingDisplayPolicy === 'provider-visible/v1';
+    const assistant = (key, text, calls, usage, stream = [], interrupted = false) => {
+      const reasoning = visibleReasoning ? displayText(stream, 'reasoning-delta') : '';
+      const content = [...(reasoning ? [{ type: 'reasoning', text: reasoning }] : []), ...(text ? [{ type: 'text', text }] : []),
         ...calls.map(call => ({ type: 'tool-call', id: projectedCallId(call.callId), name: call.name, arguments: canonical(call.arguments) }))];
       const seq = append('assistant/message', { turn, step, message: { id: id(key), role: 'assistant', content, source: { kind: 'model', ...source } },
-        stream, ...(usage ? { usage } : {}) }, { surfaceOp: 'append' });
-      lastAssistant = { text, calls };
+        stream, ...(interrupted ? { interrupted: true } : {}), ...(usage ? { usage } : {}) }, { surfaceOp: 'append' });
+      lastAssistant = interrupted ? null : { text, calls };
       for (const call of calls) {
         pending.set(call.callId, call);
         append('tool/call', { turn, step, callId: projectedCallId(call.callId), name: call.name, arguments: canonical(call.arguments) });
@@ -280,8 +288,11 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       if (interrupted) {
         drain(payload.messageCursor);
         if (modelCount++ > 0) { append('step/end', { turn, step }); step++; append('step/start', { turn, step }); }
-        const seq = append('assistant/attempt', { turn, step, stream: nativeDurableStream(payload.operationKey, payload.displayStream) });
-        settlements.push([payload.operationKey, 'assistant/attempt', seq]);
+        const stream = nativeDurableStream(payload.operationKey, payload.displayStream);
+        const readable = visibleReasoning && (displayText(stream, 'text-delta') || displayText(stream, 'reasoning-delta'));
+        const seq = readable ? assistant(`interrupted:${event.eventId}`, displayText(stream, 'text-delta'), [], null, stream, true)
+          : append('assistant/attempt', { turn, step, stream });
+        settlements.push([payload.operationKey, readable ? 'assistant/message' : 'assistant/attempt', seq]);
         continue;
       }
       invariant(summary || index === null || Number.isSafeInteger(index) && index >= cursor && messages[index]?.role === 'assistant',
@@ -292,11 +303,17 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       const usage = payload.usageReported === false ? null : sessionUsage(payload.usage);
       const stream = nativeDurableStream(payload.operationKey, payload.displayStream);
       // An uncommitted provider prefix is an attempt, never a tool batch or
-      // final candidate. Keep any reported usage on its existing empty message.
+      // final candidate. New display admissions retain readable public content;
+      // legacy admissions keep their attempt and empty usage message unchanged.
       if (!summary && index === null && stream.length) {
-        const seq = append('assistant/attempt', { turn, step, stream });
-        settlements.push([payload.operationKey, 'assistant/attempt', seq]);
-        assistant(`response:${event.eventId}`, '', [], usage);
+        if (visibleReasoning && (displayText(stream, 'text-delta') || displayText(stream, 'reasoning-delta'))) {
+          const seq = assistant(`response:${event.eventId}`, displayText(stream, 'text-delta'), [], usage, stream, true);
+          settlements.push([payload.operationKey, 'assistant/message', seq]);
+        } else {
+          const seq = append('assistant/attempt', { turn, step, stream });
+          settlements.push([payload.operationKey, 'assistant/attempt', seq]);
+          assistant(`response:${event.eventId}`, '', [], usage);
+        }
       } else {
         const seq = assistant(`response:${event.eventId}`, summary || payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
           message?.toolCalls ?? [], usage, stream);

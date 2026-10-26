@@ -248,7 +248,7 @@ function validateAssistantToolIds(calls) {
 }
 
 // Parse a buffered 2xx Anthropic Messages body into a sealed result.
-export function parseAnthropicBuffered(bodyText, request, { captureReplay = false } = {}) {
+export function parseAnthropicBuffered(bodyText, request, { captureReplay = false, onThinking } = {}) {
   let payload;
   try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -301,7 +301,9 @@ export function parseAnthropicBuffered(bodyText, request, { captureReplay = fals
   const counters = payload.usage == null ? {} : parseAnthropicUsageFragment(payload.usage);
   const normalized = normalizeResponse({ text, toolCalls: calls, finishReason: finish, streamComplete: true });
   const result = { ...normalized, usage: buildAnthropicUsage(counters), usageReported: hasCompleteUsage(counters) };
-  return captureReplay ? sealAnthropicReplay(result, request.profile, replayBlocks) : result;
+  const sealed = captureReplay ? sealAnthropicReplay(result, request.profile, replayBlocks) : result;
+  onThinking?.(reasoningBlocks.map(block => block.thinking).join(''));
+  return sealed;
 }
 
 function mapStopReason(stopReason) {

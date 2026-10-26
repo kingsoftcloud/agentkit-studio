@@ -145,7 +145,7 @@ export function createNativeModelPort({
           return await streamResponse(response, request, binding, emitEvent, internal, maxBytes,
             idlePolicy && overallMs > 0 ? Math.min(idleTimeout, overallMs) : idleTimeout);
         }
-        return await bufferedResponse(response, request, binding, maxBytes);
+        return await bufferedResponse(response, request, binding, maxBytes, emitEvent);
       } catch (error) {
         if (request.signal?.aborted) throw error;
         if (error instanceof IdleTimeout || internal.signal.aborted) {
@@ -205,17 +205,21 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
   return state.finalize();
 }
 
-async function bufferedResponse(response, request, binding, maxBytes) {
+async function bufferedResponse(response, request, binding, maxBytes, emit) {
   const bodyText = await readBoundedText(response, maxBytes);
   const captureReplay = request.profile?.providerReplayMode !== 'none';
+  // Keep legacy buffered admissions unchanged. New visibility admissions also
+  // retain explicitly provided display reasoning when a server returns JSON.
+  const onThinking = request.profile.providerThinkingDisplayPolicy === 'provider-visible/v1'
+    && request.profile.providerThinkingDisplay === true ? text => { if (text) emit({ kind: 'thinking', text }); } : undefined;
   try {
     if (binding.protocol === 'anthropic-messages') {
-      return parseAnthropicBuffered(bodyText, request, { captureReplay });
+      return parseAnthropicBuffered(bodyText, request, { captureReplay, onThinking });
     }
     if (binding.protocol === 'openai-responses') {
-      return parseResponsesBuffered(bodyText, request, { captureReplay });
+      return parseResponsesBuffered(bodyText, request, { captureReplay, onThinking });
     }
-    return parseOpenAIBuffered(bodyText, request, { captureReplay, binding });
+    return parseOpenAIBuffered(bodyText, request, { captureReplay, binding, onThinking });
   } catch {
     return terminalResult('invalid_response');
   }

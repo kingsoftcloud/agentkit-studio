@@ -201,7 +201,7 @@ function validateAssistantToolIds(calls) {
 // Parse a buffered 2xx chat completions body into a sealed result. Used when a
 // 2xx response is not SSE (rare for stream:true); also the basis for envelope
 // validation. Throws ProtocolError on a malformed envelope.
-export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, binding } = {}) {
+export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, binding, onThinking } = {}) {
   let payload;
   try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -249,11 +249,13 @@ export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, 
       failureKind: 'incomplete_response', reasoning: '', captureReplay,
     });
   }
-  const reasoning = captureReplay ? chatReasoning(message) : '';
-  return finalizeResult({
+  const reasoning = captureReplay || onThinking ? chatReasoning(message) : '';
+  const result = finalizeResult({
     kind: null, text, toolCalls: calls, reportedUsage, request, finishReason: finish,
     streamComplete: true, reasoning, captureReplay,
   });
+  onThinking?.(reasoning);
+  return result;
 }
 
 function finalizeResult({

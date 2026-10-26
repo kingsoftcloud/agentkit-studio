@@ -16,8 +16,13 @@ HTTP 响应头等待仍受 request timeout 约束；收到 SSE 后，request tim
 `activity` 只用于等待期限，不进入 Session、公有 stream、持久 display 前缀或
 工具执行。压缩及 review 的模型调用同样可以续期，摘要输出不进入对话展示。
 
-新 Run 的 `profile.providerThinkingDisplay` 默认 false。模型 profile 的参数
-`provider_thinking_display: true` 显式开启显示；该字段不发送给模型服务。
+新 Run 的 `profile.providerThinkingDisplay` 默认 true，并固定
+`providerThinkingDisplayPolicy: 'provider-visible/v1'`。模型 profile 的参数
+`provider_thinking_display: false` 可显式关闭显示；该参数不发送给模型服务。
+既有 Run 保留准入时的默认值、绑定和投影格式，恢复时不会自动开启。
+新 Run 的公开思考会保存在消息内容中，流式结束或历史重新加载后仍可折叠查看；
+完整 JSON 响应同样只提取 provider 明确提供的思考文本。中断前缀标为未完成，
+其中的半截工具参数不会成为可执行调用。
 OpenAI Chat、Responses 和 Anthropic 均将显示与私有协议回放分开：关显示仍保留
 后续工具回合需要的原始推理/签名；开启显示也不要求开启回放。
 

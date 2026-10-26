@@ -542,3 +542,54 @@ for (const boundary of ['before-delivery', 'during-flush']) {
     assert.equal(sink.projections.stateOf().openTurn, false);
   });
 }
+
+for (const visible of [false, true]) test(`sealed display thinking ${visible ? 'survives message content and cold replay' : 'keeps the old stream-only projection'}`, async t => {
+  const profile = { ...fixture().config.profile, providerThinkingDisplay: visible,
+    ...(visible ? { providerThinkingDisplayPolicy: 'provider-visible/v1' } : {}) };
+  const f = setup(t, undefined, { profile }), sink = consumer();
+  const worker = new NativeKernel({ store: f.store, digest, owner: 'thinking-content', onCheckpoint: delivery(f.store, sink), ports: {
+    model: { generate: async (_, emit) => {
+      emit({ kind: 'thinking', text: 'Visible thought ' }); emit({ kind: 'thinking', text: 'continued.' });
+      emit({ kind: 'text', text: 'Visible answer' }); return { ...final(), text: 'Visible answer' };
+    } },
+  } });
+  assert.equal((await worker.runUntilIdle(scope, 'run')).phase, 'completed');
+  const message = sink.events.find(event => event.type === 'assistant/message');
+  assert.deepEqual(message.data.message.content, [...(visible ? [{ type: 'reasoning', text: 'Visible thought continued.' }] : []),
+    { type: 'text', text: 'Visible answer' }]);
+  assert.equal(f.store.load(scope, 'run').snapshot.messages.some(message => message.content.includes('Visible thought')), false,
+    'Public thinking display is not injected into canonical task prose');
+  const before = structuredClone(sink.events); f.reopen();
+  const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot);
+  assert.deepEqual(cold.events, before);
+  await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot); assert.deepEqual(cold.events, before);
+});
+
+for (const cancel of [false, true]) test(`visible thinking interruption ${cancel ? 'on cancel' : 'on provider retry'} persists as incomplete content without tool authority`, async t => {
+  const f = setup(t, undefined, { profile: { ...fixture().config.profile, providerThinkingDisplay: true,
+    providerThinkingDisplayPolicy: 'provider-visible/v1', retryInitialDelayMs: 0 } }), sink = consumer();
+  let models = 0, ready, lateEmit; const entered = new Promise(resolve => { ready = resolve; });
+  const worker = new NativeKernel({ store: f.store, digest, owner: 'thinking-interrupted', onCheckpoint: delivery(f.store, sink), ports: {
+    model: { generate: async (_, emit) => {
+      if (++models > 1) return { ...final(), text: 'Recovered answer' };
+      lateEmit = emit; emit({ kind: 'thinking', text: 'Interrupted thinking' }); emit({ kind: 'text', text: 'Incomplete prefix' });
+      emit({ kind: 'tool_delta', text: '{"path":', metadata: { index: 0, callId: 'preview-only', name: 'read' } });
+      ready(); if (cancel) return new Promise(() => {});
+      return { ...final(), kind: 'provider_retryable_error', text: 'UNSEALED RAW RESULT', usageReported: false };
+    } }, tools: { execute: async () => assert.fail('An incomplete streamed call cannot execute') },
+  } });
+  const running = worker.runUntilIdle(scope, 'run'); await entered;
+  if (cancel) worker.submit(scope, 'run', { commandId: 'cancel-thinking', kind: 'cancel', payload: {} });
+  const end = await running; assert.equal(end.phase, cancel ? 'canceled' : 'completed');
+  const messages = sink.events.filter(event => event.type === 'assistant/message');
+  const interrupted = messages.filter(event => event.data.interrupted === true); assert.equal(interrupted.length, 1);
+  assert.deepEqual(interrupted[0].data.message.content, [{ type: 'reasoning', text: 'Interrupted thinking' }, { type: 'text', text: 'Incomplete prefix' }]);
+  assert.equal(interrupted[0].data.message.content.some(part => part.type === 'tool-call'), false);
+  assert.equal(JSON.stringify(sink.events).includes('UNSEALED RAW RESULT'), false);
+  const cut = cutDelivery(f.store.load(scope, 'run'), sink.events, interrupted[0]);
+  assert.equal(cut.at(-1).role, 'assistant'); assert.equal(cut.at(-1).content, 'Incomplete prefix');
+  assert.doesNotMatch(JSON.stringify(cut), /Interrupted thinking|Recovered answer|preview-only|UNSEALED RAW RESULT/);
+  const before = structuredClone(sink.events); lateEmit({ kind: 'thinking', text: 'LATE THINKING' });
+  assert.deepEqual(sink.events, before); f.reopen();
+  const cold = consumer(); await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot); assert.deepEqual(cold.events, before);
+});

@@ -67,6 +67,21 @@ export function nativeConversationCut(record, admission, prefix) {
         messages[index] = { ...messages[index], content: payload.candidateStatus === 'rejected' ? '' : messages[index].content };
         delete messages[index].kind;
       }
+      // New display admissions publish an interrupted prefix as a readable
+      // message. A cut there contains only its sealed public prose: no partial
+      // tool batch, reasoning display, later answer or private replay state.
+      if (!summary && (interrupted || index === null)
+        && record.configuration.profile.providerThinkingDisplayPolicy === 'provider-visible/v1'
+        && targetId === id(`${interrupted ? 'interrupted' : 'response'}:${event.eventId}`)) {
+        const display = payload.displayStream?.records ?? [];
+        const text = display.filter(member => member.event.kind === 'text').map(member => member.event.text).join('');
+        const reasoning = display.some(member => member.event.kind === 'thinking' && member.event.text);
+        if (text || reasoning) {
+          invariant(target.type === 'assistant/message' && target.data.interrupted === true,
+            'native_conversation_fork_message_boundary_invalid');
+          return text ? [...selected(), { role: 'assistant', content: text }] : selected();
+        }
+      }
       if (!interrupted && targetId === id(`response:${event.eventId}`)) {
         invariant(target.type === 'assistant/message', 'native_conversation_fork_message_boundary_invalid');
         if (!summary && index !== null) cursor = index + 1;

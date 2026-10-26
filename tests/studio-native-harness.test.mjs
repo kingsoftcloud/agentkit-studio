@@ -14,7 +14,7 @@ import { nativeDshBackgroundOwnership } from '../packages/agentkit-harness/src/n
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createBackgroundCommandPort } from '../packages/agentkit-harness/src/native/background-command-port.mjs';
 import { createAgentStore } from '../src/agent-store.mjs';
-import { createModelService } from '../src/model-service.mjs';
+import { createModelService, modelInput } from '../src/model-service.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 import { createStudioObservability } from '../src/studio-observability.mjs';
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
@@ -261,8 +261,9 @@ test('a failed Native trace cache cannot fail the actual Host turn or authorize 
   assert.equal(f.head().phase, 'completed'); assert.equal(f.requests.length, 1);
 });
 
-for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(`managed binding reuses real Studio assembly with its own ledger and trusted principal${deliveryReviewPolicy ? ' and pinned review policy' : ''}`, async t => {
-  const f = await setup(t, { recovery: true, ...(deliveryReviewPolicy ? { spec: { execution: { deliveryReviewPolicy } } } : {}) }), store = new MemoryRunStore();
+for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (const display of [undefined, false]) test(`managed binding reuses real Studio assembly with its own ledger and trusted principal${deliveryReviewPolicy ? ' and pinned review policy' : ''}${display === false ? ' with thinking hidden' : ''}`, async t => {
+  const f = await setup(t, { recovery: true, ...(display === false ? { profile: { parameters: { provider_thinking_display: false } } } : {}),
+    ...(deliveryReviewPolicy ? { spec: { execution: { deliveryReviewPolicy } } } : {}) }), store = new MemoryRunStore();
   const target = { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id };
   const principal = { userId: 'managed-user' }, runId = 'managed-real-run';
   const args = { store, admission: null, runId, target, principal };
@@ -272,7 +273,8 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) test(
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v1', rule: 'auto' });
   assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v1', rule: 'auto' });
   assert.equal(bound.configuration.profile.streamTimeoutPolicy, 'idle/v1');
-  assert.equal(bound.configuration.profile.providerThinkingDisplay, false);
+  assert.equal(bound.configuration.profile.providerThinkingDisplay, display ?? true);
+  assert.equal(bound.configuration.profile.providerThinkingDisplayPolicy, 'provider-visible/v1');
   assert.equal(bound.configuration.profile.controllerReasoningPolicy, 'disclosed-delegate/v1');
   assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
   assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
@@ -1652,4 +1654,29 @@ for (const [context, code] of [
   const fixture = await setup(t, { spec: { context } });
   await assert.rejects(fixture.host.executeTurn(fixture.payload), { code });
   assert.equal(fixture.requests.length, 0); assert.equal(fixture.head(), null);
+});
+
+for (const legacyDisplay of [undefined, false]) test(`restored admitted thinking ${legacyDisplay === false ? 'hidden default' : 'legacy absence'} is not upgraded by new visibility policy`, async t => {
+  const f = await setup(t, { recovery: true }), store = new MemoryRunStore();
+  const args = { store, admission: null, runId: 'legacy-thinking', target: { tenantId: 'tenant', agentInstanceId: f.record.metadata.id }, principal: { userId: 'user' } };
+  const bound = await f.host.resolveManagedBinding(f.payload, args), configuration = structuredClone(bound.configuration);
+  await bound.releaseResources?.({ scope: bound.scope, runId: args.runId, sessionId: f.payload.agent.session.id });
+  const profile = configuration.profile, p = await f.models.profile('fixture');
+  const description = { id: p.id, provider: p.provider, modelName: p.modelName, baseUrl: p.baseUrl,
+    protocol: p.protocol || 'openai-chat', contextWindow: p.contextWindow ?? 128000, maxOutputTokens: p.maxOutputTokens ?? 8192,
+    parameters: p.parameters ?? {}, requestTimeoutMs: p.requestTimeoutMs ?? 110000, input: modelInput(p) };
+  delete profile.providerThinkingDisplayPolicy;
+  const oldRuntime = { providerThinkingDisplay: false, streamTimeoutPolicy: 'idle/v1', controllerReasoningPolicy: 'disclosed-delegate/v1' };
+  if (legacyDisplay === undefined) for (const key of Object.keys(oldRuntime)) delete profile[key];
+  else profile.providerThinkingDisplay = false;
+  // Explicit previous admission format, before provider-visible/v1 existed.
+  profile.compatibilityDigest = digest({ description, inlineReasoningPolicy: profile.inlineReasoningPolicy,
+    providerCompatibilityPolicy: profile.providerCompatibilityPolicy, ...(legacyDisplay === undefined ? {} : { modelRuntimeOptions: oldRuntime }) });
+  const restored = await f.host.resolveManagedBinding(f.payload, { ...args,
+    admission: { scope: bound.scope, buildId: bound.buildId, configuration } });
+  assert.deepEqual(restored.configuration, configuration);
+  assert.equal(restored.configuration.profile.providerThinkingDisplay, legacyDisplay);
+  assert.equal(restored.configuration.profile.providerThinkingDisplayPolicy, undefined);
+  assert.equal(f.requests.length, 0);
+  await restored.releaseResources?.({ scope: restored.scope, runId: args.runId, sessionId: f.payload.agent.session.id });
 });

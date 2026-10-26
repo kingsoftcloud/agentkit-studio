@@ -60,7 +60,7 @@ async function applyProof(ctx, options) {
       spec: { ...(options.frozen || options.automation ? { instructions: { system: 'FROZEN_NATIVE_SYSTEM_A' } } : {}),
         execution: { ...(options.todos || options.planMode || options.conversationFork ? {} : { nativeTodoMode: 'off' }),
           ...(options.planMode ? {} : { nativePlanMode: 'off' }),
-          ...(options.workspaceRepair || options.contextPruning ? { nativeToolSearchMode: 'off' } : {}),
+          ...(options.workspaceRepair || options.contextPruning || options.thinkingDisplay ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.mcpUrl && !options.toolSearch && !options.planMcp ? { nativeToolSearchMode: 'off' } : {}),
           ...(options.deliveryReview ? { deliveryReviewPolicy: { pathSuffixes: ['.ts'] } } : {}),
           ...(options.deadlinePolicy ? { nativeWallDeliveryPolicy: 'deadline-delivery/v7', timeoutSeconds: 600 } : {}) },
@@ -237,7 +237,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.contextPruning || options.editCreate || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.contextPruning || options.thinkingDisplay || options.editCreate || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.
