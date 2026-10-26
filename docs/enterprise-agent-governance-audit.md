@@ -45,9 +45,27 @@ Its third finding exposed a possible second ask from another pre-execute
 listener; the listener now coalesces declarative asks. Claude did not rerun the
 packed Host verifier.
 
-Remaining governance evidence: actual denied/cancelled approval paths under a
-packed Host, all named Skill/child/extension surfaces under a versioned policy,
-and complete resource-authority and license audit. `security.allowedPermissions`
+The [negative packed-Host evidence](enterprise-agent-bound-policy-negative-evidence.json)
+now runs a coding Agent through the same authenticated admission, SDK turn,
+production ToolRegistry, ApprovalService and Native SQLite with a strict bound
+policy and a permissive Session. A rejected write settles as an error tool
+result and completed Run; a cancelled approval settles once as `cancelled` and
+the Run is `canceled`. In both cases the preceding workspace read succeeds,
+the write never creates a file, and no MCP effect occurs. The controlled model
+and approval responder are instrumentation; cancellation is initiated inside
+the trusted Host while the approval is pending, so this does not certify the
+Studio UI's cancel path. The original allow/frozen/cold verifier was rerun and
+still passes. Reproduce the two negative runs without a full suite:
+
+```sh
+node scripts/verify-enterprise-agent-platform.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz --approval-mode reject --keep
+node scripts/verify-enterprise-agent-platform.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz --approval-mode cancel --keep
+```
+
+Remaining governance evidence: all named Skill/child/extension surfaces under
+a versioned policy, and complete resource-authority and license audit. The
+Studio UI's cancel path remains a separate product acceptance gate.
+`security.allowedPermissions`
 is still Host capability metadata, not a one-shot permission grant; its labels
 must not be presented as authorization proof.
 

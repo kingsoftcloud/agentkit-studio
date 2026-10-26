@@ -2,40 +2,40 @@
   "passed": true,
   "node": "v26.5.0",
   "archiveSha256": "64256c3b294f4f244b863c13d861875a33475418a2bff1001ad2cb0ad1a00bfb",
-  "fixtureSha256": "32d5a557e643982bf1dc8838d55d668eeeeb55ccbe10073cfcc68512f81bc649",
-  "verifierSha256": "d9d5095f85588f6eb52412c1229682e43eaf812786a15e43037325615d1c48cc",
+  "fixtureSha256": "b56398f5b131586ed0eadd42fb3abff0a5fd8062c43036f129d4bd148856c9e7",
+  "verifierSha256": "7b8de81288604e1d9767ca26fb15feff2805e0617d2a2c7641f5c4f5ce50b80f",
   "sourceSha256": "0d6af62fb2486af56d341a18d203092d5d594cf60996d80f627bfb12a9ea4ffc",
   "sdkCommit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
   "identity": {
     "business": {
       "role": "business",
-      "agentId": "ar-local-755d821cb76c47c1",
+      "agentId": "ar-local-5aa16d671cf34e76",
       "revision": 2,
-      "presetId": "agentkit-studio-agent-ar-local-755d821cb76c47c1-r2",
+      "presetId": "agentkit-studio-agent-ar-local-5aa16d671cf34e76-r2",
       "sessionId": "enterprise-business"
     },
     "frozen": {
       "role": "frozen-business",
-      "agentId": "ar-local-755d821cb76c47c1",
+      "agentId": "ar-local-5aa16d671cf34e76",
       "revision": 1,
-      "presetId": "agentkit-studio-agent-ar-local-755d821cb76c47c1-r1-build_9389fbba71bb059afd8b",
+      "presetId": "agentkit-studio-agent-ar-local-5aa16d671cf34e76-r1-build_6ee535fe7062602e6ddf",
       "sessionId": "enterprise-frozen-business",
-      "buildId": "build_9389fbba71bb059afd8b"
+      "buildId": "build_6ee535fe7062602e6ddf"
     },
     "coding": {
       "role": "coding",
-      "agentId": "ar-local-b595ff1871a94704",
+      "agentId": "ar-local-86e1ba4742a6494d",
       "revision": 1,
-      "presetId": "agentkit-studio-agent-ar-local-b595ff1871a94704-r1",
+      "presetId": "agentkit-studio-agent-ar-local-86e1ba4742a6494d-r1",
       "sessionId": "enterprise-coding"
     }
   },
   "runIds": [
-    "native-dsh-a393aa9221b4b0dfe8e8616ce3ce7aab40569f0f4cea45241572159c0a4f1563",
-    "native-dsh-829c5d6c1bd555e7543658fbdaf47e4a1aa1e33046b76373ba24ccbec8bf1ca9",
-    "native-dsh-f248194b0f7456dbf37b092feadf2f04c8cf7c3a7e92edbfad340227a872f724"
+    "native-dsh-f3efb2b34c6c0a0f9728c9214b79aa740999fc511453ade3410de89de04c6f1a",
+    "native-dsh-be61a1030cc5056f5b525e0ca6610757918ace3f550e11a14ece10148c1b5217",
+    "native-dsh-4324fcdee4a399b8ea6cacc45f61cf1616e5202eeae55f5fb61832037e36cf2f"
   ],
-  "buildId": "build_9389fbba71bb059afd8b",
+  "buildId": "build_6ee535fe7062602e6ddf",
   "modelCalls": {
     "business": 3,
     "coding": 3,
@@ -43,12 +43,12 @@
   },
   "approvals": [
     {
-      "receipt_id": "R1792995547902",
+      "receipt_id": "R1792996184820",
       "customer_id": "C-1024",
       "decision": "approved",
       "credit_limit": 50000,
       "approver": "enterprise-proof",
-      "timestamp": "2026-10-26T06:19:07.902Z"
+      "timestamp": "2026-10-26T06:29:44.820Z"
     }
   ],
   "reportedFixtureUsage": {
@@ -81,36 +81,36 @@
       "role": "business",
       "source": "startup",
       "sessionId": "enterprise-business",
-      "presetId": "agentkit-studio-agent-ar-local-755d821cb76c47c1-r2",
-      "pid": 29149
+      "presetId": "agentkit-studio-agent-ar-local-5aa16d671cf34e76-r2",
+      "pid": 32495
     },
     {
       "role": "coding",
       "source": "startup",
       "sessionId": "enterprise-coding",
-      "presetId": "agentkit-studio-agent-ar-local-b595ff1871a94704-r1",
-      "pid": 29149
+      "presetId": "agentkit-studio-agent-ar-local-86e1ba4742a6494d-r1",
+      "pid": 32495
     },
     {
       "role": "frozen-business",
       "source": "startup",
       "sessionId": "enterprise-frozen-business",
-      "presetId": "agentkit-studio-agent-ar-local-755d821cb76c47c1-r1-build_9389fbba71bb059afd8b",
-      "pid": 29149
+      "presetId": "agentkit-studio-agent-ar-local-5aa16d671cf34e76-r1-build_6ee535fe7062602e6ddf",
+      "pid": 32495
     },
     {
       "role": "business",
       "source": "resume",
       "sessionId": "enterprise-business",
-      "presetId": "agentkit-studio-agent-ar-local-755d821cb76c47c1-r2",
-      "pid": 29164
+      "presetId": "agentkit-studio-agent-ar-local-5aa16d671cf34e76-r2",
+      "pid": 32510
     },
     {
       "role": "coding",
       "source": "resume",
       "sessionId": "enterprise-coding",
-      "presetId": "agentkit-studio-agent-ar-local-b595ff1871a94704-r1",
-      "pid": 29164
+      "presetId": "agentkit-studio-agent-ar-local-86e1ba4742a6494d-r1",
+      "pid": 32510
     }
   ],
   "restart": {
@@ -119,17 +119,17 @@
     "gap": ""
   },
   "elapsedFixtureLocalMs": {
-    "harness-start": 2038,
-    "business-run": 2006,
-    "coding-run": 1815,
-    "frozen-run": 984,
-    "restart-start": 1912,
-    "resume-business": 602,
-    "resume-coding": 647
+    "harness-start": 1878,
+    "business-run": 2024,
+    "coding-run": 1949,
+    "frozen-run": 1001,
+    "restart-start": 1701,
+    "resume-business": 659,
+    "resume-coding": 687
   },
   "scope": {
     "tenantId": "local",
-    "workspaceId": "26b45296dc5cfa93e8b841dc44e1752ec22effaca1a65341dd966c3ede097c8c",
+    "workspaceId": "581fdd2dd4dbd98c8fc493f8bd3ed25b7756ccea721a6e536e98c2d61202b5c6",
     "userId": "local-user"
   },
   "limitation": "Packed production modules with explicitly copied instrumentation fixture and a reused (symlinked) local dependency graph (same approach as scripts/verify-studio-native-background.mjs); not a fresh installation. Model responses are deterministic OpenAI-compatible fixtures used as protocol/integration evidence, not model-quality or token-performance benchmarks; usage tokens are fixture values labelled as fixture/local measurements. Per-run modelCalls are observed from the durable Native SQLite run snapshot. The local MCP server is a minimal hand-rolled streamable-HTTP implementation speaking the MCP 2025-06-18 protocol the production adapter consumes."

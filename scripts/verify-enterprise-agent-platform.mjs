@@ -24,8 +24,11 @@ import { dshPresetId } from '../src/agent-preset-admission.mjs';
 
 const { values } = parseArgs({ options: {
   source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean', default: false },
+  'approval-mode': { type: 'string', default: 'allow' },
 } });
 assert.ok(values.source && values.archive, 'Use --source <maintained built DSH> --archive <Studio.tgz>');
+const approvalMode = values['approval-mode'];
+assert.ok(['allow', 'reject', 'cancel'].includes(approvalMode), 'approval-mode must be allow, reject or cancel');
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const source = resolve(values.source), archive = resolve(values.archive);
 const root = await mkdtemp(join(tmpdir(), 'studio-enterprise-agent-'));
@@ -130,7 +133,9 @@ const modelServer = createServer(async (req, res) => {
     } else if (isCoding) {
       if (toolResults === 0) delta = { tool_calls: [{ index: 0, id: `call-code-${idx}`, type: 'function', function: { name: 'read_workspace_file', arguments: JSON.stringify({ path: 'seed.txt' }) } }] }, finish = 'tool_calls';
       else if (toolResults === 1) delta = { tool_calls: [{ index: 0, id: `call-code-${idx}`, type: 'function', function: { name: 'write_workspace_file', arguments: JSON.stringify({ path: 'src/version.txt', content: '1.0.0' }) } }] }, finish = 'tool_calls';
-      else delta = { content: 'Read seed.txt and created src/version.txt with content 1.0.0.' }, finish = 'stop';
+      else delta = { content: approvalMode === 'allow'
+        ? 'Read seed.txt and created src/version.txt with content 1.0.0.'
+        : 'The attempted workspace write did not complete.' }, finish = 'stop';
     } else { delta = { content: 'No bound tools recognized.' }, finish = 'stop'; }
     res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     res.end(`data: ${JSON.stringify({ id: `ent-${idx}`, choices: [{ index: 0, delta, finish_reason: finish }], usage: { prompt_tokens: 9, completion_tokens: 11 } })}\n\ndata: [DONE]\n\n`);
@@ -173,7 +178,8 @@ try {
   await writeFile(patch, ['- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none', '- insert:',
     ...plugins.flatMap(([id, name, config]) => [`    - id: ${id}`, `      name: ${JSON.stringify(name)}`, ...config ? ['      config:', ...config] : []]),
     '    - id: ent-proof', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures/studio-enterprise-agent-platform.mjs')).href)}`, '      config:',
-    `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(modelUrl)}`, `        mcpUrl: ${JSON.stringify(mcpUrl)}`, ''].join('\n'));
+    `        directory: ${JSON.stringify(root)}`, `        modelUrl: ${JSON.stringify(modelUrl)}`, `        mcpUrl: ${JSON.stringify(mcpUrl)}`,
+    `        approvalMode: ${JSON.stringify(approvalMode)}`, ''].join('\n'));
 
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -184,6 +190,63 @@ try {
   harness = new DeepSeekHarness(options);
   // The first real Session creation triggers authenticated Agent/Build admission.
   await timed('harness-start', () => harness.start());
+  if (approvalMode !== 'allow') {
+    await mkdir(join(root, 'workspace', 'src'), { recursive: true });
+    await writeFile(join(root, 'workspace', 'seed.txt'), 'seed');
+    let codingResult, runError;
+    try {
+      codingResult = await timed('coding-negative-run', () => harness.session('enterprise-coding')
+        .run('Read seed.txt then create src/version.txt with content 1.0.0.'));
+    } catch (error) { runError = { code: error?.code, message: error?.message }; }
+    if (approvalMode === 'reject') {
+      assert.equal(runError, undefined, 'A rejected approval should settle the turn normally');
+      assert.equal(codingResult.finalResponse, 'The attempted workspace write did not complete.');
+    }
+    const identity = await until('identity.json', () => json(join(root, 'identity.json')));
+    const sessions = (await readdir(join(root, 'sessions'), { recursive: true })).filter(f => f.endsWith('.jsonl'));
+    assert.equal(sessions.length, 1, 'Only the coding Session was started');
+    const events = await jsonl(join(root, 'sessions', sessions[0]));
+    const asked = events.filter(e => e.type === 'approval/asked');
+    const decided = events.filter(e => e.type === 'approval/decided');
+    assert.equal(asked.length, 1, 'Strict bound policy asked exactly once for the workspace write');
+    assert.equal(decided.length, 1, 'The approval has exactly one durable decision');
+    assert.equal(decided[0].data.outcome, approvalMode === 'reject' ? 'rejected' : 'cancelled');
+    assert.equal(asked[0].data.id, decided[0].data.id);
+    const results = events.filter(e => e.type === 'tool/result');
+    assert.equal(results.length, 2, 'Both read and blocked write settle in the Session history');
+    assert.deepEqual(results.map(e => e.data.message.isError), [false, true]);
+    const admissions = await jsonl(join(root, 'tool-admissions.jsonl'));
+    assert.deepEqual(admissions.map(a => a.name), ['read_workspace_file', 'write_workspace_file']);
+    assert.equal(mcpCalls.length, 0, 'No unrelated MCP effect was executed');
+    await assert.rejects(readFile(join(root, 'workspace/src/version.txt'), 'utf8'), { code: 'ENOENT' });
+    const { SqliteRunStore } = await import(pathToFileURL(join(installed, 'packages/agentkit-harness/src/native/sqlite-store.mjs')).href);
+    const workspaceId = createHash('sha256').update(JSON.stringify(resolve(root, 'workspace'))).digest('hex');
+    const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
+    let records;
+    try { records = store.list({ tenantId: 'local', workspaceId, userId: 'local-user', agentId: identity.coding.agentId }, identity.coding.sessionId)
+      .map(row => store.load({ tenantId: 'local', workspaceId, userId: 'local-user', agentId: identity.coding.agentId }, row.runId)); }
+    finally { store.close(); }
+    assert.equal(records.length, 1);
+    assert.equal(records[0].snapshot.phase, approvalMode === 'reject' ? 'completed' : 'canceled');
+    assert.equal(records[0].configuration.hostRecoveryBinding.agentRevision, 1);
+    assert.match(records[0].configuration.hostRecoveryBinding.policyDigest, /^[a-f0-9]{64}$/);
+    assert.deepEqual(failures, []);
+    const report = { passed: true, approvalMode, node: process.version,
+      archiveSha256: createHash('sha256').update(await readFile(archive)).digest('hex'),
+      fixtureSha256: createHash('sha256').update(fixture).digest('hex'),
+      verifierSha256: createHash('sha256').update(await readFile(fileURLToPath(import.meta.url))).digest('hex'),
+      sdkCommit: execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      identity: identity.coding,
+      approval: { asked: asked.length, decided: decided.length, outcome: decided[0].data.outcome },
+      admissions: admissions.map(a => a.name), toolResultErrors: results.map(e => e.data.message.isError),
+      runPhase: records[0].snapshot.phase,
+      runError, mcpCalls: mcpCalls.length, workspaceWriteObserved: false,
+      scope: 'Packed production Host, authenticated Agent admission and SDK turn, real ToolRegistry/ApprovalService and Native SQLite; deterministic model, local workspace.'
+        + (approvalMode === 'cancel' ? ' Cancel is triggered inside the trusted Host approval responder while the question is pending, not through the Studio UI.' : '') };
+    await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify(report, null, 2));
+    passed = true;
+    console.log(`Studio enterprise bound-policy ${approvalMode} PASS: one audited ${report.approval.outcome} decision; no workspace write.`);
+  } else {
   const businessResult = await timed('business-run', () => harness.session('enterprise-business')
     .run('Approve a credit limit increase for customer C-1024 to 50000 using the CRM tool, then record the outcome.'));
   const identity = await until('identity.json', () => json(join(root, 'identity.json')));
@@ -333,6 +396,7 @@ try {
   await writeFile(join(root, 'accepted-evidence.json'), JSON.stringify(report, null, 2));
   passed = true;
   console.log(`Studio enterprise agent platform PASS: business + coding + frozen Build; engine agentkit.native-dsh-turn/v1; real /agentkit admission; real MCP + workspace outcomes; restart=${restart.outcome}.`);
+  }
 } catch (error) {
   failures.push(error);
   await writeFile(join(root, 'failure-evidence.json'), JSON.stringify({ code: error?.code, message: error?.message, stack: error?.stack, failures: failures.map(f => ({ code: f?.code, message: f?.message })) }, null, 2)).catch(() => {});

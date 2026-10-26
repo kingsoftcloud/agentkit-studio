@@ -239,6 +239,14 @@ export async function apply(ctx, options) {
   // ApprovalService (its durable asked/decided events are still produced).
   ctx.on('approval/request', async request => {
     const identity = await readIdentity();
-    if (entryFor(identity, request.agent.session.id)) return 'allowed-once';
+    if (!entryFor(identity, request.agent.session.id)) return;
+    if (options.approvalMode === 'reject') return 'rejected';
+    if (options.approvalMode === 'cancel') {
+      // Exercise the real Agent cancellation signal while ApprovalService is
+      // awaiting a human answer. A late allow must not enter the tool body.
+      queueMicrotask(() => request.agent.cancel({ kind: 'user' }, { keepInbox: true }));
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return 'allowed-once';
   }, { prepend: true });
 }
