@@ -45,7 +45,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
   }
   async function profile(id) {
     const { values } = await configuration.resolve();
-    const profiles = values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName, baseUrl: values.modelBaseUrl, credentialName: 'AGENTKIT_MODEL_API_KEY', apiKey: values.modelApiKey }];
+    const profiles = values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash', baseUrl: values.modelBaseUrl, credentialName: 'AGENTKIT_MODEL_API_KEY', apiKey: values.modelApiKey }];
     // An empty id selects the default profile (first valid when no marker
     // exists), matching the model proxy's routing default.
     const effectiveId = String(id || '').trim() || (profiles.find(item => item.enabled !== false && item.default)?.id || profiles.find(item => item.enabled !== false)?.id || '');

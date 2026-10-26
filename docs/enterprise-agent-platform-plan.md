@@ -97,9 +97,9 @@ line counts or test totals. Do not increment for producing another plan.
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 18 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1, Skill shell policy-wait lease loss 1 earned); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 4 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke 1 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1, Skill shell policy-wait lease loss 1 earned); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 5 |
 
-Current assessed progress: **76/100**, approximately 76%. P4's remaining credit
+Current assessed progress: **77/100**, approximately 77%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -438,6 +438,29 @@ now records nine fixture model requests. Real-model measurements and wider
 Host-crash/side-effect fault acceptance remain open.
 
 ## Next delivery order
+
+The first bounded actual-model Native check used
+`node scripts/verify-native-real-model.mjs deepseek-v4.1-flash` and the saved
+local model credential without printing or persisting it. Each task ran through
+the current NativeKernel, production HTTP adapter and temporary SQLite store.
+The business travel prompt completed in one model call with 44 input/94 output
+tokens and 1,216 ms; the TypeScript repair prompt completed in one call with 45
+input/44 output tokens and 778 ms. Both matched their task-specific text checks.
+These are provider-reported tokens and local wall times, not billed cost (the
+provider did not report a price). The kernel reported `unverified` because no
+external result verifier was installed. This is a two-task smoke check, not a
+statistical quality or baseline/reference comparison; P5 earns only one of its
+six measurement points.
+
+The local config had a legacy API key but no explicit model name. The settings
+view advertised `deepseek-v4.1-flash`, while `modelService.profile('')`
+previously returned an empty model name. The service fallback now matches
+settings, with a focused regression (5/5). A compiled bundle Host attempt was
+not counted as evidence: the checkout is not an installed runtime containing
+DSH packages, so startup failed with `ENOENT`. This does not establish a model
+or Native runtime failure. The context/budget SQLite integration check passed
+3/3 after the compaction retry correction; its existing scope remains the two
+points already earned in P4.
 
 1. Finish the bound-policy extension/resource matrix, then close remaining
    context/source and cross-capability budget integration while preserving
