@@ -201,6 +201,9 @@ export interface ContextCompaction {
   sourceText: string; sourceDigest: string; offset: number; summary: string;
   coverage: { start: number; stop: number; projectionDigest: string }[];
   chunk: ContextChunk | null; proposal: string | null; errors: number; quoteLimit: number | null;
+  /** Provider retry attempts are separate from invalid-summary/proposal attempts.
+   * Absence on restored legacy runs conservatively inherits `errors`. */
+  providerErrors?: number;
   hookSubject: ObjectValue; hooksComplete: boolean;
   workspaceRevision?: string | null;
   /** References into the immutable prefix; cleared groups must belong to removedRefs. */

@@ -373,6 +373,26 @@ and pure retry policy), without a full suite:
 node --test --test-timeout=10000 packages/agentkit-harness/test/native-retry-budget.test.mjs packages/agentkit-harness/test/native-model-integration.test.mjs packages/agentkit-harness-core/test/retry.test.mjs
 ```
 
+An independent Claude Code review found that compaction mixed provider retry
+errors with invalid-summary errors while selecting two different ceilings from
+the latest error kind. Core now persists separate provider and summary counters;
+old combined-counter compactions resume conservatively. Memory and SQLite
+NativeKernel runs with a provider failure followed by an invalid summary now
+complete within each category's own limit. The focused context suite passed
+34/34 after rebuilding the core. The review's claim that summaries evade the
+shared model-call limit was rejected: `store.mts` charges every model attempt
+atomically at claim time, and the summary reducer adds only reported token/cost
+usage to avoid double counting. Existing context tests assert total model calls
+include every summary. Deadline delivery's larger summary output allowance is
+an explicit policy with a regression test; the token counter remains an
+estimate and provider overflow recovery is still a separate limit. This fix
+alone does not close the remaining cross-capability budget acceptance points.
+
+```sh
+node scripts/build-native-harness.mjs
+node --test --test-timeout=15000 packages/agentkit-harness-core/test/context-planning.test.mjs
+```
+
 ### Native defaults and mounted Agent management
 
 See [management behavior and reproduction](enterprise-agent-management.md) and

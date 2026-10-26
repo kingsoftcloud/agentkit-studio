@@ -212,6 +212,26 @@ test('summary tool calls are rejected data and never dispatched as task tools', 
   assert.equal(result.reason, 'context_summary_retry_exhausted'); assert.equal(summaries, 2); assert.equal(tools, 1);
 });
 
+for (const sqlite of [false, true]) test(`${sqlite ? 'sqlite' : 'memory'}: provider and invalid-summary retries keep separate durable limits`, async t => {
+  const run = setup(t, { sqlite, contextPolicy: { maxSummaryRetries: 1 } });
+  let tasks = 0, summaries = 0;
+  run.ports.model.generate = async request => {
+    if (request.purpose === 'compaction') {
+      summaries++;
+      if (summaries === 1) return { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage() };
+      if (summaries === 2) return toolResponse();
+      return final('Bounded historical notes');
+    }
+    return ++tasks === 1 ? toolResponse() : final('Task complete');
+  };
+  const result = await run.worker().runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed', result.reason);
+  assert.equal(tasks, 2);
+  assert.ok(summaries >= 3);
+  assert.equal(result.usage.modelCalls, tasks + summaries);
+  assert.equal(result.contextState.compactions, 1);
+});
+
 test('summary calls consume the same model budget and cannot spend the finalization reserve', async t => {
   const run = setup(t, { limits: { maxModelCalls: 2, finalizationReserveModelCalls: 1 } }); let tasks = 0, summaries = 0;
   run.ports.model.generate = async request => {

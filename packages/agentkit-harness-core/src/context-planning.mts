@@ -335,7 +335,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
       } else {
         compaction.coverage.push({ start: compaction.chunk.start, stop: compaction.chunk.stop, projectionDigest: compaction.chunk.projectionDigest });
         compaction.offset = compaction.chunk.stop; compaction.summary = compaction.proposal;
-        compaction.proposal = null; compaction.chunk = nextChunk; compaction.errors = 0;
+        compaction.proposal = null; compaction.chunk = nextChunk; compaction.errors = 0; compaction.providerErrors = 0;
         if (compaction.offset === compaction.sourceText.length) {
           verifyCoverage(compaction, true);
           state.history = { prefixCount: compaction.prefixCount, prefixDigest: compaction.prefixDigest,
@@ -473,7 +473,8 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   state.compaction = { sourceRevision: snapshot.revision, prefixCount: snapshot.messages.length, prefixDigest: digest(snapshot.messages),
     goalRevision: snapshot.goalRevision, contractDigest: digest(config.contract), retainedRefs: retained.map(index => refs[index]!), removedRefs: removed.map(index => refs[index]!),
     sourceText, sourceDigest: digest(sourceText), offset: 0, summary: state.history?.summary ?? '', coverage: [], chunk: null,
-    proposal: null, errors: 0, quoteLimit: null, hooksComplete: !config.hooks.some(hook => hook.events.includes('PreCompact')),
+    proposal: null, errors: 0, providerErrors: 0, quoteLimit: null,
+    hooksComplete: !config.hooks.some(hook => hook.events.includes('PreCompact')),
     ...(policy.readWorkingSetCount !== undefined ? { workspaceRevision: snapshot.workspaceRevision } : {}),
     ...(acceptedPruning ? { prunedToolResultRefs: acceptedPruning.sourceMessageRefs } : {}),
     hookSubject: { sourceRevision: snapshot.revision, sourceContextDigest: digest(snapshot.messages), sourceMessageCount: snapshot.messages.length,
@@ -500,13 +501,18 @@ export function reduceContextModel(snapshot: RunSnapshot, result: ModelResult, c
   }
   if (['policy_abort', 'user_abort', 'provider_terminal_error'].includes(result.kind)) return { ...base, phase: 'finalizing',
     outcome: result.kind === 'policy_abort' ? 'blocked' : 'unverified', reason: `context_summary_${result.kind}` };
-  compaction.errors++;
-  const limit = result.kind === 'provider_retryable_error' ? config.profile.maxProviderRetries : config.contextPolicy!.maxSummaryRetries;
-  if (compaction.errors > limit) return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'context_summary_retry_exhausted' };
+  const provider = result.kind === 'provider_retryable_error';
+  // Old persisted compactions had one combined counter. Seed their first
+  // provider retry conservatively; new compactions keep the two limits separate.
+  const attempts = provider ? (compaction.providerErrors ?? compaction.errors) + 1 : compaction.errors + 1;
+  if (provider) compaction.providerErrors = attempts;
+  else compaction.errors = attempts;
+  const limit = provider ? config.profile.maxProviderRetries : config.contextPolicy!.maxSummaryRetries;
+  if (attempts > limit) return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'context_summary_retry_exhausted' };
   if (result.kind === 'context_overflow') {
     const length = compaction.chunk.stop - compaction.chunk.start;
     if (length <= 2) return { ...base, phase: 'finalizing', outcome: 'blocked', reason: 'context_summary_quote_overflow' };
     compaction.quoteLimit = Math.max(1, Math.floor(length / 2)); compaction.chunk = null;
   }
-  return { ...base, retryNotBefore: now + retryDelay(result, compaction.errors, config, random) };
+  return { ...base, retryNotBefore: now + retryDelay(result, attempts, config, random) };
 }
