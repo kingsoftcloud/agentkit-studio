@@ -5,7 +5,7 @@ import { join } from 'node:path';
 export const name = 'studio-native-memory-web-proof';
 export const inject = ['llm', 'studioHostCompatibility'];
 export function apply(ctx, { directory }) {
-  ctx.llm.registerAdapter(['agentkit-studio-fixture'], {
+  ctx.llm.registerAdapter(['agentkit-studio-fixture', 'agentkit-studio-fixture-hidden'], {
     providerInfo: provider => ({ id: provider, name: 'Local Memory proof' }),
     providerRetryPolicy: () => undefined,
     listModels: async provider => [{ provider, id: 'pinned', name: 'pinned' }],

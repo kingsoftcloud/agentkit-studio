@@ -11,9 +11,11 @@
     "physical-browser-network-outage-recovers-durable-native-answer-without-reexecution",
     "product-stop-button-cancels-native-run-and-history-retains-terminal",
     "provider-failure-is-durable-and-shows-only-public-terminal-message-after-reload",
+    "strict-native-approval-survives-reload-and-ui-answer-executes-once",
+    "profile-disabled-provider-reasoning-stays-private-before-and-after-reload",
     "new-session-runs-current-r3-with-independent-native-ledger-and-history"
   ],
-  "archiveSha256": "8694665df913e029a29effdba96a684ef83f2382327e903a6fd45059f50aa283",
+  "archiveSha256": "33e52328b7975a84df8aa2c4f7effbabccd582ea3ddbe9b988c4e3551dee79d5",
   "sourceSha256": {
     "dist/client.js": "a00c96a916fb238fde0edc499347efa67403ebef5a00a055e88442f323a0873a",
     "src/runtime-contract.mjs": "ad88514601078a538dd3bede8e65482abf38db5f4d359ddcd5ea416e61cd2986",
@@ -51,12 +53,29 @@
       1,
       1
     ],
-    "buildId": "build_2ef7f11e0f590fe364c3",
-    "frozenSessionId": "session-d6326ff4-897b-4bb3-b219-84a419296832",
-    "currentSessionId": "session-f8cd5ea3-f285-48ae-8185-df2e3bb7f352",
-    "settledWhileBrowserOffline": true
+    "buildId": "build_74a7ddaff08ce57a7ce6",
+    "frozenSessionId": "session-aa15a27d-388b-4747-ae02-ca784fb39722",
+    "currentSessionId": "session-b8ec3fb6-b1c8-4bb0-a426-977c6af020fc",
+    "settledWhileBrowserOffline": true,
+    "approval": {
+      "agentId": "ar-local-fa16e4cc57c64e3d",
+      "sessionId": "session-1c5addc9-a522-4440-9417-1bfe669698a2",
+      "phase": "completed",
+      "modelCalls": 2,
+      "toolCalls": 1,
+      "asked": 1,
+      "decided": 1,
+      "outcome": "allowed-once"
+    },
+    "hiddenReasoning": {
+      "agentId": "ar-local-5674bca173674d60",
+      "sessionId": "session-3e34f19f-5d8d-4a1c-8b21-da7b11745493",
+      "phase": "completed",
+      "modelCalls": 1,
+      "displayed": false
+    }
   },
-  "agentId": "ar-local-a64f7960780244bb",
+  "agentId": "ar-local-d482572bb2a74337",
   "requests": [
     {
       "marker": "MANAGEMENT_REVISION_ONE",
@@ -85,6 +104,21 @@
     },
     {
       "marker": "MANAGEMENT_REVISION_THREE",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "marker": "APPROVAL_WEB_PROOF",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "marker": "APPROVAL_WEB_PROOF",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "marker": "HIDDEN_REASONING_WEB_PROOF",
       "inputTokens": 11,
       "outputTokens": 7
     }

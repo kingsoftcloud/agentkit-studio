@@ -1,8 +1,9 @@
 # Native defaults and mounted Agent management
 
 Reviewed 2026-10-26. This batch completes the user-facing version/conflict and
-management evidence in P2 of the enterprise Agent Studio plan. It does not
-certify the remaining task interaction, governance or real-model measurements.
+management evidence in P2 and the mounted task-interaction evidence in P4 of
+the enterprise Agent Studio plan. It does not certify the remaining governance,
+context/budget integration or real-model measurements.
 
 ## Behavior
 
@@ -68,6 +69,17 @@ The proof covers:
     shows the fixed public explanation before and after a browser reload; the
     private response body never appears in the UI. The canonical failure event
     uses the same safe explanation.
+11. A separate coding Agent with a frozen strict policy calls the bound
+    `write_workspace_file` tool. Chrome shows the pending DSH approval, reloads,
+    then answers “allow once” in the original Session. The file is written
+    once; the SQLite Run has two model calls and one tool call. Persisted Session
+    history contains one `approval/asked` and one matching `approval/decided`,
+    with no raw file arguments in the approval reason. Explicit provider
+    reasoning is present in an expandable thought row and survives reload.
+12. A second Agent binds a model profile with
+    `provider_thinking_display: false`. Its fixture still supplies
+    `reasoning_content`, but Chrome does not display it before or after reload.
+    The inspected Session history also contains no private reasoning text.
 
 The local model is a controlled HTTP/SSE fixture, not a quality/token/latency
 benchmark. A reload during an active turn proves page-level reconnection. A
@@ -76,8 +88,10 @@ committed while offline. Neither proves abrupt Host crash recovery or a range
 of real-world network failure patterns; those remain separate acceptance scopes.
 The Stop check covers a held model request; cancellation during an external
 tool's unknown side effect has its own Native receipt/recovery acceptance.
-The 401 check covers a terminal provider error; approval and permitted public
-reasoning still need mounted task-interaction acceptance.
+The approval and reasoning checks use controlled provider responses. They prove
+the mounted product path and visibility policy, not the quality or disclosure
+terms of a real model provider. Approval after an abrupt Host crash and a wider
+range of in-flight side effects remain separate fault-acceptance scopes.
 The verifier uses a reused dependency graph, not a clean dependency install.
 Its Node-only PATH deliberately excludes OS document-directory helpers; the
 shipped workspace controller is configured with a scratch Documents directory.
@@ -87,7 +101,8 @@ The refreshed machine-readable report is `enterprise-agent-management-evidence.j
 Its archive and production source hashes identify the evaluated implementation.
 The local evidence directory also contains screenshots of conflict recovery,
 revision status, both revision executions, page reload, network recovery, the
-stopped terminal and the provider failure.
+stopped terminal, provider failure and approval. The machine-readable report
+records the explicit reasoning-on and reasoning-off sessions.
 
 Reproduction:
 
@@ -119,6 +134,14 @@ then 21 affected recovery checks after a validation-assertion correction.
 The mounted Chrome verifier passed with six model requests, including the one
 failed request; it used a fresh production archive. These checks do not measure
 real-model answer quality or latency.
+The extension for approval and reasoning passed with nine fixture model
+requests. Its fresh packed Host and actual Chrome showed one durable approval
+answer, one workspace effect, public thought after reload and no displayed
+thought for the profile that disabled it. A separate read of the corresponding
+Session logs confirmed the disabled profile's private text was absent. Actual
+Claude Code supplied the tool-call fixture shape; its suggested cloud personal
+assistant approval UI path was rejected after checking the maintained DSH
+`ui-approval` source and the successful Native browser flow.
 The build guard caught and prompted removal of an accidental browser dependency
 on the runtime contract; the default now lives in `src/authoring-defaults.mjs`.
 Initial verifier corrections used the actual separate Build-list route and a

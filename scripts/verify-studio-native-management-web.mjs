@@ -37,13 +37,37 @@ const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     const system = body.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+    const approvalTurn = system.includes('APPROVAL_WEB_PROOF');
+    const hiddenReasoningTurn = system.includes('HIDDEN_REASONING_WEB_PROOF');
     const marker = system.includes('MANAGEMENT_REVISION_THREE') ? 'MANAGEMENT_REVISION_THREE' : 'MANAGEMENT_REVISION_ONE';
-    assert.ok(system.includes(marker));
-    requests.push({ marker, inputTokens: 11, outputTokens: 7 });
-    assert.ok(requests.length <= 6, 'Unexpected repeated model request');
+    assert.ok(approvalTurn || hiddenReasoningTurn || system.includes(marker));
+    requests.push({ marker: approvalTurn ? 'APPROVAL_WEB_PROOF' : hiddenReasoningTurn ? 'HIDDEN_REASONING_WEB_PROOF' : marker,
+      inputTokens: 11, outputTokens: 7 });
+    assert.ok(requests.length <= 9, 'Unexpected repeated model request');
     if (requests.length === 6) {
       res.writeHead(401, { 'content-type': 'text/plain' });
       res.end('private-provider-error-body'); return;
+    }
+    if (approvalTurn) {
+      assert.ok((body.tools || []).some(tool => (tool.function?.name || tool.name) === 'write_workspace_file'));
+      const priorResults = body.messages.filter(message => message.role === 'tool').length;
+      assert.ok(priorResults <= 1, 'Workspace write must not repeat');
+      const delta = priorResults === 0
+        ? { tool_calls: [{ index: 0, id: 'approval-web-call', type: 'function', function: {
+          name: 'write_workspace_file', arguments: JSON.stringify({ path: 'approval-web.txt', content: 'approved once' }) } }] }
+        : { reasoning_content: 'APPROVAL_PUBLIC_REASONING', content: 'APPROVAL_WEB_DONE' };
+      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+      res.end('data: ' + JSON.stringify({ id: 'approval-' + requests.length,
+        choices: [{ index: 0, delta, finish_reason: priorResults === 0 ? 'tool_calls' : 'stop' }],
+        usage: { prompt_tokens: 11, completion_tokens: 7 } }) + '\n\ndata: [DONE]\n\n');
+      return;
+    }
+    if (hiddenReasoningTurn) {
+      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
+      res.end('data: ' + JSON.stringify({ id: 'hidden-reasoning-' + requests.length,
+        choices: [{ index: 0, delta: { reasoning_content: 'HIDDEN_REASONING_PRIVATE', content: 'HIDDEN_REASONING_DONE' },
+          finish_reason: 'stop' }], usage: { prompt_tokens: 11, completion_tokens: 7 } }) + '\n\ndata: [DONE]\n\n');
+      return;
     }
     const heldIndex = requests.length - 3;
     if (heldIndex >= 0 && heldIndex < heldRequests.length) {
@@ -91,7 +115,9 @@ try {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'] } },
     dependencies: { '@deepseek-ai/dsh-base': '0.2.1-rc.2', '@deepseek-ai/dsh-web-app': '0.2.1-rc.2', '@kingsoftcloud/agentkit-studio': '0.0.2' } }));
   await writeFile(join(root, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'fixture', provider: 'openai-compatible',
-    modelName: 'pinned', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, default: true, credentialName: 'LOCAL_PROOF' }],
+    modelName: 'pinned', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, default: true, credentialName: 'LOCAL_PROOF' },
+  { id: 'fixture-hidden', provider: 'openai-compatible', modelName: 'pinned', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+    credentialName: 'LOCAL_PROOF', parameters: { provider_thinking_display: false } }],
     modelProfileKeys: { LOCAL_PROOF: 'local-fixture-key' } }), { mode: 0o600 });
   const patch = join(root, 'proof.patch.yml');
   await writeFile(patch, ['- id: session-persistence-jsonl', '  config:', `    root: ${JSON.stringify(join(root, 'sessions'))}`, '    compression: none',
@@ -315,9 +341,69 @@ try {
   await inspectRun(); await page.screenshot({ path: join(root, 'failed-native-run.png'), fullPage: true });
   await page.reload(); await inspectRun();
   report.checks.push('provider-failure-is-durable-and-shows-only-public-terminal-message-after-reload');
+  phase = 'product-approval';
+  const approvalPolicy = { contract: 'agentkit.native-agent-policy/v1', mode: 'strict', rules: {} };
+  const approvalAgent = await rpc('agents/create-local', { name: 'Approval Web proof', runtimeType: 'harness',
+    spec: { runtime: { type: 'harness' }, instructions: { system: 'APPROVAL_WEB_PROOF: write the requested scratch file.' },
+      execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' },
+      bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'],
+        nativeAgentPolicy: approvalPolicy } },
+    bindings: { modelProfileIds: ['fixture'], tools: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file'],
+      nativeAgentPolicy: approvalPolicy } });
+  const approvalAgentId = approvalAgent.metadata.id;
+  await page.reload();
+  await page.getByText('智能体', { exact: true }).first().click();
+  await page.getByRole('button', { name: '我的智能体', exact: true }).click();
+  await page.getByLabel('搜索 Agent', { exact: true }).fill('Approval Web proof');
+  const approvalRow = page.getByRole('row').filter({ hasText: 'Approval Web proof' });
+  await approvalRow.waitFor({ state: 'visible' });
+  await approvalRow.getByRole('button', { name: '绑定到新会话', exact: true }).click();
+  const approvalTrigger = page.locator('.studio-agent-trigger').filter({ hasText: 'Approval Web proof' });
+  await approvalTrigger.waitFor({ state: 'visible' });
+  const approvalSessionId = await approvalTrigger.getAttribute('data-studio-session-id');
+  assert.ok(approvalSessionId);
+  await composer.fill('Write approval-web.txt with approved once.'); await composer.press('Enter');
+  const approvalPanel = page.locator('[data-approval-key]');
+  await approvalPanel.waitFor({ state: 'visible', timeout: 30000 });
+  assert.match(await approvalPanel.innerText(), /write_workspace_file/);
+  await page.reload();
+  await approvalPanel.waitFor({ state: 'visible', timeout: 30000 });
+  assert.equal(await approvalPanel.locator('button').count(), 2);
+  await approvalPanel.locator('button').last().click();
+  await page.getByText('APPROVAL_WEB_DONE', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  const reasoningRow = page.locator('[data-variant="think"]').filter({ hasText: 'APPROVAL_PUBLIC_REASONING' });
+  await reasoningRow.waitFor({ state: 'attached', timeout: 30000 });
+  assert.equal(await readFile(join(root, 'workspace/approval-web.txt'), 'utf8'), 'approved once');
+  await page.reload(); await page.getByText('APPROVAL_WEB_DONE', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await reasoningRow.waitFor({ state: 'attached', timeout: 30000 });
+  assert.equal(await approvalPanel.count(), 0);
+  report.checks.push('strict-native-approval-survives-reload-and-ui-answer-executes-once');
+  phase = 'private-reasoning-hidden';
+  const hiddenAgent = await rpc('agents/create-local', { name: 'Hidden Reasoning Web proof', runtimeType: 'harness',
+    spec: { runtime: { type: 'harness' }, instructions: { system: 'HIDDEN_REASONING_WEB_PROOF: return the answer.' },
+      execution: { nativeTodoMode: 'off', nativePlanMode: 'off', nativeToolSearchMode: 'off' },
+      bindings: { modelProfileIds: ['fixture-hidden'] } }, bindings: { modelProfileIds: ['fixture-hidden'] } });
+  const hiddenAgentId = hiddenAgent.metadata.id;
+  await page.getByText('智能体', { exact: true }).first().click();
+  await page.getByRole('button', { name: '我的智能体', exact: true }).click();
+  await page.getByLabel('搜索 Agent', { exact: true }).fill('Hidden Reasoning Web proof');
+  const hiddenRow = page.getByRole('row').filter({ hasText: 'Hidden Reasoning Web proof' });
+  await hiddenRow.waitFor({ state: 'visible' });
+  await hiddenRow.getByRole('button', { name: '绑定到新会话', exact: true }).click();
+  const hiddenTrigger = page.locator('.studio-agent-trigger').filter({ hasText: 'Hidden Reasoning Web proof' });
+  await hiddenTrigger.waitFor({ state: 'visible' });
+  const hiddenSessionId = await hiddenTrigger.getAttribute('data-studio-session-id');
+  assert.ok(hiddenSessionId);
+  await composer.fill('Return the answer.'); await composer.press('Enter');
+  await page.getByText('HIDDEN_REASONING_DONE', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  assert.equal(await page.getByText('HIDDEN_REASONING_PRIVATE', { exact: false }).count(), 0);
+  await page.reload(); await page.getByText('HIDDEN_REASONING_DONE', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  assert.equal(await page.getByText('HIDDEN_REASONING_PRIVATE', { exact: false }).count(), 0);
+  report.checks.push('profile-disabled-provider-reasoning-stays-private-before-and-after-reload');
   assert.deepEqual(modelFailures, []); assert.deepEqual(rendererErrors, []);
   assert.deepEqual(requests.map(item => item.marker), ['MANAGEMENT_REVISION_ONE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE',
-    'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE']);
+    'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'MANAGEMENT_REVISION_THREE', 'APPROVAL_WEB_PROOF', 'APPROVAL_WEB_PROOF',
+    'HIDDEN_REASONING_WEB_PROOF']);
   assert.equal(await readFile(join(root, 'legacy-loop.jsonl'), 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; }), '');
   phase = 'durable-version-bindings';
   const ledger = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
@@ -341,9 +427,42 @@ try {
     assert.equal(runs[5].snapshot.parentRunId, runs[4].snapshot.runId, 'Failed Run retains its parent');
     assert.equal(runs[5].snapshot.reason, 'provider_terminal_error');
     assert.equal(runs[5].snapshot.usage.modelCalls, 1, 'Failed request is accounted once');
+    const approvalScope = { ...scope, agentId: approvalAgentId };
+    const approvalRows = ledger.list(approvalScope, approvalSessionId);
+    assert.equal(approvalRows.length, 1);
+    const approvalRun = ledger.load(approvalScope, approvalRows[0].runId);
+    assert.equal(approvalRun.snapshot.phase, 'completed');
+    assert.equal(approvalRun.snapshot.usage.modelCalls, 2);
+    assert.equal(approvalRun.snapshot.usage.toolCalls, 1);
+    assert.equal(approvalRun.configuration.hostRecoveryBinding.agentRevision, 1);
+    const approvalSessionFile = (await readdir(join(root, 'sessions'), { recursive: true }))
+      .find(file => file.endsWith('.jsonl') && file.includes(approvalSessionId));
+    assert.ok(approvalSessionFile, 'The answered approval must have a durable Session history');
+    const approvalEvents = (await readFile(join(root, 'sessions', approvalSessionFile), 'utf8'))
+      .trim().split('\n').map(JSON.parse);
+    const asked = approvalEvents.filter(event => event.type === 'approval/asked');
+    const decided = approvalEvents.filter(event => event.type === 'approval/decided');
+    assert.equal(asked.length, 1); assert.equal(decided.length, 1);
+    assert.equal(asked[0].data.toolName, 'write_workspace_file');
+    assert.equal(decided[0].data.id, asked[0].data.id);
+    assert.equal(decided[0].data.outcome, 'allowed-once');
+    assert.doesNotMatch(asked[0].data.reason, /approval-web\.txt|approved once/);
+    const hiddenScope = { ...scope, agentId: hiddenAgentId };
+    const hiddenRows = ledger.list(hiddenScope, hiddenSessionId);
+    assert.equal(hiddenRows.length, 1);
+    const hiddenRun = ledger.load(hiddenScope, hiddenRows[0].runId);
+    assert.equal(hiddenRun.snapshot.phase, 'completed');
+    assert.equal(hiddenRun.configuration.profile.providerThinkingDisplay, false);
+    assert.equal(hiddenRun.snapshot.usage.modelCalls, 1);
+    assert.ok(!JSON.stringify(hiddenRun.events.filter(event => event.kind === 'model.completed')).includes('HIDDEN_REASONING_PRIVATE'));
     report.durable = { revisions: [1, 3, 3, 3, 3, 3], engine: 'agentkit.native/v1', phases: runs.map(run => run.snapshot.phase),
       modelCalls: runs.map(run => run.snapshot.usage.modelCalls), buildId, frozenSessionId, currentSessionId,
-      settledWhileBrowserOffline: completedOffline };
+      settledWhileBrowserOffline: completedOffline,
+      approval: { agentId: approvalAgentId, sessionId: approvalSessionId, phase: approvalRun.snapshot.phase,
+        modelCalls: approvalRun.snapshot.usage.modelCalls, toolCalls: approvalRun.snapshot.usage.toolCalls,
+        asked: asked.length, decided: decided.length, outcome: decided[0].data.outcome },
+      hiddenReasoning: { agentId: hiddenAgentId, sessionId: hiddenSessionId, phase: hiddenRun.snapshot.phase,
+        modelCalls: hiddenRun.snapshot.usage.modelCalls, displayed: false } };
   } finally { ledger.close(); }
   report.checks.push('new-session-runs-current-r3-with-independent-native-ledger-and-history');
   report.passed = true; report.agentId = agentId;

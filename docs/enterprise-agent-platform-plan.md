@@ -96,10 +96,10 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete reference/duplication/license audit (5) | 10 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5; live page, browser-network reconnect, product stop and terminal provider error earned 4) | 17 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds and cancellation earned 2); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 18 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries 1, frozen background Host SIGKILL/cold completion 1, bound-policy approval cancellation 1 earned); runtime differences/local management and deployment boundary audit (3); final integrated checks, licenses and requirement-by-requirement audit (5) | 3 |
 
-Current assessed progress: **74/100**, approximately 74%. P4's remaining credit
+Current assessed progress: **75/100**, approximately 75%. P4's remaining credit
 means existing capabilities are not yet re-certified as a group for this objective;
 it does not mean Memory/context/children/UI are unimplemented. The earlier
 43/100 is a different checklist and cannot be carried over.
@@ -407,8 +407,15 @@ Run panel displayed a fixed public error before and after page reload, without
 showing the private response body. The canonical failure event uses the same
 safe mapping. This earns one more P4 interaction point. The updated
 [mounted report](enterprise-agent-management-evidence.json) records the six
-requests and all terminal phases; focused affected tests passed. Approval and
-allowed public reasoning remain open, as do real-model measurements.
+requests and all terminal phases; focused affected tests passed. A subsequent
+fresh packed Host and actual Chrome run added a strict coding Agent: the pending
+approval survived reload, one UI “allow once” answer caused one workspace
+effect, and history recorded one asked/decided pair. Explicit provider thought
+appeared after reload, while a second profile with display disabled kept its
+private reasoning out of the UI and inspected Session history. This earns P4's
+last interaction point; the [mounted report](enterprise-agent-management-evidence.json)
+now records nine fixture model requests. Real-model measurements and wider
+Host-crash/side-effect fault acceptance remain open.
 
 ## Next delivery order
 
