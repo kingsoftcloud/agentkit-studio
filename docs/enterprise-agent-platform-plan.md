@@ -1,6 +1,6 @@
 # Enterprise Agent Studio implementation and local acceptance
 
-Status: active, 2026-10-26. This is the current thread objective. The earlier
+Status: complete for the stated local phase, 2026-10-26. This is the current thread objective. The earlier
 Python-to-TypeScript migration and ZCode coding-alignment evidence remain useful
 inputs; neither establishes completion of this broader platform objective.
 
@@ -94,12 +94,12 @@ line counts or test totals. Do not increment for producing another plan.
 | Milestone | Weight | Required evidence | Earned |
 | --- | ---: | --- | ---: |
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete Native-migration reference/duplication/license inventory (5, earned) | 15 |
-| P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
+| P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, matrix reviewed and dispatch/browser/redirect gaps repaired); user-facing version/conflict and management behavior (5) | 20 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
 | P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), context/budget integration (4; compaction, Host sources and cross-capability accounting earned); background and child lifecycle (5, earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, earned) | 20 |
-| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke, paired direct-model comparison and paired tool task 4 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 13 |
+| P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke, paired direct-model comparison, paired read-only policy and coding tools, and an actual local-file effect all earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5, earned; broad discovery plus corrected-file reruns and packed Host evidence) | 20 |
 
-Current assessed progress: **92/100**, approximately 92%. P4's complete credit
+Current assessed progress: **100/100** for the stated local phase. P4's complete credit
 means the listed local capability and task-interaction invariants have relevant
 source and execution evidence; it does not claim cloud or arbitrary-extension
 conformance. The earlier 43/100 is a different checklist and cannot be carried
@@ -534,6 +534,28 @@ samples are too small to establish latency or token advantage, and the direct
 baseline has a different system context; a comparable reference-Harness or
 broader task-quality benchmark remains open.
 
+The [paired coding-tool report](enterprise-agent-real-model-coding-comparison.json)
+uses the same streaming model and adapter to read a TypeScript function, locate
+the exact-stock checkout bug and supply `requested <= stock`. Two alternating
+rounds per variant passed 4/4 exact-tool and correction checks. Direct inference
+reported 250/308 output tokens; Native reported 403/377. Local elapsed times
+were 2,919/1,816 ms direct and 2,850/3,221 ms Native. These tiny samples do not
+support a token or speed advantage; in this case Native was more verbose. The
+second distinct tool task earns one P5 measurement point. A broader statistical
+quality benchmark or comparable reference-Harness study remains useful future work.
+
+The [paired local-file repair report](enterprise-agent-real-model-write-comparison.json)
+uses an effectful tool to change the checkout operator in a temporary TypeScript
+file, then checks the resulting bytes. Direct and Native each ran two alternating
+rounds; 4/4 performed exactly one tool call, wrote the intended `<=` correction
+and supplied a repair explanation. Input tokens were 853 per sample. Direct
+output tokens were 91/134 and Native's were 124/124; elapsed times were
+1,966/1,817 ms direct and 4,968/1,862 ms Native. This closes the six-point
+bounded measurement category with a real local effect. The sample is too small
+for statistical quality or speed claims, does not compare against a separately
+configured DSH/Codex model or billable price, and does not replace the controlled
+Host approval/recovery evidence.
+
 Two additional existing fault fixtures were re-run for this objective, rather
 than inferred from their filenames. `tests/native-workspace-receipt-process.test.mjs`
 passed 2/2: a real SIGKILL after one workspace publication is followed by a
@@ -547,13 +569,56 @@ These are local controlled-model/HTTP fault experiments, not proof of exactly
 once execution by every external service. They earn P5's two remaining fault
 points; the six-point fault category is now complete.
 
-1. Finish the bound-policy extension/resource matrix, then close remaining
-   context/source and cross-capability budget integration while preserving
-   Memory and child lifecycle invariants. The Skill shell lease-loss check and
-   default strict policy for newly saved Native Revisions are complete.
-2. Expand the bounded actual-model smoke into a representative result/token/
-   latency comparison with a fixed baseline and explicit task-quality checks.
-3. Perform final integrated acceptance and explicit requirement/license audit.
+The extension/resource matrix, bounded actual-model comparison, integrated
+acceptance and explicit requirement/license audit are complete for this local
+phase. P2's final point covers the reviewed trusted Native
+dispatch paths; arbitrary Node plugins remain trusted Host code, and cloud
+deployment or unknown third-party effects are not certified by this audit.
 
 Each batch runs targeted checks; broad checks happen at final/stage integration
 or when new evidence warrants them. No full-suite rerun after every merge.
+
+
+## Final local acceptance, 2026-10-26
+
+The [final acceptance record](enterprise-agent-final-acceptance.json) maps this
+phase's requirements to the inspected evidence and retains the limitations. The
+fixed denominator is complete: P1 15, P2 20, P3 25, P4 20, P5 20.
+
+One broad repository run exercised 6,736 tests: 6,718 passed, 14 failed, two were
+cancelled and two skipped. It exposed a real Managed/local Memory status-boundary
+defect plus stale expectations, incomplete projection fixtures and the source
+size gate. The Managed recovery composition is repaired; revision assertions
+now verify every stream frame's monotonic revision, the Python oracle remains
+unchanged while Native-only repair controls are checked separately, and the
+symlink test attacks the actual background registry path after Memory
+initialization. The patch inventory now checks 48 patches and 347 paths.
+
+Following the requested test policy, the broad suite was not repeated. All
+affected Host/recovery/reference/manifest/component files passed 148 checks;
+Memory binding files passed 47; the four managed A2A question cases passed; and
+the extracted agent gateway/authority/source-size group passed 102. The original
+56-case diagnosis/workspace/child reproduction also passed. These groups
+overlap; they are not a distinct-test total or a claim that a second full run
+passed. The stalled child-test process was closed after its failed checks; its
+managed A2A cases now terminate normally.
+
+The source-size fix extracts immutable Host binding helpers and per-agent tool
+ports, preserving live closure checks and shared maps. The final packed Host
+actually performs business MCP mutation, coding file publication, frozen-Build
+execution and both cold continuations. The separate packed Skill proof performs
+one directory resolution/download/script, publishes exact text/binary artifacts,
+and reopens history in a new Host without replay. Both use the maintained DSH
+commit recorded in the JSON, with dispatchGuard compiled into its runtime.
+TypeScript contracts, syntax, portability, patch manifests, four source-bound
+launchers and package license/integrity checks pass. Production source from the
+verified archive is retained while this documentation is finalized.
+
+Required attribution remains in the distributed notices and licenses; Native
+implementation comments describe behavior without optional framework comparisons.
+Existing serialized policy identifiers retain their compatibility meaning.
+
+Cloud scheduling/multi-replica ownership, hostile-plugin isolation, arbitrary
+external-service exactly-once behavior and statistical performance superiority
+are outside this completed local phase. The small real-model comparisons show
+correct results, not a demonstrated token or speed advantage.

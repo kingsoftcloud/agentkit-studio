@@ -61,7 +61,8 @@ for (const sqlite of [false, true]) {
     assert.equal(result.reason, 'repeated_tool_error_recovery_exhausted'); assert.equal(result.usage.modelCalls, 9);
     assert.equal(run.effects.length, 6); assert.equal(result.toolErrorRecovery.startedModelCall, 6);
     assert.equal(run.requests.filter(request => request.messages[0]?.kind === 'compaction_instructions').length, 2);
-    assert.equal(result.contextState.compaction.errors, 2); assert.equal(result.contextState.history, null);
+    assert.equal(result.contextState.compaction.providerErrors, 2);
+    assert.equal(result.contextState.compaction.errors, 0); assert.equal(result.contextState.history, null);
     assert.match(canonical(contextContinuity(result, run.config)), /original budget|compaction/);
   });
   test(`${backend}: six definite failures permit diagnosis and one actual verified correction`, async t => {

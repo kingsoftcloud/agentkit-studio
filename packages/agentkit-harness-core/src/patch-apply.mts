@@ -1,5 +1,5 @@
-// ZCode 3c5b227649371507ddc4eb46ac5133afe6db1cab, core/src/tool/patch-apply.ts.
-// Apache-2.0; only local module extensions changed. See THIRD_PARTY_NOTICES.md.
+// Modified Apache-2.0 code; only local module extensions changed.
+// Attribution and license: THIRD_PARTY_NOTICES.md.
 import { normalizeLineEndings } from "./edit-matchers.mjs";
 import type { PatchChunk } from "./patch-parser.mjs";
 

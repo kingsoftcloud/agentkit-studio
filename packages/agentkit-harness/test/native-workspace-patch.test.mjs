@@ -17,7 +17,9 @@ function setup(t, { authorize = async () => 'allow', enablePatches = true } = {}
   const tools = create(); let sequence = 0;
   const call = (patch_text, options = {}) => tools.execute({ sessionId: 'session', operationKey: `op-${++sequence}`,
     call: { name: 'apply_workspace_patch', callId: `patch-${sequence}`, arguments: { patch_text } },
-    definition: tools.definitions.find(tool => tool.name === 'apply_workspace_patch'), signal: new AbortController().signal, ...options });
+    definition: tools.definitions.find(tool => tool.name === 'apply_workspace_patch'), signal: new AbortController().signal,
+    ...Object.fromEntries(Object.entries(options).filter(([key]) => key !== 'assertCurrent')) },
+  { assertCurrent: options.assertCurrent });
   return { root, workspace, stateDir, tools, create, call, write: (path, text) => writeFileSync(join(workspace, path), text),
     read: path => readFileSync(join(workspace, path), 'utf8') };
 }
@@ -71,16 +73,18 @@ for (const [title, lines] of [
 test('symlink aliases and a destination created during verification are refused', async t => {
   const f = setup(t); f.write('a.txt', 'old\n'); symlinkSync('a.txt', join(f.workspace, 'alias.txt'));
   assert.equal((await f.call(patch('*** Delete File: a.txt', '*** Delete File: alias.txt'))).content.error_type, 'patch_path_conflict');
-  let race;
-  race = setup(t, { authorize: async () => { setTimeout(() => race.write('created.txt', 'external\n'), 0); return 'allow'; } });
-  const result = await race.call(patch('*** Add File: created.txt', '+new'));
+  const race = setup(t); let changed = false;
+  const result = await race.call(patch('*** Add File: created.txt', '+new'), { assertCurrent: () => {
+    if (!changed) { race.write('created.txt', 'external\n'); changed = true; } return true;
+  } });
   assert.equal(result.status, 'error'); assert.equal(race.read('created.txt'), 'external\n');
 });
 
 test('external edits during verification and cancellation retain every original file', async t => {
-  let f;
-  f = setup(t, { authorize: async () => { setTimeout(() => f.write('a.txt', 'external\n'), 0); return 'allow'; } }); f.write('a.txt', 'old\n');
-  const result = await f.call(patch('*** Update File: a.txt', '@@', '-old', '+new', '*** Add File: created.txt', '+new'));
+  const f = setup(t); f.write('a.txt', 'old\n'); let changed = false;
+  const result = await f.call(patch('*** Update File: a.txt', '@@', '-old', '+new', '*** Add File: created.txt', '+new'), {
+    assertCurrent: () => { if (!changed) { f.write('a.txt', 'external\n'); changed = true; } return true; },
+  });
   assert.equal(result.content.error_type, 'file_modified_since_read'); assert.equal(f.read('a.txt'), 'external\n');
   assert.equal(existsSync(join(f.workspace, 'created.txt')), false);
   const g = setup(t), controller = new AbortController(); g.write('a.txt', 'old\n');

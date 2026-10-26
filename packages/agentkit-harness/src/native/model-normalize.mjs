@@ -21,7 +21,7 @@ const CONTEXT_LIMITS = new Set(['context_overflow', 'context_length_exceeded']);
 const OUTPUT_LIMITS = new Set([
   'output_limit', 'length', 'max_tokens', 'max_output_tokens', 'incomplete',
   // A completed generation can fill input + output capacity without its input
-  // having been rejected. Match ZCode's bounded output-continuation semantics;
+  // having been rejected. Use bounded output continuation;
   // real input-overflow errors still take the separate context-overflow path.
   'model_context_window_exceeded',
 ]);

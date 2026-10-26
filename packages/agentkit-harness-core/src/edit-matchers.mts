@@ -1,6 +1,5 @@
-// Adapted without algorithm changes from zai-org/ZCode 3c5b227649371507ddc4eb46ac5133afe6db1cab,
-// apps/zcode-cli/packages/core/src/tool/edit-matchers.ts (Apache-2.0).
-// See THIRD_PARTY_NOTICES.md and third-party/ZCode-LICENSE.
+// Modified Apache-2.0 code, preserving the original algorithms.
+// Attribution and license: THIRD_PARTY_NOTICES.md.
 type EditMatchStrategy =
   | "exact"
   | "quote_normalized"

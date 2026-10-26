@@ -274,14 +274,14 @@ function deadlineSignal(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-async function webFetch({ fetch: fetchImpl, url, maxChars, timeout, ssrfPolicy, signal, persistOutput, request }) {
+async function webFetch({ fetch: fetchImpl, url, maxChars, timeout, ssrfPolicy, signal, persistOutput, request, checkCurrent }) {
   const current = String(url || '').trim();
   if (!current) return { ok: false, error_type: 'url_required', error_message: 'url is required' };
   const limit = Number.isFinite(maxChars) && maxChars > 0 ? Math.trunc(maxChars) : DEFAULT_MAX_CHARS;
   const timeoutMs = Number.isFinite(timeout) && timeout > 0 ? timeout * 1000 : 30_000;
   const deadline = deadlineSignal(signal, timeoutMs);
   try {
-    return await fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, persistOutput, request, deadline });
+    return await fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, persistOutput, request, deadline, checkCurrent });
   } catch (error) {
     if (signal?.aborted) throw error;
     if (deadline.aborted) return { ok: false, error_type: 'timeout', error_message: 'web_fetch timed out', url };
@@ -289,11 +289,13 @@ async function webFetch({ fetch: fetchImpl, url, maxChars, timeout, ssrfPolicy, 
   }
 }
 
-async function fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, persistOutput, request, deadline }) {
+async function fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, persistOutput, request, deadline, checkCurrent }) {
   let currentUrl = current;
   for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+    checkCurrent?.();
     const blocked = await validatePublicHttpUrl(currentUrl, ssrfPolicy, deadline);
     if (blocked) return blocked;
+    checkCurrent?.();
     let response;
     try { response = await fetchImpl(currentUrl, { method: 'GET', redirect: 'manual', signal: deadline }); }
     catch (error) {
@@ -310,6 +312,7 @@ async function fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, p
     const contentType = response.headers.get('content-type') || '';
     const { text: fullText, reachedByteCeiling, fullBytes } = await readBoundedBody(response, { signal: deadline, returnFull: true });
     deadline.throwIfAborted?.();
+    checkCurrent?.();
     const text = /html/i.test(contentType) ? htmlToText(fullText) : fullText;
     const budget = budgetText(text, limit);
     const result = { ok: true, url, final_url: currentUrl, status_code: response.status, content_type: contentType, ...budget,
@@ -320,6 +323,7 @@ async function fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, p
     // succeeded when it did not.
     if (budget.truncated && typeof persistOutput === 'function') {
       try {
+        checkCurrent?.();
         const ref = await persistOutput(request, text, { toolName: 'web_fetch', mediaType: contentType || 'text/plain', fullBytes, reachedByteCeiling });
         const path = ref?.uri ?? ref?.path;
         if (typeof path !== 'string' || !path.trim() || path.includes('\0')) throw new Error('persist_output_reference_invalid');
@@ -329,6 +333,7 @@ async function fetchPage({ fetchImpl, url, current, limit, ssrfPolicy, signal, p
         result.persisted = { failed: true, error: 'persist_output_failed' };
       }
     }
+    checkCurrent?.();
     return result;
   }
   return { ok: false, error_type: 'too_many_redirects', error_message: 'web_fetch exceeded redirect limit', url };
@@ -508,22 +513,28 @@ export function createWebToolTransport({ fetch: fetchImpl, searchFetch = fetchIm
       const rejection = toolInputRejection(definition, call);
       if (rejection) return { status: 'error', content: rejection };
       const signal = request.signal;
+      const checkCurrent = () => {
+        signal.throwIfAborted();
+        if (typeof request.assertCurrent === 'function' && request.assertCurrent() !== true)
+          throw Object.assign(new Error('Native Web authority expired'), { code: 'web_authority_stale' });
+      };
       // All transport context except the signal is JSON data, captured before
       // the first await. In particular persistOutput cannot borrow a changed
       // Session or operation identity from the caller's mutable request.
-      const bound = { ...copy(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))), signal };
+      const bound = { ...copy(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal' && key !== 'assertCurrent'))), signal };
       const args = bound.call.arguments;
       signal.throwIfAborted();
       try {
         const content = call.name === 'web_fetch'
           ? await webFetch({ fetch: fetchImpl, url: args.url, maxChars: args.max_chars, timeout: args.timeout,
-            ssrfPolicy: sealedSsrf, signal, persistOutput, request: bound })
+            ssrfPolicy: sealedSsrf, signal, persistOutput, request: bound, checkCurrent })
           : await webSearch({ fetch: searchFetch, providerConfig: sealedProvider, query: args.query,
             maxResults: args.max_results, recencyDays: args.recency_days, signal });
-        signal.throwIfAborted();
+        checkCurrent();
         return { status: content.ok ? 'ok' : 'error', content };
       } catch (error) {
         if (signal.aborted) throw error;
+        if (error?.code === 'web_authority_stale') return { status: 'error', content: { code: 'web_authority_stale', executed: false } };
         return { status: 'error', content: { ok: false, error_type: 'WebToolError', error_message: 'web tool failed' } };
       }
     },

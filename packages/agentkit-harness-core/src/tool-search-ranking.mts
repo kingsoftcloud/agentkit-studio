@@ -1,5 +1,4 @@
-/** Adapted from ZCode 3c5b227649371507ddc4eb46ac5133afe6db1cab, Apache-2.0.
- * See third-party/ZCode-LICENSE and THIRD_PARTY_NOTICES.md. */
+/** Modified Apache-2.0 code; attribution and license: THIRD_PARTY_NOTICES.md. */
 export interface ToolSearchCandidate {
   name: string; description?: string; aliases?: string[]; searchHint?: string;
   deferred: boolean; mcp?: { serverName: string; toolName: string };

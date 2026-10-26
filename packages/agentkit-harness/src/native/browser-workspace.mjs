@@ -55,11 +55,17 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
   const lifetime = new AbortController(); let closed = false, closing, verificationAttempt = 0;
   const owns = ref => same(ref.scope, scope) && ref.runtimeId === runtimeId && ref.workspaceRevision === workspaceRevision;
   const browser = await createBrowser({ scope: structuredClone(scope), runtimeId, workspaceRevision, viewport: [1280, 720],
-    networkPolicy(ref, url) { const page = pages.get(ref.runId); return !closed && !!page && !page.revoked && same(page.ref, ref) && page.server.allows(url); },
+    networkPolicy(ref, url) {
+      const page = pages.get(ref.runId), target = targets.get(ref.runId);
+      let current = true;
+      try { current = target?.assertCurrent?.() !== false; } catch { current = false; }
+      return current && !closed && !!page && !page.revoked && same(page.ref, ref) && page.server.allows(url);
+    },
     artifactSink(ref, payload, mime) {
       const page = pages.get(ref.runId), target = targets.get(ref.runId);
       if (closed || !page || page.revoked || !same(page.ref, ref) || !owns(ref) || !target || target.signal.aborted || mime !== 'image/png'
         || !(payload instanceof Uint8Array)) fail('screenshot_target_unavailable');
+      if (target.assertCurrent && target.assertCurrent() !== true) fail('browser_authority_stale');
       const boundedRoot = target.evidence ? evidence : workspace;
       if (!boundedRoot || !within(boundedRoot, realpathExisting(target.path))) fail('screenshot_path_invalid');
       publishWorkspaceBytes(target.path, Buffer.from(payload));
@@ -145,6 +151,12 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
       if (!same(request.scope, scope) || request.call?.name !== 'browser_inspect_workspace'
         || !same(request.definition, definition)) return { status: 'error', content: { code: 'scope_or_tool_mismatch' } };
       const signal = combine(request.signal); signal.throwIfAborted();
+      const checkOwned = () => {
+        signal.throwIfAborted();
+        if (request.assertCurrent && request.assertCurrent() !== true) fail('browser_authority_stale');
+        return true;
+      };
+      checkOwned();
       let input, entry, target;
       try {
         input = parseWorkspaceBrowserInput(request.call.arguments, request.operationKey);
@@ -152,43 +164,48 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
         target = screenshotTarget(workspace, input.screenshotPath);
       } catch (error) { return { status: 'error', content: { code: safeInput.has(error.code) ? error.code : 'browser_entry_not_found' } }; }
       return serial(request.runId, signal, async () => {
+        checkOwned();
         const prior = lost.get(request.runId);
         if (prior && (input.actions.length !== 1 || input.actions[0].kind !== 'reload')) return {
           status: 'error', content: { code: 'browser_session_lost', required_actions: [{ type: 'reload' }] }, browserSessionRef: structuredClone(prior) };
         let page = pages.get(request.runId), first = !page || page.server.entry !== entry || !!prior;
         let navigationReason = prior ? 'session_restarted' : !page ? 'initial_open'
           : page.server.entry !== entry ? 'entry_changed' : 'none';
-        if (page && first) { await closePage(request.runId, { closeBrowser: !prior }); page = null; }
+        if (page && first) { await closePage(request.runId, { closeBrowser: !prior }); checkOwned(); page = null; }
         if (!page) {
           try { page = await openPage(request.runId, input, request.operationKey, signal, prior); }
           catch { signal.throwIfAborted(); return { status: 'error', content: { code: 'browser_start_failed' },
             ...(prior ? { browserSessionRef: structuredClone(prior) } : {}) }; }
-          lost.delete(request.runId);
+          checkOwned(); lost.delete(request.runId);
         }
         let sourceRevision;
         try { sourceRevision = page.server.revision(); }
         catch (error) { return { status: 'error', content: { code: safeInput.has(error.code) ? error.code : 'browser_served_revision_unavailable' }, browserSessionRef: structuredClone(page.ref) }; }
         const changed = sourceRevision !== page.sourceRevision;
         if (changed && !first) navigationReason = 'source_changed';
-        targets.set(request.runId, { path: target, evidence: false, signal });
+        targets.set(request.runId, { path: target, evidence: false, signal, assertCurrent: checkOwned });
         const observations = [], actionResults = [], actions = prior ? [] : input.actions;
         let dispatched = false;
         try {
           dispatched = true;
           const initial = await act(page, request.operationKey, 0, first || changed ? 'navigate' : 'screenshot', signal);
+          checkOwned();
           observations.push(initial);
           if (initial.status !== 'ok' || !initial.complete) return result(observations, page, target, actionResults, navigationReason);
           page.sourceRevision = sourceRevision;
-          if (input.waitMs) await sleep(input.waitMs, signal);
+          if (input.waitMs) { await sleep(input.waitMs, signal); checkOwned(); }
           for (const [index, action] of actions.entries()) {
-            if (action.kind === 'wait') { await sleep(action.ms, signal); actionResults.push({ index, type: 'wait', ok: true }); continue; }
+            checkOwned();
+            if (action.kind === 'wait') { await sleep(action.ms, signal); checkOwned(); actionResults.push({ index, type: 'wait', ok: true }); continue; }
             const { kind, actionId: _, timeoutMs: __, ...fields } = action;
             const seen = await act(page, request.operationKey, index + 1, kind === 'reload' ? 'navigate' : kind, signal,
               Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== null)));
+            checkOwned();
             observations.push(seen); actionResults.push({ index, type: kind, ok: seen.status === 'ok' });
             if (seen.status !== 'ok' || !seen.complete) return result(observations, page, target, actionResults, navigationReason);
           }
           observations.push(await act(page, request.operationKey, actions.length + 1, 'screenshot', signal));
+          checkOwned();
           return result(observations, page, target, actionResults, navigationReason);
         } catch (error) {
           if (dispatched) { page.revoked = true; lost.set(request.runId, structuredClone(page.ref)); }

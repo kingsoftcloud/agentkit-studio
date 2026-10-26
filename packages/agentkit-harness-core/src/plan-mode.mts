@@ -10,7 +10,6 @@ export const CHILD_PLAN_POLICY = 'inherit-plan/v1';
 export const ENTER_PLAN_MODE = 'EnterPlanMode';
 export const EXIT_PLAN_MODE = 'ExitPlanMode';
 
-/** Behavioral reference: ZCode 3c5b227, contracts/tools/plan-mode and core/tool/handlers/plan-mode. */
 export function planModeToolDefinitions(deferred = false): ToolDefinition[] {
   const base = { readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 1000,
     contextRole: 'task_planning' as const, observationRole: 'none' as const,

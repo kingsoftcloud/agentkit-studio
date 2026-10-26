@@ -291,7 +291,9 @@ for (const failFlush of [false, true]) test(`managed receiver live preview settl
   }
   finish.resolve(); await running;
   assert.equal(toolCalls, 1); assert.equal(h.requests.length, 2);
-  assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => [frame.turn, frame.step, frame.revision]), [[1, 1, 1], [1, 2, 2]]);
+  assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => [frame.turn, frame.step]), [[1, 1], [1, 2]]);
+  assert.deepEqual(frames.map(frame => frame.revision), frames.map((_, index) => index + 1),
+    'every stream frame advances the shared lifecycle revision');
   for (const end of frames.filter(frame => frame.type === 'end')) {
     assert.equal(end.outcome.kind, 'committed'); assert.equal(end.outcome.eventType, 'assistant/message');
     const message = h.events.find(event => event.seq === end.outcome.seq);
@@ -310,7 +312,8 @@ for (const failFlush of [false, true]) test(`managed receiver live preview settl
   const next = h.makePayload({ turn: 2, binding: h.agentBinding });
   next.input.assembly = h.assembly;
   await h.host.executeTurn(next);
-  assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.revision), [1, 2, 3]);
+  assert.deepEqual(frames.filter(frame => frame.type === 'start').map(frame => frame.turn), [1, 1, 2]);
+  assert.deepEqual(frames.map(frame => frame.revision), frames.map((_, index) => index + 1));
 });
 
 test('managed resolveManagedBinding runs model->tool->result through the managed SQLite ledger and leaves the local ledger untouched', async t => {

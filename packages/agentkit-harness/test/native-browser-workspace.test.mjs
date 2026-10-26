@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createStudioBrowserWorkspacePort } from '../src/native/browser-workspace.mjs';
@@ -72,6 +72,17 @@ test('trusted combined vision deadline preserves strict full formal admission at
   const count = h.trace.length;
   assert.equal((await h.port.execute(forged)).content.code, 'scope_or_tool_mismatch');
   assert.equal(h.trace.length, count, 'changing a non-timeout formal field cannot execute');
+});
+
+test('expired Native authority during a browser action blocks screenshot publication and later actions', async t => {
+  const h = await owner(t);
+  let current = true;
+  h.hooks({ act: async (_ref, action) => { if (action.kind === 'navigate') current = false; } });
+  const result = await h.port.execute({ ...request('stale-action', { ...baseInput, actions: [{ type: 'click', selector: '#start' }] }),
+    assertCurrent: () => current });
+  assert.equal(result.status, 'uncertain');
+  assert.equal(h.trace.filter(row => row.kind === 'act').length, 1);
+  assert.equal(existsSync(join(h.root, '.artifacts', 'browser-check.png')), false);
 });
 
 test('the public schema and parser agree on the complete Studio action protocol', () => {

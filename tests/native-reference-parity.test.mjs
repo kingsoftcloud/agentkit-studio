@@ -521,10 +521,11 @@ test('final_submission_schema_tool: submit_final_output seals a candidate direct
 // --- pure contract / store comparisons (no kernel loop) ---
 test('command_priority_ordering: matches the locked contract', () => {
   const expected = scenario('command_priority_ordering');
-  // Node adds an explicit receipt-inspection command; every original command
+  // Node adds explicit receipt-inspection and workspace-repair commands; every original command
   // retains the exact reference priority and ordering.
-  const { reconcile_tool: inspectionPriority, ...sharedPriority } = commandPriority;
+  const { reconcile_tool: inspectionPriority, repair_workspace: repairPriority, ...sharedPriority } = commandPriority;
   assert.equal(inspectionPriority, 75);
+  assert.equal(repairPriority, 75);
   assert.deepEqual(sharedPriority, expected.priorities);
   assert.deepEqual(
     Object.keys(sharedPriority).sort((a, b) => sharedPriority[b] - sharedPriority[a]),

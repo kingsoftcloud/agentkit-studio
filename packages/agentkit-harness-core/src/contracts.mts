@@ -179,7 +179,7 @@ export interface ContextPlanningPolicy {
   pruneToolResults?: boolean; pruneKeepRecentBatches?: number; pruneMinSavedTokens?: number;
   /** Optional earlier local cleanup boundary; absence preserves the original full-compaction threshold. */
   pruneThresholdTokens?: number;
-  /** New admissions derive an earlier ZCode boundary; absence preserves legacy timing. */
+  /** New admissions derive an earlier cleanup boundary; absence preserves legacy timing. */
   pruneThresholdPolicy?: 'zcode-local/v1';
   /** Admit cleaned historical tool output as the source of a still-needed summary. */
   pruneSummaryPolicy?: 'zcode-local/v1';

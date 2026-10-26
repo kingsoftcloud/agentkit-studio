@@ -24,7 +24,8 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
   const definitions = new Map(), registry = new Map(), events = new Map(), bodies = [], invocations = [];
   const services = { sessions: { flush: async () => true }, llm: {}, sessionProjections: {
     register(definition) { definitions.set(definition.key, definition); return () => definitions.delete(definition.key); },
-    stateOf(session, key) { const definition = definitions.get(key); return events.get(session.id).reduce(definition.apply, definition.init()); },
+    stateOf(session, key) { const definition = definitions.get(key); return definition
+      ? events.get(session.id).reduce(definition.apply, definition.init()) : undefined; },
   } };
   const ctx = { get: key => services[key], effect: install => install(), tools: {
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },

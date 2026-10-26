@@ -856,7 +856,7 @@ test('background registry still rejects a symlink inside the configured home', a
   const h = await setup(t, { storeAlias: true });
   const outside = join(h.root, 'other-private-state');
   await mkdir(outside, { mode: 0o700 });
-  await symlink(outside, join(h.root, 'native-harness'), 'dir');
+  await symlink(outside, join(h.root, 'native-harness/background-watches'), 'dir');
   await assert.rejects(h.host.startBackgroundWatcher(), { code: 'background_state_symlink' });
 });
 

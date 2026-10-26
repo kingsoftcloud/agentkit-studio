@@ -101,29 +101,34 @@ for (const lossAt of ['none', 'registry', 'credentials', 'connection']) test(`pa
   }
 });
 
-test('a bound Skill shell cannot dispatch after Native ownership expires during policy wait', async t => {
+for (const lossAt of ['pre-execute', 'around-dispatch']) test(`a bound Skill shell cannot dispatch after Native ownership expires at ${lossAt}`, async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-skill-authority-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
   const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
-  const registry = new Map(), guards = new Set(), agent = { session: { id: 'session' } };
+  const registry = new Map(), guards = new Set(), dispatchGuards = new Set(), agent = { session: { id: 'session' } };
   let effects = 0, released = false;
   const ctx = { effect: install => install(), tools: {
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     guard: guard => { guards.add(guard); return () => guards.delete(guard); },
+    dispatchGuard: guard => { dispatchGuards.add(guard); return () => dispatchGuards.delete(guard); },
     execute: async input => {
-      if (input.name === 'bash' && !released) {
+      const release = () => {
         const current = store.load(scope, 'run');
         assert.equal(current.snapshot.phase, 'executing_tools');
         store.release(scope, 'run', current.lease); released = true;
-      }
+      };
+      if (input.name === 'bash' && lossAt === 'pre-execute' && !released) release();
       // DSH evaluates monotonic guards after its asynchronous pre-execute gate.
       const denial = [...guards].map(guard => guard(input)).find(Boolean);
       if (denial) return { isError: true, content: [{ type: 'text', text: denial }] };
+      if (input.name === 'bash' && lossAt === 'around-dispatch' && !released) release();
+      const dispatchDenial = [...dispatchGuards].map(guard => guard(input)).find(Boolean);
+      if (dispatchDenial) return { isError: true, content: [{ type: 'text', text: dispatchDenial }] };
       const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
       return { isError: false, value, content: tool.output.render(input.arguments, value) };
     },
   } };
-  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: [], toolContracts: [],
+  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, nativeEngineContract: 'agentkit.native-dsh-turn/v1', toolBindings: [], toolContracts: [],
     skillDefinitions: [{ name: 'authority-skill', content: '---\nname: authority-skill\ndescription: Authority check\n---\nUse bash.' }] },
     workspaceRoot, stateDir: join(root, 'state') });
   t.after(() => gateway.close());
@@ -143,4 +148,43 @@ test('a bound Skill shell cannot dispatch after Native ownership expires during 
   const record = store.load(scope, 'run');
   const toolIntent = record.intents.find(intent => intent.kind === 'tool');
   assert.ok(toolIntent); assert.equal(record.receipts.some(receipt => receipt.operationKey === toolIntent.operationKey), false);
+});
+
+for (const driftAt of ['pre-execute', 'around-dispatch']) test(`a bound third-party ToolRegistry body cannot run with arguments changed at ${driftAt}`, async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-extension-authority-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
+  const registry = new Map(), guards = new Set(), agent = { session: { id: 'session' } };
+  let effects = 0, denied = false;
+  const ctx = { effect: install => install(), tools: {
+    register: definition => { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
+    guard: guard => { guards.add(guard); return () => guards.delete(guard); },
+    execute: async input => {
+      // The maintained DSH registry gives pre-execute listeners a mutable
+      // execution before its monotonic guards run.
+      if (driftAt === 'pre-execute') input.arguments = { action: 'delete-record' };
+      const denial = [...guards].map(guard => guard(input)).find(Boolean);
+      if (denial) { denied = true; return { isError: true, content: [{ type: 'text', text: denial }] }; }
+      if (driftAt === 'around-dispatch') {
+        try { input.arguments = { action: 'delete-record' }; }
+        catch { denied = true; return { isError: true, content: [{ type: 'text', text: 'Native arguments sealed' }] }; }
+      }
+      const value = await registry.get(input.name).execute(input.arguments, input);
+      return { isError: false, content: [{ type: 'text', text: JSON.stringify(value) }] };
+    },
+  } };
+  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: ['external'], toolContracts: [] },
+    workspaceRoot, stateDir: join(root, 'state') });
+  t.after(() => gateway.close());
+  registry.set('external', { name: 'external', description: 'Third-party effect', parameters: { type: 'object', properties: {} },
+    execute: async () => { effects++; return { ok: true }; } });
+  const data = fixture({ tools: gateway.definitions(agent, [...registry.values()]) }); data.snapshot.sessionId = 'session';
+  let models = 0;
+  const kernel = new NativeKernel({ store, owner: 'extension-owner', digest, ports: { ...gateway.forAgent(agent, { scope, store }),
+    model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'external-call', name: 'external', arguments: { action: 'read-record' } }] }
+      : { kind: 'final_candidate', text: 'Denied', usage: emptyUsage(), toolCalls: [] } } } });
+  kernel.start(data.snapshot, data.config);
+  await kernel.runUntilIdle(scope, 'run');
+  assert.equal(denied, true); assert.equal(effects, 0);
 });

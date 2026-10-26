@@ -1,5 +1,4 @@
-/** Native file-only rewind. Behavioral reference: ZCode 3c5b227 core/runtime/
- * methods/{tools,file-rewind,workspace-checkpoint-persistence}.ts. A prepared
+/** Native file-only rewind. A prepared
  * journal is never an instruction to replay effects after process death. */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';

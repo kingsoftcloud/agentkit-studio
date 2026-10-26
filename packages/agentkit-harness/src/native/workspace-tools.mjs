@@ -620,7 +620,7 @@ export function createNativeWorkspaceTools({
     for (let index = 0; index < text.length; index++) if (text[index] === '\n') {
       total++; if (text[index - 1] === '\r') crlf++;
     }
-    // ZCode's actual filesystem adapter uses dominant EOL, with LF on ties
+    // Use the dominant EOL, with LF on ties
     // and new files. Keep v1/nonempty editing semantics unchanged.
     const ending = crlf > total - crlf ? '\r\n' : '\n';
     return replacement.replace(/\r\n/g, '\n').replace(/\n/g, ending);

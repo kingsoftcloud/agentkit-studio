@@ -1,0 +1,57 @@
+{
+  "model": "deepseek-v4.1-flash",
+  "streaming": true,
+  "task": "read-only code review and exact correction",
+  "baseline": "direct inference with a minimal two-call tool loop",
+  "candidate": "NativeKernel with SQLite",
+  "samples": [
+    {
+      "round": 1,
+      "variant": "direct",
+      "status": "final_candidate",
+      "checked": true,
+      "outputCharacters": 654,
+      "modelCalls": 2,
+      "toolCalls": 1,
+      "inputTokens": 691,
+      "outputTokens": 250,
+      "latencyMs": 2919
+    },
+    {
+      "round": 1,
+      "variant": "native",
+      "status": "completed",
+      "checked": true,
+      "outputCharacters": 908,
+      "modelCalls": 2,
+      "toolCalls": 1,
+      "inputTokens": 698,
+      "outputTokens": 403,
+      "latencyMs": 2850
+    },
+    {
+      "round": 2,
+      "variant": "native",
+      "status": "completed",
+      "checked": true,
+      "outputCharacters": 898,
+      "modelCalls": 2,
+      "toolCalls": 1,
+      "inputTokens": 698,
+      "outputTokens": 377,
+      "latencyMs": 3221
+    },
+    {
+      "round": 2,
+      "variant": "direct",
+      "status": "final_candidate",
+      "checked": true,
+      "outputCharacters": 728,
+      "modelCalls": 2,
+      "toolCalls": 1,
+      "inputTokens": 698,
+      "outputTokens": 308,
+      "latencyMs": 1816
+    }
+  ]
+}

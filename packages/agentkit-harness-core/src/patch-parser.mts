@@ -1,5 +1,4 @@
-// ZCode 3c5b227649371507ddc4eb46ac5133afe6db1cab, core/src/tool/patch-parser.ts.
-// Apache-2.0; see THIRD_PARTY_NOTICES.md and third-party/ZCode-LICENSE.
+// Modified Apache-2.0 code; attribution and license: THIRD_PARTY_NOTICES.md.
 export type ParsedPatch =
   | { type: "add"; path: string; contents: string }
   | { type: "delete"; path: string }

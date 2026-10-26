@@ -3,7 +3,7 @@ import { nativeMcpSchemaValidator } from './native-mcp-json.mjs';
 
 export const NATIVE_MCP_SCHEMA_CONTRACT = 'agentkit.native-mcp-schema/v1';
 
-/** ZCode 3c5b227 core/mcp/index.ts: only an explicit true is destructive.
+/** Only an explicit true is destructive.
  * This permission fact is distinct from Native readOnly/replay authority. */
 export function snapshotNativeMcpPlanAccess(tool) {
   return { contract: 'zcode-mcp-plan/v1', destructive: tool.annotations?.destructiveHint === true };

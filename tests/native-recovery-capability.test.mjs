@@ -33,7 +33,7 @@ test('native-recovery-binding returns the frozen binding facts without starting 
   try {
     const result = await plugCtx.serial({}, 'agentkit/native-recovery-binding', { agent: { id: 'alpha' } });
     assert.deepEqual(result, { agentId: 'alpha', runtime: 'harness', local: true, agentRevision: 7,
-      buildId: 'build-aaa', nativeEngineContract: NATIVE_DSH_TURN_CONTRACT, nativeTools });
+      buildId: 'build-aaa', boundToolPolicy: null, nativeEngineContract: NATIVE_DSH_TURN_CONTRACT, nativeTools });
     assert.equal(result.nativeTools, nativeTools, 'nativeTools is the frozen binding object, not a request copy');
   } finally { await fiber.dispose(); await root.fiber.dispose(); }
 });

@@ -55,6 +55,56 @@ without guards. The fresh packed Host and maintained DSH Skill workflow still
 complete with exact text/binary artifacts and durable ownership. The local
 check used controlled model responses and a local Skill service:
 
+The final extension audit found that this guard sealed name and arguments for
+Skill shell calls only. Other DSH-owned third-party bodies could be bound as
+Native tools; a mutable pre-execute listener could replace their arguments
+without changing the original Native intent. The monotonic guard now compares
+registry name and exact arguments against the owned intent for every call,
+including sandbox name translation, browser verification and operator-only
+workspace repair. It pins the arguments property before `tools/execute`
+wrappers run. A real SQLite/NativeKernel test changes an `external` call's
+arguments both before the early guard and after it, confirming zero third-party
+effects.
+
+DSH's `tools/execute` stage also has asynchronous wrappers, including Session
+checkpoint flush. A lease can expire during that wait even if arguments are
+unchanged. Maintained DSH patch 055 adds `ToolRuntime.dispatchGuard`: a separate
+scoped, monotonic check after all around-dispatch wrappers and immediately
+before the registered body. The Native gateway requires and registers that
+hook for whole-turn Native contracts. Its core test passed 142/142, including
+the new async-wait denial, and TypeScript compilation passed. Combined Studio
+authority/gateway/policy tests passed 79/79 with real SQLite/NativeKernel lease
+release at both pre-execute and around-dispatch. The maintained source export
+verified its 48-patch ancestry, final tree and bundle. Third-party Node code
+remains trusted Host composition, not a sandbox; an already-started external
+effect can still be uncertain rather than undone.
+
+The read-only Claude Code matrix review identified two additional current-
+intent gaps: Native Web followed redirects without checking the ledger again,
+and Browser could publish a screenshot or begin another action after a long
+action outlived its lease. Web now checks before every HTTP hop and before
+publishing oversized output. Browser checks after owner creation, waits and
+actions, before subsequent actions, at each network-policy decision and at
+the screenshot publication callback. An in-flight click cannot be rolled back;
+on a stale result the Session is marked uncertain. Four focused Browser/Web
+files passed 69/69, including one-hop-only redirect and zero screenshot after
+authority loss.
+
+The same review reported old frozen Revisions without a versioned Agent policy.
+That behavior is explicit compatibility policy: old Builds retain their
+original Host permissions; new saves create a strict policy Revision. No
+historical Python Session or database is being migrated in this phase. It also
+flagged DSH Node E2B/Skill/Knowledge paths; those serve separate DSH/Codex
+engines and cannot acquire a Native ledger, so they are governed by their own
+Session policy. `loose` intentionally inherits that policy. Remote Skill
+bindings freeze the selected service/space/name configuration, while a new
+Run may resolve the service's current version; the downloaded version and
+archive digest are recorded with the run. This is dynamic resource resolution,
+not an assertion that the remote bytes were frozen at Build time. Managed
+Teams callback permits belong to the cloud/managed boundary outside this
+local-only acceptance. These distinctions remain explicit in the runtime
+capability surface.
+
 ```sh
 node --test --test-timeout=15000 tests/native-mcp-dispatch-authority.test.mjs
 node --test --test-timeout=15000 tests/studio-native-skills-disclosure.test.mjs
@@ -272,3 +322,31 @@ concrete regression in that bounded change. Its first review invocation reached
 its turn limit; the resumed final report completed. Primary ran and inspected
 the executable checks and the packed-Host evidence above; the review did not
 claim independently rerunning them or completing the remaining governance work.
+
+## Local matrix closure
+
+The later whole-surface Claude review and primary source/runtime checks cover
+Native workspace/commands, parent and inherited MCP, Skills and their shell
+dispatch, child lifecycle, browser/Web, Memory, Knowledge, context sources and
+A2A. The concrete asynchronous authority gaps are repaired above. Host code is
+trusted composition; the monotonic guards constrain registered Native calls,
+not arbitrary JavaScript executed directly by a Host plugin.
+
+Compatibility behavior is explicit: old unversioned Builds keep their admitted
+Host policy; saving creates a new versioned policy Revision. Loose mode inherits
+Host policy. Remote Skills resolve the current version from a frozen service,
+space and name binding for a new execution, then retain the resolved version and
+archive hash in its receipts. These are documented contracts, not evidence that
+an old Build's remote content bytes are frozen. DSH and Codex use their separate
+adapters rather than borrowing a Native execution lease. Managed Teams permits
+remain outside this local phase.
+
+The final repository run also exposed a product recovery defect: a Managed
+record was queried through the local principal's Memory-extraction service.
+The recovery composition now omits that local-only status for a foreign managed
+principal. All 148 affected Host/recovery/manifest/reference tests, 47 Memory
+binding tests and the four managed A2A question cases pass after correction.
+The existing foreign-principal Memory service rejection remains intact.
+
+This closes P2's last local authority point. Final post-change archive and
+mounted-Host checks remain the separate P5 release gate.

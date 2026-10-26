@@ -182,7 +182,10 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
     },
   } };
   if (options.argumentEncodings) ctx.tools.argumentEncodings = options.argumentEncodings;
-  if (options.nativeEngineContract) ctx.tools.guard = () => () => {};
+  if (options.nativeEngineContract) {
+    ctx.tools.guard = () => () => {};
+    ctx.tools.dispatchGuard = () => () => {};
+  }
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: names, toolContracts: contracts,
     ...(options.nativeEngineContract ? { nativeEngineContract: options.nativeEngineContract } : {}) },
     workspaceRoot, stateDir: join(root, 'state'), ...options });

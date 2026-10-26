@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
+  "headCommit": "786f15474b99c012680e76326a55386848c8f45b",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-zcode",
-  "tree": "e86079b225a5547c5bc7344c0893347a3b3eea8a",
-  "sourceSha256": "9f27c66cf96407b26b54171432238299472e0e0b94769a407b6fea23713e4761",
+  "tree": "9c4744c11fda30fca2c391e1defa62e2f8e73176",
+  "sourceSha256": "17ad2df1b5052817721feed2171748cd8dd464db8fc463a62e929b1a26cd490b",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "b74d56c65811674c49077f9832c9cfcadeefd22e545677aae8dd8ca868f018fc"
+    "sha256": "061ffeba48350d727d7db1cd06666c1c840f4ae5ea9ba38ab34598bc0f5a1abd"
   },
   "commits": [
     {
@@ -292,6 +292,12 @@
       "file": "054-scoped-external-instructions.patch",
       "commit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
       "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
+    },
+    {
+      "id": "055",
+      "file": "055-tool-dispatch-guard.patch",
+      "commit": "786f15474b99c012680e76326a55386848c8f45b",
+      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4"
     }
   ]
 }

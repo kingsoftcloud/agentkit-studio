@@ -6,8 +6,7 @@ export const TODO_POLICY = 'session-todos/v1';
 export const TODO_READ = 'TodoRead';
 export const TODO_WRITE = 'TodoWrite';
 
-/** Adapted from ZCode 3c5b227: contracts/src/tools/todo.ts and core/src/tool/handlers/todo.ts.
- * Apache-2.0; see THIRD_PARTY_NOTICES.md and third-party/ZCode-LICENSE.
+/** Modified Apache-2.0 code; attribution and license: THIRD_PARTY_NOTICES.md.
  * Pure staging controls. TodoWrite's only mutation happens in the receipt commit. */
 export function todoToolDefinitions(deferred = false): ToolDefinition[] {
   const base = { permissions: [], timeoutMs: 1000, contextRole: 'task_planning' as const,
@@ -41,7 +40,7 @@ export function todoItems(value: unknown): TodoItem[] {
   invariant(Array.isArray(value) && value.every(item => item && typeof item === 'object' && !Array.isArray(item)
     && typeof item.content === 'string' && item.content.length > 0 && ['pending', 'in_progress', 'completed'].includes(item.status)
     && ['high', 'medium', 'low'].includes(item.priority)), 'invalid_todo_items');
-  // ZCode's item parser strips extra keys, preserves content, and allows parallel active items.
+  // Strip extra keys, preserve content, and allow parallel active items.
   return value.map(({ content, status, priority }) => ({ content, status, priority }));
 }
 

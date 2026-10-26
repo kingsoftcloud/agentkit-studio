@@ -103,6 +103,21 @@ test('web_fetch follows up to 5 manual redirects, canceling each redirect body',
   assert.equal(hops, 1);
 });
 
+test('web_fetch rechecks Native authority before following a redirect', async t => {
+  let hops = 0, current = true;
+  const { url, ready, close } = localServer((_req, res) => {
+    hops++;
+    if (hops === 1) { res.statusCode = 302; res.setHeader('location', '/final'); current = false; res.end(); }
+    else res.end('should not fetch');
+  });
+  await ready; t.after(close);
+  const tools = createNativeWebTools({ fetch, ssrfPolicy: { allowPrivate: true }, authorize: allowAuthorize, sessionId: 's1' });
+  const result = await tools.execute({ ...webRequest({ sessionId: 's1', signal: sig(),
+    call: { callId: 'c', name: 'web_fetch', arguments: { url: url() } } }), assertCurrent: () => current });
+  assert.equal(result.content.code, 'web_authority_stale');
+  assert.equal(hops, 1);
+});
+
 test('web_fetch returns too_many_redirects after 5 hops', async t => {
   let hops = 0;
   const { url, ready, close } = localServer((req, res) => { hops++; res.statusCode = 302; res.setHeader('location', '/loop'); res.end(); });

@@ -2449,12 +2449,50 @@
         "snapshots/session/agent-instructions-external/workspace/nested/task.txt"
       ],
       "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
+    },
+    {
+      "id": "055",
+      "file": "055-tool-dispatch-guard.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "045",
+        "049"
+      ],
+      "contracts": [
+        "A dispatch guard runs after asynchronous around-dispatch wrappers and immediately before a tool body starts.",
+        "A dispatch denial leaves the body uninvoked and returns an ordinary tool error.",
+        "Native checks its original intent and lease again at that final boundary."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source 786f1547: 142 ToolRuntime checks passed, including stale authority during an asynchronous around-dispatch wait."
+      },
+      "removeWhen": "Upstream ToolRuntime provides an equivalent final pre-body dispatch authority check.",
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/tools.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/tools.spec.ts"
+      ],
+      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4"
     }
   ],
-  "patchedTree": "e86079b225a5547c5bc7344c0893347a3b3eea8a",
-  "patchedSourceSha256": "9f27c66cf96407b26b54171432238299472e0e0b94769a407b6fea23713e4761",
+  "patchedTree": "9c4744c11fda30fca2c391e1defa62e2f8e73176",
+  "patchedSourceSha256": "17ad2df1b5052817721feed2171748cd8dd464db8fc463a62e929b1a26cd490b",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "9d219b65ed97a14a5f63fbf86ce136cb495e3503ef3b4aa96c55649de6631d29"
+    "sha256": "67df55980f016b038fb96257c7f05af01f619d964e8113565304884e51637b94"
   }
 }
