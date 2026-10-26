@@ -69,6 +69,7 @@ export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId,
       invariant(agent.status === 'idle', 'studio_native_background_session_busy');
       invariant(typeof agentEvents === 'function', 'studio_native_recovery_dispatch_unavailable');
       const binding = await live(() => agentEvents(ctx, agent).serial('agentkit/native-recovery-binding', {}), signal);
+      binding.nativeTools?.assertConversationWorkspaceSettled?.(agent);
       signal.throwIfAborted();
       assertNativeRecoveryPreset(capsule, binding);
       let observer;
@@ -94,6 +95,7 @@ export function createStudioNativeBackgroundAdmission({ ctx, store, workspaceId,
       // the shared executor has claimed and flushed that owner.
       await idle.start(async payload => {
         checkBranch();
+        binding.nativeTools?.assertConversationWorkspaceSettled?.(agent);
         preparedSignal = AbortSignal.any([signal, payload.signal]);
         preparedSignal.throwIfAborted();
         const admitted = await admitBackgroundNotification({ store, scope, sourceRunId, taskId, digest: hash,

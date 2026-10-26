@@ -87,6 +87,38 @@ async function commandSetup(t, options = {}) {
   return { ...h, calls };
 }
 
+async function workspaceSetup(t, port = {}) {
+  const h = await setup(t), calls = { preview: 0, apply: 0 };
+  h.agent.runMaintenance = job => job(new AbortController().signal);
+  h.onQuery(() => ({ ...h.binding, nativeTools: { conversationWorkspace: () => ({
+    preview(_control, options) { assert.equal(options.assertCurrent(), true); calls.preview++;
+      return { contract: 'agentkit.native-conversation-workspace-control/v1', canApply: true, previewToken: 'a'.repeat(64), files: [], unsafeFiles: [] }; },
+    apply(control, options) { assert.equal(options.assertCurrent(), true); calls.apply++;
+      if (port.fail) throw Error('workspace_publication_failed');
+      return { contract: control.contract, requestDigest: control.requestDigest, previewToken: control.workspacePreviewToken,
+        checkpointId: null, rewoundCheckpointIds: [], changedPaths: [] }; },
+  }) } }));
+  return { ...h, calls };
+}
+
+test('combined workspace preview is read-only and failed branch persistence retries without reapplying files', async t => {
+  const h = await workspaceSetup(t), request = { ...h.request, scope: 'both' }, original = h.store.load(h.scope, h.identity.runId);
+  const before = structuredClone(h.events);
+  const preview = await h.service.previewWorkspace(request); assert.equal(preview.canApply, true);
+  assert.deepEqual(h.events, before); assert.equal(h.calls.apply, 0);
+  const apply = { ...request, workspacePreviewToken: preview.previewToken };
+  h.durability(false); await assert.rejects(h.service.rewind(apply), { code: 'native_conversation_rewind_not_durable' });
+  assert.equal(h.calls.apply, 1); h.durability(true);
+  assert.equal((await h.service.rewind(apply)).workspaceCleanup.previewToken, preview.previewToken);
+  assert.equal(h.calls.apply, 1); assert.deepEqual(h.store.load(h.scope, h.identity.runId), original);
+});
+
+test('failed workspace restoration never publishes the conversation branch', async t => {
+  const h = await workspaceSetup(t, { fail: true }), before = structuredClone(h.events);
+  await assert.rejects(h.service.rewind({ ...h.request, scope: 'both', workspacePreviewToken: 'a'.repeat(64) }), /workspace_publication_failed/);
+  assert.deepEqual(h.events, before);
+});
+
 test('command cleanup is maintenance-owned and a failed flush retries the same marker without another stop', async t => {
   const h = await commandSetup(t), original = h.store.load(h.scope, h.identity.runId);
   const status = await h.service.status(h.status); assert.equal(status.canRewind, true); assert.equal(status.requiresStop, true);

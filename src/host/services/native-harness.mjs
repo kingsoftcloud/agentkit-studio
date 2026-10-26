@@ -216,6 +216,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       invariant(typeof prepareInput === 'function', 'studio_native_whole_turn_host_required');
       invariant(binding.agentId && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0
         && binding.nativeTools, 'studio_native_revision_binding_missing');
+      if (!original) binding.nativeTools.assertConversationWorkspaceSettled?.(agent);
       invariant(!binding.buildId || typeof builds?.resolve === 'function', 'studio_native_build_service_unavailable');
       const releaseBinding = await acquireBinding(String(agent.session.id), signal);
       let transferred = false;
@@ -981,6 +982,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     repairWorkspace: recovery.repairWorkspace,
     conversationStatus: conversation.status,
     rewindConversation: conversation.rewind,
+    previewConversationWorkspace: conversation.previewWorkspace,
     controlA2aTask,
     managedScopeControl,
     childHistory(request, signal) { return readChildren(request, signal); },

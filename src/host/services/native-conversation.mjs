@@ -8,9 +8,13 @@ import { nativeConversationRetainedCommands } from '../../providers/native-conve
 const text = value => typeof value === 'string' && value.trim() && value.length <= 256;
 export function validateNativeConversationRequest(request, rewind = false) {
   const keys = ['agentId', 'sessionId', ...(rewind ? ['expectedHeadRunId', 'targetMessageId', 'commandId', 'expectedGeneration'] : [])];
+  const both = request?.scope === 'both';
+  if (both && rewind) keys.push('scope', ...(rewind === 'preview' ? [] : ['workspacePreviewToken']));
   invariant(request && !Array.isArray(request) && Object.keys(request).sort().join(',') === keys.sort().join(',')
     && keys.filter(key => key !== 'expectedGeneration').every(key => text(request[key]))
-    && (!rewind || Number.isSafeInteger(request.expectedGeneration) && request.expectedGeneration >= 0), 'STUDIO_NATIVE_CONVERSATION_INVALID');
+    && (!rewind || Number.isSafeInteger(request.expectedGeneration) && request.expectedGeneration >= 0)
+    && (rewind !== 'preview' || both)
+    && (!both || rewind === 'preview' || /^[a-f0-9]{64}$/.test(request.workspacePreviewToken)), 'STUDIO_NATIVE_CONVERSATION_INVALID');
 }
 
 /** The Session's append-only replacement is the branch commit. Its data-only
@@ -78,23 +82,31 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
   };
   const response = (request, marker) => ({ contract: 'agentkit.studio-native-conversation-rewind/v1',
     agentId: request.agentId, sessionId: request.sessionId, commandId: marker.commandId,
-    generation: marker.generation, state: 'applied', surfacePersisted: true });
+    generation: marker.generation, state: 'applied', surfacePersisted: true,
+    ...(marker.workspaceCleanup ? { workspaceCleanup: copy(marker.workspaceCleanup) } : {}) });
   const status = async (request, callerSignal) => {
     validateNativeConversationRequest(request);
     const signal = AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : [])]);
     const current = await inspect(request, signal), selected = selection(current.session);
     const canRewind = safe(current) || safe(current, true) && canCleanCommands(current) || Boolean(control(current));
+    const recovery = current.binding.nativeTools?.conversationWorkspaceRecovery?.(current.agent);
     return { contract: 'agentkit.studio-native-conversation/v1', agentId: request.agentId, sessionId: request.sessionId,
       headRunId: current.record?.snapshot.runId ?? null, generation: selected.markers.at(-1)?.data.source.nativeRewind.generation ?? 0,
-      canRewind, requiresStop: Boolean(canRewind && (control(current)
+      canRewind, canRewindWorkspace: Boolean(canRewind && typeof current.binding?.nativeTools?.conversationWorkspace === 'function'),
+      ...(recovery ? { workspaceRecovery: { agentId: request.agentId, sessionId: request.sessionId, scope: 'both',
+        commandId: recovery.commandId, targetMessageId: recovery.targetMessageId, expectedHeadRunId: recovery.expectedHeadRunId,
+        expectedGeneration: recovery.expectedGeneration, workspacePreviewToken: recovery.workspacePreviewToken } } : {}),
+      requiresStop: Boolean(canRewind && (control(current)
         || canCleanCommands(current) && current.record.snapshot.backgroundCommands.some(row => !row.notified))),
       inputs: selected.inputs.slice(-64).map(event => ({ messageId: event.data.id,
         text: event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n').slice(0, 240) || '附件输入' })) };
   };
-  const apply = async (request, original, callerSignal) => {
+  const apply = async (request, original, callerSignal, previewOnly = false) => {
     const bytes = canonical(original);
     const signal = AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : [])]);
     let current = await inspect(original, signal);
+    const workspaceRecovery = current.binding.nativeTools?.conversationWorkspaceRecovery?.(current.agent);
+    invariant(!workspaceRecovery || workspaceRecovery.commandId === original.commandId, 'studio_native_workspace_control_recovery_required');
     const { agent, session, scope, record } = current;
     let selected = selection(session);
     const previous = selected.markers.find(event => event.data.source.nativeRewind.commandId === original.commandId);
@@ -108,11 +120,12 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
     'native_conversation_rewind_head_conflict');
     const target = selected.inputs.find(event => event.data.id === original.targetMessageId);
     invariant(target, 'native_conversation_rewind_target_not_active');
+    const { workspacePreviewToken: _previewToken, ...cancelIdentity } = original;
     const cancel = { commandId: `native-rewind-cancel-${conversationDigest({ sessionId: original.sessionId, commandId: original.commandId })}`,
-      kind: 'cancel', payload: { dshCancelReason: { kind: 'user' }, nativeConversationRewindRequestDigest: conversationDigest(original) } };
+      kind: 'cancel', payload: { dshCancelReason: { kind: 'user' }, nativeConversationRewindRequestDigest: conversationDigest(cancelIdentity) } };
     const previousCancel = record.commands.find(row => row.command.commandId === cancel.commandId);
     invariant(!previousCancel || canonical(previousCancel.command) === canonical(cancel), 'command_replay_conflict');
-    const seed = nativeConversationPrefixSeed({ store, scope, profile: record.configuration.profile,
+    let seed = nativeConversationPrefixSeed({ store, scope, profile: record.configuration.profile,
       tools: record.configuration.tools, policies: record.configuration, prefix: selected.events.slice(0, target.seq),
       sourceEvents: selected.events, identityNamespace: `rewind:${original.commandId}`, parentSessionId: original.sessionId });
     const marker = { contract: 'native-conversation-rewind/v1', commandId: original.commandId, sessionId: original.sessionId,
@@ -145,19 +158,25 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
       selected = settled;
       invariant(safe(current, true), 'native_conversation_rewind_stop_unsettled');
     }
+    if (original.scope === 'both') {
+      seed = nativeConversationPrefixSeed({ store, scope, profile: current.record.configuration.profile,
+        tools: current.record.configuration.tools, policies: current.record.configuration, prefix: selected.events.slice(0, target.seq),
+        sourceEvents: selected.events, identityNamespace: `rewind:${original.commandId}`, parentSessionId: original.sessionId });
+      marker.seed = seed;
+    }
     const cleanup = current.record.snapshot.backgroundCommands.length > 0 && canCleanCommands(current);
     const publish = async publishSignal => {
+      const frozen = canonical(current.record), frozenEvents = canonical(selected.events);
+      const cleanupSignal = AbortSignal.any([publishSignal, AbortSignal.timeout(stopTimeoutMs)]);
+      const assertCurrent = () => {
+        cleanupSignal.throwIfAborted();
+        invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent
+          && safe(current, true) && canonical(session.snapshotEvents()) === frozenEvents
+          && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId
+          && canonical(store.load(scope, original.expectedHeadRunId)) === frozen, 'studio_native_conversation_changed');
+        return true;
+      };
       if (cleanup) {
-        const frozen = canonical(current.record), frozenEvents = canonical(selected.events);
-        const cleanupSignal = AbortSignal.any([publishSignal, AbortSignal.timeout(stopTimeoutMs)]);
-        const assertCurrent = () => {
-          cleanupSignal.throwIfAborted();
-          invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent
-            && safe(current, true) && canonical(session.snapshotEvents()) === frozenEvents
-            && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId
-            && canonical(store.load(scope, original.expectedHeadRunId)) === frozen, 'studio_native_conversation_changed');
-          return true;
-        };
         const retainedRefs = nativeConversationRetainedCommands({ store, scope, record: current.record, seed,
           prefix: selected.events.slice(0, target.seq), sourceEvents: selected.events });
         const commands = current.binding.nativeTools.conversationCommands(agent, { scope, store });
@@ -179,26 +198,43 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
       }
       const commandsSettled = Boolean(marker.commandCleanup);
       invariant(safe(current, commandsSettled), 'native_conversation_rewind_stop_unsettled');
+      if (original.scope === 'both') {
+        assertCurrent();
+        const workspace = current.binding.nativeTools.conversationWorkspace?.(agent, { scope, store });
+        invariant(workspace, 'native_conversation_workspace_control_unavailable');
+        const { workspacePreviewToken, ...identity } = original;
+        const operation = { ...identity, scope: copy(scope), contract: 'agentkit.native-conversation-workspace-control/v1',
+          requestDigest: marker.requestDigest, sourceDigest: conversationDigest(current.record),
+          selectionDigest: conversationDigest({ seed, prefix: selected.events.slice(0, target.seq) }),
+          ...(workspacePreviewToken ? { workspacePreviewToken } : {}) };
+        const options = { signal: cleanupSignal, assertCurrent, record: current.record, seed,
+          prefix: selected.events.slice(0, target.seq), sourceEvents: selected.events };
+        if (previewOnly) return workspace.preview(operation, options);
+        marker.workspaceCleanup = workspace.apply(operation, options); assertCurrent();
+        invariant(marker.workspaceCleanup?.contract === operation.contract && marker.workspaceCleanup.requestDigest === marker.requestDigest,
+          'native_conversation_workspace_cleanup_invalid');
+      }
       const removed = selected.nodes.slice(selected.nodes.indexOf(target.seq));
       publishSignal.throwIfAborted();
       invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent && safe(current, commandsSettled)
         && canonical(session.snapshotEvents()) === canonical(selected.events)
         && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId, 'studio_native_conversation_changed');
       session.append('user/message', { id: `ak-native-rewind-${conversationDigest(original)}`, role: 'user',
-        source: { kind: NATIVE_CONVERSATION_REWIND_SOURCE, form: 'notice', summary: '已回退对话，工作区文件保留', nativeRewind: marker },
-        content: [{ type: 'text', text: '对话已回退到所选输入之前。工作区文件保留当前状态；继续修改前请重新读取相关文件。' }] },
+        source: { kind: NATIVE_CONVERSATION_REWIND_SOURCE, form: 'notice', summary: original.scope === 'both' ? '已回退对话和文件' : '已回退对话，工作区文件保留', nativeRewind: marker },
+        content: [{ type: 'text', text: original.scope === 'both' ? '对话和文件已回退到所选输入之前；继续修改前请重新读取相关文件。'
+          : '对话已回退到所选输入之前。工作区文件保留当前状态；继续修改前请重新读取相关文件。' }] },
       { surfaceOp: { op: 'replace', startSeq: removed[0], endSeq: removed.at(-1) }, sourceEventSeqs: removed });
       invariant(await ctx.get('sessions').flush(session) === true, 'native_conversation_rewind_not_durable');
       return response(original, marker);
     };
-    if (cleanup) {
+    if (cleanup || original.scope === 'both') {
       invariant(typeof agent.runMaintenance === 'function', 'native_conversation_command_maintenance_unavailable');
       return agent.runMaintenance(maintenanceSignal => publish(AbortSignal.any([signal, maintenanceSignal])));
     }
     return publish(signal);
   };
-  const rewind = async (request, callerSignal) => {
-    validateNativeConversationRequest(request, true);
+  const rewind = async (request, callerSignal, previewOnly = false) => {
+    validateNativeConversationRequest(request, previewOnly ? 'preview' : true);
     const original = copy(request), bytes = canonical(original), key = canonical({ agentId: original.agentId, sessionId: original.sessionId });
     const existing = pending.get(key);
     if (existing) {
@@ -206,9 +242,10 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
       return awaitA2aControl(() => existing.promise, AbortSignal.any([lifetime.signal, ...(callerSignal ? [callerSignal] : [])]));
     }
     const entry = { bytes, commandId: original.commandId };
-    entry.promise = apply(request, original, callerSignal).finally(() => { if (pending.get(key) === entry) pending.delete(key); });
+    entry.promise = apply(request, original, callerSignal, previewOnly).finally(() => { if (pending.get(key) === entry) pending.delete(key); });
     pending.set(key, entry);
     return entry.promise;
   };
-  return { status, rewind, isRewinding: request => pending.has(canonical({ agentId: request.agentId, sessionId: request.sessionId })) };
+  return { status, rewind, previewWorkspace: (request, signal) => rewind(request, signal, true),
+    isRewinding: request => pending.has(canonical({ agentId: request.agentId, sessionId: request.sessionId })) };
 }

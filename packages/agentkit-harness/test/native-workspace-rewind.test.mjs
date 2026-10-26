@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync, chmodSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { createNativeWorkspaceTools } from '../src/native/workspace-tools.mjs';
 import { committedWorkspaceCheckpoint } from '../src/native/workspace-checkpoints.mjs';
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
@@ -39,6 +42,110 @@ function setup(t, authorize = async () => 'allow') {
     write: (path, text) => writeFileSync(join(workspace, path), text), read: path => readFileSync(join(workspace, path), 'utf8') };
 }
 const patch = (...lines) => ['*** Begin Patch', ...lines, '*** End Patch'].join('\n');
+
+function conversationControl(record, commandId = 'combined') {
+  return { contract: 'agentkit.native-conversation-workspace-control/v1', scope, sessionId: 'session',
+    commandId, requestDigest: `request-${commandId}`, sourceDigest: digest(record),
+    expectedHeadRunId: record.snapshot.runId, expectedGeneration: 0, targetMessageId: 'input', selectionDigest: 'selection' };
+}
+
+test('Host combined rewind uses a separate durable intent, retains earlier files, and cold-retries without rewriting its source Run', async t => {
+  const f = setup(t);
+  const kept = await f.run('write_workspace_file', { path: 'kept.txt', content: 'Keep' });
+  const removed = await f.run('write_workspace_file', { path: 'removed.txt', content: 'Remove' });
+  const control = conversationControl(removed.record), options = { signal: new AbortController().signal, assertCurrent: () => true,
+    checkpointCommitted: f.committed, selectCheckpoint: () => removed.output.content.checkpoint_id };
+  const preview = f.tools.previewConversationRewind(control, options);
+  assert.equal(preview.canApply, true); assert.deepEqual(preview.files.map(file => file.path), ['removed.txt']);
+  assert.equal(f.read('removed.txt'), 'Remove', 'preview does not publish');
+  const request = { ...control, workspacePreviewToken: preview.previewToken };
+  const result = f.tools.rewindConversation(request, options);
+  assert.equal(existsSync(join(f.workspace, 'removed.txt')), false); assert.equal(f.read('kept.txt'), 'Keep');
+  assert.deepEqual(f.store.load(scope, kept.runId), kept.record); assert.deepEqual(f.store.load(scope, removed.runId), removed.record);
+  assert.deepEqual(f.tools.pendingConversationRewind([]), request);
+  assert.equal(f.tools.pendingConversationRewind([{ commandId: request.commandId, requestDigest: request.requestDigest }]), null);
+  f.reopen();
+  assert.deepEqual(f.tools.rewindConversation(request, { ...options, checkpointCommitted: f.committed }), result);
+  const inverse = await f.run('preview_workspace_rewind', { checkpoint_id: result.checkpointId });
+  assert.equal(inverse.output.content.can_apply, true, 'ordinary file rewind verifies the Host control receipt provenance');
+});
+
+test('Host combined rewind refuses external edits after its frozen preview', async t => {
+  const f = setup(t), changed = await f.run('write_workspace_file', { path: 'a.txt', content: 'Native' });
+  const control = conversationControl(changed.record), options = { signal: new AbortController().signal, assertCurrent: () => true,
+    checkpointCommitted: f.committed, selectCheckpoint: () => changed.output.content.checkpoint_id };
+  const preview = f.tools.previewConversationRewind(control, options); f.write('a.txt', 'External');
+  assert.throws(() => f.tools.rewindConversation({ ...control, workspacePreviewToken: preview.previewToken }, options), { code: 'checkpoint_rewind_conflict' });
+  assert.equal(f.read('a.txt'), 'External'); assert.equal(f.tools.pendingConversationRewind([]), null);
+});
+
+test('retry observes a completed Host result while preserving subsequent user edits', async t => {
+  const f = setup(t), changed = await f.run('write_workspace_file', { path: 'a.txt', content: 'Native' });
+  const control = conversationControl(changed.record), options = { signal: new AbortController().signal, assertCurrent: () => true,
+    checkpointCommitted: f.committed, selectCheckpoint: () => changed.output.content.checkpoint_id };
+  const preview = f.tools.previewConversationRewind(control, options), request = { ...control, workspacePreviewToken: preview.previewToken };
+  const result = f.tools.rewindConversation(request, options); f.write('a.txt', 'Later user edit'); f.reopen();
+  assert.deepEqual(f.tools.rewindConversation(request, { ...options, checkpointCommitted: f.committed }), result);
+  assert.equal(f.read('a.txt'), 'Later user edit');
+});
+
+test('an earlier rewind includes both an undone publication and its inverse, without resurrecting a removed file', async t => {
+  const f = setup(t);
+  const first = await f.run('write_workspace_file', { path: 'a.txt', content: 'A' });
+  const second = await f.run('write_workspace_file', { path: 'b.txt', content: 'B' });
+  const options = { signal: new AbortController().signal, assertCurrent: () => true, checkpointCommitted: f.committed,
+    selectCheckpoint: () => second.output.content.checkpoint_id };
+  const control = conversationControl(second.record, 'remove-second');
+  const preview = f.tools.previewConversationRewind(control, options);
+  f.tools.rewindConversation({ ...control, workspacePreviewToken: preview.previewToken }, options);
+  assert.equal(existsSync(join(f.workspace, 'b.txt')), false);
+  const earlier = conversationControl(second.record, 'remove-first');
+  const rootOptions = { ...options, selectCheckpoint: () => first.output.content.checkpoint_id };
+  const rootPreview = f.tools.previewConversationRewind(earlier, rootOptions); assert.equal(rootPreview.canApply, true);
+  f.tools.rewindConversation({ ...earlier, workspacePreviewToken: rootPreview.previewToken }, rootOptions);
+  assert.equal(existsSync(join(f.workspace, 'a.txt')), false);
+  assert.equal(existsSync(join(f.workspace, 'b.txt')), false, 'undoing an older input must not revive a removed branch file');
+});
+
+test('cold retry compensates an interrupted Host restore and never blindly repeats the file operation', async t => {
+  const f = setup(t); f.write('a.txt', 'Before');
+  const changed = await f.run('apply_workspace_patch', { patch_text: patch('*** Update File: a.txt', '@@', '-Before', '+After') });
+  assert.equal(changed.output.status, 'ok');
+  const control = conversationControl(changed.record), controller = new AbortController();
+  const options = { signal: controller.signal, checkpointCommitted: f.committed,
+    selectCheckpoint: () => changed.output.content.checkpoint_id,
+    assertCurrent: () => { if (f.read('a.txt') === 'Before') controller.abort(Error('lost Host after publication')); return true; } };
+  const preview = f.tools.previewConversationRewind(control, options), request = { ...control, workspacePreviewToken: preview.previewToken };
+  assert.throws(() => f.tools.rewindConversation(request, options), /lost Host/);
+  assert.equal(f.read('a.txt'), 'Before'); assert.deepEqual(f.tools.pendingConversationRewind([]), request);
+  f.reopen();
+  assert.throws(() => f.tools.rewindConversation(request, { ...options, signal: new AbortController().signal, assertCurrent: () => true,
+    checkpointCommitted: f.committed }), { code: 'checkpoint_control_compensated' });
+  assert.equal(f.read('a.txt'), 'After\n'); assert.equal(f.tools.pendingConversationRewind([]), null);
+  assert.deepEqual(f.store.load(scope, changed.runId), changed.record);
+  assert.throws(() => f.tools.rewindConversation(request, { ...options, signal: new AbortController().signal, assertCurrent: () => true,
+    checkpointCommitted: f.committed }), { code: 'checkpoint_control_compensated' });
+});
+
+test('actual SIGKILL after Host file publication leaves a durable intent that cold retry compensates', async t => {
+  const f = setup(t); f.write('a.txt', 'Before');
+  const changed = await f.run('apply_workspace_patch', { patch_text: patch('*** Update File: a.txt', '@@', '-Before', '+After') });
+  const control = conversationControl(changed.record, 'actual-process-death'), options = { signal: new AbortController().signal,
+    assertCurrent: () => true, checkpointCommitted: f.committed, selectCheckpoint: () => changed.output.content.checkpoint_id };
+  const preview = f.tools.previewConversationRewind(control, options), request = { ...control, workspacePreviewToken: preview.previewToken };
+  const input = join(f.root, 'crash-input.json'); writeFileSync(input, JSON.stringify({ root: f.root, control: request, checkpointId: changed.output.content.checkpoint_id }));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../../../tests/fixtures/native-conversation-workspace-crash.mjs', import.meta.url)), input],
+    { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = ''; child.stderr.on('data', bytes => stderr += bytes);
+  const exited = once(child, 'exit'); t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  const [code, signal] = await exited; assert.equal(code, null, stderr); assert.equal(signal, 'SIGKILL', stderr);
+  assert.equal(JSON.parse(readFileSync(join(f.root, 'control-publication-crash.json'), 'utf8')).commandId, request.commandId);
+  assert.equal(f.read('a.txt'), 'Before');
+  f.reopen(); assert.deepEqual(f.tools.pendingConversationRewind([]), request);
+  assert.throws(() => f.tools.rewindConversation(request, { ...options, checkpointCommitted: f.committed }), { code: 'checkpoint_control_compensated' });
+  assert.equal(f.read('a.txt'), 'After\n'); assert.equal(f.tools.pendingConversationRewind([]), null);
+  assert.deepEqual(f.store.load(scope, changed.runId), changed.record);
+});
 
 test('committed preimages survive cold reopen and rewind all later file changes without rerunning tools', async t => {
   const f = setup(t); f.write('a.txt', 'original\r\n'); f.write('script.sh', 'echo old\n'); chmodSync(join(f.workspace, 'script.sh'), 0o755);

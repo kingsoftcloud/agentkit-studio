@@ -42,6 +42,37 @@ function makeState(host, newCommandId = () => 'cmd-1') {
   return createNativeConversationState({ hostRemote: host, agentId: AGENT, sessionId: SESSION, newCommandId });
 }
 
+test('combined rewind previews explicit files and confirms the exact preview before sending', async () => {
+  const host = mockHost({ status: okStatus({ canRewindWorkspace: true }), rewind: request => okRewind(request, { workspaceCleanup: {
+    contract: 'agentkit.native-conversation-workspace-control/v1', previewToken: request.workspacePreviewToken, changedPaths: ['removed.txt'] } }) });
+  const previews = [];
+  host.previewNativeConversationWorkspace = async request => { previews.push(structuredClone(request));
+    return { contract: 'agentkit.native-conversation-workspace-control/v1', previewToken: 'a'.repeat(64), canApply: true,
+      files: [{ path: 'removed.txt', action: 'delete' }], unsafeFiles: [] }; };
+  const state = makeState(host); await state.refresh(); await state.previewWorkspace('m2');
+  assert.equal(host.calls.rewind.length, 0, 'preview cannot apply'); assert.equal(state.getSnapshot().preview.files[0].path, 'removed.txt');
+  await state.confirmWorkspace();
+  assert.deepEqual(host.calls.rewind[0], { ...previews[0], workspacePreviewToken: 'a'.repeat(64) });
+});
+
+test('an unsafe combined preview cannot be confirmed', async () => {
+  const host = mockHost({ status: okStatus({ canRewindWorkspace: true }) });
+  host.previewNativeConversationWorkspace = async () => ({ contract: 'agentkit.native-conversation-workspace-control/v1',
+    previewToken: 'b'.repeat(64), canApply: false, files: [], unsafeFiles: [{ path: 'a.txt', reason: 'checkpoint_external_modified' }] });
+  const state = makeState(host); await state.refresh(); await state.previewWorkspace('m1'); await state.confirmWorkspace();
+  assert.equal(host.calls.rewind.length, 0);
+});
+
+test('cold panel restores an unresolved durable workspace request and retries its original identity', async () => {
+  const recovery = { agentId: AGENT, sessionId: SESSION, scope: 'both', commandId: 'original-control', expectedHeadRunId: 'run-3',
+    expectedGeneration: 2, targetMessageId: 'm2', workspacePreviewToken: 'c'.repeat(64) };
+  const host = mockHost({ status: (_request, count) => okStatus(count === 1 ? { workspaceRecovery: recovery } : {}),
+    rewind: request => okRewind(request, { workspaceCleanup: { contract: 'agentkit.native-conversation-workspace-control/v1',
+      previewToken: request.workspacePreviewToken, changedPaths: [] } }) });
+  const state = makeState(host); await state.refresh(); assert.deepEqual(state.getSnapshot().pending, recovery);
+  await state.retry(); assert.deepEqual(host.calls.rewind[0], recovery); assert.equal(state.getSnapshot().pending, null);
+});
+
 test('refresh loads status, clears error, and validates identity', async () => {
   const host = mockHost();
   const state = makeState(host);

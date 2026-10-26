@@ -189,6 +189,7 @@ export function createStudioHostRemote(options = {}) {
     repairNativeWorkspace: (payload, signal) => nativeChildOperation('sessions/native-workspace-repair', payload, signal),
     nativeConversationStatus: (payload, signal) => nativeChildOperation('sessions/native-conversation-status', payload, signal),
     rewindNativeConversation: (payload, signal) => nativeChildOperation('sessions/native-conversation-rewind', payload, signal),
+    previewNativeConversationWorkspace: (payload, signal) => nativeChildOperation('sessions/native-conversation-workspace-preview', payload, signal),
     controlNativeA2aTask: (payload, signal) => nativeChildOperation('sessions/native-a2a-control', payload, signal),
     dshA2aTaskHistory: (payload, signal) => nativeChildOperation('sessions/dsh-a2a-history', payload, signal),
     controlDshA2aTask: (payload, signal) => nativeChildOperation('sessions/dsh-a2a-control', payload, signal),

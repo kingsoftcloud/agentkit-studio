@@ -24,6 +24,15 @@ export function nativeConversationRewindMarkers(events) {
         && new Set([...cleanup.retained, ...cleanup.stopped].map(row => canonical(row.ref))).size === cleanup.retained.length + cleanup.stopped.length,
       'native_conversation_rewind_marker_invalid');
     }
+    if (marker.workspaceCleanup !== undefined) {
+      const cleanup = marker.workspaceCleanup;
+      invariant(cleanup?.contract === 'agentkit.native-conversation-workspace-control/v1'
+        && cleanup.requestDigest === marker.requestDigest && typeof cleanup.previewToken === 'string'
+        && (cleanup.checkpointId === null || typeof cleanup.checkpointId === 'string')
+        && Array.isArray(cleanup.rewoundCheckpointIds) && cleanup.rewoundCheckpointIds.every(id => typeof id === 'string')
+        && Array.isArray(cleanup.changedPaths) && cleanup.changedPaths.every(path => typeof path === 'string'),
+      'native_conversation_rewind_marker_invalid');
+    }
     generations.set(marker.sessionId, marker.generation);
   }
   return markers;

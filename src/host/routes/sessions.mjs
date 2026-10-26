@@ -5,6 +5,11 @@ import { validateNativeConversationRequest } from '../services/native-conversati
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost, getDshA2aControls }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-conversation-workspace-preview') {
+            validateNativeConversationRequest(payload, 'preview');
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.previewConversationWorkspace(payload, signal) };
+        }
         if (endpoint === 'sessions/native-conversation-status' || endpoint === 'sessions/native-conversation-rewind') {
             const rewind = endpoint === 'sessions/native-conversation-rewind';
             validateNativeConversationRequest(payload, rewind);

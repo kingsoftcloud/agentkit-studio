@@ -27,7 +27,7 @@ import { acquireWorkspaceMutationLock, workspaceMutationGuard } from './workspac
 import { budgetWorkspaceSourcePage, validateSourcePageBudget } from './source-page.mjs';
 import { prepareWorkspaceEdits } from './workspace-edit-match.mjs';
 import { prepareWorkspacePatch } from './workspace-patch.mjs';
-import { createWorkspaceCheckpointJournal, captureCheckpointFile, checkpointStatesEqual, WORKSPACE_CHECKPOINT_POLICY } from './workspace-checkpoints.mjs';
+import { createWorkspaceCheckpointJournal, captureCheckpointFile, checkpointStatesEqual, WORKSPACE_CHECKPOINT_POLICY, CONVERSATION_WORKSPACE_CONTROL } from './workspace-checkpoints.mjs';
 import { parseStructuredPatch } from '../../../agentkit-harness-core/dist/patch-parser.mjs';
 import { canonical } from '../../../agentkit-harness-core/dist/index.mjs';
 
@@ -956,6 +956,7 @@ export function createNativeWorkspaceTools({
           activeGuard?.(); const target = resolvePath(file.path);
           if (target !== file.canonicalPath) throw Object.assign(Error('checkpoint_path_changed'), { code: 'checkpoint_path_changed' });
           if (!checkpointStatesEqual(captureCheckpointFile(target), file.current)) throw Object.assign(Error('checkpoint_external_modified'), { code: 'checkpoint_external_modified' });
+          if (checkpointStatesEqual(file.current, file.desired)) continue;
           if (file.desired.kind === 'absent') {
             if (existsSync(target)) remove(target, lstatSync(target).isDirectory());
           } else if (file.desired.kind === 'directory') {
@@ -1398,7 +1399,90 @@ export function createNativeWorkspaceTools({
     const guard = workspaceMutationGuard(request, assertCurrent, checkRootBoundary);
     guard(); checkpoints.recordRepairReceipt(request, result); guard();
   }
+  // Explicit authenticated Host action, with its own journaled intent/result.
+  // Reuses the workspace publisher/lock, never fabricates a Native tool claim.
+  function conversationWorkspace(control, { signal, assertCurrent, checkpointCommitted, selectCheckpoint }, apply) {
+    if (!enableRewind || control?.contract !== CONVERSATION_WORKSPACE_CONTROL || control.sessionId !== store.sessionId
+      || !(signal instanceof AbortSignal) || typeof assertCurrent !== 'function' || typeof selectCheckpoint !== 'function'
+      || typeof checkpointCommitted !== 'function') throw Object.assign(Error('checkpoint_control_authority_missing'), { code: 'checkpoint_control_authority_missing' });
+    const frozen = canonical(control);
+    const guard = () => {
+      signal.throwIfAborted(); checkRootBoundary();
+      const valid = assertCurrent();
+      if (valid && typeof valid.then === 'function') Promise.resolve(valid).catch(() => {});
+      if (valid !== true || canonical(control) !== frozen) throw Object.assign(Error('workspace_execution_authority_changed'), { code: 'workspace_execution_authority_changed' });
+      signal.throwIfAborted();
+    };
+    guard(); const release = acquireWorkspaceMutationLock(pinnedRootReal);
+    const previous = [activeMutations, activeGuard, activeCheckpoint, activePublications, activeReads];
+    const mutations = new Set(), publications = new Map();
+    let checkpoint, plan;
+    try {
+      guard();
+      const previousControl = apply ? checkpoints.controlRecord(control) : null;
+      if (previousControl?.status === 'completed') { const result = checkpoints.completeControl(control); guard(); return result; }
+      if (previousControl) {
+        if (['prepared', 'compensating'].includes(previousControl.status)) {
+          const repair = checkpoints.prepareControlRepair(control); guard();
+          restoreRepairPlan(repair, guard); guard(); repair.complete(); guard();
+        }
+        throw Object.assign(Error('checkpoint_control_compensated'), { code: 'checkpoint_control_compensated' });
+      }
+      const rows = checkpoints.controlRows();
+      if (rows.some(row => ['prepared', 'compensating'].includes(row.status))) throw Object.assign(Error('checkpoint_outcome_unknown'), { code: 'checkpoint_outcome_unknown' });
+      const checkpointId = selectCheckpoint(rows); guard();
+      plan = checkpointId ? checkpoints.preview(checkpointId, checkpointCommitted) : { ids: [], files: [], content: { can_apply: true, unsafe_files: [] } };
+      const { requestDigest: _digest, workspacePreviewToken: _token, ...identity } = control;
+      const previewToken = sha256(canonical({ identity, checkpointId, plan: plan.content.preview_token ?? null }));
+      const preview = { contract: CONVERSATION_WORKSPACE_CONTROL, checkpointId, previewToken, canApply: plan.content.can_apply,
+        files: plan.content.files ?? [], unsafeFiles: plan.content.unsafe_files };
+      if (!apply) return preview;
+      if (!preview.canApply || previewToken !== control.workspacePreviewToken) throw Object.assign(Error('checkpoint_rewind_conflict'), { code: 'checkpoint_rewind_conflict' });
+      if (!checkpointId) return { contract: CONVERSATION_WORKSPACE_CONTROL, requestDigest: control.requestDigest,
+        checkpointId: null, rewoundCheckpointIds: [], changedPaths: [], previewToken };
+      guard(); checkpoint = checkpoints.beginControl(control, plan);
+      activeMutations = mutations; activeGuard = guard; activeCheckpoint = checkpoint; activePublications = publications; activeReads = new Map();
+      impls.rewind_workspace_files({}, { preparedRewind: plan }); guard();
+      checkpoint.finish(mutations); guard();
+      const result = checkpoints.completeControl(control); guard(); return result;
+    } catch (error) {
+      if (checkpoint?.canCompensate && mutations.size && !signal.aborted
+        && !['workspace_execution_authority_changed', 'workspace_root_changed', 'workspace_missing'].includes(error.code)) {
+        compensateRewind(plan, publications, checkpoint, guard);
+      } else if (checkpoint && !mutations.size) checkpoint.fail();
+      throw error;
+    } finally {
+      [activeMutations, activeGuard, activeCheckpoint, activePublications, activeReads] = previous;
+      release();
+    }
+  }
+  function restoreRepairPlan(plan, guard) {
+    for (const file of plan.files) {
+      const check = () => { guard(); if (resolvePath(file.path) !== file.canonicalPath)
+        throw Object.assign(Error('checkpoint_path_changed'), { code: 'checkpoint_path_changed' }); };
+      check(); const current = captureCheckpointFile(file.canonicalPath);
+      if (!checkpointStatesEqual(current, file.current)) throw Object.assign(Error('checkpoint_external_modified'), { code: 'checkpoint_external_modified' });
+      if (checkpointStatesEqual(current, file.before)) continue;
+      if (current.kind !== 'absent' && current.kind !== file.before.kind) {
+        check(); if (current.kind === 'directory') rmdirSync(file.canonicalPath); else unlinkSync(file.canonicalPath);
+      }
+      if (file.before.kind === 'file') {
+        check(); publishWorkspaceBytes(file.canonicalPath, Buffer.from(file.before.bytes, 'base64')); check(); chmodSync(file.canonicalPath, file.before.mode);
+      } else if (file.before.kind === 'directory') {
+        check(); mkdirSync(file.canonicalPath, { recursive: true, mode: file.before.mode }); check(); chmodSync(file.canonicalPath, file.before.mode);
+      }
+      check();
+    }
+  }
   return { definitions, execute, observe, recordReceipt, observeReceipt, repairWorkspace, recordRepairReceipt,
+    pendingConversationRewind: accepted => {
+      const rows = checkpoints.pendingControlRows().filter(row => row.controlBinding && row.status !== 'failed'
+        && !accepted.some(marker => marker.commandId === row.controlBinding.commandId && marker.requestDigest === row.controlBinding.requestDigest));
+      if (rows.length > 1) throw Object.assign(Error('checkpoint_control_duplicate'), { code: 'checkpoint_control_duplicate' });
+      return rows[0] ? structuredClone(rows[0].controlBinding) : null;
+    },
+    previewConversationRewind: (control, options) => conversationWorkspace(control, options, false),
+    rewindConversation: (control, options) => conversationWorkspace(control, options, true),
     adoptConversationBranch: (branch, restore) => store.adoptConversationBranch(branch, () => {
       const candidates = typeof restore === 'function' ? restore() : restore ?? [];
       return candidates.filter(raw => {

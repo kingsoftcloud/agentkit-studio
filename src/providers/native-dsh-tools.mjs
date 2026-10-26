@@ -18,6 +18,8 @@ import { directoryModelReply, DIRECTORY_MODEL_DESCRIPTION, DIRECTORY_SCOPE_MODEL
 import { workspaceSourceModelReply } from './native-source-observation.mjs';
 import { NATIVE_DSH_OUTPUT_SCHEMA, nativeDshBuiltinOutput, renderNativeDshBuiltinOutput } from './native-output.mjs';
 import { nativeConversationReadStates } from './native-conversation-reads.mjs';
+import { nativeConversationWorkspaceCheckpoint } from './native-conversation-workspace.mjs';
+import { nativeConversationRewindMarkers } from './native-conversation-rewind.mjs';
 import { createNativeDshBrowserTools } from './native-dsh-browser.mjs';
 import { createNativeDshWebTools } from './native-dsh-web.mjs';
 import { nativeWebToolDefinitions } from '../../packages/agentkit-harness/src/native/web-tools.mjs';
@@ -643,6 +645,27 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
       contract: LOCAL_COMMAND_TOOLS_CONTRACT, controls: { contract: LOCAL_PROCESS_CONTRACT, settings: controls },
       risk: [LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY], backend: 'local_process', environmentDigest: hash(commandEnv),
     } : null,
+    conversationWorkspaceRecovery(agent) {
+      const accepted = nativeConversationRewindMarkers(agent.session.snapshotEvents())
+        .filter(event => agent.session.isOwnSeq(event.seq)).map(event => event.data.source.nativeRewind);
+      return state(agent).pendingConversationRewind(accepted);
+    },
+    assertConversationWorkspaceSettled(agent) {
+      const accepted = nativeConversationRewindMarkers(agent.session.snapshotEvents())
+        .filter(event => agent.session.isOwnSeq(event.seq)).map(event => event.data.source.nativeRewind);
+      invariant(!state(agent).pendingConversationRewind(accepted), 'studio_native_workspace_control_recovery_required');
+    },
+    conversationWorkspace(agent, authority) {
+      invariant(!closed && authority?.scope?.agentId === config.agentId && authority.store && agent?.session?.id,
+        'studio_native_conversation_workspace_unbound');
+      const sessionId = String(agent.session.id), workspaceTools = state(agent, sessionId);
+      const options = request => ({ signal: request.signal,
+        assertCurrent: () => { invariant(!closed && String(agent.session?.id) === sessionId, 'studio_native_conversation_workspace_unbound'); return request.assertCurrent(); },
+        checkpointCommitted: row => committedWorkspaceCheckpoint(row, { store: authority.store, scope: authority.scope, sessionId }),
+        selectCheckpoint: checkpoints => nativeConversationWorkspaceCheckpoint({ ...request, checkpoints, store: authority.store, scope: authority.scope }) });
+      return { preview: (control, request) => workspaceTools.previewConversationRewind(control, options(request)),
+        apply: (control, request) => workspaceTools.rewindConversation(control, options(request)) };
+    },
     conversationCommands(agent, authority) {
       invariant(!closed && commandBackend === 'local_process' && authority?.scope?.agentId === config.agentId
         && authority.store && agent?.session?.id, 'studio_native_conversation_commands_unbound');
