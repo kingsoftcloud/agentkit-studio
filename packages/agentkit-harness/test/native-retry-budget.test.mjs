@@ -93,9 +93,12 @@ test('real HTTP retry kinds share one durable model-call budget across cold reop
 
 test('shared wall budget wins over a provider Retry-After without another HTTP attempt', async t => {
   const fixture = await setup(t, () => ({ status: 429, headers: { 'retry-after': '30' } }), { maxWallMs: 500 });
-  const { kernel } = fixture.open(); kernel.start(identity, fixture.config);
+  const { store, kernel } = fixture.open(); kernel.start(identity, fixture.config);
   const driving = kernel.runUntilIdle(identity.scope, identity.runId);
-  while (fixture.requests.length === 0) await new Promise(resolve => setTimeout(resolve, 5));
+  const deadline = Date.now() + 3000;
+  while (!store.load(identity.scope, identity.runId).snapshot.retryNotBefore && Date.now() < deadline)
+    await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(store.load(identity.scope, identity.runId).snapshot.retryNotBefore, 40_000);
   // Advance the active worker's monotonic clock while it owns the retry wait.
   fixture.advance(501);
   const done = await driving;
