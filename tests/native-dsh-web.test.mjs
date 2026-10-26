@@ -12,6 +12,20 @@ import { createNativeArtifactStore } from '../packages/agentkit-harness/src/nati
 const allowAuthorize = async () => 'allow';
 const sig = () => new AbortController().signal;
 
+test('web authorization cannot fetch after Native authority retires', async t => {
+  let current = true, requests = 0;
+  const tools = createNativeDshWebTools({ config: { sessionId: 's1',
+    authorize: async () => { current = false; return 'allow'; },
+    ssrfPolicy: { allowPrivate: true } },
+    fetch: async () => { requests++; throw new Error('stale web call must not fetch'); } });
+  t.after(() => tools.close());
+  const result = await tools.execute(webRequest({ sessionId: 's1', signal: sig(),
+    call: { callId: 'stale', name: 'web_fetch', arguments: { url: 'https://example.com/' } },
+    assertCurrent: () => current }));
+  assert.equal(result.content.code, 'web_authority_stale');
+  assert.equal(requests, 0);
+});
+
 test('the protecting dispatcher resolves a hostname and actually connects using validated addresses', async t => {
   let requests = 0, lookups = 0;
   const { url, ready, close } = localServer((_req, res) => { requests++; res.end('connected through pinned DNS'); });

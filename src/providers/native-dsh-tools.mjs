@@ -311,7 +311,9 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             const web = await invocation.web();
             if (config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT)
               invariant(invocation.assertCurrent?.(invocation.request) === true, 'studio_native_tool_authority_stale');
-            outcome = await web.execute({ ...invocation.request, signal: exec.signal });
+            outcome = await web.execute({ ...invocation.request, signal: exec.signal,
+              ...(config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT
+                ? { assertCurrent: () => invocation.assertCurrent?.(invocation.request) === true } : {}) });
           } else if (a2aNames.has(name)) {
             invariant(invocation.a2a, 'studio_native_a2a_binding_missing');
             outcome = await invocation.a2a.execute({ ...invocation.request, signal: exec.signal });

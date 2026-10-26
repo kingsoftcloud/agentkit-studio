@@ -603,6 +603,8 @@ export function createNativeWebTools({
       if (decision?.status === 'approval_required' && typeof decision.interactionId === 'string') return decision;
       return { status: 'error', content: { code: 'policy_denied', executed: false } };
     }
+    if (typeof request.assertCurrent === 'function' && request.assertCurrent() !== true)
+      return { status: 'error', content: { code: 'web_authority_stale', executed: false } };
     return transport.execute(request);
   }
 

@@ -14,8 +14,9 @@ classification. The DSH registry guard runs before the builtin body, while
 end during that wait. Browser owner creation is also asynchronous and previously
 could continue to dispatch after a stale lease.
 
-The registered Native builtin now re-reads exact current-intent authority
-after the approval wait. Web dispatch re-checks after constructing its adapter.
+The registered production Native builtin now re-reads exact current-intent
+authority after the approval wait. Web dispatch re-checks after constructing
+its adapter and before transport execution following its authorization wait.
 The browser adapter accepts the bound Native authority callback and checks it
 before owner allocation and after asynchronous owner creation, immediately
 before entering the browser workspace port. The trusted browser verifier does
@@ -25,8 +26,10 @@ not carry a Native tool intent and keeps its existing separate contract.
 approval wait: releasing the lease during approval yields `stale_fence`, with
 zero browser launches and only the original model call. A separate browser
 adapter test releases authority during owner creation and observes zero owner
-executions. Focused checks passed: browser adapter 13/13 and the one exact
-Native approval case 1/1. This closes those two pre-dispatch windows, not every
+executions. A Web adapter test retires authority during its authorization
+callback and observes zero fetches. Focused checks passed: browser adapter
+13/13, the exact Native approval case 1/1, and Web adapter/gateway 20/20.
+This closes those pre-dispatch windows, not every
 possible lease change during a long-running browser action or an arbitrary
 third-party effect; the full extension/resource matrix remains open.
 
