@@ -309,6 +309,7 @@ export function configure(input: ConfigurationInput): RunConfiguration {
       || recent.every(value => Number.isSafeInteger(value) && value! >= 0), 'invalid_context_recent_tool_policy');
     invariant(policy.pruneToolResults === undefined || typeof policy.pruneToolResults === 'boolean', 'invalid_context_pruning_policy');
     invariant(policy.pruneThresholdPolicy === undefined || policy.pruneThresholdPolicy === 'zcode-local/v1', 'invalid_context_pruning_policy');
+    invariant(policy.pruneSummaryPolicy === undefined || policy.pruneSummaryPolicy === 'zcode-local/v1', 'invalid_context_pruning_policy');
     invariant([policy.pruneKeepRecentBatches, policy.pruneMinSavedTokens, policy.pruneThresholdTokens].every(value => value === undefined
       || Number.isSafeInteger(value) && value! >= 1), 'invalid_context_pruning_policy');
   }

@@ -762,9 +762,9 @@ export class NativeKernel {
                 ...(configuration.contextSources.length ? { sourceFence: executionFence } : {}) };
               assertHookFeedbackRetained(snapshot, changes.preparedContext.messages);
               assertGuidanceRetained(snapshot, changes.preparedContext.messages);
-              if (result.toolResultPruning) facts.push({ kind: 'context.tool_results_pruned',
-                payload: result.toolResultPruning as unknown as ObjectValue });
             }
+            if (result.toolResultPruning) facts.push({ kind: 'context.tool_results_pruned',
+              payload: result.toolResultPruning as unknown as ObjectValue });
             const discovery = discoveryAfterCleanup(snapshot, result);
             if (discovery) {
               changes.toolDiscovery = discovery;

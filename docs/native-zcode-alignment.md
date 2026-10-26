@@ -3,6 +3,34 @@
 Status: in progress. This is a new source-alignment task, not a reopening or a
 replacement of the earlier Python-to-TypeScript migration acceptance.
 
+## Confirmed scope
+
+The target is ZCode's coding Harness internals and the task conversation
+interaction/presentation needed to use that Harness inside the existing Studio.
+
+- Harness: prompt/instruction assembly, model/tool loop, context and compaction,
+  editing, permissions, plans/todos, steering/cancellation, background work,
+  children and recovery.
+- Task conversation: streaming answers and available model reasoning, tool
+  arguments/results/progress, task status, approval/questions and user responses,
+  stop/continue, and conversation history/rewind. Audit the complete path from
+  provider events through persisted Session events to the Studio presentation;
+  backend event support alone does not establish display parity. Check ordering,
+  partial/error/cancel states and cold-history rendering without duplicate output.
+  Reasoning display uses the provider's available display content; private replay
+  signatures and other opaque protocol metadata remain separate.
+- Keep Native's durable execution and lightweight design, existing multi-runtime
+  boundaries, and future endpoint/cloud handoff interfaces. Implementing a cloud
+  scheduler or full cross-runtime checkpoint portability is outside this phase.
+- Exclude ZCode's desktop shell, account/billing/updater, office/document product
+  modules and unrelated plugins, pages or visual redesign. Reuse Studio's current
+  Session/UI ownership and presentation components where possible.
+
+This clarification makes conversation presentation explicit within M3/M4 and
+its end-to-end checks within M6. Unrelated product modules were already outside
+the coding Harness target; excluding them earns no extra progress. The
+denominator remains 100; this scope clarification itself earned no points.
+
 ## Reproducible inputs
 
 - Native baseline: `ac9ee0b` on `feat-ksadk-harness` (resolve to the full Git
@@ -36,11 +64,12 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **38/100**: M1 4/15 (inputs, initial matrix and reviewed
-source findings), M2 7/15 (explicit earlier cleanup, admitted Anthropic cache
+Current earned progress: **39/100**: M1 4/15 (inputs, initial matrix and reviewed
+source findings), M2 8/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity, plus versioned
-reference-default earlier cleanup through the actual Studio counter/command path), M3 6/20
+reference-default earlier cleanup through the actual Studio counter/command path,
+and authenticated cleaned-source summaries with SQLite recovery and actual Studio integration), M3 6/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
 plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
@@ -2322,3 +2351,83 @@ admitted input/output budget and counts the whole wire request.
 Earned progress: **38/100**, M2 **7/15**, denominator unchanged. This point is
 the default reference timing/admission and its actual Studio evidence; it does
 not certify full context/microcompact alignment or task-level savings.
+
+## Cleaned-source summary integration (39/100)
+
+Source audit confirms `runtime/methods/turn-loop.ts:83-108` calls microcompact
+before auto-compact in the same model step. `microcompact.ts:74-80` updates both
+history and turn entries; `compact.ts:201-209,277` and
+`compact-active.ts:192-211` select summary input from those cleaned entries.
+The reference minimum-savings check does not require post-cleanup input to fall
+below the full-summary threshold.
+
+New Studio Runs with explicit `pruneToolResults: true` now admit
+`pruneSummaryPolicy: zcode-local/v1`, independently of explicit/default cleanup
+threshold selection. Recovery and child binding preserve the original policy's
+presence or absence. Direct bindings and previously admitted Runs retain their
+existing behavior. No additional dependency or execution loop is introduced.
+
+When worthwhile cleanup still leaves too much input, the same planner uses the
+cleaned view for retention and summary selection. Cleared groups enter the
+summary together with their call frames, so retained groups cannot later hydrate
+cleared text from the original transcript. Persisted `prunedToolResultRefs`
+reconstruct eligible successful-result placeholders during source validation and
+fragment/media offset calculation. Prefix/ref/payload digests still authenticate
+original immutable messages. Unknown/duplicate/ineligible refs, changed receipts,
+partial cleared groups or a mismatching source manifest are rejected. PreCompact
+subjects explicitly identify the cleaned projection; original receipts remain
+available for execution recovery and ordinary conversation history.
+
+Local acceptance:
+
+- `/tmp/native-pruning-summary-tests.log`: 10 passed, including still-over-window
+  cleaned sources, legacy unchanged sources, invalid manifests and two SQLite
+  reopen boundaries (before summary execution and after a committed summary
+  receipt). Commands and completed summary fragments execute once. Additional
+  original-ref/payload assertions pass in
+  `/tmp/native-pruning-summary-manifest.log` (one selected test).
+- `/tmp/native-pruning-summary-related.log`: 32 passed (context planning and
+  actual request/token counters). `/tmp/native-pruning-summary-hooks.log`:
+  35 passed (hooks and context contributions). Build/pack and whitespace checks
+  pass; no full repository suite ran.
+- Actual packed Frozen Studio Host:
+  `node scripts/verify-studio-native-harness.mjs --source .artifacts/dsh-native-zcode --archive /tmp/agentkit-native-pruning-summary-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz --mount-host --context-pruning-summary --frozen --keep`.
+  `/tmp/native-pruning-summary-proof-final.log` passes; root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-C0jcqk`.
+  Two real foreground Node commands produce 600/900 evidence lines. The ordinary
+  whole-request counter measures **19395 -> 12740** input tokens after cleanup,
+  still above the 12000-token context window, and the summary sources contain
+  placeholders instead of old result lines. Original call arguments are retained.
+  Both the first turn and cold follow-up complete; no command is repeated and
+  the original Run remains identical. Across both turns the controlled peer
+  observes 10 HTTP model requests, including **6 summary fragments**. The cold
+  follow-up starts a new Run and may summarize imported history again; this proof
+  does not claim reuse of the previous Run's summary or zero extra model cost.
+- The separate `--context-pruning --frozen` scenario also passes:
+  `/tmp/native-pruning-summary-early-proof.log`, root
+  `/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-host-Nz2lfB`:
+  three commands, five task requests across cold continuation, zero summaries.
+- Runtime archive SHA-256:
+  `380d47602c63c242129dfd78c7da3c79bded1061af129eaed4bfde9c642c4f2f`.
+  These are deterministic local wire estimates with controlled model responses,
+  not task-quality, billed-token, latency or successful-task cost comparisons.
+
+The first 600/600-line fixture showed an intentional existing Native difference:
+cleanup produced 9459 input tokens, above the 8455.68 trigger but below the hard
+window, so fresh complete tool results were admitted before summary. The final
+600/900 fixture crosses the hard window and verifies the required summary path.
+A subsequent assertion incorrectly matched the old marker inside original
+command arguments; the verifier now checks concrete old result lines instead.
+Neither issue was fixed by weakening the actual over-window summary requirement.
+
+Real Claude Code read-only audit session
+`a0ed47eb-a12a-45f5-8095-54e8b0c87682` completed successfully in
+`/tmp/native-pruning-summary-source-audit.json`. Its source call-chain and
+original-transcript/summary-binding findings were checked against the official
+source and this worktree; its reading of tests alone was not treated as execution
+proof. It ran no tests and modified no files. No audit process remains live.
+
+Earned progress: **39/100**, M2 **8/15**, unchanged denominator. This point covers
+cleaned-source summary integration and its recovery/Host evidence. Idle-triggered
+cleanup, result-count versus batch recency, complete context/protocol/interaction
+alignment and M6's before/reference/after task/performance comparison remain open.

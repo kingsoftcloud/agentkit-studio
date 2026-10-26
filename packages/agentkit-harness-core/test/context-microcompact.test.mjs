@@ -192,3 +192,90 @@ test('new admitted defaults use the reference earlier boundary, preserving legac
   const smallPlan = await planNativeContext(small.snapshot, small.config, small.config.tools, counters, digest, false, true);
   assert.deepEqual(smallPlan.toolResultPruning.toolCallIds, ['small-old'], 'zero derived threshold immediately triggers eligible cleanup');
 });
+
+test('still-needed summaries use authenticated cleaned sources, preserving legacy source and rejecting changed manifests', async () => {
+  const { config, snapshot } = scenario();
+  append(snapshot.messages, 'old', 'read', 'OLD_EVIDENCE:'.repeat(1800));
+  append(snapshot.messages, 'recent', 'read', 'RECENT_EVIDENCE:'.repeat(2200));
+  const original = structuredClone(snapshot);
+  const legacy = await planNativeContext(snapshot, config, config.tools, counters, digest, false, true);
+  assert.equal(legacy.action, 'compact'); assert.ok(legacy.state.compaction.sourceText.includes('OLD_EVIDENCE:'));
+  const current = fixture({ ...config, contextPolicy: { ...policy, pruneSummaryPolicy: 'zcode-local/v1' } }).config;
+  const plan = await planNativeContext(snapshot, current, current.tools, counters, digest, false, true);
+  assert.equal(plan.action, 'compact'); assert.ok(plan.toolResultPruning.postInputTokens > current.profile.contextWindow);
+  assert.equal(plan.state.compaction.sourceText.includes('OLD_EVIDENCE:'), false);
+  assert.ok(plan.state.compaction.sourceText.includes('historical_tool_result_cleared'));
+  assert.ok(plan.state.compaction.sourceText.includes('RECENT_EVIDENCE:'));
+  const oldEntry = JSON.parse(plan.state.compaction.sourceText).find(entry => entry.message.callId === 'old');
+  const oldIndex = snapshot.messages.findIndex(message => message.callId === 'old');
+  assert.equal(oldEntry.ref, contextMessageRef(snapshot.messages[oldIndex], oldIndex, digest));
+  assert.equal(oldEntry.payloadDigest, digest(snapshot.messages[oldIndex]));
+  assert.equal(JSON.parse(oldEntry.message.content).payload_digest, digest(snapshot.messages[oldIndex].content));
+  assert.deepEqual(plan.state.compaction.prunedToolResultRefs, plan.toolResultPruning.sourceMessageRefs);
+  assert.deepEqual(snapshot, original);
+  const resumed = { ...snapshot, contextState: plan.state };
+  assert.equal((await planNativeContext(resumed, current, current.tools, counters, digest, false, true)).action, 'compact');
+  for (const refs of [[plan.state.compaction.prunedToolResultRefs[0], plan.state.compaction.prunedToolResultRefs[0]],
+    ['unknown'], [contextMessageRef(snapshot.messages.at(-1), snapshot.messages.length - 1, digest)]]) {
+    const changed = structuredClone(resumed); changed.contextState.compaction.prunedToolResultRefs = refs;
+    await assert.rejects(planNativeContext(changed, current, current.tools, counters, digest, false, true), /context_summary_pruning_manifest_invalid|context_compaction_manifest_changed/);
+  }
+  const changed = structuredClone(resumed); changed.messages[2].content += 'changed receipt';
+  await assert.rejects(planNativeContext(changed, current, current.tools, counters, digest, false, true), /context_compaction_source_changed/);
+});
+
+test('SQLite resume keeps cleanup before chunked summaries without replaying commands or completed summary chunks', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'native-pruning-summary-')), filename = join(directory, 'run.sqlite');
+  let store = new SqliteRunStore(filename);
+  t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  const { config, snapshot } = fixture({ tools: [tool()], contextPolicy: { ...policy, pruneSummaryPolicy: 'zcode-local/v1' },
+    profile: { ...fixture().config.profile, contextWindow: 8000, maxOutputTokens: 128 } });
+  store.create(config, snapshot);
+  let taskCalls = 0, tools = 0, summaryCalls = 0;
+  const offsets = new Set();
+  const ports = { context: { tokens: { tokenizerId: 'fixture', tokenizerDigest: 'fixture/v1',
+    countRequest: request => countRequest(request.messages, request.tools), countText: async request => counters.countText(request.text) } },
+  tools: { execute: async request => { tools++; return { status: 'ok', content: request.call.callId === 'old'
+    ? 'OLD_EVIDENCE:'.repeat(1800) : 'RECENT_EVIDENCE:'.repeat(2200) }; } },
+  model: { generate: async request => {
+    if (request.purpose === 'compaction') {
+      summaryCalls++; const source = JSON.parse(request.messages[1].content).source;
+      assert.ok(!source.text.includes('OLD_EVIDENCE:'));
+      assert.ok(!offsets.has(source.start), 'A completed summary fragment must not be reissued after SQLite reopen');
+      offsets.add(source.start); return final('Recent evidence observed; original commands have completed.');
+    }
+    taskCalls++;
+    if (taskCalls <= 2) return { ...final(''), kind: 'tool_calls', toolCalls: [{ callId: taskCalls === 1 ? 'old' : 'recent', name: 'read', arguments: {} }] };
+    assert.ok(!canonical(request.messages).includes('OLD_EVIDENCE:'));
+    assert.ok(request.messages.some(message => message.kind === 'compaction_summary'));
+    return final('Completed after cleaned summary');
+  } } };
+  await assert.rejects(new NativeKernel({ store, ports, digest, owner: 'before-summary', onCheckpoint: async next => {
+    if (next.contextState?.compaction?.prunedToolResultRefs) throw Error('stop after source commit');
+  } }).runUntilIdle(scope, 'run'), /stop after source commit/);
+  assert.equal(summaryCalls, 0); assert.equal(tools, 2);
+  store.close(); store = new SqliteRunStore(filename);
+  await assert.rejects(new NativeKernel({ store, ports, digest, owner: 'after-source', onCheckpoint: async next => {
+    if (next.contextState?.compaction?.proposal !== null && next.contextState?.compaction?.proposal !== undefined)
+      throw Error('stop after summary receipt');
+  } }).runUntilIdle(scope, 'run'), /stop after summary receipt/);
+  assert.equal(summaryCalls, 1);
+  store.close(); store = new SqliteRunStore(filename);
+  const end = await new NativeKernel({ store, ports, digest, owner: 'after-summary-receipt' }).runUntilIdle(scope, 'run');
+  assert.equal(end.phase, 'completed'); assert.equal(end.finalText, 'Completed after cleaned summary');
+  assert.equal(tools, 2); assert.equal(taskCalls, 3); assert.ok(summaryCalls >= 2 && summaryCalls <= 8);
+  assert.equal(end.contextState.compactions, 1);
+  assert.ok(end.messages.find(message => message.callId === 'old').content.includes('OLD_EVIDENCE:'));
+  assert.equal(store.events(scope, 'run').filter(event => event.kind === 'context.tool_results_pruned').length, 1);
+});
+
+test('Studio admits cleaned summary sources only for new enabled bindings', () => {
+  const description = { protocol: 'openai-chat', modelName: 'test', contextWindow: 32000, maxOutputTokens: 1000 };
+  const bind = (raw, pruningSummaryDefaults = false) => bindNativeContext({ description,
+    context: { compaction: raw }, pruningSummaryDefaults }).policy;
+  assert.equal(bind({ pruneToolResults: true }).pruneSummaryPolicy, undefined);
+  assert.equal(bind({}, true).pruneSummaryPolicy, undefined);
+  assert.equal(bind({ pruneToolResults: false }, true).pruneSummaryPolicy, undefined);
+  assert.equal(bind({ pruneToolResults: true }, true).pruneSummaryPolicy, 'zcode-local/v1');
+  assert.throws(() => fixture({ contextPolicy: { ...policy, pruneSummaryPolicy: 'unknown' } }), /invalid_context_pruning_policy/);
+});

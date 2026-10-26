@@ -258,8 +258,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const readWorkingSetDefaults = !original || Object.hasOwn(original.configuration.contextPolicy ?? {}, 'readWorkingSetCount');
       const recentToolBatchDefaults = !original || Object.hasOwn(original.configuration.contextPolicy ?? {}, 'recentToolBatchCount');
       const pruningThresholdDefaults = !original || original.configuration.contextPolicy?.pruneThresholdPolicy === 'zcode-local/v1';
+      const pruningSummaryDefaults = !original || original.configuration.contextPolicy?.pruneSummaryPolicy === 'zcode-local/v1';
       const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens,
-        readWorkingSetDefaults, recentToolBatchDefaults, pruningThresholdDefaults });
+        readWorkingSetDefaults, recentToolBatchDefaults, pruningThresholdDefaults, pruningSummaryDefaults });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputSelection = original ? admittedModelSelection(agent, input.assembly) : { ...selection, ...source };
       const inputServices = { attachments: () => ctx.get('attachments'),
@@ -441,7 +442,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         invariant(!compat || modelOptions.thinkingMode === undefined || compat.supportsThinking,
           'native_model_profile_thinking_mode_unsupported');
         const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context,
-          readWorkingSetDefaults, recentToolBatchDefaults, pruningThresholdDefaults });
+          readWorkingSetDefaults, recentToolBatchDefaults, pruningThresholdDefaults, pruningSummaryDefaults });
         return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
         profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
           compatibilityDigest: providerCompatibilityPolicy ? hash({ description: desc, inlineReasoningPolicy, providerCompatibilityPolicy,

@@ -38,6 +38,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'workspace-repair': { type: 'boolean', default: false },
   'edit-create': { type: 'boolean', default: false },
   'context-pruning': { type: 'boolean', default: false },
+  'context-pruning-summary': { type: 'boolean', default: false },
   'conversation-fork': { type: 'boolean', default: false },
   'conversation-rewind': { type: 'boolean', default: false },
   'conversation-active-rewind': { type: 'boolean', default: false },
@@ -112,7 +113,10 @@ assert.ok(!values['edit-create'] || values['mount-host'] && !Object.entries(valu
 const editCreationProof = values['edit-create'] ? createEditCreationProof() : null;
 assert.ok(!values['context-pruning'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['context-pruning', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning is a separate mounted Host proof');
-const contextPruningProof = values['context-pruning'] ? createContextPruningProof() : null;
+assert.ok(!values['context-pruning-summary'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
+  && !['context-pruning-summary', 'mount-host', 'frozen', 'keep'].includes(key)), '--context-pruning-summary is a separate mounted Host proof');
+const contextPruningProof = values['context-pruning'] || values['context-pruning-summary']
+  ? createContextPruningProof({ summary: values['context-pruning-summary'] }) : null;
 assert.ok(!values['conversation-fork'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true
   && !['conversation-fork', 'mount-host', 'frozen', 'keep'].includes(key)), '--conversation-fork is a separate mounted Host proof; --frozen is supported');
 const conversationForkProof = values['conversation-fork'] ? createConversationForkProof() : null;

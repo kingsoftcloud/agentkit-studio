@@ -2,7 +2,7 @@ import { invariant } from '../../packages/agentkit-harness-core/dist/index.mjs';
 import { createNativeContextPort } from '../../packages/agentkit-harness/src/native/context-counter.mjs';
 
 /** Bind budget, counter and policy from the resolved Agent revision/Frozen Build. */
-export function bindNativeContext({ description, context = {}, maxTokens, readWorkingSetDefaults = false, recentToolBatchDefaults = false, pruningThresholdDefaults = false } = {}) {
+export function bindNativeContext({ description, context = {}, maxTokens, readWorkingSetDefaults = false, recentToolBatchDefaults = false, pruningThresholdDefaults = false, pruningSummaryDefaults = false } = {}) {
   invariant(context && typeof context === 'object' && !Array.isArray(context), 'studio_native_context_invalid');
   const raw = context.compaction ?? {};
   invariant(raw && typeof raw === 'object' && !Array.isArray(raw), 'studio_native_compaction_invalid');
@@ -33,6 +33,7 @@ export function bindNativeContext({ description, context = {}, maxTokens, readWo
       ...(Object.hasOwn(raw, 'pruneThresholdTokens') ? { pruneThresholdTokens: raw.pruneThresholdTokens } : {}),
       ...(pruningThresholdDefaults && raw.pruneToolResults === true && !Object.hasOwn(raw, 'pruneThresholdTokens')
         ? { pruneThresholdPolicy: 'zcode-local/v1' } : {}),
+      ...(pruningSummaryDefaults && raw.pruneToolResults === true ? { pruneSummaryPolicy: 'zcode-local/v1' } : {}),
     } : {}),
     ...(readWorkingSetDefaults || ['readWorkingSetCount', 'readWorkingSetMaxTokens', 'readWorkingSetTotalMaxTokens']
       .some(key => Object.hasOwn(raw, key)) ? {

@@ -175,6 +175,8 @@ export interface ContextPlanningPolicy {
   pruneThresholdTokens?: number;
   /** New admissions derive an earlier ZCode boundary; absence preserves legacy timing. */
   pruneThresholdPolicy?: 'zcode-local/v1';
+  /** Admit cleaned historical tool output as the source of a still-needed summary. */
+  pruneSummaryPolicy?: 'zcode-local/v1';
 }
 export interface ContextHistory {
   prefixCount: number; prefixDigest: string; contractDigest: string; tokenizerDigest: string;
@@ -193,6 +195,8 @@ export interface ContextCompaction {
   chunk: ContextChunk | null; proposal: string | null; errors: number; quoteLimit: number | null;
   hookSubject: ObjectValue; hooksComplete: boolean;
   workspaceRevision?: string | null;
+  /** References into the immutable prefix; cleared groups must belong to removedRefs. */
+  prunedToolResultRefs?: string[];
 }
 export interface ContextPlanningState {
   history: ContextHistory | null; compaction: ContextCompaction | null;

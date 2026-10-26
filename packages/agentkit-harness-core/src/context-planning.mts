@@ -1,5 +1,5 @@
 import type { ContextAdmission, ContextCompaction, ContextPlanningResult, ContextPlanningState, Message, ModelResult,
-  ObjectValue, RunConfiguration, RunSnapshot, ToolDefinition, Usage } from './contracts.mjs';
+  ObjectValue, RunConfiguration, RunSnapshot, ToolDefinition, ToolResultPruning, Usage } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { directoryProgressQuote } from './directory-progress.mjs';
 import { planModeGuidance } from './plan-mode.mjs';
@@ -19,8 +19,8 @@ export interface ContextCounters {
 const emptyState = (): ContextPlanningState => ({ history: null, compaction: null, compactions: 0,
   compactionsWithoutProgress: 0, progressDigest: null, lastModelCall: 0 });
 export const contextMessageRef = (message: Message, index: number, digest: (value: unknown) => string): string => `message:${index}:${digest(message)}`;
-function historicalEntry(message: Message, index: number, digest: (value: unknown) => string): ObjectValue {
-  const projected = copy(message);
+function historicalEntry(message: Message, index: number, digest: (value: unknown) => string, projection = message): ObjectValue {
+  const projected = copy(projection);
   // Private provider protocol belongs only to live retained assistant frames.
   // It cannot become historical observations or summary instructions.
   delete projected.providerReplay; delete projected.replayToolIds;
@@ -168,17 +168,34 @@ function verifyCoverage(compaction: ContextCompaction, complete = false): void {
   }
   invariant(cursor === compaction.offset && (!complete || cursor === compaction.sourceText.length), 'context_source_coverage_incomplete');
 }
+/** Reconstruct only admitted cleanup; prefix/ref digests still authenticate original receipts. */
+function summaryProjection(prefix: Message[], compaction: ContextCompaction, config: RunConfiguration,
+  digest: (value: unknown) => string): Message[] {
+  if (compaction.prunedToolResultRefs === undefined) return prefix;
+  const selected = new Set(compaction.prunedToolResultRefs), refs = refsOf(prefix, digest);
+  invariant(config.contextPolicy?.pruneSummaryPolicy === 'zcode-local/v1' && selected.size > 0
+    && selected.size === compaction.prunedToolResultRefs.length
+    && [...selected].every(ref => compaction.removedRefs.includes(ref)), 'context_summary_pruning_manifest_invalid');
+  const groups = groupsOf(prefix, prefix.map((_, index) => index));
+  const projected = projectOldToolResults(prefix, refs, groups, config.tools, new Set(), 1, digest);
+  const eligible = new Set(projected.clearedIndexes.map(index => refs[index]!));
+  invariant([...selected].every(ref => eligible.has(ref))
+    && groups.every(group => !group.some(index => selected.has(refs[index]!))
+      || group.every(index => compaction.removedRefs.includes(refs[index]!))), 'context_summary_pruning_manifest_invalid');
+  return prefix.map((message, index) => selected.has(refs[index]!) ? projected.messages[index]! : message);
+}
 function boundCompaction(snapshot: RunSnapshot, compaction: ContextCompaction, config: RunConfiguration, digest: (value: unknown) => string): void {
   invariant(compaction.goalRevision === snapshot.goalRevision && compaction.prefixCount <= snapshot.messages.length
     && compaction.prefixDigest === digest(snapshot.messages.slice(0, compaction.prefixCount))
     && compaction.contractDigest === digest(config.contract) && compaction.sourceDigest === digest(compaction.sourceText), 'context_compaction_source_changed');
   const prefix = snapshot.messages.slice(0, compaction.prefixCount), refs = refsOf(prefix, digest);
+  const projected = summaryProjection(prefix, compaction, config, digest);
   const byRef = new Map(refs.map((ref, index) => [ref, prefix[index]!]));
   invariant(new Set(compaction.removedRefs).size === compaction.removedRefs.length
     && new Set(compaction.retainedRefs).size === compaction.retainedRefs.length
     && compaction.retainedRefs.every(ref => byRef.has(ref) && !compaction.removedRefs.includes(ref))
     && compaction.removedRefs.every((ref, index) => byRef.has(ref) && (index === 0 || refs.indexOf(ref) > refs.indexOf(compaction.removedRefs[index - 1]!)))
-    && canonical(compaction.removedRefs.map(ref => historicalEntry(byRef.get(ref)!, refs.indexOf(ref), digest))) === compaction.sourceText,
+    && canonical(compaction.removedRefs.map(ref => historicalEntry(byRef.get(ref)!, refs.indexOf(ref), digest, projected[refs.indexOf(ref)]!))) === compaction.sourceText,
   'context_compaction_manifest_changed');
   verifyCoverage(compaction);
 }
@@ -192,13 +209,14 @@ async function quoteChunk(snapshot: RunSnapshot, compaction: ContextCompaction, 
   const maxOutputTokens = ['deadline-delivery/v1', 'deadline-delivery/v2'].includes(config.wallDeliveryPolicy ?? '')
     ? config.profile.maxOutputTokens : Math.min(config.contextPolicy!.summaryMaxTokens, config.profile.maxOutputTokens);
   const prefix = snapshot.messages.slice(0, compaction.prefixCount), refs = refsOf(prefix, digest);
+  const projected = summaryProjection(prefix, compaction, config, digest);
   const mediaFor = (stop: number): NonNullable<Message['media']> => {
     const selected = new Map<string, NonNullable<Message['media']>[number]>();
     let position = 1;
     for (const ref of compaction.removedRefs) {
       const index = refs.indexOf(ref), message = prefix[index]!;
       if (position >= compaction.offset && position < stop) for (const block of message.media ?? []) selected.set(canonical(block), copy(block));
-      position += canonical(historicalEntry(message, index, digest)).length + 1;
+      position += canonical(historicalEntry(message, index, digest, projected[index]!)).length + 1;
     }
     return [...selected.values()];
   };
@@ -267,8 +285,10 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
       if (count + config.profile.maxOutputTokens <= config.profile.contextWindow) contributions = next;
     }
   }
+  let acceptedPruning: ToolResultPruning | undefined;
   const result = (action: ContextPlanningResult['action'], reason: string, messages: Message[] = [], admission: ContextAdmission | null = null): ContextPlanningResult =>
-    copy({ action, reason, state, messages, admission });
+    copy({ action, reason, state, messages, admission,
+      ...(acceptedPruning && action !== 'blocked' ? { toolResultPruning: acceptedPruning } : {}) });
   const progress = digest({ goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision,
     workspaceModifiedPaths: snapshot.workspaceModifiedPaths,
     artifactRefs: config.artifactPolicy === 'runtime-artifacts/v1' ? artifactProgressIdentity(snapshot.artifactRefs) : snapshot.artifactRefs,
@@ -333,9 +353,11 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   }
   const indexes = activeIndexes(snapshot, state, config, digest), groups = groupsOf(snapshot.messages, indexes);
   const refs = refsOf(snapshot.messages, digest), continuity = contextContinuity(snapshot, config);
-  const view = (selected: number[], summary = state.history?.summary ?? '') => withSummary(selected.map(index => copy(snapshot.messages[index]!)), summary, continuity, contributions);
-  const messages = view(indexes), counted = checkedCount(await counters.countRequest(copy(messages), copy(tools), 'task', config.profile.maxOutputTokens));
-  const fits = counted + config.profile.maxOutputTokens <= config.profile.contextWindow;
+  let planningMessages = snapshot.messages;
+  const prunedGroups = new Set<number>();
+  const view = (selected: number[], summary = state.history?.summary ?? '') => withSummary(selected.map(index => copy(planningMessages[index]!)), summary, continuity, contributions);
+  let messages = view(indexes), counted = checkedCount(await counters.countRequest(copy(messages), copy(tools), 'task', config.profile.maxOutputTokens));
+  let fits = counted + config.profile.maxOutputTokens <= config.profile.contextWindow;
   const admission: ContextAdmission = { sourceDigest: contextSourceDigest(snapshot, digest), toolsDigest: digest(tools),
     tokenizerId: policy.tokenizerId, tokenizerDigest: policy.tokenizerDigest, countedInputTokens: counted,
     maxOutputTokens: config.profile.maxOutputTokens, contextWindow: config.profile.contextWindow };
@@ -352,13 +374,22 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
       const prunedMessages = withSummary(indexes.map(index => projected.messages[index]!), state.history?.summary ?? '', continuity, contributions);
       const post = checkedCount(await counters.countRequest(copy(prunedMessages), copy(tools), 'task', config.profile.maxOutputTokens));
       if (counted - post >= (policy.pruneMinSavedTokens ?? 256)
-        && post < (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio) {
+        && (post < (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio
+          || policy.pruneSummaryPolicy === 'zcode-local/v1')) {
         assertHookFeedbackRetained(snapshot, prunedMessages);
-        return { ...result('ready', 'historical_tool_results_within_budget', prunedMessages,
-          { ...admission, countedInputTokens: post }), toolResultPruning: {
+        acceptedPruning = {
           sourceMessageRefs: projected.clearedIndexes.map(index => refs[index]!), toolCallIds: projected.clearedCallIds,
           preInputTokens: counted, postInputTokens: post, savedTokens: counted - post,
-        } };
+        };
+        if (post < (config.profile.contextWindow - config.profile.maxOutputTokens) * policy.triggerRatio)
+          return result('ready', 'historical_tool_results_within_budget', prunedMessages, { ...admission, countedInputTokens: post });
+        planningMessages = projected.messages; messages = prunedMessages; counted = post;
+        fits = counted + config.profile.maxOutputTokens <= config.profile.contextWindow;
+        admission.countedInputTokens = post;
+        // Summarize cleaned old groups together with their call frames. None may
+        // be retained and later accidentally hydrated from the immutable transcript.
+        const cleared = new Set(projected.clearedIndexes);
+        for (const group of groups) if (group.some(index => cleared.has(index))) prunedGroups.add(group[0]!);
       }
     }
   }
@@ -399,6 +430,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
     const toolGroups = groups.filter(group => snapshot.messages[group[0]!]!.toolCalls?.length);
     for (const group of toolGroups.slice(-policy.recentToolBatchCount).reverse()) {
       const cost = await groupCost(group);
+      if (prunedGroups.has(group[0]!)) continue;
       if (cost > policy.recentToolBatchMaxTokens! || cost > policy.recentToolBatchesTotalMaxTokens! - total) break;
       const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
       if (proposed.length === indexes.length) continue;
@@ -421,6 +453,7 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   // New policies preserve a chronological suffix; older source ranges survive
   // only through the explicit working set, never by filling small holes.
   for (const group of [...groups].reverse()) {
+    if (prunedGroups.has(group[0]!)) continue;
     if (group.every(index => retained.includes(index))) continue;
     const proposed = [...new Set([...retained, ...group])].sort((a, b) => a - b);
     if (proposed.length === indexes.length) continue;
@@ -431,14 +464,16 @@ export async function planNativeContext(snapshot: RunSnapshot, config: RunConfig
   const removed = indexes.filter(index => !retained.includes(index));
   if (!removed.length) return fits && !forceCompaction ? result('ready', 'context_no_reducible_history', messages, admission)
     : result('blocked', 'context_no_reducible_history');
-  const sourceText = canonical(removed.map(index => historicalEntry(snapshot.messages[index]!, index, digest)));
+  const sourceText = canonical(removed.map(index => historicalEntry(snapshot.messages[index]!, index, digest, planningMessages[index]!)));
   state.compaction = { sourceRevision: snapshot.revision, prefixCount: snapshot.messages.length, prefixDigest: digest(snapshot.messages),
     goalRevision: snapshot.goalRevision, contractDigest: digest(config.contract), retainedRefs: retained.map(index => refs[index]!), removedRefs: removed.map(index => refs[index]!),
     sourceText, sourceDigest: digest(sourceText), offset: 0, summary: state.history?.summary ?? '', coverage: [], chunk: null,
     proposal: null, errors: 0, quoteLimit: null, hooksComplete: !config.hooks.some(hook => hook.events.includes('PreCompact')),
     ...(policy.readWorkingSetCount !== undefined ? { workspaceRevision: snapshot.workspaceRevision } : {}),
+    ...(acceptedPruning ? { prunedToolResultRefs: acceptedPruning.sourceMessageRefs } : {}),
     hookSubject: { sourceRevision: snapshot.revision, sourceContextDigest: digest(snapshot.messages), sourceMessageCount: snapshot.messages.length,
-      messageRefs: removed.map(index => refs[index]!), messages: removed.map(index => snapshot.messages[index]) as unknown as ObjectValue[],
+      ...(acceptedPruning ? { sourceProjection: 'cleared-tool-results/v1', prunedToolResultRefs: acceptedPruning.sourceMessageRefs } : {}),
+      messageRefs: removed.map(index => refs[index]!), messages: removed.map(index => planningMessages[index]) as unknown as ObjectValue[],
       retainedMessageRefs: retained.map(index => refs[index]!) },
   };
   await quoteChunk(snapshot, state.compaction, config, counters, digest);
