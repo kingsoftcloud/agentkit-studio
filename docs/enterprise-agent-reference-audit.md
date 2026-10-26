@@ -48,6 +48,14 @@ projects cache breakpoints only onto provider wire messages. Other comments
 that call an implementation a behavioral reference still require source/diff
 review before the final attribution inventory is certified.
 
+A separate Claude Code read-only license review identified `todos.mts` and
+`coordinator-response.mts` as uncategorized ZCode citations. Primary review
+compared both to the pinned upstream contracts and handlers, confirmed their
+adapted tool shapes/results, added their notice entries and in-file Apache-2.0
+pointers, and checked that both source files are required in the packed archive.
+The archive integrity check passed for 1,845 files. This resolves those two
+specific attribution gaps; it does not certify every asset or future dependency.
+
 Upstream `NOTICE.md` contains product/security/privacy statements rather than
 an attribution list for these retained files. Do not present upstream product
 policy as Studio policy. The local package dry-run includes the root LICENSE,

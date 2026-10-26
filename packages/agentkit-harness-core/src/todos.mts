@@ -6,7 +6,8 @@ export const TODO_POLICY = 'session-todos/v1';
 export const TODO_READ = 'TodoRead';
 export const TODO_WRITE = 'TodoWrite';
 
-/** ZCode 3c5b227: contracts/src/tools/todo.ts and core/src/tool/handlers/todo.ts.
+/** Adapted from ZCode 3c5b227: contracts/src/tools/todo.ts and core/src/tool/handlers/todo.ts.
+ * Apache-2.0; see THIRD_PARTY_NOTICES.md and third-party/ZCode-LICENSE.
  * Pure staging controls. TodoWrite's only mutation happens in the receipt commit. */
 export function todoToolDefinitions(deferred = false): ToolDefinition[] {
   const base = { permissions: [], timeoutMs: 1000, contextRole: 'task_planning' as const,

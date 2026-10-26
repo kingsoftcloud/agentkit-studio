@@ -7,7 +7,9 @@ export const CHILD_TASK_POLICY = 'session-controls/v1';
 export const COORDINATOR_RESPONSE_POLICY = 'owned-parent-response/v1';
 export const RESPOND_TO_COORDINATOR = 'RespondToCoordinator';
 
-/** ZCode 3c5b227: contracts/tools/respond-to-coordinator and its core handler.
+/** Adapted from ZCode 3c5b227: contracts/src/tools/respond-to-coordinator.ts and
+ * core/src/tool/handlers/respond-to-coordinator.ts. Apache-2.0; see
+ * THIRD_PARTY_NOTICES.md and third-party/ZCode-LICENSE.
  * The acknowledgement and immutable queue fact share the tool receipt commit. */
 export function coordinatorResponseDefinition(deferred = false): ToolDefinition {
   return { name: RESPOND_TO_COORDINATOR,
