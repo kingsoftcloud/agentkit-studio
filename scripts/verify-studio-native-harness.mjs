@@ -488,7 +488,7 @@ try {
     for (const kind of ['step/start', 'step/end', 'assistant/message']) assert.equal(result.events.filter(event => event.type === kind).length, 2, kind);
     assert.equal(result.events.some(event => ['request/header', 'request/context'].includes(event.type)), false);
     assert.deepEqual(result.events.filter(event => event.type === 'assistant/message').map(event => event.data.usage),
-      [{ inputTokens: 5, outputTokens: 7 }, { inputTokens: 5, outputTokens: 7 }]);
+      [{ inputTokens: 5, outputTokens: 7, totalTokens: 12 }, { inputTokens: 5, outputTokens: 7, totalTokens: 12 }]);
     assert.equal(await readFile(join(root, 'workspace', `published-${turn}.txt`), 'utf8'), `publication-${turn}${values.hooks ? ' via Hook' : ''}`);
     const receipt = result.events.find(event => event.type === 'tool/result').data.message;
     assert.deepEqual(receipt.content, [{ type: 'text', text: `Published published-${turn}.txt (policy view)` }]);
@@ -534,7 +534,7 @@ try {
     assert.equal(end.type, 'end'); assert.equal(end.outcome.kind, 'committed');
     assert.equal(end.outcome.eventType, 'assistant/message'); assert.equal(end.index, chunks.length);
     assert.deepEqual(chunks.map(frame => frame.index), chunks.map((_, index) => index));
-    assert.ok(frames.every(frame => frame.revision === start.revision));
+    assert.ok(frames.every((frame, index) => frame.revision === start.revision + index));
     const matches = stored.filter(event => event.seq === end.outcome.seq
       && event.type === end.outcome.eventType && event.data.turn === start.turn && event.data.step === start.step
       && JSON.stringify(event.data.stream) === JSON.stringify(chunks.map(({ time, chunk }) => ({ type: 'chunk', time, chunk }))));

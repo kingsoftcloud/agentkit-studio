@@ -64,18 +64,19 @@ Initial completed checklist items: clean tracked baseline and target branch
 verified; official ZCode checkout pinned; Pi source pin recorded. No capability
 group is yet certified completely aligned.
 
-Current earned progress: **41/100**: M1 4/15 (inputs, initial matrix and reviewed
+Current earned progress: **42/100**: M1 4/15 (inputs, initial matrix and reviewed
 source findings), M2 9/15 (explicit earlier cleanup, admitted Anthropic cache
 projection, actual Host baseline/nested instruction refresh, and integrated local
 deferred-tool discovery with durable cleanup/Session continuity, plus versioned
 reference-default earlier cleanup through the actual Studio counter/command path,
 authenticated cleaned-source summaries with SQLite recovery and actual Studio integration,
-and admitted idle cleanup with persistent assistant clocks and cold Studio continuity), M3 7/20
+and admitted idle cleanup with persistent assistant clocks and cold Studio continuity), M3 8/20
 (successful context-window truncation, durable cache usage accounting and
 source-aligned edit matching and structured patches through actual packed Studio child tools,
 plus Native-local catalog authoring and frozen-Build admission through authenticated Host routes,
 and versioned creation/whitespace replacement through Edit with actual Host cold continuity,
-plus admitted public reasoning display, durable interrupted prefixes and buffered responses with actual local Host/history/component checks), M4 9/20
+plus admitted public reasoning display, durable interrupted prefixes and buffered responses with actual local Host/history/component checks,
+and full installed Studio Gateway reconnect with active reasoning restoration, real tool disclosure and settled history), M4 9/20
 (durable session Todo controls, compaction continuity and actual Studio projection
 across cold Host turns, plus receipt-backed Plan transitions, tool restrictions and
 actual Studio plan review, frozen non-destructive MCP Plan access and dynamic
@@ -84,9 +85,9 @@ plus child-local Todo continuity and durable coordinator responses through the
 actual packed Studio Host, plus owned Plan delegation/wait with immutable child
 mode inheritance and fresh continuation rebinding). The latest M4 point covers
 that integrated child Plan behavior, not the whole child control or planning group.
-The latest M3 point covers public reasoning and incomplete-prefix persistence,
-including JSON fallback and the existing local reasoning disclosure. It does not
-certify the whole conversation/reconnect, protocol, editing or tool execution group.
+The latest M3 point covers actual full-page local Gateway reconnect, tool
+parameters/results, completed task status and history disclosure. It does not
+certify all conversation controls, protocol, editing or tool execution cases.
 M5 12/15 covers durable file preimages on the admitted writer path (one point)
 and receipt-backed preview/authorized file-only rewind across a cold Studio Host
 (one point), guarded compensation of failed file rewinds (one point), and
@@ -126,7 +127,7 @@ audited and integrated.
 | Model and stream | `src/runtime/methods/turn-model-step.ts`, `model-streaming-event.ts`, `../adapters/src/model/` | Node `model-{openai-chat,responses,anthropic,normalize}.mjs`, core `model-stream.mts`, `machine.mts` | Native already rejects truncated tool batches. Successful `model_context_window_exceeded` now enters bounded output continuation; buffered/SSE/local HTTP→kernel cases pass. Remaining protocol/stream audit pending. |
 | Output continuation | `src/runtime/methods/turn-output-token-continuation.ts`, `tests/runtime-output-token-continuation*.test.ts` | core `output-recovery.mts`, `machine.mts`, `test/output-recovery.test.mjs` | Reference treats a completed truncated response differently from a rejected input-overflow request. Native retains its authenticated suffix/task recovery, original budgets and durable receipts. Compare boundary cases; pending. |
 | Context / microcompact | `src/compact/microcompact.ts`, `src/runtime/methods/{microcompact,turn-loop}.ts`, `tests/microcompact.test.ts` | core `context-{planning,microcompact,view}.mts`, source working set, Node context counter | New explicitly enabled admissions derive the reference earlier threshold, use cleaned sources for still-needed summaries and support idle-triggered cleanup through persistent assistant completion clocks. Actual Host/counter/cold-continuation evidence is recorded below; original policies and explicit thresholds remain. Result-count versus batch recency, exact budget strategy and full context acceptance remain pending. |
-| Local task conversation / thinking display | `src/runtime/methods/model.ts:278-330,515`, `tests/runtime-reasoning-history.test.ts`, model streaming Session events | Node `assistant-stream.mjs`, `session-delivery.mjs`, Host `native-harness.mjs`, maintained DSH `api/session-controller` and conversation UI | New admissions enable public provider reasoning by default, retain it in durable message content, and publish readable interrupted prefixes without partial tool authority. Explicit hiding and old Run defaults remain. SSE/JSON protocol checks, actual packed Frozen Host with disconnect/cold continuation, persisted history assembler and real component Chromium clicks pass. Full application follow/reconnect and complete conversation parity remain open. The cloud Assistant path stays separate. |
+| Local task conversation / thinking display | `src/runtime/methods/model.ts:278-330,515`, `tests/runtime-reasoning-history.test.ts`, model streaming Session events | Node `assistant-stream.mjs`, `session-delivery.mjs`, Host `native-harness.mjs`, maintained DSH `api/session-controller` and conversation UI | New admissions enable public provider reasoning by default, retain it in durable message content, and publish readable interrupted prefixes without partial tool authority. Explicit hiding and old Run defaults remain. SSE/JSON checks, packed Frozen Host disconnect/cold continuation, persisted history and component clicks pass. Full installed Studio now passes a physical Gateway disconnect, actual active-attempt baseline restoration, tool parameters/results, completed task status and browser history reload without extra model calls. Other conversation controls and complete parity remain open. The cloud Assistant path stays separate. |
 | Tool discovery / Skills / MCP | `src/tool/search/{exposure,history,search}.ts`, `src/tool/deferred-call.ts`, `tests/tool-search-*.test.ts` | core `tool-{discovery,search-ranking}.mts`, Node wire projections and `skill-disclosure.mjs`, Host `native-dsh-tools.mjs` / `native-subagents.mjs` | Local search/wrapper path now enters actual packed Host, real MCP, child authority, SQLite and cleanup. Skills retain existing progressive disclosure. Native Anthropic tool-reference optimization, complete deferred-selection comparison and task-cost benchmarking remain pending. |
 | File search/read/edit and undo | `src/tool/handlers/`, `patch-{parser,apply}.ts`, `edit-matchers.ts`, `runtime/methods/file-rewind.ts` | core matchers/parsers, Node workspace ports/workers and `workspace-checkpoints.mjs`, Host source/directory projections and mutation lock | Matching, patches and receipt-backed file-only rewind pass actual packed Studio cold continuation and frozen-Build admission. Native read-state, publication and unknown-effect guards remain. Ordinary conversation fork and idle same-Session rewind also pass packed Host proofs. Preview-bound combined file/conversation rewind now passes actual packed Host active-stop, cold continuation and repeated root-cut proofs. New admitted v2 Edit supports absent-file creation and full-fresh-read whitespace replacement, actual Host denial and cold editing; v1/legacy behavior is preserved. Large/legacy-encoded files, range/pruned/reconciled read-state variants, full historical selection, remaining partial-restore reconciliation, hook aliases and read/write policy comparisons are pending. |
 | Tool validation / execution | `src/tool/{executor,scheduler,input-normalization,model-contract}.ts` | core `tool-input.mts`, `machine.mts`, Host tool authority and DSH pipeline | Native has ledger-bound tools and read-only concurrency. Compare coercion, rejection feedback, ordering and resource conflicts. Pending. |
@@ -2634,3 +2635,71 @@ are still open.
 Earned progress: **41/100**, M3 **7/20**, unchanged denominator. This point covers
 admitted public reasoning persistence and actual local Host/history/disclosure
 behavior; it does not certify complete ZCode interaction parity.
+
+### Full local Studio follow transport and history (42/100)
+
+This batch closes the previous batch's full-browser transport gap for a local
+reasoning/tool/final-response turn. It uses the installed Studio plugin in the
+complete maintained DSH web profile, not an isolated renderer or reconstructed
+follow baseline. Existing production code supports this path without a new
+conversation protocol or state machine.
+
+Source chain checked: Native `assistant-stream.mjs:36` emits dense lifecycle
+revisions; `src/host/bootstrap.mjs:221` publishes the original frames to
+`agent/assistant-stream`. Maintained DSH
+`packages/api/session-controller/src/history.ts` owns the follow snapshot and
+frames, `client/transport.ts:179` opens `session/follow`, and
+`client/sessions/session.ts:646` feeds the real assistant fold into the chat
+event source. ZCode's pinned `runtime/methods/model.ts:278-330` remains the
+reasoning event reference. Studio reuses its existing DSH disclosure and
+completed-process folding behavior.
+
+`scripts/verify-native-full-page.mjs` extracts the packed plugin into a fresh
+dependency graph and uses separate DSH/AgentKit homes and workspace. It boots
+the full web profile, creates/adopts a Native Agent through authenticated Host
+routes and the actual browser selector, and sends the prompt from the composer.
+Chromium's WebSocket route forwards real traffic unchanged; the interruption
+closes both sides of the physical carrier and blocks replacement sockets while
+the provider emits another reasoning chunk. No baseline or Session event is
+invented. The new physical connection receives that chunk in the Host's actual
+active-attempt snapshot. The same task then performs a real workspace write,
+receives the real tool result, completes and retires its stop control. The page
+opens the tool parameters/result, reloads, opens the retained reasoning and
+checks one final answer without another model invocation.
+
+Reproduction (build the maintained `apps/web` frontend first if its `dist`
+is absent):
+
+```sh
+node scripts/verify-native-full-page.mjs \
+  --source .artifacts/dsh-native-zcode \
+  --archive /tmp/agentkit-native-thinking-pack/kingsoftcloud-agentkit-studio-0.0.2.tgz
+```
+
+Evidence: `/tmp/native-full-page-proof-final-accepted.log` passes; root
+`/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-full-page-lVQAbM`
+contains `proof.json`, real `gateway-frames.json` and `settled.png`.
+Runtime archive SHA-256 remains
+`21191f417a2db47769b8e0eb53637bebdd91838e86652b5cc4d18c984297f239`;
+maintained Host pin remains `a0272d447be3d951800fcb9062ea571ff1d1fede`.
+The actual `/api/remote.mux` baseline restores revision 6, startedAfterSeq 27,
+nextIndex 5; final history is revision 15 without an active attempt. Two model
+requests, one durable tool call/result and one completed turn are verified.
+
+Real Claude Code session `f9463083-1c53-40d0-849e-fdc5a892d863` audited the
+follow path and corrected the general mounted verifier's stale per-attempt
+revision assertion to per-frame increments. Main review confirmed the Host
+publication wiring, retained designed reconnect/rebaseline behavior and did not
+change production code for speculative ordering issues. The related usage
+assertion now includes the already-shipped input/output token total.
+`/tmp/native-stream-revision-proof.log` passes the existing packed mounted-Host
+scenario: two successful turns across restart, a denied turn, six model
+requests/live attempts, two allowed writes and a separate default DSH turn.
+These are targeted checks; the full suite was not rerun.
+
+Limits: this proves an in-process browser transport interruption and browser
+reload. It is not a cold Host restart of an unfinished model stream, approval/
+steering/cancellation UI certification, a complete Markdown-formatting audit,
+or a quality/token/latency benchmark. Those remaining objective items retain
+their original scope. Earned progress is **42/100**, M3 **8/20**, denominator
+unchanged; other milestone scores remain unchanged.
