@@ -96,13 +96,14 @@ line counts or test totals. Do not increment for producing another plan.
 | P1: responsibility and baseline audit | 15 | Four-layer source/ownership map (5); reproduced defects and coupling findings (3); reproducible local baseline (2); complete Native-migration reference/duplication/license inventory (5, earned) | 15 |
 | P2: lifecycle, resources and governance | 20 | Client/Host revision and late-cancel safety (3); immutable revision/engine binding regression evidence (2); full create/configure/Build/admission lifecycle (5); trusted extension/resource authority (5, four currently earned); user-facing version/conflict and management behavior (5) | 19 |
 | P3: business and coding verticals | 25 | Business Agent effect/result through real product routes and NativeKernel (10); coding Agent effect/result through same engine (10); frozen bindings and cold continuation across both (5) | 25 |
-| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), remaining context/budget integration (4; compaction budget/usage, failed-summary bounds, cancellation and combined Host sources earned 3); background and child lifecycle (5, now earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, now earned) | 19 |
+| P4: capability and task interaction | 20 | Automatic Memory module and trusted-source foundation (1), durable job/cursor (2), Host trigger/lifetime (1), usage/status (1); shared retry budget through actual HTTP/cold reopen (1), context/budget integration (4; compaction, Host sources and cross-capability accounting earned); background and child lifecycle (5, earned); approval/cancel/error/public reasoning/history/reconnect product flow (5, earned) | 20 |
 | P5: measurements and final acceptance | 20 | Representative actual-model result/token/latency comparison (6; bounded Native smoke, paired direct-model comparison and paired tool task 4 earned); failure/cancel/recovery/no-blind-replay experiments (6; Memory crash boundaries, frozen background Host SIGKILL, bound-policy approval cancellation, Skill shell lease loss, workspace receipt SIGKILL and remote A2A control SIGKILL all earned); runtime differences/local management and deployment boundary audit (3, earned); final integrated checks, licenses and requirement-by-requirement audit (5) | 13 |
 
-Current assessed progress: **91/100**, approximately 91%. P4's remaining credit
-means existing capabilities are not yet re-certified as a group for this objective;
-it does not mean Memory/context/children/UI are unimplemented. The earlier
-43/100 is a different checklist and cannot be carried over.
+Current assessed progress: **92/100**, approximately 92%. P4's complete credit
+means the listed local capability and task-interaction invariants have relevant
+source and execution evidence; it does not claim cloud or arbitrary-extension
+conformance. The earlier 43/100 is a different checklist and cannot be carried
+over.
 
 No full milestone is certified solely by a related unit test or source filename.
 If scope/evidence changes, record it explicitly rather than silently changing
@@ -289,8 +290,23 @@ read in the same context effect; an oversized optional source item is excluded,
 the smaller source item and original user input reach the model, and the
 production wire counter keeps input plus reserved output inside the frozen
 6,000-token window. Its focused test passes with one model call. Cross-capability
-budget acceptance remains unearned. Background/child lifecycle now has the
-separate evidence below; broader task interaction remains unearned.
+budget acceptance is covered by the joint evidence below. Background/child and
+product task-interaction evidence appears in the later sections.
+
+Cross-capability accounting was checked at the common claim boundary:
+`modelRoom` subtracts the parent Run's model calls (including compaction and
+retries), settled descendant usage and outstanding child reservations before
+another model claim. SQLite refuses a claim after a child reservation has used
+the room, and recovery retains the reservation and settles actual child usage
+once. The actual HTTP compaction/SQLite tests show summary calls consume the
+same parent budget, with failed summaries and cancellation bounded. The Host
+Memory/context-source check above proves source budgeting on the wire. Automatic
+Memory extraction is a separate auxiliary Run with its own five-call limit and
+separately visible usage; it cannot be misreported as free parent usage. Focused
+stage checks passed 3 context/HTTP, 8 child-budget and 1 Host Memory-budget
+cases. This earns P4's final integration point; it is a composition of source,
+store and Host evidence, not a claim that one test simulates every capability
+at once.
 
 Focused affected files: **47 passed**, plus **1 existing actual-HTTP compaction
 and cold-continuation check** passed separately. No full suite was run. The
