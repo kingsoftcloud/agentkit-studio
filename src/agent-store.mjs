@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncDirectory } from '../packages/agentkit-harness/src/native/local-command-state.mjs';
+import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -118,7 +119,7 @@ export function createAgentStore({ storeDir } = {}) {
     return revisions.filter(Boolean);
   }
 
-  async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole, purpose }) {
+  async function create({ name, runtimeType, description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole, purpose }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
     const normalizedBindings = normalizeAgentBindings(spec.bindings ?? bindings);
@@ -136,7 +137,7 @@ export function createAgentStore({ storeDir } = {}) {
         ...(teamRole ? { teamRole: structuredClone(teamRole) } : {}),
         ...(creationKey ? { creationKey: String(creationKey) } : {}),
       },
-      spec: { ...spec, bindings: normalizedBindings, runtime: { type: runtimeType } },
+      spec: { ...spec, bindings: normalizedBindings, runtime: { ...spec.runtime, type: runtimeType ?? spec.runtime?.type ?? STUDIO_DEFAULT_AUTHORING_RUNTIME } },
       bindings: normalizedBindings,
     };
     const target = pathFor(agentId);

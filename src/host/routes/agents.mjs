@@ -1,4 +1,5 @@
 /** agents operations; authentication and lifetime belong to the dispatcher. */
+import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
 export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, assistantSetup }) {
     return async (endpoint, payload, signal) => {
         const serverClient = await serverClientPromise;
@@ -22,7 +23,7 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
                     const record = await templateAuthoring.create({
                         templateSource: payload?.templateSource,
                         name: payload?.name,
-                        runtimeType: payload?.runtimeType || payload?.spec?.runtime?.type || 'dsh-native',
+                        runtimeType: payload?.runtimeType || payload?.spec?.runtime?.type || STUDIO_DEFAULT_AUTHORING_RUNTIME,
                         description: payload?.description || payload?.spec?.description || '',
                         spec: payload?.spec || {},
                         bindings: payload?.bindings || payload?.spec?.bindings || {},

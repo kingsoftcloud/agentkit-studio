@@ -1,12 +1,13 @@
 import { memorySourceContext, readAgentMemoryConfig, writeAgentMemoryConfig, validateAgentMemoryConfig, memoryRequiresCloudBinding, clampInt, clampFloat, MEMORY_WRITE_MODES, MEMORY_ROLLOUTS, MEMORY_PROVIDER_CLOUD } from '../state/agent-memory-config.mjs';
 import { createNativeRoleFields, readNativeRoleDrafts, validateNativeRoleDrafts } from './native-role-fields.mjs';
+import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
 
 export function createAgentForm({
   ui: { React: { createElement: h, useState, useEffect, Fragment }, BRAND, ALLOWED_RUNTIME_TYPES, RUNTIME_LABELS, buttonStyle, inputStyle, SectionHeading, PlatformResourcePicker, Pill },
   hostRemote
 }) {
   const nativeRoleFields = createNativeRoleFields({ React: { createElement: h }, buttonStyle, inputStyle });
-  function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated }) {
+  function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload }) {
     const editing = Boolean(initialAgent);
     const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
     const originalSpec = initialAgent?.spec || creationSeed?.spec || {};
@@ -17,6 +18,7 @@ export function createAgentForm({
     const [step, setStep] = useState(0);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [conflict, setConflict] = useState(false);
     const [catalogStatus, setCatalogStatus] = useState('loading');
     const [catalog, setCatalog] = useState({ model: [], tool: [], mcp: [], skill: [] });
     const [selectedModel, setSelectedModel] = useState(originalBindings.modelProfileId || '');
@@ -25,7 +27,7 @@ export function createAgentForm({
     const [selectedMcp, setSelectedMcp] = useState(idsOf(originalBindings.mcpServers));
     const [selectedSkills, setSelectedSkills] = useState(idsOf(originalBindings.skills));
     const [platformBindings, setPlatformBindings] = useState(originalBindings.plugins || []);
-    const initialRuntime = originalSpec.runtime?.type || 'dsh-native';
+    const initialRuntime = originalSpec.runtime?.type || (editing ? 'dsh-native' : STUDIO_DEFAULT_AUTHORING_RUNTIME);
     const [memoryConfig, setMemoryConfig] = useState(() => readAgentMemoryConfig({ spec: originalSpec, runtime: initialRuntime, cloudEditing, creationSeed, editing }));
     const updateMemory = patch => setMemoryConfig(previous => ({ ...previous, ...patch }));
     const memoryEnabled = memoryConfig.enabled;
@@ -33,7 +35,7 @@ export function createAgentForm({
     const [nativeRoles, setNativeRoles] = useState(() => initialRuntime === 'harness' && !cloudEditing ? readNativeRoleDrafts(originalSpec) : []);
     const [policy, setPolicy] = useState(originalBindings.policyTemplate || 'strict');
     const [form, setForm] = useState({
-      id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || creationSeed?.name || '我的第一个 Agent', runtime: originalSpec.runtime?.type || 'dsh-native',
+      id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || creationSeed?.name || '我的第一个 Agent', runtime: initialRuntime,
       description: originalSpec.description || creationSeed?.description || '', prompt: originalSpec.instructions?.system || '', template: 'blank',
     });
     const runtimeOptions = [
@@ -116,7 +118,7 @@ export function createAgentForm({
         if (roleError) { setError(roleError); setStep(2); return; }
       }
       if (saving || !form.id.trim() || !form.name.trim() || (!cloudEditing && (catalogStatus !== 'ready' || !selectedModel))) return;
-      setSaving(true); setError('');
+      setSaving(true); setError(''); setConflict(false);
       const id = form.id.trim().toLowerCase();
       try {
         const prompt = form.prompt.trim() || form.description.trim() || templates.find(item => item[0] === form.template)?.[3] || templates[0][3];
@@ -159,7 +161,12 @@ export function createAgentForm({
         });
         const metadata = created?.metadata || {};
         onCreated({ id: metadata.id || id, name: metadata.name || form.name.trim(), revision: metadata.revision || 1 });
-      } catch (reason) { setError(reason?.message || '创建 Agent 失败'); }
+      } catch (reason) {
+        setConflict(reason?.code === 'AGENT_EXPECTED_REVISION_CONFLICT');
+        setError(reason?.code === 'AGENT_EXPECTED_REVISION_CONFLICT'
+          ? 'Agent 已被其他窗口更新。当前未保存的内容仍保留；读取最新版本会替换这些内容，请重新核对后保存。'
+          : reason?.message || '创建 Agent 失败');
+      }
       finally { setSaving(false); }
     };
 
@@ -289,6 +296,7 @@ export function createAgentForm({
         h('div', { 'data-agent-form-body': true, style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '22px', background: BRAND.surface, minWidth: 0 } },
           stepContent,
           error ? h('div', { role: 'alert', style: { marginTop: '16px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
+          conflict && onReload ? h('button', { type: 'button', disabled: saving, onClick: onReload, style: buttonStyle() }, '读取最新版本') : null,
           h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: '24px' } },
             h('button', { type: 'button', onClick: step === 0 ? onBack : () => setStep(step - 1), style: buttonStyle() }, step === 0 ? '取消' : '上一步'),
             step < 3 ? h('button', { type: 'button', disabled: !canNext, onClick: () => setStep(step + 1), style: { ...buttonStyle(), color: canNext ? BRAND.primaryText : BRAND.inkMuted, background: canNext ? BRAND.primaryFill : BRAND.accentSoft, borderColor: canNext ? 'transparent' : BRAND.border } }, '下一步') : h('button', { type: 'button', disabled: saving || !canNext, onClick: create, style: { ...buttonStyle(), color: saving || !canNext ? BRAND.inkMuted : BRAND.primaryText, background: saving || !canNext ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving || !canNext ? BRAND.border : 'transparent' } }, saving ? '保存中…' : editing ? '保存 Agent' : '创建 Agent'))

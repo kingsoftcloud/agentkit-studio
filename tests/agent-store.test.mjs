@@ -7,6 +7,20 @@ import { createAgentStore, normalizeAgentBindings } from '../src/agent-store.mjs
 import { spawn, spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 
+test('new local Agents default to Native while explicit runtimes and saved revisions stay intact', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-runtime-default-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const store = createAgentStore({ storeDir: root });
+  assert.equal((await store.create({ name: 'Default' })).spec.runtime.type, 'harness');
+  for (const type of ['dsh-native', 'codex', 'harness']) {
+    const original = await store.create({ name: type, spec: { runtime: { type, marker: 'explicit' } } });
+    assert.deepEqual(original.spec.runtime, { type, marker: 'explicit' });
+    await store.update(original.metadata.id, { name: 'Edited', expectedRevision: 1 });
+    const reopened = createAgentStore({ storeDir: root });
+    assert.deepEqual((await reopened.get(original.metadata.id)).spec.runtime, original.spec.runtime);
+    assert.deepEqual((await reopened.getRevision(original.metadata.id, 1)).spec.runtime, original.spec.runtime);
+  }
+});
+
 test('editing and reopening preserve immutable Agent revisions for older native Sessions', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-revisions-'));
   try {

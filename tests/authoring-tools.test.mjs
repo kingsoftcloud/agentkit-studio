@@ -40,12 +40,28 @@ test('native conversation preserves the draft across turns and restart; only con
   assert.equal(created.agent.id, 'created-agent');
   assert.equal(writes.length, 1);
   assert.equal(writes[0].name, '周报助手');
-  assert.equal(writes[0].runtimeType, 'dsh-native');
+  assert.equal(writes[0].runtimeType, 'harness');
+  assert.deepEqual(writes[0].spec.security, { toolPolicy: 'deny-by-default', allowedPermissions: ['process:host-user'] });
   assert.deepEqual(writes[0].spec.instructions, { system: '整理工作区日报', task: '输出重点、风险与负责人' });
   assert.deepEqual(writes[0].spec.bindings.modelProfileIds, ['model:one']);
   assert.deepEqual(writes[0].spec.bindings.tools, []);
   await make().get('studio_agent_create').execute({ expectedRevision: 2, confirm: true }, exec);
   assert.equal(writes.length, 1, 'repeated confirmation must not duplicate the Agent');
+});
+
+test('explicit DSH/Codex drafts survive reopening; a requested fresh draft returns to Native', async t => {
+  const { make, writes, exec } = await fixture(t);
+  for (const runtimeType of ['dsh-native', 'codex']) {
+    const scoped = { ...exec, agent: { session: { id: runtimeType } } };
+    await make().get('studio_agent_draft').execute({ expectedRevision: 0, patch: {
+      name: runtimeType, runtimeType, systemPrompt: 'Explicit engine', modelProfileIds: ['model:one'],
+    } }, scoped);
+    assert.equal((await make().get('studio_agent_draft').execute({}, scoped)).draft.runtimeType, runtimeType);
+    await make().get('studio_agent_create').execute({ expectedRevision: 1, confirm: true }, scoped);
+    assert.equal(writes.at(-1).runtimeType, runtimeType); assert.deepEqual(writes.at(-1).spec.security.allowedPermissions, []);
+    const reset = await make().get('studio_agent_draft').execute({ expectedRevision: 1, reset: true }, scoped);
+    assert.equal(reset.draft.runtimeType, 'harness'); assert.equal(reset.status, 'draft');
+  }
 });
 
 test('drafts isolate native sessions, reject stale edits and require reviewed confirmation', async t => {

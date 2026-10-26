@@ -252,13 +252,12 @@ const advance = (harness, tree) => {
   next.props.onClick();
   return harness.render();
 };
-// A blank Agent defaults to the dsh-native runtime; local Native memory is a
-// harness capability, so tests switch the runtime to harness on step 0 first.
+// New local authoring defaults to Native. Keep this assertion in the actual
+// form paths so a UI-only default cannot drift from the creation payload.
 const switchToHarness = (harness, tree) => {
-  const runtimeSelect = findBy(tree, node => node.type === 'select' && node.props.value === 'dsh-native');
-  assert.ok(runtimeSelect, 'runtime select present on step 0');
-  runtimeSelect.props.onChange({ target: { value: 'harness' } });
-  return harness.render();
+  const runtimeSelect = findBy(tree, node => node.type === 'select' && node.props.value === 'harness');
+  assert.ok(runtimeSelect, 'new local Agent defaults to Native on step 0');
+  return tree;
 };
 
 test('form: harness blank create offers the local memory source and needs no binding', async () => {
