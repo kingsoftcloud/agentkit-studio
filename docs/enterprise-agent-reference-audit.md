@@ -12,7 +12,7 @@ gate.
 | Reference | Evidence inspected | Scope |
 | --- | --- | --- |
 | ZCode | `/tmp/agentkit-zcode-reference`, HEAD `3c5b227649371507ddc4eb46ac5133afe6db1cab`; its `LICENSE`, `NOTICE.md`, named source files and command-plan manifest | Pinned source and attributed code below. Final license/dependency review remains open. |
-| pi | `native-zcode-alignment.md` records `d5b3de22d0e24a3e9c38a9410d3329b099717283` | This audit did not locate/inspect that source. Composition claims remain to be revalidated for this platform objective. |
+| pi-durable | `/tmp/agentkit-pi-durable-reference-d5b3de22` holds the pinned README, specification, tool, submission, scheduler, Session and CLI sources at `d5b3de22d0e24a3e9c38a9410d3329b099717283` | The bounded [pi-durable assessment](native-pi-durable-reference.md) checks specific recovery, submission, ownership and host boundaries. It is not a complete conformance or license audit. |
 | OpenCode | Earlier conversation records `f669c46c9604ea3d70b8a7ed1f0c10f3a5ac1f61` | This audit did not inspect its source. Absence from one local document does not establish absence of a pin or checkout everywhere. |
 | AgentCore / Volcano AgentKit | Current plan's platform lifecycle/resource analogy | Current official product docs were not inspected. No claim of feature equivalence or imported implementation is established here. |
 
@@ -84,7 +84,7 @@ gate; this inventory is not proof that the project has no other third-party code
 
 ## Remaining audit work
 
-Inspect pinned pi/OpenCode implementation for the specific boundaries used;
+Inspect pinned OpenCode implementation for the specific boundaries used;
 identify the intended AgentCore reference and verify relevant official docs;
 complete source/diff/notice and bundled dependency review; and examine kernel
 branches for actual duplicated state or bypasses before restructuring.
