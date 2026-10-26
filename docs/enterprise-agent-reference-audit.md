@@ -1,15 +1,17 @@
 # Enterprise Agent Studio: bounded reference and responsibility audit
 
 Reviewed 2026-10-26 against the enterprise platform objective. Actual Claude
-Code supplied a draft; main review removed conclusions unsupported by the
-bounded search. This is an engineering source/provenance inventory, not a
-complete license or architecture acceptance gate.
+Code supplied a draft and independently checked the declared ports; main review
+checked the pinned checkout, corrected the two missing port notices and removed
+conclusions unsupported by the bounded search. This is an engineering
+source/provenance inventory, not a complete license or architecture acceptance
+gate.
 
 ## Reference inputs and limits
 
 | Reference | Evidence inspected | Scope |
 | --- | --- | --- |
-| ZCode | `/tmp/agentkit-zcode-reference`, HEAD `3c5b227649371507ddc4eb46ac5133afe6db1cab`; its `LICENSE`, `NOTICE.md` opening and named source files | Pinned source and existing attributed code below. Full NOTICE applicability still requires review. |
+| ZCode | `/tmp/agentkit-zcode-reference`, HEAD `3c5b227649371507ddc4eb46ac5133afe6db1cab`; its `LICENSE`, `NOTICE.md`, named source files and command-plan manifest | Pinned source and attributed code below. Final license/dependency review remains open. |
 | pi | `native-zcode-alignment.md` records `d5b3de22d0e24a3e9c38a9410d3329b099717283` | This audit did not locate/inspect that source. Composition claims remain to be revalidated for this platform objective. |
 | OpenCode | Earlier conversation records `f669c46c9604ea3d70b8a7ed1f0c10f3a5ac1f61` | This audit did not inspect its source. Absence from one local document does not establish absence of a pin or checkout everywhere. |
 | AgentCore / Volcano AgentKit | Current plan's platform lifecycle/resource analogy | Current official product docs were not inspected. No claim of feature equivalence or imported implementation is established here. |
@@ -20,31 +22,36 @@ license, dependency, deployment architecture or current capability.
 
 ## Existing source provenance
 
-`THIRD_PARTY_NOTICES.md` names four core modules and one command-plan package
-from the pinned ZCode source. `third-party/ZCode-LICENSE` preserves the upstream
-Apache-2.0 license. Headers identify the upstream paths and local adaptations:
+`THIRD_PARTY_NOTICES.md` names the retained core source modules, the Anthropic
+cache projection, and one command-plan package from the pinned ZCode source.
+`third-party/ZCode-LICENSE` preserves the upstream Apache-2.0 license. Headers
+identify the upstream paths and local adaptations:
 
 - `patch-parser.mts` and `patch-apply.mts`: structured patch parsing/application.
 - `edit-matchers.mts`: standalone matching algorithm.
 - `tool-search-ranking.mts`: ranking and MCP-name normalization.
+- `memory-extraction-scheduler.mts`: eligibility and coalesced scheduling,
+  extended with a Host-persisted cursor callback.
+- `model-anthropic-cache.mjs`: provider-wire cache breakpoint projection.
 - `third-party/zcode-command-plan/`: parser, read-only argument policies and Git
-  checks; `source.json` records per-file original digests. The inspected
-  `bash-command-parser.ts` upstream digest matches its recorded original hash.
+  checks; `source.json` records per-file original digests. All 23 recorded
+  SHA-256 hashes match both the pinned upstream files and the retained local
+  source. `index.ts` is the documented local entry adaptation.
 
-Two additional modules explicitly describe a ZCode port/adaptation but are not
-listed in the current notice inventory: core `memory-extraction-scheduler.mts`
-(`memory/extraction.ts`) and Node `model-anthropic-cache.mjs`
-(`context/builder.ts`, `provider-request-messages.ts`). Their relevant upstream
-sources and complete attribution inventory need review before final delivery.
-A comment alone cannot establish whether implementation was copied or whether
-notice obligations apply. The same limit applies to comments calling an
-implementation a behavioral reference.
+The explicit port of `memory/extraction.ts` and adaptation of
+`context/builder.ts` plus `provider-request-messages.ts` are now attributed in
+the notice inventory. The local scheduler retains reference algorithm and
+control flow but adds Host-owned durable cursor commit; the Anthropic adapter
+projects cache breakpoints only onto provider wire messages. Other comments
+that call an implementation a behavioral reference still require source/diff
+review before the final attribution inventory is certified.
 
-Upstream `NOTICE.md` contains product/security/privacy statements. Its full
-contents and applicability to retained code have not been audited here. Do not
-present upstream product policy as Studio policy. Current dependency and bundled
-license coverage also remains a final gate; the inventory above is not proof
-that the project has no other third-party code.
+Upstream `NOTICE.md` contains product/security/privacy statements rather than
+an attribution list for these retained files. Do not present upstream product
+policy as Studio policy. The local package dry-run includes the root LICENSE,
+this notice, ZCode's license, the command-plan bundled license, and both newly
+attributed source files. Dependency and bundled-license coverage remains a final
+gate; this inventory is not proof that the project has no other third-party code.
 
 ## Responsibility findings in current sources
 
@@ -63,8 +70,10 @@ that the project has no other third-party code.
   tools and extraction limits live in Node
   `packages/agentkit-harness/src/native/memory-extraction-run.mjs`; trusted source
   projection lives in `src/providers/native-memory-extraction-source.mjs`.
-  They do not install a second execution loop. Host job/cursor/lifetime wiring
-  remains incomplete.
+  They do not install a second execution loop. Host
+  `native-memory-extraction.mjs`, SQLite job/cursor storage and the mounted
+  Native service now schedule, recover and report extraction. See
+  `enterprise-agent-memory-recovery.md` for the tested crash boundaries.
 - Local Agent CAS belongs to `src/agent-store.mjs`; client and Host routes must
   preserve expected revision and live cancellation authority. HTTP
   authentication is `connection.admit` in `routes/http.mjs` before dispatch;

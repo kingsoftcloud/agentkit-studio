@@ -1,7 +1,8 @@
 // Automatic memory-extraction scheduling primitive.
 //
-// Ports the ZCode reference scheduling/eligibility (memory/extraction.ts,
-// pinned 3c5b227): a single-flight, one-pending-coalesced scheduler that
+// Modified from ZCode scheduling/eligibility (memory/extraction.ts,
+// pinned 3c5b227, Apache-2.0; see THIRD_PARTY_NOTICES.md and
+// third-party/ZCode-LICENSE): a single-flight, one-pending-coalesced scheduler that
 // runs an extraction `execute` over a snapshot window after a durable cursor.
 // The cursor is in-memory only here; persistent cursor/job storage belongs to
 // the Host. A failed `onCursor` persistence callback does not advance the

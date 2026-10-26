@@ -34,3 +34,19 @@ source modules are unchanged. `source.json` records their paths and SHA-256
 digests. The packaged `dist/native-command-plan.mjs` bundles these modules with
 `unbash@4.0.1`; notices are included in `dist/native-command-plan.LICENSE.txt`.
 This module classifies Plan permissions only and supplies no execution engine.
+
+`packages/agentkit-harness-core/src/memory-extraction-scheduler.mts` adapts
+ZCode's extraction eligibility, single-flight scheduler, pending-work
+coalescing and cancellation from the same pinned commit, file
+`apps/zcode-cli/packages/core/src/memory/extraction.ts`. Native substitutes
+its own message type and adds a Host-persisted cursor callback; it does not
+reuse ZCode's memory prompt or file tools. This modified Apache-2.0 source is
+covered by `third-party/ZCode-LICENSE`.
+
+`packages/agentkit-harness/src/native/model-anthropic-cache.mjs` adapts the
+stable-system-prefix and latest-conversation breakpoint behavior from that
+commit's `apps/zcode-cli/packages/core/src/context/builder.ts` and
+`apps/zcode-cli/packages/core/src/runtime/helpers/provider-request-messages.ts`.
+Native projects provider wire messages without changing its durable transcript.
+The ZCode reference is Apache-2.0 and its license is preserved in
+`third-party/ZCode-LICENSE`.

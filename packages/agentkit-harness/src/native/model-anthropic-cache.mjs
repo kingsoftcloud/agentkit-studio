@@ -1,5 +1,6 @@
 // Native wire-only adaptation of ZCode's stable-prefix / conversation-tail
-// caching layout (3c5b227, context/builder.ts and provider-request-messages.ts).
+// caching layout (3c5b227, context/builder.ts and provider-request-messages.ts;
+// Apache-2.0; see THIRD_PARTY_NOTICES.md and third-party/ZCode-LICENSE).
 // No extra model requests, persisted message edits or provider replay edits.
 const ephemeral = () => ({ type: 'ephemeral' });
 const cacheable = block => ['text', 'image', 'tool_use', 'tool_result'].includes(block?.type)
