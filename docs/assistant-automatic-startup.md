@@ -1,11 +1,8 @@
 # Automatic installed assistant startup
 
-The assistant Host fixture and the production entry smoke establish different things:
+`verify-assistant-automatic-startup.mjs` launches the **installed** `scripts/start-agent-bundle.mjs`, which prepares a dedicated profile and starts the ordinary compiled DSH CLI. Studio loads through its normal `index.apply`; the smoke does not mount bootstrap/guard directly and does not disable the Studio bundle.
 
-- `verify-personal-assistant-host.mjs` injects a controlled bootstrap/guard into real DSH Host roots. It exercises HTTP, native sessions, permissions, attachments and restart semantics, but disables automatic Studio entry loading for that injected composition.
-- `verify-assistant-automatic-startup.mjs` launches the **installed** `scripts/start-agent-bundle.mjs`, which prepares a dedicated profile and starts the ordinary compiled DSH CLI. Studio loads through its normal `index.apply`. The smoke does not mount bootstrap/guard directly and does not disable the Studio bundle.
-
-The second check uses only a loopback model, synthetic fixture credentials and temporary state. It checks cold startup, the official authenticated web route and Host compatibility, a real native managed-workspace write, full process shutdown, automatic restoration of an overdue native schedule before session prewarming, durable request replay, and a continued message in the same session after restart. Auxiliary title requests are recorded separately from tool-bearing conversation requests. It is not a browser, production account, Desktop upgrade or broad security audit.
+The check uses only a loopback model, synthetic fixture credentials and temporary state. It checks cold startup, the official authenticated web route and Host compatibility, a real native managed-workspace write, full process shutdown, automatic restoration of an overdue native schedule before session prewarming, durable request replay, and a continued message in the same session after restart. Auxiliary title requests are recorded separately from tool-bearing conversation requests. It is not a browser, production account, Desktop upgrade or broad security audit.
 
 Run it against an already built, patched DSH installation and a profile containing the exact packed Studio archive:
 

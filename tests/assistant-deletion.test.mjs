@@ -3,43 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, access, symlink, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createAssistantLifecycle } from '../src/assistant-lifecycle.mjs';
 import { createAssistantRetirement } from '../src/assistant-retirement.mjs';
 import { createPersonalAssistantRuntime } from '../src/personal-assistant-runtime.mjs';
 
 async function temp(t) { const root = await mkdtemp(join(tmpdir(), 'studio-assistant-delete-')); t.after(() => rm(root, { recursive: true, force: true })); return realpath(root); }
-const payload = { agentId: 'ar-owned', confirmAgentId: 'ar-owned', deploymentId: 'deployment-owned', versionId: 'v1' };
-function deploymentFixture() {
-  const record = { id: payload.deploymentId, cloudAgentId: payload.agentId, agentId: 'local-agent', buildId: 'build-owned', versionId: 'v1', runtime: 'dsh-native', state: 'READY' };
-  const calls = [], service = {
-    get: async () => ({ ...record }),
-    agents: { connect: async () => ({ agent: { deployment: { id: record.id } }, capabilities: ['personal-assistant-delete/v1'], endpoint: 'https://runtime.example.test', token: 'fixture-token' }) },
-    remove: async () => { calls.push('remove'); record.state = 'DELETED'; return { ...record }; },
-  };
-  return { record, calls, service };
-}
-test('assistant closes only after data erasure, and resumed deletion never repeats cleanup', async t => {
-  const directory = await temp(t), f = deploymentFixture(); let fetches = 0;
-  f.service.remove = async () => { f.calls.push('remove'); f.record.state = fetches && f.calls.length > 1 ? 'DELETED' : 'DELETING'; return { ...f.record }; };
-  const options = { directory, deployments: async () => f.service, fetchImpl: async (_url, init) => {
-    fetches++; assert.equal(init.method, 'POST');
-    return Response.json({ deleted: true, historyDeleted: true, memoryDeleted: true, agentId: f.record.agentId, buildId: f.record.buildId });
-  } };
-  assert.equal((await createAssistantLifecycle(options).close(payload)).status, 'deleting');
-  assert.equal((await createAssistantLifecycle(options).close(payload)).status, 'closed');
-  assert.equal(fetches, 1); assert.equal(f.calls.length, 2);
-});
-test('wrong ownership, an old image or unconfirmed cleanup cannot delete a deployment', async t => {
-  const directory = await temp(t), f = deploymentFixture(); let requests = 0;
-  const lifecycle = createAssistantLifecycle({ directory, deployments: async () => f.service, fetchImpl: async () => { requests++; return Response.json({ deleted: false }); } });
-  await assert.rejects(lifecycle.close({ ...payload, confirmAgentId: 'wrong' }), { code: 'ASSISTANT_DELETE_CONFIRMATION_REQUIRED' });
-  await assert.rejects(lifecycle.close({ ...payload, versionId: 'stale' }), { code: 'ASSISTANT_DELETE_SCOPE_CHANGED' });
-  await assert.rejects(lifecycle.close(payload), { code: 'ASSISTANT_DELETE_UNCONFIRMED' });
-  assert.equal(f.calls.length, 0); assert.equal(requests, 1);
-  f.service.agents.connect = async () => ({ agent: { deployment: { id: payload.deploymentId } }, capabilities: [] });
-  await assert.rejects(lifecycle.close(payload), { code: 'ASSISTANT_DELETE_UPGRADE_REQUIRED' });
-  assert.equal(f.calls.length, 0);
-});
 test('retirement erases only receipt-owned runtime files after native writers drain', async t => {
   const root = await temp(t), hash = 'a'.repeat(64), calls = [];
   const liveAgent = { session: { id: 'assistant' }, status: 'idle' };
@@ -169,18 +136,3 @@ test('a substituted workspace root blocks cleanup before memory or unrelated fil
 });
 
 
-test('managed deployments require explicit workspace erasure before removal', async t => {
-  const directory = await temp(t), f = deploymentFixture();
-  f.service.agents.connect = async () => ({ agent: { deployment: { id: f.record.id } },
-    capabilities: ['personal-assistant-delete/v1', 'personal-assistant-workspace-managed/v1'],
-    endpoint: 'https://runtime.example.test', token: 'fixture-token' });
-  let workspaceDeleted = false;
-  const lifecycle = createAssistantLifecycle({ directory, deployments: async () => f.service, fetchImpl: async () =>
-    Response.json({ deleted: true, historyDeleted: true, memoryDeleted: true, workspaceDeleted,
-      agentId: f.record.agentId, buildId: f.record.buildId }) });
-  await assert.rejects(lifecycle.close(payload), { code: 'ASSISTANT_DELETE_UNCONFIRMED' });
-  assert.deepEqual(f.calls, []);
-  workspaceDeleted = true;
-  assert.equal((await lifecycle.close(payload)).workspaceDeleted, true);
-  assert.deepEqual(f.calls, ['remove']);
-});

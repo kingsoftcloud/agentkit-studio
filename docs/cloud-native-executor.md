@@ -176,10 +176,10 @@ image/provisioner, not evidence supplied by this patch.
    Session-local CRUD, definition/body replacement refusal, restore and disposal.
    They do not establish arbitrary-code isolation.
 2. Build/pack Studio into a disposable DSH profile and run
-   `scripts/verify-personal-assistant-host.mjs` with its isolated homes. This
-   checks controlled model tool round trips, persisted timers and Host restart.
-   Run the normal `index.apply` startup verifier as well, since that script's
-   Host-bootstrap mount alone does not prove normal plugin startup.
+   `scripts/verify-assistant-automatic-startup.mjs` with its isolated homes. The
+   installed CLI loads Studio through its normal `index.apply`, so this covers
+   cold startup, a native managed-workspace write, restored schedules, durable
+   request replay and restart.
 3. On a provisioner test machine, use a pinned SSH helper archive and existing
    synthetic test identities. The upstream `scripts/verify-ssh-helper-artifact.ts`
    verifies relocated artifacts/provider composition; `scripts/verify-ssh-helper-ssh.ts`

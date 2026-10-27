@@ -8,7 +8,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection, AssistantSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles } = documentEffects;
   const { openAgentAuthoring } = authoring;
@@ -19,7 +19,6 @@ export function mountStudio(ctx, app) {
 
   ctx.effect(() => authoring.mount(), 'agentkit-studio:authoring-owner');
   ctx.uiConversation.events.register(codexToolDefinition);
-  ctx.effect(() => app.assistantConversation.bind(ctx.uiConversation), 'agentkit-studio:assistant-native-history');
   // Settings owns first-run coordination. Registering here makes the
   // guide visible in the real DSH onboarding path and gives the shell a
   // stable entry it can reopen after the user chose “later”.
@@ -249,9 +248,6 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-models', order: 190, label: '模型与凭证',
   }, () => h(ModelSettingsSection, { dshModel })));
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'agentkit-assistant', order: 195, label: '个人助理',
-  }, AssistantSettingsSection));
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'agentkit-studio', order: 200, label: PRODUCT_BRAND.name,
   }, StudioSettingsSection));
