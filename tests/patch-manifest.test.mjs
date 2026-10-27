@@ -17,7 +17,7 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 43); assert.equal(report.paths, 264); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 44); assert.equal(report.paths, 268); assert.ok(report.hostTests.length > 0);
   assert.deepEqual(report.nativeTests, ['native/system/test/flock.test.js']);
 });
 

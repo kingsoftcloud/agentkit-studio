@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "3596ee104ee64ca2bed0b85f0e8467c7d4000b2a",
+  "headCommit": "8817bdcbc848043000579cf05fb267bfd2e09252",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-12",
-  "tree": "caab366b5220ec207003dd5e1d0252e986d1ac59",
-  "sourceSha256": "740dd754a7e61dfd27c73034a47470ac5a158ac1756eaeab8355a56537cba48e",
+  "tree": "0bf2ad7f595839da9fa8352acf21df3dc56b0784",
+  "sourceSha256": "ca5c0a192fc3903c1b3866ad46a25ca463c828832f30cecdb3035e17a7290386",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "70827a0b5759c06111791119e60b0361675ce02692c8a1127f5bb733447e9856"
+    "sha256": "9e33e710235a844cf09d54576e387ffc6337fd7367a0cc65c4fb9b8b49edda6e"
   },
   "commits": [
     {
@@ -268,6 +268,12 @@
       "file": "050-maintenance-source-validation.patch",
       "commit": "3596ee104ee64ca2bed0b85f0e8467c7d4000b2a",
       "sha256": "03f58fa416958357f5b22aa8b32509704028f5f582a31103b0ef13839c9e64f8"
+    },
+    {
+      "id": "051",
+      "file": "051-desktop-cli-product-name.patch",
+      "commit": "8817bdcbc848043000579cf05fb267bfd2e09252",
+      "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973"
     }
   ]
 }

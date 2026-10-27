@@ -2224,12 +2224,53 @@
       ],
       "sha256": "03f58fa416958357f5b22aa8b32509704028f5f582a31103b0ef13839c9e64f8",
       "sequence": 43
+    },
+    {
+      "id": "051",
+      "file": "051-desktop-cli-product-name.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973",
+      "dependsOn": [
+        "014",
+        "020"
+      ],
+      "affectedFiles": [
+        "apps/desktop/cli/dsh",
+        "apps/desktop/cli/dsh.cmd",
+        "apps/desktop/scripts/prepare-cli.ts",
+        "apps/desktop/tests/cli-launcher.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "安装后的 dsh 启动器按构建产品名启动应用可执行文件，不再固定 DeepSeek Harness；上游默认构建的启动行为不变"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游 CLI 启动脚本按产品名解析可执行文件",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/cli-launcher.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 44
     }
   ],
-  "patchedTree": "caab366b5220ec207003dd5e1d0252e986d1ac59",
-  "patchedSourceSha256": "740dd754a7e61dfd27c73034a47470ac5a158ac1756eaeab8355a56537cba48e",
+  "patchedTree": "0bf2ad7f595839da9fa8352acf21df3dc56b0784",
+  "patchedSourceSha256": "ca5c0a192fc3903c1b3866ad46a25ca463c828832f30cecdb3035e17a7290386",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "d7b43c69f2bf24c7afae191cea4334c82f69ee5fa10493997058862b0bb8fc51"
+    "sha256": "98f447d58dd0669ed69a86a7077362a9ccde073df795e2d7869a011871669125"
   }
 }
