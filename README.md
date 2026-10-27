@@ -45,11 +45,11 @@ Use `DSH_HOME` and `AGENTKIT_HOME` to isolate local profiles and Studio data. Do
 launch targets also build the client first. `pnpm check`, `pnpm test` and
 `pnpm pack` rebuild it automatically; packaged plugins still include `dist/client.js`.
 
-## Experts and personal assistant
+## Experts and cloud personal assistant
 
 The Agents panel includes an original expert catalog, resource templates and local teams built on official DSH Agent Teams. Existing Agents still use the same editor, frozen revisions and native conversations. See [expert catalog and local teams](docs/expert-catalog.md).
 
-The personal assistant panel connects to a compatible DSH Native cloud deployment. Conversation acceptance, history and reminders remain durable in the cloud runtime when the local client closes. A compatible deployment and the relevant configured resources are required; see [personal assistant](docs/personal-assistant.md).
+The cloud personal assistant is now a separate DSH client plugin: install `@kingsoftcloud/agentkit-personal-assistant`. Studio keeps the Agent catalog, preset binding and the DSH Native cloud runtime that plugin talks to; the in-app assistant panel, its opening wizard and its desktop-side transport are no longer part of this repository.
 
 ## Checks
 

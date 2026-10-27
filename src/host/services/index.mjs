@@ -21,10 +21,9 @@ export function createStudioServices(ctx, options) {
   const automation = createAutomationServices(ctx, { ...options, ...platform, ...builds, ...agents, deployments });
   const authoring = createAuthoringServices(ctx, { ...platform, ...agents, ...resources, getTemplateAuthoring: () => options.getTemplateAuthoring() });
   let assistantSetupPromise;
-  const assistantSetup = () => assistantSetupPromise ||= Promise.all([import('../../assistant-setup.mjs'), platform.configurationPromise,
-    platform.serverClientPromise, platform.deploymentClientPromise, agents.agentStorePromise, builds.studioBuildPromise, options.getModels(), deployments()])
-    .then(([{ createAssistantSetup }, configuration, serverClient, deploymentClient, agentStore, studio, models, deploymentService]) => createAssistantSetup({
-      storeDir: join(options.storeDir, 'assistant-setup'), configuration, serverClient, deploymentClient, agents: agentStore, build: studio.build, models, deployments: deploymentService, credentials: platform.credentialsService, fetchImpl: platform.runtimeFetch,
+  const assistantSetup = () => assistantSetupPromise ||= Promise.all([import('../../assistant-setup.mjs'), platform.configurationPromise])
+    .then(([{ createAssistantSetup }, configuration]) => createAssistantSetup({
+      storeDir: join(options.storeDir, 'assistant-setup'), configuration,
     }));
   return { ...platform, ...builds, ...agents, ...resources, ...automation, ...authoring, deployments, assistantSetup };
 }

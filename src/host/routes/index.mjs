@@ -15,7 +15,6 @@ import { createEvaluationRoutes } from './evaluations.mjs';
 import { createChannelRoutes } from './channels.mjs';
 import { createServerActionRoutes } from './server.mjs';
 import { createIntegrationServices } from '../services/integrations.mjs';
-import { createAssistantRoutes } from './assistant.mjs';
 
 /** Each domain captures only its declared dependencies from this Host. */
 export function createStudioRoutes(ctx, services) {
@@ -27,7 +26,6 @@ export function createStudioRoutes(ctx, services) {
   const templates = createTemplateRoutes(deps);
   return Object.freeze({
     templates, platform: templates, teams: templates, 'team-templates': templates, 'template-resources': templates, 'template-workflows': templates,
-    assistant: createAssistantRoutes(deps),
     host: createHostRoutes(deps),
     resources, mcp: resources,
     credentials: (_endpoint, payload) => credentials(payload),

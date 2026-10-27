@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPersonalAssistantRuntime } from '../src/personal-assistant-runtime.mjs';
 import { startBuildRuntimeHttp } from '../src/build-runtime-http.mjs';
-import { createAssistantRoutes } from '../src/host/routes/assistant.mjs';
 
 function fixture() {
   const logs = new Map(), requests = new Map(), timers = new Map(); let flush = true, cancelled = 0, runs = 0;
@@ -192,17 +191,6 @@ test('memory reuses bound resource and partition; foreign IDs fail before mutati
   await assert.rejects(api('submit', { text: '', requestId: 'r' }), { code: 'ASSISTANT_INPUT_INVALID' });
   await assert.rejects(api('snapshot', { conversation: '../other' }), { code: 'ASSISTANT_CONVERSATION_INVALID' });
 });
-
-test('Host rejects old images and non-DSH agents before sending anything', async () => {
-  let connected = { agent: { spec: { runtime: { type: 'dsh-native' } } }, capabilities: [] }, calls = 0;
-  const route = createAssistantRoutes({ deployments: async () => ({ agents: { connect: async () => connected } }), fetchImpl: async () => { calls++; } });
-  await assert.rejects(route('assistant/execute', { agentId: 'a', operation: 'submit', input: {} }), { code: 'ASSISTANT_IMAGE_UPGRADE_REQUIRED' });
-  connected.agent.spec.runtime.type = 'codex';
-  await assert.rejects(route('assistant/execute', { agentId: 'a', operation: 'snapshot' }), { code: 'ASSISTANT_RUNTIME_INVALID' });
-  await assert.rejects(route('assistant/execute', { operation: '../other' }), { code: 'ASSISTANT_OPERATION_INVALID' });
-  assert.equal(calls, 0);
-});
-
 
 test('assistant transcript does not present injected instructions as human messages', async () => {
   const f = fixture(), api = f.create();

@@ -221,14 +221,6 @@ export function createProductClient(connection, { window = globalThis.window } =
     }
     return {
         computerConnection: signal => studioBridgeOperation('host/computer', {}, signal),
-        closeAssistant: payload => studioBridgeOperation('assistant/close', payload),
-        assistantCatalog: () => studioBridgeOperation('assistant/catalog', {}),
-        assistantExecute: (agentId, operation, input = {}, signal) => studioBridgeOperation('assistant/execute', { agentId, operation, input }, signal),
-        assistantSetupOptions: () => studioBridgeOperation('assistant/setup-options', {}),
-        assistantSetupStart: input => studioBridgeOperation('assistant/setup-start', input),
-        assistantSetupStatus: () => studioBridgeOperation('assistant/setup-status', {}),
-        assistantSetupUpgrade: input => studioBridgeOperation('assistant/setup-upgrade', input),
-        assistantSetupSetGrants: input => studioBridgeOperation('assistant/setup-grants', input),
         get baseUrl() { return baseUrl; },
         health: () => directServer() ? Promise.resolve({ status: 'ok', source: 'agentengine-server', controlPlane: true }) : request('/api/v1/system/health'),
         bootstrap: () => directServer() ? Promise.resolve({ workspaceReady: true, source: 'agentengine-server' }) : request('/api/v1/system/bootstrap'),

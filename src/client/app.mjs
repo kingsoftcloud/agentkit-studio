@@ -42,12 +42,6 @@ import { createConversationAgentState } from "./state/conversation-agent.mjs";
 import { createNativeAuthoring } from "./state/native-authoring.mjs";
 import { readProductVersions } from "./state/product-versions.mjs";
 import { createStudioActions } from "./state/actions.mjs";
-import { createComputerConnection } from './components/computer-connection.mjs';
-import { createAssistantSettings } from './pages/assistant-settings.mjs';
-import { createAssistantConversation } from './dsh/assistant-conversation.mjs';
-import { createAssistantTranscript } from './components/assistant-transcript.mjs';
-import { createAssistantPage } from './pages/assistant.mjs';
-import { createAssistantBrowser } from './components/assistant-browser.mjs';
 
 import { createExpertPages } from './pages/expert-catalog.mjs';
 import { createTemplateSquare } from './pages/template-square.mjs';
@@ -55,7 +49,7 @@ import { createStudioTeamPages } from './pages/studio-teams.mjs';
 import { createTemplateResourcePages } from './pages/template-resource-library.mjs';
 
 /** Build one presentation graph and one set of owners for each apply(ctx). */
-export function createStudioApp({ React, primitives, ConversationNodeAssembler, nativeModules }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
+export function createStudioApp({ React, primitives }, { window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent, MutationObserver = globalThis.MutationObserver } = {}) {
   let closed = false;
 
   /** Show only the value just typed; stored credentials are never read back. */
@@ -106,12 +100,6 @@ export function createStudioApp({ React, primitives, ConversationNodeAssembler, 
   ui.ModelSettingsSection = createModelSettingsSection({ ui, hostRemote, window, CustomEvent });
   Object.assign(ui, createCredentialOnboarding({ ui, hostRemote, window, document }));
   Object.assign(ui, createAgentPages({ ui, hostRemote, actions, window }));
-  ui.ComputerConnection = createComputerConnection({ ui, hostRemote, actions, window, document });
-  ui.AssistantSettingsSection = createAssistantSettings({ ui, hostRemote, actions, window, nativeModules });
-  const assistantConversation = createAssistantConversation({ ConversationNodeAssembler });
-  ui.AssistantTranscript = createAssistantTranscript({ ui, hostRemote, assistantConversation, window });
-  ui.AssistantBrowser = createAssistantBrowser({ ui, nativeModules, window });
-  ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window, nativeModules });
   Object.assign(ui, createExpertPages({ ui, hostRemote, actions, window, CustomEvent }));
   Object.assign(ui, createTemplateSquare({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createStudioTeamPages({ ui, hostRemote, actions, window, CustomEvent }));
@@ -122,7 +110,7 @@ export function createStudioApp({ React, primitives, ConversationNodeAssembler, 
 
 
   return {
-    ui: Object.freeze(ui), assistantConversation, window, CustomEvent, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent,
+    ui: Object.freeze(ui), window, CustomEvent, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent,
     closed: () => closed,
     dispose() { if (closed) return; closed = true; actions.dispose(); confirmation.dispose(); authoring.dispose(); connectionOwner.dispose(); },
   };

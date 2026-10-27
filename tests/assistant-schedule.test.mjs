@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assistantScheduleExpected, executeAssistantSchedule } from '../src/assistant-schedule.mjs';
-import { createAssistantScheduleRemote } from '../src/client/dsh/assistant-schedule-remote.mjs';
 const record = { id: 'task', kind: 'weekly', title: 'Review', prompt: 'Review reports', scheduledAt: '2030-01-01T09:00:00.000Z', time: '09:00:00.000', timeZone: 'UTC', weekdays: [1, 3] };
 const deferred = () => Promise.withResolvers();
 function fixture() {
@@ -69,34 +68,3 @@ test('create waits for ensure, checks cancellation again, and never retries an u
   await assert.rejects(f.run('schedule-create', { spec: { title: 'Task', prompt: 'Do it', after_seconds: 1 } }), /ack lost/); assert.equal(creates, 1);
 });
 
-test('native UI Remote rejects foreign Sessions and late results after disposal; has no create shortcut', async () => {
-  const calls = [], pending = deferred();
-  const remote = createAssistantScheduleRemote({ agentId: 'assistant', sessionId: 'current', execute: (...args) => { calls.push(args); return pending.promise; } });
-  assert.equal(remote.schedule.create, undefined);
-  assert.throws(() => remote.schedule.update({ sessionId: 'other', id: 'task', expected: record }), /不属于/);
-  const read = remote.schedule.catalog(); remote.dispose(); pending.resolve({ sessionId: 'current', items: [] });
-  await assert.rejects(read, { name: 'AbortError' }); assert.equal(calls.length, 1); assert.equal(calls[0][2].conversation, 'personal'); assert.equal(calls[0][3].aborted, true);
-});
-
-test('native UI catalog rejects a mixed-Session response and releases refresh subscriptions', async () => {
-  let tick, cleared = 0, changes = 0;
-  const remote = createAssistantScheduleRemote({ agentId: 'assistant', sessionId: 'current', execute: async () => ({ sessionId: 'current', items: [{ ...record, sessionId: 'other' }] }),
-    setTimer: work => { tick = work; return 1; }, clearTimer: () => { cleared++; } });
-  await assert.rejects(remote.schedule.catalog(), /归属无法确认/);
-  const off = remote.subscribe('schedule/changed', () => { changes++; }); tick(); assert.equal(changes, 1); off(); assert.equal(cleared, 1);
-  remote.dispose(); tick(); assert.equal(changes, 1);
-});
-
-test('periodic invalidation waits for a slow catalog read instead of superseding it indefinitely', async () => {
-  const pending = deferred(); let tick, reads = 0, invalidations = 0;
-  const remote = createAssistantScheduleRemote({ agentId: 'assistant', sessionId: 'current',
-    execute: async () => { reads++; return pending.promise; }, setTimer: callback => { tick = callback; return 1; }, clearTimer() {} });
-  const off = remote.subscribe('schedule/changed', () => { invalidations++; });
-  const read = remote.schedule.catalog();
-  for (let interval = 0; interval < 8; interval++) tick();
-  assert.equal(reads, 1); assert.equal(invalidations, 0);
-  pending.resolve({ sessionId: 'current', items: [{ ...record, sessionId: 'current', status: 'active' }] });
-  assert.equal((await read).value[0].id, 'task');
-  tick(); assert.equal(invalidations, 1);
-  off(); remote.dispose();
-});

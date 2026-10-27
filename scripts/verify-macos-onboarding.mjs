@@ -28,21 +28,8 @@ try {
   await page.locator('.agentkit-onboarding-actions').getByRole('button',{name:'开始对话',exact:true}).click();
   const catalog = await verifyStudioCatalogUi(page);
   await page.screenshot({path:join(evidence,'macos-catalog.png'),fullPage:true});
-  await page.getByText('个人助理',{exact:true}).first().click();
-  await page.getByRole('button',{name:'助理连接信息',exact:true}).click();
-  const connection=page.getByRole('dialog',{name:'助理连接信息',exact:true});
-  await expect(connection.getByRole('status')).toContainText('本机已连接');
-  await page.screenshot({path:join(evidence,'macos-computer-connection.png'),fullPage:true});
-  await connection.getByRole('button',{name:'在系统设置中管理助理',exact:true}).click();
-  await page.getByRole('dialog').getByRole('button',{name:'个人助理',exact:true}).click();
-  await expect(page.locator('[data-studio-assistant-settings]')).toBeVisible();
-  await page.screenshot({path:join(evidence,'macos-assistant-settings.png'),fullPage:true});
-  await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'助理连接信息',exact:true}).click();
-  await page.getByRole('dialog',{name:'助理连接信息',exact:true}).getByRole('button',{name:'打开本机会话',exact:true}).click();
-  await expect(page.locator('.studio-agent-trigger')).toBeVisible();
-  await expect(page.locator('[data-studio-assistant]')).toHaveCount(0);
-  await writeFile(join(evidence,'macos-onboarding.json'),JSON.stringify({version,actualSignedApp:true,catalog,realComputerConnection:true,nativeAssistantSettings:true,localSessionOpened:true,...proof,configuredReopenVerified:true},null,2));
+  await expect(page.getByText('个人助理',{exact:true})).toHaveCount(0);
+  await writeFile(join(evidence,'macos-onboarding.json'),JSON.stringify({version,actualSignedApp:true,catalog,legacyAssistantPanelAbsent:true,...proof,configuredReopenVerified:true},null,2));
 } catch(error) {
   for(const [index,page] of app.windows().entries()) {
     await page.screenshot({path:join(evidence,`macos-onboarding-failure-${index}.png`),fullPage:true}).catch(()=>{});
