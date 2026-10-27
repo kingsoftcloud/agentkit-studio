@@ -275,6 +275,7 @@ jobs:
             .artifacts/windows-release/
             .artifacts/windows-proof/
             .artifacts/windows-diagnostics/
+            .artifacts/desktop-checkouts/**/unsigned-artifacts/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
