@@ -111,6 +111,19 @@ export function normalizeCatalogEntry(raw, { source = 'builtin' } = {}) {
 /** First-party bundles Studio curates for the DSH plugin market. */
 export const DSH_CURATED_PLUGINS = Object.freeze([
   {
+    id: '@kingsoftcloud/agentkit-personal-assistant',
+    installSpec: '@kingsoftcloud/agentkit-personal-assistant',
+    displayName: '个人助理',
+    description: '右侧助理对话面板，并可连接用户专属云电脑：看屏幕、开浏览器、操作桌面。',
+    category: '助理',
+    tags: ['个人助理', '云电脑', '桌面', '浏览器'],
+    featured: true,
+    experimental: true,
+    defaultEnabled: false,
+    capabilities: ['助理对话面板', '云电脑桌面画面', '浏览器 / 终端 / 文件', '剪贴板快捷键'],
+    readinessNote: '插件已启用；首次使用需要在「设置 → 个人助理」中连接云端电脑。',
+  },
+  {
     id: '@deepseek-ai/dsh-experimental-agent-team-profile',
     installSpec: '@deepseek-ai/dsh-experimental-agent-team-profile',
     displayName: 'Agent Teams',
