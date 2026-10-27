@@ -8,7 +8,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, DshPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles } = documentEffects;
   const { openAgentAuthoring } = authoring;
@@ -30,6 +30,12 @@ export function mountStudio(ctx, app) {
   // DSH owns the single global plugin center. Studio contributes Codex as
   // an official plugin item through the public plugin-manager slot, so the
   // existing Codex catalog stays available without a second DSH market.
+  // Studio contributes the DSH plugin market (curated bundles plus an optional
+  // remote index) as a row inside the official 插件 page, so the bundled
+  // personal assistant stays discoverable and default-off after installation.
+  ctx.slots.inject('plugins.item', () => ctx.slots.register({
+    name: 'plugins.item', id: 'agentkit-dsh-plugin-market', order: 50, label: '插件市场',
+  }, props => h(DshPluginMarketItem, props)));
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-codex-plugin-market', order: 90, label: 'Codex 插件',
   }, props => h(CodexPluginMarketItem, props)));
