@@ -7,6 +7,7 @@
 | 侧栏名称与图标 | 官方 `sidebar.brand.name`、`sidebar.brand.mark` 插槽 |
 | 首页图标 | 官方 `conversation.hero.brand.mark` 插槽 |
 | 首页标题与提示 | locale 词条；有 `locale.override()` 时按插件 scope 贡献，缺少时保留宿主原生词条 |
+| 插件市场入口 | 官方 `plugins.item` 插槽（`agentkit-dsh-plugin-market`）；市场是插件页里的一行，不新增侧边栏或第二个插件中心，安装/启停/更新归官方插件管理器。见 [DSH 插件市场](dsh-plugin-market.md)。 |
 | 浏览器标题与 favicon | Studio 的文档效果和 Web 注入，由插件生命周期释放 |
 | 桌面应用身份、签名、公证、更新 | 桌面包装及发行流程，不能由 Web 插槽代替 |
 

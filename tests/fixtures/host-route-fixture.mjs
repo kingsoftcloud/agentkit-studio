@@ -49,7 +49,7 @@ export function createHostRouteFixture(mode = 'success') {
   const evaluation = service('evaluations', { listRuns: { items: [] }, getRun: {}, listTargets: { items: [] }, listEvalsets: { items: [] }, importEvalset: {}, createEvaluation: {} });
   const channels = service('channels', { getConnection: {}, updateConnection: {}, updateAgentConnection: {}, proxyAction: {} });
   const deployment = service('deployments', Object.fromEntries(['prepare', 'create', 'prepareUpdate', 'applyUpdate', 'list', 'get', 'refresh', 'repairAccess', 'reconcile', 'logs', 'remove'].map(name => [name, { result: name }])));
-  const dshPlugins = service('dshPlugins', { listDsh: { items: [] }, installDsh: {}, uninstallDsh: {}, setDshEnabled: {}, updateDsh: {} });
+  const dshPlugins = service('dshPlugins', { listDsh: { items: [] }, discoverDsh: { items: [], info: { npmTotal: 0, curated: 0 } }, refreshDshCatalog: {}, installDsh: {}, uninstallDsh: {}, setDshEnabled: {}, updateDsh: {} });
   const codexPlugins = service('codexPlugins', { listCodex: { items: [] }, inspectCodex: {}, installCodex: {}, uninstallCodex: {} });
   const exporter = {
     sessionLogExportDeps: () => ({ sessionPersistence: {} }),

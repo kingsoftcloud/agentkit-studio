@@ -291,7 +291,9 @@ test('operational pages keep the old Studio hierarchy without stacked duplicate 
 });
 
 test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter', () => {
-  assert.match(clientSource, /dshPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-list'/);
+  assert.match(clientSource, /dshPlugins: \(\) => \(bridgeAvailable\(\)\s*\?\s*studioBridgeOperation\('plugins\/dsh-list'/);
+  assert.match(clientSource, /function dshPluginMarketList/);
+  assert.match(clientSource, /refreshDshPluginIndex: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-index-refresh'/);
   assert.match(clientSource, /codexPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/codex-list'/);
   assert.match(clientSource, /installDshPlugin: /);
   assert.match(clientSource, /enableDshPlugin: /);
@@ -305,11 +307,16 @@ test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter
   assert.match(clientSource, /section\('插件目录'/);
 });
 
-test('the official DSH plugin center is the only visible market and carries Codex as an official item', () => {
+test('the official DSH plugin center is the only visible market and carries Studio market items', () => {
   assert.match(clientSource, /ctx\.slots\.inject\('plugins\.item'/);
+  assert.match(clientSource, /agentkit-dsh-plugin-market/);
+  assert.match(clientSource, /label: '插件市场'/);
+  assert.match(clientSource, /function DshPluginMarketItem/);
   assert.match(clientSource, /agentkit-codex-plugin-market/);
   assert.match(clientSource, /function CodexPluginMarketItem/);
   assert.match(clientSource, /打开插件中心/);
+  // The market is a row inside the official plugin page, never a Studio
+  // sidebar panel and never a second plugin center.
   assert.doesNotMatch(clientSource, /id: 'marketplace', label: '插件市场'/);
 });
 

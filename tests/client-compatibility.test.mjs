@@ -42,3 +42,16 @@ test('compatibility streams share session exchange and CSRF with ordinary reads 
   assert.equal(stream.init.credentials, 'include');
   assert.equal(client.baseUrl, 'http://legacy.invalid');
 });
+
+test('product client exposes the DSH plugin lifecycle the market row calls', async () => {
+  // app.mjs mounts the plain product client directly; lifecycle methods that
+  // only exist in the compatibility extension are undefined at runtime.
+  const calls = [];
+  const connection = { rpc: { call: async (...args) => { calls.push(args); return { ok: true, value: { note: 'fixture' } }; } } };
+  const client = createProductClient(connection, { window: { location: { origin: 'http://localhost', hash: '' } } });
+  for (const name of ['dshPlugins', 'refreshDshPluginIndex', 'installDshPlugin', 'enableDshPlugin', 'disableDshPlugin', 'updateDshPlugin', 'uninstallDshPlugin']) {
+    assert.equal(typeof client[name], 'function', `${name} must be defined on the product client`);
+  }
+  await client.enableDshPlugin('@deepseek-ai/dsh-experimental-agent-team-profile');
+  assert.deepEqual(calls, [['/agentkit', 'plugins/dsh-enable', { pluginName: '@deepseek-ai/dsh-experimental-agent-team-profile' }]]);
+});

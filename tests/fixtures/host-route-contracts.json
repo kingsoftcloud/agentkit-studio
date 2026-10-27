@@ -704,6 +704,47 @@
       ]
     },
     {
+      "endpoint": "plugins/dsh-index-refresh",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {}
+      },
+      "calls": [
+        [
+          "dshPlugins.refreshDshCatalog",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-discover",
+      "mode": "success",
+      "result": {
+        "ok": true,
+        "value": {
+          "items": [],
+          "info": {
+            "npmTotal": 0,
+            "curated": 0
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.discoverDsh",
+          [
+            {
+              "$fixture": "payload"
+            }
+          ]
+        ]
+      ],
+      "payload": {
+        "force": true
+      }
+    },
+    {
       "endpoint": "agents/local-get",
       "mode": "success",
       "result": {
@@ -2485,6 +2526,50 @@
         [
           "dshPlugins.listDsh",
           []
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-index-refresh",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.refreshDshCatalog",
+          []
+        ]
+      ]
+    },
+    {
+      "endpoint": "plugins/dsh-discover",
+      "mode": "backend-error",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "FIXTURE_BACKEND_FAILED",
+          "message": "fixture backend failure",
+          "details": {
+            "reason": "fixture"
+          }
+        }
+      },
+      "calls": [
+        [
+          "dshPlugins.discoverDsh",
+          [
+            {
+              "force": false
+            }
+          ]
         ]
       ]
     },

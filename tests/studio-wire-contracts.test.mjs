@@ -88,3 +88,13 @@ test('delivery-target query has an independent registered read-only contract', a
   assert.deepEqual(await dispatch('schedules/delivery-targets', payload), { ok: true, value: {} });
   assert.deepEqual(fixture.calls, [['cloudSchedules.execute', ['delivery-targets', payload]]]);
 });
+
+test('DSH plugin market bridge endpoints are registered operations', async () => {
+  const { STUDIO_OPERATION_IDS } = await import('../src/contracts/operations.mjs');
+  const endpoints = [
+    'plugins/dsh-list', 'plugins/dsh-discover', 'plugins/dsh-index-refresh',
+    'plugins/dsh-install', 'plugins/dsh-remove', 'plugins/dsh-enable',
+    'plugins/dsh-disable', 'plugins/dsh-update'
+  ];
+  for (const endpoint of endpoints) assert.ok(STUDIO_OPERATION_IDS.includes(endpoint), endpoint);
+});

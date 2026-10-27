@@ -6,6 +6,10 @@ export function createPluginRoutes({ getDshPlugins, getCodexPlugins }) {
                 const plugins = await getDshPlugins();
                 if (endpoint === 'plugins/dsh-list')
                     return { ok: true, value: await plugins.listDsh() };
+                if (endpoint === 'plugins/dsh-discover')
+                    return { ok: true, value: await plugins.discoverDsh({ force: payload?.force === true }) };
+                if (endpoint === 'plugins/dsh-index-refresh')
+                    return { ok: true, value: await plugins.refreshDshCatalog() };
                 if (endpoint === 'plugins/dsh-install')
                     return { ok: true, value: await plugins.installDsh(payload?.source, payload?.acceptHostPermissions === true) };
                 if (endpoint === 'plugins/dsh-remove')

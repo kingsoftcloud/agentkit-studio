@@ -56,6 +56,8 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "skills/list",
   "skills/preview-installed",
   "plugins/dsh-list",
+  "plugins/dsh-discover",
+  "plugins/dsh-index-refresh",
   "agents/local-get",
   "agents/update-local",
   "agents/local-delete",
