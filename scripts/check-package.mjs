@@ -17,15 +17,12 @@ const packageJson = JSON.parse(read('package.json'));
 const manifest = JSON.parse(read('studio.plugin.json'));
 const expected = [
   'package.json', 'studio.plugin.json', 'README.md', 'CHANGELOG.md',
-  'LICENSE',
+  'LICENSE', 'cordis.patch.yml',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
   'packages/agentkit-harness/package.json', 'packages/agentkit-harness/agentkit-harness.plugin.json',
   'packages/agentkit-harness/src/index.mjs', 'packages/agentkit-harness/src/core.mjs',
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',
   'packages/agentkit-harness/src/index.d.ts',
-  'scripts/build-client.mjs', 'docs/brand/visual-system.md',
-  'docs/README.md', 'docs/architecture.md', 'docs/getting-started.md',
-  'patches/dsh-v0.2.1-rc.2/README.md',
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
@@ -33,7 +30,8 @@ if (packageJson.name !== '@kingsoftcloud/agentkit-studio') throw new Error(`unex
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
 if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');
 if (manifest.requiredDsh !== '0.2.1-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
-if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
+if (packageJson.private === true) throw new Error('package.json must be publishable: registry publication is enabled for this release line');
+if (packageJson.publishConfig?.access !== 'public') throw new Error('package.json publishConfig.access must be public');
 const harnessPackage = JSON.parse(read('packages/agentkit-harness/package.json'));
 const harnessManifest = JSON.parse(read('packages/agentkit-harness/agentkit-harness.plugin.json'));
 if (harnessPackage.name !== '@kingsoftcloud/agentkit-harness' || harnessPackage.private === true) throw new Error('Harness package must be independently packable');
