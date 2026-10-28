@@ -14,6 +14,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 const FORMAT = 'agentkit.studio-assistant-binding/v1';
 const SERVICE = 'studioPersonalAssistantDesktop';
@@ -24,10 +25,148 @@ const TICKET = /^[A-Za-z0-9_-]{32,512}$/u;
 const AGENT_ID = /^ar-[A-Za-z0-9-]{4,120}$/u;
 const BOT_ID = /^[A-Za-z0-9._:-]{1,64}$/u;
 const MAX_TICKET_SECONDS = 60;
+const RUNTIME_VERSION = /^\d+\.\d+\.\d+$/u;
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,100}$/u;
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+const MAX_ENV_VALUE = 4096;
+const MAX_ENV_VARIABLES = 64;
+const MAX_MANIFEST_BYTES = 16 * 1024;
+const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
+const DEFAULT_PROMPT = '请用中文完成用户任务。只使用提供的云电脑工具，不得假装已经执行。';
+// The platform publishes each environment's managed-runtime catalog in its
+// client bootstrap config. Studio reads the same document the server resolves
+// from, so the version picker can never invent an undeployable version.
+const RUNTIME_CATALOG_KEY = 'runtime.catalog';
 
 const fail = (code, message, status = 409, details = {}) => Object.assign(new Error(message), { code, status, details });
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = value => typeof value === 'string' ? value.trim() : '';
+
+/** Parse the recorded managed-runtime declaration. A binding written by an
+ * older Studio build (or adopted before the manifest was kept locally) simply
+ * has no record; callers must treat that as "configuration unknown" instead of
+ * silently rewriting the instance with guessed defaults. */
+function parseManifest(value) {
+  const source = text(value);
+  if (!source) return null;
+  if (Buffer.byteLength(source, 'utf8') > MAX_MANIFEST_BYTES) return null;
+  let doc;
+  try { doc = parseYaml(source); } catch { return null; }
+  if (!record(doc)) return null;
+  const runtime = record(doc.runtime) ? doc.runtime : {};
+  return {
+    name: text(doc.name), framework: text(doc.framework), artifactType: text(doc.artifact_type),
+    model: text(doc.model), prompt: typeof doc.prompt === 'string' ? doc.prompt : '',
+    runtimeName: text(runtime.name), runtimeVersion: text(runtime.version),
+  };
+}
+
+/** The canonical declaration the platform requires for a ManagedRuntime
+ * update. Field order mirrors the PA contract so manifest digests stay stable
+ * between create and configure. */
+function buildManifest({ name, version, model, prompt }) {
+  const doc = {
+    name,
+    framework: 'personal-assistant',
+    artifact_type: 'ManagedRuntime',
+    ...(model ? { model } : {}),
+    prompt: prompt ?? DEFAULT_PROMPT,
+    runtime: { name: 'personal-assistant', version },
+  };
+  const source = stringifyYaml(doc);
+  if (Buffer.byteLength(source, 'utf8') > MAX_MANIFEST_BYTES) {
+    throw fail('ASSISTANT_SETTINGS_MANIFEST_TOO_LARGE', '个人助理配置清单过大，请缩短提示词后重试', 400);
+  }
+  return source;
+}
+
+/** Keep only the fields a page may edit; never accept credential-shaped
+ * platform fields from the page. Environment variables carrying secrets are
+ * flagged sensitive so the platform stores them like kernel-managed secrets. */
+function normalizeSettingsInput(input) {
+  if (!record(input)) throw fail('ASSISTANT_SETTINGS_INPUT_INVALID', '配置参数无效', 400);
+  const model = input.model === undefined ? undefined : text(input.model);
+  if (model !== undefined && !MODEL_NAME.test(model)) {
+    throw fail('ASSISTANT_SETTINGS_MODEL_INVALID', '模型名称无效（只能是字母、数字、点、冒号、斜线）', 400);
+  }
+  const prompt = input.prompt === undefined ? undefined : String(input.prompt);
+  if (prompt !== undefined && prompt.length > 8_000) {
+    throw fail('ASSISTANT_SETTINGS_PROMPT_TOO_LARGE', '提示词不能超过 8000 个字符', 400);
+  }
+  const version = input.runtimeVersion === undefined ? undefined : text(input.runtimeVersion);
+  if (version !== undefined && !RUNTIME_VERSION.test(version)) {
+    throw fail('ASSISTANT_SETTINGS_VERSION_INVALID', '运行时版本号格式无效', 400);
+  }
+  let variables;
+  if (input.environmentVariables !== undefined) {
+    if (!Array.isArray(input.environmentVariables) || input.environmentVariables.length > MAX_ENV_VARIABLES) {
+      throw fail('ASSISTANT_SETTINGS_ENV_INVALID', `环境变量最多 ${MAX_ENV_VARIABLES} 项`, 400);
+    }
+    const keys = new Set();
+    variables = input.environmentVariables.map(item => {
+      if (!record(item)) throw fail('ASSISTANT_SETTINGS_ENV_INVALID', '环境变量格式无效', 400);
+      const key = text(item.key ?? item.Key);
+      const value = item.value ?? item.Value ?? '';
+      if (!ENV_KEY.test(key)) throw fail('ASSISTANT_SETTINGS_ENV_INVALID', `环境变量名无效：${key || '（空）'}`, 400);
+      if (keys.has(key)) throw fail('ASSISTANT_SETTINGS_ENV_INVALID', `环境变量重复：${key}`, 400);
+      if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_ENV_VALUE) {
+        throw fail('ASSISTANT_SETTINGS_ENV_INVALID', `环境变量 ${key} 的值无效或过长`, 400);
+      }
+      keys.add(key);
+      const sensitive = item.sensitive === true || item.IsSensitive === true;
+      return { key, value, sensitive };
+    });
+  }
+  const deleteKeys = input.deleteKeys === undefined ? undefined : input.deleteKeys;
+  if (deleteKeys !== undefined) {
+    if (!Array.isArray(deleteKeys) || deleteKeys.length > MAX_ENV_VARIABLES) {
+      throw fail('ASSISTANT_SETTINGS_ENV_INVALID', '要删除的环境变量数量无效', 400);
+    }
+    for (const key of deleteKeys) {
+      if (typeof key !== 'string' || !ENV_KEY.test(key)) throw fail('ASSISTANT_SETTINGS_ENV_INVALID', `要删除的环境变量名无效：${key || '（空）'}`, 400);
+    }
+  }
+  return { model, prompt, version, variables, deleteKeys };
+}
+
+/** Platform errors for a PA update are currently indistinguishable from a
+ * generic 400 for the page; translate the known preprod limits into an action
+ * the user (and support) can act on. */
+function settingsFailure(error) {
+  const message = text(error?.message) || '云端没有接受这次配置更新，请稍后再试';
+  const rawStatus = Number(error?.status ?? error?.details?.status);
+  const status = Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 503;
+  if (/ManagedRuntime requires Framework|requires Framework=/u.test(message)) {
+    return fail('ASSISTANT_SETTINGS_UNSUPPORTED', '当前云端平台版本还不支持个人助理的配置更新（平台只开放了 DSH 类实例），等平台发布个人助理支持后即可保存', 409);
+  }
+  if (/AgentRuntime not found|请求的资源不存在/u.test(message)) {
+    return fail('ASSISTANT_SETTINGS_UNAVAILABLE', '云端还没有接好这个个人助理的更新通道，请稍后再试；实例本身仍在正常运行', 503);
+  }
+  if (Number(error?.status) === 404 || /not found|not exist|未找到/iu.test(message)) {
+    return fail('ASSISTANT_SETTINGS_NOT_FOUND', '云端找不到这个个人助理实例，请重新连接或重新创建', 409);
+  }
+  return fail('ASSISTANT_SETTINGS_FAILED', message.slice(0, 240), status);
+}
+
+const compareVersions = (left, right) => {
+  const a = left.split('.').map(Number), b = right.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) { if (a[index] !== b[index]) return a[index] - b[index]; }
+  return 0;
+};
+
+/** Accept both `{Data:{...}}` and `{data:{...}}` action envelopes. */
+const actionData = value => record(value?.data) ? value.data : record(value?.Data) ? value.Data : value;
+
+/** Mask a GetAgent environment row for the page: values of sensitive keys never
+ * leave the Host, only the fact that the key is set. */
+function publicEnvironmentRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(record).map(row => {
+    const key = text(row.Key ?? row.key);
+    const sensitive = row.IsSensitive === true || row.isSensitive === true;
+    return { key, sensitive, value: sensitive ? '' : String(row.Value ?? row.value ?? '') };
+  }).filter(row => ENV_KEY.test(row.key));
+}
 
 function gatewayOrigin(value) {
   let url;
@@ -56,7 +195,8 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     }
     if (!record(raw) || raw.format !== FORMAT || !text(raw.gatewayUrl) || !AGENT_ID.test(text(raw.agentId)) || !text(raw.apiKey))
       throw fail('ASSISTANT_BINDING_CORRUPT', '个人助理绑定无法读取，请重新连接', 500);
-    cached = { gatewayUrl: gatewayOrigin(raw.gatewayUrl), agentId: text(raw.agentId), apiKey: text(raw.apiKey), label: text(raw.label), updatedAt: text(raw.updatedAt) };
+    cached = { gatewayUrl: gatewayOrigin(raw.gatewayUrl), agentId: text(raw.agentId), apiKey: text(raw.apiKey), label: text(raw.label),
+      manifest: typeof raw.manifest === 'string' ? raw.manifest : '', updatedAt: text(raw.updatedAt) };
     cacheAt = Date.now();
     return cached;
   }
@@ -65,7 +205,7 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     await mkdir(storeDir, { recursive: true, mode: 0o700 });
     const next = `${file}.${randomUUID()}.next`;
     await writeFile(next, JSON.stringify({ format: FORMAT, gatewayUrl: binding.gatewayUrl, agentId: binding.agentId,
-      apiKey: binding.apiKey, label: binding.label || '', updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
+      apiKey: binding.apiKey, label: binding.label || '', manifest: binding.manifest || '', updatedAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
     await rename(next, file);
     cached = null; cacheAt = 0;
   }
@@ -265,9 +405,12 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
   async function create(payload = {}, signal) {
     if (typeof getClient !== 'function') throw fail('ASSISTANT_CREATE_UNAVAILABLE', '当前 Studio 版本不支持创建个人助理', 503);
     const version = text(env.AGENTKIT_PERSONAL_ASSISTANT_RUNTIME_VERSION) || '0.1.9';
+    const model = text(env.AGENTKIT_PERSONAL_ASSISTANT_MODEL) || DEFAULT_MODEL;
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
     const name = `personal-assistant-${stamp}-${randomUUID().slice(0, 10)}`;
-    const manifest = `name: ${name}\nframework: personal-assistant\nartifact_type: ManagedRuntime\nruntime:\n  name: personal-assistant\n  version: "${version}"\n`;
+    // Keep the declaration Studio writes, so later settings edits can rebuild
+    // the exact same instance identity without inventing a new name.
+    const manifest = buildManifest({ name, version, model, prompt: DEFAULT_PROMPT });
     const client = await getClient();
     const { values } = await (await configurationSource)?.resolve() || {};
     const region = text(values?.cloudRegion) === 'pre-online' ? 'cn-beijing-6' : (text(values?.cloudRegion) || 'cn-beijing-6');
@@ -300,6 +443,9 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     if (!agent) throw fail('ASSISTANT_CREATE_TIMEOUT', '个人助理正在创建中，请稍后重试', 504);
     const resolved = await refresh(signal);
     if (!resolved.binding) throw fail('ASSISTANT_CREDENTIAL_UNAVAILABLE', '个人助理已创建，但云端暂时无法获取连接凭证，请稍后重试', 503);
+    // Remember the declaration this Studio wrote; the platform does not echo it
+    // back on GetAgent, and a later settings update must reuse the same name.
+    await writeBinding({ ...resolved.binding, manifest });
     return { configured: true, agentId: resolved.binding.agentId };
   }
 
@@ -307,6 +453,143 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     await rm(file, { force: true });
     cached = null; cacheAt = 0;
     return { configured: false };
+  }
+
+  /** Read the bound instance's editable configuration.
+   *
+   * The platform `GetAgent` projection is the source of truth for the
+   * deployment status/version and the non-secret environment rows. The model,
+   * prompt and instance name live in the managed-runtime declaration, which
+   * the platform does not echo today; Studio therefore keeps the declaration
+   * it wrote in the binding file and reports `recordSource: 'missing'` when an
+   * instance predates that record instead of guessing. */
+  async function settings(input = {}, signal) {
+    const binding = await readBinding();
+    const agentId = binding?.agentId;
+    if (!AGENT_ID.test(agentId || '')) throw fail('ASSISTANT_NOT_CREATED', '当前没有可用的个人助理，请先开通或连接', 409);
+    if (typeof getDeploymentClient !== 'function') throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', '当前 Studio 版本还不支持个人助理配置', 503);
+    let client;
+    try { client = await getDeploymentClient(); }
+    catch { throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', '暂时无法连接云端控制面，请稍后重试', 503); }
+    let detail;
+    try { detail = await client.forAgent(agentId).get({}, { signal }); }
+    catch (error) { throw settingsFailure(error); }
+    const data = actionData(detail);
+    if (record(data) && data.Code !== undefined && Number(data.Code) !== 0) {
+      throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', text(data.Message) || '云端没有返回个人助理配置，请稍后再试', 503);
+    }
+    const basic = record(data?.Basic) ? data.Basic : {};
+    const deployment = record(data?.Deployment) ? data.Deployment : {};
+    const runtime = record(deployment.RuntimeConfig) ? deployment.RuntimeConfig : {};
+    const advanced = record(data?.Advanced) ? data.Advanced : {};
+    const manifest = parseManifest(binding.manifest);
+    const version = text(runtime.Version) || manifest?.runtimeVersion || '';
+    return {
+      configured: true,
+      agentId,
+      name: text(basic.Name) || binding.label || '',
+      description: text(basic.Description),
+      status: text(basic.Status) || text(basic.Phase),
+      deploymentType: text(deployment.DeploymentType),
+      runtime: {
+        name: text(runtime.Name) || 'personal-assistant',
+        version,
+        imageDigest: text(runtime.ImageDigest),
+        updatedAt: text(basic.UpdatedAt),
+      },
+      model: manifest?.model || '',
+      prompt: manifest?.prompt ?? '',
+      environmentVariables: publicEnvironmentRows(advanced.EnvironmentVariables),
+      recordSource: manifest ? 'studio' : 'missing',
+    };
+  }
+
+  /** Candidate runtime versions published for this environment. The catalog is
+   * optional infrastructure: when it is missing the page still shows the
+   * instance's current version and explains that no upgrade target is
+   * published. */
+  async function settingsVersions(input = {}, signal) {
+    const binding = await readBinding();
+    if (!binding || !AGENT_ID.test(binding.agentId)) throw fail('ASSISTANT_NOT_CREATED', '当前没有可用的个人助理，请先开通或连接', 409);
+    const recorded = parseManifest(binding.manifest);
+    const currentVersion = text(input.currentVersion) || recorded?.runtimeVersion || '';
+    const versions = [];
+    if (typeof getDeploymentClient === 'function') {
+      try {
+        const client = await getDeploymentClient();
+        const source = typeof configurationSource === 'function' ? configurationSource() : configurationSource;
+        const { values } = await (await source)?.resolve() || {};
+        const region = text(values?.cloudRegion) === 'pre-online' ? 'cn-beijing-6' : (text(values?.cloudRegion) || 'cn-beijing-6');
+        const result = await client.getBootstrapConfig({ region, runtime: 'personal-assistant' }, { signal });
+        const data = actionData(result) || {};
+        const configs = record(data.Configs) ? data.Configs : {};
+        const pa = record(configs[RUNTIME_CATALOG_KEY]) ? configs[RUNTIME_CATALOG_KEY]['personal-assistant'] : null;
+        const catalogVersions = record(pa?.versions) ? pa.versions : null;
+        if (catalogVersions) {
+          for (const [version, entry] of Object.entries(catalogVersions)) {
+            if (!RUNTIME_VERSION.test(version)) continue;
+            versions.push({
+              version,
+              image: text(entry?.image),
+              capabilities: Array.isArray(entry?.capabilities) ? entry.capabilities.filter(value => typeof value === 'string').slice(0, 20) : [],
+            });
+          }
+        }
+      } catch { /* No catalog is a normal preprod state; the page explains it. */ }
+    }
+    versions.sort((left, right) => compareVersions(left.version, right.version));
+    return {
+      currentVersion: RUNTIME_VERSION.test(currentVersion) ? currentVersion : '',
+      versions,
+      catalogAvailable: versions.length > 0,
+    };
+  }
+
+  /** Submit one platform update with the user's edited settings.
+   *
+   * The platform applies model/prompt/version through the managed-runtime
+   * declaration and environment variables through its incremental patch, so a
+   * single UpdateAgent call covers every setting and the instance rolls only
+   * once. The page never restarts the instance itself. */
+  async function settingsUpdate(input = {}, signal) {
+    const binding = await readBinding();
+    if (!binding || !AGENT_ID.test(binding.agentId)) throw fail('ASSISTANT_NOT_CREATED', '当前没有可用的个人助理，请先开通或连接', 409);
+    if (typeof getDeploymentClient !== 'function') throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', '当前 Studio 版本还不支持个人助理配置', 503);
+    const parsed = normalizeSettingsInput(input);
+    const recorded = parseManifest(binding.manifest);
+    const version = parsed.version || recorded?.runtimeVersion || '';
+    if (!RUNTIME_VERSION.test(version)) throw fail('ASSISTANT_SETTINGS_VERSION_REQUIRED', '请先选择个人助理的运行时版本，再保存配置', 400);
+    // The platform needs the complete declaration on every PA update. The
+    // instance name must not change, so a legacy binding without a recorded
+    // manifest fails closed instead of overwriting the instance with guesses.
+    const name = recorded?.name || '';
+    if (!name) {
+      throw fail('ASSISTANT_SETTINGS_MANIFEST_MISSING',
+        '这个个人助理是用旧版 Studio 创建的，本机没有记录它的配置清单，暂时不能在线修改；可以先关闭再重新创建，等平台提供读取接口后即可直接编辑', 409);
+    }
+    const model = parsed.model ?? recorded.model ?? DEFAULT_MODEL;
+    if (!MODEL_NAME.test(model)) throw fail('ASSISTANT_SETTINGS_MODEL_INVALID', '模型名称无效', 400);
+    const prompt = parsed.prompt ?? recorded.prompt ?? DEFAULT_PROMPT;
+    const manifest = buildManifest({ name, version, model, prompt });
+    const payload = {
+      AgentId: binding.agentId,
+      ManagedRuntimeConfig: { RuntimeName: 'personal-assistant', RuntimeVersion: version, Manifest: manifest },
+    };
+    const patch = {};
+    if (parsed.variables !== undefined) {
+      patch.Upsert = parsed.variables.map(item => ({
+        Key: item.key, Value: item.value, ...(item.sensitive ? { IsSensitive: true } : {}),
+      }));
+    }
+    if (parsed.deleteKeys?.length) patch.Delete = [...new Set(parsed.deleteKeys)];
+    if (Object.keys(patch).length) payload.EnvironmentVariablePatch = patch;
+    let client;
+    try { client = await getDeploymentClient(); }
+    catch { throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', '暂时无法连接云端控制面，请稍后重试', 503); }
+    try { await client.forAgent(binding.agentId).update(payload, { signal }); }
+    catch (error) { throw settingsFailure(error); }
+    await writeBinding({ ...binding, manifest, label: binding.label });
+    return { configured: true, agentId: binding.agentId, version, model, prompt, saved: true, status: 'updating' };
   }
 
   /** Close the bound cloud assistant for good: remove the managed runtime
@@ -336,13 +619,15 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     return { configured: false, agentId, closed: true };
   }
 
-  return Object.freeze({ configuration, issueTicket, status, connect, create, disconnect, destroy });
+  return Object.freeze({ configuration, issueTicket, status, connect, create, disconnect, destroy,
+    settings, settingsUpdate, settingsVersions });
 }
 
 /** The service shape the standalone plugin consumes via `ctx.get()`. */
 export function assistantDesktopService(impl) {
   return Object.freeze({ format: SERVICE, configuration: impl.configuration, issueTicket: impl.issueTicket,
-    status: impl.status, connect: impl.connect, create: impl.create, disconnect: impl.disconnect, destroy: impl.destroy });
+    status: impl.status, connect: impl.connect, create: impl.create, disconnect: impl.disconnect, destroy: impl.destroy,
+    settings: impl.settings, settingsUpdate: impl.settingsUpdate, settingsVersions: impl.settingsVersions });
 }
 
 export const ASSISTANT_DESKTOP_SERVICE = SERVICE;

@@ -194,5 +194,115 @@ test('creating an assistant waits for the instance and binds its credential', as
 test('the provided service keeps only the documented surface', () => {
   const service = assistantDesktopService(createAssistantDesktop({ storeDir: '/tmp/unused', configuration: { resolve: async () => ({ values: {} }) } }));
   assert.equal(service.format, ASSISTANT_DESKTOP_SERVICE);
-  assert.deepEqual(Object.keys(service).sort(), ['configuration', 'connect', 'create', 'destroy', 'disconnect', 'format', 'issueTicket', 'status']);
+  assert.deepEqual(Object.keys(service).sort(), ['configuration', 'connect', 'create', 'destroy', 'disconnect', 'format', 'issueTicket', 'settings', 'settingsUpdate', 'settingsVersions', 'status']);
+});
+
+function settingsHarness({ store, manifest = null, detail, failUpdate = null, catalog = null } = {}) {
+  const binding = { format: 'agentkit.studio-assistant-binding/v1', gatewayUrl: GATEWAY, agentId: AGENT, apiKey: KEY,
+    label: '我的个人助理', updatedAt: new Date().toISOString(), ...(manifest ? { manifest } : {}) };
+  const updates = [];
+  const options = {
+    storeDir: store,
+    fetchImpl: async () => { throw new Error('settings must not open the desktop gateway'); },
+    configuration: { resolve: async () => ({ values: { cloudRegion: 'pre-online' } }) },
+    getDeploymentClient: async () => ({
+      forAgent: id => ({
+        get: async () => ({ Data: detail ?? {
+          Basic: { Name: 'pa-cloud-session-x', Status: 'RUNNING', UpdatedAt: '2026-10-27T07:58:47Z' },
+          Deployment: { DeploymentType: 'ManagedRuntime', RuntimeConfig: { Name: 'personal-assistant', Version: '0.1.37', ImageDigest: 'hub/x@sha256:abc' } },
+          Advanced: { EnvironmentVariables: [
+            { Key: 'OPENAI_BASE_URL', Value: 'https://kspmas.ksyun.com/v1', IsSensitive: false },
+            { Key: 'OPENAI_API_KEY', Value: 'sk-secret', IsSensitive: true },
+          ] },
+        } }),
+        update: async payload => { if (failUpdate) throw failUpdate; updates.push({ id, payload }); return { Data: { accepted: true } }; },
+      }),
+      getBootstrapConfig: async () => ({ data: { Configs: catalog ? { 'runtime.catalog': catalog } : {} } }),
+    }),
+  };
+  return { binding, updates, options };
+}
+
+const RECORDED_MANIFEST = 'name: pa-cloud-session-x\nframework: personal-assistant\nartifact_type: ManagedRuntime\nmodel: deepseek-v4.1-flash-1017\nprompt: 请用中文完成用户任务。\nruntime:\n  name: personal-assistant\n  version: 0.1.37\n';
+
+test('settings reads the platform instance and never returns a stored secret value', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { binding, options } = settingsHarness({ store: dir, manifest: RECORDED_MANIFEST });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  const snapshot = await service.settings({});
+  assert.equal(snapshot.agentId, AGENT);
+  assert.equal(snapshot.name, 'pa-cloud-session-x');
+  assert.equal(snapshot.runtime.version, '0.1.37');
+  assert.equal(snapshot.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(snapshot.recordSource, 'studio');
+  const secret = snapshot.environmentVariables.find(row => row.key === 'OPENAI_API_KEY');
+  assert.equal(secret.sensitive, true);
+  assert.equal(secret.value, '');
+  assert.equal(snapshot.environmentVariables.find(row => row.key === 'OPENAI_BASE_URL').value, 'https://kspmas.ksyun.com/v1');
+});
+
+test('settings reports a legacy instance without a recorded manifest instead of guessing it', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { binding, options } = settingsHarness({ store: dir });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  const snapshot = await service.settings({});
+  assert.equal(snapshot.recordSource, 'missing');
+  assert.equal(snapshot.model, '');
+});
+
+test('settings update submits one managed-runtime declaration with the edited model, prompt and environment', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { binding, updates, options } = settingsHarness({ store: dir, manifest: RECORDED_MANIFEST });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  const result = await service.settingsUpdate({ model: 'deepseek-v4.1-flash-1017', prompt: '请简洁回答', runtimeVersion: '0.1.37',
+    environmentVariables: [{ key: 'AGENTKIT_FEATURE_FLAG', value: '1', sensitive: false }], deleteKeys: ['OLD_FLAG'] });
+  assert.equal(result.saved, true);
+  assert.equal(result.status, 'updating');
+  assert.equal(updates.length, 1);
+  const payload = updates[0].payload;
+  assert.equal(payload.AgentId, AGENT);
+  assert.equal(payload.ManagedRuntimeConfig.RuntimeName, 'personal-assistant');
+  assert.equal(payload.ManagedRuntimeConfig.RuntimeVersion, '0.1.37');
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /name: pa-cloud-session-x/);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /prompt: 请简洁回答/);
+  assert.deepEqual(payload.EnvironmentVariablePatch, { Upsert: [{ Key: 'AGENTKIT_FEATURE_FLAG', Value: '1' }], Delete: ['OLD_FLAG'] });
+  const saved = JSON.parse(await readFile(join(dir, 'assistant-binding.json'), 'utf8'));
+  assert.match(saved.manifest, /prompt: 请简洁回答/);
+});
+
+test('settings update explains the preprod platform gap instead of surfacing a raw 400', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { binding, options } = settingsHarness({ store: dir, manifest: RECORDED_MANIFEST,
+    failUpdate: Object.assign(new Error('ManagedRuntime requires Framework=codex/harness/dsh-native and a matching RuntimeName'), { status: 400 }) });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  await assert.rejects(() => service.settingsUpdate({ model: 'deepseek-v4.1-flash-1017' }),
+    error => error.code === 'ASSISTANT_SETTINGS_UNSUPPORTED' && error.status === 409);
+});
+
+test('settings update refuses a legacy binding without the recorded declaration', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { binding, options } = settingsHarness({ store: dir });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  await assert.rejects(() => service.settingsUpdate({ runtimeVersion: '0.1.37', model: 'deepseek-v4.1-flash-1017' }),
+    error => error.code === 'ASSISTANT_SETTINGS_MANIFEST_MISSING' && error.status === 409);
+});
+
+test('settings versions reads the published personal-assistant catalog', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const catalog = { 'personal-assistant': { versions: {
+    '0.1.37': { image: 'hub/x@sha256:aaa', capabilities: ['personal-assistant/v1'] },
+    '0.1.40': { image: 'hub/x@sha256:bbb', capabilities: ['personal-assistant/v1'] },
+  } } };
+  const { binding, options } = settingsHarness({ store: dir, manifest: RECORDED_MANIFEST, catalog });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  const result = await service.settingsVersions({});
+  assert.equal(result.currentVersion, '0.1.37');
+  assert.deepEqual(result.versions.map(row => row.version), ['0.1.37', '0.1.40']);
+  assert.equal(result.catalogAvailable, true);
 });
