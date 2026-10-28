@@ -42,6 +42,7 @@ const CATEGORY_RULES = [
   ['效率与通知', /\b(notify|notification|reminder|shortcut|productivity|timer|pomodoro|schedule|todo)\b|通知|提醒|快捷|效率|定时|待办/u],
   ['协作与工作流', /\b(agent.?team|multi.?agent|workflow|orchestrat|collaborat|pipeline|subagent)\b|协作|团队|工作流|编排|多智能体/u],
   ['输入与编辑', /\b(input|editor|vscode|completion|autocomplete|at-file|genui|clipboard|paste|prompt)\b|输入|编辑|补全|文件引用|剪贴板/u],
+  ['助理', /\bassistant\b|助理|云电脑/u],
   ['安全与质量', /\b(security|guard|permission|permissions|sanitize|audit|scan|review|safety)\b|安全|权限|审查|审计|风控/u]
 ];
 
@@ -74,6 +75,7 @@ export const DSH_CURATED_DISCOVERY = Object.freeze([
   { name: '@nanmicoder/dsh-agent-teams', category: '协作与工作流', tags: ['多智能体', '团队'] },
   { name: 'dsh-notification', category: '效率与通知', tags: ['通知'] },
   { name: 'dsh-skill-viewer', category: '效率与通知', tags: ['技能', '浏览'] },
+  { name: '@kingsoftcloud/agentkit-personal-assistant', category: '助理', tags: ['个人助理', '云电脑', '多助理'] },
   { name: 'dshmarket', category: '其他', tags: ['插件市场'] },
   { name: 'dsh-web-plugin-manager', category: '其他', tags: ['插件管理'] }
 ]);
