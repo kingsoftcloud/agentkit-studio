@@ -13,6 +13,24 @@ test('DSH failed install result rejects instead of claiming installation succeed
   await assert.rejects(() => plugins.installDsh('addon'), error => error instanceof StudioPluginsError && error.details.application === 'failed' && error.message.includes('pnpm store mismatch'));
 });
 
+test('version gate failures surface the required runtime instead of a bare code', async () => {
+  const plugins = adapter({
+    listBundles: async () => [],
+    inspect: async () => ({ status: 'accepted', name: '@kingsoftcloud/agentkit-studio' }),
+    installBundle: async () => ({ application: 'failed', changed: false, stage: 'install', error: {
+      code: 'incompatible-version',
+      incompatible: [{ name: '@kingsoftcloud/agentkit-studio', version: '0.0.5', runtimeVersion: '0.2.0-rc.2', requirements: { 'engines.dsh': '0.2.1-rc.2' } }],
+    } }),
+  });
+  await assert.rejects(() => plugins.installDsh('@kingsoftcloud/agentkit-studio@0.0.5'), error =>
+    error.code === 'DSH_PLUGIN_OPERATION_FAILED'
+    && error.message.includes('不兼容')
+    && error.message.includes('0.0.5')
+    && error.message.includes('engines.dsh=0.2.1-rc.2')
+    && error.message.includes('0.2.0-rc.2')
+    && error.message.includes('更新'));
+});
+
 test('DSH shipped bundles activate without reinstalling and preserve loaded row state', async () => {
   const calls = [];
   const plugins = adapter({

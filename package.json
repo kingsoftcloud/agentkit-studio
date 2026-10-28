@@ -132,5 +132,12 @@
     "esbuild": "0.27.7",
     "marked": "18.1.1",
     "typescript": "6.0.3"
-  }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "agentkit",
+    "studio",
+    "cloud-assistant",
+    "personal-assistant"
+  ]
 }

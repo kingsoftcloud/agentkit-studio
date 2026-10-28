@@ -22,12 +22,25 @@ export class StudioPluginsError extends Error {
   }
 }
 
+function incompatibilityMessage(error) {
+  const rows = Array.isArray(error?.incompatible) ? error.incompatible : [];
+  if (!rows.length) return '';
+  // DSH 只把版本闸门的明细放在 `incompatible` 里，界面不展示会让用户只看到
+  // `incompatible-version` 这种无信息量的 code，误以为插件包坏了。
+  const lines = rows.slice(0, 3).map(row => {
+    const requirements = Object.entries(row?.requirements && typeof row.requirements === 'object' ? row.requirements : {})
+      .map(([field, expected]) => `${field}=${expected}`).join('、');
+    return `${row.name}@${row.version} 要求 ${requirements || '未声明'}，当前 Studio 运行时是 ${row.runtimeVersion || '未知版本'}`;
+  });
+  return `插件与当前 Studio 运行时版本不兼容：${lines.join('；')}。请把 Studio 更新到最新版本后再安装。`;
+}
+
 function changeResult(change) {
   if (!change || !['applied', 'restart-required'].includes(change.application) || change.error) {
     const details = change || {};
     const diagnostic = String(change?.error?.diagnostic || '').slice(-1200);
     const code = change?.application === 'cancelled' ? 'DSH_PLUGIN_CANCELLED' : 'DSH_PLUGIN_OPERATION_FAILED';
-    throw new StudioPluginsError(code, diagnostic || `插件操作未生效：${change?.error?.code || change?.application || '宿主没有返回结果'}`, details);
+    throw new StudioPluginsError(code, diagnostic || incompatibilityMessage(change?.error) || `插件操作未生效：${change?.error?.code || change?.application || '宿主没有返回结果'}`, details);
   }
   return { ok: true, ...change, note: change.application === 'restart-required' ? '配置已保存，需要重启 Host 后生效。' : 'Host 已应用插件变更。' };
 }
