@@ -44,7 +44,8 @@
     "studio.plugin.json",
     "CHANGELOG.md",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "scripts/start-agent-bundle.mjs"
   ],
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
