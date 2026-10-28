@@ -114,6 +114,7 @@ test('release settings preserve secrets and resolve only credential file referen
 });
 
 test('CI build version reaches the official package CLI instead of being lost in its environment', async t => {
+  const studioVersion=(await import('../package.json',{with:{type:'json'}})).default.version;
   const input=await fixture(t);
   const bin=join(input.root,'bin'); await mkdir(bin);
   const calls=join(input.root,'calls.jsonl');
@@ -128,7 +129,7 @@ setImmediate(()=>{process.stdout.write('en=${launchToken}');process.stderr.write
   const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
   const build=await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
     '--source',input.source,'--output',input.output,'--patches',input.patches,'--commit',input.commit,
-    '--target','mac-arm64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.2'],{
+    '--target','mac-arm64','--dsh-version','0.2.0-rc.2','--studio-version',studioVersion],{
     env:{...process.env,PATH:`${bin}:${process.env.PATH}`,PACKAGE_CALLS:calls,DSH_DESKTOP_PLUGIN_INPUTS:'',DSH_DESKTOP_BUILD_VERSION:'0.2.0-rc.2.20261012.0'},
   });
   for(const output of [build.stdout,build.stderr]) {
@@ -140,6 +141,7 @@ setImmediate(()=>{process.stdout.write('en=${launchToken}');process.stderr.write
 });
 
 test('Windows target reads its own settings and delegates NSIS packaging to DSH', async t => {
+  const studioVersion=(await import('../package.json',{with:{type:'json'}})).default.version;
   const input=await fixture(t);
   const bin=join(input.root,'bin'); await mkdir(bin);
   const calls=join(input.root,'windows-calls.jsonl');
@@ -149,7 +151,7 @@ test('Windows target reads its own settings and delegates NSIS packaging to DSH'
   const {promisify}=await import('node:util'); const {execFile}=await import('node:child_process');
   await promisify(execFile)(process.execPath,['scripts/package-desktop.mjs',
     '--source',input.source,'--output',input.output,'--patches',input.patches,'--commit',input.commit,
-    '--target','win-x64','--dsh-version','0.2.0-rc.2','--studio-version','0.0.2','--build-version','0.2.0-rc.2.20261013.20'],{
+    '--target','win-x64','--dsh-version','0.2.0-rc.2','--studio-version',studioVersion,'--build-version','0.2.0-rc.2.20261013.20'],{
     env:{...process.env,PATH:`${bin}:${process.env.PATH}`,PACKAGE_CALLS:calls,DSH_DESKTOP_PLUGIN_INPUTS:''},
   });
   const recorded=(await readFile(calls,'utf8')).trim().split('\n').map(line=>JSON.parse(line));

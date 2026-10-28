@@ -56,6 +56,17 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioSchedulerPromise, studioObservabilityPromise, studioEvaluationPromise,
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
+
+  // Productized personal-assistant desktop proxy. The standalone plugin asks
+  // this Host service for its cloud binding and for one-shot desktop tickets,
+  // so the gateway API key never reaches the plugin, its page or its logs.
+  const { createAssistantDesktop, assistantDesktopService } = await import('../assistant-desktop.mjs');
+  const assistantDesktop = createAssistantDesktop({
+    storeDir: studioStoreDir, fetchImpl: services.runtimeFetch,
+    configuration: configurationPromise,
+    getClient: async () => serverClientPromise,
+  });
+  ctx.provide('studioPersonalAssistantDesktop', assistantDesktopService(assistantDesktop));
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the

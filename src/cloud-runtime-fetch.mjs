@@ -8,7 +8,11 @@ export function createCloudRuntimeFetch({ configuration, fetchImpl = fetch, runt
     assertOpen();
     const url = new URL(input instanceof Request ? input.url : input);
     const preprodRuntime = url.protocol === 'https:' && !url.port && !url.username && !url.password
-      && /^ar-[A-Za-z0-9-]+\.agent-pre\.kspmas\.ksyun\.com$/.test(url.hostname);
+      // Preprod runtime and personal-assistant gateway hosts share the frozen
+      // preprod chain. Keep the exception on this exact domain and single-label
+      // shape only; public production origins keep the process TLS policy.
+      && (/^ar-[A-Za-z0-9-]+\.agent-pre\.kspmas\.ksyun\.com$/.test(url.hostname)
+        || url.hostname === 'pa-desktop-dev.agent-pre.kspmas.ksyun.com');
     if (preprodRuntime) {
       const { values } = await (await configuration).resolve();
       assertOpen();
