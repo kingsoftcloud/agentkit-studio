@@ -216,7 +216,7 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
   }
 
   /** Page-facing snapshot: fetchable without leaking the credential. */
-  async function status(signal) {
+  async function status(input = {}, signal) {
     const resolved = await refresh(signal).catch(error => ({ binding: null, candidates: [], reason: error?.code || 'unavailable' }));
     return { configured: Boolean(resolved.binding), agentId: resolved.binding?.agentId,
       gatewayUrl: resolved.binding?.gatewayUrl, reason: resolved.binding ? '' : resolved.reason,

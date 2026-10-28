@@ -54,6 +54,20 @@ test('the Studio proxy discovers the account assistant and binds it without any 
   assert.equal((await stat(join(dir, 'assistant-binding.json'))).mode & 0o777, 0o600);
 });
 
+test('the plugin call convention status(input, signal) stays a readable snapshot', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir });
+  const service = createAssistantDesktop(options);
+  // The standalone plugin calls every binding method as (input, signal); status
+  // must tolerate the positional input object instead of treating it as an
+  // AbortSignal and degrading to ASSISTANT_GATEWAY_UNREACHABLE.
+  const status = await service.status({}, AbortSignal.timeout(5_000));
+  assert.equal(status.configured, true);
+  assert.equal(status.agentId, AGENT);
+  assert.equal(status.reason, '');
+  assert.equal(status.candidates.length, 1);
+});
+
 test('issueTicket returns the normalized public authorization only', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
   const { options, calls } = harness({ store: dir });
