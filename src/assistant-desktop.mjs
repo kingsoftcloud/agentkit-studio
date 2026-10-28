@@ -38,7 +38,7 @@ function gatewayOrigin(value) {
   return url.origin;
 }
 
-export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = process.env, configuration: configurationSource, getClient } = {}) {
+export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = process.env, configuration: configurationSource, getClient, getDeploymentClient } = {}) {
   const file = join(storeDir, 'assistant-binding.json');
   let cached, cacheAt = 0;
   const ttl = 5_000;
@@ -309,13 +309,40 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     return { configured: false };
   }
 
-  return Object.freeze({ configuration, issueTicket, status, connect, create, disconnect });
+  /** Close the bound cloud assistant for good: remove the managed runtime
+   * (the pod), let the platform release the AICP key and the Ding order, then
+   * drop the local binding. The page must echo the instance id, so a stale
+   * button can never delete a different agent. */
+  async function destroy(input = {}, signal) {
+    const binding = await readBinding();
+    const agentId = binding?.agentId || text(input.agentId);
+    if (!AGENT_ID.test(agentId)) throw fail('ASSISTANT_NOT_CREATED', '当前没有可关闭的个人助理', 409);
+    const confirmed = text(input.confirmAgentId);
+    if (!confirmed) throw fail('ASSISTANT_DELETE_CONFIRMATION_REQUIRED', '关闭个人助理需要再次确认', 409, { agentId });
+    if (confirmed !== agentId) throw fail('ASSISTANT_DELETE_CONFIRMATION_REQUIRED', '确认的实例标识与当前绑定不一致，请刷新后重试', 409, { agentId });
+    if (typeof getDeploymentClient !== 'function') throw fail('ASSISTANT_DELETE_UNAVAILABLE', '当前 Studio 版本不支持关闭个人助理', 503);
+    let client;
+    try { client = await getDeploymentClient(); }
+    catch { throw fail('ASSISTANT_DELETE_UNAVAILABLE', '暂时无法连接云端控制面，请稍后重试', 503); }
+    try { await client.forAgent(agentId).remove({ signal }); }
+    catch (error) {
+      // A missing agent is already closed; everything else keeps the binding so
+      // the user can retry the same instance instead of losing the reference.
+      if (Number(error?.status) === 404 || /not found|not exist|未找到/iu.test(String(error?.message))) { /* already gone */ }
+      else throw fail('ASSISTANT_DELETE_FAILED', String(error?.message || '云端未能关闭个人助理，请稍后重试').slice(0, 240), Number(error?.status) >= 400 && Number(error?.status) <= 599 ? Number(error.status) : 503);
+    }
+    await rm(file, { force: true });
+    cached = null; cacheAt = 0;
+    return { configured: false, agentId, closed: true };
+  }
+
+  return Object.freeze({ configuration, issueTicket, status, connect, create, disconnect, destroy });
 }
 
 /** The service shape the standalone plugin consumes via `ctx.get()`. */
 export function assistantDesktopService(impl) {
   return Object.freeze({ format: SERVICE, configuration: impl.configuration, issueTicket: impl.issueTicket,
-    status: impl.status, connect: impl.connect, create: impl.create, disconnect: impl.disconnect });
+    status: impl.status, connect: impl.connect, create: impl.create, disconnect: impl.disconnect, destroy: impl.destroy });
 }
 
 export const ASSISTANT_DESKTOP_SERVICE = SERVICE;

@@ -65,6 +65,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     storeDir: studioStoreDir, fetchImpl: services.runtimeFetch,
     configuration: configurationPromise,
     getClient: async () => serverClientPromise,
+    // Closing the assistant needs DeleteAgent, which the general client
+    // intentionally excludes; the deployment client owns that mutation.
+    getDeploymentClient: async () => deploymentClientPromise,
   });
   ctx.provide('studioPersonalAssistantDesktop', assistantDesktopService(assistantDesktop));
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });

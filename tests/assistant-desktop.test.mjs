@@ -99,6 +99,42 @@ test('a stale key is re-acquired from the platform instead of asking the user', 
   assert.equal(status.candidates.length, 1);
 });
 
+test('closing the assistant needs the instance id echoed back', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir });
+  const calls = [];
+  options.getDeploymentClient = async () => ({ forAgent: id => ({ remove: async () => { calls.push(id); return { Data: { deleted: true } }; } }) });
+  const service = createAssistantDesktop(options);
+  await service.configuration({});
+  await assert.rejects(service.destroy({}), error => error.code === 'ASSISTANT_DELETE_CONFIRMATION_REQUIRED' && error.status === 409);
+  await assert.rejects(service.destroy({ confirmAgentId: 'ar-00000000000000-00000000' }),
+    error => error.code === 'ASSISTANT_DELETE_CONFIRMATION_REQUIRED' && error.status === 409);
+  assert.deepEqual(calls, []);
+});
+
+test('closing the assistant removes the cloud runtime and drops the binding', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir });
+  const calls = [];
+  options.getDeploymentClient = async () => ({ forAgent: id => ({ remove: async () => { calls.push(id); return { Data: { deleted: true } }; } }) });
+  const service = createAssistantDesktop(options);
+  assert.equal((await service.configuration({})).configured, true);
+  const closed = await service.destroy({ confirmAgentId: AGENT });
+  assert.deepEqual(closed, { configured: false, agentId: AGENT, closed: true });
+  assert.deepEqual(calls, [AGENT]);
+  await assert.rejects(readFile(join(dir, 'assistant-binding.json'), 'utf8'), error => error.code === 'ENOENT');
+});
+
+test('closing without a binding is refused instead of deleting anything', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir });
+  let touched = false;
+  options.getDeploymentClient = async () => ({ forAgent: () => ({ remove: async () => { touched = true; } }) });
+  const service = createAssistantDesktop(options);
+  await assert.rejects(service.destroy({ confirmAgentId: AGENT }), error => error.code === 'ASSISTANT_NOT_CREATED' && error.status === 409);
+  assert.equal(touched, false);
+});
+
 test('no cloud assistant yet reports the create state', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
   const { options } = harness({ store: dir });
@@ -158,5 +194,5 @@ test('creating an assistant waits for the instance and binds its credential', as
 test('the provided service keeps only the documented surface', () => {
   const service = assistantDesktopService(createAssistantDesktop({ storeDir: '/tmp/unused', configuration: { resolve: async () => ({ values: {} }) } }));
   assert.equal(service.format, ASSISTANT_DESKTOP_SERVICE);
-  assert.deepEqual(Object.keys(service).sort(), ['configuration', 'connect', 'create', 'disconnect', 'format', 'issueTicket', 'status']);
+  assert.deepEqual(Object.keys(service).sort(), ['configuration', 'connect', 'create', 'destroy', 'disconnect', 'format', 'issueTicket', 'status']);
 });
