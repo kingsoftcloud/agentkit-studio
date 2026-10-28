@@ -1,6 +1,7 @@
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, DSH_MODEL_SETTINGS_NS, modelCredentialName, modelProfileId } from '../dsh/model-bridge.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { modelRuntimeOptions } from '../../model-profile-contract.mjs';
 
 export function createModelSettingsSection({
   ui: { React: { createElement: h, useEffect, useState }, Pill, SecretInput, buttonStyle, inputStyle, BRAND = DEFAULT_BRAND },
@@ -82,7 +83,9 @@ export function createModelSettingsSection({
           onSaved?.();
           return;
         }
-        const rawProfiles = form.profiles.map((profile, index) => ({ id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, default: profile.default === true, codexApi: profile.codexApi || 'responses', input: profile.input || ['text'] }));
+        const rawProfiles = form.profiles.map((profile, index) => ({ ...modelRuntimeOptions(profile),
+          ...(typeof profile.displayName === 'string' ? { displayName: profile.displayName } : {}),
+          id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, default: profile.default === true, codexApi: profile.codexApi || 'responses', input: profile.input || ['text'] }));
         const defaultIndex = rawProfiles.findIndex(profile => profile.default);
         const profiles = rawProfiles.map((profile, index) => ({ ...profile, default: defaultIndex < 0 ? index === 0 : index === defaultIndex }));
         if (profiles.some(profile => !profile.modelName)) throw new Error('每个模型配置都需要填写模型名称');
@@ -105,6 +108,14 @@ export function createModelSettingsSection({
       } catch (reason) { setError(reason?.message || '保存模型与凭证失败'); } finally { setSaving(false); }
     };
     const field = (label, key, placeholder, type = 'text') => h('label', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, label, h(type === 'password' ? SecretInput : 'input', { label, type, value: form[key] || '', placeholder, autoComplete: type === 'password' ? 'new-password' : 'off', onChange: event => setField(key, event.target.value), style: inputStyle() }));
+    const thinkingControl = (profile, index) => h('label', { style: { display: 'block', marginTop: '10px' } },
+      'Native 思考模式', h('select', { value: profile.parameters?.thinking?.type || 'default', onChange: event => {
+        const parameters = { ...(profile.parameters || {}) };
+        if (event.target.value === 'default') delete parameters.thinking;
+        else parameters.thinking = { type: event.target.value };
+        setProfile(index, 'parameters', parameters);
+      }, style: inputStyle() }, h('option', { value: 'default' }, '服务默认'), h('option', { value: 'enabled' }, '开启'), h('option', { value: 'disabled' }, '关闭')),
+      h('span', { style: { fontSize: '12px', display: 'block', marginTop: '6px' } }, '服务需支持思考模式；界面只展示模型实际返回的思考。'));
     return h('div', { 'data-studio-model-settings': true, 'data-onboarding-mode': mode, style: { color: BRAND.ink, minWidth: 0, padding: '0 0 18px', fontFamily: 'inherit' } },
       status === 'error' ? h('div', { role: 'alert', style: { marginBottom: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
       h('form', { onSubmit: save, style: { display: 'grid', gap: '24px', maxWidth: '760px' } },
@@ -118,7 +129,7 @@ export function createModelSettingsSection({
               profile.inputCapability === 'catalog' ? [h(Pill, null, '文字'), profile.input?.includes('image') ? h(Pill, null, '图片') : null, h('span', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '模型目录已识别')]
                 : h('span', { style: { color: BRAND.inkMuted } }, ({ unknown: '模型目录未提供能力信息', unavailable: '暂时无法读取模型目录', missing: '模型目录中未找到该模型' }[profile.inputCapability] || (status === 'loading' ? '正在读取模型目录…' : '保存后自动识别')))),
             h('label', { style: { display: 'block', marginTop: '8px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'API Key', h(SecretInput, { label: 'API Key', value: profile.apiKey, placeholder: modelStatus[profile.credentialName]?.configured ? '已配置，留空保持不变' : '由本机 Host 安全保存', autoComplete: 'new-password', onChange: event => setProfile(index, 'apiKey', event.target.value), style: inputStyle() }), h('div', { style: { display: 'flex', gap: '10px', marginTop: '6px', color: BRAND.inkMuted, fontSize: '12px', flexWrap: 'wrap' } }, h('span', null, sourceLabel(modelStatus[profile.credentialName]?.source)), profile.provider === 'ksyun' ? h('a', { href: 'https://ksp.console.ksyun.com/#/apiKey', target: '_blank', rel: 'noopener noreferrer', style: { color: BRAND.accentStrong, textDecoration: 'underline' } }, '获取 Key') : null)),
-            mode === 'all' && h('details', { style: { marginTop: '14px', color: BRAND.inkMuted } }, h('summary', { style: { cursor: 'pointer', color: BRAND.ink } }, '高级连接设置'), h('label', { style: { display: 'block', marginTop: '10px' } }, 'Codex 连接协议', h('select', { value: profile.codexApi || 'responses', onChange: event => setProfile(index, 'codexApi', event.target.value), style: inputStyle() }, h('option', { value: 'responses' }, 'Responses'), h('option', { value: 'chat-completions' }, 'Chat Completions')), h('span', { style: { fontSize: '12px', display: 'block', marginTop: '6px' } }, '只影响 Codex 运行时。服务仅支持 Chat Completions 时选择该协议。')))
+            mode === 'all' && h('details', { style: { marginTop: '14px', color: BRAND.inkMuted } }, h('summary', { style: { cursor: 'pointer', color: BRAND.ink } }, '高级连接设置'), h('label', { style: { display: 'block', marginTop: '10px' } }, 'Codex 连接协议', h('select', { value: profile.codexApi || 'responses', onChange: event => setProfile(index, 'codexApi', event.target.value), style: inputStyle() }, h('option', { value: 'responses' }, 'Responses'), h('option', { value: 'chat-completions' }, 'Chat Completions')), h('span', { style: { fontSize: '12px', display: 'block', marginTop: '6px' } }, '只影响 Codex 运行时。服务仅支持 Chat Completions 时选择该协议。')), thinkingControl(profile, index))
           ))),
           mode === 'all' && h('button', { type: 'button', onClick: addProfile, style: { ...buttonStyle(), marginTop: '10px' } }, '＋ 添加提供商或模型')),
         mode !== 'model' && h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } }, h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' } }, h('div', null, h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '14px' } }, '云端凭证'), h('p', { style: { margin: '3px 0 0', color: BRAND.inkMuted, fontSize: '11px' } }, '用于构建、部署和资源访问')), h(Pill, { tone: cloudStatus.configured ? 'accent' : 'signal' }, cloudStatus.configured ? '已配置' : '未配置')), h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px' } }, field('Access Key', 'cloudAccessKey', cloudStatus.configured ? '已配置，留空保持不变' : '云端 Access Key', 'password'), field('Secret Key', 'cloudSecretKey', cloudStatus.configured ? '已配置，留空保持不变' : '云端 Secret Key', 'password')), h('details', { style: { marginTop: '10px', color: BRAND.inkMuted, fontSize: '11px' } }, h('summary', { style: { cursor: 'pointer', color: BRAND.ink, fontWeight: 700 } }, '高级云端设置'), h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', marginTop: '8px' } }, field('Account ID', 'cloudAccountId', '可选'), field('区域', 'cloudRegion', '例如：cn-beijing-6'), field('控制面地址', 'cloudServerUrl', '例如：https://agentengine.example.com'), field('对象存储桶', 'cloudBucket', '可选'))), h('div', { style: { marginTop: '9px', color: BRAND.inkMuted, fontSize: '10px' } }, '当前来源：', sourceLabel(cloudStatus.source))),

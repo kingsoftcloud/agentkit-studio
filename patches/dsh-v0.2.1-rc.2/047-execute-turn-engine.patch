@@ -1,0 +1,655 @@
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 03d88148c7992f1c856efc44df0a930470f90f70..4ed906e2a5f09427acdb079e294b2729e9362959 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -87,6 +87,7 @@ turn/start
+   -> agent/pre-step; project runtime context at fallback
+                                      reject | enter(messages, startsRequestSeries?)
+      reject, or a first enter rewritten empty -> close the turn with no step
++     agent/execute-turn: handled | delegate below
+      step/start
+      agent/request -> prepareCall (cancellation commits neither system nor users)
+      reconcile system/message using the prepared call capability
+diff --git a/docs/architecture.zh.md b/docs/architecture.zh.md
+index 870fa1c996ba569f882a7cb70e62f0bd655c64af..98880ea0211467f93f2cdab7805624f7498c5a53 100644
+--- a/docs/architecture.zh.md
++++ b/docs/architecture.zh.md
+@@ -91,6 +91,7 @@ turn/start
+   -> agent/pre-step; project runtime context at fallback
+                                      reject | enter(messages, startsRequestSeries?)
+      reject, or a first enter rewritten empty -> close the turn with no step
++     agent/execute-turn: handled | delegate below
+      step/start
+      agent/request -> prepareCall (cancellation commits neither system nor users)
+      reconcile system/message using the prepared call capability
+diff --git a/docs/subsystems/core.i18n.yaml b/docs/subsystems/core.i18n.yaml
+index 94bed7605494446cd4f40a308738b1ffe587c284..ab43ba20b56b3fe1d9f57e952e104a6e16c64055 100644
+--- a/docs/subsystems/core.i18n.yaml
++++ b/docs/subsystems/core.i18n.yaml
+@@ -18,8 +18,8 @@
+   en: 6c8c47ac78de2dde
+   zh: c9d527a25a85d1d9
+ /core/interception-decisions:
+-  en: 6fccceb0a5f1cad9
+-  zh: f43c30c2386d8cc8
++  en: 8e2cc9ae247472ad
++  zh: 0e31ac83b38fea9a
+ /core/sessions:
+   en: 9a38f693a00fa80d
+   zh: d0f66664ac85ae64
+diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
+index 9f792ef159bc64a7c4613e913cb382bfa4ee0611..86905537f1a868314208d479463229e1bd0a6830 100644
+--- a/docs/subsystems/core.md
++++ b/docs/subsystems/core.md
+@@ -334,7 +334,7 @@ type PreStepDecision =
+ type RequestErrorAction = { kind: 'retry' } | undefined
+ ```
+ 
+-`agent/pre-step` is the only waterfall listener chain before request derivation. `agent/turn-stopping` runs when a turn has no tool or steering continuation, before one final steering drain.
++`agent/execute-turn` receives the first admitted `TurnInput` with assembled prompt/tools. Returning a `TurnExecutionResult` transfers all step execution and transcript admission to the listener; returning `next()` preserves the default loop. `prepareInput(step)` admits later next-step input through assembly and pre-step policy while the delegated execution remains active. The host retains its turn boundaries, cancellation and agent lifecycle; it never starts a fallback executor after a handler fails. `agent/turn-stopping` belongs to the default loop; a delegated engine owns its stopping policy.
+ 
+ `agent/created` carries a `SessionStartSource` (why the session lifecycle began; a bridge keys its SessionStart matcher on it):
+ 
+@@ -866,6 +866,37 @@ Types: [Scoped](scope.md)
+ 
+ Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+ 
++<a id="agentexecute-turn--waterfall"></a>
++
++#### `agent/execute-turn` — waterfall
++
++Execute the whole admitted turn instead of the standard model/tool loop. Return a reason without calling next() to own all steps, requests, retry, tools, stopping policy and transcript admission. Calling next() delegates without consuming additional input. The host still owns turn boundaries, cancellation, status, queued follow-ups and teardown. No standard step, request or turn-stopping listener runs for a handled turn.
++
++```ts cordis-catalog
++/**
++ * Execute the whole admitted turn instead of the standard model/tool loop.
++ * Return a reason without calling next() to own all steps, requests, retry,
++ * tools, stopping policy and transcript admission. Calling next() delegates
++ * without consuming additional input. The host still owns turn boundaries,
++ * cancellation, status, queued follow-ups and teardown. No standard step,
++ * request or turn-stopping listener runs for a handled turn.
++ * @param payload.agent - the agent whose lifecycle contains the execution.
++ * @param payload.input - initial admitted input and assembled prompt/tools; not yet logged as model input.
++ * @param payload.turn - the open host turn number.
++ * @param payload.signal - cancellation signal; an engine must quiesce before returning.
++ * @param payload.prepareInput - claim next-step input through assembly and pre-step policy.
++ * Call serially with the next step number, only while owning this turn.
++ * The engine logs accepted messages and its own step boundaries before dispatching effects.
++ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
++ * @mode waterfall
++ */
++'agent/execute-turn'(this: Scoped<Agent>, payload: { agent: Agent; input: Extract<TurnInput, { kind: 'enter' }>; turn: number; signal: AbortSignal; prepareInput: (step: number) => Promise<TurnInput> }, next: () => Promise<TurnExecutionResult>): Promise<TurnExecutionResult>
++```
++
++Types: [Scoped](scope.md)
++
++Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
++
+ <a id="agentinboxclaimed--emit"></a>
+ 
+ #### `agent/inbox/claimed` — emit
+diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
+index 7acae9488959dab7e1f9c81f60585c1cb093bed2..275eb6f9cc7df3052ef650d828650c027c9366d8 100644
+--- a/docs/subsystems/core.zh.md
++++ b/docs/subsystems/core.zh.md
+@@ -342,7 +342,7 @@ type PreStepDecision =
+ type RequestErrorAction = { kind: 'retry' } | undefined
+ ```
+ 
+-`agent/pre-step` 是请求推导前唯一的 waterfall（瀑布式）监听器链。`agent/turn-stopping` 在轮次没有工具或 steering（中途引导）后续时运行，先于最后一次 steering 排空。
++`agent/execute-turn` 接收首次已接纳的 `TurnInput` 及组装好的提示词和工具。返回 `TurnExecutionResult` 会将全部步骤执行和会话输入记录职责交给监听器；返回 `next()` 保留默认循环。委派执行仍有效时，`prepareInput(step)` 通过组装和 pre-step 策略接纳后续 next-step 输入。宿主保留轮次边界、取消及 agent 生命周期；接管失败不会启动备用执行器。`agent/turn-stopping` 属于默认循环；接管引擎负责自己的停止策略。
+ 
+ `agent/created` 携带 `SessionStartSource`（会话生命周期为何开始；桥接层据此匹配其 SessionStart）：
+ 
+@@ -878,6 +878,37 @@ Types: [Scoped](scope.zh.md)
+ 
+ Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
+ 
++<a id="agentexecute-turn--waterfall"></a>
++
++#### `agent/execute-turn` — waterfall
++
++Execute the whole admitted turn instead of the standard model/tool loop. Return a reason without calling next() to own all steps, requests, retry, tools, stopping policy and transcript admission. Calling next() delegates without consuming additional input. The host still owns turn boundaries, cancellation, status, queued follow-ups and teardown. No standard step, request or turn-stopping listener runs for a handled turn.
++
++```ts cordis-catalog
++/**
++ * Execute the whole admitted turn instead of the standard model/tool loop.
++ * Return a reason without calling next() to own all steps, requests, retry,
++ * tools, stopping policy and transcript admission. Calling next() delegates
++ * without consuming additional input. The host still owns turn boundaries,
++ * cancellation, status, queued follow-ups and teardown. No standard step,
++ * request or turn-stopping listener runs for a handled turn.
++ * @param payload.agent - the agent whose lifecycle contains the execution.
++ * @param payload.input - initial admitted input and assembled prompt/tools; not yet logged as model input.
++ * @param payload.turn - the open host turn number.
++ * @param payload.signal - cancellation signal; an engine must quiesce before returning.
++ * @param payload.prepareInput - claim next-step input through assembly and pre-step policy.
++ * Call serially with the next step number, only while owning this turn.
++ * The engine logs accepted messages and its own step boundaries before dispatching effects.
++ * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
++ * @mode waterfall
++ */
++'agent/execute-turn'(this: Scoped<Agent>, payload: { agent: Agent; input: Extract<TurnInput, { kind: 'enter' }>; turn: number; signal: AbortSignal; prepareInput: (step: number) => Promise<TurnInput> }, next: () => Promise<TurnExecutionResult>): Promise<TurnExecutionResult>
++```
++
++Types: [Scoped](scope.zh.md)
++
++Source: [`packages/core/agent/src/runtime-types.ts`](../../packages/core/agent/src/runtime-types.ts)
++
+ <a id="agentinboxclaimed--emit"></a>
+ 
+ #### `agent/inbox/claimed` — emit
+diff --git a/packages/core/agent-loop/README.i18n.yaml b/packages/core/agent-loop/README.i18n.yaml
+index 0bbdb05d3759cffe55effb437d684613ea8d7a43..860e1fc52a726f6f521d95af2bf5d52c38f0a332 100644
+--- a/packages/core/agent-loop/README.i18n.yaml
++++ b/packages/core/agent-loop/README.i18n.yaml
+@@ -21,11 +21,11 @@
+   en: 96295035babf4f90
+   zh: 8848f9497019ee63
+ /deepseek-ai-dsh-agent-loop/use-this-package/create-or-resume-agents-programmatically:
+-  en: 82ec792637e8e57f
+-  zh: e32f8ec5ee17afcf
++  en: fb5c076593df797a
++  zh: f6e57e7660d159f0
+ /deepseek-ai-dsh-agent-loop/use-this-package/what-a-step-does:
+-  en: 15ce4783b53532a2
+-  zh: b04a18337281237a
++  en: baf8d82bf872fd90
++  zh: 9079545452e83862
+ /deepseek-ai-dsh-agent-loop/understand-the-implementation:
+   en: ce7e776e9d516bdb
+   zh: 59d2751743db7795
+diff --git a/packages/core/agent-loop/README.md b/packages/core/agent-loop/README.md
+index 62dcd35a92a39c1a4696e2e031a0296534fcface..1b832f2b66b0fdfa3b46005a6d6127ea42399609 100644
+--- a/packages/core/agent-loop/README.md
++++ b/packages/core/agent-loop/README.md
+@@ -70,8 +70,11 @@ const handle = await ctx.agents.create({
+ 
+ Every inbox mutation commits one normalized `agent/inbox/spliced` event. The projection registry folds that event synchronously, so the live projection reflects the splice when `Session.append()` returns. Insertions, edits, removals, claiming, and cancellation replay through the same standard splice coordinates. Ordinary removals carry `outcome: 'canceled'` and emit `agent/inbox/discarded { message }`; claiming uses pure deletions with no outcome and emits `agent/inbox/claimed`. Every insertion emits `agent/inbox/inserted { message }`. `MessageId` stays unique across both pending lists. Consumers that need a removed message use the claimed or discarded notification instead of depending on a pre-splice `session/event` view.
+ 
++<a id="what-a-step-does"></a>
+ ### What a step does
+ 
++An engine can own a whole turn through `agent/execute-turn` after the first non-empty pre-step admission. A handling listener logs admitted input and its own steps, runs all model/tool/retry/stopping policy, and returns the turn reason; the default loop does none of that work. The host retains turn boundaries, cancellation, status, follow-up scheduling and teardown. `prepareInput(step)` admits later steering through the same prompt assembly and pre-step policy. A listener calling `next()` preserves the standard loop; a failed handler closes the turn without dispatching a fallback engine.
++
+ Each step sends the session's derived history — with the latest non-empty `system/message` node as the effective prompt, or no system messages when the rendered prompt is empty — and its visible tool schemas; the model's tool calls run through the guarded tool pipeline and every accepted fact is appended to the session log before the next step derives from it. Parallel-safe calls may overlap up to `maxParallelToolCalls`; exclusive calls run alone as ordering barriers. Cancellation is cooperative: `agent.cancel()` aborts the current activity and, unless `keepInbox` is set, clears pending work; a cancelled stream finalizes the text already delivered to the user.
+ 
+ -----
+diff --git a/packages/core/agent-loop/README.zh.md b/packages/core/agent-loop/README.zh.md
+index ee355a328d0b5b9cdc6ac1c1e93ad7296a8ab5be..d22481591cb51b0dfeea48b3257fcf07ce5126ec 100644
+--- a/packages/core/agent-loop/README.zh.md
++++ b/packages/core/agent-loop/README.zh.md
+@@ -70,8 +70,11 @@ const handle = await ctx.agents.create({
+ 
+ 每次 inbox 变更都会提交一条规范化的 `agent/inbox/spliced` 事件。投影注册表会同步折叠该事件，因此 `Session.append()` 返回时，实时投影已经反映该 splice。插入、编辑、移除、领取与取消都通过同一组标准 splice 坐标回放。普通删除携带 `outcome: 'canceled'` 并发出 `agent/inbox/discarded { message }`；领取使用不带 outcome 的纯删除，并发出 `agent/inbox/claimed`。每次插入都会发出 `agent/inbox/inserted { message }`。`MessageId` 在两个待处理列表之间保持唯一。需要被移除消息的消费方应使用 claimed 或 discarded 通知，而不依赖 splice 前的 `session/event` 投影视图。
+ 
++<a id="what-a-step-does"></a>
+ ### 一个步骤做什么
+ 
++引擎可在首次非空 pre-step 准入后，通过 `agent/execute-turn` 接管整个轮次。接管监听器记录已接纳输入及自己的步骤，负责所有模型、工具、重试和停止策略，再返回轮次结束原因；默认循环不会执行这些工作。宿主保留轮次边界、取消、状态、后续轮次调度和卸载职责。`prepareInput(step)` 通过相同的提示词组装和 pre-step 策略接纳后续引导。监听器调用 `next()` 会保留标准循环；接管失败会关闭轮次，不会启动备用执行引擎。
++
+ 每个步骤都会发送会话的派生历史——最新的非空 `system/message` 节点是有效提示词，渲染提示词为空时则没有系统消息——及其可见工具 schema；模型的工具调用经过受守卫的工具流水线，每个被接纳的事实都会在下一步据此派生之前追加到会话日志。并行安全调用最多可重叠 `maxParallelToolCalls` 个；独占调用单独运行并构成排序屏障。取消是协作式的：`agent.cancel()` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；被取消的流会终结已送达用户的文本。
+ 
+ -----
+diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
+index adf2e33ddcc9b37e8e20e89203a276bcdf18ee5d..d7c4745b381a2d3a644d84f694e356ed1ff036b7 100644
+--- a/packages/core/agent-loop/src/agent.ts
++++ b/packages/core/agent-loop/src/agent.ts
+@@ -14,6 +14,7 @@ import type {
+   InboxTarget,
+   PreStepDecision,
+   RequestErrorAction,
++  TurnInput,
+ } from '@deepseek-ai/dsh-agent'
+ import { agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
+ import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
+@@ -51,14 +52,7 @@ type Phase =
+ 
+ type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }>
+ 
+-type PreparedStep =
+-  | { kind: 'reject' }
+-  | {
+-    kind: 'enter'
+-    messages: UserMessage[]
+-    startsRequestSeries?: true
+-    assembly: PromptAssembly
+-  }
++type PreparedStep = TurnInput
+ 
+ /** Remove adapter-derived values before plugins propose the next request config. */
+ function requestProposal(header: EpochHeader): LlmCallConfig {
+@@ -328,6 +322,26 @@ export class ReactLoopAgent implements Agent {
+           return false
+         }
+         signal.throwIfAborted()
++        if (phase.step === 0) {
++          let executing = true
++          try {
++            const execution = await this.dispatch.waterfall('agent/execute-turn', {
++              input: decision, turn, signal,
++              prepareInput: async (nextStep) => {
++                if (!executing) throw new Error('Turn execution has already settled')
++                signal.throwIfAborted()
++                return this.preStep('next-step', { turn, step: nextStep })
++              },
++            }, () => Promise.resolve(undefined))
++            signal.throwIfAborted()
++            if (execution !== undefined) {
++              turnEnds = execution.reason
++              break
++            }
++          } finally {
++            executing = false
++          }
++        }
+         this.session.append('step/start', { turn, step })
+         phase.step = step
+         const toolRecovery = new ToolCallRecovery()
+diff --git a/packages/core/agent-loop/tests/execute-turn-loader.spec.ts b/packages/core/agent-loop/tests/execute-turn-loader.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2332cff0a008c2f57128ccdaf4635d1486100399
+--- /dev/null
++++ b/packages/core/agent-loop/tests/execute-turn-loader.spec.ts
+@@ -0,0 +1,33 @@
++import { readdir, readFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import { expect, it } from 'vitest'
++import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
++
++it('a Loader-composed external engine produces one durable turn without a default model route', async () => {
++  const configPath = fileURLToPath(new URL('./fixtures/external-turn/cordis.yml', import.meta.url))
++  let persisted = ''
++  async function readLogs(directory: string): Promise<void> {
++    for (const entry of await readdir(directory, { withFileTypes: true })) {
++      const path = join(directory, entry.name)
++      if (entry.isDirectory()) await readLogs(path)
++      else if (entry.name.endsWith('.jsonl')) persisted += await readFile(path, 'utf8')
++    }
++  }
++  const result = await runLoaderSmoke({
++    label: 'external whole-turn engine', tempDirPrefix: 'dsh-external-turn-',
++    binScript: fileURLToPath(new URL('./fixtures/external-turn/driver.ts', import.meta.url)),
++    configPath, tsconfigPath: fileURLToPath(new URL('../../../../tsconfig.json', import.meta.url)),
++    mode: 'src', sourceImport: 'tsx/esm',
++    inspect: async cwd => readLogs(join(cwd, '.sessions')),
++  })
++  const report = JSON.parse(result.stdout.trim()) as {
++    result: { output: string; usage: { inputTokens: number; outputTokens: number } }
++    events: { type: string; data: object }[]
++  }
++  expect(report.result).toMatchObject({ output: 'External engine completed.', usage: { inputTokens: 3, outputTokens: 4 } })
++  expect(report.events.filter(event => event.type === 'turn/start')).toHaveLength(1)
++  expect(report.events.filter(event => event.type === 'turn/end')).toEqual([{ type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } }])
++  expect(persisted).toContain('External engine completed.')
++  expect(persisted).toContain('"type":"turn/end"')
++}, LOADER_SMOKE_TEST_TIMEOUT_MS)
+diff --git a/packages/core/agent-loop/tests/execute-turn.spec.ts b/packages/core/agent-loop/tests/execute-turn.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9d350539590d58bea34e38d20feb2fc522f14817
+--- /dev/null
++++ b/packages/core/agent-loop/tests/execute-turn.spec.ts
+@@ -0,0 +1,132 @@
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { Context } from '@deepseek-ai/cordis'
++import AgentLoop from '@deepseek-ai/dsh-agent-loop'
++import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
++import { SessionId } from '@deepseek-ai/dsh-session'
++import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
++import type { Agent, TurnInput } from '@deepseek-ai/dsh-agent'
++import { MockAdapter, textResponse } from './mock-adapter.ts'
++
++const contexts: Context[] = []
++afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
++async function harness() {
++  const ctx = new Context()
++  contexts.push(ctx)
++  await mountAgentLoopTestDependencies(ctx)
++  await ctx.plugin(AgentLoop, { agents: [] })
++  const adapter = new MockAdapter([textResponse('default engine')])
++  ctx.llm.registerAdapter(['mock'], adapter)
++  const handle = await ctx.agents.create({ sessionId: SessionId('external-turn'), agentOptions: { provider: 'mock', model: 'mock' } })
++  return { ctx, agent: handle.agent, adapter }
++}
++function send(agent: Agent, text: string) {
++  agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
++}
++
++describe('whole-turn execution', () => {
++  it('delegates unchanged to the default request and tool loop', async () => {
++    const { ctx, agent } = await harness()
++    const request = vi.fn()
++    ctx.on('agent/request', async (_payload, next) => { request(); return next() })
++    ctx.on('agent/execute-turn', async ({ input }, next) => {
++      expect(input.messages[0]?.content).toEqual([{ type: 'text', text: 'hello' }])
++      return next()
++    })
++    send(agent, 'hello')
++    await agent.whenIdle()
++    expect(request).toHaveBeenCalledOnce()
++    expect(agent.session.snapshotEvents().filter(e => e.type === 'assistant/message')).toHaveLength(1)
++  })
++
++  it('a scoped engine owns all steps without entering default requests or stop hooks', async () => {
++    const { ctx, agent } = await harness()
++    const request = vi.fn(), stopping = vi.fn()
++    ctx.on('agent/request', async (_payload, next) => { request(); return next() })
++    ctx.on('agent/turn-stopping', () => { stopping() })
++    const engine = agent.ctx.on('agent/execute-turn', async ({ input, turn }) => {
++      agent.session.append('step/start', { turn, step: 1 })
++      for (const message of input.messages) agent.session.append('user/message', message, { surfaceOp: 'append' })
++      agent.session.append('assistant/message', {
++        turn, step: 1, stream: [], message: createAssistantMessage({
++          content: [{ type: 'text', text: 'external engine' }], source: { provider: 'external-fixture', model: 'fixture/v1' },
++        }),
++      }, { surfaceOp: 'append' })
++      agent.session.append('step/end', { turn, step: 1 })
++      return { reason: { kind: 'completed' } }
++    })
++    send(agent, 'hello')
++    await agent.whenIdle()
++    expect(request).not.toHaveBeenCalled()
++    expect(stopping).not.toHaveBeenCalled()
++    expect(agent.status).toBe('idle')
++    const events = agent.session.snapshotEvents()
++    expect(events.filter(e => e.type === 'turn/start')).toHaveLength(1)
++    expect(events.filter(e => e.type === 'turn/end').map(e => e.data)).toEqual([{ turn: 1, reason: { kind: 'completed' } }])
++    engine()
++    send(agent, 'fallback after disposal')
++    await agent.whenIdle()
++    expect(request).toHaveBeenCalledOnce()
++  })
++
++  it('admits steering through pre-step and rejects retained input capability after settlement', async () => {
++    const { ctx, agent } = await harness()
++    let retained: ((step: number) => Promise<TurnInput>) | undefined
++    const coordinates: number[] = []
++    ctx.on('agent/pre-step', async ({ step }, next) => { coordinates.push(step); return next() })
++    ctx.on('agent/execute-turn', async ({ prepareInput }) => {
++      retained = prepareInput
++      agent.steer(createUserMessage({ content: [{ type: 'text', text: 'steering' }], source: { kind: 'user' } }))
++      const input = await prepareInput(2)
++      expect(input.kind).toBe('enter')
++      if (input.kind === 'enter') expect(input.messages[0]?.content).toEqual([{ type: 'text', text: 'steering' }])
++      return { reason: { kind: 'completed' } }
++    })
++    send(agent, 'hello')
++    await agent.whenIdle()
++    expect(coordinates).toEqual([1, 2])
++    expect(agent.inbox.nextStep).toHaveLength(0)
++    await expect(retained!(3)).rejects.toThrow('already settled')
++  })
++
++  it('cancel quiesces the external engine before the queued follow-up starts', async () => {
++    const { ctx, agent } = await harness()
++    const entered = Promise.withResolvers<undefined>()
++    const order: string[] = []
++    ctx.on('agent/execute-turn', async ({ signal, turn }) => {
++      order.push(`start:${turn}`)
++      if (turn === 1) {
++        entered.resolve(undefined)
++        await new Promise<undefined>((resolve) => {
++          signal.addEventListener('abort', () => { resolve(undefined) }, { once: true })
++        })
++        await Promise.resolve()
++        order.push('quiesced')
++      }
++      return { reason: { kind: 'completed' } }
++    })
++    send(agent, 'first')
++    await entered.promise
++    agent.cancel({ kind: 'user' })
++    send(agent, 'second')
++    await agent.whenIdle()
++    expect(order).toEqual(['start:1', 'quiesced', 'start:2'])
++    expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/end').map(e => e.data)).toEqual([
++      { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } },
++      { turn: 2, reason: { kind: 'completed' } },
++    ])
++  })
++
++  it('a failed engine closes the turn and never falls back to a second executor', async () => {
++    const { ctx, agent } = await harness()
++    const request = vi.fn()
++    ctx.logger.error = vi.fn()
++    ctx.on('agent/request', async (_payload, next) => { request(); return next() })
++    ctx.on('agent/execute-turn', async () => { throw new Error('external engine failed') })
++    send(agent, 'hello')
++    await agent.whenIdle()
++    expect(request).not.toHaveBeenCalled()
++    const ending = agent.session.snapshotEvents().find(e => e.type === 'turn/end')
++    expect(ending?.data).toMatchObject({ turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN' } } })
++    expect(agent.status).toBe('idle')
++  })
++})
+diff --git a/packages/core/agent-loop/tests/fixtures/external-turn/cordis.yml b/packages/core/agent-loop/tests/fixtures/external-turn/cordis.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..691b6d493caf2f6d5a6b276f05eab78d61f5a4af
+--- /dev/null
++++ b/packages/core/agent-loop/tests/fixtures/external-turn/cordis.yml
+@@ -0,0 +1,14 @@
++- name: '@deepseek-ai/dsh-llm'
++- name: '@deepseek-ai/dsh-session'
++- name: '@deepseek-ai/dsh-session-projection'
++- name: '@deepseek-ai/dsh-session-persistence-jsonl'
++  config:
++    root: './.sessions'
++    compression: none
++- name: '@deepseek-ai/dsh-system-prompt'
++- name: '@deepseek-ai/dsh-tools'
++- name: '@deepseek-ai/dsh-agent'
++- name: '@deepseek-ai/dsh-agent-loop'
++  config:
++    agents: []
++- name: './engine.ts'
+diff --git a/packages/core/agent-loop/tests/fixtures/external-turn/driver.ts b/packages/core/agent-loop/tests/fixtures/external-turn/driver.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9f81347701c0ad0e27a2de8e692e73403104a5a
+--- /dev/null
++++ b/packages/core/agent-loop/tests/fixtures/external-turn/driver.ts
+@@ -0,0 +1,15 @@
++/** Loader process fixture: publish a real Agent, drive and flush its delegated turn. */
++import { boot } from '@deepseek-ai/dsh-app-boot'
++import { runFixtureTurn } from '@deepseek-ai/dsh-loader-smoke'
++import { SessionId } from '@deepseek-ai/dsh-session'
++
++const configPath = process.argv[2]
++if (configPath === undefined) throw new Error('Expected a cordis.yml path')
++const ctx = await boot('external-turn-fixture', configPath)
++try {
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('external-loader') })
++  const result = await runFixtureTurn(ctx, { task: 'Use the external engine.' })
++  process.stdout.write(`${JSON.stringify({ result, events: agent.session.snapshotEvents().map(event => ({ type: event.type, data: event.data })) })}\n`)
++} finally {
++  await ctx.fiber.dispose()
++}
+diff --git a/packages/core/agent-loop/tests/fixtures/external-turn/engine.ts b/packages/core/agent-loop/tests/fixtures/external-turn/engine.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0fcbebeddd19fb3ae7fe3c6b689d8b985adb5ed3
+--- /dev/null
++++ b/packages/core/agent-loop/tests/fixtures/external-turn/engine.ts
+@@ -0,0 +1,24 @@
++/** Test-only external engine composed through the public turn event. */
++import type { Context } from '@deepseek-ai/cordis'
++import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
++
++export const name = 'external-turn-fixture'
++export const inject = ['agents', 'systemPrompt']
++/** Install a deterministic engine; any default request is a composition failure. */
++export function apply(ctx: Context): void {
++  ctx.systemPrompt.section({ name: 'external-fixture', order: 0, text: 'External engine instruction.' })
++  ctx.on('agent/request', async () => { throw new Error('Default engine must not execute a handled turn') })
++  ctx.on('agent/execute-turn', async ({ agent, input, turn, signal }) => {
++    signal.throwIfAborted()
++    agent.session.append('step/start', { turn, step: 1 })
++    for (const message of input.messages) agent.session.append('user/message', message, { surfaceOp: 'append' })
++    agent.session.append('assistant/message', {
++      turn, step: 1, stream: [], message: createAssistantMessage({
++        content: [{ type: 'text', text: 'External engine completed.' }], source: { provider: 'external-fixture', model: 'fixture/v1' },
++      }),
++      usage: { inputTokens: 3, outputTokens: 4 },
++    }, { surfaceOp: 'append' })
++    agent.session.append('step/end', { turn, step: 1 })
++    return { reason: { kind: 'completed' } }
++  })
++}
+diff --git a/packages/core/agent/README.i18n.yaml b/packages/core/agent/README.i18n.yaml
+index befdc09642372eb2c1ae1de3cc60869815dbe345..a89c87a134ee57145325d1524d56e42dc9ab172a 100644
+--- a/packages/core/agent/README.i18n.yaml
++++ b/packages/core/agent/README.i18n.yaml
+@@ -27,8 +27,8 @@
+   en: 2594a1e02adea801
+   zh: cae8860369728efb
+ /deepseek-ai-dsh-agent/use-this-package/intercept-or-observe-work-in-flight:
+-  en: fb42e501ef88a040
+-  zh: 8822f29727d14bef
++  en: 12ccd493f3af071e
++  zh: e9b17db97b8a4568
+ /deepseek-ai-dsh-agent/understand-the-implementation:
+   en: ce7e776e9d516bdb
+   zh: 59d2751743db7795
+diff --git a/packages/core/agent/README.md b/packages/core/agent/README.md
+index 9da1f06f64004f8154ac424dd2aadc6c59c2647c..dd87386e220c9d557208c881df095f3908b5766a 100644
+--- a/packages/core/agent/README.md
++++ b/packages/core/agent/README.md
+@@ -64,6 +64,8 @@ await handle.agent.whenIdle()
+ 
+ ### Intercept or observe work in flight
+ 
++`agent/execute-turn` lets an engine handle an admitted whole turn while the host retains cancellation, turn boundaries, status and teardown. Its handler owns all steps, model requests, tools, retry, stopping and logged input; delegating with `next()` retains the standard loop. See the [agent-loop execution rules](../agent-loop/README.md#what-a-step-does).
++
+ The `agent/*` events let plugins act on live work without depending on the loop package. `agent/pre-step` can reject a proposed step or replace the messages entering it; `agent/request-error` lets a listener retry a failed model request; `agent/turn-stopping` runs before an otherwise completed turn closes and can steer to keep it open. `agent/assistant-stream` carries one process-local Assistant attempt's ordered start, transient chunk, and end frames. Start names the attempt's turn and step, chunk indexes are dense from zero, and `end.index` is the next chunk position. The loop commits the complete compact stream as one `assistant/message` or `assistant/attempt` before a committed end frame, so the live event remains presentation data rather than the replay source. `agent/status`, `agent/created`, and `agent/disposed` drive UI and coordination state, and the per-message `agent/inbox/*` notifications keep inbox projections in sync. Exact signatures, dispatch modes, and payload contracts live in the generated region of the [core subsystem page](../../../docs/subsystems/core.md#cordis-surface).
+ 
+ -----
+diff --git a/packages/core/agent/README.zh.md b/packages/core/agent/README.zh.md
+index 0166f96a80af1eaf35000912750d1ac5d36b1fb1..9f625723d8445ff8e52098629e4c7d8260b41cba 100644
+--- a/packages/core/agent/README.zh.md
++++ b/packages/core/agent/README.zh.md
+@@ -64,6 +64,8 @@ await handle.agent.whenIdle()
+ 
+ ### 拦截或观察进行中的工作
+ 
++`agent/execute-turn` 允许引擎接管已接纳的整个轮次，宿主保留取消、轮次边界、状态及卸载职责。监听器负责所有步骤、模型请求、工具、重试、停止及输入记录；调用 `next()` 委托会保留标准循环。参见 [agent-loop 执行规则](../agent-loop/README.zh.md#what-a-step-does)。
++
+ `agent/*` 事件让插件无需依赖循环包即可作用于实时工作。`agent/pre-step` 可以拒绝拟进入的步骤或替换进入它的消息；`agent/request-error` 让监听器重试失败的模型请求；`agent/turn-stopping` 在本可完成的轮次关闭前运行，并可通过 steer 使其保持打开。`agent/assistant-stream` 携带一个进程本地 Assistant attempt 的有序 start、瞬态分片与 end frame。start 给出该 attempt 的轮次与步骤，分片索引从零开始密集递增，`end.index` 则是下一个分片位置。loop 会在 committed end frame 前把完整紧凑流提交为一个 `assistant/message` 或 `assistant/attempt`，因此实时事件仍是呈现数据而非回放来源。`agent/status`、`agent/created` 与 `agent/disposed` 驱动 UI 与协调状态，逐消息的 `agent/inbox/*` 通知则让收件箱投影保持同步。确切签名、分发 mode 与 payload 约定见 [core 子系统页](../../../docs/subsystems/core.zh.md#cordis-surface) 的生成区块。
+ 
+ -----
+diff --git a/packages/core/agent/src/runtime-types.ts b/packages/core/agent/src/runtime-types.ts
+index 0fa89afc054a819493206cef65dd7907092cdd7f..6347f76d06aa494506ac88a58721f1a55caca079 100644
+--- a/packages/core/agent/src/runtime-types.ts
++++ b/packages/core/agent/src/runtime-types.ts
+@@ -10,7 +10,8 @@ import type { Scoped } from '@deepseek-ai/dsh-scope'
+ import type {
+   LlmAttemptId, LlmCallConfig, LlmFailure, MessageId, ReasoningEffortId, ResolvedRetryPolicy, StreamChunk,
+ } from '@deepseek-ai/dsh-llm'
+-import type { AgentCancelCause, Session, SessionSeq, UserMessage } from '@deepseek-ai/dsh-session'
++import type { AgentCancelCause, Session, SessionSeq, TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
++import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
+ export type { AgentCancelCause } from '@deepseek-ai/dsh-session'
+ import type { Agent, InboxTarget } from './types.ts'
+ export type { Agent } from './types.ts'
+@@ -118,6 +119,19 @@ export type PreStepDecision =
+     startsRequestSeries?: true
+   }
+ 
++/** Input admitted through the host's inbox, prompt assembly and pre-step policy. */
++export type TurnInput =
++  | { kind: 'reject' }
++  | {
++    kind: 'enter'
++    messages: UserMessage[]
++    assembly: PromptAssembly
++    startsRequestSeries?: true
++  }
++
++/** A delegated engine's completed turn; undefined delegates to the standard loop. */
++export type TurnExecutionResult = { reason: TurnEndReason } | undefined
++
+ /** Action returned by a listener that owns model-request recovery. */
+ export type RequestErrorAction = { kind: 'retry' } | undefined
+ 
+@@ -307,6 +321,24 @@ declare module '@deepseek-ai/cordis' {
+     'agent/inbox/discarded'(this: Scoped<Agent>, payload: { agent: Agent; message: UserMessage }): void
+     // ---- the machine's extension points ----
+     /**
++     * Execute the whole admitted turn instead of the standard model/tool loop.
++     * Return a reason without calling next() to own all steps, requests, retry,
++     * tools, stopping policy and transcript admission. Calling next() delegates
++     * without consuming additional input. The host still owns turn boundaries,
++     * cancellation, status, queued follow-ups and teardown. No standard step,
++     * request or turn-stopping listener runs for a handled turn.
++     * @param payload.agent - the agent whose lifecycle contains the execution.
++     * @param payload.input - initial admitted input and assembled prompt/tools; not yet logged as model input.
++     * @param payload.turn - the open host turn number.
++     * @param payload.signal - cancellation signal; an engine must quiesce before returning.
++     * @param payload.prepareInput - claim next-step input through assembly and pre-step policy.
++     * Call serially with the next step number, only while owning this turn.
++     * The engine logs accepted messages and its own step boundaries before dispatching effects.
++     * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
++     * @mode waterfall
++     */
++    'agent/execute-turn'(this: Scoped<Agent>, payload: { agent: Agent; input: Extract<TurnInput, { kind: 'enter' }>; turn: number; signal: AbortSignal; prepareInput: (step: number) => Promise<TurnInput> }, next: () => Promise<TurnExecutionResult>): Promise<TurnExecutionResult>
++    /**
+      * Reject a proposed step or replace the messages that enter it. Calling
+      * `next()` preserves the current messages.
+      * @param payload.agent - the agent proposing the step.
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index b321cb7ece210e061a506e72ed2fc174fdfb8749..e9b383b92814c2305013b9d8752dae8ccfcc2bbe 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -402,9 +402,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+     description: 'Approval service that applies session policy before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.',
+     methods: [
+       {
+-        signature: 'setPolicy(agent: Agent, policy: ApprovalPolicy): void',
++        signature: 'setPolicy(agent: Agent, policy: ApprovalPolicy, options: { actor?: \'user\' | \'automation\' } = {}): void',
+         description: 'Switch one live agent\'s policy and queue the transition for its next model step. Session initialization uses setApprovalPolicy directly because there is no previously visible policy to change.',
+-        parameters: [{ name: 'agent', description: 'the live agent whose policy is changing.' }, { name: 'policy', description: 'the new effective policy.' }],
++        parameters: [{ name: 'agent', description: 'the live agent whose policy is changing.' }, { name: 'policy', description: 'the new effective policy.' }, { name: 'options', description: 'attributes a programmatic change without implying a human action.' }],
+       },
+       {
+         signature: 'async request(req: ApprovalRequest): Promise<ApprovalOutcome>',
+@@ -4065,6 +4065,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
+     parameters: [{ name: 'payload', description: '.error - the failure, verbatim. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
+   },
+   {
++    name: 'agent/execute-turn',
++    mode: 'waterfall',
++    signature: '\'agent/execute-turn\'(this: Scoped<Agent>, payload: { agent: Agent; input: Extract<TurnInput, { kind: \'enter\' }>; turn: number; signal: AbortSignal; prepareInput: (step: number) => Promise<TurnInput> }, next: () => Promise<TurnExecutionResult>): Promise<TurnExecutionResult>',
++    summary: 'Execute the whole admitted turn instead of the standard model/tool loop.',
++    description: 'Execute the whole admitted turn instead of the standard model/tool loop. Return a reason without calling next() to own all steps, requests, retry, tools, stopping policy and transcript admission. Calling next() delegates without consuming additional input. The host still owns turn boundaries, cancellation, status, queued follow-ups and teardown. No standard step, request or turn-stopping listener runs for a handled turn.',
++    parameters: [{ name: 'payload', description: '.prepareInput - claim next-step input through assembly and pre-step policy. Call serially with the next step number, only while owning this turn. The engine logs accepted messages and its own step boundaries before dispatching effects. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
++  },
++  {
+     name: 'agent/inbox/claimed',
+     mode: 'emit',
+     signature: '\'agent/inbox/claimed\'(this: Scoped<Agent>, payload: { agent: Agent; message: UserMessage; turn: number }): void',
+@@ -8401,6 +8409,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+     declaration: 'export interface TurnEndReasonMap {\n    completed: {\n        kind: \'completed\';\n    };\n    aborted: {\n        kind: \'aborted\';\n        reason: TurnEndCancelCause;\n    };\n    blocked: {\n        kind: \'blocked\';\n    };\n    error: {\n        kind: \'error\';\n        error: LlmFailure;\n    };\n    \'max-tokens\': {\n        kind: \'max-tokens\';\n    };\n    interrupted: {\n        kind: \'interrupted\';\n    };\n    forked: {\n        kind: \'forked\';\n    };\n}',
+   },
+   {
++    name: 'TurnExecutionResult',
++    declaration: 'export type TurnExecutionResult = {\n    reason: TurnEndReason;\n} | undefined;',
++  },
++  {
++    name: 'TurnInput',
++    declaration: 'export type TurnInput = {\n    kind: \'reject\';\n} | {\n    kind: \'enter\';\n    messages: UserMessage[];\n    assembly: PromptAssembly;\n    startsRequestSeries?: true;\n};',
++  },
++  {
+     name: 'TurnStartInput',
+     declaration: 'export interface TurnStartInput {\n    text: string;\n    turnId: string;\n    agentId?: string;\n}',
+   },
+diff --git a/scripts/gen-cordis-catalog.ts b/scripts/gen-cordis-catalog.ts
+index ebd752714286dd59491439c88a697bfa84f3b6f2..6a66a45c6fd327e996e94beb38991986c941b314 100644
+--- a/scripts/gen-cordis-catalog.ts
++++ b/scripts/gen-cordis-catalog.ts
+@@ -337,6 +337,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
+   SubagentModelSelectionSettings: 'subagent.md',
+   AgentOptions: 'core.md',
+   AgentStatus: 'core.md',
++  TurnInput: 'core.md',
++  TurnExecutionResult: 'core.md',
+   AssistantStreamFrame: 'core.md',
+   ContentBlock: 'llm-streaming.md',
+   CreateAgentOptions: 'core.md',

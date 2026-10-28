@@ -1,0 +1,1283 @@
+diff --git a/docs/architecture.i18n.yaml b/docs/architecture.i18n.yaml
+index 304b250d612a44a0a31fc71b01a22a59186b1045..4d7a678928d933e559422287a95edbb4a549f80d 100644
+--- a/docs/architecture.i18n.yaml
++++ b/docs/architecture.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: e89802f066e4955d
+   zh: ea2fb4bef94e086d
+ /deepseek-harness-architecture/turn-flow:
+-  en: 37e5750b8b62613d
+-  zh: 77f99f40ffa473ce
++  en: d41e6511dfb3af23
++  zh: 67bda42b6b5a5fae
+ /deepseek-harness-architecture/session-log:
+   en: a2e35c43438fec6d
+   zh: e27bdac8e9feff32
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 0183c3fab12f0799f17708937e8a4b4db8353722..2c08937380fcbb2391b37b9c2782909898800bb2 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -116,7 +116,7 @@ Failed steps [record missing tool results](../packages/core/agent-loop/README.md
+ 
+ Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
+ 
+-External whole-turn engines use `agent.externalTurns` to persist `turn/owner` before effects and explicitly resume the same open turn; ordinary turns and forks retain their repair. [Agent-loop](../packages/core/agent-loop/README.md#understand-the-implementation) defines ownership, durability and failure handling.
++External whole-turn engines use `agent.externalTurns` to persist `turn/owner` before effects and explicitly resume the same open turn; versioned idle admission also lets a trusted Host start a turn without synthetic user input; ordinary turns and forks retain their repair. [Agent-loop](../packages/core/agent-loop/README.md#understand-the-implementation) defines ownership, durability and failure handling.
+ 
+ ## Session log
+ 
+diff --git a/docs/architecture.zh.md b/docs/architecture.zh.md
+index f8f21e78a91b1562a19411a6f07a3ee27970e8dd..383ef8cf1467c5bd1d0cd616b2e2b9ee002c33da 100644
+--- a/docs/architecture.zh.md
++++ b/docs/architecture.zh.md
+@@ -120,7 +120,7 @@ turn/end
+ 
+ 详情见[时序图](agent-lifecycle.zh.md)、[工具流水线](tool-execution-pipeline.zh.md)和[取消与错误恢复](subsystems/core.zh.md#the-agent-handle)。
+ 
+-整轮执行引擎通过 `agent.externalTurns` 在副作用前持久记录 `turn/owner`，并显式恢复原未结束轮次；普通轮次和 fork 仍沿用原修复。[Agent-loop](../packages/core/agent-loop/README.zh.md#understand-the-implementation) 定义归属、持久化与失败处理。
++整轮执行引擎通过 `agent.externalTurns` 在副作用前持久记录 `turn/owner`，并显式恢复原未结束轮次；带版本的空闲准入还允许可信 Host 启动轮次而不合成用户输入；普通轮次和 fork 仍沿用原修复。[Agent-loop](../packages/core/agent-loop/README.zh.md#understand-the-implementation) 定义归属、持久化与失败处理。
+ 
+ ## 会话日志
+ 
+diff --git a/docs/event-producer-consumer.md b/docs/event-producer-consumer.md
+index adeb683b9bcfc67b98f6c4ee0d2a71f10b59dc3c..680c4a34d8ddc8c9718a57e811e42e6d272e4c3c 100644
+--- a/docs/event-producer-consumer.md
++++ b/docs/event-producer-consumer.md
+@@ -11,19 +11,19 @@ This matrix shows which packages dispatch each harness-owned event and which pac
+ | `agent-loop/config-start-failed` | `emit` | [`packages/core/agent-loop/src/index.ts:262`](../packages/core/agent-loop/src/index.ts) | [`agent-loop`](../packages/core/agent-loop) (`events.dispatch`) | - |
+ | `agent-preset/catalog-changed` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:66`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
+ | `agent-preset/selected` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:74`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
+-| `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:424`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
+-| `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:304`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+-| `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:313`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+-| `agent/error` | `emit` | [`packages/core/agent/src/runtime-types.ts:454`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`deepseek-account`](../packages/credentials/deepseek-account), [`goal-round-driver`](../packages/goal/goal-round-driver), [`headless`](../packages/bundle/headless), `server`, `session-controller`, [`session-telemetry`](../packages/session/session-telemetry), [`subagent`](../packages/subagent/subagent) |
+-| `agent/execute-turn` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:369`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | - |
+-| `agent/inbox/claimed` | `emit` | [`packages/core/agent/src/runtime-types.ts:342`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`tool-jobs`](../packages/jobs/tool-jobs), [`user-questions`](../packages/interaction/user-questions) |
+-| `agent/inbox/discarded` | `emit` | [`packages/core/agent/src/runtime-types.ts:350`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`user-questions`](../packages/interaction/user-questions) |
+-| `agent/inbox/inserted` | `emit` | [`packages/core/agent/src/runtime-types.ts:331`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent) |
+-| `agent/pre-step` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:381`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`agent-instructions`](../packages/context/agent-instructions), `claude-code-mods`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`plan-mode`](../packages/plan/plan-mode), [`repeat-tool-reminder`](../packages/guard/repeat-tool-reminder), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), `session-controller`, [`session-reference`](../packages/context/session-reference), [`time-context`](../packages/context/time-context), [`tmux-context`](../packages/context/tmux-context), [`tool-skill`](../packages/skill/tool-skill) |
+-| `agent/request` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:398`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`webhook`](../packages/experimental/webhook) |
+-| `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:414`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
+-| `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:323`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
+-| `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:442`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
++| `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:472`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
++| `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:352`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
++| `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:361`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
++| `agent/error` | `emit` | [`packages/core/agent/src/runtime-types.ts:502`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`deepseek-account`](../packages/credentials/deepseek-account), [`goal-round-driver`](../packages/goal/goal-round-driver), [`headless`](../packages/bundle/headless), `server`, `session-controller`, [`session-telemetry`](../packages/session/session-telemetry), [`subagent`](../packages/subagent/subagent) |
++| `agent/execute-turn` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:417`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | - |
++| `agent/inbox/claimed` | `emit` | [`packages/core/agent/src/runtime-types.ts:390`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`tool-jobs`](../packages/jobs/tool-jobs), [`user-questions`](../packages/interaction/user-questions) |
++| `agent/inbox/discarded` | `emit` | [`packages/core/agent/src/runtime-types.ts:398`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`user-questions`](../packages/interaction/user-questions) |
++| `agent/inbox/inserted` | `emit` | [`packages/core/agent/src/runtime-types.ts:379`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent) |
++| `agent/pre-step` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:429`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`agent-instructions`](../packages/context/agent-instructions), `claude-code-mods`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`plan-mode`](../packages/plan/plan-mode), [`repeat-tool-reminder`](../packages/guard/repeat-tool-reminder), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), `session-controller`, [`session-reference`](../packages/context/session-reference), [`time-context`](../packages/context/time-context), [`tmux-context`](../packages/context/tmux-context), [`tool-skill`](../packages/skill/tool-skill) |
++| `agent/request` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:446`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`webhook`](../packages/experimental/webhook) |
++| `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:462`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
++| `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:371`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
++| `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:490`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
+ | `api-session/activity` | `emit` | [`packages/api/session-controller/src/types.ts:637`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+ | `api-session/added` | `emit` | [`packages/api/session-controller/src/types.ts:617`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+ | `api-session/error` | `emit` | [`packages/api/session-controller/src/types.ts:644`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+diff --git a/docs/event-producer-consumer.zh.md b/docs/event-producer-consumer.zh.md
+index a1fae72f61a64c60fea1ffa82851c122167ba29b..8af555d29a4f11fa9563ef4a9ec42a4da2453034 100644
+--- a/docs/event-producer-consumer.zh.md
++++ b/docs/event-producer-consumer.zh.md
+@@ -13,19 +13,19 @@
+ | `agent-loop/config-start-failed` | `emit` | [`packages/core/agent-loop/src/index.ts:262`](../packages/core/agent-loop/src/index.ts) | [`agent-loop`](../packages/core/agent-loop) (`events.dispatch`) | - |
+ | `agent-preset/catalog-changed` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:66`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
+ | `agent-preset/selected` | `emit` | [`packages/preset/agent-preset-registry/src/types.ts:74`](../packages/preset/agent-preset-registry/src/types.ts) | [`agent-preset-registry`](../packages/preset/agent-preset-registry) (`emit`) | `remotes` |
+-| `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:424`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
+-| `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:304`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+-| `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:313`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
+-| `agent/error` | `emit` | [`packages/core/agent/src/runtime-types.ts:454`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`deepseek-account`](../packages/credentials/deepseek-account), [`goal-round-driver`](../packages/goal/goal-round-driver), [`headless`](../packages/bundle/headless), `server`, `session-controller`, [`session-telemetry`](../packages/session/session-telemetry), [`subagent`](../packages/subagent/subagent) |
+-| `agent/execute-turn` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:369`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | - |
+-| `agent/inbox/claimed` | `emit` | [`packages/core/agent/src/runtime-types.ts:342`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`tool-jobs`](../packages/jobs/tool-jobs), [`user-questions`](../packages/interaction/user-questions) |
+-| `agent/inbox/discarded` | `emit` | [`packages/core/agent/src/runtime-types.ts:350`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`user-questions`](../packages/interaction/user-questions) |
+-| `agent/inbox/inserted` | `emit` | [`packages/core/agent/src/runtime-types.ts:331`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent) |
+-| `agent/pre-step` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:381`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`agent-instructions`](../packages/context/agent-instructions), `claude-code-mods`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`plan-mode`](../packages/plan/plan-mode), [`repeat-tool-reminder`](../packages/guard/repeat-tool-reminder), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), `session-controller`, [`session-reference`](../packages/context/session-reference), [`time-context`](../packages/context/time-context), [`tmux-context`](../packages/context/tmux-context), [`tool-skill`](../packages/skill/tool-skill) |
+-| `agent/request` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:398`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`webhook`](../packages/experimental/webhook) |
+-| `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:414`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
+-| `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:323`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
+-| `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:442`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
++| `agent/assistant-stream` | `emit` | [`packages/core/agent/src/runtime-types.ts:472`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`headless`](../packages/bundle/headless), `session-controller` |
++| `agent/created` | `serial` | [`packages/core/agent/src/runtime-types.ts:352`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`serial`) | `agent-team`, `browser-use-runtime`, `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal`](../packages/goal/goal), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`loader-smoke`](../packages/test-support/loader-smoke), `session-controller`, `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
++| `agent/disposed` | `emit` | [`packages/core/agent/src/runtime-types.ts:361`](../packages/core/agent/src/runtime-types.ts) | [`agent`](../packages/core/agent) (`events.dispatch`) | [`agent-loop`](../packages/core/agent-loop), `claude-code-mods`, [`file-reference-local`](../packages/context/file-reference-local), [`goal-round-driver`](../packages/goal/goal-round-driver), `session-controller`, [`subagent`](../packages/subagent/subagent), `tool-agent-team`, [`tool-subagent`](../packages/subagent/tool-subagent) |
++| `agent/error` | `emit` | [`packages/core/agent/src/runtime-types.ts:502`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`deepseek-account`](../packages/credentials/deepseek-account), [`goal-round-driver`](../packages/goal/goal-round-driver), [`headless`](../packages/bundle/headless), `server`, `session-controller`, [`session-telemetry`](../packages/session/session-telemetry), [`subagent`](../packages/subagent/subagent) |
++| `agent/execute-turn` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:417`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | - |
++| `agent/inbox/claimed` | `emit` | [`packages/core/agent/src/runtime-types.ts:390`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`tool-jobs`](../packages/jobs/tool-jobs), [`user-questions`](../packages/interaction/user-questions) |
++| `agent/inbox/discarded` | `emit` | [`packages/core/agent/src/runtime-types.ts:398`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent), [`user-questions`](../packages/interaction/user-questions) |
++| `agent/inbox/inserted` | `emit` | [`packages/core/agent/src/runtime-types.ts:379`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`goal-round-driver`](../packages/goal/goal-round-driver), [`subagent`](../packages/subagent/subagent) |
++| `agent/pre-step` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:429`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`agent-instructions`](../packages/context/agent-instructions), `claude-code-mods`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`plan-mode`](../packages/plan/plan-mode), [`repeat-tool-reminder`](../packages/guard/repeat-tool-reminder), [`session-checkpoint-policy`](../packages/session/session-checkpoint-policy), `session-controller`, [`session-reference`](../packages/context/session-reference), [`time-context`](../packages/context/time-context), [`tmux-context`](../packages/context/tmux-context), [`tool-skill`](../packages/skill/tool-skill) |
++| `agent/request` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:446`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`agent`](../packages/core/agent), [`webhook`](../packages/experimental/webhook) |
++| `agent/request-error` | `waterfall` | [`packages/core/agent/src/runtime-types.ts:462`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`waterfall`) | [`compaction-basic`](../packages/compaction/compaction-basic), [`compaction-image-offload`](../packages/compaction/compaction-image-offload), [`llm-retry`](../packages/llm/llm-retry) |
++| `agent/status` | `emit` | [`packages/core/agent/src/runtime-types.ts:371`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`emit`) | [`acp`](../packages/acp/acp), `agent-team`, [`compaction-basic`](../packages/compaction/compaction-basic), [`goal-round-driver`](../packages/goal/goal-round-driver), `server`, `session-controller` |
++| `agent/turn-stopping` | `serial` | [`packages/core/agent/src/runtime-types.ts:490`](../packages/core/agent/src/runtime-types.ts) | [`agent-loop`](../packages/core/agent-loop) (`serial`) | [`hooks-claude-code`](../packages/experimental/hooks-claude-code), [`hooks-codex`](../packages/experimental/hooks-codex), [`workspace-changes`](../packages/deliverables/workspace-changes) |
+ | `api-session/activity` | `emit` | [`packages/api/session-controller/src/types.ts:637`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+ | `api-session/added` | `emit` | [`packages/api/session-controller/src/types.ts:617`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+ | `api-session/error` | `emit` | [`packages/api/session-controller/src/types.ts:644`](../packages/api/session-controller/src/types.ts) | `session-controller` (`emit`) | `remotes` |
+diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
+index 116db3065c7d7f62b7bd214a7b84436cf19c110b..2ff8a58a2385fcbc5f79bb73b278cfd5fea3c008 100644
+--- a/docs/subsystems/core.md
++++ b/docs/subsystems/core.md
+@@ -347,8 +347,17 @@ The optional `Agent.externalTurns` advertises `dsh.external-turn-host/v1`: durab
+ interface ExternalTurnHost {
+   readonly contract: 'dsh.external-turn-host/v1'
+   /**
++   * Admission contract this host publishes when it can start a whole turn from
++   * the true idle phase. Absent on older implementations; a consumer must check
++   * both this contract version and the {@link ExternalTurnHost.start} method
++   * before assuming the capability — presence of `contract` alone is not
++   * authorization. The value names the public idle-start admission the trusted
++   * Host resolves.
++   */
++  readonly idleAdmissionContract?: 'dsh.external-turn-start/v1'
++  /**
+    * Claim the currently running turn before any step or external effect.
+-   * Flush the Session durably before creating external execution state. Exact repeats are idempotent.
++   * Flush ownership durably before model or tool effects. Exact repeats are idempotent.
+    * @param ownership - engine identifier and complete serialized recovery admission.
+    * @returns sequence of the original ownership event.
+    */
+@@ -368,6 +377,45 @@ interface ExternalTurnHost {
+     signal: AbortSignal
+     prepareInput: (step: number) => Promise<TurnInput>
+   }) => Promise<{ reason: TurnEndReason }>): Promise<{ reason: TurnEndReason }>
++  /**
++   * Exclusively start and own one whole turn from the true idle phase, driven
++   * by a trusted Host. Synchronously reserves the agent's running phase before
++   * returning; `prepare` resolves admission without a model or tool call and
++   * the engine `execute` runs to settlement under the same phase, so
++   * {@link Agent.whenIdle} awaits both. The SDK owns only the lifecycle: it
++   * opens the turn, records the Host-supplied ownership,
++   * runs the engine through scoped pre-step input, and closes the turn once.
++   *
++   * A busy rejection leaves no durable trace: an open turn
++   * or owner, any queued input, an active maintenance task, or a reentrant
++   * start/resume refuses with `agent_busy` and changes neither the log nor
++   * the queue; a `turn/start` append failure rolls the phase back and throws
++   * without an incremented turn. If recording a failed ending also fails,
++   * the turn remains open and queued input stays parked until repair.
++   * Once ownership is recorded, a later failure
++   * keeps the owner and open turn for explicit recovery — queued follow-ups
++   * stay parked and never downgrade to the default driver. A successful or
++   * explicitly cancelled settlement writes `turn/end` exactly once before
++   * queued human work may run.
++   *
++   * Absent on older implementations; a consumer must also check
++   * {@link ExternalTurnHost.idleAdmissionContract} before assuming the
++   * capability. The Host, not the SDK, authorizes the engine; the recorded
++   * ownership is durable state, not execution authority.
++   * The engine must flush the recorded ownership before model or tool effects.
++   * @param prepare - trusted Host admission: resolve the ownership for the
++   *   fresh turn under the turn signal. Must not call the model or tools. The
++   *   SDK validates and claims it through {@link claim}.
++   * @param execute - engine operation; receives the recorded ownership, the
++   *   turn, the turn abort signal, and `prepareInput` for later scoped steps.
++   * @returns the committed ending; cancellation uses the Agent's explicit cause.
++   */
++  start?(prepare: (payload: { turn: number; signal: AbortSignal }) => Promise<ExternalTurnOwnership>, execute: (payload: {
++    ownership: ExternalTurnOwnership
++    turn: number
++    signal: AbortSignal
++    prepareInput: (step: number) => Promise<TurnInput>
++  }) => Promise<{ reason: TurnEndReason }>): Promise<{ reason: TurnEndReason }>
+ }
+ ```
+ 
+diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
+index c6137fc8fc9597c983d48e53c26d92facee8b7f7..5f57e82feb400dc8ca14987d5fcf45cc82024b13 100644
+--- a/docs/subsystems/core.zh.md
++++ b/docs/subsystems/core.zh.md
+@@ -355,8 +355,17 @@ type RequestErrorAction = { kind: 'retry' } | undefined
+ interface ExternalTurnHost {
+   readonly contract: 'dsh.external-turn-host/v1'
+   /**
++   * Admission contract this host publishes when it can start a whole turn from
++   * the true idle phase. Absent on older implementations; a consumer must check
++   * both this contract version and the {@link ExternalTurnHost.start} method
++   * before assuming the capability — presence of `contract` alone is not
++   * authorization. The value names the public idle-start admission the trusted
++   * Host resolves.
++   */
++  readonly idleAdmissionContract?: 'dsh.external-turn-start/v1'
++  /**
+    * Claim the currently running turn before any step or external effect.
+-   * Flush the Session durably before creating external execution state. Exact repeats are idempotent.
++   * Flush ownership durably before model or tool effects. Exact repeats are idempotent.
+    * @param ownership - engine identifier and complete serialized recovery admission.
+    * @returns sequence of the original ownership event.
+    */
+@@ -376,6 +385,45 @@ interface ExternalTurnHost {
+     signal: AbortSignal
+     prepareInput: (step: number) => Promise<TurnInput>
+   }) => Promise<{ reason: TurnEndReason }>): Promise<{ reason: TurnEndReason }>
++  /**
++   * Exclusively start and own one whole turn from the true idle phase, driven
++   * by a trusted Host. Synchronously reserves the agent's running phase before
++   * returning; `prepare` resolves admission without a model or tool call and
++   * the engine `execute` runs to settlement under the same phase, so
++   * {@link Agent.whenIdle} awaits both. The SDK owns only the lifecycle: it
++   * opens the turn, records the Host-supplied ownership,
++   * runs the engine through scoped pre-step input, and closes the turn once.
++   *
++   * A busy rejection leaves no durable trace: an open turn
++   * or owner, any queued input, an active maintenance task, or a reentrant
++   * start/resume refuses with `agent_busy` and changes neither the log nor
++   * the queue; a `turn/start` append failure rolls the phase back and throws
++   * without an incremented turn. If recording a failed ending also fails,
++   * the turn remains open and queued input stays parked until repair.
++   * Once ownership is recorded, a later failure
++   * keeps the owner and open turn for explicit recovery — queued follow-ups
++   * stay parked and never downgrade to the default driver. A successful or
++   * explicitly cancelled settlement writes `turn/end` exactly once before
++   * queued human work may run.
++   *
++   * Absent on older implementations; a consumer must also check
++   * {@link ExternalTurnHost.idleAdmissionContract} before assuming the
++   * capability. The Host, not the SDK, authorizes the engine; the recorded
++   * ownership is durable state, not execution authority.
++   * The engine must flush the recorded ownership before model or tool effects.
++   * @param prepare - trusted Host admission: resolve the ownership for the
++   *   fresh turn under the turn signal. Must not call the model or tools. The
++   *   SDK validates and claims it through {@link claim}.
++   * @param execute - engine operation; receives the recorded ownership, the
++   *   turn, the turn abort signal, and `prepareInput` for later scoped steps.
++   * @returns the committed ending; cancellation uses the Agent's explicit cause.
++   */
++  start?(prepare: (payload: { turn: number; signal: AbortSignal }) => Promise<ExternalTurnOwnership>, execute: (payload: {
++    ownership: ExternalTurnOwnership
++    turn: number
++    signal: AbortSignal
++    prepareInput: (step: number) => Promise<TurnInput>
++  }) => Promise<{ reason: TurnEndReason }>): Promise<{ reason: TurnEndReason }>
+ }
+ ```
+ 
+diff --git a/packages/core/agent-loop/README.i18n.yaml b/packages/core/agent-loop/README.i18n.yaml
+index 72d16315a461fe493396e288f17b3a52abced005..f457ec26302c2a98a9336c99952784e24c288404 100644
+--- a/packages/core/agent-loop/README.i18n.yaml
++++ b/packages/core/agent-loop/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: fb5c076593df797a
+   zh: f6e57e7660d159f0
+ /deepseek-ai-dsh-agent-loop/use-this-package/what-a-step-does:
+-  en: aeb9dd98257ac2d1
+-  zh: bfd19f93de6137a3
++  en: 7268cbc1e5043112
++  zh: 2e4ac92c006cfb5c
+ /deepseek-ai-dsh-agent-loop/understand-the-implementation:
+   en: ce7e776e9d516bdb
+   zh: 59d2751743db7795
+diff --git a/packages/core/agent-loop/README.md b/packages/core/agent-loop/README.md
+index 859d8c6e99b3fd13bbcc9ac0afd41194b94a5d26..d19f9dc8dd2d3fde49d064a1376f3fddd55d8769 100644
+--- a/packages/core/agent-loop/README.md
++++ b/packages/core/agent-loop/README.md
+@@ -75,7 +75,9 @@ Every inbox mutation commits one normalized `agent/inbox/spliced` event. The pro
+ 
+ An engine can own a whole turn through `agent/execute-turn` after the first non-empty pre-step admission. A handling listener logs admitted input and its own steps, runs all model/tool/retry/stopping policy, and returns the turn reason; the default loop does none of that work. The host retains turn boundaries, cancellation, status, follow-up scheduling and teardown. `prepareInput(step)` admits later steering through the same prompt assembly and pre-step policy. A listener calling `next()` preserves the standard loop; a failed handler without durable ownership closes the turn without dispatching a fallback engine.
+ 
+-`agent.externalTurns` advertises `dsh.external-turn-host/v1`. A whole-turn engine claims `turn/owner` before its first step, with a versioned engine identifier and complete serialized recovery admission. The Host must flush this event before creating external execution state. The required event makes unsupported older readers refuse the log. Resume preserves an owned open turn without synthetic tool results or closers; ordinary turns and forks retain their existing repair. `pending()` grants no execution authority. A trusted Host resolves the original preset and calls `resume(engine, execute)` to reserve the same turn exclusively. Rejection keeps ownership open, parks follow-ups and reports the error; successful settlement closes it once before queued work can run. Later input still uses scoped assembly and pre-step policy. Neither the Session record nor a matching engine string grants tool permissions.
++`agent.externalTurns` advertises `dsh.external-turn-host/v1`. A whole-turn engine claims `turn/owner` before its first step, with a versioned engine identifier and complete serialized recovery admission. The Host must flush this event before model or tool effects. The required event makes unsupported older readers refuse the log. Resume preserves an owned open turn without synthetic tool results or closers; ordinary turns and forks retain their existing repair. `pending()` grants no execution authority. A trusted Host resolves the original preset and calls `resume(engine, execute)` to reserve the same turn exclusively. Rejection keeps ownership open, parks follow-ups and reports the error; successful settlement closes it once before queued work can run. Later input still uses scoped assembly and pre-step policy. Neither the Session record nor a matching engine string grants tool permissions.
++
++For a Host-initiated turn without queued input, require both `idleAdmissionContract === 'dsh.external-turn-start/v1'` and `start(prepare, execute)`. Admission exclusively reserves the true idle phase; maintenance, open turns, existing ownership and queued input reject without changing the log. `prepare` resolves ownership without calling models or tools, and `execute` must flush the recorded owner before effects. Both callbacks share cancellation and `whenIdle()` settlement. Failure before ownership closes the unowned turn; failure after ownership preserves it for explicit recovery and parks follow-ups. A process loss before ownership uses ordinary interrupted-turn repair; after ownership it requires same-turn engine recovery. Starting this way adds no user message or default model request.
+ 
+ Each step sends the session's derived history — with the latest non-empty `system/message` node as the effective prompt, or no system messages when the rendered prompt is empty — and its visible tool schemas; the model's tool calls run through the guarded tool pipeline and every accepted fact is appended to the session log before the next step derives from it. Parallel-safe calls may overlap up to `maxParallelToolCalls`; exclusive calls run alone as ordering barriers. Cancellation is cooperative: `agent.cancel()` aborts the current activity and, unless `keepInbox` is set, clears pending work; a cancelled stream finalizes the text already delivered to the user.
+ 
+diff --git a/packages/core/agent-loop/README.zh.md b/packages/core/agent-loop/README.zh.md
+index a0c5e6d79e4470097de50802c768f0cdba209192..ea47d565867ae9b349402a3f9144d89e05c1e6c6 100644
+--- a/packages/core/agent-loop/README.zh.md
++++ b/packages/core/agent-loop/README.zh.md
+@@ -75,7 +75,9 @@ const handle = await ctx.agents.create({
+ 
+ 引擎可在首次非空 pre-step 准入后，通过 `agent/execute-turn` 接管整个轮次。接管监听器记录已接纳输入及自己的步骤，负责所有模型、工具、重试和停止策略，再返回轮次结束原因；默认循环不会执行这些工作。宿主保留轮次边界、取消、状态、后续轮次调度和卸载职责。`prepareInput(step)` 通过相同的提示词组装和 pre-step 策略接纳后续引导。监听器调用 `next()` 会保留标准循环；尚未认领持久执行权时，接管失败会关闭轮次，不会启动备用执行引擎。
+ 
+-`agent.externalTurns` 公开 `dsh.external-turn-host/v1`。整轮执行引擎须在首个步骤前认领 `turn/owner`，记录带版本的引擎标识和完整的序列化恢复准入信息；Host 必须先持久刷新该事件，再创建外部执行状态。该事件为必读事件，不支持它的旧读取器必须拒绝日志。恢复会保留被认领的未结束轮次，不生成合成工具结果或结束事件；普通轮次和 fork 仍采用原有修复。`pending()` 不授予执行权限。可信 Host 解析原 preset 后，通过 `resume(engine, execute)` 独占原轮次。执行失败会报告错误并保留归属，后续输入保持排队；执行成功只关闭一次轮次，随后才释放排队任务。后续输入仍通过作用域内的提示组装和 pre-step 策略接纳。会话记录或相同引擎字符串均不授予工具权限。
++`agent.externalTurns` 公开 `dsh.external-turn-host/v1`。整轮执行引擎须在首个步骤前认领 `turn/owner`，记录带版本的引擎标识和完整的序列化恢复准入信息；Host 必须在模型调用或工具副作用前持久刷新该事件。该事件为必读事件，不支持它的旧读取器必须拒绝日志。恢复会保留被认领的未结束轮次，不生成合成工具结果或结束事件；普通轮次和 fork 仍采用原有修复。`pending()` 不授予执行权限。可信 Host 解析原 preset 后，通过 `resume(engine, execute)` 独占原轮次。执行失败会报告错误并保留归属，后续输入保持排队；执行成功只关闭一次轮次，随后才释放排队任务。后续输入仍通过作用域内的提示组装和 pre-step 策略接纳。会话记录或相同引擎字符串均不授予工具权限。
++
++Host 无排队输入而主动启动轮次时，须同时检查 `idleAdmissionContract === 'dsh.external-turn-start/v1'` 和 `start(prepare, execute)`。准入会独占真实空闲阶段；维护任务、未结束轮次、已有归属或排队输入均使请求被拒绝，且不改变日志。`prepare` 解析归属，不调用模型或工具；`execute` 必须在副作用前持久刷新已记录的归属。两个回调共享取消信号，且 `whenIdle()` 等待二者结束。归属记录前失败会关闭未认领轮次；记录后失败则保留归属供显式恢复，并停放后续输入。进程在记录归属前中断时采用普通轮次修复；记录后中断则要求引擎恢复原轮次。该启动方式不添加用户消息，也不触发默认模型请求。
+ 
+ 每个步骤都会发送会话的派生历史——最新的非空 `system/message` 节点是有效提示词，渲染提示词为空时则没有系统消息——及其可见工具 schema；模型的工具调用经过受守卫的工具流水线，每个被接纳的事实都会在下一步据此派生之前追加到会话日志。并行安全调用最多可重叠 `maxParallelToolCalls` 个；独占调用单独运行并构成排序屏障。取消是协作式的：`agent.cancel()` 中止当前活动，并在未设置 `keepInbox` 时清除待处理工作；被取消的流会终结已送达用户的文本。
+ 
+diff --git a/packages/core/agent-loop/package.json b/packages/core/agent-loop/package.json
+index 6792353436f838807e2cb8bbfc9af650f0cc9f85..e819f2bf22e1b5dcfa96fd32d4b4033f296ca564 100644
+--- a/packages/core/agent-loop/package.json
++++ b/packages/core/agent-loop/package.json
+@@ -45,6 +45,8 @@
+     "zod": "4.4.3"
+   },
+   "devDependencies": {
++    "@deepseek-ai/dsh-app-boot": "workspace:*",
++    "@deepseek-ai/dsh-loader-smoke": "workspace:*",
+     "@deepseek-ai/dsh-llm-deepseek-api-key": "workspace:*",
+     "@deepseek-ai/cordis": "workspace:~",
+     "@deepseek-ai/dsh-llm-pi-ai": "workspace:*",
+diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
+index beb2b3f3a91ac659adff3539f72faa04548f07c5..49b6b5e04ad2f1f60167a55bd48aaa833f73724f 100644
+--- a/packages/core/agent-loop/src/agent.ts
++++ b/packages/core/agent-loop/src/agent.ts
+@@ -29,7 +29,7 @@ import {
+ import { assertNever, deepFreeze } from '@deepseek-ai/dsh-util-values'
+ import type { Scope } from '@deepseek-ai/dsh-scope'
+ import { createScope } from '@deepseek-ai/dsh-scope'
+-import type { EpochHeader, RequestContext, Session, SessionId, SessionSeq, TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
++import type { EpochHeader, ExternalTurnOwnership, RequestContext, Session, SessionId, SessionSeq, TurnEndReason, UserMessage } from '@deepseek-ai/dsh-session'
+ import { canonicalHeader, headerEquals, ExternalTurnOwnershipError, parseExternalTurnOwnership, ToolCallRecovery } from '@deepseek-ai/dsh-session'
+ import { joinContextSections, renderContextSections, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+ import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
+@@ -94,6 +94,7 @@ export class ReactLoopAgent implements Agent {
+   readonly inbox: ReactLoopInbox
+   readonly externalTurns: ExternalTurnHost = {
+     contract: 'dsh.external-turn-host/v1',
++    idleAdmissionContract: 'dsh.external-turn-start/v1',
+     pending: () => {
+       const owner = this.externalTurnBoundary().externalOwner
+       if (!owner) return null
+@@ -113,6 +114,7 @@ export class ReactLoopAgent implements Agent {
+       return this.session.append('turn/owner', owner).seq
+     },
+     resume: (engine, execute) => this.resumeExternalTurn(engine, execute),
++    start: (prepare, execute) => this.startExternalTurn(prepare, execute),
+   }
+   private phase: Phase
+   private activityDone: Promise<void> = Promise.resolve()
+@@ -255,12 +257,129 @@ export class ReactLoopAgent implements Agent {
+     } finally {
+       executing = false
+       this.setPhase({ kind: 'idle', lastTurn: ownership.turn })
+-      if (!this.externalTurns.pending() && abortedCancelCause(phase.abort.signal)?.kind !== 'disposed' && this.inbox.hasPending) this.wakeDriver()
++      this.wakeQueuedExternalInput(phase.abort.signal)
+       done.resolve()
+     }
+   }
+ 
+   /**
++   * Exclusively start and own one whole turn from the true idle phase. Synchronous
++   * admission reserves the running phase before returning; a busy agent refuses
++   * without changing the log or queue. From prepare through execute the same
++   * phase, abort controller, and activity settlement own the turn, so whenIdle
++   * awaits both and a same-Agent start/resume/maintenance/default driver cannot
++   * reenter. A turn/start append failure rolls the phase back without an
++   * incremented turn; once ownership is recorded, a later failure keeps the
++   * owner and open turn for explicit recovery and queued follow-ups stay
++   * parked. A successful or explicitly cancelled settlement writes turn/end
++   * once before queued human work may run.
++   * @param prepare - trusted Host admission; resolves ownership for the fresh
++   *   turn under the turn signal, without a model or tool call.
++   * @param execute - engine operation; receives the recorded ownership.
++   * @returns the committed ending; cancellation uses the Agent's explicit cause.
++   */
++  private async startExternalTurn(
++    prepare: Parameters<NonNullable<ExternalTurnHost['start']>>[0],
++    execute: Parameters<NonNullable<ExternalTurnHost['start']>>[1],
++  ): Promise<{ reason: TurnEndReason }> {
++    // Synchronous admission: refuse any non-idle phase (maintenance reports
++    // idle but is not claimable), an unowned open turn, an existing owner, or
++    // any queued input — none of these change the log or the queue.
++    if (this.phase.kind !== 'idle') throw new ExternalTurnOwnershipError('agent_busy')
++    if (this.externalTurns.pending()) throw new ExternalTurnOwnershipError('agent_busy')
++    const boundary = this.externalTurnBoundary()
++    if (boundary.openTurnStartSeq !== null) throw new ExternalTurnOwnershipError('agent_busy')
++    if (this.inbox.hasPending) throw new ExternalTurnOwnershipError('agent_busy')
++    const turn = this.phase.lastTurn + 1
++    const done = Promise.withResolvers<void>()
++    const phase: Extract<Phase, { kind: 'running' }> = {
++      kind: 'running', abort: new AbortController(), turn: this.phase.lastTurn, step: 0, wakeRequested: false,
++    }
++    // Reserve the running phase and the activity settlement together: a
++    // reentrant status callback that cancels during the synchronous transition
++    // aborts the controller before prepare runs, so throwIfAborted refuses the
++    // engine and whenIdle still resolves through the finally below.
++    this.activityDone = done.promise
++    this.setPhase(phase)
++    let executing = true
++    let opened = false
++    let ownerRecorded = false
++    let ownership: ExternalTurnOwnership | undefined
++    try {
++      // Open the turn once. An append failure leaves no unowned open turn.
++      this.session.append('turn/start', { turn })
++      opened = true
++      phase.turn = turn
++      phase.abort.signal.throwIfAborted()
++      // Trusted Host admission resolves ownership without a model or tool. A
++      // cancellation here quiesces before the engine runs; the first cause wins.
++      ownership = await prepare({ turn, signal: phase.abort.signal })
++      phase.abort.signal.throwIfAborted()
++      // Validate and detach the exact turn before recording, then write the
++      // owner through the public claim, which the session-projection folds
++      // synchronously. The execute callback receives the detached snapshot, so
++      // a Host that mutates the prepare-returned object after claim cannot
++      // change the ownership the engine sees. The engine must flush the recorded
++      // ownership before model or tool effects; recording does not authorize them.
++      const validated = parseExternalTurnOwnership(ownership, turn)
++      this.externalTurns.claim(validated)
++      ownerRecorded = true
++      const result = await this.loopCtx.agents.withInitiator(this, () => execute({ ownership: validated, turn,
++        signal: phase.abort.signal, prepareInput: async (step) => {
++          if (!executing) throw new Error('Turn execution has already settled')
++          phase.abort.signal.throwIfAborted()
++          return this.preStep('next-step', { turn, step })
++        } }))
++      const cause = abortedCancelCause(phase.abort.signal)
++      const reason: TurnEndReason = cause ? { kind: 'aborted', reason: cause } : result.reason
++      this.session.append('turn/end', { turn, reason })
++      return { reason }
++    } catch (error: unknown) {
++      // Owner recorded: keep the open turn for explicit recovery and never
++      // downgrade queued work to the default driver. The turn/end append is
++      // not forced; a failed append surfaces the original error, leaving the
++      // owner in place.
++      if (ownerRecorded) return this.throwError(error)
++      // No owner: close the unowned open turn once, but only if it actually
++      // opened — a turn/start append failure left no open turn, so a forged
++      // turn/end would corrupt the boundary. Cancellation and errors share
++      // the first-cause / structured-failure reason the default loop uses.
++      if (opened) {
++        const cause = abortedCancelCause(phase.abort.signal)
++        const reason: TurnEndReason = cause
++          ? { kind: 'aborted', reason: cause }
++          : {
++            kind: 'error',
++            error: error instanceof LlmError
++              ? error.failure
++              : { message: errorChain(error), code: 'UNKNOWN' },
++          }
++        try { this.session.append('turn/end', { turn, reason }) }
++        catch (closeError) {
++          return this.throwError(new AggregateError([error, closeError], 'External turn could not record its failure'))
++        }
++      }
++      return this.throwError(error)
++    } finally {
++      executing = false
++      // Keep lastTurn at the opened turn number once the turn opened, so the
++      // next ordinary driver or recovery sees the correct sequence; a turn
++      // that never opened keeps the prior lastTurn.
++      this.setPhase({ kind: 'idle', lastTurn: opened ? turn : phase.turn })
++      this.wakeQueuedExternalInput(phase.abort.signal)
++      done.resolve()
++    }
++  }
++
++  /** Keep queued input parked until its external owner settles.
++   * @param signal - settled activity signal; disposal must not wake new work.
++   */
++  private wakeQueuedExternalInput(signal: AbortSignal): void {
++    if (this.externalTurnBoundary().openTurnStartSeq === null
++      && abortedCancelCause(signal)?.kind !== 'disposed' && this.inbox.hasPending) this.wakeDriver()
++  }
++
++  /**
+    * Start one driver, or latch its wake behind maintenance or an aborted
+    * activity. A wake sent while idle always opens its turn boundary, even
+    * when its message was cleared; only a latched replay is suppressed when
+diff --git a/packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts b/packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac271b7e6f84fb3cdc5f8ae5a8a4e43372edc52c
+--- /dev/null
++++ b/packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts
+@@ -0,0 +1,102 @@
++import { spawn } from 'node:child_process'
++import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import { createInterface } from 'node:readline'
++import { expect, it } from 'vitest'
++import { resolveExampleLaunch } from '@deepseek-ai/dsh-loader-smoke'
++
++type Report = { ready?: string
++  events?: { type: string
++    data: Record<string, unknown> }[]
++  before?: { type: string
++    data: Record<string, unknown> }[]
++  after?: { type: string
++    data: Record<string, unknown> }[]
++  pending?: unknown
++  remaining?: unknown }
++const driver = fileURLToPath(new URL('./fixtures/external-turn/idle-driver.ts', import.meta.url))
++const config = fileURLToPath(new URL('./fixtures/external-turn/cordis.yml', import.meta.url))
++
++async function persisted(directory: string): Promise<string> {
++  let text = ''
++  for (const entry of await readdir(directory, { withFileTypes: true })) {
++    const path = join(directory, entry.name)
++    if (entry.isDirectory()) text += await persisted(path)
++    else if (entry.name.endsWith('.jsonl')) text += await readFile(path, 'utf8')
++  }
++  return text
++}
++
++for (const boundary of ['prepare', 'owner']) it(`built Loader survives actual SIGKILL at the ${boundary} idle-start boundary`, async () => {
++  const root = await mkdtemp(join(tmpdir(), 'dsh-idle-loader-'))
++  const children: ReturnType<typeof launch>[] = []
++  function launch(mode: string) {
++    const spec = resolveExampleLaunch({ srcBin: driver, libBin: driver, mode: 'lib',
++      configArgs: [config, mode, boundary], env: { DSH_HOME: join(root, '.dsh'), DSH_AGENTS_HOME: join(root, '.agents') } })
++    const child = spawn(spec.command, spec.args, { cwd: root, env: { ...process.env, ...spec.env }, stdio: ['ignore', 'pipe', 'pipe'] })
++    let stderr = ''
++    child.stderr.on('data', (chunk) => { stderr += String(chunk) })
++    const report = Promise.withResolvers<Report>()
++    let reported = false
++    const lines = createInterface({ input: child.stdout })
++    lines.on('line', (line) => {
++      if (!line.startsWith('{')) return
++      try { report.resolve(JSON.parse(line) as Report); reported = true } catch (error) { report.reject(error) }
++    })
++    const timeout = setTimeout(() => {
++      report.reject(new Error(`Fixture did not settle: ${stderr}`))
++      child.kill('SIGKILL')
++    }, 12000)
++    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
++      child.once('error', (error) => { report.reject(error); reject(error) })
++      child.once('close', (code, signal) => {
++        clearTimeout(timeout)
++        lines.close()
++        if (!reported) report.reject(new Error(`Fixture exited ${String(code ?? signal)} before reporting: ${stderr}`))
++        resolve({ code, signal })
++      })
++    })
++    return { child, report: report.promise, exited }
++  }
++  try {
++    const killed = launch('kill'); children.push(killed)
++    const ready = await killed.report
++    expect(ready.ready).toBe(boundary)
++    expect(ready.events?.filter(e => e.type === 'turn/start')).toHaveLength(1)
++    expect(ready.events?.filter(e => e.type === 'turn/owner')).toHaveLength(boundary === 'owner' ? 1 : 0)
++    expect(ready.events?.some(e => e.type === 'turn/end')).toBe(false)
++    expect(killed.child.kill('SIGKILL')).toBe(true)
++    expect(await killed.exited).toEqual({ code: null, signal: 'SIGKILL' })
++    const onDisk = await persisted(join(root, '.sessions'))
++    expect(onDisk).toContain('"type":"turn/start"')
++    expect(onDisk.includes('"type":"turn/owner"')).toBe(boundary === 'owner')
++    expect(onDisk).not.toContain('"type":"turn/end"')
++    const resumed = launch('recover'); children.push(resumed)
++    const report = await resumed.report
++    expect(await resumed.exited).toEqual({ code: 0, signal: null })
++    expect(report.remaining).toBeNull()
++    expect(report.after?.filter(e => e.type === 'user/message')).toHaveLength(0)
++    expect(report.after?.filter(e => e.type === 'assistant/message')).toHaveLength(1)
++    if (boundary === 'owner') {
++      expect(report.pending).toEqual({ contract: 'dsh.external-turn/v1', turn: 1,
++        engine: 'idle-process-fixture/v1', binding: '{"source":"original-admission"}' })
++      expect(report.before?.filter(e => e.type === 'turn/end')).toHaveLength(0)
++      expect(report.after?.filter(e => e.type === 'turn/start')).toHaveLength(1)
++      expect(report.after?.filter(e => e.type === 'turn/end').map(e => e.data)).toEqual([{ turn: 1, reason: { kind: 'completed' } }])
++    } else {
++      expect(report.pending).toBeNull()
++      expect(report.before?.filter(e => e.type === 'turn/end').map(e => e.data)).toEqual([{ turn: 1, reason: { kind: 'interrupted' } }])
++      expect(report.after?.filter(e => e.type === 'turn/start')).toHaveLength(2)
++      expect(report.after?.filter(e => e.type === 'turn/end').map(e => e.data.turn)).toEqual([1, 2])
++    }
++    expect(await persisted(join(root, '.sessions'))).toContain('Original admission recovered.')
++  } finally {
++    for (const { child, exited } of children) {
++      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
++      await exited
++    }
++    await rm(root, { recursive: true, force: true })
++  }
++}, 30000)
+diff --git a/packages/core/agent-loop/tests/external-turn-idle-start.spec.ts b/packages/core/agent-loop/tests/external-turn-idle-start.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4972866d2a2c1d3c4f53fe001c9fe1e08a1eafbb
+--- /dev/null
++++ b/packages/core/agent-loop/tests/external-turn-idle-start.spec.ts
+@@ -0,0 +1,507 @@
++import { afterEach, expect, it, vi } from 'vitest'
++import { Context } from '@deepseek-ai/cordis'
++import AgentLoop from '@deepseek-ai/dsh-agent-loop'
++import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
++import { SessionId, SessionSeq, interruptedTurnClosers, parseExternalTurnOwnership } from '@deepseek-ai/dsh-session'
++import type { ExternalTurnOwnership, SessionEvent } from '@deepseek-ai/dsh-session'
++import type { Agent, TurnInput } from '@deepseek-ai/dsh-agent'
++import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
++import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
++import { mkdtemp, rm } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { MockAdapter, textResponse } from './mock-adapter.ts'
++
++const contexts: Context[] = [], directories: string[] = []
++afterEach(async () => {
++  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
++  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
++})
++
++const ownership = (turn: number): ExternalTurnOwnership => ({
++  contract: 'dsh.external-turn/v1', turn, engine: 'fixture-engine/v1', binding: '{"admission":"idle-start"}',
++})
++const send = (agent: Agent, text: string) => {
++  agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
++}
++
++async function harness(root?: string) {
++  const ctx = new Context(); contexts.push(ctx)
++  await mountAgentLoopTestDependencies(ctx)
++  if (root) await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
++  await ctx.plugin(AgentLoop, { agents: [] })
++  const adapter = new MockAdapter([textResponse('default turn')])
++  ctx.llm.registerAdapter(['mock'], adapter)
++  ctx.logger.error = vi.fn()
++  return { ctx, adapter }
++}
++
++async function restored(events: SessionEvent[]) {
++  const root = await mkdtemp(join(tmpdir(), 'dsh-idle-start-')); directories.push(root)
++  const first = await harness(root), id = SessionId('idle-start-recovery')
++  const detached = first.ctx.sessions.prepare(id)
++  const writer = await first.ctx.sessionPersistence.create(detached.header)
++  await writer.append(events); await writer.close(); await first.ctx.fiber.dispose()
++  const second = await harness(root)
++  const handle = await second.ctx.agents.resume({ resumeSessionId: id, agentOptions: { provider: 'mock', model: 'mock' } })
++  return { ...second, agent: handle.agent, handle }
++}
++
++/** A trusted-Host prepare that returns the fixture ownership for the given turn. */
++const prepare = (expectedTurn: number) => async ({ turn, signal }: { turn: number; signal: AbortSignal }) => {
++  expect(turn).toBe(expectedTurn)
++  signal.throwIfAborted()
++  return ownership(turn)
++}
++
++/** Build an execute that admits one user message and one structured assistant message with pinned usage. */
++function runExecute(agent: Agent, text = 'idle engine completed') {
++  return async (payload: {
++    ownership: ExternalTurnOwnership
++    turn: number
++    signal: AbortSignal
++    prepareInput: (step: number) => Promise<TurnInput>
++  }) => {
++    payload.signal.throwIfAborted()
++    agent.session.append('step/start', { turn: payload.turn, step: 1 })
++    agent.session.append('user/message', createUserMessage({
++      content: [{ type: 'text', text: payload.ownership.binding }],
++      source: { kind: 'user' },
++    }), { surfaceOp: 'append' })
++    agent.session.append('assistant/message', {
++      turn: payload.turn, step: 1, stream: [], message: createAssistantMessage({
++        content: [{ type: 'text', text }],
++        source: { provider: 'external-fixture', model: 'fixture/v1' },
++      }),
++      usage: { inputTokens: 3, outputTokens: 4 },
++    }, { surfaceOp: 'append' })
++    agent.session.append('step/end', { turn: payload.turn, step: 1 })
++    return { reason: { kind: 'completed' as const } }
++  }
++}
++
++it('advertises the idle admission contract and start method on the public host', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-contract'), agentOptions: { provider: 'mock', model: 'mock' } })
++  expect(agent.externalTurns!.idleAdmissionContract).toBe('dsh.external-turn-start/v1')
++  expect(typeof agent.externalTurns!.start).toBe('function')
++})
++
++it('starts one whole turn from idle with no default request and a single durable boundary', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-happy'), agentOptions: { provider: 'mock', model: 'mock' } })
++  const requests = vi.fn(); ctx.on('agent/request', async (_p, next) => { requests(); return next() })
++  const ending = await agent.externalTurns!.start!(prepare(1), runExecute(agent))
++  await agent.whenIdle()
++  expect(ending.reason).toEqual({ kind: 'completed' })
++  expect(requests).not.toHaveBeenCalled()
++  const events = agent.session.snapshotEvents()
++  expect(events.filter(e => e.type === 'turn/start')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'step/start')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'step/end')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'user/message')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'assistant/message')).toHaveLength(1)
++  expect(agent.externalTurns!.pending()).toBeNull()
++  expect(agent.status).toBe('idle')
++})
++
++it('refuses to start when an owner is already recorded and leaves the log unchanged', async () => {
++  // Seed a cold owned turn; the restored agent must refuse idle-start and keep
++  // the log and the pending owner unchanged.
++  const owned = await restored([
++    { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
++    { type: 'turn/owner', seq: SessionSeq(1), time: 2, data: ownership(1) },
++  ])
++  const before = owned.agent.session.snapshotEvents()
++  await expect(owned.agent.externalTurns!.start!(prepare(1), runExecute(owned.agent)))
++    .rejects.toMatchObject({ code: 'agent_busy' })
++  expect(owned.agent.session.snapshotEvents()).toEqual(before)
++  expect(owned.agent.externalTurns!.pending()).toEqual(ownership(1))
++})
++
++it('refuses to start when a turn is already open without an owner', async () => {
++  const ctx = new Context(); contexts.push(ctx)
++  await mountAgentLoopTestDependencies(ctx)
++  await ctx.plugin(AgentLoop, { agents: [] })
++  // Hang the model stream so a default turn stays open while the test runs.
++  const adapter = new MockAdapter([{ hangAfter: textResponse('hanging') }])
++  ctx.llm.registerAdapter(['mock'], adapter)
++  ctx.logger.error = vi.fn()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-open-busy'), agentOptions: { provider: 'mock', model: 'mock' } })
++  const started = Promise.withResolvers<undefined>()
++  const released = Promise.withResolvers<undefined>()
++  ctx.on('agent/execute-turn', async () => { started.resolve(undefined); await released.promise; return undefined })
++  send(agent, 'open a default turn')
++  await started.promise
++  const before = agent.session.snapshotEvents()
++  await expect(agent.externalTurns!.start!(prepare(2), runExecute(agent))).rejects.toMatchObject({ code: 'agent_busy' })
++  expect(agent.session.snapshotEvents()).toEqual(before)
++  released.resolve(undefined)
++  // Abort the hanging model stream so the default turn closes and the agent idles.
++  agent.cancel({ kind: 'user' })
++  await agent.whenIdle()
++})
++
++it('refuses to start when input is queued and leaves the queue unchanged', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-queued'), agentOptions: { provider: 'mock', model: 'mock' } })
++  // inject queues input without waking the driver, so the agent stays idle.
++  agent.inject(createUserMessage({ content: [{ type: 'text', text: 'queued prompt' }], source: { kind: 'user' } }))
++  const before = agent.session.snapshotEvents()
++  await expect(agent.externalTurns!.start!(prepare(1), runExecute(agent))).rejects.toMatchObject({ code: 'agent_busy' })
++  expect(agent.session.snapshotEvents()).toEqual(before)
++  expect(agent.inbox.nextStep).toHaveLength(1)
++})
++
++it('refuses a competing start and a maintenance task while one is running', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-competing'), agentOptions: { provider: 'mock', model: 'mock' } })
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  const start1 = agent.externalTurns!.start!(prepare(1), async () => { entered.resolve(undefined); await release.promise; return { reason: { kind: 'completed' } } })
++  await entered.promise
++  await expect(agent.externalTurns!.start!(prepare(1), runExecute(agent))).rejects.toMatchObject({ code: 'agent_busy' })
++  // runMaintenance refuses synchronously while the idle-start owns the phase.
++  expect(() => agent.runMaintenance(async () => 1)).toThrow(/already has active work/)
++  release.resolve(undefined)
++  await start1
++  await agent.whenIdle()
++})
++
++it('reentrant cancellation before prepare does not invoke the engine and whenIdle resolves', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-cancel-prepare'), agentOptions: { provider: 'mock', model: 'mock' } })
++  const executeFn = vi.fn(async () => ({ reason: { kind: 'completed' as const } }))
++  // Cancel synchronously on the first running status transition, before prepare runs.
++  let cancelled = false
++  agent.ctx.on('agent/status', ({ status }) => {
++    if (status === 'running' && !cancelled) { cancelled = true; agent.cancel({ kind: 'user' }, { keepInbox: true }) }
++  })
++  await expect(agent.externalTurns!.start!(prepare(1), executeFn)).rejects.toMatchObject({ kind: 'user' })
++  expect(executeFn).not.toHaveBeenCalled()
++  // The turn never opened (prepare was aborted before turn/start? No — turn/start is before prepare).
++  // turn/start appended, so an unowned open turn must be closed once with aborted.
++  const events = agent.session.snapshotEvents()
++  expect(events.filter(e => e.type === 'turn/start')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')[0]?.data).toMatchObject({ turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
++  expect(agent.externalTurns!.pending()).toBeNull()
++  let idle = false
++  await agent.whenIdle().then(() => { idle = true })
++  expect(idle).toBe(true)
++})
++
++it('cancellation during execute reports the first cause and writes turn/end once', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-cancel-execute'), agentOptions: { provider: 'mock', model: 'mock' } })
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  const ending = agent.externalTurns!.start!(prepare(1), async ({ signal }) => {
++    entered.resolve(undefined); await release.promise; expect(signal.aborted).toBe(true)
++    return { reason: { kind: 'completed' } }
++  })
++  await entered.promise
++  agent.cancel({ kind: 'user' })
++  let idle = false; const idleWait = agent.whenIdle().then(() => { idle = true })
++  await Promise.resolve(undefined); expect(idle).toBe(false)
++  release.resolve(undefined)
++  expect(await ending).toEqual({ reason: { kind: 'aborted', reason: { kind: 'user' } } })
++  await idleWait
++  const events = agent.session.snapshotEvents()
++  expect(events.filter(e => e.type === 'turn/end')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')[0]?.data).toMatchObject({ turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
++  expect(agent.externalTurns!.pending()).toBeNull()
++})
++
++it('a failed owner keeps the open turn for cold resume on the same turn', async () => {
++  const root = await mkdtemp(join(tmpdir(), 'dsh-idle-failed-owner-')); directories.push(root)
++  const ctx = new Context(); contexts.push(ctx)
++  await mountAgentLoopTestDependencies(ctx)
++  await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
++  await ctx.plugin(AgentLoop, { agents: [] })
++  ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('recovery')]))
++  ctx.logger.error = vi.fn()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-failed-owner'), agentOptions: { provider: 'mock', model: 'mock' } })
++  await expect(agent.externalTurns!.start!(prepare(1), async () => { throw Error('engine unavailable') }))
++    .rejects.toThrow('engine unavailable')
++  expect(agent.externalTurns!.pending()).toEqual(ownership(1))
++  // The open turn has a turn/start and a turn/owner but no turn/end.
++  const liveEvents = agent.session.snapshotEvents()
++  expect(liveEvents.filter(e => e.type === 'turn/start')).toHaveLength(1)
++  expect(liveEvents.filter(e => e.type === 'turn/owner')).toHaveLength(1)
++  expect(liveEvents.filter(e => e.type === 'turn/end')).toHaveLength(0)
++  await ctx.fiber.dispose()
++  // Cold reopen: the persisted tail preserves the owner for the same turn.
++  const reopened = await restored([
++    { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
++    { type: 'turn/owner', seq: SessionSeq(1), time: 2, data: ownership(1) },
++  ])
++  expect(reopened.agent.externalTurns!.pending()).toEqual(ownership(1))
++  // Resume closes the same turn once and parks any queued work.
++  const ending = await reopened.agent.externalTurns!.resume('fixture-engine/v1', async ({ ownership: own, turn }) => {
++    expect(own).toEqual(ownership(1)); expect(turn).toBe(1)
++    return { reason: { kind: 'completed' } }
++  })
++  expect(ending.reason).toEqual({ kind: 'completed' })
++  expect(reopened.agent.externalTurns!.pending()).toBeNull()
++})
++
++it('queued human input stays parked after a failed owner and runs only after recovery', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-queued-after'), agentOptions: { provider: 'mock', model: 'mock' } })
++  const requests = vi.fn(); ctx.on('agent/request', async (_p, next) => { requests(); return next() })
++  const arrived = Promise.withResolvers<undefined>()
++  // Release execute on the next microtask so the await expect can settle.
++  queueMicrotask(() =>{  arrived.resolve(undefined) })
++  // A followup that arrives during execute stays parked when the engine fails;
++  // it must not downgrade to the default driver.
++  await expect(agent.externalTurns!.start!(prepare(1), async () => {
++    send(agent, 'queued after failure')
++    await arrived.promise
++    throw Error('engine unavailable')
++  })).rejects.toThrow('engine unavailable')
++  await agent.whenIdle()
++  expect(requests).not.toHaveBeenCalled()
++  expect(agent.inbox.nextTurn).toHaveLength(1)
++  expect(agent.externalTurns!.pending()).toEqual(ownership(1))
++  // A successful recovery closes the owned turn once, then releases the
++  // queued prompt to a later ordinary turn through the default driver.
++  await agent.externalTurns!.resume('fixture-engine/v1', async () => ({ reason: { kind: 'completed' } }))
++  await agent.whenIdle()
++  expect(requests).toHaveBeenCalledOnce()
++  expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/end').map(e => e.data.turn)).toEqual([1, 2])
++})
++
++it('a retained prepareInput rejects after the turn settles', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-retained-prepare'), agentOptions: { provider: 'mock', model: 'mock' } })
++  let retained: ((step: number) => Promise<TurnInput>) | undefined
++  await agent.externalTurns!.start!(prepare(1), async ({ prepareInput }) => {
++    retained = prepareInput
++    agent.inject(createUserMessage({ content: [{ type: 'text', text: 'steering' }], source: { kind: 'user' } }))
++    const next = await prepareInput(2)
++    expect(next.kind).toBe('enter')
++    return { reason: { kind: 'completed' } }
++  })
++  await agent.whenIdle()
++  await expect(retained!(3)).rejects.toThrow('already settled')
++})
++
++it('refuses an ownership whose turn does not match the opened turn', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-wrong-turn'), agentOptions: { provider: 'mock', model: 'mock' } })
++  await expect(agent.externalTurns!.start!(
++    async ({ turn }) => ownership(turn + 1),  // wrong turn
++    runExecute(agent),
++  )).rejects.toMatchObject({ code: 'invalid_ownership' })
++  // The unowned open turn is closed once with an error reason.
++  const events = agent.session.snapshotEvents()
++  expect(events.filter(e => e.type === 'turn/start')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/owner')).toHaveLength(0)
++  expect(agent.externalTurns!.pending()).toBeNull()
++  // Restartable: a fresh start on the next turn succeeds.
++  await expect(agent.externalTurns!.start!(prepare(2), runExecute(agent))).resolves.toEqual({ reason: { kind: 'completed' } })
++})
++
++it('parseExternalTurnOwnership rejects a contract mismatch for the idle-start admission', () => {
++  expect(() => parseExternalTurnOwnership({ ...ownership(1), contract: 'dsh.external-turn-start/v1' }, 1))
++    .toThrow(expect.objectContaining({ code: 'invalid_ownership' }))
++  expect(() => parseExternalTurnOwnership({ contract: 'dsh.external-turn-start/v1', turn: 1, engine: 'x', binding: 'y' }, 1))
++    .toThrow(expect.objectContaining({ code: 'invalid_ownership' }))
++})
++
++it('interrupted idle-start closers preserve the external owner for explicit recovery', () => {
++  const seed: SessionEvent[] = [
++    { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
++    { type: 'turn/owner', seq: SessionSeq(1), time: 2, data: ownership(1) },
++    { type: 'step/start', seq: SessionSeq(2), time: 3, data: { turn: 1, step: 1 } },
++  ]
++  expect(interruptedTurnClosers(seed).map(e => e.type)).toEqual(['step/end', 'turn/end'])
++  expect(interruptedTurnClosers(seed, { preserveExternalTurn: true })).toEqual([])
++})
++
++it('execute receives a detached ownership snapshot that a Host mutation after claim cannot change', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-detached'), agentOptions: { provider: 'mock', model: 'mock' } })
++  let seen: ExternalTurnOwnership | undefined
++  let returned: ExternalTurnOwnership | undefined
++  await agent.externalTurns!.start!(
++    async ({ turn, signal }) => {
++      signal.throwIfAborted()
++      returned = ownership(turn)
++      return returned
++    },
++    async (payload) => {
++      // Mutate the Host's returned object after the SDK validated and recorded
++      // a detached snapshot; execute sees the snapshot, not the live object.
++      Object.assign(returned!, { binding: '{"admission":"tampered"}' })
++      seen = payload.ownership
++      return { reason: { kind: 'completed' } }
++    },
++  )
++  await agent.whenIdle()
++  expect(seen).toEqual(ownership(1))
++  expect(seen).not.toBe(returned)
++  expect(returned!.binding).toBe('{"admission":"tampered"}')
++  expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/owner')[0]?.data).toEqual(ownership(1))
++})
++
++it('JSONL orphan repair closes an unowned turn before the next ordinary turn', async () => {
++  // Logical repair coverage; the Loader spec separately kills a live process.
++  const root = await mkdtemp(join(tmpdir(), 'dsh-idle-kill-')); directories.push(root)
++  const ctx = new Context(); contexts.push(ctx)
++  await mountAgentLoopTestDependencies(ctx)
++  await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
++  ctx.logger.error = vi.fn()
++  const id = SessionId('idle-kill')
++  // Write the exact on-disk tail a kill mid-prepare leaves: a session header
++  // followed by one turn/start and nothing else.
++  const detached = ctx.sessions.prepare(id)
++  const writer = await ctx.sessionPersistence.create(detached.header)
++  await writer.append([{ type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } }])
++  await writer.close()
++  await ctx.fiber.dispose()
++  // Cold resume: the persisted log ends at an unowned turn/start.
++  const ctx2 = new Context(); contexts.push(ctx2)
++  await mountAgentLoopTestDependencies(ctx2)
++  await ctx2.plugin(JsonlSessionPersistence, { root, compression: 'none' })
++  await ctx2.plugin(AgentLoop, { agents: [] })
++  ctx2.llm.registerAdapter(['mock'], new MockAdapter([textResponse('recovered turn')]))
++  ctx2.logger.error = vi.fn()
++  const handle = await ctx2.agents.resume({ resumeSessionId: id, agentOptions: { provider: 'mock', model: 'mock' } })
++  const events = handle.agent.session.snapshotEvents()
++  // The orphaned turn/start received an interrupted turn/end (no owner, so the
++  // resume path did not preserve it for external recovery).
++  expect(events.filter(e => e.type === 'turn/start')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')).toHaveLength(1)
++  expect(events.filter(e => e.type === 'turn/end')[0]?.data).toMatchObject({ turn: 1, reason: { kind: 'interrupted' } })
++  expect(handle.agent.externalTurns!.pending()).toBeNull()
++  // The same stable id re-drives a fresh turn through the default driver.
++  send(handle.agent, 'recovered turn')
++  await handle.agent.whenIdle()
++  const after = handle.agent.session.snapshotEvents()
++  expect(after.filter(e => e.type === 'turn/end').map(e => (e.data as { turn: number }).turn)).toEqual([1, 2])
++  expect(after.filter(e => e.type === 'assistant/message')).toHaveLength(1)
++})
++
++it('refuses idle admission while maintenance owns the agent', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-maintenance') })
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  const maintenance = agent.runMaintenance(async () => { entered.resolve(undefined); await release.promise })
++  await entered.promise
++  expect(agent.status).toBe('idle')
++  const before = agent.session.snapshotEvents()
++  try {
++    await expect(agent.externalTurns!.start!(prepare(1), runExecute(agent))).rejects.toMatchObject({ code: 'agent_busy' })
++    expect(agent.session.snapshotEvents()).toEqual(before)
++  } finally { release.resolve(undefined); await maintenance }
++})
++
++it('whenIdle waits for cancelled prepare and cancellation keeps its first cause', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-prepare-wait') })
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  const execute = vi.fn(runExecute(agent))
++  const starting = agent.externalTurns!.start!(async ({ turn }) => {
++    entered.resolve(undefined); await release.promise; return ownership(turn)
++  }, execute)
++  // Observe the eventual rejection before cancelling; the gate owns settlement.
++  const result = starting.catch((error: unknown) => error)
++  await entered.promise
++  agent.cancel({ kind: 'user' }); agent.cancel({ kind: 'disposed' })
++  let idle = false; const waiting = agent.whenIdle().then(() => { idle = true })
++  await Promise.resolve(undefined); expect(idle).toBe(false)
++  release.resolve(undefined)
++  expect(await result).toEqual({ kind: 'user' })
++  await waiting
++  expect(execute).not.toHaveBeenCalled()
++  expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/end').map(e => e.data))
++    .toEqual([{ turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }])
++})
++
++it('prepare rejection closes the unowned turn and allows the next idle admission', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-prepare-rejected') })
++  const execute = vi.fn(runExecute(agent))
++  await expect(agent.externalTurns!.start!(async () => { throw Error('Admission refused') }, execute)).rejects.toThrow('Admission refused')
++  expect(execute).not.toHaveBeenCalled()
++  expect(agent.externalTurns!.pending()).toBeNull()
++  expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/end')).toHaveLength(1)
++  await expect(agent.externalTurns!.start!(prepare(2), runExecute(agent))).resolves.toEqual({ reason: { kind: 'completed' } })
++})
++
++it('disposed cancellation keeps queued human input parked after prepare settles', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-disposed-queue') })
++  const entered = Promise.withResolvers<undefined>()
++  const release = Promise.withResolvers<undefined>()
++  const requests = vi.fn(); ctx.on('agent/request', async (_payload, next) => { requests(); return next() })
++  const starting = agent.externalTurns!.start!(async ({ turn }) => {
++    entered.resolve(undefined); await release.promise; return ownership(turn)
++  }, runExecute(agent)).catch((error: unknown) => error)
++  await entered.promise
++  send(agent, 'Queued before disposal')
++  agent.cancel({ kind: 'disposed' }, { keepInbox: true })
++  release.resolve(undefined)
++  expect(await starting).toEqual({ kind: 'disposed' })
++  await agent.whenIdle()
++  expect(agent.inbox.nextTurn).toHaveLength(1)
++  expect(requests).not.toHaveBeenCalled()
++  expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/start')).toHaveLength(1)
++  expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/end').map(e => e.data))
++    .toEqual([{ turn: 1, reason: { kind: 'aborted', reason: { kind: 'disposed' } } }])
++})
++
++for (const failure of ['turn/start', 'turn/owner', 'turn/end'] as const) it(`preserves recoverable state when ${failure} append fails`, async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId(`idle-append-${failure.replace('/', '-')}`) })
++  const append = agent.session.append.bind(agent.session)
++  const fault = vi.spyOn(agent.session, 'append').mockImplementation((...args) => {
++    if (args[0] === failure) throw Error(`Failed ${failure}`)
++    return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.append>
++  })
++  try { await expect(agent.externalTurns!.start!(prepare(1), runExecute(agent))).rejects.toThrow(`Failed ${failure}`) }
++  finally { fault.mockRestore() }
++  await agent.whenIdle()
++  const events = agent.session.snapshotEvents()
++  expect(events.filter(e => e.type === 'turn/start')).toHaveLength(failure === 'turn/start' ? 0 : 1)
++  expect(events.filter(e => e.type === 'turn/end')).toHaveLength(failure === 'turn/owner' ? 1 : 0)
++  if (failure === 'turn/end') {
++    expect(agent.externalTurns!.pending()).toEqual(ownership(1))
++    await agent.externalTurns!.resume('fixture-engine/v1', async () => ({ reason: { kind: 'completed' } }))
++    expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/start')).toHaveLength(1)
++  } else {
++    expect(agent.externalTurns!.pending()).toBeNull()
++    await agent.externalTurns!.start!(prepare(failure === 'turn/start' ? 1 : 2), runExecute(agent))
++  }
++})
++
++it('parks queued input if an unowned failed turn cannot record its ending', async () => {
++  const { ctx } = await harness()
++  const { agent } = await ctx.agents.create({ sessionId: SessionId('idle-failed-closer') })
++  const requests = vi.fn(); ctx.on('agent/request', async (_payload, next) => { requests(); return next() })
++  const append = agent.session.append.bind(agent.session)
++  const fault = vi.spyOn(agent.session, 'append').mockImplementation((...args) => {
++    if (args[0] === 'turn/end') throw Error('Ending persistence failed')
++    return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.append>
++  })
++  try {
++    await expect(agent.externalTurns!.start!(async () => {
++      send(agent, 'Queued while preparing')
++      throw Error('Admission failed')
++    }, runExecute(agent))).rejects.toMatchObject({
++      errors: [expect.objectContaining({ message: 'Admission failed' }), expect.objectContaining({ message: 'Ending persistence failed' })],
++    })
++    await agent.whenIdle()
++    expect(requests).not.toHaveBeenCalled()
++    expect(agent.inbox.nextTurn).toHaveLength(1)
++    expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/start')).toHaveLength(1)
++    expect(agent.session.snapshotEvents().filter(e => e.type === 'turn/end')).toHaveLength(0)
++    await expect(agent.externalTurns!.start!(prepare(2), runExecute(agent))).rejects.toMatchObject({ code: 'agent_busy' })
++  } finally { fault.mockRestore() }
++})
+diff --git a/packages/core/agent-loop/tests/fixtures/external-turn/idle-driver.ts b/packages/core/agent-loop/tests/fixtures/external-turn/idle-driver.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a27339e9b545231ba61d6ddae867790046edf737
+--- /dev/null
++++ b/packages/core/agent-loop/tests/fixtures/external-turn/idle-driver.ts
+@@ -0,0 +1,58 @@
++/** Built Loader fixture: flush an actual idle-start boundary before a parent SIGKILL. */
++import { boot } from '@deepseek-ai/dsh-app-boot'
++import { SessionId } from '@deepseek-ai/dsh-session'
++import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
++
++const [configPath, mode, boundary] = process.argv.slice(2)
++if (!configPath || !['kill', 'recover'].includes(mode ?? '') || !['prepare', 'owner'].includes(boundary ?? '')) {
++  throw new Error('Expected config, kill|recover and prepare|owner')
++}
++const ctx = await boot('external-idle-fixture', configPath)
++const id = SessionId('external-idle-kill')
++const { agent } = mode === 'kill'
++  ? await ctx.agents.create({ sessionId: id })
++  : await ctx.agents.resume({ resumeSessionId: id })
++const external = agent.externalTurns
++if (external?.idleAdmissionContract !== 'dsh.external-turn-start/v1' || !external.start) throw new Error('Idle admission unavailable')
++const ownership = (turn: number) => ({
++  contract: 'dsh.external-turn/v1' as const, turn, engine: 'idle-process-fixture/v1', binding: '{"source":"original-admission"}',
++})
++const events = () => agent.session.snapshotEvents().map(({ type, data }) => ({ type, data }))
++const block = async () => {
++  await ctx.sessions.flush(agent.session)
++  await new Promise<void>((resolve, reject) => {
++    process.stdout.write(`${JSON.stringify({ ready: boundary, events: events() })}\n`, (error) => {
++      if (error) reject(error)
++      else resolve()
++    })
++  })
++  // The parent must kill this process; no cancellation, exception or dispose can repair its tail.
++  await new Promise<void>(() => { setInterval(() => {}, 1000) })
++  throw new Error('Kill gate unexpectedly returned')
++}
++if (mode === 'kill') {
++  await external.start(async ({ turn }) => {
++    if (boundary === 'prepare') await block()
++    return ownership(turn)
++  }, async () => { await block(); return { reason: { kind: 'completed' } } })
++} else {
++  try {
++    const before = events(), pending = external.pending()
++    const execute = async ({ turn }: { turn: number }) => {
++      await ctx.sessions.flush(agent.session)
++      agent.session.append('step/start', { turn, step: 1 })
++      agent.session.append('assistant/message', { turn, step: 1, stream: [],
++        message: createAssistantMessage({ content: [{ type: 'text', text: 'Original admission recovered.' }],
++          source: { provider: 'external-fixture', model: 'fixture/v1' } }),
++        usage: { inputTokens: 3, outputTokens: 4 },
++      }, { surfaceOp: 'append' })
++      agent.session.append('step/end', { turn, step: 1 })
++      return { reason: { kind: 'completed' as const } }
++    }
++    if (boundary === 'owner') await external.resume('idle-process-fixture/v1', execute)
++    else await external.start(async ({ turn }) => ownership(turn), execute)
++    await agent.whenIdle()
++    await ctx.sessions.flush(agent.session)
++    process.stdout.write(`${JSON.stringify({ before, pending, after: events(), remaining: external.pending() })}\n`)
++  } finally { await ctx.fiber.dispose() }
++}
+diff --git a/packages/core/agent/README.i18n.yaml b/packages/core/agent/README.i18n.yaml
+index a89c87a134ee57145325d1524d56e42dc9ab172a..b8c3c87c7d2cb3436d111f7b6d084c572c1f2049 100644
+--- a/packages/core/agent/README.i18n.yaml
++++ b/packages/core/agent/README.i18n.yaml
+@@ -27,8 +27,8 @@
+   en: 2594a1e02adea801
+   zh: cae8860369728efb
+ /deepseek-ai-dsh-agent/use-this-package/intercept-or-observe-work-in-flight:
+-  en: 12ccd493f3af071e
+-  zh: e9b17db97b8a4568
++  en: 5736a7d2d48fa43b
++  zh: 3a3d248c28acbf38
+ /deepseek-ai-dsh-agent/understand-the-implementation:
+   en: ce7e776e9d516bdb
+   zh: 59d2751743db7795
+diff --git a/packages/core/agent/README.md b/packages/core/agent/README.md
+index dd87386e220c9d557208c881df095f3908b5766a..0dfe579c1e04b685ecf4b92178ae04e9c3cfc874 100644
+--- a/packages/core/agent/README.md
++++ b/packages/core/agent/README.md
+@@ -64,7 +64,7 @@ await handle.agent.whenIdle()
+ 
+ ### Intercept or observe work in flight
+ 
+-`agent/execute-turn` lets an engine handle an admitted whole turn while the host retains cancellation, turn boundaries, status and teardown. Its handler owns all steps, model requests, tools, retry, stopping and logged input; delegating with `next()` retains the standard loop. See the [agent-loop execution rules](../agent-loop/README.md#what-a-step-does).
++`agent/execute-turn` lets an engine handle an admitted whole turn while the host retains cancellation, turn boundaries, status and teardown. Its handler owns all steps, model requests, tools, retry, stopping and logged input; delegating with `next()` retains the standard loop. `agent.externalTurns` also exposes versioned idle admission and explicit owned-turn recovery for trusted Hosts. See the [agent-loop execution rules](../agent-loop/README.md#what-a-step-does).
+ 
+ The `agent/*` events let plugins act on live work without depending on the loop package. `agent/pre-step` can reject a proposed step or replace the messages entering it; `agent/request-error` lets a listener retry a failed model request; `agent/turn-stopping` runs before an otherwise completed turn closes and can steer to keep it open. `agent/assistant-stream` carries one process-local Assistant attempt's ordered start, transient chunk, and end frames. Start names the attempt's turn and step, chunk indexes are dense from zero, and `end.index` is the next chunk position. The loop commits the complete compact stream as one `assistant/message` or `assistant/attempt` before a committed end frame, so the live event remains presentation data rather than the replay source. `agent/status`, `agent/created`, and `agent/disposed` drive UI and coordination state, and the per-message `agent/inbox/*` notifications keep inbox projections in sync. Exact signatures, dispatch modes, and payload contracts live in the generated region of the [core subsystem page](../../../docs/subsystems/core.md#cordis-surface).
+ 
+diff --git a/packages/core/agent/README.zh.md b/packages/core/agent/README.zh.md
+index 9f625723d8445ff8e52098629e4c7d8260b41cba..e6d29b4287cc42a4dd1f470024e444ce7f0afbb3 100644
+--- a/packages/core/agent/README.zh.md
++++ b/packages/core/agent/README.zh.md
+@@ -64,7 +64,7 @@ await handle.agent.whenIdle()
+ 
+ ### 拦截或观察进行中的工作
+ 
+-`agent/execute-turn` 允许引擎接管已接纳的整个轮次，宿主保留取消、轮次边界、状态及卸载职责。监听器负责所有步骤、模型请求、工具、重试、停止及输入记录；调用 `next()` 委托会保留标准循环。参见 [agent-loop 执行规则](../agent-loop/README.zh.md#what-a-step-does)。
++`agent/execute-turn` 允许引擎接管已接纳的整个轮次，宿主保留取消、轮次边界、状态及卸载职责。监听器负责所有步骤、模型请求、工具、重试、停止及输入记录；调用 `next()` 委托会保留标准循环。`agent.externalTurns` 还向可信 Host 提供带版本的空闲准入与已认领轮次的显式恢复。参见 [agent-loop 执行规则](../agent-loop/README.zh.md#what-a-step-does)。
+ 
+ `agent/*` 事件让插件无需依赖循环包即可作用于实时工作。`agent/pre-step` 可以拒绝拟进入的步骤或替换进入它的消息；`agent/request-error` 让监听器重试失败的模型请求；`agent/turn-stopping` 在本可完成的轮次关闭前运行，并可通过 steer 使其保持打开。`agent/assistant-stream` 携带一个进程本地 Assistant attempt 的有序 start、瞬态分片与 end frame。start 给出该 attempt 的轮次与步骤，分片索引从零开始密集递增，`end.index` 则是下一个分片位置。loop 会在 committed end frame 前把完整紧凑流提交为一个 `assistant/message` 或 `assistant/attempt`，因此实时事件仍是呈现数据而非回放来源。`agent/status`、`agent/created` 与 `agent/disposed` 驱动 UI 与协调状态，逐消息的 `agent/inbox/*` 通知则让收件箱投影保持同步。确切签名、分发 mode 与 payload 约定见 [core 子系统页](../../../docs/subsystems/core.zh.md#cordis-surface) 的生成区块。
+ 
+diff --git a/packages/core/agent/src/runtime-types.ts b/packages/core/agent/src/runtime-types.ts
+index 98af4881613fdcc90f4f098dc17a63600d17af27..fda436502a12a27c56c37edaf81bae251f3cdff2 100644
+--- a/packages/core/agent/src/runtime-types.ts
++++ b/packages/core/agent/src/runtime-types.ts
+@@ -136,8 +136,17 @@ export type TurnExecutionResult = { reason: TurnEndReason } | undefined
+ export interface ExternalTurnHost {
+   readonly contract: 'dsh.external-turn-host/v1'
+   /**
++   * Admission contract this host publishes when it can start a whole turn from
++   * the true idle phase. Absent on older implementations; a consumer must check
++   * both this contract version and the {@link ExternalTurnHost.start} method
++   * before assuming the capability — presence of `contract` alone is not
++   * authorization. The value names the public idle-start admission the trusted
++   * Host resolves.
++   */
++  readonly idleAdmissionContract?: 'dsh.external-turn-start/v1'
++  /**
+    * Claim the currently running turn before any step or external effect.
+-   * Flush the Session durably before creating external execution state. Exact repeats are idempotent.
++   * Flush ownership durably before model or tool effects. Exact repeats are idempotent.
+    * @param ownership - engine identifier and complete serialized recovery admission.
+    * @returns sequence of the original ownership event.
+    */
+@@ -157,6 +166,45 @@ export interface ExternalTurnHost {
+     signal: AbortSignal
+     prepareInput: (step: number) => Promise<TurnInput>
+   }) => Promise<{ reason: TurnEndReason }>): Promise<{ reason: TurnEndReason }>
++  /**
++   * Exclusively start and own one whole turn from the true idle phase, driven
++   * by a trusted Host. Synchronously reserves the agent's running phase before
++   * returning; `prepare` resolves admission without a model or tool call and
++   * the engine `execute` runs to settlement under the same phase, so
++   * {@link Agent.whenIdle} awaits both. The SDK owns only the lifecycle: it
++   * opens the turn, records the Host-supplied ownership,
++   * runs the engine through scoped pre-step input, and closes the turn once.
++   *
++   * A busy rejection leaves no durable trace: an open turn
++   * or owner, any queued input, an active maintenance task, or a reentrant
++   * start/resume refuses with `agent_busy` and changes neither the log nor
++   * the queue; a `turn/start` append failure rolls the phase back and throws
++   * without an incremented turn. If recording a failed ending also fails,
++   * the turn remains open and queued input stays parked until repair.
++   * Once ownership is recorded, a later failure
++   * keeps the owner and open turn for explicit recovery — queued follow-ups
++   * stay parked and never downgrade to the default driver. A successful or
++   * explicitly cancelled settlement writes `turn/end` exactly once before
++   * queued human work may run.
++   *
++   * Absent on older implementations; a consumer must also check
++   * {@link ExternalTurnHost.idleAdmissionContract} before assuming the
++   * capability. The Host, not the SDK, authorizes the engine; the recorded
++   * ownership is durable state, not execution authority.
++   * The engine must flush the recorded ownership before model or tool effects.
++   * @param prepare - trusted Host admission: resolve the ownership for the
++   *   fresh turn under the turn signal. Must not call the model or tools. The
++   *   SDK validates and claims it through {@link claim}.
++   * @param execute - engine operation; receives the recorded ownership, the
++   *   turn, the turn abort signal, and `prepareInput` for later scoped steps.
++   * @returns the committed ending; cancellation uses the Agent's explicit cause.
++   */
++  start?(prepare: (payload: { turn: number; signal: AbortSignal }) => Promise<ExternalTurnOwnership>, execute: (payload: {
++    ownership: ExternalTurnOwnership
++    turn: number
++    signal: AbortSignal
++    prepareInput: (step: number) => Promise<TurnInput>
++  }) => Promise<{ reason: TurnEndReason }>): Promise<{ reason: TurnEndReason }>
+ }
+ 
+ /** Action returned by a listener that owns model-request recovery. */
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 5f38bae3561846058531c3fcc1092df01b012024..9aaf253abea3c6bd4495f71ae0db30e17fa65132 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -7177,6 +7177,12 @@ importers:
+       '@deepseek-ai/dsh-agent':
+         specifier: workspace:*
+         version: link:../agent
++      '@deepseek-ai/dsh-app-boot':
++        specifier: workspace:*
++        version: link:../../boot/app-boot
++      '@deepseek-ai/dsh-loader-smoke':
++        specifier: workspace:*
++        version: link:../../test-support/loader-smoke
+       '@deepseek-ai/dsh-llm':
+         specifier: workspace:*
+         version: link:../../llm/llm

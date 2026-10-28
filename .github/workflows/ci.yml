@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/native-*']
   pull_request:
     branches: [main]
 
@@ -26,6 +26,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build:native-source
+      - run: pnpm check:native-ui
       - run: |
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"

@@ -1,15 +1,20 @@
 import { selectCloudPermissionPresentation } from './cloud-permission.mjs';
 import { codexToolDefinition } from './codex-tool.mjs';
+import { mountA2aObservation } from './a2a-observation.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
 import { createNativeSessionBinding } from './session-entry.mjs';
 import { registerPanelNavigation } from './panel-navigation.mjs';
 import { installProductCopy } from '../../product-copy.mjs';
+import { installNativeToolViews } from './native-tool-view.mjs';
+import { installTaskTimeline } from './task-timeline.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
   const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection, AssistantSettingsSection } = ui;
   const { createElement: h } = React;
+  installNativeToolViews(ctx, React);
+  installTaskTimeline(ctx, { ui, hostRemote });
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
@@ -19,6 +24,7 @@ export function mountStudio(ctx, app) {
 
   ctx.effect(() => authoring.mount(), 'agentkit-studio:authoring-owner');
   ctx.uiConversation.events.register(codexToolDefinition);
+  ctx.effect(() => mountA2aObservation(ctx, { React }).dispose, 'agentkit-studio: A2A observation view');
   ctx.effect(() => app.assistantConversation.bind(ctx.uiConversation), 'agentkit-studio:assistant-native-history');
   // Settings owns first-run coordination. Registering here makes the
   // guide visible in the real DSH onboarding path and gives the shell a
@@ -132,6 +138,9 @@ export function mountStudio(ctx, app) {
   }, CloudPermissionPresentation));
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     { name: 'conversation.session.header.actions', id: 'agentkit-studio-cloud-status', order: -10 }, CloudSessionStatus,
+  ));
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+    { name: 'conversation.session.header.actions', id: 'agentkit-studio-native-children', order: -9 }, ui.NativeChildPanel,
   ));
 
   // Authoring entry: only the hero selector keeps the "创建 Agent" button.

@@ -1,0 +1,116 @@
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index 4624d6a75959422e776a7103d7ed6cb79967cafc..411187ad2867340e5b10967103d847791e696004 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -342,6 +342,8 @@ export interface ToolExecutionInput {
+    * validation. Callers and tools own exact decoding; Session JSON is unchanged.
+    */
+   readonly argumentEncoding?: 'dsh.raw-json-number/v1'
++  /** External runtime owns model budgeting and retrievable overflow after all authorization policies. */
++  readonly resultRetention?: 'caller/v1'
+   /** The agent on whose behalf the call runs (set by the agent loop). */
+   readonly agent?: Agent
+   /**
+@@ -826,6 +828,9 @@ export class ToolRuntime extends Service {
+   /** Supported opt-in execution-local argument encodings; ordinary JSON needs no declaration. */
+   readonly argumentEncodings: readonly ['dsh.raw-json-number/v1'] = Object.freeze(['dsh.raw-json-number/v1'] as const)
+ 
++  /** Negotiated caller-owned result retention; does not bypass any tool policy. */
++  readonly resultRetentions: readonly ['caller/v1'] = Object.freeze(['caller/v1'] as const)
++
+   static Config: z<Config> = z.object({
+     mode: z.union(['native', 'ptc'] as const).default('native'),
+     maxParallelSubCalls: z.natural().min(1).default(10),
+@@ -1447,6 +1452,7 @@ export class ToolRuntime extends Service {
+     const parent = exec.parent
+     const signal = exec.signal
+     const argumentEncoding = exec.argumentEncoding
++    const resultRetention = exec.resultRetention
+     // Distinguish a mode-collapsed call (visible in the scope, denied only by
+     // the `ptc` collapse) from a genuinely unknown tool. A collapsed call is
+     // deterministically denied, so it terminates BEFORE the extensible policy
+@@ -1467,6 +1473,7 @@ export class ToolRuntime extends Service {
+       ...parent !== undefined ? { parent } : {},
+       ...exec.schema !== undefined ? { schema: exec.schema } : {},
+       ...argumentEncoding !== undefined ? { argumentEncoding } : {},
++      ...resultRetention !== undefined ? { resultRetention } : {},
+       deferContext(context: UserMessage): void {
+         deferredContexts.push(context)
+       },
+@@ -1489,6 +1496,9 @@ export class ToolRuntime extends Service {
+     const finalizerFor = (): ToolDefinition['finalizeContent'] | undefined =>
+       collapsed && !signal.aborted ? undefined : capturedFinalizer
+     try {
++      if (resultRetention !== undefined && resultRetention !== 'caller/v1') {
++        throw new TypeError('unsupported tool result retention')
++      }
+       if (argumentEncoding !== undefined && argumentEncoding !== 'dsh.raw-json-number/v1') {
+         throw new TypeError('unsupported tool argument encoding')
+       }
+diff --git a/packages/spill/spill-policy/src/index.ts b/packages/spill/spill-policy/src/index.ts
+index 6adbee9f12c31ae2d5c665ab897f1129d01acf56..7a068f8f8f648881e31bc9e86ba2ed244a388b5c 100644
+--- a/packages/spill/spill-policy/src/index.ts
++++ b/packages/spill/spill-policy/src/index.ts
+@@ -132,7 +132,11 @@ export function apply(ctx: Context, config: Config): void {
+ 
+   ctx.on('tools/post-execute', async (exec, result, next): Promise<PostToolDecision> => {
+     const decision = await next()
+-    if (decision.kind !== 'accept' || Object.hasOwn(decision, 'value') || exec.name === 'read') return decision
++    // A caller-owned runtime receives the accepted post-policy observation
++    // and applies its own budget and scoped retrieval contract. Never invent
++    // a host locator that that runtime cannot read. Authorization still runs.
++    if (exec.resultRetention === 'caller/v1' || decision.kind !== 'accept'
++      || Object.hasOwn(decision, 'value') || exec.name === 'read') return decision
+     const content = decision.content ?? result.content
+     const hasImages = content.some(block => block.type === 'image')
+     // Text-only PTC bindings retain their asynchronous log-only spill path.
+diff --git a/packages/spill/spill-policy/tests/spill-policy.spec.ts b/packages/spill/spill-policy/tests/spill-policy.spec.ts
+index a94456ac1bc431607f5ad21603ac919fd39f9f73..9743799731e2f2cf5613c6a57ec3fa993869e722 100644
+--- a/packages/spill/spill-policy/tests/spill-policy.spec.ts
++++ b/packages/spill/spill-policy/tests/spill-policy.spec.ts
+@@ -622,3 +622,45 @@ describe('disposal (HMR safety)', () => {
+     expect(spill?.saves).toHaveLength(1)
+   })
+ })
++
++
++describe('caller-owned retention', () => {
++  it('returns the complete authorized observation without creating host spill locators', async () => {
++    const { ctx, spill } = await setup({ maxInlineTokens: 64 }, true, (context) => {
++      context.on('tools/post-execute', async (_exec, _result, next) => {
++        await next()
++        return { kind: 'accept', content: [{ type: 'text', text: 'authorized '.repeat(1000) }] }
++      })
++    })
++    ctx.tools.register(textTool('big', 'private raw payload'))
++    expect(ctx.tools.resultRetentions).toContain('caller/v1')
++    const result = await ctx.tools.execute({ ...exec('big'), resultRetention: 'caller/v1' })
++    expect(textOf(result.content)).toBe('authorized '.repeat(1000))
++    expect(textOf(result.content)).not.toContain('private raw payload')
++    expect(spill?.saves).toHaveLength(0)
++  })
++
++  it('preserves post-policy denial and does not turn retention ownership into authorization', async () => {
++    const { ctx, spill } = await setup({ maxInlineTokens: 64 }, true, (context) => {
++      context.on('tools/post-execute', async (_exec, _result, next) => {
++        await next()
++        return { kind: 'block', feedback: [{ type: 'text', text: 'policy denied' }] }
++      })
++    })
++    ctx.tools.register(textTool('big', 'private '.repeat(1000)))
++    const result = await ctx.tools.execute({ ...exec('big'), resultRetention: 'caller/v1' })
++    expect(result.isError).toBe(true)
++    expect(textOf(result.content)).toContain('policy denied')
++    expect(textOf(result.content)).not.toContain('private')
++    expect(spill?.saves).toHaveLength(0)
++  })
++
++  it('rejects unsupported ownership contracts before dispatch', async () => {
++    const { ctx } = await setup({ maxInlineTokens: 64 })
++    const body = vi.fn(async () => [{ type: 'text' as const, text: 'ran' }])
++    ctx.tools.register(defineContentToolFixture({ name: 'big', description: 'big', parameters: {}, execute: body }))
++    const result = await ctx.tools.execute({ ...exec('big'), resultRetention: 'unknown' as 'caller/v1' })
++    expect(result.isError).toBe(true)
++    expect(body).not.toHaveBeenCalled()
++  })
++})

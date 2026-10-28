@@ -1,30 +1,19 @@
 import { hostFetch } from './http-fetch.mjs';
 /** Host-owned adapters for resources bound to a local Agent revision. */
 import { createHash, randomUUID } from 'node:crypto';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client, StreamableHTTPClientTransport, SSEClientTransport, StdioClientTransport, getDefaultEnvironment } from '../dist/native-mcp-client.mjs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
+import { fetchNativeSkillArchive } from './providers/native-skill-loader.mjs';
+import { MCP_JSON_PARSER_CONTRACT, NATIVE_MCP_JSON_CODEC, nativeMcpJsonParser, nativeMcpSchemaValidator } from './providers/native-mcp-json.mjs';
+import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
 
 export class LocalResourceError extends Error {
   constructor(code, message, details = {}) { super(message); this.name = 'LocalResourceError'; this.code = code; this.details = details; }
 }
 
 function resourceId(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
-
-/** AICP bounds AgentUserId and SessionId to 64 characters. */
-function memorySubjectId(collectionId, userId, agentId = '') {
-  const encoded = JSON.stringify([
-    'memory-partition/v1',
-    String(collectionId || ''),
-    String(agentId || ''),
-    String(userId || 'studio-anonymous').trim() || 'studio-anonymous',
-  ]);
-  return `mp1-${createHash('sha256').update(encoded).digest('hex').slice(0, 60)}`;
-}
 
 function memoryReply(reply, requireReceipt = false) {
   let data = reply?.data;
@@ -39,10 +28,6 @@ function memoryReply(reply, requireReceipt = false) {
   return { data, requestId };
 }
 
-function memorySessionId(sessionId) {
-  const raw = String(sessionId || '').trim();
-  return raw ? createHash('sha256').update(`memory-session/v1|${raw}`).digest('hex') : '';
-}
 function contentHash(value, skillId) {
   const raw = String(value || '').trim().toLowerCase().replace(/^sha256:/, '');
   if (!raw) return '';
@@ -152,8 +137,10 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       credentialRef: detail.credentialRef || config.credentialRef, apiKey: detail.api_key || detail.apiKey };
   }
 
-  async function mcp(binding) {
+  async function mcp(binding, jsonCodec, cacheId, assertCurrent) {
     assertOpen();
+    if (jsonCodec !== undefined && jsonCodec !== NATIVE_MCP_JSON_CODEC) throw new LocalResourceError('MCP_JSON_CODEC_INVALID', 'MCP JSON 解析契约无效');
+    const exact = jsonCodec === NATIVE_MCP_JSON_CODEC;
     const detail = await describeMcp(binding), stdio = detail.transport === 'stdio';
     const { resourceId: key, endpoint, headers } = stdio ? detail : await resolveMcpConnection(detail, credentials);
     const environment = { ...getDefaultEnvironment(), ...detail.env };
@@ -163,21 +150,29 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       environment[name] = value;
     }
     assertOpen();
+    assertCurrent?.();
     // DSH credentials are mutable. Re-resolve them on every operation and
     // replace a cached client when the effective auth material changes. The
     // fingerprint is one-way and never leaves this process.
     const fingerprint = createHash('sha256').update(JSON.stringify({ endpoint, transport: detail.transport, command: detail.command, args: detail.args, ...(stdio ? { environment } : { headers: Object.entries(headers).sort(([a], [b]) => a.localeCompare(b)) }) })).digest('hex');
-    const cached = mcpClients.get(key);
+    // Native and ordinary callers may use the same resource concurrently.
+    // Keep their parser/schema contracts on separate connections.
+    const cacheKey = cacheId ?? JSON.stringify([key, jsonCodec ?? null]);
+    const cached = mcpClients.get(cacheKey);
     if (cached?.fingerprint === fingerprint) return cached;
     if (cached) {
       await Promise.resolve(cached.client.close?.()).catch(() => {});
-      mcpClients.delete(key);
+      mcpClients.delete(cacheKey);
     }
-    const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' });
+    const Transport = stdio ? StdioClientTransport : detail.transport === 'sse' ? SSEClientTransport : StreamableHTTPClientTransport;
+    if (exact && Transport.jsonParserContract !== MCP_JSON_PARSER_CONTRACT) throw new LocalResourceError('MCP_JSON_CODEC_UNAVAILABLE', 'MCP 客户端缺少精确 JSON 解析接口');
+    const jsonOptions = exact ? { jsonParser: nativeMcpJsonParser } : {};
+    const transport = stdio ? new Transport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe', ...jsonOptions })
+      : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl, ...jsonOptions });
+    const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' },
+      exact ? { jsonSchemaValidator: nativeMcpSchemaValidator } : undefined);
+    assertCurrent?.();
     connectingClients.add(client);
-    const transport = stdio ? new StdioClientTransport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe' })
-      : detail.transport === 'sse' ? new SSEClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl })
-        : new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl });
     if (stdio) transport.stderr?.resume();
     try {
       await client.connect(transport, { timeout: 20000 });
@@ -187,37 +182,61 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       await Promise.resolve(transport.close?.()).catch(() => {});
       throw mcpFailure(error, key);
     } finally { connectingClients.delete(client); }
-    const entry = { client, transport, fingerprint };
-    const displaced = mcpClients.get(key);
+    const entry = { client, transport, fingerprint, cacheKey };
+    const displaced = mcpClients.get(cacheKey);
     if (displaced && displaced !== entry) await displaced.client.close().catch(() => {});
     if (closed) { await client.close().catch(() => {}); assertOpen(); }
-    mcpClients.set(key, entry);
+    mcpClients.set(cacheKey, entry);
     return entry;
   }
 
-  async function listMcpTools(id) {
+  async function listMcpTools(id, { jsonCodec, snapshot = false } = {}) {
+    if (typeof snapshot !== 'boolean') throw new LocalResourceError('MCP_SNAPSHOT_INVALID', 'MCP 目录快照选项无效');
     const key = resourceId(id);
-    const entry = await mcp(id);
+    // A revision's schema discovery must not replace an active caller's
+    // connection or populate that caller's mutable output-validator cache.
+    const entry = await mcp(id, jsonCodec, snapshot ? Symbol('MCP catalog snapshot') : undefined);
     try { return (await entry.client.listTools()).tools || []; }
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
-      if (mcpClients.get(key) === entry) mcpClients.delete(key);
+      if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
       throw mcpFailure(error, key, 'list');
+    } finally {
+      if (snapshot) {
+        await Promise.resolve(entry.client.close?.()).catch(() => {});
+        if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
+      }
     }
   }
 
-  async function callMcpTool(id, name, args = {}, { signal } = {}) {
-    signal?.throwIfAborted();
+  async function callMcpTool(id, name, args = {}, { signal, resultFormat = 'content', assertCurrent } = {}) {
+    const check = () => {
+      signal?.throwIfAborted();
+      if (assertCurrent === undefined) return;
+      if (typeof assertCurrent !== 'function') throw new LocalResourceError('MCP_AUTHORITY_INVALID', 'MCP 调用权限校验无效');
+      const result = assertCurrent();
+      if (result && typeof result.then === 'function') {
+        Promise.resolve(result).catch(() => {});
+        throw new LocalResourceError('MCP_AUTHORITY_INVALID', 'MCP 调用权限校验必须同步完成');
+      }
+      if (result === false) throw new LocalResourceError('MCP_AUTHORITY_STALE', 'MCP 调用权限已失效');
+    };
+    check();
+    if (!['content', 'mcp-result/v1'].includes(resultFormat)) throw new LocalResourceError('MCP_RESULT_FORMAT_INVALID', 'MCP 结果格式无效');
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
-    const entry = await mcp(id);
+    const entry = await mcp(id, resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined, undefined, check);
+    // Credentials and connection initialization may wait. A connected client
+    // cannot extend the original parent or child's Native dispatch authority.
+    check();
     let result;
     try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }
     catch (error) {
       await Promise.resolve(entry.client.close?.()).catch(() => {});
-      if (mcpClients.get(key) === entry) mcpClients.delete(key);
+      if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
       throw mcpFailure(error, key, 'call', name);
     }
+    if (resultFormat === 'mcp-result/v1') return result;
     if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
     return result?.content || result;
   }
@@ -249,16 +268,14 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       const expectedHash = contentHash(item.ContentHash || item.contentHash || item.content_hash || item.Hash || item.hash, skillId);
       const download = await serverClient.skillAction(versionId ? 'GetSkillDownloadUrl' : 'GetPremadeSkillDownloadUrl', { SkillId: skillId, ...(versionId ? { VersionId: versionId } : {}) });
       const url = String(download.data?.DownloadUrl || download.data?.download_url || '').trim();
-      if (!/^https:\/\//i.test(url)) throw new LocalResourceError('SKILL_DOWNLOAD_URL_INVALID', '云端 Skill 下载地址无效', { resourceId: skillId });
-      const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
-      if (!response.ok) throw new LocalResourceError('SKILL_DOWNLOAD_FAILED', `云端 Skill 下载失败（${response.status}）`, { resourceId: skillId });
-      const length = Number(response.headers.get('content-length') || 0);
-      if (length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
-      const archive = Buffer.from(await response.arrayBuffer());
-      if (archive.length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
-      if (expectedHash) {
-        const actualHash = createHash('sha256').update(archive).digest('hex');
-        if (actualHash !== expectedHash) throw new LocalResourceError('SKILL_ARCHIVE_HASH_MISMATCH', '云端 Skill 压缩包完整性校验失败', { resourceId: skillId, expected: expectedHash, actual: actualHash });
+      let archive;
+      try {
+        // This is trusted pre-Run resource admission. Native tool execution
+        // uses the same downloader with its actual intent/fence authority.
+        ({ archive } = await fetchNativeSkillArchive({ url, contentHash: expectedHash,
+          signal: AbortSignal.timeout(30000), assertCurrent: () => true, fetchImpl }));
+      } catch (error) {
+        throw new LocalResourceError(error.code || 'SKILL_DOWNLOAD_FAILED', '云端 Skill 下载或完整性校验失败', { resourceId: skillId });
       }
       try { manifests.push(...await materializeCloudSkill(archive, cacheDir, String(item.Name || item.name || skillId))); }
       catch (error) { throw new LocalResourceError(error.code || 'SKILL_ARCHIVE_INVALID', '云端 Skill 文件无法完整加载：' + error.message, { resourceId: skillId }); }
@@ -332,7 +349,8 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     return memories;
   }
 
-  async function writeMemory(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
+  function prepareMemoryWrite(id, userId, messages, { sessionId = '', agentId = '', flush = false } = {}) {
+    assertOpen();
     if (!serverClient?.action) throw new LocalResourceError('MEMORY_SERVICE_UNAVAILABLE', '云端记忆库适配器未启用', { resourceId: resourceId(id) });
     const collectionId = resourceId(id);
     const conversation = (Array.isArray(messages) ? messages : [])
@@ -344,7 +362,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
         MessageId: randomUUID(),
         Content: [{ Type: 'input_text', Text: String(message.content).slice(0, 16000) }],
       }));
-    if (!conversation.length) return { accepted: false, reason: 'empty' };
+    if (!conversation.length) return null;
     const payload = {
       MemoryCollectionId: collectionId,
       AgentUserId: memorySubjectId(collectionId, userId, agentId),
@@ -355,8 +373,33 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       ...(memorySessionId(sessionId) ? { SessionId: memorySessionId(sessionId) } : {}),
       ...(flush === true ? { Flush: true } : {}),
     };
+    return payload;
+  }
+
+  async function writeMemory(id, userId, messages, options = {}) {
+    const payload = prepareMemoryWrite(id, userId, messages, options);
+    if (!payload) return { accepted: false, reason: 'empty' };
     const result = await serverClient.action('CreateMemorySdk', payload, { apiVersion: '2025-11-14' });
     return { accepted: true, data: memoryReply(result, true).data };
+  }
+
+  async function bindMemoryWriter() {
+    assertOpen();
+    if (typeof serverClient?.bindMemoryWriter !== 'function')
+      throw new LocalResourceError('MEMORY_DURABLE_WRITER_UNAVAILABLE', '记忆服务缺少持久写入端口');
+    const transport = await serverClient.bindMemoryWriter(); assertOpen();
+    return { binding: structuredClone(transport.binding),
+      prepare: (id, userId, messages, options) => ({ requestId: randomUUID(), payload: prepareMemoryWrite(id, userId, messages, options) }),
+      async write(prepared, { signal, assertCurrent }) {
+        const guard = () => { assertOpen(); signal.throwIfAborted();
+          const current = assertCurrent();
+          if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+          if (current !== true) throw new LocalResourceError('MEMORY_WRITE_AUTHORITY_LOST', '记忆写入授权已失效'); };
+        guard(); const result = await transport.write(structuredClone(prepared.payload),
+          { signal, requestId: prepared.requestId, apiVersion: '2025-11-14' }); guard();
+        const reply = memoryReply(result, true);
+        return { accepted: true, requestId: reply.requestId };
+      } };
   }
 
   async function close() {
@@ -389,7 +432,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   }
 
   // Host-only descriptor; it can contain credentials. Never expose it through RPC.
-  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, listMemory,
+  return { describeMcp, listMcpTools, callMcpTool, loadSkill, searchKnowledge, searchMemory, writeMemory, bindMemoryWriter, listMemory,
     deleteMemory: (id, userId, memoryId, options) => mutateMemory('DeleteMemory', id, userId, memoryId, undefined, options),
     updateMemory: (id, userId, memoryId, content, options) => mutateMemory('UpdateMemory', id, userId, memoryId, content, options), close };
 }

@@ -1,0 +1,78 @@
+{
+  "reviewedAt": "2026-10-26",
+  "output": "/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-memory-web-aksKhq",
+  "evidence": "full-mounted-studio-memory-controlled-model",
+  "passed": true,
+  "checks": [
+    "create-and-enable-memory-through-form",
+    "success-separate-main-and-memory-usage",
+    "success-reload-preserves-status-and-usage",
+    "budget-separate-main-and-memory-usage",
+    "budget-reload-preserves-status-and-usage",
+    "actual-sqlite-effect-and-original-revision-binding"
+  ],
+  "durable": {
+    "parentRuns": 2,
+    "separateAuxiliaryRuns": 2,
+    "engine": "agentkit.native/v1",
+    "revision": 1,
+    "memoryFacts": 1,
+    "memoryVersion": 1
+  },
+  "requests": [
+    {
+      "kind": "main",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "success",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "success",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "main",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "budget",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "budget",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "budget",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "budget",
+      "inputTokens": 11,
+      "outputTokens": 7
+    },
+    {
+      "kind": "budget",
+      "inputTokens": 11,
+      "outputTokens": 7
+    }
+  ],
+  "agentId": "ar-local-cbca1f9eecf94a26",
+  "sessionId": "session-5205c17e-5e67-4732-bccb-a7315bff8048",
+  "rendererErrors": [],
+  "modelFailures": [],
+  "limitations": [
+    "Controlled localhost model replies and token counts, not a model-quality/token-saving benchmark.",
+    "Maintained DSH dependency graph reused; not a fresh installation.",
+    "Browser reload is exercised here; Host process-kill recovery has separate evidence."
+  ]
+}

@@ -1,4 +1,5 @@
 import { createNativeHostRemote } from './remote/node-client.mjs';
+import { validateOperationResponse } from './contracts/transport.mjs';
 /**
  * Narrow browser-to-AgentKit Host transport used by the Studio product layer.
  *
@@ -106,6 +107,15 @@ export function createStudioHostRemote(options = {}) {
     return result;
   }
 
+  async function nativeChildOperation(operation, payload, signal) {
+    const reply = await request('/agentkit', { method: 'POST', body: JSON.stringify({ method: operation, payload }), signal });
+    const envelope = reply?.result;
+    validateOperationResponse(operation, envelope);
+    if (!envelope.ok) throw new StudioHostError(envelope.error?.message || 'Native child operation failed', {
+      code: envelope.error?.code, status: envelope.error?.status, details: envelope.error?.details });
+    return envelope.value;
+  }
+
   return {
     get csrfToken() { return csrfToken; },
     get sessionToken() { return sessionToken; },
@@ -172,6 +182,24 @@ export function createStudioHostRemote(options = {}) {
     trace: id => request(`/api/v1/traces/${encodeURIComponent(id)}`),
     traceOtlp: id => request(`/api/v1/traces/${encodeURIComponent(id)}/otlp`),
     exportSessionLog: (id, query = '') => request(`/api/v1/sessions/${encodeURIComponent(id)}:export${query ? `?${query}` : ''}`),
+    nativeChildHistory: (payload, signal) => nativeChildOperation('sessions/native-child-history', payload, signal),
+    nativeRecoveryStatus: (payload, signal) => nativeChildOperation('sessions/native-recovery-status', payload, signal),
+    resumeNativeRun: (payload, signal) => nativeChildOperation('sessions/native-recovery-resume', payload, signal),
+    reviewNativeBackground: (payload, signal) => nativeChildOperation('sessions/native-background-review', payload, signal),
+    reconcileNativeTool: (payload, signal) => nativeChildOperation('sessions/native-recovery-reconcile', payload, signal),
+    repairNativeWorkspace: (payload, signal) => nativeChildOperation('sessions/native-workspace-repair', payload, signal),
+    nativeConversationStatus: (payload, signal) => nativeChildOperation('sessions/native-conversation-status', payload, signal),
+    rewindNativeConversation: (payload, signal) => nativeChildOperation('sessions/native-conversation-rewind', payload, signal),
+    previewNativeConversationWorkspace: (payload, signal) => nativeChildOperation('sessions/native-conversation-workspace-preview', payload, signal),
+    controlNativeA2aTask: (payload, signal) => nativeChildOperation('sessions/native-a2a-control', payload, signal),
+    dshA2aTaskHistory: (payload, signal) => nativeChildOperation('sessions/dsh-a2a-history', payload, signal),
+    controlDshA2aTask: (payload, signal) => nativeChildOperation('sessions/dsh-a2a-control', payload, signal),
+    nativeChildResult: (payload, signal) => nativeChildOperation('sessions/native-child-result', payload, signal),
+    nativeChildFile: (payload, signal) => nativeChildOperation('sessions/native-child-file', payload, signal),
+    nativeCommandOutput: (payload, signal) => nativeChildOperation('sessions/native-command-output', payload, signal),
+    promoteNativeChild: (payload, signal) => nativeChildOperation('sessions/native-child-promote', payload, signal),
+    sendNativeChildInput: (payload, signal) => nativeChildOperation('sessions/native-child-send', payload, signal),
+    cancelNativeChild: (payload, signal) => nativeChildOperation('sessions/native-child-cancel', payload, signal),
     channelConnection: () => request('/api/v1/channels/connection'),
     updateChannelConnection: payload => request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
     updateAgentChannelConnection: (id, payload) => request(`/api/v1/channels/agents/${encodeURIComponent(id)}/connection`, { method: 'PUT', body: JSON.stringify(payload) }),

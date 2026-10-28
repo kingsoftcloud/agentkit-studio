@@ -1,0 +1,101 @@
+@kingsoftcloud/agentkit-harness-ui — THIRD-PARTY NOTICES
+
+This package is Apache-2.0 licensed (see LICENSE).
+
+Portions of the presentation semantics in the thought (reasoning) block —
+collapsed-by-default streaming with a latest-line summary, auto-collapse on
+stream end unless the user interacted, content scroll-follow with a bottom
+lock, and a host-supplied real duration label — are derived from the
+vercel/ai-elements `reasoning.tsx` component:
+
+  Original: packages/elements/src/reasoning.tsx
+  Copyright 2023 Vercel, Inc.
+  Licensed under the Apache License, Version 2.0
+  https://github.com/vercel/ai-elements
+
+The derived behavior was reimplemented from scratch in plain ESM with no
+source copied; the original Apache-2.0 notice is retained here per the
+license's redistribution terms. No "inspired by" product branding is asserted.
+
+The execute/read/edit renderer contracts and the unified-diff line-number
+parsing are adapted from the ZCode DESKTOP task conversation presentation
+(also Apache-2.0 within this reference set): execute `$` prompt + bounded
+command and safe-ANSI stdout/stderr/exit/cwd, read file chip, edit file chips
+with +N/-N count and inline diff carrying real @@ line numbers. These were
+reimplemented as pure, function-free view-model fragments; the Markdown table adaptation described below includes derived source.
+
+
+The reasoning summary playback queue is adapted from
+packages/ui/src/ToolCallBlocks/QueuedSummaryContent.tsx and the latest-line
+selection in packages/ui/src/components/ai-elements/reasoning.tsx of ZCode,
+revision 3c5b227649371507ddc4eb46ac5133afe6db1cab, under Apache-2.0.
+This distribution changes the implementation to a host-independent ESM
+scheduler and CSS transitions; it retains no dependency on that application.
+
+Inline tool and reasoning icons contain Lucide SVG paths from lucide-static 0.544.0.
+
+ISC License
+
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2023 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2025.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+---
+
+The MIT License (MIT) (for portions derived from Feather)
+
+Copyright (c) 2013-2023 Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Bundled Markdown rendering dependencies and their license texts are listed in
+markdown/dist/THIRD_PARTY_LICENSES.txt. Original inline license notices are
+also retained in the generated Markdown factory.
+
+Markdown table layout, toolbar, overflow scrolling, sticky scrollbar and fullscreen
+preview are adapted from packages/ui/src/components/ai-elements/markdown-table.tsx
+of ZCode, revision 3c5b227649371507ddc4eb46ac5133afe6db1cab, Apache-2.0.
+The host supplies React and portals; scoped CSS replaces utility classes, and local
+status announcements replace application toasts. Dialog focus and scroll lifecycle
+are implemented within this independent package.
+
+Subagent parent-row interaction and deterministic role colors are adapted from
+packages/ui/src/ToolCallBlocks/renderers/agent.tsx, lib/subagentColors.ts,
+v4/ConversationAgentToolCallRow.tsx and app-shell/SubagentSessionSidePane.tsx
+of the same revision and license. The read-only child timeline is composed with
+the independent renderer; docking is supplied by the host.
+
+Conversation status panel shell, mini/panel/auto modes, Todo focus window,
+background-work and child-session sections are adapted from
+packages/ui/src/v4/ConversationStatusPanel.tsx, conversationStatusPanelModel.ts
+and conversationLayout.ts of ZCode, revision
+3c5b227649371507ddc4eb46ac5133afe6db1cab, Apache-2.0.
+The host supplies committed activity facts, Git observations and navigation
+actions; this independent component carries no execution authority.

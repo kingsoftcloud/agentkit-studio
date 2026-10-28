@@ -13,7 +13,7 @@ const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
 
-export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, validatePrevious, assistant, hosted, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, validatePrevious, responseProjection, assistant, hosted, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16 } = {}) {
   if (!agentId || !/^build_[0-9a-f]{20}$/.test(buildId || '') || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
   const tokenHash = hash(token);
@@ -106,6 +106,10 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
         await validatePrevious(input.previous, abort.signal);
         abort.signal.throwIfAborted();
       }
+      const projectionRequest = isResponses ? { ...input, agentId, buildId } : null;
+      const savedProjection = isResponses && responseProjection ? await responseProjection.load(projectionRequest, abort.signal) : null;
+      const savedResponse = savedProjection?.response;
+      if (savedResponse) input.createdAt = savedResponse.created_at;
       if (isResponses) projection = createRuntimeResponsesStream(input, emit);
       if (input.stream) {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
@@ -113,13 +117,19 @@ export async function startBuildRuntimeHttp({ agentId, buildId, bundleSha256 = '
         else emit('run.started', { runId, sessionId, agentId, buildId, requestId: input.requestId });
         heartbeat = setInterval(() => { if (!res.destroyed && !abort.signal.aborted) res.write(': keepalive\n\n'); }, 15000); heartbeat.unref();
       }
-      const result = await runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input, ...(isResponses ? { model: input.model } : {}), signal: abort.signal,
-        ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
+      const result = await runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input,
+        ...(savedResponse ? { requireReplay: true } : {}), ...(isResponses ? { model: input.model } : {}), signal: abort.signal,
+        ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted && !savedResponse) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
       if (abort.signal.aborted) throw abort.signal.reason;
       const value = { ...result, requestId: input.requestId, runtimeRunId: runId, buildId };
       if (projection) {
         if (input.hosted) await hosted.flushRun(input);
-        const response = projection.complete(result);
+        const prepared = savedResponse || projection.prepare(result);
+        const persisted = responseProjection ? await responseProjection.save(projectionRequest, prepared,
+          savedProjection?.events ?? projection.snapshot(), abort.signal) : null;
+        const response = persisted?.response ?? prepared;
+        abort.signal.throwIfAborted();
+        if (savedResponse) projection.replay(response, persisted.events); else projection.publish(response);
         if (input.stream) res.end('data: [DONE]\n\n'); else json(res, 200, response);
       } else if (input.stream) { emit('run.completed', value); res.end(); } else json(res, 200, value);
     } catch (error) {

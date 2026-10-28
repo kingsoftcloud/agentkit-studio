@@ -1,0 +1,172 @@
+{
+  "reviewedAt": "2026-10-26",
+  "scope": "local enterprise Native child lifecycle and background cold recovery",
+  "ui": {
+    "output": "/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-children-web-2Bs9QQ",
+    "evidence": "full-mounted-studio-children-controlled-model",
+    "passed": true,
+    "checks": [
+      "create-native-role-through-real-agent-form",
+      "explicit-strict-policy-approvals",
+      "guide-original-child-and-promote-to-background",
+      "read-settled-result-and-child-usage",
+      "reload-restores-original-child-and-result",
+      "cancel-original-active-child-before-late-tool-dispatch",
+      "reload-keeps-both-rounds-and-cancellation",
+      "actual-sqlite-parent-binding-usage-settlement-and-no-canceled-effect"
+    ],
+    "archiveSha256": "f9be6bee421621a7524186da5e8a4dd6f39db4e57d87f66a2753de5cd7bff72e",
+    "sourceSha256": {
+      "dist/client.js": "13e5a7cd7486ed746f93fee68ca92f07c1359790bbb810f897f2537c7bf43e66",
+      "src/providers/native-subagents.mjs": "a13705cb0ea9f96a895febfa224e4e8d7b8d53fc64d69875c582d6b1e1565a86",
+      "src/native-child-tools.mjs": "9e21c14d4a150b1f8dddcd018cbbd3a7530018fa531f150603cb0fc73e0b3053",
+      "src/native-tool-catalog.mjs": "0369261c87b49148b951b976eabd8e7d244c550079941d8a0dd04d8a1e44b7b3",
+      "src/client/pages/agent-form.mjs": "72924562245483b785c640340b9b456ca94c714ffe7f06963be7b0f6418f93f5",
+      "src/client/pages/native-role-fields.mjs": "a2f071cd370b84a708583fe94afd2dde24fc0e453ddc5d97b36d2f639d4c3611",
+      "packages/agentkit-harness/src/native/workspace-tools.mjs": "302d1e851b07b8bbdd81bec74248cb89b3e81f6be5b13cc66cc5ca1d92a3e374"
+    },
+    "durable": {
+      "parents": 2,
+      "children": 2,
+      "phases": [
+        "completed",
+        "canceled"
+      ],
+      "childModelCalls": [
+        2,
+        1
+      ],
+      "childToolCalls": [
+        1,
+        0
+      ],
+      "revision": 1,
+      "engine": "agentkit.native/v1",
+      "childUsageSettledOnce": true,
+      "lateWriteDispatched": false
+    },
+    "agentId": "ar-local-8f18334891114f60",
+    "sessionId": "session-c6c25754-fe72-4e0b-a577-2b533c7a808a",
+    "requests": [
+      {
+        "scenario": "guided",
+        "kind": "parent",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "guided",
+        "kind": "child",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "guided",
+        "kind": "parent",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "guided",
+        "kind": "child",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "guided",
+        "kind": "parent",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "guided",
+        "kind": "parent",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "cancel",
+        "kind": "parent",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "cancel",
+        "kind": "child",
+        "inputTokens": 11,
+        "outputTokens": 7
+      },
+      {
+        "scenario": "cancel",
+        "kind": "parent",
+        "inputTokens": 11,
+        "outputTokens": 7
+      }
+    ],
+    "rendererErrors": [],
+    "modelFailures": []
+  },
+  "background": {
+    "output": "/var/folders/rq/sljhp4n11lz8y3y4dvc9xhbh0000gn/T/studio-native-background-EsLYB4",
+    "passed": true,
+    "node": "v26.5.0",
+    "boundary": "cold",
+    "frozen": true,
+    "archiveSha256": "f9be6bee421621a7524186da5e8a4dd6f39db4e57d87f66a2753de5cd7bff72e",
+    "fixtureSha256": "33cc442fdb7db118471c767003ebb89ab75311789553846f657f4635f4f9002b",
+    "sdkCommit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
+    "scope": {
+      "tenantId": "local",
+      "workspaceId": "5dc3bebc9d51f075434ced3edb786b65a9dc9e1d96adb06d182d05413ee5d4e9",
+      "userId": "local-user",
+      "agentId": "ar-local-1ff84b252e904a55"
+    },
+    "sourceRunId": "native-dsh-170acf485ff17742c5a9f3ef55b5b3463f3b724b1a31c276ad51ed0afaffcba5",
+    "noticeRunId": "wake_e928541c86e4c229d43ecfcc2590e211085e242e33b7860596679d1d9777a6e4",
+    "ref": {
+      "operationKey": "[\"[\\\"local\\\",\\\"5dc3bebc9d51f075434ced3edb786b65a9dc9e1d96adb06d182d05413ee5d4e9\\\",\\\"local-user\\\",\\\"ar-local-1ff84b252e904a55\\\"]\",\"native-dsh-170acf485ff17742c5a9f3ef55b5b3463f3b724b1a31c276ad51ed0afaffcba5\"]:effect:8:tool",
+      "sourceRunId": "native-dsh-170acf485ff17742c5a9f3ef55b5b3463f3b724b1a31c276ad51ed0afaffcba5",
+      "taskId": "9cc0771ea97b6e4d1c7e69ec874351715a4c8da2827b30cb59e39944ac514b0c"
+    },
+    "lifetimes": [
+      {
+        "pid": 14426,
+        "signal": "SIGKILL",
+        "boundary": "source-completed-command-running"
+      }
+    ],
+    "modelCalls": 3,
+    "commandEffects": 1,
+    "sessionLoads": [
+      {
+        "source": "startup",
+        "sessionId": "native-background-session",
+        "pid": 14426
+      },
+      {
+        "source": "resume",
+        "sessionId": "native-background-session",
+        "pid": 14453
+      }
+    ],
+    "limitation": "Packed production modules with explicitly copied instrumentation fixture and fixed local dependency graph; not fresh installation."
+  },
+  "verification": {
+    "primaryFocusedCases": 41,
+    "claudeFocusedCases": 25,
+    "contractTypeScript": "passed",
+    "clientBuild": "passed",
+    "fullSuiteRun": false
+  },
+  "limitations": [
+    "Controlled local model responses and token values; no real-model quality or savings claim.",
+    "UI browser reload, not a network partition or UI Host crash test.",
+    "UI child background is promotion; direct background child has Host test evidence.",
+    "Background command uses actual Host SIGKILL and cold restart through SDK.",
+    "Reused local dependency graph, not a fresh install."
+  ],
+  "verifierSha256": {
+    "children": "818ec5dae8e0210afc469d911a2a106764cab06e9d4ac5c94c4fd3374534e610",
+    "background": "98659a859873bc57764fd94004932cad7e3d2cf57ca556b68a747628da4360c4"
+  }
+}

@@ -51,6 +51,42 @@ export function auditPath(file) {
     .map(() => ({ file, kind: 'forbidden public path' }));
 }
 
+function isTestInput(file) {
+  return /^(?:tests\/|packages\/[^/]+\/test\/)/.test(file);
+}
+
+function publicExample(name, candidate, text, file) {
+  const value = candidate[0];
+  const testInput = isTestInput(file);
+  if (name === 'internal-service-host') {
+    if (APPROVED_INTERNAL_SERVICE_HOSTS.has(value.toLowerCase()) || value === 'metadata.google.internal') return true;
+    if (testInput && ['foo', 'search'].some(prefix => value === `${prefix}.${'internal'}`)) return true;
+    // An unquoted JavaScript property access is not a network endpoint.
+    if (/\.[cm]?js$/.test(file) && /^[A-Za-z_$][\w$]*\.internal$/.test(value)
+      && /[\[\s(,]/.test(text[candidate.index - 1] || '')
+      && /[,;\])}]/.test(text[candidate.index + value.length] || '')) return true;
+  }
+  if (name === 'private-network-address') {
+    const address = value.replace(/^[^0-9]+|[^0-9]+$/g, '');
+    // RFC 1918 range bases in SSRF denial tables are public constants.
+    if (['10.0.0.0', '172.16.0.0', '192.168.0.0'].includes(address)
+      && /^['"]/.test(value) && /['"/]$/.test(value)) return true;
+    // Bare address literals in deterministic network-policy fixtures contain no
+    // endpoint credentials; URLs and private endpoint configurations still fail.
+    if (testInput && /^['"]/.test(value) && /['"]$/.test(value)) return true;
+    if (testInput && value.startsWith('/') && value.endsWith('/')) return true;
+  }
+  if (name === 'embedded-url-credential' && testInput) {
+    // Only these short, explicit synthetic user/password pairs are examples.
+    // Other credentials and all provider-token patterns remain subject to scan.
+    return /^https?:\/\/user:(?:pass|password|secret|token|unsafe-token)@$/i.test(value);
+  }
+  if (name === 'aws-access-key' && testInput) {
+    return value === ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
+  }
+  return false;
+}
+
 export function auditText(file, source, { historical = false } = {}) {
   // Scan byte content too: NUL bytes must not provide a scanner bypass.
   const text = source[0] === 0xff && source[1] === 0xfe
@@ -59,29 +95,10 @@ export function auditText(file, source, { historical = false } = {}) {
   for (const { name, pattern } of SENSITIVE_TEXT_PATTERNS) {
     // Deleted documents remain reachable through Git history and receive the
     // same private-material checks as current files.
-    let match = pattern.exec(text);
-    if (name === 'embedded-url-credential' && historical && /^tests\//.test(file)) {
-      const candidates = [...text.matchAll(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>`]+/gi)];
-      if (candidates.length) match = candidates.find(candidate => {
-        try {
-          const url = new URL(candidate[0]);
-          return !['example.test', 'example.com'].includes(url.hostname)
-            || !['password', 'secret', 'token', 'unsafe-token'].includes(url.password);
-        } catch { return true; }
-      }) || null;
-    }
-    if (name === 'internal-service-host' && match) {
-      // Inspect every internal-host match so an approved endpoint does not
-      // hide an unknown internal endpoint later in the same file.
-      const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-      match = null;
-      for (const candidate of text.matchAll(globalPattern)) {
-        if (!APPROVED_INTERNAL_SERVICE_HOSTS.has(candidate[0].toLowerCase())) {
-          match = candidate;
-          break;
-        }
-      }
-    }
+    // Inspect every candidate: a public constant or placeholder cannot hide a
+    // later real credential, including in a deleted historical test file.
+    const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    const match = [...text.matchAll(globalPattern)].find(candidate => !publicExample(name, candidate, text, file));
     if (!match) continue;
     const line = text.slice(0, match.index).split('\n').length;
     hits.push({ file, kind: name, line });

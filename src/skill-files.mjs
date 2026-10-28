@@ -1,6 +1,7 @@
 /** Materialize resource files; DSH owns loading, tool execution and permissions. */
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile, rename, rm, readFile, lstat } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rename, rm, lstat, readdir, realpath, open } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { readZipFiles } from './zip.mjs';
 import { parseFrontmatter } from './skill-discovery.mjs';
@@ -22,31 +23,84 @@ export function runtimeSkill({ name, content, path }) {
     invocation: { modelInvocable: String(metadata['disable-model-invocation']) !== 'true', userInvocable: String(metadata['user-invocable']) !== 'false' } };
 }
 
-export async function materializeCloudSkill(archive, cacheDir, name) {
+export async function materializeCloudSkill(archive, cacheDir, name, { assertCurrent = () => true } = {}) {
+  const check = () => {
+    const verdict = assertCurrent();
+    if (verdict && typeof verdict.then === 'function') Promise.resolve(verdict).catch(() => {});
+    if (verdict !== true) throw Object.assign(new Error('Skill loading authority changed'), { code: 'SKILL_LOAD_AUTHORITY_CHANGED' });
+  };
+  check();
   const files = readZipFiles(archive);
   const manifests = files.filter(file => /(?:^|\/)SKILL\.md$/i.test(file.name));
   if (!manifests.length) throw Object.assign(new Error('云端 Skill 缺少 SKILL.md'), { code: 'SKILL_MANIFEST_MISSING' });
   const digest = createHash('sha256').update(archive).digest('hex');
   await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+  check();
+  if ((await lstat(cacheDir)).isSymbolicLink()) throw new Error('invalid skill cache directory');
+  const pinnedCache = await realpath(cacheDir);
+  const checkCache = async () => {
+    check();
+    if ((await lstat(cacheDir)).isSymbolicLink() || await realpath(cacheDir) !== pinnedCache)
+      throw new Error('skill cache directory changed');
+    check();
+  };
   const target = join(cacheDir, digest);
+  await checkCache();
   const existing = await lstat(target).catch(() => null);
   if (existing) {
     if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error('invalid skill cache directory');
-    for (const file of files) {
-      const path = join(target, file.name);
-      if (!(await lstat(path)).isFile() || !(await readFile(path)).equals(file.data)) throw new Error('skill cache content changed');
-    }
   } else {
     const staging = await mkdtemp(join(cacheDir, '.prepare-'));
     try {
       for (const file of files) {
+        await checkCache();
         const path = join(staging, file.name);
         await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        check();
         await writeFile(path, file.data, { mode: file.executable ? 0o700 : 0o600, flag: 'wx' });
       }
+      await checkCache();
       try { await rename(staging, target); }
       catch (error) { if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error; }
     } finally { await rm(staging, { recursive: true, force: true }); }
   }
+  // Validate the winner after publication too: another materializer may have
+  // published this digest while the staging tree was being written.
+  await checkCache();
+  if (!(await lstat(target)).isDirectory() || (await lstat(target)).isSymbolicLink())
+    throw new Error('invalid skill cache directory');
+  const expected = new Map(files.map(file => [file.name, file.data]));
+  const seen = new Set();
+  async function inspect(directory, prefix = '') {
+    await checkCache();
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const key = prefix + entry.name, filename = join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error('skill cache content changed');
+      if (entry.isDirectory()) {
+        if (![...expected.keys()].some(name => name.startsWith(key + '/'))) throw new Error('skill cache content changed');
+        await inspect(filename, key + '/');
+      } else {
+        if (!entry.isFile() || !expected.has(key)) throw new Error('skill cache content changed');
+        check();
+        const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const info = await handle.stat(), wanted = expected.get(key);
+          if (!info.isFile() || info.size !== wanted.length) throw new Error('skill cache content changed');
+          const buffer = Buffer.alloc(wanted.length + 1); let offset = 0;
+          while (offset < buffer.length) {
+            check();
+            const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+            if (!bytesRead) break;
+            offset += bytesRead;
+          }
+          if (offset !== wanted.length || !buffer.subarray(0, offset).equals(wanted)) throw new Error('skill cache content changed');
+        } finally { await handle.close(); }
+        check(); seen.add(key);
+      }
+    }
+  }
+  await inspect(target);
+  if (seen.size !== expected.size) throw new Error('skill cache content changed');
+  await checkCache();
   return manifests.map(file => runtimeSkill({ name, content: file.data.toString('utf8'), path: join(target, file.name) }));
 }

@@ -1,0 +1,487 @@
+/* @kingsoftcloud/agentkit-harness-ui/markdown — table layer stylesheet.
+ *
+ * Ported from the reference Markdown table component:
+ * Tailwind utility classes are converted item-by-item to scoped CSS keyed on
+ * the ks-md-table-* classes emitted by table-factory.mjs. Table rules live
+ * under .ks-markdown so the shared theme tokens resolve; the portaled preview
+ * dialog renders into document.body (outside .ks-markdown) and therefore
+ * carries its own token set with explicit light/dark + prefers-color-scheme.
+ * No Tailwind dependency is introduced. */
+
+/* ── table-specific tokens (extend the .ks-markdown palette) ──────────────── */
+
+.ks-markdown {
+  --ks-fg-subtlest: #6e7681;
+  --ks-row-hover: rgba(175, 184, 193, 0.2);
+}
+.ks-markdown.ks-theme-dark {
+  --ks-fg-subtlest: #7d8590;
+  --ks-row-hover: rgba(177, 186, 196, 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  .ks-markdown:not(.ks-theme-light) {
+    --ks-fg-subtlest: #7d8590;
+    --ks-row-hover: rgba(177, 186, 196, 0.12);
+  }
+}
+
+/* ── root: my-0 flex min-w-0 flex-col gap-2 ───────────────────────────────── */
+
+.ks-markdown .ks-md-table-root {
+  margin-top: 0;
+  margin-bottom: 0;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── toolbar: flex items-center justify-end gap-1 ─────────────────────────── */
+
+.ks-markdown .ks-md-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* ── ghost icon button (Button variant=ghost size=icon-md) ────────────────── */
+
+.ks-markdown .ks-md-table-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ks-fg-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.ks-markdown .ks-md-table-btn:hover {
+  background: var(--ks-bg-soft);
+  color: var(--ks-fg);
+}
+.ks-markdown .ks-md-table-btn:focus-visible {
+  outline: 2px solid var(--ks-link);
+  outline-offset: 1px;
+}
+.ks-markdown .ks-md-table-btn[aria-pressed="true"] {
+  color: var(--ks-fg);
+  background: var(--ks-bg-soft);
+}
+
+/* ── tooltip via data-tip (replaces ControlHintTooltip) ───────────────────── */
+
+.ks-markdown .ks-md-table-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--ks-fg);
+  color: var(--ks-bg);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+  z-index: 30;
+}
+.ks-markdown .ks-md-table-btn:hover[data-tip]::after,
+.ks-markdown .ks-md-table-btn:focus-visible[data-tip]::after {
+  opacity: 1;
+}
+
+/* ── inline status region (replaces toast; never claims success on error) ── */
+
+.ks-markdown .ks-md-table-status {
+  margin-left: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.ks-markdown .ks-md-table-status-success {
+  color: var(--ks-copied);
+  background: var(--ks-bg-soft);
+}
+.ks-markdown .ks-md-table-status-error {
+  color: #cf222e;
+  background: rgba(248, 81, 73, 0.12);
+}
+.ks-markdown.ks-theme-dark .ks-md-table-status-error {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  .ks-markdown:not(.ks-theme-light) .ks-md-table-status-error {
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.16);
+  }
+}
+
+/* ── frame: group/markdown-table-frame relative w-full ───────────────────── */
+
+.ks-markdown .ks-md-table-frame {
+  position: relative;
+  width: 100%;
+}
+
+/* ── width container: min-w-full w-max + transition when not borrowing left ── */
+
+.ks-markdown .ks-md-table-width {
+  min-width: 100%;
+  width: max-content;
+}
+.ks-markdown .ks-md-table-width-transition {
+  transition: max-width 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ks-markdown .ks-md-table-width-transition {
+    transition: none;
+  }
+}
+
+/* ── viewport wrap: relative w-full overflow-hidden rounded-xl border ─────── */
+
+.ks-markdown .ks-md-table-viewport-wrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--ks-border);
+}
+
+/* ── scroll viewport: !scrollbar-hide w-full overflow-x-auto overflow-y-visible */
+
+.ks-markdown .ks-md-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.ks-markdown .ks-md-table-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ── table: w-max min-w-full border-separate border-spacing-0 text-ui-base ── */
+
+.ks-markdown .ks-md-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9375em;
+}
+
+.ks-markdown .ks-md-table-thead,
+.ks-markdown .ks-md-table-tbody {
+  /* upstream attaches no classes; hooks reserved on the class for diagnostics */
+}
+
+/* ── tr: transition-colors last:[&>td]:border-b-0 hover:bg-hover/20 ──────── */
+
+.ks-markdown .ks-md-table-tr {
+  transition: background-color 120ms ease-out;
+}
+.ks-markdown .ks-md-table-tr:hover {
+  background: var(--ks-row-hover);
+}
+.ks-markdown .ks-md-table-tr:last-child > .ks-md-table-td {
+  border-bottom: 0;
+}
+
+/* ── th: border-b px-3 py-2 text-left font-normal text-foreground-subtlest
+ *       min-w-16 max-w-md whitespace-normal break-words ───────────────────── */
+
+.ks-markdown .ks-md-table-th {
+  border-bottom: 1px solid var(--ks-border);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 400;
+  color: var(--ks-fg-subtlest);
+  vertical-align: top;
+  min-width: 64px;
+  max-width: 448px;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* ── td: border-b px-3 py-2 text-foreground align-top
+ *       min-w-16 max-w-md whitespace-normal break-words ───────────────────── */
+
+.ks-markdown .ks-md-table-td {
+  border-bottom: 1px solid var(--ks-border);
+  padding: 8px 12px;
+  color: var(--ks-fg);
+  vertical-align: top;
+  min-width: 64px;
+  max-width: 448px;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* ── edge shadow: pointer-events-none absolute inset-y-0 z-10 w-6 + sides ── */
+
+.ks-markdown .ks-md-table-edge-shadow {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  width: 24px;
+}
+.ks-markdown .ks-md-table-edge-shadow[data-side="left"] {
+  left: 0;
+  border-radius: 12px 0 0 12px;
+  box-shadow: inset 12px 0 12px -12px color-mix(in srgb, black 15%, transparent);
+}
+.ks-markdown .ks-md-table-edge-shadow[data-side="right"] {
+  right: 0;
+  border-radius: 0 12px 12px 0;
+  box-shadow: inset -12px 0 12px -12px color-mix(in srgb, black 15%, transparent);
+}
+
+/* ── virtual scrollbar wrapper: pointer-events-none py-1 opacity-0
+ *    transition-[width,opacity] + visible/hidden + sticky; frame-hover reveals */
+
+.ks-markdown .ks-md-table-vbar {
+  pointer-events: none;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  opacity: 0;
+  transition: width 200ms ease-out, opacity 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ks-markdown .ks-md-table-vbar {
+    transition: none;
+  }
+}
+.ks-markdown .ks-md-table-vbar-hidden {
+  visibility: hidden;
+}
+.ks-markdown .ks-md-table-vbar-visible {
+  visibility: visible;
+}
+.ks-markdown .ks-md-table-frame:hover .ks-md-table-vbar-visible {
+  pointer-events: auto;
+  opacity: 1;
+}
+.ks-markdown .ks-md-table-vbar-sticky {
+  position: relative;
+  z-index: 20;
+}
+
+/* ── virtual track: mt-1 h-3.5 w-full touch-none rounded-full bg-foreground/3 ── */
+
+.ks-markdown .ks-md-table-vtrack {
+  margin-top: 4px;
+  height: 14px;
+  width: 100%;
+  touch-action: none;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--ks-fg) 3%, transparent);
+}
+
+/* ── virtual thumb: h-3 rounded-full bg-foreground/20 hover:bg-foreground/40 ── */
+
+.ks-markdown .ks-md-table-vthumb {
+  height: 12px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--ks-fg) 20%, transparent);
+  transition: background-color 120ms ease-out;
+  cursor: grab;
+}
+.ks-markdown .ks-md-table-vthumb:hover {
+  background: color-mix(in srgb, var(--ks-fg) 40%, transparent);
+}
+.ks-markdown .ks-md-table-vthumb:active {
+  cursor: grabbing;
+}
+
+/* ── preview dialog (portaled to document.body — own token set) ──────────── */
+
+.ks-md-table-dialog-overlay {
+  --ks-dlg-bg: #ffffff;
+  --ks-dlg-fg: #1f2328;
+  --ks-dlg-fg-muted: #59636e;
+  --ks-dlg-border: #d0d7de;
+  --ks-dlg-th-bg: #f6f8fa;
+  --ks-dlg-row-hover: rgba(175, 184, 193, 0.2);
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, black 40%, transparent);
+}
+.ks-md-table-dialog-overlay.ks-theme-dark {
+  --ks-dlg-bg: #0d1117;
+  --ks-dlg-fg: #e6edf3;
+  --ks-dlg-fg-muted: #9198a1;
+  --ks-dlg-border: #30363d;
+  --ks-dlg-th-bg: #161b22;
+  --ks-dlg-row-hover: rgba(177, 186, 196, 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  .ks-md-table-dialog-overlay:not(.ks-theme-light) {
+    --ks-dlg-bg: #0d1117;
+    --ks-dlg-fg: #e6edf3;
+    --ks-dlg-fg-muted: #9198a1;
+    --ks-dlg-border: #30363d;
+    --ks-dlg-th-bg: #161b22;
+    --ks-dlg-row-hover: rgba(177, 186, 196, 0.12);
+  }
+}
+
+/* Dialog content: flex max-h-[calc(100vh-2rem)] w-max max-w-[calc(100vw-2rem)]
+ * flex-col gap-3 overflow-hidden rounded-2xl p-4 + sm/md/lg breakpoints. */
+.ks-md-table-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 2rem);
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 16px;
+  background: var(--ks-dlg-bg);
+  border: 1px solid var(--ks-dlg-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+@media (min-width: 640px) {
+  .ks-md-table-dialog {
+    max-height: calc(100vh - 8rem);
+    max-width: calc(100vw - 8rem);
+  }
+}
+@media (min-width: 768px) {
+  .ks-md-table-dialog {
+    min-width: 640px;
+  }
+}
+@media (min-width: 1024px) {
+  .ks-md-table-dialog {
+    min-width: 720px;
+  }
+}
+
+/* Dialog header: pr-8 (room for the close button). */
+.ks-md-table-dialog-header {
+  position: relative;
+  padding-right: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ks-md-table-dialog-title {
+  margin: 0;
+  font-size: 1.125em;
+  font-weight: 600;
+  color: var(--ks-dlg-fg);
+}
+.ks-md-table-dialog-desc {
+  margin: 0;
+  font-size: 0.8125em;
+  color: var(--ks-dlg-fg-muted);
+}
+.ks-md-table-dialog-close {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+.ks-md-table-dialog-scroll {
+  min-height: 0;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--ks-dlg-border);
+  background: var(--ks-dlg-bg);
+}
+
+/* The dialog's close button is outside .ks-markdown, so it needs its own rule. */
+.ks-md-table-dialog .ks-md-table-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ks-dlg-fg-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.ks-md-table-dialog .ks-md-table-btn:hover {
+  background: color-mix(in srgb, var(--ks-dlg-fg) 8%, transparent);
+  color: var(--ks-dlg-fg);
+}
+.ks-md-table-dialog .ks-md-table-btn:focus-visible {
+  outline: 2px solid var(--ks-dlg-fg-muted);
+  outline-offset: 1px;
+}
+
+/* Preview table: same base as the main table + [&_th]:sticky top-0 z-10
+ * bg-background. Scoped to .ks-md-table-preview (only the preview table has it)
+ * and under the dialog (outside .ks-markdown). */
+.ks-md-table-dialog .ks-md-table-preview {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9375em;
+}
+.ks-md-table-dialog .ks-md-table-preview .ks-md-table-tr {
+  transition: background-color 120ms ease-out;
+}
+.ks-md-table-dialog .ks-md-table-preview .ks-md-table-tr:hover {
+  background: var(--ks-dlg-row-hover);
+}
+.ks-md-table-dialog .ks-md-table-preview .ks-md-table-tr:last-child > .ks-md-table-td {
+  border-bottom: 0;
+}
+.ks-md-table-dialog .ks-md-table-preview .ks-md-table-th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--ks-dlg-th-bg);
+  color: var(--ks-dlg-fg-muted);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: top;
+  padding: 8px 12px;
+  min-width: 64px;
+  max-width: 448px;
+  white-space: normal;
+  overflow-wrap: break-word;
+  border-bottom: 1px solid var(--ks-dlg-border);
+}
+.ks-md-table-dialog .ks-md-table-preview .ks-md-table-td {
+  color: var(--ks-dlg-fg);
+  vertical-align: top;
+  text-align: left;
+  padding: 8px 12px;
+  min-width: 64px;
+  max-width: 448px;
+  white-space: normal;
+  overflow-wrap: break-word;
+  border-bottom: 1px solid var(--ks-dlg-border);
+}

@@ -5,9 +5,35 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSkillDiscovery, parseFrontmatter, skillSlug } from '../src/skill-discovery.mjs';
 
+test('strict imported manifests reject malformed YAML while local-display scalar recovery remains available', () => {
+  const bad = '---\nname: sample\ndescription: valid\nbroken: [\n---\nbody';
+  assert.equal(parseFrontmatter(bad).name, 'sample');
+  assert.throws(() => parseFrontmatter(bad, { strict: true }), { code: 'SKILL_MANIFEST_INVALID' });
+  for (const source of ['---name: sample\ndescription: test\n---\nbody', '---\nname: sample\ndescription: test\n---'])
+    assert.throws(() => parseFrontmatter(source, { strict: true }), { code: 'SKILL_MANIFEST_INVALID' });
+});
+
+test('strict import frontmatter preserves universal newlines, bounded aliases and Python duplicate-key selection', () => {
+  const metadata = parseFrontmatter('---\r\nname: old\r\nname: imported\r\ndescription: &text Unicode 技能\r\ncopy: *text\r\n---\r\nbody', { strict: true });
+  assert.equal(metadata.name, 'imported'); assert.equal(metadata.description, 'Unicode 技能'); assert.equal(metadata.copy, metadata.description);
+});
+import { DatabaseSync } from 'node:sqlite';
+import { statSync } from 'node:fs';
+
 async function makeHome() {
   return mkdtemp(join(tmpdir(), 'agentkit-skills-'));
 }
+
+test('local Skill discovery orders supplementary Unicode paths by Python code points', async t => {
+  const home = await makeHome(), scan = join(home, 'skills');
+  t.after(() => rm(home, { recursive: true, force: true }));
+  for (const name of ['\u{10000}', '\ue000']) {
+    await mkdir(join(scan, name), { recursive: true });
+    await writeFile(join(scan, name, 'SKILL.md'), '---\nname: same\ndescription: valid\n---\nInstructions');
+  }
+  const result = await createSkillDiscovery({ home }).discover([scan]);
+  assert.deepEqual(result.candidates.map(value => value.path), [join(scan, '\ue000'), join(scan, '\u{10000}')]);
+});
 
 test('parseFrontmatter reads simple scalar fields and ignores non-manifest text', () => {
   const metadata = parseFrontmatter('---\nname: My Skill\ndescription: does things\nversion: 2.1.0\n---\nbody');
@@ -116,4 +142,19 @@ test('equal Skill directory names in different explicit roots remain distinct ca
     assert.equal(result.candidates.length, 2);
     assert.equal(new Set(result.candidates.map(item => item.candidateId)).size, 2);
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('catalog publication preserves an existing readable store and rejects lost authority after cross-Host lock wait', async t => {
+  const root = await makeHome(); t.after(() => rm(root, { recursive: true, force: true }));
+  const storeDir = join(root, 'readable-store'); await mkdir(storeDir, { mode: 0o755 });
+  const before = statSync(storeDir).mode, discovery = createSkillDiscovery({ storeDir });
+  const first = { resourceId: `skill-catalog-${'a'.repeat(24)}`, directory: root, digest: 'a', name: 'first', kind: 'skill', status: 'ready' };
+  await discovery.registerBundleSkills([first]); assert.equal(statSync(storeDir).mode, before);
+  const db = new DatabaseSync(join(storeDir, '.catalog-publication/lock.sqlite')); db.exec('BEGIN IMMEDIATE');
+  let current = true;
+  const pending = discovery.registerBundleSkills([{ ...first, resourceId: `skill-catalog-${'b'.repeat(24)}`, name: 'second' }], { assertCurrent: () => current });
+  await new Promise(resolve => setTimeout(resolve, 35)); current = false; db.exec('ROLLBACK'); db.close();
+  await assert.rejects(pending, { code: 'SKILL_PUBLICATION_AUTHORITY_LOST' });
+  assert.deepEqual((await discovery.listInstalled()).items.map(item => item.name), ['first']);
+  await assert.rejects(discovery.registerBundleSkills([first], { assertCurrent: async () => true }), { code: 'SKILL_PUBLICATION_AUTHORITY_LOST' });
 });

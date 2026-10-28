@@ -1,0 +1,1 @@
+Native Node adapters and the command classifier ship with this package. The classifier bundle includes third-party components; see dist/native-command-plan.LICENSE.txt, THIRD_PARTY_NOTICES.md and ZCode-LICENSE. Native launcher binaries carry their redistribution notices in src/native/local-process-licenses/. The kernel is supplied by @kingsoftcloud/agentkit-harness-core.

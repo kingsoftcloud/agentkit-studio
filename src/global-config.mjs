@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'yaml';
 import { normalizeModelEndpoint } from './model-endpoint.mjs';
+import { modelRuntimeOptions } from './model-profile-contract.mjs';
 
 const FIELDS = {
   modelProvider: ['MODEL_PROVIDER'], modelName: ['OPENAI_MODEL_NAME', 'DEEPSEEK_MODEL_NAME'],
@@ -44,6 +45,7 @@ async function readDocument(path, json = false) {
 function normalizeProfiles(value) {
   if (!Array.isArray(value)) return [];
   const profiles = value.filter(record).map(profile => ({
+    ...nativeModelOptions(profile),
     id: scalar(profile.id) || `${scalar(profile.provider) || 'provider'}:${scalar(profile.modelName) || scalar(profile.model)}`,
     ...(scalar(profile.displayName) ? {displayName:scalar(profile.displayName)} : {}),
     provider: scalar(profile.provider) || 'ksyun',
@@ -60,6 +62,26 @@ function normalizeProfiles(value) {
   // valid profile as the default and normalize multiple markers to one.
   const defaultIndex = profiles.findIndex(profile => profile.default);
   return profiles.map((profile, index) => ({ ...profile, default: defaultIndex < 0 ? index === 0 : index === defaultIndex }));
+}
+
+// These fields affect the Native model contract and must survive config reads
+// and portable import; silently discarding them changes a frozen execution.
+function nativeModelOptions(profile) {
+  const result = {};
+  if (profile.protocol !== undefined) {
+    if (!['openai-chat', 'openai-responses', 'anthropic-messages'].includes(profile.protocol))
+      throw new ConfigurationError('模型协议格式无效');
+    result.protocol = profile.protocol;
+  }
+  for (const key of ['contextWindow', 'maxOutputTokens', 'requestTimeoutMs']) if (profile[key] !== undefined) {
+    if (!Number.isSafeInteger(profile[key]) || profile[key] <= 0) throw new ConfigurationError('模型预算或超时格式无效');
+    result[key] = profile[key];
+  }
+  if (profile.parameters !== undefined) {
+    if (!record(profile.parameters)) throw new ConfigurationError('模型参数格式无效');
+    result.parameters = structuredClone(profile.parameters);
+  }
+  return modelRuntimeOptions(result);
 }
 
 function project(document) {
@@ -147,6 +169,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
       if (key === 'modelProfiles') {
         if (!Array.isArray(value) || value.some(profile => !record(profile) || !scalar(profile.modelName) || !scalar(profile.provider))) return Promise.reject(new ConfigurationError('模型目录格式无效'));
         if (value.some(profile => profile.codexApi && !['responses', 'chat-completions'].includes(profile.codexApi))) return Promise.reject(new ConfigurationError('Codex 模型接口格式无效'));
+        try { value.forEach(nativeModelOptions); } catch (error) { return Promise.reject(error); }
       } else if (key === 'modelProfileKeys') {
         if (!record(value) || Object.values(value).some(item => typeof item !== 'string')) return Promise.reject(new ConfigurationError('模型凭证格式无效'));
       } else if (typeof value !== 'string') return Promise.reject(new ConfigurationError('配置值必须为文本'));

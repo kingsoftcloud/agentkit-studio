@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-11",
-  "tree": "0331b5810698a91b459a1a6f70aade3691ef0392",
-  "sourceSha256": "015bfa95471852a9bd85bb304610f6e4f99b762ed745a3ec8485f72c0abac027",
+  "headCommit": "d918977b892638296d9e36af6721272e7e704ccb",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-zcode",
+  "tree": "2f5cb898e1f3d7633bd42bbc6dcd5e9faa600bce",
+  "sourceSha256": "9250193a2a1caa8bd165a31f3b188e7e0ed63adbf8e728ae50c2d71962a4200c",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "035164e7cc34c39d0326cd4eef11e6a2c9c64afc7a3f798275a092e9620dc3b2"
+    "sha256": "12f98715d81ce452bb0266f341b88531b5d28c1dc4101dfa4a2194d783f86fda"
   },
   "commits": [
     {
@@ -238,6 +238,108 @@
       "file": "045-tool-dispatch-definition.patch",
       "commit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+    },
+    {
+      "id": "046",
+      "file": "046-maintained-doc-refresh.patch",
+      "commit": "aa199c96d679641c8a835b8b84497ecb32b79a06",
+      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4"
+    },
+    {
+      "id": "047",
+      "file": "047-execute-turn-engine.patch",
+      "commit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
+      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
+    },
+    {
+      "id": "048",
+      "file": "048-sdk-external-turn.patch",
+      "commit": "4d4f6d195cc5bb2871387c810e29482465247f27",
+      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
+    },
+    {
+      "id": "049",
+      "file": "049-exact-numeric-arguments.patch",
+      "commit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
+      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
+    },
+    {
+      "id": "050",
+      "file": "050-external-turn-ownership.patch",
+      "commit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
+      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
+    },
+    {
+      "id": "051",
+      "file": "051-external-turn-idle-admission.patch",
+      "commit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
+      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
+    },
+    {
+      "id": "052",
+      "file": "052-node-only-primary-runtime.patch",
+      "commit": "594077b72ae7398531f340564e80e88169a43c94",
+      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
+    },
+    {
+      "id": "053",
+      "file": "053-node-office-authoring.patch",
+      "commit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
+      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
+    },
+    {
+      "id": "054",
+      "file": "054-scoped-external-instructions.patch",
+      "commit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
+      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
+    },
+    {
+      "id": "055",
+      "file": "055-tool-dispatch-guard.patch",
+      "commit": "786f15474b99c012680e76326a55386848c8f45b",
+      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4"
+    },
+    {
+      "id": "056",
+      "file": "056-caller-result-retention.patch",
+      "commit": "600cd0b7e7a72ef8b6774d05aabccaba30b5895b",
+      "sha256": "41f7b0eeb18f3201193b94df2e157c8a6344cbc2fa57d321924f86ab16e93f37"
+    },
+    {
+      "id": "057",
+      "file": "057-runtime-chat-presentation.patch",
+      "commit": "b752e6a4a07d497ec30c820c3caa77f318356602",
+      "sha256": "00475d007b7d10d76b0044f2a653af083e3f76d207184002312557a6cd0d61fb"
+    },
+    {
+      "id": "058",
+      "file": "058-chat-table-layout-boundary.patch",
+      "commit": "d68df244a5b220584bd8534f2c157e5aa239907a",
+      "sha256": "54372264c65e91607ba3b0ab9a6368e9047264dd9e41e81a7939db8ab2fd8216"
+    },
+    {
+      "id": "059",
+      "file": "059-chat-status-presentation-seat.patch",
+      "commit": "2ef4455c10eed95d9786533c52efd953d0c641f4",
+      "sha256": "13f6b4128ab27fddd72ab856fd1605a8d5709ecab0e1ccd061f64ef2c6d23986"
+    },
+    {
+      "id": "060",
+      "file": "060-conversation-status-todo-owner.patch",
+      "commit": "a4403d52e8d4fb602ee4343c32f0d415e9fe3f8d",
+      "sha256": "9f91ca15990e72774be479ba8b01f0a707e6825007ea80d95f94ec4b490a8ddf"
+    },
+    {
+      "id": "061",
+      "file": "061-tool-preflight-defer.patch",
+      "commit": "609f1aed18758966eee9815f245d86a9e227c084",
+      "sha256": "41956a490e4625f7ecf66edfa0a18d9a5aef6124e13fa8044d6f751a7c67a0ee"
+    },
+    {
+      "id": "062",
+      "file": "062-conversation-shell-scroll-owner.patch",
+      "commit": "d918977b892638296d9e36af6721272e7e704ccb",
+      "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9"
     }
   ]
 }

@@ -5,8 +5,9 @@
  * serves overview, list, detail, and raw OTLP to the observability page.
  */
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { NATIVE_SKILL_EVENTS, selectNativeSkillEvents } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
 
 export class StudioObservabilityError extends Error {
   constructor(code, message, details = {}) {
@@ -24,6 +25,7 @@ function parseRange(range) {
 
 function projectSpans(events) {
   const spans = [];
+  const skillIds = new Set();
   const rootSpanId = randomUUID().replace(/-/g, '').slice(0, 16);
   const rootStart = events.length ? new Date(events[0].at).getTime() : Date.now();
   const rootEnd = events.length ? new Date(events[events.length - 1].at).getTime() : rootStart;
@@ -32,6 +34,26 @@ function projectSpans(events) {
     const type = String(event.event_type || event.type || '');
     if (type.startsWith('tool.') || type.startsWith('turn.') || type.startsWith('model.') || type === 'resource.checked') {
       spans.push({ spanId: randomUUID().replace(/-/g, '').slice(0, 16), parentSpanId: rootSpanId, name: type, kind: 'INTERNAL', startedAt: event.at, endedAt: event.at, attributes: { seq: event.seq || 0, ...event.payload } });
+    }
+    if (type === 'tool.completed' && event.payload?.name === 'execute_skills') {
+      let result = event.payload.content;
+      try { if (typeof result === 'string' && Buffer.byteLength(result) <= 2 * 1024 ** 2) result = JSON.parse(result); } catch { continue; }
+      if (result?.skill_event_contract !== NATIVE_SKILL_EVENTS) continue;
+      for (const fact of selectNativeSkillEvents(result.skill_events)) {
+        if (skillIds.has(fact.event_id)) continue;
+        skillIds.add(fact.event_id);
+        spans.push({ spanId: createHash('sha256').update(fact.event_id).digest('hex').slice(0, 16),
+          parentSpanId: rootSpanId, name: fact.event_type, kind: 'INTERNAL',
+          startedAt: new Date(fact.started_at * 1000).toISOString(), endedAt: new Date((fact.ended_at ?? fact.started_at) * 1000).toISOString(),
+          attributes: { 'ksadk.skill.event_id': fact.event_id, 'ksadk.skill.status': fact.status,
+            'ksadk.skill.event_type': fact.event_type, 'ksadk.skill.trace_id': fact.trace_id,
+            'ksadk.skill.invocation_id': fact.skill_invocation_id, 'ksadk.skill.runtime_id': fact.runtime_id,
+            'ksadk.skill.run_id': fact.run_id, 'ksadk.skill.binding_snapshot_id': fact.binding_snapshot_id,
+            'ksadk.skill.decision_id': fact.decision_id, 'ksadk.skill.error_code': fact.error_code,
+            'ksadk.skill.error_category': fact.error_category,
+            ...(fact.skill_ref ? { 'ksadk.skill.id': fact.skill_ref.skill_id,
+              'ksadk.skill.version_id': fact.skill_ref.version_id, 'ksadk.skill.name': fact.skill_ref.name } : {}), ...fact.attributes } });
+      }
     }
   }
   return spans;
@@ -46,9 +68,27 @@ function extractTokenUsage(events) {
   return reported ? { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens } : { inputTokens: null, outputTokens: null, totalTokens: null };
 }
 
+function measuredUsage(value, events) {
+  if (value === undefined) return extractTokenUsage(events);
+  if (!value || !['inputTokens', 'outputTokens', 'totalTokens'].every(key => Number.isSafeInteger(value[key]) && value[key] >= 0)
+    || value.inputTokens + value.outputTokens !== value.totalTokens)
+    throw new StudioObservabilityError('TRACE_USAGE_INVALID', 'Trace measured usage is invalid');
+  return { inputTokens: value.inputTokens, outputTokens: value.outputTokens, totalTokens: value.totalTokens };
+}
+
+async function saveTrace(path, record) {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(JSON.stringify(record, null, 2)); await handle.sync(); }
+    finally { await handle.close(); }
+    await rename(temporary, path);
+  } finally { await rm(temporary, { force: true }); }
+}
+
 function normalizeTrace(record) {
   const duration = Date.parse(record.completedAt) - Date.parse(record.startedAt);
-  const tokenUsage = extractTokenUsage(record.events || []);
+  const tokenUsage = measuredUsage(record.measuredTokenUsage, record.events || []);
   const spans = (record.spans || []).map(span => ({ ...span, durationMs: Math.max(0, Date.parse(span.endedAt) - Date.parse(span.startedAt)) || 0 }));
   const otlp = structuredClone(record.otlp);
   const otlpTraceId = createHash('sha256').update(String(record.traceId)).digest('hex').slice(0, 32);
@@ -59,20 +99,20 @@ function normalizeTrace(record) {
 export function createStudioObservability({ storeDir } = {}) {
   async function ensureDir() { await mkdir(storeDir, { recursive: true, mode: 0o700 }); }
 
-  async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [] }) {
+  async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [], measuredTokenUsage }) {
     await ensureDir();
     const spans = projectSpans(events);
-    const tokenUsage = extractTokenUsage(events);
+    const tokenUsage = measuredUsage(measuredTokenUsage, events);
     const record = {
       traceId: String(traceId || `trace_${randomUUID().replace(/-/g, '')}`),
       sessionId: String(sessionId || ''), agentId: String(agentId || ''), agentName: String(agentName || ''),
       executionLocation, ...(provenance ? { provenance } : {}),
       status: String(status || 'completed'), startedAt: String(startedAt || (events[0]?.at || new Date().toISOString())),
       completedAt: String(completedAt || (events[events.length - 1]?.at || new Date().toISOString())),
-      tokenUsage, spanCount: spans.length, spans, events,
+      tokenUsage, ...(measuredTokenUsage ? { measuredTokenUsage: tokenUsage } : {}), spanCount: spans.length, spans, events,
       otlp: { resourceSpans: [{ resource: { attributes: [{ key: 'agent.id', value: { stringValue: String(agentId || '') } }, { key: 'agent.name', value: { stringValue: String(agentName || '') } }] }, scopeSpans: [{ spans: spans.map(span => ({ traceId: traceId, spanId: span.spanId, parentSpanId: span.parentSpanId, name: span.name, kind: span.kind, startTimeUnixNano: String(new Date(span.startedAt).getTime() * 1e6), endTimeUnixNano: String(new Date(span.endedAt).getTime() * 1e6), attributes: Object.entries(span.attributes).map(([key, value]) => ({ key, value: { stringValue: String(value) } })) })) }] }] },
     };
-    await writeFile(join(storeDir, `${record.traceId}.json`), JSON.stringify(record, null, 2));
+    await saveTrace(join(storeDir, `${record.traceId}.json`), record);
     return record;
   }
 

@@ -32,6 +32,7 @@ const output = result.outputFiles[0].text;
 if (!output.includes('window.__ModuleLoader__.load({')) throw new Error('client bundle lost the DSH ModuleLoader registration');
 if (!output.includes('@kingsoftcloud/agentkit-studio')) throw new Error('client bundle lost the Studio module id');
 for (const input of Object.keys(result.metafile.inputs)) {
+  if (/^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(input)) continue;
   if (/^(?:src\/(?:host|providers)\/|packages\/agentkit-harness\/|node_modules\/)/.test(input)) throw new Error(`Unexpected browser dependency: ${input}`);
 }
 await mkdir(resolve(root, 'dist'), { recursive: true });

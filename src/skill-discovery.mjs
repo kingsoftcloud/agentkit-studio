@@ -9,7 +9,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile, rename } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
+import { atomicPrivate, lockUntil, privateDirectory, syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
 
 const DEFAULT_SCAN_RELATIVES = ['skills', '.agents/skills', '.codex/skills', '.claude/skills'];
 const MAX_DEPTH = 4;
@@ -25,13 +27,34 @@ export class SkillDiscoveryError extends Error {
   }
 }
 
+/** Python string ordering compares Unicode code points, independent of locale. */
+export function compareSkillText(a, b) {
+  const left = Array.from(a, value => value.codePointAt(0)), right = Array.from(b, value => value.codePointAt(0));
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return left.length - right.length;
+}
+
 export function skillSlug(value) {
   const slug = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!slug) throw new SkillDiscoveryError('SKILL_NAME_INVALID', 'SKILL.md 的 name 无法生成目录 slug');
   return slug.slice(0, 64);
 }
 
-export function parseFrontmatter(source) {
+export function parseFrontmatter(source, { strict = false } = {}) {
+  if (strict) {
+    // Python read_text normalizes universal newlines before safe_load. Keep the
+    // legacy local-display recovery below, but never recover malformed imports.
+    const text = String(source || '').replace(/\r\n?/g, '\n'), end = text.indexOf('\n---\n', 4);
+    if (!text.startsWith('---\n') || end < 0) throw new SkillDiscoveryError('SKILL_MANIFEST_INVALID', 'Skill manifest frontmatter is invalid');
+    let parsed;
+    try { parsed = parseYaml(text.slice(4, end), { version: '1.1', uniqueKeys: false, maxAliasCount: 100 }); }
+    catch { throw new SkillDiscoveryError('SKILL_MANIFEST_INVALID', 'Skill manifest YAML is invalid'); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.name || !parsed.description)
+      throw new SkillDiscoveryError('SKILL_MANIFEST_INVALID', 'Skill manifest name and description are required');
+    return parsed;
+  }
   const text = String(source || '');
   if (!text.startsWith('---')) return {};
   const end = text.indexOf('\n---', 3);
@@ -76,7 +99,7 @@ async function listFiles(directory, base = directory, depth = 0, out = []) {
 
 async function directoryDigest(files) {
   const hash = createHash('sha256');
-  for (const file of files.slice().sort((a, b) => a.relative.localeCompare(b.relative))) {
+  for (const file of files.slice().sort((a, b) => compareSkillText(a.relative, b.relative))) {
     hash.update(file.relative);
     hash.update(await readFile(file.absolute).catch(() => Buffer.alloc(0)));
   }
@@ -114,7 +137,7 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
         sourceDirectories.set(candidate.candidateId, directory);
       }
     }
-    candidates.sort((a, b) => (a.name || '').localeCompare(b.name || '') || a.path.localeCompare(b.path));
+    candidates.sort((a, b) => compareSkillText(a.name || '', b.name || '') || compareSkillText(a.path, b.path));
     const token = `skd_${randomUUID().replace(/-/g, '')}`;
     records.set(token, { token, candidates, sourceDirectories, expiresAt: Date.now() + RECORD_TTL_MS });
     for (const [key, value] of records) if (value.expiresAt < Date.now()) records.delete(key);
@@ -234,7 +257,7 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
       } catch { /* unreadable skill directory is skipped, not fatal for the list */ }
     }
     for (const { directory, ...item } of Object.values(await bundleRecords())) items.push(item);
-    items.sort((a, b) => a.name.localeCompare(b.name));
+    items.sort((a, b) => compareSkillText(a.name, b.name));
     return { items, nextCursor: null, total: items.length, source: 'local-store' };
   }
 
@@ -258,19 +281,44 @@ export function createSkillDiscovery({ home = homedir(), storeDir } = {}) {
 
   async function bundleRecords() { try { return JSON.parse(await readFile(join(store, '.catalog-skills.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return {}; throw error; } }
   let registration = Promise.resolve();
-  function registerBundleSkills(entries) {
+  function registerBundleSkills(entries, { assertCurrent = () => true, overwrite = false, rejectNameConflict = false } = {}) {
+    const guard = () => {
+      const current = assertCurrent();
+      if (current && typeof current.then === 'function') Promise.resolve(current).catch(() => {});
+      if (current !== true) throw new SkillDiscoveryError('SKILL_PUBLICATION_AUTHORITY_LOST', 'Skill publication authority is no longer current');
+    };
+    const sealed = structuredClone(entries);
     const pending = registration.then(async () => {
-      const records = await bundleRecords();
-      for (const item of entries) {
-        if (!/^skill-catalog-[a-f0-9]{24}$/.test(item.resourceId) || !item.directory || !item.digest) throw new SkillDiscoveryError('SKILL_BUNDLE_INVALID', '目录 Skill 声明无效');
-        if (records[item.resourceId] && JSON.stringify(records[item.resourceId]) !== JSON.stringify(item)) throw new SkillDiscoveryError('SKILL_BUNDLE_CONFLICT', '目录 Skill 内容发生冲突');
-        records[item.resourceId] = item;
-      }
-      await mkdir(store, { recursive: true, mode: 0o700 });
-      const temporary = join(store, `.catalog-skills-${randomUUID()}.tmp`);
-      await writeFile(temporary, JSON.stringify(records), { mode: 0o600 });
-      await rename(temporary, join(store, '.catalog-skills.json'));
-      return entries.map(({ directory, ...item }) => item);
+      guard(); await mkdir(store, { recursive: true, mode: 0o700 }); guard();
+      // Existing explicit Skill stores may be readable by other users. Keep
+      // their permissions; lock and staging data have their own private root.
+      const root = realpathSync(store), inode = lstatSync(store);
+      const publication = join(root, '.catalog-publication'); privateDirectory(publication, true);
+      const live = () => {
+        guard(); const current = lstatSync(store);
+        if (!current.isDirectory() || current.isSymbolicLink() || realpathSync(store) !== root
+          || current.dev !== inode.dev || current.ino !== inode.ino)
+          throw new SkillDiscoveryError('SKILL_PUBLICATION_ROOT_CHANGED', 'Skill store changed during publication');
+        privateDirectory(publication);
+      };
+      live(); const unlock = await lockUntil(join(publication, 'lock.sqlite'), performance.now() + 5000);
+      try {
+        live(); const records = await bundleRecords(); live();
+        const installed = rejectNameConflict ? (await listInstalled()).items : []; live();
+        for (const item of sealed) {
+          if (!/^skill-catalog-[a-f0-9]{24}$/.test(item.resourceId) || !item.directory || !item.digest) throw new SkillDiscoveryError('SKILL_BUNDLE_INVALID', '目录 Skill 声明无效');
+          if (records[item.resourceId] && JSON.stringify(records[item.resourceId]) !== JSON.stringify(item)) throw new SkillDiscoveryError('SKILL_BUNDLE_CONFLICT', '目录 Skill 内容发生冲突');
+          if (rejectNameConflict && !overwrite && installed.some(previous => previous.name === item.name && previous.resourceId !== item.resourceId))
+            throw new SkillDiscoveryError('SKILL_ALREADY_EXISTS', '同名 Skill 已安装，请确认覆盖后重试');
+          records[item.resourceId] = item;
+        }
+        const temporary = join(publication, `${randomUUID()}.json`);
+        try {
+          live(); atomicPrivate(temporary, JSON.stringify(records)); live();
+          renameSync(temporary, join(store, '.catalog-skills.json')); syncDirectory(store); syncDirectory(publication);
+        } finally { if (existsSync(temporary)) unlinkSync(temporary); }
+        return sealed.map(({ directory, ...item }) => item);
+      } finally { unlock(); }
     });
     registration = pending.catch(() => {}); return pending;
   }

@@ -1,0 +1,82 @@
+{
+  "name": "@kingsoftcloud/agentkit-harness-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Host-independent Native Harness contracts, transitions and durable execution.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./browser-contract": {
+      "types": "./dist/browser-contract.d.mts",
+      "default": "./dist/browser-contract.mjs"
+    },
+    "./captured-source": {
+      "types": "./dist/captured-source.d.mts",
+      "default": "./dist/captured-source.mjs"
+    },
+    "./edit-matchers": {
+      "types": "./dist/edit-matchers.d.mts",
+      "default": "./dist/edit-matchers.mjs"
+    },
+    "./model-json": {
+      "types": "./dist/model-json.d.mts",
+      "default": "./dist/model-json.mjs"
+    },
+    "./patch-apply": {
+      "types": "./dist/patch-apply.d.mts",
+      "default": "./dist/patch-apply.mjs"
+    },
+    "./patch-parser": {
+      "types": "./dist/patch-parser.d.mts",
+      "default": "./dist/patch-parser.mjs"
+    },
+    "./tool-context": {
+      "types": "./dist/tool-context.d.mts",
+      "default": "./dist/tool-context.mjs"
+    },
+    "./values": {
+      "types": "./dist/values.d.mts",
+      "default": "./dist/values.mjs"
+    },
+    "./task-contract": {
+      "types": "./dist/task-contract.d.mts",
+      "default": "./dist/task-contract.mjs"
+    },
+    "./tool-input": {
+      "types": "./dist/tool-input.d.mts",
+      "default": "./dist/tool-input.mjs"
+    },
+    "./turn-input": {
+      "types": "./dist/turn-input.d.mts",
+      "default": "./dist/turn-input.mjs"
+    },
+    "./context-microcompact": {
+      "types": "./dist/context-microcompact.d.mts",
+      "default": "./dist/context-microcompact.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "README.md",
+    "ZCode-LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "dependencies": {
+    "ajv": "8.17.1",
+    "ajv-draft-04": "1.0.0",
+    "ajv-formats": "3.0.1"
+  },
+  "scripts": {
+    "build": "node ../../scripts/build-native-harness.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

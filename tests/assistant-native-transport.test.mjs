@@ -6,7 +6,7 @@ const scope = 'a'.repeat(64);
 const receipt = { receiptId: 'receipt-one', kind: 'image', mediaType: 'image/png', attachment: { attachmentId: 'sha256:' + 'b'.repeat(64), name: 'one.png', bytes: 3 } };
 const input = { sessionId: 'cloud-session', requestId: 'request-one', mode: 'queue', clientTimeZone: 'UTC', content: [{ type: 'image', mediaType: 'image/png', data: 'YWJj', name: 'one.png' }] };
 const prompt = value => ['/api', 'session/prompt', { args: { request: value } }];
-function bench({ memory = new Map(), change, scopeId = scope, sessionId = 'cloud-session' } = {}) {
+function bench({ memory = new Map(), change, scopeId = scope, sessionId = 'cloud-session', crypto = webcrypto } = {}) {
   const calls = [], storage = { get length() { return memory.size; }, key: index => [...memory.keys()][index] ?? null, getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value), removeItem: key => memory.delete(key) };
   const execute = async (_agent, operation, value, signal) => {
     calls.push({ operation, value, signal });
@@ -16,7 +16,7 @@ function bench({ memory = new Map(), change, scopeId = scope, sessionId = 'cloud
     if (operation === 'native-call') return { ok: true, value: { accepted: true } };
     return {};
   };
-  return { calls, memory, storage, open: () => createAssistantNativeTransport({ execute, agentId: 'assistant', storage, crypto: webcrypto }) };
+  return { calls, memory, storage, open: () => createAssistantNativeTransport({ execute, agentId: 'assistant', storage, crypto }) };
 }
 
 test('native image send journals only receipt before durable submission and preserves exact ID', async () => {
@@ -150,16 +150,31 @@ test('terminal carrier errors block the native graph and preserve the safe failu
   await transport.dispose();
 });
 
-test('two simultaneous composers cannot overwrite or delete another unknown-ACK request journal', async () => {
+test('two simultaneous composers cannot overwrite or delete another unknown-ACK request journal', { timeout: 10000 }, async () => {
   const uploadA = Promise.withResolvers(), uploadB = Promise.withResolvers(); let uploads = 0, unknown = true;
-  const b = bench({ change(operation, value) {
-    if (operation === 'attachment-upload') return ++uploads === 1 ? uploadA.promise : uploadB.promise;
+  const hashes = [Promise.withResolvers(), Promise.withResolvers()], hashing = Promise.withResolvers();
+  const firstUpload = Promise.withResolvers(), bothUploads = Promise.withResolvers(); let digestCalls = 0;
+  const crypto = { randomUUID: () => webcrypto.randomUUID(), subtle: { async digest(...args) {
+    const index = digestCalls++;
+    if (digestCalls === 2) hashing.resolve();
+    const result = await webcrypto.subtle.digest(...args);
+    await hashes[index].promise; return result;
+  } } };
+  const b = bench({ crypto, change(operation, value) {
+    if (operation === 'attachment-upload') {
+      uploads++; firstUpload.resolve(value.name); if (uploads === 2) bothUploads.resolve();
+      // Request identity owns the gate; WebCrypto completion order does not.
+      return value.name === 'request-A.png' ? uploadA.promise : uploadB.promise;
+    }
     if (operation === 'native-call' && value.payload.args.request.requestId === 'request-A' && unknown) throw Error('A ACK lost');
   } });
   const first = await b.open(), second = await b.open();
-  const sendingA = first.rpc.call(...prompt({ ...input, requestId: 'request-A' }));
-  const sendingB = second.rpc.call(...prompt({ ...input, requestId: 'request-B' }));
-  while (uploads < 2) await new Promise(resolve => setTimeout(resolve, 0));
+  const sendingA = first.rpc.call(...prompt({ ...input, requestId: 'request-A', content: [{ ...input.content[0], name: 'request-A.png' }] }));
+  const sendingB = second.rpc.call(...prompt({ ...input, requestId: 'request-B', content: [{ ...input.content[0], name: 'request-B.png' }] }));
+  await hashing.promise;
+  // Reproduce the schedule that used to swap the gates and deadlock awaiting A.
+  hashes[1].resolve(); assert.equal(await firstUpload.promise, 'request-B.png');
+  hashes[0].resolve(); await bothUploads.promise;
   uploadA.resolve({ ...receipt, receiptId: 'receipt-A' }); assert.equal((await sendingA).ok, false);
   uploadB.resolve({ ...receipt, receiptId: 'receipt-B' }); assert.equal((await sendingB).ok, true);
   assert.equal(b.memory.size, 1); assert.match([...b.memory.keys()][0], /request-A$/);

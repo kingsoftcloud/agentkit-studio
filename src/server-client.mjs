@@ -1,6 +1,6 @@
 import { hostFetch } from './http-fetch.mjs';
 /** Node client for the existing AgentEngine public Action API. */
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import aws4 from 'aws4';
 import { createCloudIdentityResolver } from './cloud-identity.mjs';
 import { createCloudEndpointPolicy } from './cloud-endpoints.mjs';
@@ -25,7 +25,7 @@ const SERVER_ACTIONS = new Set([
 ]);
 
 const SKILL_SERVICE_ACTIONS = new Set([
-  'ListSkillsBySpaceId', 'GetSkillDownloadUrl', 'GetPremadeSkillDownloadUrl',
+  'ListSkillSpaces', 'ListAvailablePremadeSkills', 'ListSkillsBySpaceId', 'GetSkillDownloadUrl', 'GetPremadeSkillDownloadUrl',
 ]);
 
 function normalizeAgent(item = {}) {
@@ -129,6 +129,21 @@ export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', descripti
 /** The general Studio client intentionally excludes deployment mutations. */
 export function createAgentEngineClient(options) { return createClient(options, SERVER_ACTIONS); }
 
+/** A trusted Host SDK endpoint is distinct from the generic Studio server URL.
+ * It grants only the resource SDK actions, never deployment or agent control. */
+export function createAicpResourceClient({ origin, trafficSource = 'agentkit', ...options }) {
+  let endpoint;
+  try { if (origin) endpoint = new URL(origin); } catch { /* stable configuration error below */ }
+  if (origin && (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password
+    || endpoint.pathname !== '/' || endpoint.search || endpoint.hash)) {
+    throw new AgentEngineError('AICP_RESOURCE_ENDPOINT_INVALID', 'SDK 地址须为不含凭据、路径或查询的 HTTP(S) origin');
+  }
+  if (typeof trafficSource !== 'string' || /[^\x20-\x7e]/u.test(trafficSource) || Buffer.byteLength(trafficSource) > 16384)
+    throw new AgentEngineError('AICP_RESOURCE_TRAFFIC_SOURCE_INVALID', '请求来源须为可打印 ASCII 字符');
+  const { action, bindMemoryWriter } = createClient(options, new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListSessions']), endpoint ?? null, trafficSource.trim() || 'agentkit');
+  return { action, bindMemoryWriter };
+}
+
 /**
  * Node-only deployment transport. The caller owns the durable deployment
  * receipt and must reconcile an unknown create result before sending again.
@@ -181,11 +196,11 @@ export function createAgentEngineDeploymentClient(options) {
 }
 
 /** AK/SK stay in Node; redirects and implicit mutation retries are disabled. */
-function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions) {
+function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000, streamTimeoutMs = Math.max(timeoutMs, 180000), sessionToken = '', serverUrl = '', innerKopUrl = '', innerIamUrl = '' }, allowedActions, resourceOrigin = null, resourceTrafficSource = null) {
   const endpoints = createCloudEndpointPolicy({ innerKopUrl, innerIamUrl });
   const deploymentIdentity = allowedActions.has('CreateAgentProduct') ? createCloudIdentityResolver({ fetchImpl, timeoutMs, endpointPolicy: endpoints }) : null;
   const resolveBase = (values, fallback = endpoints.publicKop) => {
-    try { return new URL(values.cloudServerUrl || serverUrl || fallback); }
+    try { return new URL(resourceOrigin || values.cloudServerUrl || serverUrl || fallback); }
     catch { throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址无效'); }
   };
   async function inspectIdentity(options) {
@@ -268,25 +283,27 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     return { ...normalizeAgent(payload.draft || payload.agent || payload), requestId: String(response.headers.get('x-request-id') || '') };
   }
 
-  async function action(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment } = {}) {
+  const action = (name, payload, options) => performAction(name, payload, options);
+  async function performAction(name, payload = {}, { signal, apiVersion = API_VERSION, requestId = randomUUID(), templateEnvironment, preserveEnvelope = false } = {}, fixedConfiguration) {
     if (!/^[A-Z][A-Za-z0-9]+$/.test(name)) throw new AgentEngineError('INVALID_ACTION', '无效 Server Action');
     if (!allowedActions.has(name)) throw new AgentEngineError('ACTION_NOT_ALLOWED', `Studio 当前不开放 ${name}`);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AgentEngineError('INVALID_REQUEST_ID', '请求 ID 必须是 UUID');
-    const resolved = await configuration.resolve();
+    const resolved = fixedConfiguration ?? await configuration.resolve();
     if (templateEnvironment !== undefined && (!['pre-online','online'].includes(templateEnvironment) || !['ListStudioTemplates','GetStudioTemplate','GetStudioTemplateDownload','GetStudioTemplateCatalogCapabilities'].includes(name))) throw new AgentEngineError('INVALID_TEMPLATE_ENVIRONMENT', '模板环境仅可用于模板读取接口');
     const values = templateEnvironment ? {...resolved.values, cloudRegion:templateEnvironment==='online'?'cn-beijing-6':templateEnvironment, cloudCustomSource:templateEnvironment==='pre-online'?'pre':''} : resolved.values;
     const base = resolveBase(values);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname);
     // The official inner AICP endpoint is HTTP, also used by the explicit
     // inner-account fallback below. An explicitly configured inner endpoint
-    // must have the same contract; arbitrary remote HTTP origins stay denied.
-    const officialInner = endpoints.isInnerKop(base);
+    // must have the same contract. A separate Host resource SDK client may
+    // pin its own exact origin; generic Studio URLs grant no signing authority.
+    const officialInner = endpoints.isInnerKop(base) || Boolean(resourceOrigin && base.origin === resourceOrigin.origin);
     if (base.username || base.password || base.search || base.hash || base.pathname !== '/' ||
       (base.protocol !== 'https:' && !(base.protocol === 'http:' && (loopback || officialInner)))) {
       throw new AgentEngineError('SERVER_URL_INVALID', '控制面地址须为 HTTPS origin；HTTP 仅限本机或官方 AICP 内网入口');
     }
     const requestAgainst = async (requestBase, allowInnerFallback = true) => {
-      const kop = endpoints.isKop(requestBase);
+      const kop = endpoints.isKop(requestBase) || Boolean(resourceOrigin && requestBase.origin === resourceOrigin.origin);
       // `pre-online` is a logical environment, not a signing region: KOP and
       // AWS4 require a real region (cn-beijing-6) plus the X-KSC-CUSTOM-SOURCE
       // marker. Signing with the literal value makes KOP reject the request.
@@ -305,6 +322,7 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
       const headers = { 'Content-Type': 'application/json', Accept: 'application/json',
         'X-Ksc-Request-Id': requestId, 'X-Ksc-Region': controlRegion,
         'X-Ksc-Source': 'agentkit-studio' };
+      if (resourceTrafficSource) headers['X-Traffic-Source'] = resourceTrafficSource;
       if (values.cloudAccountId) headers['X-Ksc-Account-Id'] = values.cloudAccountId;
       const url = new URL(kop ? `/?Action=${name}&Version=${apiVersion}` : `/agentengine/api/v1/${name}`, requestBase);
       if (kop) {
@@ -370,7 +388,8 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
         return requestAgainst(endpoints.innerKop, false);
       }
       if (!envelope) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server 未返回有效 JSON', { status: response.status, action: name });
-      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory'].includes(name);
+      const nativeResource = ['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'ListMemories', 'UpdateMemory', 'DeleteMemory'].includes(name)
+        || (preserveEnvelope && name === 'ListSessions');
       const codeValid = envelope?.Code == null ? nativeResource : [0, 200].includes(Number(envelope.Code));
       if (!response.ok || !envelope || !codeValid || envelope.Error || envelope.ResponseMetadata?.Error) {
         if (kop && ['InvalidActionOrVesion', 'InvalidActionOrVersion'].includes(envelope?.Error?.Code)) {
@@ -383,9 +402,10 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
         throw new AgentEngineError(status === 429 ? 'SERVER_RATE_LIMITED' : 'SERVER_ACTION_FAILED',
           `${name} 请求失败（${status}）`, { status, requestId: String(envelope?.RequestId || ''), action: name });
       }
-      return { data: nativeResource ? (envelope.Data ?? envelope) : envelope.Data, requestId: String(envelope.RequestId || envelope.ResponseMetadata?.RequestId || '') };
+      return { data: preserveEnvelope ? envelope : nativeResource ? (envelope.Data ?? envelope) : envelope.Data,
+        requestId: String(envelope.RequestId || envelope.ResponseMetadata?.RequestId || '') };
     };
-    return requestAgainst(base);
+    return requestAgainst(base, !resourceOrigin);
   }
 
   /**
@@ -618,8 +638,21 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     }
     return { ...payload, source: 'agentengine-server', requestId: String(response.headers.get('x-request-id') || '') };
   }
+  async function bindMemoryWriter() {
+    if (!allowedActions.has('CreateMemorySdk')) throw new AgentEngineError('ACTION_NOT_ALLOWED', '此客户端不能写入记忆');
+    const resolved = structuredClone(await configuration.resolve()), values = resolved.values;
+    // Only the connection's public identity is persisted. Credentials remain
+    // in this closure; later settings edits cannot move an admitted write.
+    const binding = { contract: 'agentkit.cloud-memory-transport/v1', origin: resolveBase(values).origin,
+      region: values.cloudRegion || '', customSource: values.cloudCustomSource || '', trafficSource: resourceTrafficSource || 'agentkit',
+      fallbackOrigin: endpoints.innerKop?.origin || '',
+      principalDigest: createHash('sha256').update(JSON.stringify([
+        values.cloudAccessKey || '', values.cloudServiceToken || '', values.cloudAccountId || '',
+      ])).digest('hex') };
+    return { binding, write: (payload, options) => performAction('CreateMemorySdk', payload, options, resolved) };
+  }
   return {
-    getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction,
+    getObservabilityOverview, listAgentRuntimeStats, action, skillAction, streamAction, bindMemoryWriter,
     ...(deploymentIdentity ? { inspectIdentity } : {}),
     listAgents, getAgent, listResource, listCatalogResources,
   };

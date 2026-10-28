@@ -1,0 +1,286 @@
+/* @kingsoftcloud/agentkit-harness-ui/markdown — layer stylesheet.
+ *
+ * Bundled (build-markdown.cjs) on top of streamdown/styles.css. Streamdown's
+ * default components emit semantic tags (h1, table, tr, …) plus Tailwind
+ * utility classes and `data-streamdown="…"` attributes. The harness-ui host
+ * does not ship Tailwind, so those utilities are inert; this stylesheet
+ * restyles the rendered Markdown with stable, theme-aware rules keyed on the
+ * `.ks-markdown` wrapper. Code blocks are rendered by the layer's own stable
+ * CodeBlock (ks-md-* classes), not Streamdown's default code renderer. No
+ * Tailwind dependency is introduced. */
+
+@import "streamdown/styles.css";
+@import "./table.css";
+
+.ks-markdown {
+  --ks-fg: #1f2328;
+  --ks-fg-muted: #59636e;
+  --ks-bg: #ffffff;
+  --ks-bg-soft: #f6f8fa;
+  --ks-border: #d0d7de;
+  --ks-inline-bg: rgba(175, 184, 193, 0.2);
+  --ks-link: #0969da;
+  --ks-code-bg: #f6f8fa;
+  --ks-code-header-bg: #f6f8fa;
+  --ks-code-border: #d0d7de;
+  --ks-th-bg: #f6f8fa;
+  --ks-quote-fg: #59636e;
+  --ks-quote-bar: #d0d7de;
+  --ks-copied: #1a7f37;
+  color: var(--ks-fg);
+  background: transparent;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: var(--ui-font-size, 14px);
+  white-space: normal;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+.ks-markdown *,
+.ks-markdown *::before,
+.ks-markdown *::after {
+  box-sizing: border-box;
+}
+
+.ks-markdown.ks-theme-dark {
+  --ks-fg: #e6edf3;
+  --ks-fg-muted: #9198a1;
+  --ks-bg: #0d1117;
+  --ks-bg-soft: #161b22;
+  --ks-border: #30363d;
+  --ks-inline-bg: rgba(110, 118, 129, 0.4);
+  --ks-link: #4493f8;
+  --ks-code-bg: #161b22;
+  --ks-code-header-bg: #161b22;
+  --ks-code-border: #30363d;
+  --ks-th-bg: #161b22;
+  --ks-quote-fg: #9198a1;
+  --ks-quote-bar: #30363d;
+  --ks-copied: #4ac26b;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ks-markdown:not(.ks-theme-light) {
+    --ks-fg: #e6edf3;
+    --ks-fg-muted: #9198a1;
+    --ks-bg: #0d1117;
+    --ks-bg-soft: #161b22;
+    --ks-border: #30363d;
+    --ks-inline-bg: rgba(110, 118, 129, 0.4);
+    --ks-link: #4493f8;
+    --ks-code-bg: #161b22;
+    --ks-code-header-bg: #161b22;
+    --ks-code-border: #30363d;
+    --ks-th-bg: #161b22;
+    --ks-quote-fg: #9198a1;
+    --ks-quote-bar: #30363d;
+    --ks-copied: #4ac26b;
+  }
+}
+
+.ks-markdown > :first-child {
+  margin-top: 0;
+}
+.ks-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.ks-markdown p {
+  margin: 0 0 12px;
+}
+.ks-markdown h1 {
+  margin: 24px 0 16px;
+  font-size: 1.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ks-markdown h2 {
+  margin: 24px 0 16px;
+  font-size: 1.3em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ks-markdown h3 {
+  margin: 24px 0 12px;
+  font-size: 1.15em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ks-markdown h4,
+.ks-markdown h5,
+.ks-markdown h6 {
+  margin: 20px 0 10px;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ks-markdown ul,
+.ks-markdown ol {
+  margin: 0 0 12px;
+  padding-left: 1.6em;
+}
+.ks-markdown li {
+  margin: 2px 0;
+}
+.ks-markdown blockquote {
+  margin: 0 0 12px;
+  padding: 0 0 0 14px;
+  color: var(--ks-quote-fg);
+  border-left: 3px solid var(--ks-quote-bar);
+}
+.ks-markdown blockquote > :first-child {
+  margin-top: 0;
+}
+.ks-markdown blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* Inline code (our `code` override, non-block branch). */
+.ks-md-inline-code {
+  margin: 0 1px;
+  padding: 0.1em 0.4em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 0.875em;
+  background: var(--ks-inline-bg);
+  border-radius: 6px;
+}
+
+/* Links. External/file links become buttons (ks-md-link); untrusted targets
+ * render as a non-clickable muted span. */
+.ks-md-link,
+.ks-md-link-muted {
+  color: var(--ks-link);
+  text-decoration: none;
+}
+.ks-md-link {
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+.ks-md-link:hover,
+.ks-md-link-muted:hover {
+  text-decoration: underline;
+}
+.ks-md-link-muted {
+  cursor: default;
+}
+
+.ks-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+/* GFM tables are rendered by the layer's own Markdown table component
+ * (table-factory.mjs → table.css, ks-md-table-* classes), not Streamdown's
+ * default table renderer. The old element-level table rules are removed so
+ * they cannot override the component's scoped layout (e.g. display:block /
+ * overflow:auto on the <table> itself would fight the scroll viewport). */
+
+/* Stable CodeBlock (rendered by the layer, not Streamdown's default). */
+.ks-md-code {
+  margin: 12px 0;
+  border: 1px solid var(--ks-code-border);
+  border-radius: 8px;
+  background: var(--ks-code-bg);
+  overflow: hidden;
+}
+.ks-md-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--ks-code-header-bg);
+  border-bottom: 1px solid var(--ks-code-border);
+  font-size: 0.8125em;
+  color: var(--ks-fg-muted);
+}
+.ks-md-code-lang {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  text-transform: lowercase;
+}
+.ks-md-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ks-md-copy,
+.ks-md-wrap {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--ks-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--ks-fg-muted);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.ks-md-copy:hover,
+.ks-md-wrap:hover {
+  background: var(--ks-bg-soft);
+  color: var(--ks-fg);
+}
+.ks-md-copy[data-copied="true"] {
+  color: var(--ks-copied);
+  border-color: var(--ks-copied);
+}
+.ks-md-wrap[data-wrapped="true"] {
+  background: var(--ks-bg-soft);
+  color: var(--ks-fg);
+}
+
+.ks-md-pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--sdm-bg, var(--ks-code-bg));
+  color: var(--sdm-fg, var(--ks-fg));
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 0.875em;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.ks-md-pre code {
+  font-family: inherit;
+  background: transparent;
+  padding: 0;
+  white-space: pre;
+}
+.ks-md-pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* shiki dual-theme tokens. Light uses --sdm-c; dark uses --shiki-dark. The
+ * token span style carries --sdm-c (from htmlStyle.color) and --shiki-dark
+ * (from htmlStyle["--shiki-dark"]); bg via --sdm-tbg / --shiki-dark-bg. */
+.ks-md-token {
+  color: var(--sdm-c, inherit);
+  background: var(--sdm-tbg, transparent);
+}
+.ks-markdown.ks-theme-dark .ks-md-pre {
+  background: var(--shiki-dark-bg, var(--sdm-bg, var(--ks-code-bg)));
+  color: var(--shiki-dark, var(--sdm-fg, var(--ks-fg)));
+}
+.ks-markdown.ks-theme-dark .ks-md-token {
+  color: var(--shiki-dark, var(--sdm-c, inherit));
+  background: var(--shiki-dark-bg, var(--sdm-tbg, transparent));
+}
+@media (prefers-color-scheme: dark) {
+  .ks-markdown:not(.ks-theme-light) .ks-md-pre {
+    background: var(--shiki-dark-bg, var(--sdm-bg, var(--ks-code-bg)));
+    color: var(--shiki-dark, var(--sdm-fg, var(--ks-fg)));
+  }
+  .ks-markdown:not(.ks-theme-light) .ks-md-token {
+    color: var(--shiki-dark, var(--sdm-c, inherit));
+    background: var(--shiki-dark-bg, var(--sdm-tbg, transparent));
+  }
+}

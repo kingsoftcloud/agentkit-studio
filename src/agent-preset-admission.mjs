@@ -7,8 +7,16 @@
  * declarations, so silently putting them in an empty preset would produce a
  * successful looking chat that runs the wrong composition. Those resource
  * bindings are routed through the Studio DSH provider bridge, which keeps the
- * native Session UI and loop while delegating the model turn to Studio.
+ * native Session UI while delegating runtime work to Studio. The explicit
+ * Native contract replaces the whole turn; legacy bindings retain the loop.
  */
+import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { selectedNativeBuildContract } from './build-engine.mjs';
+import { nativeChildRoles } from './providers/native-subagents.mjs';
+import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
+import { knowledgeBindings } from './knowledge-tools.mjs';
+import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
+import { nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
 function encodedId(value) {
   return encodeURIComponent(String(value))
@@ -94,6 +102,7 @@ export function unsupportedDshBindings(agent = {}, { activeModel } = {}) {
     ['mcpServers', 'mcp'],
     ['skills', 'skill'],
     ['plugins', 'plugin'],
+    ['a2a', 'a2a'],
   ]) {
     if (bindingValueCount(bindings[key]) > 0) refs.push(label);
   }
@@ -139,7 +148,9 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, nativeEngineContract } = {}) {
+    if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
+    this.nativeEngineContract = nativeEngineContract;
     this.assertHostCompatible = assertHostCompatible;
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
@@ -218,10 +229,17 @@ export class DshPresetAdmission {
   }
 
   async register(agent, eligibility, buildId, { allowUnavailableResources = false } = {}) {
+    const nativeEngineContract = selectedNativeBuildContract(agent, this.nativeEngineContract);
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
-    const plugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
+    const basePlugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
+    // A Studio-owned Web binding replaces the standard preset's Web plugin;
+    // duplicate names in the same scope fail admission. An ordinary legacy
+    // preset without that binding retains its existing DSH Web environment.
+    const ownsWeb = eligibility.local && (eligibility.runtime === 'harness' && nativeEngineContract
+      || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
+    const plugins = basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web');
     let resourcesUnavailable = false;
     if (prefix) {
       const persona = plugins.find(row => row.id === 'persona');
@@ -254,9 +272,17 @@ export class DshPresetAdmission {
       const toolContracts = eligibility.local && typeof this.getToolContracts === 'function'
         ? await recoverResources(() => this.getToolContracts(agent))
         : [];
+      // Catalog resource IDs can differ from their formal builtin names.
+      if (toolContracts.some(tool => tool.executor === 'builtin' && tool.enabled !== false
+        && ['web_fetch', 'web_search'].includes(tool.name))) {
+        for (let index = plugins.length - 1; index >= 0; index--)
+          if (plugins[index].name === '@deepseek-ai/dsh-tool-web') plugins.splice(index, 1);
+      }
       const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function'
         ? await recoverResources(() => this.getSkillDefinitions(agent))
         : [];
+      const boundToolPolicy = eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
+        ? nativeAgentPolicyFromSpec(agent.spec) : null;
       if (skillDefinitions.length) {
         const shell = process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash';
         if (!plugins.some(row => row.name === '@deepseek-ai/dsh-tool-skill')) plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
@@ -269,13 +295,24 @@ export class DshPresetAdmission {
           agentId: eligibility.agentId,
           runtime: eligibility.runtime,
           local: eligibility.local,
+          ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),
+            legacyMemoryBindings: legacyMemoryBindings(agent.spec) } : {}),
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
+          ...(eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
+            ? { nativeEngineContract } : {}),
+          ...(boundToolPolicy ? { boundToolPolicy: structuredClone(boundToolPolicy) } : {}),
           ...(!eligibility.local ? { cloudVersionId: agent.deployment?.versionId || 'initial' } : {}),
           ...(buildId ? { buildId } : {}),
           ...(toolBindingRefs(agent).length ? { toolBindings: toolBindingRefs(agent) } : {}),
           ...(toolContracts.length ? { toolContracts } : {}),
           ...(skillDefinitions.length ? { skillDefinitions } : {}),
+          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { skillSpaceIds: [...new Set((agent.spec.bindings?.plugins ?? [])
+            .filter(plugin => plugin.enabled !== false).map(plugin => plugin.config?.binding?.resource)
+            .filter(resource => resource?.kind === 'skill-space').map(resource => resource.id || resource.resourceId).filter(Boolean))] } : {}),
+          ...(eligibility.local && agent.spec.bindings?.a2a?.length
+            ? { a2aBindings: structuredClone(agent.spec.bindings.a2a) } : {}),
+          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { subAgents: nativeChildRoles(agent.spec) } : {}),
         },
       });
     }
@@ -290,9 +327,9 @@ export class DshPresetAdmission {
       id: eligibility.presetId,
       name: `${String(agent?.metadata?.name || agent?.name || eligibility.agentId)}${buildId ? ` · Revision ${eligibility.revision} · ${buildId.slice(-8)}` : ''}`,
       description: buildId ? `AgentKit Studio 冻结版本 ${buildId}` : 'AgentKit Studio Agent',
-      // The persona row is optional. Resource-bearing Harness/Codex revisions
-      // add the Studio runtime listener, which changes only the provider route;
-      // DSH still owns the Session Controller, durable loop and renderer.
+      // The persona row is optional. Runtime listeners own their selected
+      // contract; opted-in Harness replaces the turn, while legacy bindings
+      // change only the provider route. DSH retains Session and rendering.
       plugins,
     });
     // A newer revision must not remove a preset still referenced by an older

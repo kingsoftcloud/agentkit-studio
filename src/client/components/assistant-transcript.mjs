@@ -1,6 +1,7 @@
 import { createAssistantImageCache, createAssistantFileCache, assistantFileReference, downloadAssistantFile } from '../dsh/assistant-conversation.mjs';
 
 import { assistantRequestText } from '../state/assistant-attachments.mjs';
+import { A2A_OBSERVATION_KIND, createA2aObservationView } from '../dsh/a2a-observation.mjs';
 
 const words = content => (content || []).filter(part => part?.type === 'text').map(part => part.text || '').join('');
 const filename = value => String(value || '云端文件').split(/[\\/]/).at(-1) || '云端文件';
@@ -15,6 +16,7 @@ const queuedLabel = item => {
 
 /** Product presentation of native DSH ViewNodes, with cloud-only read capabilities. */
 export function createAssistantTranscript({ ui, hostRemote, assistantConversation, window }) {
+  const A2aObservation = createA2aObservationView({ React: ui.React });
   const { React: { createElement: h, useState, useEffect, useMemo, useRef }, BRAND, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, buttonStyle, Button } = ui;
   const Action = Button || 'button';
   const labels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
@@ -86,6 +88,7 @@ export function createAssistantTranscript({ ui, hostRemote, assistantConversatio
         depth < 8 ? (root.subCalls || []).map(child => h(Tool, { key: child.callId, root: child, cache, images, fileCache, files, depth: depth + 1 })) : null));
   }
   function Message({ node, cache, images, fileCache, files }) {
+    if (node.kind === A2A_OBSERVATION_KIND) return h(A2aObservation, { node });
     const human = ['user', 'steering'].includes(node.kind), data = node.data;
     if (human && data.source?.rpcId === 'assistant-welcome-v1') return null;
     if (node.kind === 'tool-call') return h(Tool, { root: data.root, cache, images, fileCache, files });
@@ -108,7 +111,7 @@ export function createAssistantTranscript({ ui, hostRemote, assistantConversatio
       try { return assistantConversation.assemble(view?.events, view?.hasMore); } catch { return null; }
     }, [view?.events, view?.hasMore]);
     const images = view?.capabilities?.display?.images === true, files = view?.capabilities?.display?.files === true;
-    const visible = native?.filter(node => ['user', 'steering', 'assistant-step', 'tool-call', 'model-retry', 'turn-max-tokens', 'turn-error'].includes(node.kind) && !(node.kind === 'turn-error' && view?.status === 'failed' && node.data?.seq === view.events?.findLast(event => event.type === 'turn/end')?.seq)) || [];
+    const visible = native?.filter(node => [A2A_OBSERVATION_KIND, 'user', 'steering', 'assistant-step', 'tool-call', 'model-retry', 'turn-max-tokens', 'turn-error'].includes(node.kind) && !(node.kind === 'turn-error' && view?.status === 'failed' && node.data?.seq === view.events?.findLast(event => event.type === 'turn/end')?.seq)) || [];
     const renderedIds = new Set((view?.events || []).filter(event => event.type === 'user/message').map(event => event.data?.source?.rpcId));
     const local = messages.filter(message => message.delivery === 'accepted' && !renderedIds.has(message.requestId));
     const fallback = visible.length ? local : messages;
