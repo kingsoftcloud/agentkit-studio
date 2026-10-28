@@ -467,40 +467,53 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     const binding = await readBinding();
     const agentId = binding?.agentId;
     if (!AGENT_ID.test(agentId || '')) throw fail('ASSISTANT_NOT_CREATED', '当前没有可用的个人助理，请先开通或连接', 409);
-    if (typeof getDeploymentClient !== 'function') throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', '当前 Studio 版本还不支持个人助理配置', 503);
-    let client;
-    try { client = await getDeploymentClient(); }
-    catch { throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', '暂时无法连接云端控制面，请稍后重试', 503); }
-    let detail;
-    try { detail = await client.forAgent(agentId).get({}, { signal }); }
-    catch (error) { throw settingsFailure(error); }
-    const data = actionData(detail);
-    if (record(data) && data.Code !== undefined && Number(data.Code) !== 0) {
-      throw fail('ASSISTANT_SETTINGS_UNAVAILABLE', text(data.Message) || '云端没有返回个人助理配置，请稍后再试', 503);
-    }
-    const basic = record(data?.Basic) ? data.Basic : {};
-    const deployment = record(data?.Deployment) ? data.Deployment : {};
-    const runtime = record(deployment.RuntimeConfig) ? deployment.RuntimeConfig : {};
-    const advanced = record(data?.Advanced) ? data.Advanced : {};
     const manifest = parseManifest(binding.manifest);
-    const version = text(runtime.Version) || manifest?.runtimeVersion || '';
-    return {
+    // The platform detail endpoint is the source of truth, but a platform that
+    // predates PA support answers 5xx for these instances. Degrade to the
+    // declaration Studio recorded at create time instead of showing the user a
+    // stack-trace-flavoured error on a page that otherwise works.
+    const local = {
       configured: true,
       agentId,
-      name: text(basic.Name) || binding.label || '',
+      name: manifest?.name || binding.label || '',
+      description: '',
+      status: 'unknown',
+      deploymentType: 'ManagedRuntime',
+      runtime: { name: 'personal-assistant', version: manifest?.runtimeVersion || '', imageDigest: '', updatedAt: '' },
+      model: manifest?.model || '',
+      prompt: manifest?.prompt ?? '',
+      environmentVariables: [],
+      recordSource: manifest ? 'studio' : 'missing',
+      detailAvailable: false,
+      detailNote: '云端平台暂时没有返回实例详情（预发平台尚未开放个人助理的配置读取），下面显示的是本机记录的创建配置；环境变量详情暂时不可见。',
+    };
+    if (typeof getDeploymentClient !== 'function') return local;
+    let detail;
+    try {
+      const client = await getDeploymentClient();
+      detail = await client.forAgent(agentId).get({}, { signal });
+    } catch { return local; }
+    const data = actionData(detail);
+    if (!record(data) || (data.Code !== undefined && Number(data.Code) !== 0)) return local;
+    const basic = record(data.Basic) ? data.Basic : {};
+    const deployment = record(data.Deployment) ? data.Deployment : {};
+    const runtime = record(deployment.RuntimeConfig) ? deployment.RuntimeConfig : {};
+    const advanced = record(data.Advanced) ? data.Advanced : {};
+    return {
+      ...local,
+      name: text(basic.Name) || local.name,
       description: text(basic.Description),
       status: text(basic.Status) || text(basic.Phase),
-      deploymentType: text(deployment.DeploymentType),
+      deploymentType: text(deployment.DeploymentType) || local.deploymentType,
       runtime: {
         name: text(runtime.Name) || 'personal-assistant',
-        version,
+        version: text(runtime.Version) || local.runtime.version,
         imageDigest: text(runtime.ImageDigest),
         updatedAt: text(basic.UpdatedAt),
       },
-      model: manifest?.model || '',
-      prompt: manifest?.prompt ?? '',
       environmentVariables: publicEnvironmentRows(advanced.EnvironmentVariables),
-      recordSource: manifest ? 'studio' : 'missing',
+      detailAvailable: true,
+      detailNote: '',
     };
   }
 

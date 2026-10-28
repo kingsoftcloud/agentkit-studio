@@ -197,7 +197,7 @@ test('the provided service keeps only the documented surface', () => {
   assert.deepEqual(Object.keys(service).sort(), ['configuration', 'connect', 'create', 'destroy', 'disconnect', 'format', 'issueTicket', 'settings', 'settingsUpdate', 'settingsVersions', 'status']);
 });
 
-function settingsHarness({ store, manifest = null, detail, failUpdate = null, catalog = null } = {}) {
+function settingsHarness({ store, manifest = null, detail, failDetail = null, failUpdate = null, catalog = null } = {}) {
   const binding = { format: 'agentkit.studio-assistant-binding/v1', gatewayUrl: GATEWAY, agentId: AGENT, apiKey: KEY,
     label: '我的个人助理', updatedAt: new Date().toISOString(), ...(manifest ? { manifest } : {}) };
   const updates = [];
@@ -207,14 +207,14 @@ function settingsHarness({ store, manifest = null, detail, failUpdate = null, ca
     configuration: { resolve: async () => ({ values: { cloudRegion: 'pre-online' } }) },
     getDeploymentClient: async () => ({
       forAgent: id => ({
-        get: async () => ({ Data: detail ?? {
+        get: async () => { if (failDetail) throw failDetail; return { Data: detail ?? {
           Basic: { Name: 'pa-cloud-session-x', Status: 'RUNNING', UpdatedAt: '2026-10-27T07:58:47Z' },
           Deployment: { DeploymentType: 'ManagedRuntime', RuntimeConfig: { Name: 'personal-assistant', Version: '0.1.37', ImageDigest: 'hub/x@sha256:abc' } },
           Advanced: { EnvironmentVariables: [
             { Key: 'OPENAI_BASE_URL', Value: 'https://kspmas.ksyun.com/v1', IsSensitive: false },
             { Key: 'OPENAI_API_KEY', Value: 'sk-secret', IsSensitive: true },
           ] },
-        } }),
+        } }; },
         update: async payload => { if (failUpdate) throw failUpdate; updates.push({ id, payload }); return { Data: { accepted: true } }; },
       }),
       getBootstrapConfig: async () => ({ data: { Configs: catalog ? { 'runtime.catalog': catalog } : {} } }),
@@ -305,4 +305,18 @@ test('settings versions reads the published personal-assistant catalog', async (
   assert.equal(result.currentVersion, '0.1.37');
   assert.deepEqual(result.versions.map(row => row.version), ['0.1.37', '0.1.40']);
   assert.equal(result.catalogAvailable, true);
+});
+
+test('settings degrades to the recorded declaration when the platform detail call fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { binding, options } = settingsHarness({ store: dir, manifest: RECORDED_MANIFEST,
+    failDetail: Object.assign(new Error("KeyError: 'health_check'"), { status: 500 }) });
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify(binding));
+  const service = createAssistantDesktop(options);
+  const snapshot = await service.settings({});
+  assert.equal(snapshot.detailAvailable, false);
+  assert.equal(snapshot.recordSource, 'studio');
+  assert.equal(snapshot.model, 'deepseek-v4.1-flash-1017');
+  assert.equal(snapshot.runtime.version, '0.1.37');
+  assert.match(snapshot.detailNote, /云端平台暂时没有返回实例详情/u);
 });
