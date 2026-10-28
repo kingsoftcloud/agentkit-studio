@@ -2769,12 +2769,47 @@
         "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css"
       ],
       "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9"
+    },
+    {
+      "id": "063",
+      "file": "063-tool-preflight-contract-type.patch",
+      "category": "general-fix",
+      "risk": "low",
+      "dependsOn": [
+        "061"
+      ],
+      "contracts": [
+        "The negotiated preflight defer contract has an explicit public type, so clean host builds can generate the service type model.",
+        "The type-only change preserves the existing runtime contract and authorization behavior."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Fresh GitHub host bundle exposed a missing public type annotation; the exported literal contract type preserves the existing value."
+      },
+      "removeWhen": "Upstream provides the explicit type for the negotiated preflight defer contract.",
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/preflight-defer.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/core/tools/src/index.ts"
+      ],
+      "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613"
     }
   ],
-  "patchedTree": "2f5cb898e1f3d7633bd42bbc6dcd5e9faa600bce",
-  "patchedSourceSha256": "9250193a2a1caa8bd165a31f3b188e7e0ed63adbf8e728ae50c2d71962a4200c",
+  "patchedTree": "326c933ec56c8f53c6230fd071c5c2a043c3d7e8",
+  "patchedSourceSha256": "8553c9a90a1482f2443e09f584fa752783f8313f2df08654c856f5f4477cd4f9",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "8d4ad53c9517a51a1f201df7a48c10701c238bbef3640fdfae1a732c5f7ab81b"
+    "sha256": "b190c5d38ef8e411442aa1e5d11eadc7c98c2edb324973e1597cd9518973031e"
   }
 }

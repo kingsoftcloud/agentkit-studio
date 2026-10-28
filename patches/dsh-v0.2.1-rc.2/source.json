@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "d918977b892638296d9e36af6721272e7e704ccb",
+  "headCommit": "54ae75219e468f78e6086bc5a742ea3bd3193ddf",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-zcode",
-  "tree": "2f5cb898e1f3d7633bd42bbc6dcd5e9faa600bce",
-  "sourceSha256": "9250193a2a1caa8bd165a31f3b188e7e0ed63adbf8e728ae50c2d71962a4200c",
+  "tree": "326c933ec56c8f53c6230fd071c5c2a043c3d7e8",
+  "sourceSha256": "8553c9a90a1482f2443e09f584fa752783f8313f2df08654c856f5f4477cd4f9",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "12f98715d81ce452bb0266f341b88531b5d28c1dc4101dfa4a2194d783f86fda"
+    "sha256": "1ec6d216e144cbe08e5e2041c30a159d0937b3185bd41db2de0737f0015df1d7"
   },
   "commits": [
     {
@@ -340,6 +340,12 @@
       "file": "062-conversation-shell-scroll-owner.patch",
       "commit": "d918977b892638296d9e36af6721272e7e704ccb",
       "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9"
+    },
+    {
+      "id": "063",
+      "file": "063-tool-preflight-contract-type.patch",
+      "commit": "54ae75219e468f78e6086bc5a742ea3bd3193ddf",
+      "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613"
     }
   ]
 }

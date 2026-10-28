@@ -1,0 +1,32 @@
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index 3d704c2c71dccae004d1aa705bb97130bd4a3c7a..9ac041940a7292185a2f1ff2bf0473026c21323b 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -322,6 +322,9 @@ declare const toolExecutionTokenBrand: unique symbol
+ /** Opaque call identity that permits correlation without exposing mutable execution state. */
+ export type ToolExecutionToken = symbol & { readonly [toolExecutionTokenBrand]: true }
+ 
++/** Versioned opt-in contract for caller-owned pre-execution deferral. */
++export type ToolPreflightDeferContract = 'dsh.tool-preflight-defer/v1'
++
+ /**
+  * Caller-supplied description of one tool call. {@link ToolRuntime.execute}
+  * adds the registry-owned token to form a pipeline {@link ToolExecution};
+@@ -357,7 +360,7 @@ export interface ToolExecutionInput {
+    * closed. The value is a caller-owned pending control value, not proof of
+    * authorization or successful execution.
+    */
+-  readonly preflightDefer?: 'dsh.tool-preflight-defer/v1'
++  readonly preflightDefer?: ToolPreflightDeferContract
+   /** The agent on whose behalf the call runs (set by the agent loop). */
+   readonly agent?: Agent
+   /**
+@@ -853,7 +856,7 @@ export class ToolRuntime extends Service {
+   readonly resultRetentions: readonly ['caller/v1'] = Object.freeze(['caller/v1'] as const)
+ 
+   /** The pre-execute defer contract this runtime recognizes; callers opt in through {@link ToolExecutionInput.preflightDefer}. */
+-  readonly preflightDeferContract = 'dsh.tool-preflight-defer/v1' as const
++  readonly preflightDeferContract: ToolPreflightDeferContract = 'dsh.tool-preflight-defer/v1'
+ 
+   static Config: z<Config> = z.object({
+     mode: z.union(['native', 'ptc'] as const).default('native'),
