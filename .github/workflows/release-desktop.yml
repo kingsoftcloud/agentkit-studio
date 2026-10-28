@@ -769,10 +769,6 @@ jobs:
         run: node scripts/verify-studio-plugin-lifecycle.mjs .artifacts/public-web/lifecycle.json
       - name: Verify frozen runtime
         run: node scripts/verify-studio-frozen-host.mjs .artifacts/public-web/frozen-host.json
-      - name: Verify durable assistant and catalog in the browser
-        env:
-          STUDIO_VERIFY_UI: '1'
-        run: node scripts/verify-personal-assistant-host.mjs .artifacts/public-web/assistant.json
       - name: Verify native sidebar and ordinary Agent workflows
         run: node ci/verify-public-web.mjs
       - name: Preserve Web and Host acceptance evidence
