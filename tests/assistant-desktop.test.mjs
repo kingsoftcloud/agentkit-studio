@@ -324,3 +324,74 @@ test('settings degrades to the recorded declaration when the platform detail cal
   assert.equal(snapshot.runtime.version, '0.1.37');
   assert.match(snapshot.detailNote, /云端平台暂时没有返回实例详情/u);
 });
+
+test('a binding whose instance was deleted is treated as stale, not as an authorization failure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  await writeFile(join(dir, 'assistant-binding.json'), JSON.stringify({
+    format: 'agentkit.studio-assistant-binding/v1', gatewayUrl: GATEWAY, agentId: AGENT, apiKey: KEY,
+    label: 'pa-cloud-session', updatedAt: new Date().toISOString(),
+  }));
+  // 真实网关对已删除实例的响应：HTTP 200 + Code 404。
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ Code: 404, Message: '请求的资源不存在或已被删除。', RequestId: 'probe' }) });
+  const client = { action: async name => { if (name === 'ListAgents') return { data: { Agents: [] } }; throw new Error(name); } };
+  const service = createAssistantDesktop({ storeDir: dir, fetchImpl, getClient: async () => client,
+    configuration: { resolve: async () => ({ values: { cloudRegion: 'pre-online' } }) } });
+
+  // 账号下没有实例，旧绑定又指向已删除实例：必须是「未开通」，不能抛授权错误。
+  assert.deepEqual(await service.configuration({}), { configured: false });
+  const status = await service.status({});
+  assert.equal(status.configured, false);
+  assert.equal(status.reason, 'needs-create');
+  assert.deepEqual(status.candidates, []);
+  // 死绑定要被清掉，否则之后每次检查都会重复失败。
+  await assert.rejects(readFile(join(dir, 'assistant-binding.json'), 'utf8'), { code: 'ENOENT' });
+});
+
+test('creation goes through the productized deployment action instead of the generic CreateAgent', async () => {
+  const NEW_AGENT = 'ar-20261028091000-cccccccc';
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir, fetchOptions: { agent: NEW_AGENT } });
+  const payloads = [];
+  let genericCreateAttempted = false;
+  options.getClient = async () => ({ action: async name => {
+    if (name === 'CreateAgent') { genericCreateAttempted = true; throw new Error('Studio 当前不开放 CreateAgent'); }
+    if (name === 'ListAgents') return { data: { Agents: [{ AgentId: NEW_AGENT, Name: 'personal-assistant-x',
+      Framework: 'personal-assistant', Status: 'RUNNING', CreatedAt: '2026-10-28T01:00:00Z' }] } };
+    if (name === 'CreateAgentApiKey') return { data: { ApiKey: KEY } };
+    throw new Error(name);
+  } });
+  options.getDeploymentClient = async () => ({ createAgent: async payload => {
+    payloads.push(payload);
+    return { data: { AgentId: NEW_AGENT } };
+  } });
+
+  const service = createAssistantDesktop(options);
+  assert.deepEqual(await service.create({}), { configured: true, agentId: NEW_AGENT });
+  assert.equal(genericCreateAttempted, false);
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].Framework, 'personal-assistant');
+  assert.equal(payloads[0].DeploymentType, 'ManagedRuntime');
+  assert.equal(payloads[0].ManagedRuntimeConfig.RuntimeName, 'personal-assistant');
+});
+
+test('a rejected creation surfaces the platform reason instead of a generic retry', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir });
+  options.getDeploymentClient = async () => ({ createAgent: async () => {
+    throw Object.assign(new Error('Framework 格式不正确'), { code: 'SERVER_ACTION_FAILED', status: 422, requestId: 'req-1' });
+  } });
+  const service = createAssistantDesktop(options);
+  await assert.rejects(service.create({}), error => error.code === 'ASSISTANT_CREATE_UNAVAILABLE'
+    && error.status === 503 && /Framework 格式不正确/.test(error.message));
+});
+
+test('an unregistered runtime (404) tells the operator the platform side must open it first', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir });
+  options.getDeploymentClient = async () => ({ createAgent: async () => {
+    throw Object.assign(new Error('CreateAgentProduct 请求失败（404）'), { code: 'SERVER_ACTION_FAILED', status: 404, requestId: 'req-404' });
+  } });
+  const service = createAssistantDesktop(options);
+  await assert.rejects(service.create({}), error => error.code === 'ASSISTANT_CREATE_UNAVAILABLE'
+    && /需要平台侧开通/.test(error.message) && /404/.test(error.message));
+});

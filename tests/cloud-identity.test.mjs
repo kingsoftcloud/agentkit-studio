@@ -192,3 +192,39 @@ test('IAM inner-account denial uses the official default fallback without runtim
   await direct.resolve({ ...values, cloudServerUrl: defaults.innerKop.origin });
   assert.deepEqual(hosts, [defaults.innerIam.origin]);
 });
+
+test('inner-account IAM reports inactive keys and an empty ListAllUserAccessKeys; the owner is discovered through a bounded ListUsers scan', async () => {
+  const calls = [];
+  const resolver = createCloudIdentityResolver({ innerKopUrl: INNER_KOP_URL, innerIamUrl: INNER_IAM_URL, fetchImpl: async (url, init) => {
+    const origin = new URL(url).origin;
+    const params = new URLSearchParams(init.body), action = params.get('Action'), userName = params.get('UserName');
+    calls.push([origin, action, userName]);
+    if (origin === 'https://iam.api.ksyun.com') return new Response('<Error><Code>InnerAccountCanOnlyAccessThroughIntranet</Code></Error>', { status: 403 });
+    if (action === 'GetUser') return json({ GetUserResult: { User: user } });
+    if (action === 'ListAllUserAccessKeys') return json({ AccessKeyList: [] });
+    if (action === 'ListUsers') return json({ ListUserResult: { IsTruncated: false, Total: 2, Users: { member: [{ UserName: 'operator' }, { UserName: 'someone' }] } } });
+    if (action === 'ListAccessKeys' && !userName) return json(listing([{ AccessKeyId: 'root-ak', UserName: '', Status: 'Inactive' }]));
+    if (action === 'ListAccessKeys' && userName === 'operator') return json(listing([{ AccessKeyId: 'test-ak', UserName: 'operator', Status: 'Inactive' }]));
+    if (action === 'ListAccessKeys' && userName === 'someone') return json(listing([]));
+    throw Error('unexpected IAM action: ' + action);
+  } });
+  const identity = await resolver.resolve(values);
+  assert.deepEqual({ kind: identity.kind, accountId: identity.accountId, userUuid: identity.userUuid, userName: identity.userName },
+    { kind: 'subaccount', accountId: '123456789', userUuid: 'user-123', userName: 'operator' });
+  assert(calls.some(([origin, action]) => origin === INNER_IAM_URL && action === 'ListUsers'));
+});
+
+test('inner-account inactive keys stay unverified when the owner inventory is incomplete or ambiguous', async () => {
+  for (const users of [undefined, { member: [{ UserName: 'operator' }, { UserName: 'operator' }] }]) {
+    const resolver = createCloudIdentityResolver({ innerKopUrl: INNER_KOP_URL, innerIamUrl: INNER_IAM_URL, fetchImpl: async (url, init) => {
+      const params = new URLSearchParams(init.body), action = params.get('Action');
+      if (new URL(url).origin === 'https://iam.api.ksyun.com') return new Response('<Error><Code>InnerAccountCanOnlyAccessThroughIntranet</Code></Error>', { status: 403 });
+      if (action === 'ListAccessKeys' && !params.has('UserName')) return json(listing([{ AccessKeyId: 'root-ak', UserName: '', Status: 'Inactive' }]));
+      if (action === 'ListAllUserAccessKeys') return json({ AccessKeyList: [] });
+      if (action === 'ListUsers') return users ? json({ ListUserResult: { IsTruncated: false, Users: users } }) : json({});
+      if (action === 'ListAccessKeys') return json(listing([{ AccessKeyId: 'test-ak', UserName: 'operator', Status: 'Inactive' }]));
+      return json({});
+    } });
+    await assert.rejects(resolver.resolve(values), { code: 'CLOUD_IDENTITY_UNVERIFIED' });
+  }
+});

@@ -21,7 +21,7 @@ async function readBounded(response) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function ownKey(response, accessKey, allowMissing = false) {
+function ownKey(response, accessKey, allowMissing = false, { allowInactive = false } = {}) {
   const result = response?.ListAccessKeyResult;
   const entries = result?.AccessKeyMetadata?.member;
   // An incomplete response or missing key is unknown, never evidence of a root key.
@@ -31,7 +31,8 @@ function ownKey(response, accessKey, allowMissing = false) {
   if (!Array.isArray(entries)) fail();
   const matches = entries.filter(item => item?.AccessKeyId === accessKey);
   if (!matches.length && allowMissing) return null;
-  if (matches.length !== 1 || matches[0].Status !== 'Active' || !text(matches[0].UserName)) fail();
+  if (matches.length !== 1 || !(matches[0].Status === 'Active' || (allowInactive && matches[0].Status === 'Inactive'))
+    || !text(matches[0].UserName)) fail();
   return matches[0];
 }
 
@@ -39,6 +40,10 @@ function matchingUser(response, accessKey) {
   if (!response || response.NextMarker || (response.IsTruncated !== undefined && response.IsTruncated !== false)
     || !Array.isArray(response.AccessKeyList)) fail();
   const matches = response.AccessKeyList.filter(item => item?.AccessKey === accessKey);
+  // Some deployments restrict ListAllUserAccessKeys to the account owner and
+  // answer a subaccount caller with an empty list. Return null so the caller can
+  // try the bounded ListUsers discovery below instead of failing immediately.
+  if (!matches.length) return null;
   if (matches.length !== 1 || !text(matches[0].UserName) || !matches[0].UserName) fail();
   return matches[0].UserName;
 }
@@ -80,6 +85,50 @@ export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 150
     if (!response.ok || !payload || payload.Error) fail();
     return { payload, origin };
   }
+  // Inner-account IAM deployments can answer ListAllUserAccessKeys with an
+  // empty list for a subaccount caller even though the credential is a valid
+  // user key. Recover the owning user from the bounded user inventory; this
+  // path only runs when the key was missing from both key listings.
+  const MAX_DISCOVERY_USERS = 1000;
+  const DISCOVERY_CONCURRENCY = 8;
+  async function discoverOwner(origin, accessKey, credentials, signal) {
+    const names = new Set();
+    let marker = '';
+    for (let page = 0; page < 20; page++) {
+      const listed = await request(origin, 'ListUsers', marker ? { Marker: marker } : {}, credentials, signal);
+      const result = listed.payload?.ListUserResult;
+      const member = result?.Users?.member;
+      if (!result || !Array.isArray(member)) return null;
+      for (const item of member) {
+        const name = item?.UserName;
+        if (text(name) && name) names.add(name);
+        if (names.size > MAX_DISCOVERY_USERS) return null;
+      }
+      if (result.IsTruncated !== true) break;
+      const next = result.NextMarker || result.Marker || '';
+      if (!text(next) || !next) return null;
+      marker = next;
+    }
+    const candidates = [...names];
+    const owners = new Set();
+    for (let index = 0; index < candidates.length; index += DISCOVERY_CONCURRENCY) {
+      const batch = candidates.slice(index, index + DISCOVERY_CONCURRENCY);
+      const found = await Promise.all(batch.map(async name => {
+        try {
+          const own = await request(origin, 'ListAccessKeys', { UserName: name }, credentials, signal);
+          const entries = own.payload?.ListAccessKeyResult?.AccessKeyMetadata?.member;
+          if (!Array.isArray(entries)) return null;
+          return entries.some(item => item?.AccessKeyId === accessKey) ? name : null;
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          return null;
+        }
+      }));
+      for (const name of found) if (name) owners.add(name);
+    }
+    if (owners.size > 1) fail();
+    return owners.size === 1 ? owners.values().next().value : null;
+  }
   async function resolve(values, { signal, forceRefresh = false } = {}) {
     let base;
     try { base = new URL(values.cloudServerUrl || endpoints.publicKop); } catch { fail('SERVER_URL_INVALID', '控制面地址无效'); }
@@ -101,15 +150,22 @@ export function createCloudIdentityResolver({ fetchImpl = fetch, timeoutMs = 150
     else {
       cache.delete(cacheKey);
       const listed = await request(origin, 'ListAccessKeys', {}, credentials, signal);
-      let key = ownKey(listed.payload, cloudAccessKey, true);
+      // Inner-account IAM reports every API key as Inactive even while the
+      // signed IAM request above succeeds. That successful authentication
+      // already proves possession, so only accept the status variance on the
+      // injected inner IAM origin.
+      const allowInactive = !endpoints.isPublicIam(listed.origin);
+      let key = ownKey(listed.payload, cloudAccessKey, true, { allowInactive });
       if (!key) {
         // Some IAM deployments default ListAccessKeys to the owner's keys even
         // when signed by a subaccount. A missing key is not a root identity.
         // Resolve only this exact AK, then verify its active user-specific row.
         const all = await request(listed.origin, 'ListAllUserAccessKeys', {}, credentials, signal);
-        const name = matchingUser(all.payload, cloudAccessKey);
+        let name = matchingUser(all.payload, cloudAccessKey);
+        if (!name) name = await discoverOwner(all.origin, cloudAccessKey, credentials, signal);
+        if (!name) fail();
         const own = await request(all.origin, 'ListAccessKeys', { UserName: name }, credentials, signal);
-        key = ownKey(own.payload, cloudAccessKey);
+        key = ownKey(own.payload, cloudAccessKey, false, { allowInactive });
         if (key.UserName !== name) fail();
       }
       if (key.UserName === '') {
