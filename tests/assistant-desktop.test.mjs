@@ -177,8 +177,9 @@ test('creating an assistant waits for the instance and binds its credential', as
   const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
   const { options } = harness({ store: dir, fetchOptions: { agent: NEW_AGENT } });
   let created = false;
-  options.getClient = async () => ({ action: async name => {
-    if (name === 'CreateAgent') { created = true; return { data: { AgentId: NEW_AGENT } }; }
+  let createRequest = null;
+  options.getClient = async () => ({ action: async (name, request) => {
+    if (name === 'CreateAgent') { created = true; createRequest = request; return { data: { AgentId: NEW_AGENT } }; }
     if (name === 'ListAgents') return { data: { Agents: created ? [{ AgentId: NEW_AGENT, Name: 'personal-assistant-x',
       Framework: 'personal-assistant', Status: 'RUNNING', CreatedAt: '2026-10-28T01:00:00Z' }] : [] } };
     if (name === 'CreateAgentApiKey') return { data: { ApiKey: KEY } };
@@ -187,6 +188,9 @@ test('creating an assistant waits for the instance and binds its credential', as
   const service = createAssistantDesktop(options);
   const result = await service.create({}, undefined);
   assert.deepEqual(result, { configured: true, agentId: NEW_AGENT });
+  // The managed order is settled by the platform, so the client must ask for
+  // automatic payment; otherwise the Ding callback never creates the runtime.
+  assert.equal(createRequest.AutoPay, true);
   const saved = JSON.parse(await readFile(join(dir, 'assistant-binding.json'), 'utf8'));
   assert.equal(saved.agentId, NEW_AGENT);
 });

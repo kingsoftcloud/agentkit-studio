@@ -416,7 +416,7 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     const region = text(values?.cloudRegion) === 'pre-online' ? 'cn-beijing-6' : (text(values?.cloudRegion) || 'cn-beijing-6');
     const request = {
       Name: name, Description: '个人助理', Framework: 'personal-assistant', Region: region,
-      DeploymentType: 'ManagedRuntime',
+      DeploymentType: 'ManagedRuntime', AutoPay: true,
       ManagedRuntimeConfig: { RuntimeName: 'personal-assistant', RuntimeVersion: version, Manifest: manifest },
       Resource: { Cpu: 1, Memory: 4 }, Scaling: { MinReplicas: 1, MaxReplicas: 1 },
       Storage: { MountPath: '/data', SizeGi: 20 }, Network: { EnablePublicAccess: true, EnableVpcAccess: false },
