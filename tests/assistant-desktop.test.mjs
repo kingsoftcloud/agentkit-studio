@@ -77,7 +77,7 @@ test('issueTicket returns the normalized public authorization only', async () =>
   assert.equal(ticket.botId, '__directory__');
   assert.equal(ticket.protocol, 'agentkit.personal-assistant.desktop.v1');
   assert.equal(ticket.readOnly, true);
-  assert.equal(ticket.wsUrl, 'wss://pa-desktop-dev.agent-pre.kspmas.ksyun.com/personal-assistant/desktop/ws');
+  assert.equal(ticket.wsUrl, 'wss://pa-desktop-pre.agent-pre.kspmas.ksyun.com/personal-assistant/desktop/ws');
   assert.ok(Math.abs(Date.parse(ticket.expiresAt) - (future() * 1000)) < 120_000);
   assert.equal(ticket.leaseId, null);
   assert.equal(calls.at(-1).init.headers.authorization, `Bearer ${KEY}`);

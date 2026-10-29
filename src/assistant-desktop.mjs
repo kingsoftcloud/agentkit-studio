@@ -271,7 +271,9 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     const { values } = await (await source)?.resolve();
     if (!values) throw fail('ASSISTANT_CLOUD_UNCONFIGURED', '还没有配置云账号，请先在 Studio 中完成云账号设置', 409);
     const region = String(values?.cloudRegion || '').toLowerCase();
-    if (region === 'pre-online') return 'https://pa-desktop-dev.agent-pre.kspmas.ksyun.com';
+    // 主预发（agentengine）走 pa-desktop-pre；PA 团队 dev 环境是另一套
+    // server/DB，需要时用 AGENTKIT_PERSONAL_ASSISTANT_GATEWAY_URL 覆盖。
+    if (region === 'pre-online') return 'https://pa-desktop-pre.agent-pre.kspmas.ksyun.com';
     throw fail('ASSISTANT_GATEWAY_UNCONFIGURED', '当前环境还没有配置个人助理云网关', 409);
   }
 
