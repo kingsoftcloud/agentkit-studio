@@ -271,7 +271,9 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     const { values } = await (await source)?.resolve();
     if (!values) throw fail('ASSISTANT_CLOUD_UNCONFIGURED', '还没有配置云账号，请先在 Studio 中完成云账号设置', 409);
     const region = String(values?.cloudRegion || '').toLowerCase();
-    if (region === 'pre-online') return 'https://pa-desktop-dev.agent-pre.kspmas.ksyun.com';
+    // 主预发（agentengine）走 pa-desktop-pre；PA 团队 dev 环境是另一套
+    // server/DB，需要时用 AGENTKIT_PERSONAL_ASSISTANT_GATEWAY_URL 覆盖。
+    if (region === 'pre-online') return 'https://pa-desktop-pre.agent-pre.kspmas.ksyun.com';
     throw fail('ASSISTANT_GATEWAY_UNCONFIGURED', '当前环境还没有配置个人助理云网关', 409);
   }
 
@@ -313,7 +315,10 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
       const data = await gatewayTicket(binding, { botId: DIRECTORY_BOT_ID, mode: 'read' }, signal);
       return record(data) && TICKET.test(String(data.Ticket || ''));
     } catch (error) {
-      if (error?.status === 401 || error?.status === 403) return false;
+      // 401/403：凭证被拒。409：网关对「实例已不存在」返回 Code 404（在 gatewayTicket 里映射为
+      // 409）——两者都只说明本地这条绑定过期，必须当作不可用继续往下走。若在这里原样抛出，
+      // 一条死绑定会让 configuration() 整体失败，页面就看不到「未开通」也无法给出开通引导。
+      if ([401, 403, 409].includes(Number(error?.status))) return false;
       throw error;
     }
   }
@@ -329,7 +334,12 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     // the old one, so fall through to the re-acquisition path.
     if (binding && selected && binding.agentId !== selected.AgentId) binding = null;
     if (binding && await bindingUsable(binding, signal)) return { binding, candidates, reason: '' };
-    // The stored key is stale (or belonged to another instance). Never keep it.
+    // The stored key is stale (or belonged to another instance). Never keep it:
+    // 留下的死绑定会让之后每次检查都失败，必须在判定为过期时就清掉。
+    if (binding) {
+      await rm(file, { force: true }).catch(() => {});
+      cached = null; cacheAt = 0;
+    }
     binding = null;
     if (!selected) return { binding: null, candidates, reason: 'needs-create' };
     const gatewayUrl = await environmentGateway();
@@ -403,30 +413,48 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
    * The managed runtime name mirrors the framework, and the manifest keeps the
    * instance identity in sync with the request. */
   async function create(payload = {}, signal) {
-    if (typeof getClient !== 'function') throw fail('ASSISTANT_CREATE_UNAVAILABLE', '当前 Studio 版本不支持创建个人助理', 503);
-    const version = text(env.AGENTKIT_PERSONAL_ASSISTANT_RUNTIME_VERSION) || '0.1.9';
+    if (typeof getClient !== 'function' && typeof getDeploymentClient !== 'function')
+      throw fail('ASSISTANT_CREATE_UNAVAILABLE', '当前 Studio 版本不支持创建个人助理', 503);
+    const version = text(env.AGENTKIT_PERSONAL_ASSISTANT_RUNTIME_VERSION) || '0.1.41'; // 与平台 catalog 默认版本保持一致（预发保留 0.1.39-0.1.41）
     const model = text(env.AGENTKIT_PERSONAL_ASSISTANT_MODEL) || DEFAULT_MODEL;
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
     const name = `personal-assistant-${stamp}-${randomUUID().slice(0, 10)}`;
     // Keep the declaration Studio writes, so later settings edits can rebuild
     // the exact same instance identity without inventing a new name.
     const manifest = buildManifest({ name, version, model, prompt: DEFAULT_PROMPT });
-    const client = await getClient();
     const { values } = await (await configurationSource)?.resolve() || {};
     const region = text(values?.cloudRegion) === 'pre-online' ? 'cn-beijing-6' : (text(values?.cloudRegion) || 'cn-beijing-6');
     const request = {
       Name: name, Description: '个人助理', Framework: 'personal-assistant', Region: region,
-      DeploymentType: 'ManagedRuntime',
+      DeploymentType: 'ManagedRuntime', AutoPay: true,
       ManagedRuntimeConfig: { RuntimeName: 'personal-assistant', RuntimeVersion: version, Manifest: manifest },
       Resource: { Cpu: 1, Memory: 4 }, Scaling: { MinReplicas: 1, MaxReplicas: 1 },
       Storage: { MountPath: '/data', SizeGi: 20 }, Network: { EnablePublicAccess: true, EnableVpcAccess: false },
       Advanced: { EnableObservability: false, EnvironmentVariables: [{ Key: 'OPENAI_BASE_URL', Value: text(values?.modelBaseUrl) || 'https://kspmas.ksyun.com/v1' }] },
       InstanceId: randomUUID(),
     };
+    // 创建必须走产品化动作：Studio 通用 client 的动作白名单里没有 CreateAgent，
+    // 直接调用会被本地的 ACTION_NOT_ALLOWED 拒绝（与云端无关）。deployment client
+    // 才持有 CreateAgentProduct，Studio 自己的部署也走这条路。
     let created;
-    try { created = await client.action('CreateAgent', request, { signal }); }
-    catch (error) {
-      throw fail('ASSISTANT_CREATE_UNAVAILABLE', text(error?.message).includes('Framework') ? '当前云端还没有开放个人助理创建，请稍后再试' : '云端未能创建个人助理，请稍后再试', 503);
+    try {
+      if (typeof getDeploymentClient === 'function') {
+        created = await (await getDeploymentClient()).createAgent(request, { signal });
+      } else {
+        created = await (await getClient()).action('CreateAgent', request, { signal });
+      }
+    } catch (error) {
+      // 平台拒绝的原因必须透出来：只报「请稍后再试」会让预发缺口看起来像偶发故障。
+      const message = text(error?.message);
+      const code = text(error?.code);
+      const requestId = text(error?.requestId);
+      const hint = code === 'ACTION_NOT_ALLOWED' ? '当前 Studio 版本不支持创建个人助理，请升级 Studio'
+        // 预发控制面对 personal-assistant 的创建还没有放行时返回 404（产品/运行时未注册），
+        // 这属于平台侧缺口：给出可以转给平台同事的原始信息，而不是让人反复点重试。
+        : Number(error?.status) === 404 ? `云端控制面还没有注册个人助理（平台返回 404），需要平台侧开通后重试：${message}`
+        : message.includes('Framework') || Number(error?.status) === 422 ? `云端还不接受个人助理创建：${message}`
+        : `云端未能创建个人助理${message ? `：${message}` : ''}${requestId ? `（请求 ${requestId}）` : ''}`;
+      throw fail('ASSISTANT_CREATE_UNAVAILABLE', hint, 503);
     }
     const data = created?.data ?? created;
     const agentId = text(data?.AgentId ?? data?.Data?.AgentId ?? data?.Agent?.AgentId);
