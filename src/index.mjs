@@ -30,6 +30,11 @@ export async function apply(ctx) {
   });
   const { mountStudioHost } = await import('./host/bootstrap.mjs');
   await mountStudioHost(ctx, { env: runtimeEnv });
+  // Managed runtimes receive a platform observability bundle (Langfuse OTLP
+  // traces + CloudMonitor secondary). The plugin self-gates on that bundle, so
+  // desktop and interactive sessions are unaffected.
+  const { installManagedObservability } = await import('./observability-otel.mjs');
+  installManagedObservability(ctx);
   const versions = await import('./studio-version.mjs').then(({ studioVersions }) => studioVersions(runtimeEnv));
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',

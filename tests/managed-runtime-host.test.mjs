@@ -40,7 +40,12 @@ async function fixture(t) {
     AGENTKIT_RUNTIME_TOKEN: 'fixture-runtime-token-at-least-24-characters', AGENTENGINE_AGENT_ID: 'ar-managed-fixture', AGENTENGINE_AGENT_VERSION_ID: 'v1',
     AGENTENGINE_MANAGED_RUNTIME_NAME: 'dsh-native', AGENTENGINE_MANAGED_RUNTIME_VERSION: 'studio-test.1',
     AGENTENGINE_MANIFEST_PROTOCOL: 'runtime-manifest/v1', AGENTENGINE_MANIFEST_SHA256: hash(raw),
-    NODE_OPTIONS: '--require personal-hook', OPENAI_API_KEY: 'personal-key', KSYUN_SECRET_KEY: 'personal-cloud-key' };
+    NODE_OPTIONS: '--require personal-hook', OPENAI_API_KEY: 'personal-key', KSYUN_SECRET_KEY: 'personal-cloud-key',
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://langfuse.example/api/public/otel/v1/traces',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Basic%20cGs6c2s=', OTEL_SERVICE_NAME: 'fixture-service',
+    OTEL_RESOURCE_ATTRIBUTES: 'agentengine.agent_id=ar-managed-fixture',
+    CLOUD_MONITOR_OTLP_TRACES_ENDPOINT: 'https://cloudmonitor.example/v1/traces', CLOUD_MONITOR_OTLP_HEADERS: 'Ksc-Appkey=app-1',
+    DSH_OTEL_CA_PEM_BASE64: 'cGVt', UNRELATED_SECRET: 'must-not-leak' };
   return { root, installation, state, manifest, env, raw };
 }
 
@@ -52,7 +57,10 @@ test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or pers
   assert.equal(plan.env.AGENTKIT_RUNTIME_BUILD_ID, undefined);
   assert.equal(plan.env.AGENTKIT_BUNDLE_SHA256, undefined);
   assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, f.env.AGENTKIT_MODEL_API_KEY);
-  for (const name of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'KSYUN_SECRET_KEY']) assert.equal(plan.env[name], undefined);
+  for (const name of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'KSYUN_SECRET_KEY', 'UNRELATED_SECRET']) assert.equal(plan.env[name], undefined);
+  // Platform-managed observability reaches the Host child so the OTel plugin can export.
+  for (const name of ['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
+    'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'DSH_OTEL_CA_PEM_BASE64']) assert.equal(plan.env[name], f.env[name]);
   const config = await readFile(join(plan.env.AGENTKIT_HOME, 'config.yaml'), 'utf8');
   assert.ok(!config.includes('fixture-only-key') && !JSON.stringify(plan.identity).includes('fixture-only-key'));
   assert.deepEqual(await readdir(plan.env.AGENTKIT_HOME), ['config.yaml']);

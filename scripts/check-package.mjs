@@ -47,6 +47,7 @@ const expected = [
   'node_modules/@kingsoftcloud/agentkit-harness-ui/markdown/dist/THIRD_PARTY_LICENSES.txt',
   'cordis.patch.yml',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
+  'src/builtin-skills.mjs', 'src/builtin-skills/platform-resources/SKILL.md', 'src/observability-otel.mjs',
   'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
   'node_modules/@kingsoftcloud/agentkit-harness-node/src/native/python-syntax.mjs',
   'node_modules/@kingsoftcloud/agentkit-harness-node/src/native/python-syntax-worker.mjs',
@@ -102,6 +103,7 @@ const expected = [
   'packages/agentkit-harness/src/index.mjs', 'packages/agentkit-harness/src/core.mjs',
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',
   'packages/agentkit-harness/src/index.d.ts', 'scripts/start-agent-bundle.mjs',
+  'scripts/start-agent-manifest.mjs', 'scripts/verify-agent-manifest.mjs',
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);

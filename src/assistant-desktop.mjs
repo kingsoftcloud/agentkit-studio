@@ -415,7 +415,7 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
   async function create(payload = {}, signal) {
     if (typeof getClient !== 'function' && typeof getDeploymentClient !== 'function')
       throw fail('ASSISTANT_CREATE_UNAVAILABLE', '当前 Studio 版本不支持创建个人助理', 503);
-    const version = text(env.AGENTKIT_PERSONAL_ASSISTANT_RUNTIME_VERSION) || '0.1.41'; // 与平台 catalog 默认版本保持一致（预发保留 0.1.39-0.1.41）
+    const version = text(env.AGENTKIT_PERSONAL_ASSISTANT_RUNTIME_VERSION) || '0.1.42'; // 与平台 catalog 默认版本保持一致（预发保留 0.1.39-0.1.42）
     const model = text(env.AGENTKIT_PERSONAL_ASSISTANT_MODEL) || DEFAULT_MODEL;
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
     const name = `personal-assistant-${stamp}-${randomUUID().slice(0, 10)}`;

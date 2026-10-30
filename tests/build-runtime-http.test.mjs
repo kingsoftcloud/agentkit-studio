@@ -209,3 +209,61 @@ test('conversation execution modes are declared, narrowed by the ceiling and val
   assert.equal((await post()).status, 200);
   assert.deepEqual(modes, ['read-only', 'workspace-write']);
 });
+
+test('a failed settlement cannot hide the original run failure', async t => {
+  const logs = [];
+  const originalFailure = Object.assign(new Error('model gateway unavailable'),
+    { code: 'MODEL_UPSTREAM_UNAVAILABLE', status: 502 });
+  const settlementFailure = Object.assign(new Error('request absent from native history'),
+    { code: 'CHANNEL_REQUEST_NOT_FOUND' });
+  const platformActions = {
+    setRunControl() {},
+    async checkRun() {},
+    async flushRun() {},
+    async settleRun() { throw settlementFailure; },
+    async parseResponses() {
+      return { input: 'hello', sessionId: 'native-session', requestId: 'req-settlement',
+        stream: true, runId: 'run_settlement_fixture', model: 'model', responseId: 'resp_settlement',
+        createdAt: Date.now(), conversationId: 'conv-settlement', publicSessionId: 'public-session',
+        platformSession: { sessionId: 'public-session', nativeSessionId: 'native-session' }, metadata: {} };
+    },
+  };
+  const { post } = await setup(t, async () => { throw originalFailure; },
+    { platformActions, runLog: entry => logs.push(entry) });
+  const response = await post({ input: 'hello' });
+  assert.equal(response.status, 200);
+  const events = [];
+  for await (const event of readSse(response.body)) events.push(event);
+  const failed = events.find(event => event.type === 'response.failed');
+  assert.ok(failed, 'expected a failed response event');
+  assert.equal(failed.response.error.code, 'MODEL_UPSTREAM_UNAVAILABLE');
+  assert.deepEqual(logs.map(entry => entry.event), ['runtime.run.started', 'runtime.run.failed']);
+  assert.equal(logs[1].code, 'MODEL_UPSTREAM_UNAVAILABLE');
+  assert.equal(logs[1].settlementCode, 'CHANNEL_REQUEST_NOT_FOUND');
+});
+
+test('settlement diagnostics are inert uppercase tokens', async t => {
+  const logs = [];
+  const settlementFailure = Object.assign(new Error('private settlement detail'),
+    { code: 'CHANNEL_REQUEST_NOT_FOUND\nprivate-injected-field' });
+  const platformActions = {
+    setRunControl() {},
+    async checkRun() {},
+    async flushRun() {},
+    async settleRun() { throw settlementFailure; },
+    async parseResponses() {
+      return { input: 'hello', sessionId: 'native-session', requestId: 'req-settlement-safety',
+        stream: true, runId: 'run_settlement_safety', model: 'model', responseId: 'resp_settlement_safety',
+        createdAt: Date.now(), conversationId: 'conv-settlement-safety', publicSessionId: 'public-session',
+        platformSession: { sessionId: 'public-session', nativeSessionId: 'native-session' }, metadata: {} };
+    },
+  };
+  const { post } = await setup(t, async () => { throw Object.assign(new Error('model gateway unavailable'),
+    { code: 'MODEL_UPSTREAM_UNAVAILABLE', status: 502 }); }, { platformActions, runLog: entry => logs.push(entry) });
+  const response = await post({ input: 'hello' });
+  assert.equal(response.status, 200);
+  const events = [];
+  for await (const event of readSse(response.body)) events.push(event);
+  assert.equal(logs[1].settlementCode, 'RUNTIME_SETTLEMENT_FAILED');
+  assert(!JSON.stringify(logs).includes('private-injected-field'));
+});
