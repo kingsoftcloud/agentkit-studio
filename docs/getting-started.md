@@ -20,8 +20,7 @@ Revisions and Builds default to the Node-based TypeScript Native engine. No Nati
 opt-in flag, Python environment or uv installation is required. Existing Frozen
 Builds keep their original engine. This branch requires the repository's maintained
 DSH Host interfaces; a public DSH package with the same version is insufficient.
-See the [Native handoff](native-handoff.md) before installing this development branch;
-an existing desktop release does not automatically contain these changes.
+An existing desktop release does not automatically contain these changes.
 
 Desktop Settings shows the installed App build, the Studio plugin version and the
 pinned DSH baseline separately. Update availability compares the installed App build

@@ -14,8 +14,7 @@ Native 有自己的持久化 Run / 意图 / 回执 / 事件格式，通过版本
 Session，不能将它理解为仅替换模型调用。安装和执行不依赖 Python 或 uv。
 这部分由仓库根目录的 **Studio 包**分发，并需要维护版 DSH；下面的
 `pnpm pack:harness` 只生成 facade 包，不包含 `src/native/` 或 TS 核心。
-配置、安装、回退和剩余验收见仓库的
-[Native 交接说明](../../docs/native-handoff.md)。
+Studio 通过根目录 `package.json` 安装并绑定独立的 Core、Node 和 UI 包。
 
 ## 独立 DSH facade 包
 
