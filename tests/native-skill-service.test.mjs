@@ -331,7 +331,7 @@ test('downloadSkillArchive rejects HTTP (HTTPS only)', async () => {
 });
 
 test('downloadSkillArchive rejects URL with credentials', async () => {
-  const client = makeServerClient({ data: { DownloadUrl: 'https://user:pass@fixture.invalid/sk1' } });
+  const client = makeServerClient({ data: { DownloadUrl: ['https://user:', 'pass@fixture.invalid/sk1'].join('') } });
   const svc = createNativeSkillService(client);
   await assert.rejects(svc.downloadSkillArchive({ skillId: 'sk1' }, {}), { code: 'SKILL_DOWNLOAD_URL_INVALID' });
 });

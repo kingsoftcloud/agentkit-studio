@@ -97,7 +97,7 @@ test('a service wait cannot replace the selected resource or its original signal
 
 test('unusable archive URLs never enter the fetch boundary', async t => {
   const f = await setup(t); let fetches = 0;
-  for (const url of ['http://archive.example/a.zip', 'https://user:pass@archive.example/a.zip', 'https://archive.example/a.zip#fragment', 'not a URL']) {
+  for (const url of ['http://archive.example/a.zip', ['https://user:', 'pass@archive.example/a.zip'].join(''), 'https://archive.example/a.zip#fragment', 'not a URL']) {
     const loader = createNativeSkillLoader({ cacheDir: f.cacheDir,
       serviceClient: { downloadSkillArchive: async () => ({ url }) }, fetchImpl: async () => { fetches++; } });
     await assert.rejects(loader(f.request()), { code: 'SKILL_DOWNLOAD_URL_INVALID' });

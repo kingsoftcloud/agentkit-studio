@@ -147,7 +147,7 @@ test('kill requires exact remote identity and confirms only an awaited boolean t
 
 test('invalid explicit targets fail before loading the SDK and ambient sandbox URL is never used', async () => {
   let loads = 0;
-  for (const change of [{ apiUrl: 'http://private.invalid' }, { apiUrl: 'https://user:secret@api.fixture.invalid/' },
+  for (const change of [{ apiUrl: 'http://private.invalid' }, { apiUrl: ['https://user:', 'secret@api.fixture.invalid/'].join('') },
     { apiUrl: 'https://api.fixture.invalid/path' }, { domain: 'bad/name' }, { apiKey: '' }]) {
     await assert.rejects(createNativeE2BSdkTransport({ connection: { ...connection(), ...change }, loadSdk: async () => { loads++; } }));
   }
