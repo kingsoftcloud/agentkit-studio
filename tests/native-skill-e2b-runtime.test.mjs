@@ -252,7 +252,7 @@ test('pre-dispatch abort, changed complete context, missing authority and a fore
 
 test('the real two-command web workflow exports only the exact bundle without bringing back project dependencies', async t => {
   const h = setup(t);
-  writeFileSync(join(h.pkg, 'scripts/init-artifact.sh'), 'mkdir -p "$1/node_modules/pkg"\nprintf dependency > "$1/node_modules/pkg/index.js"\nprintf intermediate > "$1/bundle.html"');
+  writeFileSync(join(h.pkg, 'scripts/init-artifact.sh'), 'umask 077\nmkdir -p "$1/node_modules/pkg"\nprintf dependency > "$1/node_modules/pkg/index.js"\nprintf intermediate > "$1/bundle.html"');
   writeFileSync(join(h.pkg, 'scripts/bundle-artifact.sh'), 'printf "<h1>Native E2B 中文</h1>" > bundle.html');
   h.options.loadPackages = async () => [{ name: 'web-artifacts-builder', body: '# web', rootDir: h.pkg }];
   const req = request(); req.workflowPrompt = 'build html artifact'; req.skillNames = ['web-artifacts-builder'];
