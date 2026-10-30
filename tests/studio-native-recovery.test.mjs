@@ -426,10 +426,10 @@ async function interruptedFixture(t, { repairable = false } = {}) {
   // The Run starts, the model calls write, the tool returns uncertain → interrupted.
   const initial = host.executeTurn(payload); void initial.catch(() => {});
   if (repairable) {
-    for (let attempt = 0; attempt < 100 && toolCalls === 0; attempt++) await tick();
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if ((await host.recoveryStatus({ agentId: binding.agentId, sessionId: session.id })).phase === 'awaiting_reconciliation') break;
-      await tick();
+    const deadline = performance.now() + 5000;
+    while (toolCalls === 0 || (await host.recoveryStatus({ agentId: binding.agentId, sessionId: session.id })).phase !== 'awaiting_reconciliation') {
+      assert.ok(performance.now() < deadline, 'the original tool must dispatch and enter reconciliation');
+      await new Promise(resolve => setTimeout(resolve, 20));
     }
   } else await assert.rejects(initial, /NATIVE_TURN_FAILED/);
   // Verify the tool was actually dispatched (not just that the phase changed).
