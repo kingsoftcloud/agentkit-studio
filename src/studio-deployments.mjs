@@ -14,6 +14,19 @@ import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymen
 
 const cloudId = value => /^ar-(?!local-)[A-Za-z0-9-]+$/.test(value || '');
 const untrustedTls = error => [error, error?.cause, error?.cause?.cause].some(value => /^(?:CERT_|ERR_TLS_|UNABLE_TO_(?:GET|VERIFY)_|SELF_SIGNED_CERT|DEPTH_ZERO_SELF_SIGNED_CERT)/.test(value?.code || ''));
+// Status polling is a read path. A dropped connection, DNS hiccup or 5xx from
+// the platform must not be surfaced as a failed deployment write: the record
+// keeps its state and the next poll reconciles. Transport signatures (and bare
+// fetch rejections without a code) are retried silently; coded business errors
+// still surface.
+const transientRefreshError = error => {
+  const markers = [error, error?.cause, error?.cause?.cause]
+    .flatMap(value => [value?.code, value?.name].filter(marker => typeof marker === 'string' && marker));
+  const status = Number(error?.status || error?.cause?.status || 0);
+  if (status >= 500 || status === 429) return true;
+  // A fetch rejection (TypeError: fetch failed) usually has no error code.
+  return !markers.length || markers.some(marker => /^(?:TypeError|AbortError|FetchError|E(?:CONN|TIMEDOUT|AI_AGAIN|NETUNREACH|NOTFOUND|NAME|PIPE|CONNRESET|HOSTUNREACH|ADDRNOTAVAIL)|UND_ERR_|ABORT_ERR|ERR_(?:NETWORK|TLS))/i.test(marker));
+};
 const failure = error => ({ code: untrustedTls(error) ? 'DEPLOYMENT_TLS_UNTRUSTED' : /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.code || '') ? error.code : 'DEPLOYMENT_FAILED',
   message: untrustedTls(error) ? '云端入口的 TLS 证书校验失败；请检查证书链，或为 Host 配置经核验的可信 CA 后刷新' : error?.code === 'DEPLOYMENT_STORAGE_MISMATCH' ? '云端存储与所选配置不符，暂不可对话；请核对实例配置' : '操作未完成，请查看部署状态并核对云端结果；不会自动重试云端写操作',
   ...(typeof error?.requestId === 'string' && /^[a-f0-9-]{36}$/.test(error.requestId) ? { requestId: error.requestId } : {}) });
@@ -218,7 +231,11 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       return publicRecord(await store.update(id, next));
     } catch (error) {
       if (error.status === 404 && ['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, { state: 'DELETED', failure: null }));
-      return publicRecord(await store.update(id, { failure: failure(error), lastCheckedAt: new Date().toISOString() }));
+      const lastCheckedAt = new Date().toISOString();
+      // Polling failures are retried by the next health check; reporting them
+      // as a deployment failure makes a successful create look broken.
+      if (transientRefreshError(error)) return publicRecord(await store.update(id, { lastCheckedAt }));
+      return publicRecord(await store.update(id, { failure: failure(error), lastCheckedAt }));
     }
   }
   async function repairAccess(id) {

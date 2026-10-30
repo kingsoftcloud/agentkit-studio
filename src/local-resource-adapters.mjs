@@ -232,6 +232,8 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     let result;
     try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }
     catch (error) {
+      // The SDK sends cancellation asynchronously on this shared transport.
+      signal?.throwIfAborted();
       await Promise.resolve(entry.client.close?.()).catch(() => {});
       if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
       throw mcpFailure(error, key, 'call', name);
@@ -243,11 +245,38 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
 
   async function loadCloudSkillSpace(id) {
     const key = resourceId(id);
-    if (cloudSkillSpaces.has(key)) return cloudSkillSpaces.get(key);
+    if (cloudSkillSpaces.has(key)) {
+      // A pinned archive may be cached; its current access grant must not be.
+      // Managed cloud runtimes revalidate on every resource-context assembly.
+      try { await serverClient?.authorizeSkillSpace?.(key); }
+      catch (error) { cloudSkillSpaces.delete(key); throw error; }
+      return cloudSkillSpaces.get(key);
+    }
     if (!serverClient?.skillAction) throw new LocalResourceError('SKILL_SERVICE_UNAVAILABLE', '云端 Skill Service 适配器未启用', { resourceId: key });
-    let listed;
+    const raw = [], ids = new Set();
+    let page = 1;
     try {
-      listed = await serverClient.skillAction('ListSkillsBySpaceId', { SpaceId: key, PageNumber: 1, PageSize: 100 });
+      while (true) {
+        const listed = await serverClient.skillAction('ListSkillsBySpaceId', { SpaceId: key, PageNumber: page, PageSize: 100 });
+        const data = listed?.data;
+        const items = data?.Skills || data?.skills || data?.Items || data?.items;
+        if (!Array.isArray(items)) throw new LocalResourceError('SKILL_SPACE_LIST_INVALID', '云端 Skill 列表格式无效', { resourceId: key });
+        for (const item of items) {
+          const id = item?.SkillId || item?.skill_id || item?.Id || item?.id;
+          if (typeof id !== 'string' || !id.trim() || ids.has(id)) throw new LocalResourceError('SKILL_SPACE_LIST_INVALID', '云端 Skill 列表存在无效或重复条目', { resourceId: key });
+          ids.add(id); raw.push(item);
+        }
+        if (raw.length > 1000) throw new LocalResourceError('SKILL_SPACE_TOO_LARGE', 'Skill Space 超过单次加载上限', { resourceId: key });
+        const total = data.TotalCount ?? data.Total, more = data.HasMore;
+        if (total !== undefined && (!Number.isInteger(total) || total < raw.length)) throw new LocalResourceError('SKILL_SPACE_LIST_INVALID', '云端 Skill 分页总数无效', { resourceId: key });
+        if (!items.length) {
+          if ((total !== undefined && raw.length < total) || more === true) throw new LocalResourceError('SKILL_SPACE_LIST_INCOMPLETE', '云端 Skill 分页不完整', { resourceId: key });
+          break;
+        }
+        if ((total !== undefined && raw.length >= total) || (more === false && total === undefined)
+          || (total === undefined && more === undefined && items.length < 100)) break;
+        if (++page > 100) throw new LocalResourceError('SKILL_SPACE_TOO_LARGE', 'Skill Space 超过分页上限', { resourceId: key });
+      }
     } catch (error) {
       const status = skillServiceStatus(error);
       if (status === 404) {
@@ -259,7 +288,6 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       }
       throw error;
     }
-    const raw = listed.data?.Skills || listed.data?.skills || listed.data?.Items || listed.data?.items || [];
     const manifests = [];
     for (const item of raw) {
       const skillId = String(item.SkillId || item.skill_id || item.Id || item.id || '').trim();
@@ -299,7 +327,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
         return { name: key, content, ...(skillDiscovery.store ? { definitions: [runtimeSkill({ name: local.name, content, path: join(directory, 'SKILL.md') })] } : {}) };
       }
     }
-    if (!looksLikeCloudSkillSpace(key)) {
+    if (!looksLikeCloudSkillSpace(key) && !serverClient?.isBoundSkillSpace?.(key)) {
       throw new LocalResourceError('SKILL_NOT_INSTALLED', `绑定的 Skill（${key}）不在本地导入目录中；请在 Agent 编辑页重新选择 Skill。`, { resourceId: key });
     }
     return loadCloudSkillSpace(key);

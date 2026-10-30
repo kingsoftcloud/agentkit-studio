@@ -21,6 +21,7 @@ import { createDomainPage } from "./pages/domain.mjs";
 import { createResourceDialog } from "./components/resource-dialog.mjs";
 import { createResourceDialogs } from "./components/resource-dialogs.mjs";
 import { createResourcePages } from "./pages/resources.mjs";
+import { createDshPluginPages } from "./pages/dsh-plugins.mjs";
 import { createCodexPluginPages } from "./pages/codex-plugins.mjs";
 import { createDeliveryPages } from "./pages/delivery.mjs";
 import { DEPLOYMENT_LABELS } from "./state/deployment.mjs";
@@ -42,11 +43,6 @@ import { createConversationAgentState } from "./state/conversation-agent.mjs";
 import { createNativeAuthoring } from "./state/native-authoring.mjs";
 import { readProductVersions } from "./state/product-versions.mjs";
 import { createStudioActions } from "./state/actions.mjs";
-import { createComputerConnection } from './components/computer-connection.mjs';
-import { createAssistantSettings } from './pages/assistant-settings.mjs';
-import { createAssistantConversation } from './dsh/assistant-conversation.mjs';
-import { createAssistantTranscript } from './components/assistant-transcript.mjs';
-import { createAssistantPage } from './pages/assistant.mjs';
 
 import { createExpertPages } from './pages/expert-catalog.mjs';
 import { createTemplateSquare } from './pages/template-square.mjs';
@@ -91,6 +87,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.DomainPage = createDomainPage({ ui });
   Object.assign(ui, createResourceDialogs({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createResourcePages({ ui, hostRemote, actions, window }));
+  Object.assign(ui, createDshPluginPages({ ui, hostRemote }));
   Object.assign(ui, createCodexPluginPages({ ui, hostRemote }));
   Object.assign(ui, createDeliveryPages({ ui, hostRemote, actions, window, document }));
   Object.assign(ui, createScheduleDelivery({ ui, hostRemote }));
@@ -105,11 +102,6 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.ModelSettingsSection = createModelSettingsSection({ ui, hostRemote, window, CustomEvent });
   Object.assign(ui, createCredentialOnboarding({ ui, hostRemote, window, document }));
   Object.assign(ui, createAgentPages({ ui, hostRemote, actions, window }));
-  ui.ComputerConnection = createComputerConnection({ ui, hostRemote, actions, window, document });
-  ui.AssistantSettingsSection = createAssistantSettings({ ui, hostRemote, actions, window });
-  const assistantConversation = createAssistantConversation({ ConversationNodeAssembler });
-  ui.AssistantTranscript = createAssistantTranscript({ ui, hostRemote, assistantConversation, window });
-  ui.AssistantPage = createAssistantPage({ ui, hostRemote, actions, window, nativeModules });
   Object.assign(ui, createExpertPages({ ui, hostRemote, actions, window, CustomEvent }));
   Object.assign(ui, createTemplateSquare({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createStudioTeamPages({ ui, hostRemote, actions, window, CustomEvent }));
@@ -120,7 +112,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
 
 
   return {
-    ui: Object.freeze(ui), assistantConversation, window, CustomEvent, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent,
+    ui: Object.freeze(ui), window, CustomEvent, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent,
     closed: () => closed,
     dispose() { if (closed) return; closed = true; actions.dispose(); confirmation.dispose(); authoring.dispose(); connectionOwner.dispose(); },
   };

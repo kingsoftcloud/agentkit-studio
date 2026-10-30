@@ -38,6 +38,20 @@ test('public surface audit allows a tracked file deleted from the working tree',
   assert.deepEqual(hits, []);
 });
 
+test('current and historical negative fixtures allow only reviewed synthetic URL credentials', () => {
+  for (const historical of [false, true]) {
+    for (const [host, password] of [['example.test', 'fixture-secret'], ['fixture.test', 'password']]) {
+      const fixture = ['https://user:', `${password}@${host}/mcp`].join('');
+      assert.deepEqual(auditText('tests/fixtures/input.json', buffer(fixture), { historical }), []);
+      assert.ok(auditText('src/input.mjs', buffer(fixture), { historical }).some(hit => hit.kind === 'embedded-url-credential'));
+    }
+    for (const fixture of [
+      ['https://user:', 'unknown-credential@example.test/'].join(''),
+      ['https://user:', 'password@production.test/'].join(''),
+    ]) assert.ok(auditText('tests/fixtures/input.json', buffer(fixture), { historical }).some(hit => hit.kind === 'embedded-url-credential'));
+  }
+});
+
 test('public surface audit scans every tracked text file for high-confidence private material', () => {
   assert.deepEqual(auditPath('src/credentials.mjs'), []);
   const token = ['ghp_', '123456789012345678901234567890'].join('');
@@ -89,4 +103,20 @@ test('public network constants do not conceal private URLs or unknown hosts', ()
   const host = ['https://production.', 'internal'].join('');
   assert.ok(auditText('tests/policy.test.mjs', buffer(constants + '\n' + host))
     .some(hit => hit.kind === 'internal-service-host'));
+});
+
+test('historical synthetic test fixtures stay approved without loosening current files', () => {
+  const loopbackFixture = ['http://10.0.', '0.7/'].join('');
+  const internalFixture = ['http://metadata.', 'internal/'].join('');
+  const credentialFixture = ['https://user:', 'pass@example.com/'].join('');
+  assert.deepEqual(auditText('tests/assistant-permission-model.test.mjs', buffer(loopbackFixture), { historical: true }), []);
+  assert.deepEqual(auditText('tests/assistant-permission-model.test.mjs', buffer(internalFixture), { historical: true }), []);
+  assert.deepEqual(auditText('tests/assistant-permission-model.test.mjs', buffer(credentialFixture), { historical: true }), []);
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(loopbackFixture)).length > 0);
+  const otherPrivate = ['http://10.9.', '9.9/'].join('');
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(otherPrivate), { historical: true }).length > 0);
+  const otherInternal = ['http://leak.', 'internal/'].join('');
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(otherInternal), { historical: true }).length > 0);
+  const otherCredential = ['https://user:', 'real-secret@example.com/'].join('');
+  assert.ok(auditText('tests/assistant-permission-model.test.mjs', buffer(otherCredential), { historical: true }).length > 0);
 });

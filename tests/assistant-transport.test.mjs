@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startBuildRuntimeHttp } from '../src/build-runtime-http.mjs';
-import { createAssistantRoutes } from '../src/host/routes/assistant.mjs';
-import { createProductClient } from '../src/remote/control-client.mjs';
-import { ASSISTANT_ATTACHMENT_CAPABILITIES, ASSISTANT_UPLOAD_BODY_BYTES, ASSISTANT_UPLOAD_CHANNEL } from '../src/contracts/assistant-attachments.mjs';
+import { callStudioOperation } from '../src/contracts/transport.mjs';
+import { ASSISTANT_ATTACHMENT_CAPABILITIES, ASSISTANT_UPLOAD_BODY_BYTES } from '../src/contracts/assistant-attachments.mjs';
 import { assistantInputLimit, encodeAssistantInput, readAssistantResponse, assistantCloudFailure } from '../src/assistant-transport.mjs';
 
 test('only attachment upload receives the bounded large-body allowance', async t => {
@@ -30,22 +29,6 @@ test('only attachment upload receives the bounded large-body allowance', async t
   assert.equal(assistantInputLimit('submit'),256*1024);
 });
 
-test('Host checks live attachment capabilities before forwarding bytes or content', async()=>{
-  let calls=0;
-  const connected={agent:{spec:{runtime:{type:'dsh-native'}}},endpoint:'https://runtime.example.test',token:'fixture-token',capabilities:['personal-assistant/v1']};
-  const route=createAssistantRoutes({deployments:async()=>({agents:{connect:async()=>connected}}),fetchImpl:async()=>{calls++;return Response.json({accepted:true});}});
-  for(const [operation,input] of [['attachment-upload',{}],['file-read',{}],['submit',{content:[]}],['approval-decide',{}]])await assert.rejects(route('assistant/execute',{agentId:'a',operation,input}),{code:'ASSISTANT_IMAGE_UPGRADE_REQUIRED'});
-  assert.equal(calls,0);
-  connected.capabilities.push(...Object.values(ASSISTANT_ATTACHMENT_CAPABILITIES));
-  assert.equal((await route('assistant/execute',{agentId:'a',operation:'attachment-upload',input:{data:'synthetic'}})).value.accepted,true);
-  assert.equal(calls,1);
-  connected.capabilities.push('personal-assistant-approval-bridge/v1');
-  assert.equal((await route('assistant/execute',{agentId:'a',operation:'approval-decide',input:{requestId:'live-only'}})).value.accepted,true);
-  assert.equal(calls,2);
-  await assert.rejects(route('assistant/execute',{agentId:'a',operation:'submit',input:{text:'x'.repeat(256*1024)}}),{code:'ASSISTANT_INPUT_TOO_LARGE'});
-  assert.equal(calls,2);
-});
-
 test('cloud response parsing is bounded even without a declared length', async()=>{
   assert.deepEqual(await readAssistantResponse(Response.json({accepted:true})),{accepted:true});
   await assert.rejects(readAssistantResponse(new Response('{}',{headers:{'content-length':String(ASSISTANT_UPLOAD_BODY_BYTES+1)}})),{code:'ASSISTANT_RESPONSE_TOO_LARGE'});
@@ -64,36 +47,15 @@ test('only allowlisted cloud failures surface without raw upstream diagnostics',
   for(const code of ['UNKNOWN','__proto__','constructor'])assert.equal(assistantCloudFailure(500,{error:{code,message:'private diagnostic'}}).code,'ASSISTANT_CLOUD_REQUEST_FAILED');
 });
 
-test('attachment transport forwards an optional cancellation signal unchanged',async()=>{
+test('studio bridge calls stay on the control channel and forward the optional cancellation signal',async()=>{
   const calls=[];const connection={rpc:{call:async(...args)=>{calls.push(args);return {ok:true,value:{accepted:true}};}}};
-  const client=createProductClient(connection,{window:{__AGENTKIT_STUDIO__:{},location:{hash:''}}});
   const controller=new AbortController();
-  await client.assistantExecute('a','attachment-upload',{data:'synthetic'},controller.signal);
-  assert.equal(calls[0][0],ASSISTANT_UPLOAD_CHANNEL);
-  assert.equal(calls[0][1],'assistant/execute');
+  await callStudioOperation(connection,'agents/list',{},controller.signal);
+  assert.equal(calls[0][0],'/agentkit');
+  assert.equal(calls[0][1],'agents/list');
   assert.equal(calls[0][3],controller.signal);
-  await client.assistantExecute('a','submit',{text:'fixture'});
-  assert.equal(calls[1][0],'/agentkit');
-});
-
-test('native carrier negotiates its own capability and does not widen upload limits', async () => {
-  const calls = [], connected = { agent: { spec: { runtime: { type: 'dsh-native' } }, deployment: { id: 'receipt-a', buildId: 'build-a', versionId: 'initial' } }, endpoint: 'https://runtime.example.test', token: 'fixture-token', capabilities: ['personal-assistant/v1'] };
-  const route = createAssistantRoutes({ deployments: async () => ({ agents: { connect: async () => connected } }), fetchImpl: async (url, init) => { calls.push({url, init}); return Response.json({ carrierId: 'memory-handle' }); } });
-  for (const operation of ['native-open', 'native-call', 'native-stream-open', 'native-stream-poll', 'native-stream-cancel', 'native-close']) {
-    await assert.rejects(route('assistant/execute', { agentId: 'a', operation, input: {} }), { code: 'ASSISTANT_IMAGE_UPGRADE_REQUIRED' });
-    assert.equal(assistantInputLimit(operation), 256 * 1024);
-  }
-  assert.equal(calls.length, 0);
-  connected.capabilities.push('personal-assistant-native-carrier/v1');
-  assert.equal((await route('assistant/execute', { agentId: 'a', operation: 'native-open', input: { conversation: 'own' } })).value.carrierId, 'memory-handle');
-  assert.equal(calls[0].url, 'https://runtime.example.test/v1/assistant/native-open');
-  const open = () => route('assistant/execute', {agentId:'a',operation:'native-open',input:{conversation:'own'}});
-  const scopeA = (await open()).value.journalScope;
-  assert.match(scopeA,/^[a-f0-9]{64}$/); assert.equal((await open()).value.journalScope,scopeA);
-  connected.agent.deployment.versionId = 'version-b';
-  assert.notEqual((await open()).value.journalScope,scopeA);
-  delete connected.agent.deployment;
-  await assert.rejects(open(),{code:'ASSISTANT_NATIVE_UNAVAILABLE'});
+  await callStudioOperation(connection,'agents/list',{});
+  assert.equal(calls[1].length,3);
 });
 
 test('native read disconnect aborts its carrier poll but durable submit ignores client lifetime', async t => {

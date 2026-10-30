@@ -30,6 +30,8 @@ function bindingIds(bindings, key) {
   return values.map(value => typeof value === 'string' ? value : value?.resourceId || value?.id).filter(Boolean).map(String);
 }
 
+export { boundSkillResources } from './skill-bindings.mjs';
+
 function extractText(value) {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join('\n');
@@ -127,8 +129,13 @@ function explicitMemoryIntent(input) {
   // Only a direct imperative opts into writing. A recall question such as
   // “我之前要求记住的代号是什么” must not become another memory write.
   const text = String(input || '');
+  // Object-first commands are equally explicit. Limit recognition to a
+  // direct imperative with a memory destination, excluding quoted requests,
+  // questions, conditions and negations in the object phrase.
+  const objectFirst = /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?把((?:以下|这(?:一)?条|这(?:个|些)|我的)[^。.!！;；\n:：?？“”"'「」『』]{0,160}?)(?:保存|写入|存入)(?:到|进)?(?:已绑定的?|绑定的?)?(?:长期)?记忆库\s*(?:[:：，,。.!！]|$)/.exec(text);
   return /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?(?:记住|记下|别忘了)(?!了吗|什么|过)/.test(text)
     || /(?:^|[。.!！;；\n:：])\s*(?:(?:请帮我|请|帮我|麻烦你?)\s*)?(?:明确\s*)?(?:保存|写入|存入)(?:这(?:一)?条(?:信息|内容|记录)?|以下(?:信息|内容)?)?\s*(?:到|进)?\s*(?:长期记忆(?:库)?|记忆库)\s*(?:[:：，,。.!！]|$)/.test(text)
+    || Boolean(objectFirst && !/不要|别|勿|是否|能否|如何|如果/.test(objectFirst[1]))
     || /(?:^|[。.!！;；\n:：])\s*(?:please\s+)?remember(?:\s+that)?\s+(?!what\b|when\b|how\b|whether\b|if\b)/i.test(text);
 }
 
@@ -253,8 +260,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
-function createGatewayModel({ profile, fetchImpl = fetch, signal, modelIdleTimeoutMs }) {
+function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signal, modelIdleTimeoutMs }) {
   if (!profile?.baseUrl || !profile?.apiKey) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key');
+  // Only a level this profile declared reaches the wire; an undeclared level
+  // would be an unknown parameter to the gateway.
+  const reasoningWire = reasoningEffort && profile.reasoningEfforts?.[reasoningEffort];
   return {
     async *stream({ messages, tools = [] }) {
       if (signal?.aborted) throw runtimeCancelledError();
@@ -268,7 +278,7 @@ function createGatewayModel({ profile, fetchImpl = fetch, signal, modelIdleTimeo
       try { response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
-        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}) }),
+        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(reasoningWire ? { reasoning_effort: reasoningWire } : {}) }),
         signal: requestSignal,
       }); } catch {
         if (signal?.aborted) throw runtimeCancelledError();
@@ -462,7 +472,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     send({ kind: 'assistant_text', lifecycle: 'running', payload: { text: '' } });
 
     try {
-      const model = createGatewayModel({ profile, fetchImpl, signal, modelIdleTimeoutMs });
+      const model = createGatewayModel({ profile, reasoningEffort: parsed.reasoningEffort, fetchImpl, signal, modelIdleTimeoutMs });
       // The harness owns the canonical loop; this local provider drives the
       // configured model while resource calls remain explicit Host actions.
       let text = '';
@@ -505,7 +515,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
           try {
             result = tool._source === 'dsh'
               ? await toolAdapter.callTool(call.name, args, { callId: call.id, signal, agent })
-              : await resourceAdapter.callMcpTool(tool._resourceId, call.name, args);
+              : await resourceAdapter.callMcpTool(tool._resourceId, call.name, args, { signal });
           } catch (error) {
             noteTrace('tool.failed', { name: call.name, code: String(error?.code || 'MCP_TOOL_FAILED') });
             throw error;

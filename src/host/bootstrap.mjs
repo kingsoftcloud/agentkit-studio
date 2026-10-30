@@ -24,6 +24,7 @@ import { registerControlPlaneRoutes } from './routes/http.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
+import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
@@ -58,11 +59,21 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // load this Host bootstrap or its Node-only configuration dependencies.
   const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
+  const managedRuntime = runtimeEnv.AGENTENGINE_MANIFEST_PATH
+    ? await import('../managed-runtime-definition.mjs').then(({ loadManagedRuntimeDefinition }) => loadManagedRuntimeDefinition({ manifest: runtimeEnv.AGENTENGINE_MANIFEST_PATH, env: runtimeEnv })) : null;
+  if (portableRuntime && managedRuntime) throw Object.assign(new Error('运行输入不能同时包含声明和 portable bundle'), { code: 'MANAGED_HOST_INPUT_CONFLICT' });
+  const managedResourceContext = managedRuntime
+    ? await import('../managed-resource-context.mjs').then(({ createManagedResourceContext }) => createManagedResourceContext(managedRuntime)) : undefined;
+  const resolveResourceUser = managedRuntime
+    ? await import('../managed-resource-identity.mjs').then(({ createManagedResourceIdentityResolver }) => createManagedResourceIdentityResolver({
+      runtime: managedRuntime, directory: join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
+    })) : undefined;
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   let managedKernel;
+  const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
-    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
+    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, managedRuntime, managedResourceContext, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
     getTemplateAuthoring: () => templateServices?.templateAuthoring, getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
   });
   const {
@@ -72,6 +83,20 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioSchedulerPromise, studioObservabilityPromise, studioEvaluationPromise,
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
+
+  // Productized personal-assistant desktop proxy. The standalone plugin asks
+  // this Host service for its cloud binding and for one-shot desktop tickets,
+  // so the gateway API key never reaches the plugin, its page or its logs.
+  const { createAssistantDesktop, assistantDesktopService } = await import('../assistant-desktop.mjs');
+  const assistantDesktop = createAssistantDesktop({
+    storeDir: studioStoreDir, fetchImpl: services.runtimeFetch,
+    configuration: configurationPromise,
+    getClient: async () => serverClientPromise,
+    // Closing the assistant needs DeleteAgent, which the general client
+    // intentionally excludes; the deployment client owns that mutation.
+    getDeploymentClient: async () => deploymentClientPromise,
+  });
+  ctx.provide('studioPersonalAssistantDesktop', assistantDesktopService(assistantDesktop));
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
@@ -87,7 +112,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { resolveConfiguredCodexModel, selectCodexAgentModel, listCodexAgentModels } = await import('../providers/codex-configured-models.mjs');
   const codexOptions = portableRuntime
     ? await import('../portable-codex.mjs').then(({ portableCodexOptions }) => portableCodexOptions({ home: runtimeEnv.AGENTKIT_HOME, manifest: portableRuntime.manifest, env: runtimeEnv }))
-    : {};
+    : managedRuntime ? await import('../portable-codex.mjs').then(({ isolatedRuntimeCodexOptions }) => isolatedRuntimeCodexOptions({ home: runtimeEnv.AGENTKIT_HOME, scopeId: `manifest_${managedRuntime.sha256}`, env: runtimeEnv })) : {};
   const codexModels = createCodexModelCatalog(codexOptions);
   const codexRuntime = createCodexRuntime(codexOptions);
   let localRuntimeHandlerPromise;
@@ -121,26 +146,23 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     bridge,
     AdapterBase: LlmAdapter,
     attachments: () => ctx.get('attachments'),
-    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch }),
+    cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch,
+      permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
     localHandler: localRuntimeHandler,
     codexRuntime,
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     codexResourceContext,
+    resolveResourceUser,
     resourceAdapter: await resourceAdaptersPromise,
     observability: await studioObservabilityPromise,
   });
   ctx.effect(() => bridge.setAdapter(dshRuntimeAdapter), 'agentkit-studio: runtime transport registration');
   const routeDshRuntime = (options, next) => routeRuntime(options, next, bridge, request => hostCompatibility.isAgentLoopRequest(request));
   ctx.on('llm/stream', routeDshRuntime);
-  ctx.effect(() => bridge.setResourceToolExecutor(async ({ resourceId, name, arguments: args = {}, signal, resultFormat, assertCurrent } = {}) => {
-    const adapters = await resourceAdaptersPromise;
-    if (typeof adapters?.callMcpTool !== 'function') {
-      const error = new Error('AgentKit Studio MCP 资源适配器不可用');
-      error.code = 'MCP_RESOURCE_ADAPTER_MISSING';
-      throw error;
-    }
-    return adapters.callMcpTool(resourceId, name, args, { signal, resultFormat, assertCurrent });
-  }), 'agentkit-studio: resource tool registration');
+  const { createBoundResourceToolExecutor } = await import('./services/resource-tools.mjs');
+  ctx.effect(() => bridge.setResourceToolExecutor(createBoundResourceToolExecutor({
+    agents: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise,
+  })), 'agentkit-studio: resource tool registration');
   ctx.inject(['llm'], llmCtx => {
     // registerAdapter already returns a disposer. Put the registration call
     // inside the owner effect so Cordis runs it on mount and calls its
@@ -237,7 +259,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   }
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
-    adapters: await resourceAdaptersPromise, configuration: await configurationPromise });
+    adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
   templateServices = await (await import('./services/templates.mjs')).createTemplateServices(ctx, {
     ...services, storeDir: studioStoreDir, env: runtimeEnv, models, listCodexAgentModels, codexModels, getTeamTemplates: () => teamTemplates,
   });
@@ -270,7 +292,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       const plugins = await registry.pluginsFor('standard');
       return agent.metadata?.teamRole ? (await import('../studio-team-composition.mjs')).teamBasePlugins(plugins) : plugins;
     },
-    getAgent: async agentId => (await deployments()).agents.get(agentId),
+    getAgent: async agentId => managedRuntime && agentId === managedRuntime.agent.metadata.id ? structuredClone(managedRuntime.agent) : (await deployments()).agents.get(agentId),
     getActiveModel: async () => (await configurationPromise).resolve(),
     getModelSelection: createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }),
     getSkillDefinitions: async agent => {
@@ -405,12 +427,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // The portable profile delays native schedule restoration until frozen
     // preset/model/permission initialization has completed. No timer retry or
     // Session prewarming substitutes for the native dependency lifecycle.
-    readyService: portableRuntime ? FROZEN_RUNTIME_READY : undefined,
-    start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
+    readyService: portableRuntime || managedRuntime ? FROZEN_RUNTIME_READY : undefined,
+    start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, managedRuntime, managedResourceContext, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
       admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
   });
-  if (portableRuntime) {
+  if (portableRuntime || managedRuntime) {
     // Settings writes reconcile the Loader. Awaiting them inside plugin apply
     // deadlocks that reconciliation; use the same public startup boundary as DSH Settings.
     let stopped = false;
@@ -418,7 +440,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     void ctx.root.loader.await().then(async () => {
       if (stopped) return;
       const { syncPortableModelProfiles } = await import('../portable-model-bridge.mjs');
-      await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: portableRuntime.manifest.resources.profiles });
+      await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: managedRuntime?.modelProfiles || portableRuntime.manifest.resources.profiles });
       if (stopped) return;
       await bindRuntime();
     }).catch(error => console.error('[agentkit-studio] portable runtime startup failed:', error?.code || 'PORTABLE_STARTUP_FAILED'));
@@ -430,7 +452,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     onError: error => console.error('[agentkit-studio] Native background startup failed:', error?.code || 'NATIVE_BACKGROUND_STARTUP_FAILED'),
   });
   const routes = createStudioRoutes(ctx, {
-    ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility,
+    ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission, getNativeHost: nativeHost,
     getDshA2aControls: dshA2aControls,

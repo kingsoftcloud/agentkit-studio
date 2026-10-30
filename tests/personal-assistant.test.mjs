@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPersonalAssistantRuntime } from '../src/personal-assistant-runtime.mjs';
 import { startBuildRuntimeHttp } from '../src/build-runtime-http.mjs';
-import { createAssistantRoutes } from '../src/host/routes/assistant.mjs';
 
 function fixture() {
   const logs = new Map(), requests = new Map(), timers = new Map(); let flush = true, cancelled = 0, runs = 0;
@@ -193,17 +192,6 @@ test('memory reuses bound resource and partition; foreign IDs fail before mutati
   await assert.rejects(api('snapshot', { conversation: '../other' }), { code: 'ASSISTANT_CONVERSATION_INVALID' });
 });
 
-test('Host rejects old images and non-DSH agents before sending anything', async () => {
-  let connected = { agent: { spec: { runtime: { type: 'dsh-native' } } }, capabilities: [] }, calls = 0;
-  const route = createAssistantRoutes({ deployments: async () => ({ agents: { connect: async () => connected } }), fetchImpl: async () => { calls++; } });
-  await assert.rejects(route('assistant/execute', { agentId: 'a', operation: 'submit', input: {} }), { code: 'ASSISTANT_IMAGE_UPGRADE_REQUIRED' });
-  connected.agent.spec.runtime.type = 'codex';
-  await assert.rejects(route('assistant/execute', { agentId: 'a', operation: 'snapshot' }), { code: 'ASSISTANT_RUNTIME_INVALID' });
-  await assert.rejects(route('assistant/execute', { operation: '../other' }), { code: 'ASSISTANT_OPERATION_INVALID' });
-  assert.equal(calls, 0);
-});
-
-
 test('assistant transcript does not present injected instructions as human messages', async () => {
   const f = fixture(), api = f.create();
   const receipt = await api('submit', { requestId: 'r', text: 'hello' });
@@ -301,7 +289,9 @@ test('native binding opens only after durable Session creation and scopes every 
   assert.ok(f.logs.has(binding.sessionId)); assert.equal(f.runs, 0);
   await opened.runAssistant('submit', { conversation: 'foreign', requestId: 'bound-request', text: 'only current cloud session' });
   assert.equal(f.logs.size, 1); assert.equal(f.logs.get(binding.sessionId).filter(event => event.type === 'user/message').length, 1);
-  assert.throws(() => opened.runAssistant('cancel', {}), { code: 'ASSISTANT_OPERATION_INVALID' });
+  assert.throws(() => opened.runAssistant('steer', {}), { code: 'ASSISTANT_OPERATION_INVALID' });
+  assert.equal((await opened.runAssistant('cancel', {})).accepted, true);
+  assert.equal(f.cancelled, 1);
   await assert.rejects(api('native-open', { conversation: 'own', sessionId: 'foreign' }), { code: 'ASSISTANT_INPUT_INVALID' });
   const signal = new AbortController().signal;
   const request = await api('native-stream-poll', { conversation: 'own', carrierId: binding.carrierId }, { signal });
@@ -309,7 +299,7 @@ test('native binding opens only after durable Session creation and scopes every 
   const foreign = await api('native-call', { conversation: 'different', carrierId: binding.carrierId });
   assert.notEqual(foreign.sessionId, binding.sessionId, 'carrier receives authoritative current conversation, never caller sessionId');
   assert.equal(api.nativeCarrierSupported, true); api.dispose(); assert.equal(disposed, 1);
-  assert.equal(f.cancelled, 0);
+  assert.equal(f.cancelled, 1);
 });
 
 test('unavailable native carrier never creates a Session or advertises a binding', async () => {

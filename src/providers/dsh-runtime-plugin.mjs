@@ -124,6 +124,8 @@ function registerMcpTools(ctx, contracts, config, bridge) {
       output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
       execute: async (args, exec) => bridgedOutput(await executeDshResourceTool({
         agentId: config.agentId,
+        ...(config.buildId ? { buildId: config.buildId } : {}),
+        ...(config.agentRevision !== undefined ? { agentRevision: config.agentRevision } : {}),
         resourceId: contract.resourceId,
         name: contract.name,
         arguments: args || {},

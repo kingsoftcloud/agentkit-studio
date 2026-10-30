@@ -9,13 +9,14 @@ import { createOperationManager } from '../src/studio-operations.mjs';
 import { createStudioDeployments } from '../src/studio-deployments.mjs';
 import { createDeploymentStore } from '../src/deployment-store.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
+import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
-async function fixture(t, { runtime = 'harness', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
+async function fixture(t, { runtime = 'harness', credentialName = 'MODEL_KEY', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
   const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: 'private-test' };
   const configuration = { resolve: async () => ({ values }) };
-  const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName: 'MODEL_KEY', apiKey: 'model-private' };
+  const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName, apiKey: 'model-private' };
   const mcp = { resourceId: 'search', endpoint: 'https://search.example/mcp', apiKey: 'search-private' };
   const models = { profile: async () => profile }, adapters = { describeMcp: async () => mcp };
   const build = createStudioBuild({ storeDir: root }), bindings = { modelProfileId: 'model', mcpServers: ['search'] };
@@ -24,6 +25,7 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
   const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, runtimeIdentity: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
     platform: 'linux/amd64', port: 8080, runtimes: ['harness', 'dsh-native', 'codex'], bundleFormat: 'agentkit.portable-bundle/v1', minimumStudioVersion: '0.0.1', notices: ['Preview'] };
   const calls = [], remote = {}, key = 'platform-private-runtime-token', access = { ready: authReady, error: 'UNAUTHORIZED' };
+  const control = { failNextDetail: null };
   let deleted = false;
   const client = {
     inspectIdentity: async () => ({ kind: 'subaccount', accountId: 'owner', userUuid: 'actor', userName: 'operator' }),
@@ -44,7 +46,11 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
     forAgent: id => {
       assert.equal(id, cloudAgentId);
       return {
-        get: async () => { if (deleted) throw Object.assign(Error('missing'), { status: 404 }); return { data: remote }; },
+        get: async () => {
+          if (control.failNextDetail) { const error = control.failNextDetail; control.failNextDetail = null; throw error; }
+          if (deleted) throw Object.assign(Error('missing'), { status: 404 });
+          return { data: remote };
+        },
         update: async patch => {
           calls.push(['update', patch]);
           if (access.updateError && !access.responseLost) throw access.updateError;
@@ -96,8 +102,20 @@ async function fixture(t, { runtime = 'harness', createError, responseLost = fal
     } while (performance.now() < deadline);
     assert.fail(`deployment operation did not settle: ${JSON.stringify(records.map(({ id, status, result }) => ({ id, status, result })))}`);
   }
-  return { root, service, options, input, preview, request, calls, remote, profile, mcp, values, settled, release, access };
+  return { root, service, options, input, preview, request, calls, remote, profile, mcp, values, settled, release, access, control };
 }
+
+test('generated model credentials survive deployment preflight and container creation', async t => {
+  for (const credentialName of ['AGENTKIT_MODEL_API_KEY_MH7E4S', modelCredentialName({ id: 'custom:vision' })]) {
+    const f = await fixture(t, { credentialName });
+    assert.equal(f.calls.length, 0, 'preflight cannot create billable resources');
+    await f.service.create(f.request); await f.settled();
+    const payload = f.calls.find(([action]) => action === 'create')[1];
+    for (const name of [credentialName, 'OPENAI_API_KEY']) {
+      assert.deepEqual(payload.Advanced.EnvironmentVariables.find(row => row.Key === name), { Key: name, Value: 'model-private', IsSensitive: true });
+    }
+  }
+});
 
 test('deployment checks wait for background uploads before asserting the final state', async t => {
   const f = await fixture(t, { uploadDelayMs: 1700 });
@@ -263,6 +281,23 @@ test('missing or changed cloud storage blocks readiness and invocation, but reta
   assert.equal(checked.state, 'ACTION_REQUIRED');
   assert.equal(checked.failure.code, 'DEPLOYMENT_STORAGE_MISMATCH');
   assert.equal((await f.service.remove(record.id)).state, 'DELETED');
+});
+
+test('a transient status read failure keeps the deployment state instead of reporting a failed write', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  const before = await f.service.get(record.id);
+  f.control.failNextDetail = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) });
+  const checked = await f.service.refresh(record.id);
+  assert.equal(checked.state, before.state);
+  assert.equal(checked.failure, null);
+  assert.notEqual(checked.lastCheckedAt, before.lastCheckedAt);
+  const recovered = await f.service.refresh(record.id);
+  assert.equal(recovered.failure, null);
+  f.control.failNextDetail = Object.assign(new Error('platform denied the request'), { code: 'SERVICE_DENIED' });
+  const surfaced = await f.service.refresh(record.id);
+  assert.equal(surfaced.failure.code, 'SERVICE_DENIED');
+  assert.equal((await f.service.refresh(record.id)).failure, null);
 });
 
 test('cloud admission requires the current credential scope, live availability and frozen provenance', async t => {

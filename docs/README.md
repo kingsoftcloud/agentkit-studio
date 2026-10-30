@@ -1,7 +1,8 @@
 # Documentation
 
+官网与下载：<https://kingsoftcloud.github.io/agentkit-studio/>
+
 - [Expert catalog and local teams](expert-catalog.md): templates, resources and native team sessions.
-- [Personal assistant](personal-assistant.md): durable cloud conversations, reminders and memory.
 
 - [Getting started](getting-started.md): installation, models and local development.
 - [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
@@ -18,6 +19,7 @@
 - [Host compatibility](host-compatibility.md): runtime baseline, required capabilities and feature-specific admission.
 - [Product configuration](product-configuration.md): shared brand and desktop inputs, version sources and migration status.
 - [Plugin presentation compatibility](upstream-plugin-compatibility.md): declared slots, optional copy contributions and execution admission boundaries.
+- [DSH 插件市场](dsh-plugin-market.md): 插件页内的内置精选与远程索引、安装/启停/更新和就绪校验边界。
 - [Visual system](brand/visual-system.md): AgentKit Studio identity and UI conventions.
 - [Public release checks](public-release-boundary.md) and [repository mirrors](branch-sync.md).
 

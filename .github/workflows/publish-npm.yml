@@ -1,0 +1,43 @@
+name: Publish npm package
+
+# 发布 @kingsoftcloud/agentkit-studio 到 npmjs。
+# 使用 npm Trusted Publishing（OIDC），不需要在仓库里保存 token：
+# npm 包设置页 → Trusted publishing → GitHub Actions，
+# 填 kingsoftcloud/agentkit-studio + publish-npm.yml。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Publish to npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@kingsoftcloud/agentkit-studio@${VERSION}" version >/dev/null 2>&1; then
+            echo "Version ${VERSION} already published, skipping."
+            exit 0
+          fi
+          npm publish --access public --provenance

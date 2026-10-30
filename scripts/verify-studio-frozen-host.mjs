@@ -317,6 +317,13 @@ try {
     assert.ok(!forwardPage.HasMore || forwardPage.NextCursor > after); after = forwardPage.NextCursor;
   } while (forwardPage.HasMore);
   assert.deepEqual(forwardEvents, allEvents.Events, 'session_seq pages acknowledge each native event once');
+  const upper = allEvents.Events[Math.floor(allEvents.Events.length / 2)].SeqId;
+  for (const lower of [undefined, allEvents.Events[0].SeqId]) {
+    const bounded = (await (await hostedAction('ListSessionEvents', { SessionId: hostedSession, EventOrder: 'session_seq', BeforeSeqId: upper,
+      ...(lower === undefined ? {} : { AfterSeqId: lower }), Limit: 1000, HistoryEpoch: allEvents.HistoryEpoch, SnapshotSeqId: allEvents.SnapshotSeqId })).json()).Data;
+    assert.deepEqual(bounded.Events, allEvents.Events.filter(event => event.SeqId < upper && event.SeqId > (lower ?? 0)));
+    assert.equal(bounded.HasMore, false); assert.equal(bounded.SnapshotSeqId, allEvents.SnapshotSeqId);
+  }
   assert.equal((await hostedAction('ListSessionMessages', { SessionId: hostedSession }, { 'x-agentengine-subject-id': 'foreign' })).status, 404);
   check('generic-hosted-responses-and-native-history-after-cold-host-restart', { turns: 2, messages: 4, principalIsolation: true, epoch: nextPage.Data.HistoryEpoch });
   const unbound = await post({ input: 'unbound', request_id: 'unbound', model: 'model-outside-build' });

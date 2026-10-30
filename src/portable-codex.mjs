@@ -7,6 +7,14 @@ export async function portableCodexOptions({ home, manifest, env = process.env }
   if (!home || !/^bundle_[a-f0-9]{64}$/.test(manifest?.bundleId || '')) {
     throw portableError('PORTABLE_CODEX_SCOPE_INVALID', 'Codex 运行目录需要已校验的运行包身份');
   }
+  return isolatedRuntimeCodexOptions({ home, scopeId: manifest.bundleId, env });
+}
+
+/** Both input forms use the same confined app-server process boundary. */
+export async function isolatedRuntimeCodexOptions({ home, scopeId, env = process.env }) {
+  if (!home || !/^(?:bundle|manifest)_[a-f0-9]{64}$/.test(scopeId || '')) {
+    throw portableError('PORTABLE_CODEX_SCOPE_INVALID', 'Codex 运行目录需要已校验的固定声明身份');
+  }
   // The imported home may itself be reached through an OS alias (e.g. tmp on
   // macOS), but every directory we own below it must be a real private directory.
   const root = await realpath(home);
@@ -18,7 +26,7 @@ export async function portableCodexOptions({ home, manifest, env = process.env }
     return path;
   }
   const state = await directory(root, 'runtime-state');
-  const scope = await directory(state, manifest.bundleId);
+  const scope = await directory(state, scopeId);
   const isolatedHome = await directory(scope, 'home');
   const codexHome = await directory(isolatedHome, '.codex');
   const cwd = await directory(scope, 'workspace');

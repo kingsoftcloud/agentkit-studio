@@ -2,6 +2,7 @@
 import { dshModelRoute, dshModelSelection } from '../agent-preset-admission.mjs';
 import { listStudioResources } from '../resource-catalog.mjs';
 import { codexModelSelection } from './codex-models.mjs';
+import { studioReasoning } from '../model-reasoning.mjs';
 
 const failure = (code, message) => Object.assign(new Error(message), { code });
 
@@ -15,7 +16,11 @@ export async function resolveConfiguredCodexModel({ provider, model }, models) {
   if (model !== profile.modelName && !(await models.catalog(profile.id)).items.some(item => item.id === model)) {
     throw failure('CODEX_MODEL_UNAVAILABLE', '所选模型不在此提供商的目录中，请重新选择模型。');
   }
-  return { model, modelProvider: { baseUrl: profile.baseUrl, apiKey: profile.apiKey, ...(profile.codexApi === 'chat-completions' ? { api: 'chat-completions' } : {}) } };
+  const reasoning = studioReasoning(profile);
+  return { model,
+    ...(reasoning ? { reasoningEfforts: reasoning.efforts } : {}),
+    modelProvider: { baseUrl: profile.baseUrl, apiKey: profile.apiKey,
+      ...(['responses', 'chat-completions'].includes(profile.codexApi) ? { api: profile.codexApi } : {}) } };
 }
 
 export async function selectCodexAgentModel(agent, { models, catalog }) {

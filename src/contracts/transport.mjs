@@ -1,6 +1,5 @@
 // @ts-check
 import { STUDIO_CONTROL_CHANNEL } from './operations.mjs';
-import { ASSISTANT_UPLOAD_CHANNEL } from './assistant-attachments.mjs';
 
 /** @typedef {import('./operations.mjs').StudioOperationId} StudioOperationId */
 /** @typedef {import('./types.js').JsonValue} JsonValue */
@@ -40,12 +39,9 @@ export function validateOperationResponse(operation, value) {
  */
 export async function callStudioOperation(connection, operation, payload, signal) {
   signal?.throwIfAborted();
-  const input = /** @type {Record<string, unknown> | null} */ (payload);
-  const channel = operation === 'assistant/execute' && input?.operation === 'attachment-upload'
-    ? ASSISTANT_UPLOAD_CHANNEL : STUDIO_CONTROL_CHANNEL;
   const result = signal
-    ? await connection.rpc.call(channel, operation, payload, signal)
-    : await connection.rpc.call(channel, operation, payload);
+    ? await connection.rpc.call(STUDIO_CONTROL_CHANNEL, operation, payload, signal)
+    : await connection.rpc.call(STUDIO_CONTROL_CHANNEL, operation, payload);
   validateOperationResponse(operation, result);
   return result;
 }

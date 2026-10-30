@@ -9,7 +9,7 @@ test('checks expose only redacted configuration facts, not execution readiness',
     modelCredentialStatus: async () => ({ configured: true, value: 'private-value-do-not-display' }),
     runtimes: async () => ({ items: [{ runtimeType: 'harness' }, { runtimeType: 'harness' }, { runtimeType: 'unsupported' }] }) });
   assert.deepEqual(rows.map(row => row.status), ['confirmed', 'confirmed', 'confirmed']);
-  assert.equal(rows[2].detail, 'AgentKit Harness');
+  assert.equal(rows[2].detail, 'Star Harness');
   assert.doesNotMatch(JSON.stringify(rows), /private-value|apiKey|unsupported/);
   assert.match(rows[1].detail, /实际运行结果/);
 });

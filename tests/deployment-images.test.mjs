@@ -19,7 +19,7 @@ test('assistant capability is explicit, optional and strictly validated', () => 
   assert.deepEqual(parseStudioImageCatalog(response(), { runtime: 'dsh-native' }).releases[0].capabilities, []);
   const releases = [{ ...release, capabilities: ['personal-assistant/v1'] }];
   assert.deepEqual(parseStudioImageCatalog(response({ releases }), { runtime: 'dsh-native' }).releases[0].capabilities, ['personal-assistant/v1']);
-  for (const capabilities of [null, true, 'personal-assistant/v1', ['unknown'], ['personal-assistant/v1', 'personal-assistant/v1'], [{}]]) {
+  for (const capabilities of [null, true, 'personal-assistant/v1', ['personal-assistant/v1', 'personal-assistant/v1'], [{}]]) {
     assert.throws(() => parseStudioImageCatalog(response({ releases: [{ ...release, capabilities }] }), { runtime: 'dsh-native' }), { code: 'DEPLOYMENT_CATALOG_INVALID' });
   }
 });
@@ -106,7 +106,42 @@ test('image catalogs accept the implemented attachment, native carrier and manag
   const { ASSISTANT_IMAGE_CAPABILITIES } = await import('../src/contracts/assistant-capabilities.mjs');
   const catalog = parseStudioImageCatalog(response({releases:[{...release,capabilities:[...ASSISTANT_IMAGE_CAPABILITIES]}]}),{runtime:'dsh-native'});
   assert.deepEqual(catalog.releases[0].capabilities,ASSISTANT_IMAGE_CAPABILITIES);
-  for(const capability of ['personal-assistant-owner/v1','personal-assistant-arbitrary-shell/v1','personal-assistant-workspace-managed/v2']) {
-    assert.throws(()=>parseStudioImageCatalog(response({releases:[{...release,capabilities:[capability]}]}),{runtime:'dsh-native'}),{code:'DEPLOYMENT_CATALOG_INVALID'});
-  }
+});
+
+test('a release with capabilities this client does not implement retires itself, not the catalog', () => {
+  const compatible = { ...release, id: 'compatible' };
+  const future = { ...release, id: 'future', capabilities: ['personal-assistant-cloud-desktop/v1'] };
+  // Even a disabled release is validated by older clients, so it must not poison an otherwise usable catalog.
+  const disabledFuture = { ...release, id: 'disabled-future', enabled: false, capabilities: ['personal-assistant-cloud-desktop/v1'] };
+  const parsed = parseStudioImageCatalog(response({ defaultReleaseId: future.id, releases: [compatible, disabledFuture, future] }), { runtime: 'dsh-native' });
+  assert.deepEqual(parsed.releases.map(item => item.id), [compatible.id]);
+  assert.equal(parsed.configuredDefaultReleaseId, future.id);
+  assert.deepEqual(parsed.incompatibleReleases, [
+    { id: disabledFuture.id, capabilities: ['personal-assistant-cloud-desktop/v1'] },
+    { id: future.id, capabilities: ['personal-assistant-cloud-desktop/v1'] },
+  ]);
+  // The publisher did not disable the older release, so a stored default this
+  // build cannot interpret falls back to the newest release it does implement.
+  assert.equal(parsed.defaultReleaseId, compatible.id);
+  assert.deepEqual(parsed.defaultReleaseFallback, { configured: future.id, id: compatible.id, capabilities: ['personal-assistant-cloud-desktop/v1'] });
+  assert.match(parsed.releases[0].notices.at(-1), /已自动选择兼容的镜像版本/);
+  assert.equal(selectStudioImage(parsed).id, compatible.id);
+  assert.throws(() => selectStudioImage(parsed, future.id), { code: 'DEPLOYMENT_CLIENT_UPDATE_REQUIRED' });
+});
+
+test('a capability-gated catalog with no usable release names the required client update', () => {
+  const future = { ...release, id: 'future', capabilities: ['personal-assistant-cloud-desktop/v1'] };
+  const parsed = parseStudioImageCatalog(response({ defaultReleaseId: future.id, releases: [future] }), { runtime: 'dsh-native' });
+  assert.deepEqual(parsed.releases, []);
+  assert.equal(parsed.defaultReleaseId, null);
+  assert.equal(parsed.defaultReleaseFallback, null);
+  assert.throws(() => selectStudioImage(parsed), { code: 'DEPLOYMENT_CLIENT_UPDATE_REQUIRED' });
+});
+
+test('a usable default still deploys when only other releases advertise new capabilities', () => {
+  const compatible = { ...release, id: 'compatible' };
+  const future = { ...release, id: 'future', capabilities: ['personal-assistant-cloud-desktop/v1'] };
+  const parsed = parseStudioImageCatalog(response({ defaultReleaseId: compatible.id, releases: [compatible, future] }), { runtime: 'dsh-native' });
+  assert.equal(parsed.defaultReleaseId, compatible.id);
+  assert.equal(selectStudioImage(parsed).id, compatible.id);
 });

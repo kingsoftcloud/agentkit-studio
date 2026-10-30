@@ -1,0 +1,98 @@
+diff --git a/apps/desktop/cli/dsh b/apps/desktop/cli/dsh
+index ee657a3d0b262c31a1525b7747169cae266f9d53..947adc55181ba7cdac16972d03905a5e684bed4e 100644
+--- a/apps/desktop/cli/dsh
++++ b/apps/desktop/cli/dsh
+@@ -1,5 +1,6 @@
+ #!/bin/sh
+ # Run the installed CLI without changing the invoking shell or working directory.
++# The packaging step seals the executable name from the build product name.
+ set -e
+ launcher=$0
+ while [ -L "$launcher" ]; do
+@@ -11,4 +12,4 @@ while [ -L "$launcher" ]; do
+   esac
+ done
+ resources=$(CDPATH= cd -- "$(dirname -- "$launcher")/../../.." && pwd -P)
+-ELECTRON_RUN_AS_NODE=1 exec "$resources/../MacOS/DeepSeek Harness" --expose-internals "$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" "$@"
++ELECTRON_RUN_AS_NODE=1 exec "$resources/../MacOS/@DSH_DESKTOP_EXECUTABLE@" --expose-internals "$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" "$@"
+diff --git a/apps/desktop/cli/dsh.cmd b/apps/desktop/cli/dsh.cmd
+index 73af33537af9d5220784917ed361caf8ab3c9b03..2801e714f100e9d500df1a27f30817760375ff54 100644
+--- a/apps/desktop/cli/dsh.cmd
++++ b/apps/desktop/cli/dsh.cmd
+@@ -1,5 +1,5 @@
+ @echo off
+ setlocal DisableDelayedExpansion
+ set "ELECTRON_RUN_AS_NODE=1"
+-"%~dp0..\..\..\..\DeepSeek Harness.exe" --expose-internals "%~dp0..\..\..\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js" %*
++"%~dp0..\..\..\..\@DSH_DESKTOP_EXECUTABLE@.exe" --expose-internals "%~dp0..\..\..\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js" %*
+ exit /b %errorlevel%
+diff --git a/apps/desktop/scripts/prepare-cli.ts b/apps/desktop/scripts/prepare-cli.ts
+index d2b9e14200c328907d7745461b2cb4ff40344b7d..c3bb4a97ad10934ae2705c33ac4f03ed45295200 100644
+--- a/apps/desktop/scripts/prepare-cli.ts
++++ b/apps/desktop/scripts/prepare-cli.ts
+@@ -1,17 +1,23 @@
+ /** Package terminal launch scripts that reuse the installed Electron runtime. */
+ 
+-import { chmodSync, copyFileSync, mkdirSync } from 'node:fs'
++import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+ import { join } from 'node:path'
+ 
++/** Placeholder replaced with the packaged application's executable name. */
++const executablePlaceholder = '@DSH_DESKTOP_EXECUTABLE@'
++
+ /**
+  * Copy the platform launcher into the application's public command directory.
++ * The launcher starts the executable this product build ships, not the upstream default name.
+  * @param destination - Physical runtime/cli directory prepared for the application.
+  * @param platform - Target Desktop operating system.
+  */
+ export function prepareDesktopCli(destination: string, platform: 'darwin' | 'win32'): void {
+   const name = platform === 'win32' ? 'dsh.cmd' : 'dsh'
+   const command = join(destination, 'bin', name)
++  const executable = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness'
++  const template = readFileSync(join(import.meta.dirname, '..', 'cli', name), 'utf8')
+   mkdirSync(join(destination, 'bin'), { recursive: true })
+-  copyFileSync(join(import.meta.dirname, '..', 'cli', name), command)
++  writeFileSync(command, template.replaceAll(executablePlaceholder, executable))
+   if (platform === 'darwin') chmodSync(command, 0o755)
+ }
+diff --git a/apps/desktop/tests/cli-launcher.spec.ts b/apps/desktop/tests/cli-launcher.spec.ts
+index 67e38da2564361c971d82f75248f49bcafdfed6e..f3ff8d8779f9aa2c8cf4fde2aedcf228fb542b29 100644
+--- a/apps/desktop/tests/cli-launcher.spec.ts
++++ b/apps/desktop/tests/cli-launcher.spec.ts
+@@ -5,10 +5,10 @@ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeF
+ import { rm } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { dirname, join, relative } from 'node:path'
+-import { expect, it, onTestFinished } from 'vitest'
++import { expect, it, onTestFinished, vi } from 'vitest'
+ import { prepareDesktopCli } from '../scripts/prepare-cli.ts'
+ 
+-function fixture() {
++function fixture(productName = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim() || 'DeepSeek Harness') {
+   const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-cli-launcher-')))
+   const children: ChildProcessWithoutNullStreams[] = []
+   const exits: Promise<unknown>[] = []
+@@ -24,7 +24,7 @@ function fixture() {
+   const resources = join(application, ...platform === 'darwin' ? ['Contents', 'Resources'] : ['resources'])
+   const cli = join(resources, 'runtime', 'cli')
+   prepareDesktopCli(cli, platform)
+-  const electron = join(application, ...platform === 'darwin' ? ['Contents', 'MacOS', 'DeepSeek Harness'] : ['DeepSeek Harness.exe'])
++  const electron = join(application, ...platform === 'darwin' ? ['Contents', 'MacOS', productName] : [`${productName}.exe`])
+   mkdirSync(dirname(electron), { recursive: true })
+   if (platform === 'win32') copyFileSync(process.execPath, electron)
+   else symlinkSync(process.execPath, electron)
+@@ -85,3 +85,13 @@ it.skipIf(process.platform === 'win32')('resolves chained command symlinks witho
+   expect(await run.closed, run.stderr()).toBe(23)
+   expect(JSON.parse(run.stdout())).toMatchObject({ args, cwd: f.root, nodeMode: '1' })
+ })
++
++it('launches the packaged product executable instead of the upstream default name', async () => {
++  vi.stubEnv('DSH_DESKTOP_PRODUCT_NAME', 'AgentKit Studio')
++  onTestFinished(() => { vi.unstubAllEnvs() })
++  const f = fixture('AgentKit Studio')
++  const run = f.start(['--version'])
++  run.child.stdin.end()
++  expect(await run.closed, run.stderr()).toBe(23)
++  expect(JSON.parse(run.stdout())).toMatchObject({ args: ['--version'], nodeMode: '1' })
++})

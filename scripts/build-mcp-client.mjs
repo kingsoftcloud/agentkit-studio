@@ -49,7 +49,7 @@ for (const [directory, manifest] of [...packages].sort(([, a], [, b]) => a.name.
 }
 const code = result.outputFiles[0].text;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const patchHash = hash(await readFile(join(root, 'patches/@modelcontextprotocol__sdk@1.31.0.patch')));
+const patchHash = hash(await readFile(join(root, 'patches/@modelcontextprotocol__sdk@1.32.0.patch')));
 await mkdir(join(root, 'dist'), { recursive: true });
 await writeFile(join(root, 'dist/native-mcp-client.mjs'), code);
 await writeFile(join(root, 'dist/native-mcp-client.LICENSE.txt'), licenses.join('\n\n') + '\n');

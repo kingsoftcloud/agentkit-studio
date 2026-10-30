@@ -67,6 +67,19 @@ test('native Request conversion preserves authenticated POST bytes and overrides
   } finally { await transport.close(); }
 });
 
+test('preprod TLS exception covers the personal-assistant gateway hosts', async () => {
+  for (const host of ['pa-desktop-pre.agent-pre.kspmas.ksyun.com', 'pa-desktop-dev.agent-pre.kspmas.ksyun.com']) {
+    let dispatcherUsed = false;
+    const transport = createCloudRuntimeFetch({
+      configuration: { resolve: async () => ({ values: { cloudRegion: 'pre-online' } }) },
+      createDispatcher: () => ({ marker: 'preprod' }),
+      runtimeFetchImpl: async (input, options) => { dispatcherUsed = options.dispatcher?.marker === 'preprod'; return new Response('{}'); },
+    });
+    await transport(`https://${host}/health`, {});
+    assert.equal(dispatcherUsed, true, host);
+  }
+});
+
 for (const url of [
   'https://ar-demo.agent.kspmas.ksyun.com/v1/assistant/snapshot',
   'https://aicp.api.ksyun.com/',
@@ -74,6 +87,8 @@ for (const url of [
   'https://ar-demo.agent-pre.kspmas.ksyun.com.evil.example/health',
   'https://agent-pre.kspmas.ksyun.com/health',
   'https://other.agent-pre.kspmas.ksyun.com/health',
+  'https://evil-pa-desktop-dev.agent-pre.kspmas.ksyun.com/health',
+  'https://evil-pa-desktop-pre.agent-pre.kspmas.ksyun.com/health',
   'https://ar-demo.agent-pre.internal.kspmas.ksyun.com/health',
   'https://ar-demo.agent-pre.kspmas.ksyun.com:8443/health',
   'https://user@ar-demo.agent-pre.kspmas.ksyun.com/health',

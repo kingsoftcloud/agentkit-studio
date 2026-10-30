@@ -5,14 +5,15 @@ import { open } from 'node:fs/promises';
 const MIN_PART = 5 * 1024 * 1024;
 const escapeXml = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 const decodeXml = value => value.replaceAll('&quot;', '"').replaceAll('&lt;', '<').replaceAll('&amp;', '&');
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function uploadKs3Multipart({ url, bucket, accessKey, secretKey, objectKey, path, size, contentType,
-  fetchImpl = fetch, now = () => new Date(), onProgress = () => {}, partSize = 5 * 1024 * 1024,
-  concurrency = 4, timeoutMs = 300_000 }) {
+  fetchImpl = fetch, now = () => new Date(), onProgress = () => {}, partSize = 50 * 1024 * 1024,
+  concurrency = 4, timeoutMs = 900_000 }) {
   if (!Number.isSafeInteger(partSize) || partSize < MIN_PART || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
     throw new Error('invalid KS3 multipart limits');
   }
-  async function request(method, query, body, type = '', extra = {}) {
+  async function request(method, query, body, type = '', extra = {}, { retries = 3 } = {}) {
     const target = new URL(url);
     const ordered = Object.entries(query).sort(([a], [b]) => a.localeCompare(b));
     for (const [key, value] of ordered) target.searchParams.set(key, value);
@@ -27,14 +28,24 @@ export async function uploadKs3Multipart({ url, bucket, accessKey, secretKey, ob
       .map(key => `${key}:${headers[key]}\n`).join('');
     const canonical = `${method}\n${headers['Content-MD5'] || ''}\n${type}\n${headers.Date}\n${canonicalHeaders}${resource}`;
     headers.Authorization = `KSS ${accessKey}:${createHmac('sha1', secretKey).update(canonical).digest('base64')}`;
-    const response = await fetchImpl(target, { method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
-    const text = await response.text();
-    if (!response.ok || /<Error[>\s]/u.test(text)) {
-      const error = new Error(`KS3 multipart ${method} failed: ${response.status} ${objectKey}`);
-      error.retryable = response.status === 429 || response.status >= 500;
-      throw error;
+    let error;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetchImpl(target, { method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+        const text = await response.text();
+        if (!response.ok || /<Error[>\s]/u.test(text)) {
+          error = new Error(`KS3 multipart ${method} failed: ${response.status} ${objectKey}`);
+          error.retryable = response.status === 429 || response.status >= 500;
+        } else {
+          return { response, text };
+        }
+      } catch (requestError) {
+        error = requestError?.retryable === false ? requestError : Object.assign(requestError, { retryable: true });
+      }
+      if (error.retryable === false) throw error;
+      if (attempt < retries) await sleep(2 ** attempt * 1000);
     }
-    return { response, text };
+    throw error;
   }
   const initiated = await request('POST', { uploads: '' }, undefined, contentType, { 'x-kss-acl': 'public-read' });
   const uploadId = decodeXml(initiated.text.match(/<UploadId>([^<]+)<\/UploadId>/u)?.[1] || '');
@@ -56,17 +67,9 @@ export async function uploadKs3Multipart({ url, bucket, accessKey, secretKey, ob
             if (!result.bytesRead) throw new Error('KS3 release artifact was truncated during upload');
             offset += result.bytesRead;
           }
-          let etag;
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-              const result = await request('PUT', { partNumber: String(index + 1), uploadId }, bytes, 'application/octet-stream');
-              etag = result.response.headers.get('etag');
-              if (!etag || /[<>\r\n]/u.test(etag)) throw new Error('KS3 uploaded part has no valid ETag');
-              break;
-            } catch (error) {
-              if (attempt === 2 || error.retryable === false) throw error;
-            }
-          }
+          const result = await request('PUT', { partNumber: String(index + 1), uploadId }, bytes, 'application/octet-stream');
+          const etag = result.response.headers.get('etag');
+          if (!etag || /[<>\r\n]/u.test(etag)) throw new Error('KS3 uploaded part has no valid ETag');
           parts[index] = etag;
           completedBytes += bytes.length;
           onProgress({ objectKey, completedParts: parts.filter(Boolean).length, totalParts, completedBytes, size });

@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "54ae75219e468f78e6086bc5a742ea3bd3193ddf",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-zcode",
-  "tree": "326c933ec56c8f53c6230fd071c5c2a043c3d7e8",
-  "sourceSha256": "8553c9a90a1482f2443e09f584fa752783f8313f2df08654c856f5f4477cd4f9",
+  "headCommit": "b366fda4a6e014449a973b986e6673f197fe5699",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-master",
+  "tree": "8064a20819a8ae10cfcd6e50b831efc1b79bad8b",
+  "sourceSha256": "76280203b97aee62ad0ebb1c8c5e1c96a08925ed741fa99d3fa49b042131401a",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "1ec6d216e144cbe08e5e2041c30a159d0937b3185bd41db2de0737f0015df1d7"
+    "sha256": "3c70d6b6aead17ce701280545005d372cdcde3774ed66089aa49275becc0b04d"
   },
   "commits": [
     {
@@ -346,6 +346,42 @@
       "file": "063-tool-preflight-contract-type.patch",
       "commit": "54ae75219e468f78e6086bc5a742ea3bd3193ddf",
       "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613"
+    },
+    {
+      "id": "064",
+      "file": "064-macos-studio-identity.patch",
+      "commit": "2d3f86b1504d75ec7ca02eb96c18b4bf1a02d4cf",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
+    },
+    {
+      "id": "065",
+      "file": "065-native-schedule-manager.patch",
+      "commit": "38fc5e2d354b078c711851a3d78954d294485436",
+      "sha256": "fa2dac9916d7c56d95f42103a232caa110d6f86a96f01b0687dae4ecee6a99ac"
+    },
+    {
+      "id": "066",
+      "file": "066-isolated-native-browser.patch",
+      "commit": "83f1429e0cc8e888ce7f22fb58b6e24d41d431b4",
+      "sha256": "894d09790d6ecfe345dfdad52e067819e6b303eb90e20fc381053867b6f2f6f5"
+    },
+    {
+      "id": "067",
+      "file": "067-flock-libc-report-network.patch",
+      "commit": "f2946d7bec12451932edcb56de76e8e9a4446c62",
+      "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05"
+    },
+    {
+      "id": "068",
+      "file": "068-maintenance-source-validation.patch",
+      "commit": "d7f6fb3849ea894d1596e76049ee8e84ee6867d2",
+      "sha256": "3326f9d15bc1f6b8e67a0014a1a5cb7974d1efd5ca9a0bb9a98a906cb131bbce"
+    },
+    {
+      "id": "069",
+      "file": "069-desktop-cli-product-name.patch",
+      "commit": "b366fda4a6e014449a973b986e6673f197fe5699",
+      "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973"
     }
   ]
 }

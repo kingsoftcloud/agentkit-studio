@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { assistantCloudFailure } from './assistant-transport.mjs';
 import { projectAssistantNativePage, projectAssistantNativeFollowFrame,
   projectAssistantNativeControlFrame, projectAssistantNativeProjections,
-  projectAssistantNativeProjectionBaseline, ASSISTANT_NATIVE_PREVIEW_BYTES } from './assistant-native-projection.mjs';
+  projectAssistantNativeProjectionBaseline, projectAssistantNativeStatusEvent,
+  ASSISTANT_NATIVE_PREVIEW_BYTES } from './assistant-native-projection.mjs';
 
 import { ASSISTANT_NATIVE_REPRESENTATION } from './contracts/assistant-native.mjs';
 export { ASSISTANT_NATIVE_REPRESENTATION } from './contracts/assistant-native.mjs';
@@ -12,7 +13,7 @@ const PRINCIPAL = 'agentkit-assistant-native';
 // the native Controller filters every returned row using its current action.
 const READ_SESSION = ['session/list', 'session/control', 'session/page', 'session/follow', 'session/projections'];
 const READ_GLOBAL = ['session/list', 'session/control'];
-const CALLS = new Set(['session/list', 'session/projections', 'session/page', 'session/prompt', 'fileUploads/upload']);
+const CALLS = new Set(['session/list', 'session/projections', 'session/page', 'session/prompt', 'session/cancel', 'fileUploads/upload']);
 const STREAMS = new Set(['$events', 'session/control', 'session/follow', 'remoteAccess/follow']);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const exact = (value, keys) => record(value) && Object.keys(value).every(key => keys.includes(key));
@@ -130,7 +131,7 @@ export function createAssistantNativeCarrierService({ ctx, createPeer,
   function capabilities(sessionId) {
     return { owner: false, representation: ASSISTANT_NATIVE_REPRESENTATION, durableSubmit: true,
       grants: [{ resource: { kind: 'session', id: sessionId }, actions: [
-        ...READ_SESSION, 'session/prompt', 'fileUploads/upload',
+        ...READ_SESSION, 'session/prompt', 'session/cancel', 'fileUploads/upload',
       ] }], approval: false, localPaths: false, commands: false, modelSelection: false, liveText: false,
       history: { maxMessages: historyMessages, maxBytes: historyBytes, messagePreviewBytes: ASSISTANT_NATIVE_PREVIEW_BYTES, boundedReplay: true, boundedInbox: true, completeSourceLog: false } };
   }
@@ -168,6 +169,11 @@ export function createAssistantNativeCarrierService({ ctx, createPeer,
       return { request: { ...bounded, maxMessages: Math.min(request.maxMessages ?? historyMessages, historyMessages) } };
     } else if (request.sessionId !== carrier.sessionId) throw fail('ASSISTANT_NATIVE_SESSION_FORBIDDEN', 403);
     if (endpoint === 'session/projections' && !exact(request, ['sessionId'])) throw fail();
+    if (endpoint === 'session/cancel') {
+      if (!exact(args, ['request']) || !exact(args.request, ['sessionId']) || !record(args.request)
+        || args.request.sessionId !== carrier.sessionId) throw fail('ASSISTANT_NATIVE_SESSION_FORBIDDEN', 403);
+      return args;
+    }
     if (endpoint === 'session/prompt') {
       if (!exact(request, ['sessionId', 'requestId', 'requestFingerprint', 'mode', 'content', 'clientTimeZone'])
         || request.mode !== 'queue' || request.requestFingerprint !== undefined || !key(request.requestId)
@@ -191,6 +197,14 @@ export function createAssistantNativeCarrierService({ ctx, createPeer,
       const receipt = await carrier.runAssistant('attachment-upload', { kind: 'file', name: args.request.name, data: args.request.data });
       if (!receipt?.receiptId || !receipt?.attachment) throw fail('ASSISTANT_NATIVE_RECEIPT_INVALID', 502);
       return { receiptId: receipt.receiptId, file: receipt.attachment };
+    }
+    if (endpoint === 'session/cancel') {
+      // Cancellation is the one native write that must not round-trip through
+      // the read policy: the Host already owns the exact Session and its live
+      // Agent, and the accepted receipt above never covers a stopped turn.
+      const accepted = await carrier.runAssistant('cancel', {});
+      if (accepted?.accepted !== true) throw fail('ASSISTANT_NATIVE_RECEIPT_INVALID', 502);
+      return { accepted: true };
     }
     const value = await gateway.invoke({ namespace: 'session', method: endpoint.slice('session/'.length), args,
       peer: carrier.peer, signal: AbortSignal.any([carrier.abort.signal, ...(signal ? [signal] : [])]) });
@@ -217,7 +231,13 @@ export function createAssistantNativeCarrierService({ ctx, createPeer,
       if (signal.aborted) return;
       if (endpoint === '$events') {
         if (frame?.type === 'ready' && typeof frame.clientId === 'string') yield { type: 'ready', clientId: frame.clientId, host: { home: '' } };
-        // Forwarded events and waterfalls never enter this read-only carrier.
+        else if (frame?.type === 'emit') {
+          // Session running state is the one Host fact the native composer
+          // needs so its own send button can become Stop. Every other event
+          // and all waterfalls stay outside this read-only carrier.
+          const status = projectAssistantNativeStatusEvent(frame, carrier.sessionId);
+          if (status) yield status;
+        }
       } else if (endpoint === 'session/follow') {
         const safe = projectAssistantNativeFollowFrame(frame, carrier.sessionId);
         yield safe.type === 'snapshot' ? historyWindow(safe) : safe;

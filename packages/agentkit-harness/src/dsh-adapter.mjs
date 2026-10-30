@@ -10,7 +10,7 @@ export function createDshHarnessAdapter({ model, provider = 'agentkit-harness', 
   return {
     providerInfo(route) {
       if (route !== provider) throw new Error(`Harness adapter does not own provider ${route}`);
-      return { id: route, name: 'AgentKit Harness' };
+      return { id: route, name: 'Star Harness' };
     },
     providerRetryPolicy() { return undefined; },
     imageRequestPricing() { return undefined; },

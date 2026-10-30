@@ -18,3 +18,19 @@ test('a Codex Agent without resource bindings receives scoped official presentat
   assert.equal(calls[0][2].agent, owner);
   await assert.rejects(result.toolHandler({ name: 'bash', arguments: {} }), { code: 'BOUND_TOOL_NOT_FOUND' });
 });
+
+test('Codex bound MCP cancellation aborts the pending resource call', async () => {
+  const controller = new AbortController();
+  const context = createCodexResourceContext({ agentStore: { get: async () => ({ spec: { bindings: { mcpServers: ['bound-mcp'] } } }) }, builds: {},
+    resources: {
+      listMcpTools: async () => [{ name: 'pending_tool', inputSchema: { type: 'object' } }],
+      callMcpTool: async (_binding, _name, _args, options) => {
+        assert.ok(options?.signal instanceof AbortSignal);
+        controller.abort();
+        options.signal.throwIfAborted();
+      },
+    },
+  });
+  const prepared = await context({ agentId: 'agent' });
+  await assert.rejects(prepared.toolHandler({ name: prepared.dynamicTools[0].name, signal: controller.signal }), { name: 'AbortError' });
+});

@@ -1,5 +1,7 @@
 # AgentKit Studio
 
+[官网与下载](https://kingsoftcloud.github.io/agentkit-studio/) · [文档索引](docs/README.md) · [GitHub Releases](https://github.com/kingsoftcloud/agentkit-studio/releases)
+
 AgentKit Studio is a product plugin for the public [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) host. It provides Agent authoring, resource management, local conversations, deployment controls, automation, and plugin discovery in the Harness Web and desktop surfaces.
 
 The Studio plugin is designed to run with the pinned DSH host version declared in [CONTRIBUTING.md](CONTRIBUTING.md). This repository contains Studio code, compatibility patches, tests, and packaging scripts; it does not vendor the DSH source tree or user credentials.
@@ -7,7 +9,7 @@ The Studio plugin is designed to run with the pinned DSH host version declared i
 ## What it provides
 
 - Agent creation and revision-based editing with model, MCP, Skill, knowledge, and memory bindings.
-- Native DSH conversations for Studio, Codex, and AgentKit Harness runtimes.
+- Native DSH conversations for Studio, Codex, and Star Harness runtimes.
 - Host-owned resource discovery and lifecycle operations.
 - Build, deployment, automation, channel, and operational surfaces through typed Host APIs.
 - DSH plugin discovery with curated official bundles and post-install capability checks.
@@ -33,7 +35,7 @@ signing and updates.
 
 Requirements:
 
-- Node.js `22.19.0` with development headers
+- Node.js `22.23.4` (or `24.22.1+`) with development headers
 - pnpm `10.33.2`, Corepack, Git, Make, and a native compiler toolchain
 - A checkout of the pinned DSH source tree, kept outside this repository
 
@@ -50,11 +52,11 @@ Use `DSH_HOME` and `AGENTKIT_HOME` to isolate local profiles and Studio data. Do
 launch targets also build the client first. `pnpm check`, `pnpm test` and
 `pnpm pack` rebuild it automatically; packaged plugins still include `dist/client.js`.
 
-## Experts and personal assistant
+## Experts and cloud personal assistant
 
 The Agents panel includes an original expert catalog, resource templates and local teams built on official DSH Agent Teams. Existing Agents still use the same editor, frozen revisions and native conversations. See [expert catalog and local teams](docs/expert-catalog.md).
 
-The personal assistant panel connects to a compatible DSH Native cloud deployment. Conversation acceptance, history and reminders remain durable in the cloud runtime when the local client closes. A compatible deployment and the relevant configured resources are required; see [personal assistant](docs/personal-assistant.md).
+The cloud personal assistant is now a separate DSH client plugin: install `@kingsoftcloud/agentkit-personal-assistant`. Studio keeps the Agent catalog, preset binding and the DSH Native cloud runtime that plugin talks to; the in-app assistant panel, its opening wizard and its desktop-side transport are no longer part of this repository.
 
 ## Checks
 

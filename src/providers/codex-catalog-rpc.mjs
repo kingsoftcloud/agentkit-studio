@@ -8,7 +8,7 @@ const failure = (code, message) => Object.assign(new Error(message), { code });
 export async function withCodexCatalogRpc(read, { executable, spawnImpl = spawn, env = process.env, timeoutMs = 10000, maxBytes = 2 * 1024 * 1024 } = {}) {
   const command = resolveCodexCommand({ executable, env });
   let child;
-  try { child = spawnImpl(command.executable, [...command.prefixArgs, 'app-server', '--stdio'], { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'], env }); }
+  try { child = spawnImpl(command.executable, [...command.prefixArgs, 'app-server', '--stdio'], { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env }); }
   catch { throw failure('CODEX_PROVIDER_UNAVAILABLE', '无法启动 Codex App Server，请检查安装和配置。'); }
   const pending = new Map(); let id = 0, closed = false, size = 0, terminalError;
   const reject = error => { terminalError = error; for (const entry of pending.values()) entry.reject(error); pending.clear(); };

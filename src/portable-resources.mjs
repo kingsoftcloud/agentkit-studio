@@ -12,10 +12,12 @@ const refName = value => String(value || '').replace(/^env:\/\//, '');
 const validEnv = value => /^[A-Za-z_][A-Za-z0-9_]{0,159}$/.test(value);
 
 export function validatePortableCredentialNames(requirements) {
-  // Default/generated model and MCP references are resources, not Host controls.
-  if (requirements.some(item => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!(?:MODEL_API_KEY$|BUNDLE_(?:MODEL|MCP)_))|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(item.name)
-    || ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(item.name))) {
-    throw portableError('BUNDLE_HOST_CREDENTIAL_RESERVED', '资源凭证名称不能覆盖 Host 启动配置');
+  // Settings generate suffixed model keys; these and bundle model/MCP keys
+  // are resource credentials, while other AGENTKIT_* names remain Host controls.
+  const reserved = requirements.find(item => /^(?:NODE_|DSH_|CODEX_|AGENTKIT_(?!(?:MODEL_API_KEY(?:_[A-Z0-9_]+)?$|BUNDLE_(?:MODEL|MCP)_))|XDG_|LD_|DYLD_|npm_|pnpm_)/i.test(item.name)
+    || ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].includes(item.name));
+  if (reserved) {
+    throw portableError('BUNDLE_HOST_CREDENTIAL_RESERVED', `资源凭证名称不能覆盖 Host 启动配置：${reserved.name}。请调整模型或 MCP 的凭证引用`);
   }
 }
 
@@ -56,7 +58,7 @@ async function collectDirectory(root, prefix, files, limits, depth = 0) {
   }
 }
 
-export async function capturePortableResources({ record, models, adapters, configuration }) {
+export async function capturePortableResources({ record, models, adapters, configuration, credentials }) {
   rejectInlineSecrets(record.spec);
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
@@ -139,12 +141,21 @@ export async function capturePortableResources({ record, models, adapters, confi
   const cloud = {};
   if (remote.length) {
     const { values } = await configuration.resolve();
-    cloud.cloudServerUrl = endpoint(values.cloudServerUrl || 'https://aicp.api.ksyun.com');
+    cloud.cloudServerUrl = endpoint(values.cloudServerUrl || 'https://aicp.ksyun.com');
     cloud.cloudRegion = values.cloudRegion || 'cn-beijing-6';
     if (values.cloudCustomSource) cloud.cloudCustomSource = values.cloudCustomSource;
     requireEnv('KSYUN_ACCESS_KEY', 'cloud', 'cloud access key');
     requireEnv('KSYUN_SECRET_KEY', 'cloud', 'cloud secret key');
     if (values.cloudSessionToken) requireEnv('KSYUN_SESSION_TOKEN', 'cloud', 'cloud session token');
+  }
+  // Managed personal assistants mount DSH's DeepSeek search provider, which
+  // reads DEEPSEEK_API_KEY for every search. Freeze the credential only when
+  // the Host can resolve one: provisioning must still work for users without a
+  // DeepSeek account (they keep public web_fetch, and the runtime advertises
+  // only the web tools it can actually execute).
+  if (record.spec?.security?.assistantPermissions?.profile === 'workspace-managed/v1' && typeof credentials?.resolve === 'function') {
+    const search = await credentials.resolve('DEEPSEEK_API_KEY').catch(() => null);
+    if (typeof search?.value === 'string' && search.value.trim()) requireEnv('DEEPSEEK_API_KEY', 'web-search', 'personal assistant web search');
   }
   return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files,
     nativeBuiltin: nativeBuiltins.kind === 'native' ? nativeBuiltins.manifest : undefined };

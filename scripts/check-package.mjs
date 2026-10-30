@@ -45,6 +45,7 @@ const expected = [
   'node_modules/@kingsoftcloud/agentkit-harness-ui/src/react-binding.mjs',
   'node_modules/@kingsoftcloud/agentkit-harness-ui/markdown/dist/markdown.mjs',
   'node_modules/@kingsoftcloud/agentkit-harness-ui/markdown/dist/THIRD_PARTY_LICENSES.txt',
+  'cordis.patch.yml',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
   'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
   'node_modules/@kingsoftcloud/agentkit-harness-node/src/native/python-syntax.mjs',
@@ -100,10 +101,7 @@ const expected = [
   'packages/agentkit-harness/package.json', 'packages/agentkit-harness/agentkit-harness.plugin.json',
   'packages/agentkit-harness/src/index.mjs', 'packages/agentkit-harness/src/core.mjs',
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',
-  'packages/agentkit-harness/src/index.d.ts',
-  'scripts/build-client.mjs', 'docs/brand/visual-system.md',
-  'docs/README.md', 'docs/architecture.md', 'docs/getting-started.md',
-  'patches/dsh-v0.2.1-rc.2/README.md',
+  'packages/agentkit-harness/src/index.d.ts', 'scripts/start-agent-bundle.mjs',
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);
@@ -125,7 +123,8 @@ if (packageJson.dependencies?.['@astral-sh/ruff-wasm-nodejs'] !== '0.16.8') thro
 if (!/^\d+\.\d+\.\d+$/.test(String(packageJson.version))) throw new Error(`package version must be stable semver: ${String(packageJson.version)}`);
 if (manifest.id !== 'agentkit-studio' || manifest.version !== packageJson.version) throw new Error('plugin manifest identity/version does not match package.json');
 if (manifest.requiredDsh !== '0.2.1-rc.2') throw new Error(`unexpected DSH pin: ${String(manifest.requiredDsh)}`);
-if (packageJson.private !== true) throw new Error('package.json must remain private until registry publication is approved');
+if (packageJson.private === true) throw new Error('package.json must be publishable: registry publication is enabled for this release line');
+if (packageJson.publishConfig?.access !== 'public') throw new Error('package.json publishConfig.access must be public');
 const harnessPackage = JSON.parse(read('packages/agentkit-harness/package.json'));
 for (const version of ['0.2.0-rc.2', '0.2.1-rc.2']) {
   const maintenance = JSON.parse(read(`patches/dsh-v${version}/source.json`));

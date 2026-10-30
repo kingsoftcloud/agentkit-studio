@@ -1,4 +1,5 @@
 /** Cloud assistant facade. DSH owns execution, history, persistence and timers. */
+import { executeAssistantSchedule } from './assistant-schedule.mjs';
 import { UNATTENDED_EXECUTION_POLICY } from './execution-policy.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { readAssistantHistory, readAssistantImage } from './assistant-history-reader.mjs';
@@ -96,8 +97,8 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     const interaction = approvalBridge.snapshot(sessionId);
     const permissions = permissionModel?.snapshot(sessionId) || { profile: 'legacy-read-only/v1', managed: false, permission: 'read-only', approval: 'never' };
     return { ...await readAssistantHistory(controller, sessionId, payload),
-      identity: identity?.read() || null, canEditIdentity: Boolean(identity), memoryEnabled,
-      scheduleEnabled: Boolean(ctx.get('schedule')), canClose: Boolean(retirement),
+      cloudSessionId: sessionId, identity: identity?.read() || null, canEditIdentity: Boolean(identity), memoryEnabled,
+      scheduleEnabled: Boolean(ctx.get('schedule')), scheduleManagerEnabled: ['catalog', 'history', 'update', 'delete'].every(key => typeof ctx.get('schedule')?.[key] === 'function'), canClose: Boolean(retirement),
       pendingInteractions: interaction.pending,
       capabilities: {
         composer: nativeCarrier ? { mode: 'durable-cloud', nativeSessionBinding: true, nativeComposer: true, representation: ASSISTANT_NATIVE_REPRESENTATION } : cloudAssistantComposerCapability,
@@ -150,7 +151,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
           // The handle is not a credential. Each subsequent operation is again
           // authenticated by the receipt transport and this exact conversation.
           return nativeCarrier.open({ sessionId, runAssistant: (op, input) => {
-            if (!['submit', 'attachment-upload'].includes(op)) throw fail('ASSISTANT_OPERATION_INVALID', '原生会话不支持此写入操作');
+            if (!['submit', 'attachment-upload', 'cancel'].includes(op)) throw fail('ASSISTANT_OPERATION_INVALID', '原生会话不支持此写入操作');
             return api(op, { ...input, conversation: payload.conversation ?? 'personal' });
           } });
         }));
@@ -218,17 +219,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
     }
     // Compatibility for older clients. New clients exclusively use cancel-turn.
     if (operation === 'cancel') return controller.cancel({ sessionId });
-    if (operation.startsWith('schedule-')) {
-      const schedule = ctx.get('schedule');
-      if (!schedule) throw fail('ASSISTANT_SCHEDULE_UNAVAILABLE', '请在云端镜像启用 DSH 官方定时任务插件', 503);
-      if (operation === 'schedule-list') return { items: (await schedule.catalog()).filter(item => item.sessionId === sessionId) };
-      if (operation === 'schedule-create') return serialize(sessionId, async () => {
-        await ensure(sessionId);
-        return schedule.create(sessionId, payload.spec);
-      });
-      if (operation === 'schedule-delete') return schedule.delete({ sessionId, id: payload.id });
-      throw fail('ASSISTANT_OPERATION_INVALID', '不支持的定时任务操作');
-    }
+    if (operation.startsWith('schedule-')) return executeAssistantSchedule({ schedule: ctx.get('schedule'), operation, payload, sessionId, ensure, serialize, signal });
     if (operation.startsWith('memory-')) {
       if (!memoryId || frozen.spec?.memory?.enabled === false) throw fail('ASSISTANT_MEMORY_UNAVAILABLE', '请给助理绑定并启用云端记忆库', 503);
       const adapter = await resources();
@@ -262,6 +253,8 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
   Object.defineProperty(api, 'scopedCancelSupported', { get: scopedCancelAvailable });
   api.nativeCarrierSupported = Boolean(nativeCarrier);
   api.managedPermissionsSupported = Boolean(permissionModel?.enabled && nativeCarrier?.hasLiveSession);
+  api.cloudExecutionSupported = permissionModel?.cloudCapabilities?.codeExecution === true;
+  api.cloudBrowserSupported = permissionModel?.cloudCapabilities?.browser === true;
   api.disconnectInteractions = sessionId => approvalBridge.disconnect(sessionId);
   api.dispose = disposeInteractions;
   api.imageReadSupported = typeof controller.attachment === 'function';
@@ -271,6 +264,7 @@ export function createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, 
   Object.defineProperty(api, 'fileReadSupported', { get: () => assistantAttachmentCapabilities(ctx).read });
   api.deletionSupported = Boolean(retirement);
   api.identitySupported = Boolean(identity);
+  Object.defineProperty(api, 'scheduleManagerSupported', { get: () => ['catalog', 'history', 'update', 'delete'].every(key => typeof ctx.get('schedule')?.[key] === 'function') });
   api.retiring = () => retiring;
   return api;
 }

@@ -127,10 +127,14 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, cwd: requestedCwd } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd, approvalPolicy: requestedApprovalPolicy, requestApproval } = {}) {
       const cwd = String(requestedCwd ?? runtime.cwd);
       if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
+      // A managed approval run may lift the process-wide unattended default for
+      // this turn only. Portable turns without a bridge keep `never`.
+      const turnApprovalPolicy = typeof requestedApprovalPolicy === 'string' && requestedApprovalPolicy.trim()
+        ? requestedApprovalPolicy.trim() : approvalPolicy;
       const prompt = String(input || '').trim();
       if (!prompt && !imageInputs.length) throw new CodexRuntimeError('CODEX_INPUT_INVALID', 'Codex 输入不能为空');
       if (signal?.aborted) throw asError(signal.reason, 'Codex 请求已取消');
@@ -150,12 +154,18 @@ export function createCodexRuntime(options = {}) {
         [`model_providers.${providerId}.requires_openai_auth`]: false,
         [`model_providers.${providerId}.supports_websockets`]: false,
       }).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]) : [];
+      // Codex resolves the effort from config.toml; passing it as a CLI
+      // override keeps it scoped to this ephemeral thread and out of user
+      // configuration. Values are already narrowed to Codex's enum upstream.
+      const reasoningArgs = reasoningEffort
+        ? ['-c', `model_reasoning_effort=${JSON.stringify(String(reasoningEffort))}`] : [];
 
       let child;
       try {
-        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs], {
+        child = spawnImpl(executable, [...command.prefixArgs, 'app-server', '--stdio', ...providerArgs, ...reasoningArgs], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
           env: { ...baseEnv, ...(modelProvider ? { AGENTKIT_CODEX_MODEL_API_KEY: modelProvider.apiKey } : {}) },
         });
       } catch (error) {
@@ -274,6 +284,45 @@ export function createCodexRuntime(options = {}) {
           writeJson(child.stdin, { jsonrpc: '2.0', id: message.id, result });
         } catch (error) { finish(asError(error)); }
       };
+      // Codex App Server asks the client for command/permission/patch approvals
+      // only when the thread policy is `on-request`. A managed run routes those
+      // asks through the Host's Interaction bridge; every other turn keeps the
+      // historical automatic decline below.
+      const approvalReason = value => {
+        if (value === undefined || value === null) return undefined;
+        const text = String(value);
+        return text.length > 2000 ? text.slice(0, 2000) : text;
+      };
+      const replyApproval = (id, result) => {
+        if (closed) return;
+        try {
+          writeJson(child.stdin, { jsonrpc: '2.0', id, result });
+        } catch (error) { finish(asError(error)); return; }
+        activity();
+      };
+      const handleApprovalRequest = async (message, kind) => {
+        let params = {};
+        let outcome;
+        try {
+          params = object(message.params || {}, 'approval 参数');
+          const info = kind === 'permissions'
+            ? { toolName: 'codex/permissions', callId: String(params.itemId || ''), reason: approvalReason(params.reason ?? params.cwd) }
+            : kind === 'patch'
+              ? { toolName: 'codex/file-change', callId: String(params.callId || ''), reason: approvalReason(params.reason) }
+              : { toolName: 'codex/command', callId: String(params.itemId || params.approvalId || ''), reason: approvalReason(params.reason || params.command) };
+          outcome = await requestApproval({ ...info, method: message.method, params, signal: toolController.signal });
+        } catch { outcome = undefined; }
+        const approved = outcome === 'allowed-once';
+        if (kind === 'permissions') {
+          const permissions = approved && params.permissions && typeof params.permissions === 'object'
+            && !Array.isArray(params.permissions) ? params.permissions : {};
+          replyApproval(message.id, { permissions, scope: 'turn' });
+        } else if (kind === 'patch') {
+          replyApproval(message.id, { decision: approved ? 'approved' : 'denied' });
+        } else {
+          replyApproval(message.id, { decision: approved ? 'accept' : 'decline' });
+        }
+      };
       const handleMessage = message => {
         if (closed) return;
         if ((!message.params?.threadId || message.params.threadId === threadId)
@@ -284,6 +333,20 @@ export function createCodexRuntime(options = {}) {
           if (message.method === 'item/tool/call') {
             void handleDynamicToolCall(message);
             return;
+          }
+          if (typeof requestApproval === 'function') {
+            if (message.method === 'item/commandExecution/requestApproval') {
+              void handleApprovalRequest(message, 'command');
+              return;
+            }
+            if (message.method === 'item/permissions/requestApproval') {
+              void handleApprovalRequest(message, 'permissions');
+              return;
+            }
+            if (message.method === 'applyPatchApproval') {
+              void handleApprovalRequest(message, 'patch');
+              return;
+            }
           }
           // Unattended Studio turns never grant filesystem/command approvals.
           // Replying keeps the app-server protocol healthy and lets it publish
@@ -348,7 +411,7 @@ export function createCodexRuntime(options = {}) {
           cwd,
           ephemeral: true,
           experimentalRawEvents: true,
-          approvalPolicy,
+          approvalPolicy: turnApprovalPolicy,
           ...(sandbox ? { sandbox } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(providerId ? { modelProvider: providerId } : {}),
@@ -446,12 +509,12 @@ export function createCodexRuntime(options = {}) {
   return {
     ...runtime,
     async *stream(input = {}) {
-      if (input.modelProvider?.api !== 'chat-completions') { yield* runtime.stream(input); return; }
+      if (!['chat-completions', 'responses'].includes(input.modelProvider?.api)) { yield* runtime.stream(input); return; }
       if (input.signal?.aborted) throw new CodexRuntimeError('CODEX_CANCELED', 'Codex 运行已取消');
       const metrics = [];
       const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model }, onRequestMetrics: value => metrics.push({ type: 'request-metrics', metrics: value }) });
       try {
-        for await (const chunk of runtime.stream({ ...input, modelProvider: { api: 'chat-completions', baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } })) {
+        for await (const chunk of runtime.stream({ ...input, modelProvider: { api: input.modelProvider.api, baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } })) {
           while (metrics.length) yield metrics.shift();
           yield chunk;
         }

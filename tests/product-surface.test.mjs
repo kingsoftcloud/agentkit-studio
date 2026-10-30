@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 import { readClientSource } from './helpers/client-source.mjs';
+import { mountStudio } from '../src/client/dsh/mount.mjs';
 
 test('Studio disables the independent DSH account welcome and recharge flow', async () => {
   const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
@@ -51,9 +52,9 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /createConversationAgentState/);
 });
 
-test('Agent authoring reuses the native composer and starts a fresh session from Agents', () => {
-  // Keep authoring in the native conversation, with entries in the fresh
-  // conversation hero and the Agents page rather than a second composer.
+test('Agent authoring reuses the native composer and starts a fresh session from Agents', async () => {
+  // Keep authoring in the hero and Agents page: a parent-composer entry lets
+  // users seed authoring mid-chat, so the parent Studio bundle never exposes it.
   assert.doesNotMatch(clientSource, /conversation\.input\.left/);
   assert.match(clientSource, /function NativeAuthoringButton/);
   assert.match(clientSource, /openAgentAuthoring/);
@@ -61,6 +62,38 @@ test('Agent authoring reuses the native composer and starts a fresh session from
   assert.match(clientSource, /我明确确认草稿后再创建/);
   assert.match(clientSource, /agentkit-studio:seed-authoring/);
   assert.doesNotMatch(clientSource, /function ConversationalAgentCreatePage/);
+});
+
+test('parent Studio mounting preserves local composer services and never installs an assistant attachment entry', () => {
+  const registered = [], injected = [];
+  const composer = Object.freeze({ name: 'parent-native-composer' });
+  const commandUi = Object.freeze({ name: 'parent-native-commands' });
+  const sessions = Object.freeze({ name: 'parent-native-sessions' });
+  const noop = () => {};
+  const ctx = {
+    conversation: composer, commandUi, sessions, remote: {}, connection: {}, layout: {},
+    effect: noop, on: noop, inject(_dependencies, apply) { return apply(ctx); },
+    uiConversation: { events: { register: noop } },
+    slots: {
+      inject(name, register) { injected.push(name); return register(); },
+      register(options) { registered.push(options); return noop; },
+    },
+    provide() { assert.fail('parent composer services must not be replaced'); },
+  };
+  mountStudio(ctx, {
+    ui: { React: { createElement: noop }, BRAND: {}, PANELS: [{ id: 'studio-overview', page: 'overview' }] },
+    authoring: { openAgentAuthoring: noop }, connectionOwner: {}, hostRemote: {},
+    actions: { registerBinding: () => noop, registerSessionOpener: () => noop }, documentEffects: {},
+    createDshModelBridge: () => ({}), writeConversationAgent: noop,
+    window: {}, CustomEvent: class {}, closed: () => true,
+  });
+  assert.ok(registered.some(entry => entry.name === 'conversation.hero.agentPreset'), 'native authoring entry remains installed');
+  assert.ok(registered.some(entry => entry.name === 'main' && entry.key === 'studio-overview'), 'declared panel remains installed');
+  assert.equal(injected.includes('conversation.input.left'), false);
+  assert.equal(registered.some(entry => entry.name === 'conversation.input.left' || entry.id === 'studio.assistant.attachment'), false);
+  assert.equal(ctx.conversation, composer);
+  assert.equal(ctx.commandUi, commandUi);
+  assert.equal(ctx.sessions, sessions);
 });
 
 test('model settings keep multiple providers and profiles independently configurable', () => {
@@ -251,7 +284,9 @@ test('operational pages keep the old Studio hierarchy without stacked duplicate 
 });
 
 test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter', () => {
-  assert.match(clientSource, /dshPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-list'/);
+  assert.match(clientSource, /dshPlugins: \(\) => \(bridgeAvailable\(\)\s*\?\s*studioBridgeOperation\('plugins\/dsh-list'/);
+  assert.match(clientSource, /function dshPluginMarketList/);
+  assert.match(clientSource, /refreshDshPluginIndex: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/dsh-index-refresh'/);
   assert.match(clientSource, /codexPlugins: \(\) => bridgeAvailable\(\) \? studioBridgeOperation\('plugins\/codex-list'/);
   assert.match(clientSource, /installDshPlugin: /);
   assert.match(clientSource, /enableDshPlugin: /);
@@ -265,11 +300,16 @@ test('Studio preserves Host plugin bridge routes and the Codex lifecycle adapter
   assert.match(clientSource, /section\('插件目录'/);
 });
 
-test('the official DSH plugin center is the only visible market and carries Codex as an official item', () => {
+test('the official DSH plugin center is the only visible market and carries Studio market items', () => {
   assert.match(clientSource, /ctx\.slots\.inject\('plugins\.item'/);
+  assert.match(clientSource, /agentkit-dsh-plugin-market/);
+  assert.match(clientSource, /label: '插件市场'/);
+  assert.match(clientSource, /function DshPluginMarketItem/);
   assert.match(clientSource, /agentkit-codex-plugin-market/);
   assert.match(clientSource, /function CodexPluginMarketItem/);
   assert.match(clientSource, /打开插件中心/);
+  // The market is a row inside the official plugin page, never a Studio
+  // sidebar panel and never a second plugin center.
   assert.doesNotMatch(clientSource, /id: 'marketplace', label: '插件市场'/);
 });
 

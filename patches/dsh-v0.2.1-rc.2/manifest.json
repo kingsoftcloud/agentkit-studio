@@ -120,6 +120,10 @@
     "node-projection": {
       "kind": "real-dsh-node-projection",
       "script": "scripts/verify-dsh-node-store.mjs"
+    },
+    "native": {
+      "kind": "posix-built-native-owner",
+      "target": "pnpm --dir native/system run build:test-oracle && pnpm --dir native/system run test:flock"
     }
   },
   "patches": [
@@ -155,7 +159,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 1
     },
     {
       "id": "006",
@@ -189,7 +194,8 @@
           "windows",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 2
     },
     {
       "id": "008",
@@ -223,7 +229,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 3
     },
     {
       "id": "009",
@@ -282,7 +289,8 @@
           "windows",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 4
     },
     {
       "id": "010",
@@ -320,7 +328,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 5
     },
     {
       "id": "011",
@@ -362,7 +371,8 @@
           "web",
           "electron"
         ]
-      }
+      },
+      "sequence": 6
     },
     {
       "id": "012",
@@ -413,7 +423,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 7
     },
     {
       "id": "013",
@@ -454,7 +465,8 @@
           "windows",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 8
     },
     {
       "id": "014",
@@ -503,7 +515,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 9
     },
     {
       "id": "015",
@@ -538,7 +551,8 @@
           "web",
           "electron"
         ]
-      }
+      },
+      "sequence": 10
     },
     {
       "id": "016",
@@ -586,7 +600,8 @@
           "frozen",
           "persistence"
         ]
-      }
+      },
+      "sequence": 11
     },
     {
       "id": "017",
@@ -658,7 +673,8 @@
           "source",
           "web"
         ]
-      }
+      },
+      "sequence": 12
     },
     {
       "id": "019",
@@ -713,7 +729,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 13
     },
     {
       "id": "020",
@@ -751,7 +768,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 14
     },
     {
       "id": "022",
@@ -790,7 +808,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 15
     },
     {
       "id": "023",
@@ -824,7 +843,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 16
     },
     {
       "id": "024",
@@ -858,7 +878,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 17
     },
     {
       "id": "025",
@@ -906,7 +927,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 18
     },
     {
       "id": "026",
@@ -946,7 +968,8 @@
           "lifecycle",
           "frozen"
         ]
-      }
+      },
+      "sequence": 19
     },
     {
       "id": "027",
@@ -982,7 +1005,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 20
     },
     {
       "id": "028",
@@ -1014,7 +1038,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 21
     },
     {
       "id": "029",
@@ -1050,7 +1075,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 22
     },
     {
       "id": "030",
@@ -1085,7 +1111,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 23
     },
     {
       "id": "031",
@@ -1121,7 +1148,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 24
     },
     {
       "id": "032",
@@ -1170,7 +1198,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 25
     },
     {
       "id": "033",
@@ -1218,7 +1247,8 @@
           "windows",
           "installed-update"
         ]
-      }
+      },
+      "sequence": 26
     },
     {
       "id": "034",
@@ -1255,7 +1285,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 27
     },
     {
       "id": "035",
@@ -1315,7 +1346,8 @@
           "dsh-web",
           "product-profiles"
         ]
-      }
+      },
+      "sequence": 28
     },
     {
       "id": "036",
@@ -1355,7 +1387,8 @@
         "integrations": [
           "source"
         ]
-      }
+      },
+      "sequence": 29
     },
     {
       "id": "037",
@@ -1389,7 +1422,8 @@
           "source",
           "dsh-web"
         ]
-      }
+      },
+      "sequence": 30
     },
     {
       "id": "038",
@@ -1447,7 +1481,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 31
     },
     {
       "id": "039",
@@ -1510,7 +1545,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 32
     },
     {
       "id": "040",
@@ -1555,7 +1591,8 @@
           "macos",
           "windows"
         ]
-      }
+      },
+      "sequence": 33
     },
     {
       "id": "041",
@@ -1652,7 +1689,8 @@
         "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
         "packages/preset/agent-preset-registry/README.i18n.yaml"
       ],
-      "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
+      "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b",
+      "sequence": 34
     },
     {
       "id": "042",
@@ -1693,7 +1731,8 @@
         "packages/experimental/inspector/src/shared/cordis/publisher.ts",
         "packages/experimental/inspector/tests/cordis-frame-budget.host.spec.ts"
       ],
-      "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d"
+      "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d",
+      "sequence": 35
     },
     {
       "id": "043",
@@ -1764,7 +1803,8 @@
         "packages/shell/tool-pwsh/tests/tools.spec.ts",
         "packages/subagent/subagent/tests/activation-policy.spec.ts"
       ],
-      "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615"
+      "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615",
+      "sequence": 36
     },
     {
       "id": "044",
@@ -1822,7 +1862,8 @@
         "packages/client/ui-conversation/tests/conversation-store.client.spec.ts",
         "packages/client/ui-conversation/tests/input-bar.client.spec.tsx"
       ],
-      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
+      "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3",
+      "sequence": 37
     },
     {
       "id": "045",
@@ -1867,7 +1908,8 @@
         "packages/core/tools/src/index.ts",
         "packages/core/tools/tests/scoped.spec.ts"
       ],
-      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
+      "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709",
+      "sequence": 38
     },
     {
       "id": "046",
@@ -1912,7 +1954,8 @@
         "packages/experimental/inspector/README.i18n.yaml",
         "packages/interaction/user-approval/README.i18n.yaml"
       ],
-      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4"
+      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4",
+      "sequence": 39
     },
     {
       "id": "047",
@@ -1978,7 +2021,8 @@
         "packages/extensions/tool-cordis/src/api-catalog.ts",
         "scripts/gen-cordis-catalog.ts"
       ],
-      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
+      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458",
+      "sequence": 40
     },
     {
       "id": "048",
@@ -2029,7 +2073,8 @@
         "snapshots/sdk/external-turn/tool-schemas.expected.json",
         "snapshots/sdk/sdk.snapshot.ts"
       ],
-      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
+      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f",
+      "sequence": 41
     },
     {
       "id": "049",
@@ -2087,7 +2132,8 @@
         "packages/util/values/src/index.ts",
         "packages/util/values/tests/raw-number.spec.ts"
       ],
-      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
+      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e",
+      "sequence": 42
     },
     {
       "id": "050",
@@ -2179,7 +2225,8 @@
         "packages/workflow/workflow-ptc/src/guest-source.ts",
         "scripts/type-equiv.manifest.json"
       ],
-      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
+      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e",
+      "sequence": 43
     },
     {
       "id": "051",
@@ -2241,7 +2288,8 @@
         "packages/core/agent/src/runtime-types.ts",
         "pnpm-lock.yaml"
       ],
-      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
+      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e",
+      "sequence": 44
     },
     {
       "id": "052",
@@ -2301,7 +2349,8 @@
         "scripts/primary-runtime/prepare.spec.ts",
         "scripts/primary-runtime/prepare.ts"
       ],
-      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
+      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee",
+      "sequence": 45
     },
     {
       "id": "053",
@@ -2384,7 +2433,8 @@
         "pnpm-lock.yaml",
         "scripts/primary-runtime/prepare.ts"
       ],
-      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
+      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a",
+      "sequence": 46
     },
     {
       "id": "054",
@@ -2448,7 +2498,8 @@
         "snapshots/session/agent-instructions-external/workspace/nested/AGENTS.md",
         "snapshots/session/agent-instructions-external/workspace/nested/task.txt"
       ],
-      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
+      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2",
+      "sequence": 47
     },
     {
       "id": "055",
@@ -2486,7 +2537,8 @@
         "packages/core/tools/src/index.ts",
         "packages/core/tools/tests/tools.spec.ts"
       ],
-      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4"
+      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4",
+      "sequence": 48
     },
     {
       "id": "056",
@@ -2527,7 +2579,8 @@
         "packages/spill/spill-policy/src/index.ts",
         "packages/spill/spill-policy/tests/spill-policy.spec.ts"
       ],
-      "sha256": "41f7b0eeb18f3201193b94df2e157c8a6344cbc2fa57d321924f86ab16e93f37"
+      "sha256": "41f7b0eeb18f3201193b94df2e157c8a6344cbc2fa57d321924f86ab16e93f37",
+      "sequence": 49
     },
     {
       "id": "057",
@@ -2565,7 +2618,8 @@
         "packages/client/ui-chat/src/client/chat/ChatView.tsx",
         "packages/client/ui-chat/src/client/contract/slots.ts"
       ],
-      "sha256": "00475d007b7d10d76b0044f2a653af083e3f76d207184002312557a6cd0d61fb"
+      "sha256": "00475d007b7d10d76b0044f2a653af083e3f76d207184002312557a6cd0d61fb",
+      "sequence": 50
     },
     {
       "id": "058",
@@ -2600,7 +2654,8 @@
       "affectedFiles": [
         "packages/client/ui-chat/src/client/chat/ChatView.tsx"
       ],
-      "sha256": "54372264c65e91607ba3b0ab9a6368e9047264dd9e41e81a7939db8ab2fd8216"
+      "sha256": "54372264c65e91607ba3b0ab9a6368e9047264dd9e41e81a7939db8ab2fd8216",
+      "sequence": 51
     },
     {
       "id": "059",
@@ -2638,7 +2693,8 @@
         "packages/client/ui-chat/src/client/chat/ChatView.tsx",
         "packages/client/ui-chat/src/client/contract/slots.ts"
       ],
-      "sha256": "13f6b4128ab27fddd72ab856fd1605a8d5709ecab0e1ccd061f64ef2c6d23986"
+      "sha256": "13f6b4128ab27fddd72ab856fd1605a8d5709ecab0e1ccd061f64ef2c6d23986",
+      "sequence": 52
     },
     {
       "id": "060",
@@ -2674,7 +2730,8 @@
         "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css",
         "packages/client/ui-conversation/src/client/skeleton/TodoPanel.tsx"
       ],
-      "sha256": "9f91ca15990e72774be479ba8b01f0a707e6825007ea80d95f94ec4b490a8ddf"
+      "sha256": "9f91ca15990e72774be479ba8b01f0a707e6825007ea80d95f94ec4b490a8ddf",
+      "sequence": 53
     },
     {
       "id": "061",
@@ -2726,7 +2783,8 @@
         "packages/core/tools/tests/preflight-defer.spec.ts",
         "packages/extensions/tool-cordis/src/api-catalog.ts"
       ],
-      "sha256": "41956a490e4625f7ecf66edfa0a18d9a5aef6124e13fa8044d6f751a7c67a0ee"
+      "sha256": "41956a490e4625f7ecf66edfa0a18d9a5aef6124e13fa8044d6f751a7c67a0ee",
+      "sequence": 54
     },
     {
       "id": "062",
@@ -2768,7 +2826,8 @@
         "packages/client/ui-conversation/README.zh.md",
         "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css"
       ],
-      "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9"
+      "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9",
+      "sequence": 55
     },
     {
       "id": "063",
@@ -2803,13 +2862,363 @@
       "affectedFiles": [
         "packages/core/tools/src/index.ts"
       ],
-      "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613"
+      "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613",
+      "sequence": 56
+    },
+    {
+      "id": "064",
+      "file": "064-macos-studio-identity.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1",
+      "dependsOn": [
+        "032",
+        "039",
+        "040",
+        "041"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.i18n.yaml",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/scripts/electron-builder-config.mjs",
+        "apps/desktop/src/paths.ts",
+        "apps/desktop/tests/product-branding.spec.ts",
+        "apps/desktop/tests/studio-paths.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host"
+      ],
+      "contracts": [
+        "macOS Studio 与官方 DSH 并行运行：产品独立 Electron 名称、单实例锁、用户数据目录与插件 profile；会话、凭证与工作区保留共享 DSH Home"
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游桌面产品身份配置提供等价的多产品并行锁、用户数据目录与产品 profile 合同",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/studio-paths.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos"
+        ]
+      },
+      "sequence": 57
+    },
+    {
+      "id": "065",
+      "file": "065-native-schedule-manager.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "session-contract",
+      "risk": "medium",
+      "maintainerRole": "Studio native assistant integration owner",
+      "removeWhen": "The pinned upstream supplies the same instance-scoped native-schedule-manager contracts and their regression coverage.",
+      "contracts": [
+        "Native schedule.manager factory mounts the existing task manager without acquiring local Session or workspace authority.",
+        "ScheduleService authenticates registered native tool definition and execution identities; replacements and disposed registrations are rejected.",
+        "Existing task manager navigation, rule editing, complete-record CAS and delivery history preserve their native semantics."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-schedule",
+        "@deepseek-ai/dsh-tool-schedule",
+        "@deepseek-ai/dsh-client-ui-schedule"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local native component and tool regressions; no upstream submission or merge receipt."
+      },
+      "dependsOn": [
+        "038",
+        "061"
+      ],
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-schedule/tests/browser-plugin.client.spec.ts",
+          "packages/client/ui-schedule/tests/catalog-source.client.spec.ts",
+          "packages/client/ui-schedule/tests/definition.client.spec.ts",
+          "packages/client/ui-schedule/tests/delete-toast.client.spec.tsx",
+          "packages/client/ui-schedule/tests/delivery-history.client.spec.tsx",
+          "packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx",
+          "packages/client/ui-schedule/tests/recent-time-zones.client.spec.ts",
+          "packages/client/ui-schedule/tests/schedule-catalog-action.client.spec.tsx",
+          "packages/client/ui-schedule/tests/schedule-create-card.client.spec.tsx",
+          "packages/client/ui-schedule/tests/schedule-format.client.spec.ts",
+          "packages/client/ui-schedule/tests/schedule-task-tab.client.spec.tsx",
+          "packages/client/ui-schedule/tests/schedule-turn-card.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-link.client.spec.ts",
+          "packages/client/ui-schedule/tests/session-schedule-hover.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-schedule-mark.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-schedule-shared.client.spec.tsx",
+          "packages/client/ui-schedule/tests/session-schedule-state.client.spec.ts",
+          "packages/client/ui-schedule/tests/task-cron.client.spec.ts",
+          "packages/client/ui-schedule/tests/task-detail.client.spec.tsx",
+          "packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx",
+          "packages/client/ui-schedule/tests/task-menu.client.spec.tsx",
+          "packages/client/ui-schedule/tests/task-tab-bindings.client.spec.ts",
+          "packages/client/ui-schedule/tests/task-timing.client.spec.tsx",
+          "packages/schedule/schedule/tests/cron.spec.ts",
+          "packages/schedule/schedule/tests/daily.spec.ts",
+          "packages/schedule/schedule/tests/delivery-history.spec.ts",
+          "packages/schedule/schedule/tests/delivery.spec.ts",
+          "packages/schedule/schedule/tests/domain-restart.spec.ts",
+          "packages/schedule/schedule/tests/domain.spec.ts",
+          "packages/schedule/schedule/tests/legacy-history.spec.ts",
+          "packages/schedule/schedule/tests/malformed-unit.spec.ts",
+          "packages/schedule/schedule/tests/plugin.spec.ts",
+          "packages/schedule/schedule/tests/recovery.spec.ts",
+          "packages/schedule/schedule/tests/recurrence.spec.ts",
+          "packages/schedule/schedule/tests/runtime.spec.ts",
+          "packages/schedule/schedule/tests/serial-delivery.spec.ts",
+          "packages/schedule/schedule/tests/subagent-ownership.spec.ts",
+          "packages/schedule/schedule/tests/update-restart.spec.ts",
+          "packages/schedule/schedule/tests/update-service.spec.ts",
+          "packages/schedule/schedule/tests/update.spec.ts",
+          "packages/schedule/schedule/tests/weekly.spec.ts",
+          "packages/schedule/tool-schedule/tests/tool-schedule.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/schedule.md",
+        "docs/subsystems/schedule.zh.md",
+        "packages/client/ui-schedule/README.i18n.yaml",
+        "packages/client/ui-schedule/README.md",
+        "packages/client/ui-schedule/README.zh.md",
+        "packages/client/ui-schedule/src/client/TaskManagerPage.tsx",
+        "packages/client/ui-schedule/src/client/index.ts",
+        "packages/client/ui-schedule/tests/browser-plugin.client.spec.ts",
+        "packages/client/ui-schedule/tests/embedded-manager.client.spec.tsx",
+        "packages/client/ui-schedule/tests/task-detail.client.spec.tsx",
+        "packages/client/ui-schedule/tests/task-manager-page.client.spec.tsx",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/schedule/schedule/README.i18n.yaml",
+        "packages/schedule/schedule/README.md",
+        "packages/schedule/schedule/README.zh.md",
+        "packages/schedule/schedule/src/index.ts",
+        "packages/schedule/tool-schedule/README.i18n.yaml",
+        "packages/schedule/tool-schedule/README.md",
+        "packages/schedule/tool-schedule/README.zh.md",
+        "packages/schedule/tool-schedule/src/index.ts",
+        "packages/schedule/tool-schedule/tests/tool-schedule.spec.ts"
+      ],
+      "sha256": "fa2dac9916d7c56d95f42103a232caa110d6f86a96f01b0687dae4ecee6a99ac",
+      "sequence": 58
+    },
+    {
+      "id": "066",
+      "file": "066-isolated-native-browser.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "session-contract",
+      "risk": "medium",
+      "maintainerRole": "Studio native assistant integration owner",
+      "removeWhen": "The pinned upstream supplies the same instance-scoped isolated-native-browser contracts and their regression coverage.",
+      "contracts": [
+        "Native browser.content reuses the browser controller and chrome without acquiring a local Session or persistent browser identity.",
+        "Embedded iframe navigation retains an opaque-origin sandbox without popup or top-level-navigation permissions, including after unobserved redirects.",
+        "Explicit external opening and disposal preserve separate Web and Desktop lifecycle semantics; existing sidebar behavior remains compatible."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-sidebar-browser"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local native component and tool regressions; no upstream submission or merge receipt."
+      },
+      "dependsOn": [
+        "054"
+      ],
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-sidebar-browser/tests/apply.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/apply.host.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/browser-controller.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-frame.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-navigation.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/browser-title.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/electron-frame.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/electron-lifecycle.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/store.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/url.client.spec.ts",
+          "packages/client/ui-sidebar-browser/tests/workspace.client.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-sidebar-browser/README.i18n.yaml",
+        "packages/client/ui-sidebar-browser/README.md",
+        "packages/client/ui-sidebar-browser/README.zh.md",
+        "packages/client/ui-sidebar-browser/package.json",
+        "packages/client/ui-sidebar-browser/src/client/browser/IframeImpl.ts",
+        "packages/client/ui-sidebar-browser/src/client/index.ts",
+        "packages/client/ui-sidebar-browser/src/client/pages.ts",
+        "packages/client/ui-sidebar-browser/src/client/view/BrowserBody.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/BrowserChrome.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/EmbeddedBrowserBody.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts",
+        "packages/client/ui-sidebar-browser/tests/apply.client.spec.ts",
+        "packages/client/ui-sidebar-browser/tests/embedded-browser.client.spec.tsx",
+        "packages/client/ui-sidebar-browser/tsconfig.client.json",
+        "pnpm-lock.yaml"
+      ],
+      "sha256": "894d09790d6ecfe345dfdad52e067819e6b303eb90e20fc381053867b6f2f6f5",
+      "sequence": 59
+    },
+    {
+      "id": "067",
+      "file": "067-flock-libc-report-network.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "general-fix",
+      "risk": "low",
+      "maintainerRole": "Studio maintained Host and runtime integration owner",
+      "removeWhen": "Pinned upstream supplies equivalent Linux libc probing without network inspection.",
+      "contracts": [
+        "Linux libc detection excludes reverse DNS and restores caller report settings on success or failure.",
+        "Asynchronous flock ownership, libc selection and syscall errors remain unchanged."
+      ],
+      "affectedPackages": [
+        "native/system/packages/entry"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Isolated maintained-source checks and regressions passed locally; no upstream submission or remote CI receipt."
+      },
+      "dependsOn": [],
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "frozen",
+          "native"
+        ],
+        "nativeTests": [
+          "native/system/test/flock.test.js"
+        ]
+      },
+      "affectedFiles": [
+        "native/system/packages/entry/README.i18n.yaml",
+        "native/system/packages/entry/README.md",
+        "native/system/packages/entry/README.zh.md",
+        "native/system/packages/entry/src/flock.ts",
+        "native/system/test/fixtures/flock-libc-report.js",
+        "native/system/test/flock.test.js"
+      ],
+      "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05",
+      "sequence": 60
+    },
+    {
+      "id": "068",
+      "file": "068-maintenance-source-validation.patch",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "category": "generated-docs",
+      "risk": "low",
+      "maintainerRole": "Studio maintained Host and runtime integration owner",
+      "removeWhen": "Maintained upstream catalogs, bilingual records and validation recognize the same unchanged runtime APIs and artifact metadata.",
+      "contracts": [
+        "Generated catalogs match maintained approval and permission APIs.",
+        "Only unquoted uv artifact byte sizes are excluded from commit-reference detection; actual commit references remain rejected.",
+        "Tool callback identity and permission selection behavior remain unchanged."
+      ],
+      "affectedPackages": [
+        "packages/core/tools",
+        "packages/client/ui-permission-presets",
+        "packages/extensions/tool-cordis",
+        "packages/extensions/cordis-client-runner",
+        "scripts"
+      ],
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Isolated maintained-source checks and regressions passed locally; no upstream submission or remote CI receipt."
+      },
+      "dependsOn": [
+        "038",
+        "043",
+        "045",
+        "063",
+        "065"
+      ],
+      "verification": {
+        "hostTests": [
+          "scripts/verify-repository-references.spec.ts",
+          "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
+          "packages/core/tools/tests/tools.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-permission-presets/src/client/PermissionSelect.tsx",
+        "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
+        "packages/core/tools/src/index.ts",
+        "scripts/verify-repository-references.spec.ts",
+        "scripts/verify-repository-references.ts"
+      ],
+      "sha256": "3326f9d15bc1f6b8e67a0014a1a5cb7974d1efd5ca9a0bb9a98a906cb131bbce",
+      "sequence": 61
+    },
+    {
+      "id": "069",
+      "file": "069-desktop-cli-product-name.patch",
+      "category": "packaging",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973",
+      "dependsOn": [
+        "014",
+        "020"
+      ],
+      "affectedFiles": [
+        "apps/desktop/cli/dsh",
+        "apps/desktop/cli/dsh.cmd",
+        "apps/desktop/scripts/prepare-cli.ts",
+        "apps/desktop/tests/cli-launcher.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "安装后的 dsh 启动器按构建产品名启动应用可执行文件，不再固定 DeepSeek Harness；上游默认构建的启动行为不变"
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "unverified",
+        "evidence": "No upstream submission or merge receipt has been verified for this patch series."
+      },
+      "removeWhen": "上游 CLI 启动脚本按产品名解析可执行文件",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/cli-launcher.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 62
     }
   ],
-  "patchedTree": "326c933ec56c8f53c6230fd071c5c2a043c3d7e8",
-  "patchedSourceSha256": "8553c9a90a1482f2443e09f584fa752783f8313f2df08654c856f5f4477cd4f9",
+  "patchedTree": "8064a20819a8ae10cfcd6e50b831efc1b79bad8b",
+  "patchedSourceSha256": "76280203b97aee62ad0ebb1c8c5e1c96a08925ed741fa99d3fa49b042131401a",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "b190c5d38ef8e411442aa1e5d11eadc7c98c2edb324973e1597cd9518973031e"
+    "sha256": "a97b431a97405753e93d98967389e27fb5efff2e55374b1932475e53b2a79997"
   }
 }

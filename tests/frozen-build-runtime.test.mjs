@@ -41,7 +41,9 @@ test('Responses selects each bound model on the native session and preserves its
     env: { AGENTKIT_RUNTIME_AGENT_ID: 'test-agent', AGENTKIT_RUNTIME_BUILD_ID: buildId, AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: '0' } });
   let runtime = await start(); t.after(() => runtime.close());
   const diagnostic = await (await fetch(`http://127.0.0.1:${runtime.address.port}/v1/agentkit/runtime`, { headers: { authorization: `Bearer ${token}` } })).json();
-  assert.deepEqual(diagnostic.executionPolicy, { format: 'agentkit.execution-policy/v1', permissionMode: 'read-only', approvalPolicy: 'never', approvalSource: 'runtime-policy' });
+  assert.deepEqual(diagnostic.executionPolicy, { format: 'agentkit.execution-policy/v1', permissionMode: 'workspace-write', approvalPolicy: 'never', approvalSource: 'runtime-policy' });
+  assert.deepEqual(diagnostic.allowedPermissionModes, ['read-only', 'workspace-write', 'danger-full-access']);
+  assert.equal(diagnostic.capabilities.includes('cloud-execution-policy/v1'), true);
   const post = body => fetch(`http://127.0.0.1:${runtime.address.port}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const firstRequest = { input: 'question', session_id: 'conversation', request_id: 'first', model: 'model-b' };
   const first = await (await post(firstRequest)).json();

@@ -1,7 +1,7 @@
 {
   "name": "@kingsoftcloud/agentkit-studio",
-  "version": "0.0.2",
-  "private": true,
+  "version": "0.0.8",
+  "private": false,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "icon": "./assets/agentkit-studio.svg",
@@ -41,16 +41,17 @@
     "patches",
     "host-source",
     "vendor/native",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "README.md",
+    "scripts/start-agent-bundle.mjs"
   ],
   "scripts": {
-    "check": "tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node --check packages/agentkit-harness/src/core.mjs && node --check packages/agentkit-harness/src/index.mjs && node scripts/test-studio.mjs",
+    "check:node": "node scripts/check-node-version.mjs",
+    "check": "node scripts/check-node-version.mjs && tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node --check packages/agentkit-harness/src/core.mjs && node --check packages/agentkit-harness/src/index.mjs && node scripts/test-studio.mjs",
     "build:client": "node scripts/build-client.mjs",
-    "build:harness": "node scripts/verify-native-dependencies.mjs",
     "precheck": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "pretest": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "prepack": "node scripts/check-local-process-launcher.mjs && node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
-    "build:mcp": "node scripts/build-mcp-client.mjs",
     "test": "node scripts/test-studio.mjs",
     "pack:harness": "pnpm --dir packages/agentkit-harness pack --pack-destination ../../.artifacts",
     "verify-dsh": "node scripts/verify-dsh-node-store.mjs",
@@ -66,23 +67,25 @@
     "publish-desktop-feed": "node scripts/desktop-release.mjs publish",
     "verify-desktop-installed-update": "node scripts/verify-desktop-installed-update.mjs",
     "verify-dsh-sdk": "node scripts/verify-dsh-sdk-node-store.mjs",
+    "verify-dsh-plugin-market": "node scripts/verify-dsh-plugin-market.mjs",
+    "check:contracts": "tsc -p tsconfig.contracts.json",
+    "verify-studio-frozen-host": "node scripts/verify-studio-frozen-host.mjs",
+    "pack:catalog": "pnpm --dir packages/expert-catalog pack --pack-destination ../../.artifacts",
+    "build:harness": "node scripts/verify-native-dependencies.mjs",
+    "build:mcp": "node scripts/build-mcp-client.mjs",
     "verify-native-dsh-turn": "node scripts/verify-native-dsh-turn.mjs",
     "verify-native-owned-recovery": "node scripts/verify-native-owned-recovery.mjs",
     "verify-native-dsh-output": "node scripts/verify-native-dsh-output.mjs",
     "verify-native-dsh-browser": "node scripts/verify-native-dsh-browser.mjs",
     "verify-native-dsh-numeric": "node scripts/verify-native-dsh-numeric.mjs",
     "verify-studio-native-harness": "node scripts/verify-studio-native-harness.mjs",
-    "verify-dsh-plugin-market": "node scripts/verify-dsh-plugin-market.mjs",
-    "check:contracts": "tsc -p tsconfig.contracts.json",
-    "verify-studio-frozen-host": "node scripts/verify-studio-frozen-host.mjs",
-    "pack:catalog": "pnpm --dir packages/expert-catalog pack --pack-destination ../../.artifacts",
     "build:harness-node": "node scripts/verify-native-dependencies.mjs",
     "build:native-source": "node scripts/build-native-harness.mjs && node scripts/build-native-node.mjs && node packages/agentkit-harness-ui/markdown/build/build-markdown.cjs",
     "pack:native-source": "node scripts/pack-native-packages.mjs",
     "check:native-ui": "node packages/agentkit-harness-ui/markdown/build/build-markdown.cjs && node --test packages/agentkit-harness-ui/test/*.test.mjs"
   },
   "engines": {
-    "node": ">=22.19.0",
+    "node": "^22.23.4 || >=24.22.1",
     "dsh": "0.2.1-rc.2"
   },
   "dsh": {
@@ -97,7 +100,8 @@
         "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-workspace"
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-schedule"
       ],
       "platform": "web",
       "external": [
@@ -111,7 +115,9 @@
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-attachment"
+        "@deepseek-ai/dsh-client-ui-attachment",
+        "@deepseek-ai/dsh-client-ui-sidebar-browser",
+        "@deepseek-ai/dsh-client-ui-schedule"
       ]
     },
     "bundle": {
@@ -127,7 +133,7 @@
     "@kingsoftcloud/agentkit-harness-core": "file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz",
     "@kingsoftcloud/agentkit-harness-node": "file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz",
     "@kingsoftcloud/agentkit-harness-ui": "file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz",
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@openai/codex": "0.159.2",
     "ajv": "8.17.1",
     "ajv-draft-04": "1.0.0",
@@ -154,7 +160,8 @@
     "react-dom": "18.3.1",
     "streamdown": "2.5.0",
     "typescript": "6.0.3",
-    "unbash": "4.0.1"
+    "unbash": "4.0.1",
+    "marked": "18.1.1"
   },
   "bundledDependencies": [
     "@kingsoftcloud/agentkit-harness-core",
@@ -167,6 +174,24 @@
       "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/darwin-x64/launcher",
       "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/linux-arm64/launcher",
       "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/linux-x64/launcher"
-    ]
-  }
+    ],
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "homepage": "https://kingsoftcloud.github.io/agentkit-studio/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kingsoftcloud/agentkit-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kingsoftcloud/agentkit-studio/issues"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "dsh-plugin",
+    "agentkit",
+    "studio",
+    "cloud-assistant",
+    "personal-assistant"
+  ]
 }

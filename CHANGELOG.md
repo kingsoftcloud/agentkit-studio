@@ -1,8 +1,37 @@
 # Changelog
 
+## 0.0.8
+
+- 云上实例已被删除时，本机残留的绑定按“过期”处理并清理，不再整体判定为授权失败：页面能正常显示“未开通”并给出开通引导，而不是只剩一条 401/403 错误。
+- 个人助理创建改走产品化的部署动作（`CreateAgentProduct`），不再调用 Studio 通用 client 白名单之外的 `CreateAgent`；平台拒绝时透出真实原因（版本不支持、404 未注册、422 参数不符），不再统一提示“请稍后再试”。
+- 内网账号 IAM 把 API 密钥报为 `Inactive`、且 `ListAllUserAccessKeys` 对子账号返回空列表时，通过有界 `ListUsers` 扫描定位密钥属主；属性缺失或存在多个候选时仍保持未验证，不猜测身份。
+- 新建个人助理时默认运行时版本跟到 `0.1.41`（与平台 catalog 默认版本一致）：该版本修复云桌面浏览器窗口超出屏幕导致的标题栏/输入框被裁，并预置可在插件市场直接启用的 Studio 插件。
+
+## 0.0.7
+
+- 云端平台暂时无法返回个人助理实例详情时，设置页退回本机记录的配置清单并说明原因，不再把平台 5xx 当成用户操作失败。
+- 创建个人助理时记录配置清单，使后续设置修改可以复用同一实例身份；旧实例可在本机补齐清单后继续编辑。
+
+## 0.0.6
+
+- 个人助理设置页支持在线配置：模型、系统提示词、运行时版本与环境变量注入；保存时提交一次平台更新，由云端滚动应用到实例，不需要用户手动重启，也不是每个字段都重启一次。
+- 读取设置时敏感环境变量只回显“已配置”，值不出 Studio Host；旧实例缺少本机配置清单时明确提示无法在线修改，而不是用猜测的默认值覆盖云端实例。
+- 云端平台暂不支持个人助理配置更新时，给出可读的原因与建议，不把原始 400 错误直接抛给用户。
+
 ## Unreleased
 
+- Register the plugin market's `plugins/dsh-discover` bridge endpoint (and the previously missing `plugins/dsh-index-refresh`) in the Studio operation allowlist so the Host accepts them instead of rejecting them as unknown control endpoints.
+- Turn the DSH plugin market into a discovery surface instead of a mirror of the official installed list: aggregate npm (`keywords:dsh-plugin`) and GitHub (`topic:dsh-plugin`) metadata over a curated offline shelf, with category filters, download/star/update sorting, detail cards and one-click install, while installed lifecycle management stays as a second tab. Discovery uses a 10-minute memory+disk cache and keeps serving the last good catalog when the network fails.
+- Add a DSH plugin market as a row inside the official 插件 page (public `plugins.item` slot, no sidebar entry or second plugin center): curated offline catalog, optional HTTPS remote index refreshed without a release, search/category filters, manual spec install, and install/enable/disable/update/uninstall through the official plugin manager with row/service readiness probes and honest failure reporting.
+- Fix the market lifecycle on the real Host: the DSH plugin surface mounts the plain product client, so the install/enable/disable/update/uninstall methods now live on that client instead of only the compatibility extension. Install, enable and disable were verified end-to-end against the packaged DSH 0.2.1-rc.2 Host.
+- Generate the installed `dsh` terminal launcher from the packaged product name instead of a hardcoded `DeepSeek Harness`, restoring the CLI for product builds while official builds keep the upstream default (DSH patch 051).
+- 云端镜像目录出现当前 Studio 尚未实现的能力声明时，只停用该镜像版本并回退到最新的兼容镜像，同时给出升级提示；不再因一次新镜像发布拒绝整个目录，导致旧客户端无法部署任何 Agent。
+- Raise the development and CI Node.js baseline to 22.23.4 (or 24.22.1 / 26.12.1) for the October 2026 security release, and fail fast in `pnpm check`, the development doctor and CI when the runtime predates the fix.
 - Adapt generic Hosted UI Actions to frozen Studio runtimes with verified account isolation, native DSH history recovery, and explicit stream failures; retain existing personal assistant data and permissions.
+- Keep the assistant conversation quiet: one native attachment picker, concise errors and on-demand connection diagnostics.
+- Open assistant links in an instance-scoped native Studio browser pane with explicit external opening and cleanup on close or assistant change.
+- Replace the one-shot delay form with the native DSH task manager, recurring rules, complete-record editing and delivery history; admit only trusted native schedule tools scoped to the current assistant Session.
+- Add a secret-free Ubuntu PR browser acceptance stage. Full-access cloud execution still requires a separately isolated executor; current deployment and existing Session permissions are unchanged.
 
 - Fix normal portable assistant cold startup and process-restart scheduling through profile-owned plugin resolution and native runtime readiness dependencies; add an installed CLI startup/restart CI smoke.
 

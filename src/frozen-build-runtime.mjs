@@ -8,11 +8,15 @@ import { RESOURCE_CHECK_EVENT } from './resource-checks.mjs';
 import { createHash } from 'node:crypto';
 import { createPersonalAssistantRuntime } from './personal-assistant-runtime.mjs';
 import { createAssistantIdentity } from './assistant-identity.mjs';
+import { createManagedRuntimeActions } from './managed-runtime-actions.mjs';
+import { join } from 'node:path';
 import { createAssistantNativeCarrierService } from './assistant-native-carrier.mjs';
 import { createFrozenHostedActions } from './frozen-hosted-actions.mjs';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
 import { createAssistantPermissionModel } from './assistant-permission-model.mjs';
 import { createFrozenResponseProjection } from './frozen-response-projection.mjs';
+import { createManagedApprovalRegistry } from './managed-runtime-approval.mjs';
+import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, readExecutionMode } from './execution-policy.mjs';
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
 
@@ -24,15 +28,16 @@ export function observeNativeRun(ctx, agent, onFrame) {
   return () => { for (const dispose of disposers) dispose(); };
 }
 
-export async function startFrozenBuildRuntime({ ctx, build, admit, modelService, hostCompatibility, resources, env = process.env }) {
-  const agentId = env.AGENTKIT_RUNTIME_AGENT_ID;
-  const buildId = env.AGENTKIT_RUNTIME_BUILD_ID;
-  if (!agentId && !buildId) return null;
+export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, managedResourceContext, admit, modelService, hostCompatibility, resources, env = process.env }) {
+  const agentId = managedRuntime?.identity.agentId || env.AGENTKIT_RUNTIME_AGENT_ID;
+  const buildId = managedRuntime ? undefined : env.AGENTKIT_RUNTIME_BUILD_ID;
+  if (!agentId && !buildId && !managedRuntime) return null;
   hostCompatibility?.require('frozen-runtime');
   if (ctx.get('sessionController')?.promptFingerprintVersion !== 1) {
     throw Object.assign(new Error('冻结运行时需要支持请求指纹的 DSH 宿主'), { code: 'RUNTIME_HOST_CAPABILITY_UNAVAILABLE' });
   }
-  const frozen = await build.resolve(agentId, buildId);
+  const resolveDefinition = () => managedRuntime ? Promise.resolve(structuredClone(managedRuntime.agent)) : build.resolve(agentId, buildId);
+  const frozen = await resolveDefinition();
   await admit(agentId, frozen);
   const bindings = frozen.spec?.bindings || {}, first = bindings.modelProfileIds?.[0];
   const primary = bindings.modelProfileId || (typeof first === 'string' ? first : first?.resourceId || first?.id) || '';
@@ -44,11 +49,17 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
     if (!admission.modelSelection) throw Object.assign(new Error('冻结模型没有可用的运行时路由'), { code: 'RUNTIME_MODEL_UNAVAILABLE' });
     selections.set(entry.id, admission.modelSelection);
   }
+  // The image declares the default conversation policy. A deployment may narrow
+  // the ceiling later through its environment; image defaults keep parity with
+  // Local DSH sessions (workspace-write) while allowing every mode to be chosen.
+  const executionModeDefault = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_DEFAULT) || DEFAULT_CLOUD_EXECUTION_MODE;
+  const executionModeMax = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_MAX) || DEFAULT_CLOUD_EXECUTION_MAX;
+  const declaredPolicy = cloudExecutionPolicy(executionModeDefault);
   const nativeRun = createNativeAutomationRunner({
-    getService: name => ctx.get(name), reuseSession: true,
+    getService: name => ctx.get(name), reuseSession: true, executionPolicy: declaredPolicy,
     assertHostCompatible: () => hostCompatibility?.require('frozen-runtime'),
     loadReplay: request => loadFrozenRequestReplay(request, selections.get(request.model)),
-    admit: async () => admit(agentId, await build.resolve(agentId, buildId)),
+    admit: async () => admit(agentId, await resolveDefinition()),
     ...(catalog.length ? { selectModel: async key => {
       if (!selections.has(key)) throw Object.assign(new Error('模型不在冻结绑定中'), { code: 'RESPONSES_FROZEN_MODEL_MISMATCH', status: 400 });
       return selections.get(key);
@@ -67,25 +78,38 @@ export async function startFrozenBuildRuntime({ ctx, build, admit, modelService,
     }
   };
   const model = catalog.find(item => item.default)?.id || catalog[0]?.id || primary;
-  const retirement = await (await import('./assistant-retirement.mjs')).createAssistantRetirement({ ctx, env });
-  const identity = await createAssistantIdentity({ directory: env.AGENTKIT_HOME, defaultName: frozen.metadata?.name || '个人助理' });
-  // Optional on older Hosts: use only the public non-owner Peer factory. The
-  // build credential remains at this HTTP boundary, never a Host owner role.
-  const permissionModel = await createAssistantPermissionModel({ ctx, env, agentId, profile: frozen.spec?.security?.assistantPermissions?.profile });
-  let assistant;
-  const connection = ctx.get('connection');
-  const nativeCarrier = typeof connection?.createPeer === 'function'
-    && typeof ctx.get('typertGateway')?.invoke === 'function'
-    && typeof ctx.get('typertGateway')?.wireStream?.open === 'function'
-    && typeof ctx.get('remoteAccess')?.registerPolicy === 'function'
-    ? createAssistantNativeCarrierService({ ctx, createPeer: options => connection.createPeer(options),
-      onSessionDisconnect: sessionId => assistant?.disconnectInteractions(sessionId) }) : undefined;
-  assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement, identity, nativeCarrier, permissionModel });
-  const hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,
-    models: catalog.length ? catalog.map(item => item.id) : [model], bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
-    responses: createRuntimeResponsesContract({ agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, model, models: catalog.length ? catalog.map(item => item.id) : [model] }) });
-  return startBuildRuntimeHttp({ hosted, agentId, buildId, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '', deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: nativeRun.executionPolicy, validatePrevious,
-    responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, model, models: catalog.length ? catalog.map(item => item.id) : [model], token: env.AGENTKIT_RUNTIME_TOKEN,
+  const models = catalog.length ? catalog.map(item => item.id) : [model];
+  // One bridge owns the interactive approval answerer and the presented
+  // interaction records for this Host process.
+  const approval = managedRuntime ? createManagedApprovalRegistry({ ctx }) : undefined;
+  const platformActions = managedRuntime ? await createManagedRuntimeActions({ ctx, runtime: managedRuntime, admit, model, models,
+    directory: join(env.AGENTKIT_HOME, 'managed-sessions'), approval }) : undefined;
+  let assistant, hosted;
+  if (!managedRuntime) {
+    const retirement = await (await import('./assistant-retirement.mjs')).createAssistantRetirement({ ctx, env });
+    const identity = await createAssistantIdentity({ directory: env.AGENTKIT_HOME, defaultName: frozen.metadata?.name || '个人助理' });
+    // Optional on older Hosts: use only the public non-owner Peer factory. The
+    // build credential remains at this HTTP boundary, never a Host owner role.
+    const permissionModel = await createAssistantPermissionModel({ ctx, env, agentId,
+      profile: frozen.spec?.security?.assistantPermissions?.profile,
+      grants: frozen.spec?.security?.assistantPermissions?.grants });
+    const connection = ctx.get('connection');
+    const nativeCarrier = typeof connection?.createPeer === 'function'
+      && typeof ctx.get('typertGateway')?.invoke === 'function'
+      && typeof ctx.get('typertGateway')?.wireStream?.open === 'function'
+      && typeof ctx.get('remoteAccess')?.registerPolicy === 'function'
+      ? createAssistantNativeCarrierService({ ctx, createPeer: options => connection.createPeer(options),
+        onSessionDisconnect: sessionId => assistant?.disconnectInteractions(sessionId) }) : undefined;
+    assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement, identity, nativeCarrier, permissionModel });
+    hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,
+      models, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
+      responses: createRuntimeResponsesContract({ agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, model, models,
+        definitionId: undefined, versionId: undefined }) });
+  }
+  return startBuildRuntimeHttp({ hosted, agentId, buildId, managedIdentity: managedRuntime?.identity, platformActions,
+    withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
+    deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
+    validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

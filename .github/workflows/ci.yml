@@ -23,8 +23,9 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: pnpm
+      - run: node scripts/check-node-version.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:native-source
       - run: pnpm check:native-ui
@@ -38,7 +39,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        # Keep the runner within the locked Playwright browser installer support.
+        os: [ubuntu-24.04]
     timeout-minutes: 35
     steps:
       - name: Preserve source line endings
@@ -54,12 +56,16 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.22.1'
+      - run: node scripts/check-node-version.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: 11.28.5
           package_json_file: .ci-dsh/package.json
       - run: pnpm install --frozen-lockfile
+      - name: Install native libc test toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches patches/dsh-v0.2.1-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Verify normal installed assistant cold startup and restart
         shell: bash

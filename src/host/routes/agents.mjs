@@ -1,6 +1,8 @@
 /** agents operations; authentication and lifetime belong to the dispatcher. */
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
-export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, assistantSetup }) {
+import { clampExecutionMode, readExecutionMode } from '../../execution-policy.mjs';
+
+export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, assistantSetup, cloudExecutionModes }) {
     return async (endpoint, payload, signal) => {
         const serverClient = await serverClientPromise;
         if (endpoint === 'agents/local-delete') {
@@ -70,7 +72,26 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
             if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
             const connection = await (await deployments()).agents.connect(agentId);
             return { ok: true, value: { agentId, buildId: connection.agent.deployment.buildId,
-                executionPolicy: connection.executionPolicy || null } };
+                executionPolicy: connection.executionPolicy || null,
+                allowedPermissionModes: connection.allowedPermissionModes || [],
+                executionModeSwitching: connection.executionModeSwitching === true,
+                selectedPermissionMode: cloudExecutionModes ? await cloudExecutionModes.get(agentId) : null } };
+        }
+        if (endpoint === 'agents/execution-policy-set') {
+            const agentId = String(payload?.agentId || '').trim();
+            if (!agentId) return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
+            const mode = readExecutionMode(payload?.permissionMode);
+            if (!mode) return { ok: false, error: { code: 'CLOUD_EXECUTION_MODE_INVALID', message: '云端执行权限无效', details: {} } };
+            if (!cloudExecutionModes) return { ok: false, error: { code: 'CLOUD_EXECUTION_MODE_UNAVAILABLE', message: '云端执行权限尚未启用', details: {} } };
+            // Verify ownership and the frozen image declaration before persisting.
+            const connection = await (await deployments()).agents.connect(agentId);
+            if (connection.executionModeSwitching !== true) return { ok: false, error: { code: 'CLOUD_EXECUTION_MODE_UNSUPPORTED', message: '当前云端镜像尚不支持切换执行权限，请更新实例镜像版本', details: {} } };
+            const allowed = connection.allowedPermissionModes || [];
+            const clamped = clampExecutionMode(mode, allowed.at(-1));
+            if (!allowed.includes(clamped)) return { ok: false, error: { code: 'CLOUD_EXECUTION_MODE_DENIED', message: '该权限超出部署声明范围', details: {} } };
+            const selectedPermissionMode = await cloudExecutionModes.set(agentId, clamped);
+            return { ok: true, value: { agentId, selectedPermissionMode,
+                allowedPermissionModes: allowed, executionPolicy: connection.executionPolicy || null } };
         }
         if (endpoint === 'agents/ensure-preset') {
             let agentId = String(payload?.agentId || '').trim();

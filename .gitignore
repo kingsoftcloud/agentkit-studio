@@ -75,3 +75,5 @@ output/playwright/
 .ci-tools/
 
 packages/agentkit-harness-ui/markdown/dist/
+# Local pnpm content store (never a build input)
+.pnpm-store/

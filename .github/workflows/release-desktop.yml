@@ -8,9 +8,9 @@ on:
         required: true
         type: string
       studio_checkout_ref:
-        description: "Private Studio branch or tag that contains studio_ref (checkout transport only)"
+        description: "Branch or tag that contains studio_ref (checkout transport only; must contain the immutable SHA)"
         required: true
-        default: codex/agentkit-studio-p1-1
+        default: main
         type: string
       dsh_ref:
         description: "DSH tag or commit used by the Studio release"
@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
@@ -179,7 +179,7 @@ jobs:
       - name: Set up Node and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
       - uses: pnpm/action-setup@v4
         with:
           version: 11.28.5
@@ -525,7 +525,7 @@ jobs:
       - name: Set up Node and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
       - uses: pnpm/action-setup@v4
         with:
           version: 11.28.5
@@ -577,6 +577,20 @@ jobs:
           if [[ -n "$EXPECTED_PREVIOUS" ]]; then args+=(--expected-previous-version "$EXPECTED_PREVIOUS"); fi
           if [[ -n "$COMPATIBILITY_ORIGIN" ]]; then args+=(--compatibility-origin "$COMPATIBILITY_ORIGIN"); fi
           node scripts/desktop-release.mjs "${args[@]}"
+      - name: Refresh the stable studio/latest download alias
+        shell: bash
+        working-directory: studio
+        env:
+          STUDIO_DOWNLOAD_PROD_KS3_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
+          STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY }}
+          STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY }}
+          ALIAS_ORIGIN: ${{ needs.source-gate.outputs.update_origin }}
+          ALIAS_CHANNEL: ${{ needs.source-gate.outputs.channel }}
+        run: |
+          set -euo pipefail
+          test -n "$ALIAS_ORIGIN"
+          test -n "$ALIAS_CHANNEL"
+          node scripts/publish-download-alias.mjs --origin "$ALIAS_ORIGIN" --channel "$ALIAS_CHANNEL"
       - name: Upload publication evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -613,7 +627,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
       - name: Verify real installed update and retained data
         working-directory: studio
         env:
@@ -735,6 +749,9 @@ jobs:
           version: 11.28.5
           package_json_file: .ci-dsh/package.json
       - run: pnpm install --frozen-lockfile
+      - name: Install native libc test toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build and verify the maintained Host
         run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.1-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Install Chromium
@@ -752,10 +769,6 @@ jobs:
         run: node scripts/verify-studio-plugin-lifecycle.mjs .artifacts/public-web/lifecycle.json
       - name: Verify frozen runtime
         run: node scripts/verify-studio-frozen-host.mjs .artifacts/public-web/frozen-host.json
-      - name: Verify durable assistant and catalog in the browser
-        env:
-          STUDIO_VERIFY_UI: '1'
-        run: node scripts/verify-personal-assistant-host.mjs .artifacts/public-web/assistant.json
       - name: Verify native sidebar and ordinary Agent workflows
         run: node ci/verify-public-web.mjs
       - name: Preserve Web and Host acceptance evidence
@@ -771,3 +784,27 @@ jobs:
             studio/.artifacts/refactor/stage-2/sidebar-seed.json
           if-no-files-found: warn
           retention-days: 14
+
+  queue-windows:
+    name: Queue matching Windows release
+    needs: [source-gate, macos-arm64]
+    if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && needs.macos-arm64.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Queue the Windows build for the same release batch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run release-windows.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f studio_ref="${{ inputs.studio_ref }}" \
+            -f studio_checkout_ref="${{ inputs.studio_checkout_ref }}" \
+            -f build_version="${{ needs.source-gate.outputs.build_version }}" \
+            -f channel="${{ needs.source-gate.outputs.channel }}" \
+            -f update_origin="${{ needs.source-gate.outputs.update_origin }}" \
+            -f diagnostic_only=false

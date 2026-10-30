@@ -1,4 +1,12 @@
 import { callStudioOperation } from '../contracts/transport.mjs';
+
+/** Accept the legacy control-plane list shape (a bare item array) beside the
+ * current `{ items, catalog }` market envelope, so an older Web deployment
+ * still renders the market instead of showing an empty list. */
+function dshPluginMarketList(value) {
+    return Array.isArray(value) ? { items: value, catalog: null } : value;
+}
+
 /** Shared product transport; credentials and providers remain in the Host. */
 export function createProductClient(connection, { window = globalThis.window } = {}, extend) {
     const config = window.__AGENTKIT_STUDIO__ || {};
@@ -213,12 +221,6 @@ export function createProductClient(connection, { window = globalThis.window } =
     }
     return {
         computerConnection: signal => studioBridgeOperation('host/computer', {}, signal),
-        closeAssistant: payload => studioBridgeOperation('assistant/close', payload),
-        assistantCatalog: () => studioBridgeOperation('assistant/catalog', {}),
-        assistantExecute: (agentId, operation, input = {}, signal) => studioBridgeOperation('assistant/execute', { agentId, operation, input }, signal),
-        assistantSetupOptions: () => studioBridgeOperation('assistant/setup-options', {}),
-        assistantSetupStart: input => studioBridgeOperation('assistant/setup-start', input),
-        assistantSetupStatus: () => studioBridgeOperation('assistant/setup-status', {}),
         get baseUrl() { return baseUrl; },
         health: () => directServer() ? Promise.resolve({ status: 'ok', source: 'agentengine-server', controlPlane: true }) : request('/api/v1/system/health'),
         bootstrap: () => directServer() ? Promise.resolve({ workspaceReady: true, source: 'agentengine-server' }) : request('/api/v1/system/bootstrap'),
@@ -231,6 +233,7 @@ export function createProductClient(connection, { window = globalThis.window } =
         // `/api/v1/agents` is an older collection endpoint in some Hosts and
         // returns an array; normalize it to the Studio `{ items }` contract.
         agentExecutionPolicy: agentId => studioBridgeOperation('agents/execution-policy', { agentId }),
+        setAgentExecutionMode: (agentId, permissionMode) => studioBridgeOperation('agents/execution-policy-set', { agentId, permissionMode }),
         agents: async ({ page = 1, pageSize = 50, query = '', source = 'all' } = {}) => {
             // DSH Web renders plugin UI in an opaque srcdoc frame.  Use the
             // authenticated Connection carrier for the local control plane;
@@ -440,7 +443,25 @@ export function createProductClient(connection, { window = globalThis.window } =
         updateSchedule: (agentId, taskId, payload) => directServer() ? studioBridgeOperation('schedules/update', { agentId, taskId, patch: payload }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'PUT', body: JSON.stringify(payload) }),
         deleteSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/delete', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId), { method: 'DELETE' }),
         runSchedule: (agentId, taskId) => directServer() ? studioBridgeOperation('schedules/run', { taskId, agentId }) : request('/api/v1/agents/' + encodeURIComponent(agentId) + '/schedules/' + encodeURIComponent(taskId) + ':run', { method: 'POST' }),
-        dshPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-list', {}) : request('/api/v1/plugin-ecosystems/dsh/plugins'),
+        dshPlugins: () => (bridgeAvailable()
+            ? studioBridgeOperation('plugins/dsh-list', {})
+            : request('/api/v1/plugin-ecosystems/dsh/plugins')).then(dshPluginMarketList),
+        refreshDshPluginIndex: () => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-index-refresh', {}) : request('/api/v1/plugin-ecosystems/dsh/catalog:refresh', { method: 'POST' }),
+        discoverDshPlugins: (options = {}) => bridgeAvailable()
+            ? studioBridgeOperation('plugins/dsh-discover', { force: options?.force === true })
+            : request('/api/v1/plugin-ecosystems/dsh/discover' + (options?.force ? '?force=true' : '')),
+        // Lifecycle calls must live on the base product client: the DSH plugin
+        // surface mounts this object directly (no compatibility extension), so
+        // compatibility-methods-only keys would be missing at runtime.
+        installDshPlugin: (source, acceptHostPermissions = false) => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-install', { source, acceptHostPermissions }) : request('/api/v1/plugin-ecosystems/dsh/plugins:install', {
+            method: 'POST', body: JSON.stringify({ source, acceptHostPermissions }),
+        }),
+        enableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-enable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':enable', { method: 'POST' }),
+        disableDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-disable', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':disable', { method: 'POST' }),
+        updateDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-update', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName) + ':update', {
+            method: 'POST', body: JSON.stringify({ acceptHostPermissions: true }),
+        }),
+        uninstallDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
         codexPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/codex-list', {}) : request('/api/v1/plugin-ecosystems/codex/plugins'),
         inspectCodexPlugin: pluginId => studioBridgeOperation('plugins/codex-inspect', { pluginId }),
         installCodexPlugin: (pluginId, marketplaceName) => bridgeAvailable() ? studioBridgeOperation('plugins/codex-install', { pluginId, marketplaceName }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {

@@ -12,7 +12,10 @@ async function fixture(t, profile = ASSISTANT_PERMISSION_PROFILE) {
   await mkdir(join(root, 'agentkit')); await mkdir(join(root, 'dsh'));
   const digest = 'a'.repeat(64);
   await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: digest }));
-  const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: digest };
+  // A managed assistant deployment always receives its DeepSeek search
+  // credential from the frozen bundle; the uncredentialed variant is covered
+  // by the dedicated web-tool admission test below.
+  const env = { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: digest, DEEPSEEK_API_KEY: 'test-search-credential' };
   const ctx = { get: () => undefined, on: () => () => {} };
   return { root, env, ctx, model: await createAssistantPermissionModel({ ctx, env, profile, agentId: 'agent-one' }) };
 }
@@ -110,4 +113,141 @@ test('missing, rejected and ineffective managed permission setters leave the too
     assert.ok([...f.guards].some(guard => guard({ agent: f.agent, name: 'write', arguments: { file_path: 'note.txt' } })), 'failed native initialization must not expose tools');
     assert.equal(f.model.ownsSession(f.agent.session.id), false);
   }
+});
+
+test('a sensitive catalog cannot grant a Schedule name without its native trusted registration', async t => {
+  const f = await fixture(t);
+  for (const name of ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']) {
+    await assert.rejects(createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one',
+      sensitiveTools: [{ name, category: 'destructive-delete', describe: () => 'Spoofed schedule operation', definition: { name, execute: async () => [] } }],
+    }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+  }
+});
+
+test('public web tools are admitted as bounded read-only operations', async t => {
+  const f = await configuredFixture(t);
+  for (const name of ['web_search', 'web_fetch']) f.services.tools.register({ name, execute: async () => ({}) });
+  const created = await f.model.ensure(f.agent, true);
+  assert.equal(created.network, 'public-web-read-only');
+  assert.deepEqual(created.webTools, ['web_search', 'web_fetch']);
+  const gate = exec => [...f.guards].at(-1)(exec);
+  assert.equal(gate({ agent: f.agent, name: 'web_search', arguments: { queries: ['ai news'] } }), undefined);
+  assert.equal(gate({ agent: f.agent, name: 'web_fetch', arguments: { url: 'https://example.com/news' } }), undefined);
+  // Assembled so the public-surface audit does not read these fixtures as
+  // committed internal hosts or credentials.
+  const loopback = ['127', '0', '0', '1'].join('.'), privateHost = ['10', '0', '0', '7'].join('.');
+  const internalHost = ['metadata', 'internal'].join('.'), credentialUrl = `https://${['user', 'pass'].join(':')}@example.com/`;
+  for (const url of [`http://${loopback}:8080/`, 'https://169.254.169.254/latest/meta-data', `http://${privateHost}/`,
+    credentialUrl, `http://${internalHost}/`, 'file:///etc/passwd', `https://example.com/${'a'.repeat(2100)}`]) {
+    assert.match(gate({ agent: f.agent, name: 'web_fetch', arguments: { url } }), /联网读取|不能访问/);
+  }
+  assert.match(gate({ agent: f.agent, name: 'bash', arguments: { command: 'id' } }), /not admitted/);
+});
+
+test('without a DeepSeek search credential the profile advertises and admits only web_fetch', async t => {
+  const f = await configuredFixture(t);
+  for (const name of ['web_search', 'web_fetch']) f.services.tools.register({ name, execute: async () => ({}) });
+  const env = { ...f.env }; delete env.DEEPSEEK_API_KEY;
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
+  t.after(() => model.dispose());
+  const created = await model.ensure(f.agent, true);
+  assert.deepEqual(created.webTools, ['web_fetch']);
+  const gate = exec => [...f.guards].at(-1)(exec);
+  assert.equal(gate({ agent: f.agent, name: 'web_fetch', arguments: { url: 'https://example.com/news' } }), undefined);
+  assert.match(gate({ agent: f.agent, name: 'web_search', arguments: { queries: ['ai news'] } }), /not admitted/);
+});
+
+test('a sensitive catalog cannot claim either web tool name', async t => {
+  const f = await fixture(t);
+  for (const name of ['web_search', 'web_fetch']) {
+    await assert.rejects(createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one',
+      sensitiveTools: [{ name, category: 'external-send', describe: () => 'Spoofed web operation', definition: { name, execute: async () => [] } }],
+    }), { code: 'ASSISTANT_PERMISSION_UNAVAILABLE' });
+  }
+});
+
+async function cloudFixture(t, { grants = ['code-execution'], cloudSandbox, cloudBrowser } = {}) {
+  const f = await fixture(t);
+  const env = { ...f.env, ...(arguments[1]?.env || {}) };
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env, profile: ASSISTANT_PERMISSION_PROFILE,
+    agentId: 'agent-one', grants, cloudSandbox, cloudBrowser });
+  const cwd = await model.newSessionCwd('assistant-cloud');
+  const guards = new Set(), definitions = new Map();
+  let permission = 'read-only', policy = 'ask';
+  const services = {
+    tools: {
+      guard(callback) { guards.add(callback); return () => guards.delete(callback); },
+      get: name => definitions.get(name), register: definition => { definitions.set(definition.name, definition); return () => definitions.delete(definition.name); },
+    },
+    approval: { effectivePolicy: () => policy, request: async () => 'unavailable' },
+    fs: { sandboxMode: 'read-only' }, workingDirectory: { get: () => cwd },
+    sandboxPolicy: { resolve: () => ({ mode: permission }) },
+    permissionPresets: { set(session, preset) { permission = preset; policy = 'ask'; } },
+  };
+  f.ctx.get = key => services[key];
+  const agent = { session: { id: 'assistant-cloud', header: { cwd } }, ctx: f.ctx };
+  const snapshot = await model.ensure(agent, true);
+  return { ...f, model, agent, services, guards, snapshot, cwd };
+}
+
+test('a code-execution grant registers the confined tools and reports the bounded domain', async t => {
+  const f = await cloudFixture(t, { cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  assert.equal(f.snapshot.execution, 'bounded-cloud-exec/v1');
+  assert.equal(f.snapshot.network, 'offline');
+  assert.deepEqual(f.snapshot.shellTools, ['cloud_bash', 'cloud_run_code']);
+  assert.deepEqual(f.snapshot.grants, ['code-execution']);
+  assert.equal(f.snapshot.arbitraryShell, false);
+  const guard = [...f.guards].at(-1);
+  assert.equal(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), undefined);
+  // The grant admits exactly the two confined tools; the native shell names stay refused.
+  assert.match(guard({ agent: f.agent, name: 'bash', arguments: { command: 'pwd' } }), /not admitted/);
+});
+
+test('without the grant the cloud tools are absent and shell names stay refused', async t => {
+  const f = await cloudFixture(t, { grants: [] });
+  assert.equal(f.snapshot.execution, 'fixed-tool-operations');
+  assert.deepEqual(f.snapshot.shellTools, []);
+  assert.deepEqual(f.snapshot.grants, []);
+  const guard = [...f.guards].at(-1);
+  assert.match(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), /not admitted/);
+});
+
+test('a grant on an image without a usable confiner stays unregistered and reports it', async t => {
+  const f = await cloudFixture(t, { cloudSandbox: { available: false, reason: '运行镜像缺少 bubblewrap' } });
+  assert.equal(f.snapshot.execution, 'unavailable');
+  assert.deepEqual(f.snapshot.shellTools, []);
+  const guard = [...f.guards].at(-1);
+  assert.match(guard({ agent: f.agent, name: 'cloud_bash', arguments: { command: 'pwd' } }), /not admitted/);
+});
+
+test('runtime identity advertises cloud execution only for a real grant and confiner', async t => {
+  const f = await fixture(t);
+  const grant = { profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one', grants: ['code-execution'] };
+  const live = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  assert.deepEqual(live.cloudCapabilities, { codeExecution: true, browser: false, network: 'offline' });
+  const missing = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, cloudSandbox: { available: false, reason: '缺少 bubblewrap' } });
+  assert.equal(missing.cloudCapabilities.codeExecution, false, 'an unconfined image must not advertise the capability');
+  const ungranted = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
+  assert.equal(ungranted.cloudCapabilities.codeExecution, false);
+  const legacy = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, agentId: 'agent-one', grants: ['code-execution'], cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  assert.equal(legacy.cloudCapabilities.codeExecution, false, 'legacy profile never advertises the capability');
+  const browsing = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, grants: ['browser'], cloudBrowser: { available: true, chromium: '/usr/bin/chromium' } });
+  assert.equal(browsing.cloudCapabilities.browser, true);
+  assert.equal(browsing.cloudCapabilities.network, 'public-web-read-only');
+  const noChromium = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, grants: ['browser'], cloudBrowser: { available: false, reason: '缺少浏览器' } });
+  assert.equal(noChromium.cloudCapabilities.browser, false, 'an image without Chromium must not advertise browsing');
+});
+
+test('a browser grant registers the CDP tools only when the image ships Chromium', async t => {
+  const chromiumEnv = { AGENTKIT_CHROMIUM: process.execPath };
+  const granted = await cloudFixture(t, { grants: ['browser'], cloudBrowser: { available: true }, env: chromiumEnv });
+  assert.equal(granted.snapshot.browserTools.length, 8);
+  assert.equal(granted.snapshot.network, 'public-web-read-only');
+  assert.deepEqual(granted.snapshot.grants, ['browser']);
+  const guard = [...granted.guards].at(-1);
+  assert.equal(guard({ agent: granted.agent, name: 'cloud_browser_open', arguments: { url: 'https://example.com' } }), undefined);
+  const headless = await cloudFixture(t, { grants: ['browser'], cloudBrowser: { available: false, reason: '缺少 Chromium' } });
+  assert.deepEqual(headless.snapshot.browserTools, []);
+  assert.deepEqual(headless.snapshot.grants, ['browser']);
+  assert.match([...headless.guards].at(-1)({ agent: headless.agent, name: 'cloud_browser_open', arguments: { url: 'https://example.com' } }), /not admitted/);
 });

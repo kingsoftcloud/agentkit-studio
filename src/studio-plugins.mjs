@@ -4,8 +4,15 @@
  * (`PluginManager`, `PluginInventoryGateway`) inside the host process. The
  * plugin Node half shares that context, so this adapter calls the services
  * directly — no profile file reads, no CLI forwarding.
+ *
+ * The market catalog is metadata only: the built-in curated list plus an
+ * optional operator-provided remote index. Installation, profile writes,
+ * compatibility checks, approvals and runtime loading stay owned by the
+ * official DSH plugin manager.
  */
-import { dshCuratedEntries, dshCuratedPlugin } from './dsh-plugin-catalog.mjs';
+import { createDshPluginDiscovery } from './dsh-plugin-discovery.mjs';
+import { createDshPluginIndex } from './dsh-plugin-index.mjs';
+
 export class StudioPluginsError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -15,12 +22,25 @@ export class StudioPluginsError extends Error {
   }
 }
 
+function incompatibilityMessage(error) {
+  const rows = Array.isArray(error?.incompatible) ? error.incompatible : [];
+  if (!rows.length) return '';
+  // DSH 只把版本闸门的明细放在 `incompatible` 里，界面不展示会让用户只看到
+  // `incompatible-version` 这种无信息量的 code，误以为插件包坏了。
+  const lines = rows.slice(0, 3).map(row => {
+    const requirements = Object.entries(row?.requirements && typeof row.requirements === 'object' ? row.requirements : {})
+      .map(([field, expected]) => `${field}=${expected}`).join('、');
+    return `${row.name}@${row.version} 要求 ${requirements || '未声明'}，当前 Studio 运行时是 ${row.runtimeVersion || '未知版本'}`;
+  });
+  return `插件与当前 Studio 运行时版本不兼容：${lines.join('；')}。请把 Studio 更新到最新版本后再安装。`;
+}
+
 function changeResult(change) {
   if (!change || !['applied', 'restart-required'].includes(change.application) || change.error) {
     const details = change || {};
     const diagnostic = String(change?.error?.diagnostic || '').slice(-1200);
     const code = change?.application === 'cancelled' ? 'DSH_PLUGIN_CANCELLED' : 'DSH_PLUGIN_OPERATION_FAILED';
-    throw new StudioPluginsError(code, diagnostic || `插件操作未生效：${change?.error?.code || change?.application || '宿主没有返回结果'}`, details);
+    throw new StudioPluginsError(code, diagnostic || incompatibilityMessage(change?.error) || `插件操作未生效：${change?.error?.code || change?.application || '宿主没有返回结果'}`, details);
   }
   return { ok: true, ...change, note: change.application === 'restart-required' ? '配置已保存，需要重启 Host 后生效。' : 'Host 已应用插件变更。' };
 }
@@ -56,85 +76,157 @@ async function serviceReadiness(getService, requirement) {
   return { state: 'ready', checks, note: 'Host 服务能力检查通过。' };
 }
 
-async function verifyItem(item, getService) {
-  const curated = dshCuratedPlugin(item.pluginId);
-  if (!curated) return { state: 'loaded', checks: [], note: 'Host 已加载声明的插件行；该插件没有 Studio 能力 smoke 清单。' };
+/** Installed state and host-owned readiness for one market row. */
+async function verifyItem(item, getService, entry) {
   if (!item.installed) return { state: 'not-installed', checks: [], note: '插件尚未安装。' };
   if (item.enabled === false) return { state: 'disabled', checks: [], note: '插件已安装但未启用。' };
   if (item.error) return { state: 'failed', checks: [], note: `Host 报告加载错误：${item.error.diagnostic || item.error.code || 'unknown'}` };
+  // Host-owned probes exist only for curated first-party bundles. Every other
+  // plugin is reported as loaded without calling arbitrary host services.
+  if (!entry || !entry.expectedEntries?.length) {
+    return { state: 'loaded', checks: [], note: 'Host 已加载该插件；Studio 没有它的能力探针。' };
+  }
   const rows = Array.isArray(item.rows) ? item.rows : [];
-  const rowChecks = curated.expectedEntries.map(expected => {
+  const rowChecks = entry.expectedEntries.map(expected => {
     const row = rows.find(candidate => rowKey(candidate) === expected || rowKey(candidate).endsWith(`#${expected}`) || rowKey(candidate).endsWith(`:${expected}`));
     return { entry: expected, ok: Boolean(row && rowIsActive(row)), phase: row?.fiberPhase || 'missing' };
   });
   const missing = rowChecks.filter(check => !check.ok).map(check => check.entry);
   if (missing.length) return { state: 'failed', checks: rowChecks, note: `Host 尚未加载能力行：${missing.join('、')}` };
-  const service = await serviceReadiness(getService, curated.service);
+  const service = await serviceReadiness(getService, entry.service);
   if (service.state !== 'ready') return { state: 'failed', checks: [...rowChecks, ...service.checks], note: service.note };
-  return { state: 'ready', checks: [...rowChecks, ...service.checks], note: curated.readinessNote };
+  return { state: 'ready', checks: [...rowChecks, ...service.checks], note: entry.readinessNote || 'Host 已加载插件并提供声明的能力。' };
 }
 
 /** Resolve a host service by name from the plugin root context. */
-export function createStudioPlugins({ getService } = {}) {
+export function createStudioPlugins({
+  getService,
+  pluginIndex = createDshPluginIndex(),
+  discovery = createDshPluginDiscovery(),
+} = {}) {
   function service(name) {
     const instance = getService?.(name);
     if (!instance) throw new StudioPluginsError('SERVICE_UNAVAILABLE', `宿主服务 ${name} 不可用（需要 DSH 0.2.1-rc.2）`, { service: name });
     return instance;
   }
 
-  async function readDshItems(manager) {
+  async function readDshItems(manager, catalog) {
     // The market lists product bundles (profile manifest selections) —
     // installable, enable/disable-able via setBundleEnabled. The ~200 Loader
     // plugin rows belong to DSH settings' plugin manager page, not a store.
+    const entryById = new Map((catalog?.entries || []).map(entry => [entry.id, entry]));
     const bundles = await manager.listBundles();
-    const entries = typeof manager.listPlugins === 'function' ? await manager.listPlugins() : [];
-    const byId = new Map(entries.map(entry => [entry.entryId, entry]));
+    const rows = typeof manager.listPlugins === 'function' ? await manager.listPlugins() : [];
+    const rowsById = new Map(rows.map(entry => [entry.entryId, entry]));
     const items = await Promise.all((bundles || []).map(async bundle => {
-      const curated = dshCuratedPlugin(bundle.name);
-      const rows = (bundle.rows || []).map(row => ({ ...row, ...(byId.get(row.entryId) || {}) }));
-      const activeRows = rows.filter(rowIsActive);
-      const failed = rows.some(row => row.fiberPhase === 'failed');
+      const pluginId = String(bundle.name);
+      const entry = entryById.get(pluginId) || null;
+      const bundleRows = (bundle.rows || []).map(row => ({ ...row, ...(rowsById.get(row.entryId) || {}) }));
+      const activeRows = bundleRows.filter(rowIsActive);
+      const failed = bundleRows.some(row => row.fiberPhase === 'failed');
       const error = bundle.error || (failed ? { code: 'plugin-load-failed' } : undefined);
       const item = {
-        pluginId: String(bundle.name),
-        name: String(bundle.name),
-        displayName: String(bundle.meta?.displayName || curated?.displayName || bundle.name),
-        description: String(bundle.description || curated?.description || ''),
+        pluginId,
+        name: pluginId,
+        displayName: String(bundle.meta?.displayName || entry?.displayName || pluginId),
+        description: String(bundle.description || entry?.description || ''),
         version: String(bundle.version || ''),
         source: bundle.installed ? 'profile' : bundle.availability === 'installation' ? 'bundled' : 'catalog',
         enabled: bundle.enabled !== false,
         kind: 'dsh',
         availability: bundle.availability,
         installTarget: bundle.installTarget,
+        installSpec: pluginId,
         installed: bundle.installed || bundle.availability !== 'missing',
         optional: bundle.optional === true,
         removable: bundle.removable === true,
         readOnlyReason: bundle.readOnlyReason || (bundle.availability === 'installation' && !bundle.installed && !bundle.optional ? 'host-component' : ''),
         ...(error ? { error } : {}),
-        rows,
+        rows: bundleRows,
         status: error ? 'error' : bundle.availability === 'missing' && !bundle.installed ? 'available' : !bundle.enabled ? 'disabled'
-          : activeRows.length === rows.length && rows.length ? 'active' : activeRows.length ? 'partial' : 'selected',
+          : activeRows.length === bundleRows.length && bundleRows.length ? 'active' : activeRows.length ? 'partial' : 'selected',
       };
-      return { ...item, ...(curated ? { ...curated, pluginId: item.pluginId, name: item.name, version: item.version, source: item.source, enabled: item.enabled, installed: item.installed, optional: item.optional, removable: item.removable, readOnlyReason: item.readOnlyReason, rows: item.rows, status: item.status, verification: await verifyItem(item, getService) } : {}) };
+      const verification = await verifyItem(item, getService, entry);
+      return entry ? {
+        ...entry,
+        pluginId,
+        name: pluginId,
+        displayName: item.displayName,
+        description: item.description,
+        version: item.version,
+        source: item.source,
+        enabled: item.enabled,
+        installed: item.installed,
+        optional: item.optional,
+        removable: item.removable,
+        readOnlyReason: item.readOnlyReason,
+        installSpec: item.installSpec,
+        rows: item.rows,
+        status: item.status,
+        ...(item.error ? { error: item.error } : {}),
+        verification,
+      } : { ...item, verification };
     }));
     const known = new Set(items.map(item => item.pluginId));
-    for (const curated of dshCuratedEntries()) {
-      if (known.has(curated.id)) continue;
-      items.push({ ...curated, pluginId: curated.id, name: curated.id, version: '', source: 'catalog', installed: false, enabled: false, optional: true, removable: false, status: 'available', verification: { state: 'not-installed', checks: [], note: '插件尚未安装。' } });
+    for (const entry of catalog?.entries || []) {
+      if (known.has(entry.id)) continue;
+      items.push({
+        ...entry,
+        pluginId: entry.id,
+        name: entry.id,
+        installSpec: entry.installSpec || entry.id,
+        version: '',
+        source: 'catalog',
+        installed: false,
+        enabled: false,
+        optional: true,
+        removable: false,
+        readOnlyReason: '',
+        status: 'available',
+        verification: { state: 'not-installed', checks: [], note: '插件尚未安装。' },
+      });
     }
     items.sort((left, right) => (right.featured === true) - (left.featured === true) || String(left.displayName || left.pluginId).localeCompare(String(right.displayName || right.pluginId)));
     return { items, source: 'plugin-manager' };
   }
 
+  /** Public plugin discovery: what exists in the npm/GitHub ecosystem, marked with local install state. */
+  async function discoverDsh({ force = false } = {}) {
+    const manager = service('pluginManager');
+    const [catalog, bundles] = await Promise.all([discovery.discover({ force: force === true }), manager.listBundles()]);
+    const byName = new Map((bundles || []).map(bundle => [String(bundle.name), bundle]));
+    const items = (catalog.items || []).map(item => {
+      const bundle = item.packageName ? byName.get(item.packageName) : undefined;
+      const installed = bundle !== undefined && (bundle.installed === true || bundle.availability !== 'missing');
+      return {
+        ...item,
+        installed,
+        installedVersion: bundle?.version || '',
+        enabled: bundle ? bundle.enabled !== false : false,
+        readOnlyReason: bundle?.readOnlyReason || '',
+      };
+    });
+    return { items, info: catalog.info, source: 'discovery' };
+  }
+
   async function listDsh() {
     const manager = service('pluginManager');
-    return readDshItems(manager);
+    const catalog = await pluginIndex.load();
+    return { ...(await readDshItems(manager, catalog)), catalog: catalog.info };
+  }
+
+  /** Force one remote catalog refresh (UI "刷新清单"); failures keep last data. */
+  async function refreshDshCatalog() {
+    const manager = service('pluginManager');
+    const catalog = await pluginIndex.refresh();
+    return { ...(await readDshItems(manager, catalog)), catalog: catalog.info };
   }
 
   async function verifyUsable(manager, name, change) {
     if (change.application === 'restart-required') return { state: 'pending-restart', checks: [], note: '配置已保存，需要重启 Host 后才能验证插件能力。' };
-    const catalog = await readDshItems(manager);
-    const item = catalog.items.find(row => row.pluginId === String(name));
+    const catalog = await pluginIndex.load();
+    const listed = await readDshItems(manager, catalog);
+    const item = listed.items.find(row => row.pluginId === String(name));
     if (!item) throw new StudioPluginsError('DSH_PLUGIN_NOT_FOUND_AFTER_CHANGE', '插件变更后 Host 清单中找不到该插件。', { pluginName: String(name), change });
     const verification = item.verification || { state: 'loaded', checks: [], note: 'Host 已加载插件。' };
     if (verification.state === 'failed') throw new StudioPluginsError('DSH_PLUGIN_NOT_USABLE', `插件已安装但能力验证失败：${verification.note}`, { pluginName: String(name), change, verification });
@@ -183,5 +275,5 @@ export function createStudioPlugins({ getService } = {}) {
     return { ...change, verification, note: verification.note };
   }
 
-  return { listDsh, installDsh, uninstallDsh, setDshEnabled, updateDsh };
+  return { discoverDsh, listDsh, refreshDshCatalog, installDsh, uninstallDsh, setDshEnabled, updateDsh };
 }

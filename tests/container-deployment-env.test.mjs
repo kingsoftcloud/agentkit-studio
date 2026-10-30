@@ -8,6 +8,7 @@ import { createPortableBundles } from '../src/portable-bundle.mjs';
 import { sha256 } from '../src/portable-resources.mjs';
 import { createContainerDeploymentEnvironment } from '../src/container-deployment-env.mjs';
 import { planKs3BundleUpload } from '../src/ks3-bundle-store.mjs';
+import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
 async function bundle(t, runtime = 'harness', primaryCredential = 'AGENTKIT_MODEL_API_KEY') {
   const storeDir = await mkdtemp(join(tmpdir(), 'studio-deployment-env-'));
@@ -26,6 +27,21 @@ async function bundle(t, runtime = 'harness', primaryCredential = 'AGENTKIT_MODE
 }
 const runtimeToken = 'independent-runtime-access-token';
 const credentials = { AGENTKIT_MODEL_API_KEY: 'test-model', OTHER_KEY: 'other-private-key', SEARCH_KEY: 'search-private-key', UNRELATED_SECRET: 'must-not-copy' };
+
+test('generated model credential names survive private bundle delivery and container injection', async t => {
+  for (const runtime of ['harness', 'dsh-native', 'codex']) {
+    for (const name of ['AGENTKIT_MODEL_API_KEY_MH7E4S', modelCredentialName({ id: 'custom:vision' })]) {
+      const zip = await bundle(t, runtime, name);
+      const source = planKs3BundleUpload(zip, { endpoint: 'https://ks3-cn-beijing.ksyuncs.com', bucket: 'private-bundles', uploadId: '12345678-1234-1234-1234-123456789012' });
+      const rows = createContainerDeploymentEnvironment({ zip, expectedSha256: sha256(zip), runtimeToken,
+        credentials: { ...credentials, [name]: 'generated-model-private-key' }, bundleSource: source });
+      for (const key of [name, 'OPENAI_API_KEY']) {
+        assert.deepEqual(rows.find(row => row.Key === key), { Key: key, Value: 'generated-model-private-key', IsSensitive: true });
+      }
+      assert.equal(zip.includes(Buffer.from('generated-model-private-key')), false);
+    }
+  }
+});
 
 test('all Studio runtimes reuse the frozen primary model key in the existing Container API', async t => {
   for (const runtime of ['harness', 'dsh-native', 'codex']) {
@@ -72,10 +88,16 @@ test('aliases never replace a different resource credential and keep existing se
 });
 
 test('deployment refuses Host control variables as resource credentials before creating a container', async t => {
-  for (const reserved of ['NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'HOME', 'AGENTKIT_RUNTIME_TOKEN']) {
+  for (const reserved of ['NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'HOME', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_HOME',
+    'DSH_HOME', 'CODEX_HOME', 'XDG_CONFIG_HOME', 'AGENTKIT_MODEL_API_KEY_', 'AGENTKIT_MODEL_API_KEYEXTRA']) {
     const zip = await bundle(t, 'harness', reserved);
     assert.throws(() => createContainerDeploymentEnvironment({ zip, expectedSha256: sha256(zip), runtimeToken,
-      credentials: { ...credentials, [reserved]: 'unsafe-override' } }), { code: 'BUNDLE_HOST_CREDENTIAL_RESERVED' });
+      credentials: { ...credentials, [reserved]: 'unsafe-override' } }), error => {
+      assert.equal(error.code, 'BUNDLE_HOST_CREDENTIAL_RESERVED');
+      assert.ok(error.message.includes(reserved));
+      assert.equal(error.message.includes('unsafe-override'), false);
+      return true;
+    });
   }
 });
 

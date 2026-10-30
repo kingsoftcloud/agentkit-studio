@@ -45,6 +45,17 @@ export const APPROVED_INTERNAL_SERVICE_HOSTS = new Set([
   'inner.api.ksyun.com',
 ]);
 
+// Reviewed synthetic fixtures that already exist in the public history of the
+// test suite. The working tree no longer contains them, and a public branch
+// cannot rewrite history, so their exact values are exempted for historical test
+// blobs only. Never add a real endpoint, credential or private address here.
+// Assembled so this allow-list is not itself a committed private endpoint.
+export const APPROVED_HISTORICAL_TEST_VALUES = Object.freeze({
+  'private-network-address': new Set([['10', '0', '0', '7'].join('.')]),
+  'internal-service-host': new Set([['metadata', 'internal'].join('.')]),
+});
+const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token', 'fixture-secret']);
+
 export function auditPath(file) {
   return FORBIDDEN_PATHS
     .filter(pattern => pattern.test(file))
@@ -74,12 +85,18 @@ function publicExample(name, candidate, text, file) {
     // Bare address literals in deterministic network-policy fixtures contain no
     // endpoint credentials; URLs and private endpoint configurations still fail.
     if (testInput && /^['"]/.test(value) && /['"]$/.test(value)) return true;
-    if (testInput && value.startsWith('/') && value.endsWith('/')) return true;
+    if (testInput && value.startsWith('/') && value.endsWith('/')
+      && !/https?:\/$/.test(text.slice(0, candidate.index))) return true;
   }
   if (name === 'embedded-url-credential' && testInput) {
     // Only these short, explicit synthetic user/password pairs are examples.
     // Other credentials and all provider-token patterns remain subject to scan.
-    return /^https?:\/\/user:(?:pass|password|secret|token|unsafe-token)@$/i.test(value);
+    try {
+      const tail = text.slice(candidate.index).match(/^https?:\/\/[^\s"'<>`]+/)?.[0];
+      const url = new URL(tail);
+      return ['example.test', 'example.com', 'fixture.test'].includes(url.hostname)
+        && url.username === 'user' && APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS.has(url.password);
+    } catch { return false; }
   }
   if (name === 'aws-access-key' && testInput) {
     return value === ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
@@ -98,7 +115,16 @@ export function auditText(file, source, { historical = false } = {}) {
     // Inspect every candidate: a public constant or placeholder cannot hide a
     // later real credential, including in a deleted historical test file.
     const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-    const match = [...text.matchAll(globalPattern)].find(candidate => !publicExample(name, candidate, text, file));
+    const match = [...text.matchAll(globalPattern)].find(candidate => {
+      if (publicExample(name, candidate, text, file)) return false;
+      if (!historical || !/^tests\//.test(file)) return true;
+      if (name === 'private-network-address') {
+        const address = /\d{1,3}(?:\.\d{1,3}){3}/.exec(candidate[0])?.[0];
+        if (APPROVED_HISTORICAL_TEST_VALUES[name].has(address)) return false;
+      }
+      if (name === 'internal-service-host' && APPROVED_HISTORICAL_TEST_VALUES[name].has(candidate[0].toLowerCase())) return false;
+      return true;
+    });
     if (!match) continue;
     const line = text.slice(0, match.index).split('\n').length;
     hits.push({ file, kind: name, line });

@@ -9,6 +9,7 @@ import { nativeCodexUsage } from './codex-usage.mjs';
  * the AgentEngine/local-runtime stream and back into DSH text chunks.
  */
 import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.mjs';
+import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
 import { dshModelFailure } from '../model-failure.mjs';
@@ -16,6 +17,7 @@ import { createCodexToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
+import { hasManagedApprovalRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 
 const ROUTE = 'agentkit-studio';
 
@@ -517,7 +519,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, observability, attachments, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, AdapterBase, bridge } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -547,6 +549,9 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const hasImage = Array.isArray(user?.content) && user.content.some(block => block?.type === 'image' && block.offloaded !== true);
       if (!agentId) throw Object.assign(new Error('请先绑定 Agent，再发送消息'), { code: 'STUDIO_AGENT_REQUIRED' });
       if (!input && !hasImage) throw Object.assign(new Error('请输入文字或添加图片后发送'), { code: 'STUDIO_INPUT_REQUIRED' });
+      const userId = resolveResourceUser
+        ? await resolveResourceUser({ agentId, sessionId: String(options.sessionId || '') })
+        : String(options.userId || options.metadata?.userId || options.user?.id || '');
       if (mode === 'local') {
         const history = await gatewayHistory(options.messages, { attachments, signal: options.signal, includeNotices: nativeTools });
         const content = [...history].reverse().find(message => message.role === 'user')?.content || input;
@@ -571,7 +576,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               agentRevision,
               input,
               sessionId: String(options.sessionId || ''),
-              userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
+              userId,
               toolAdapter,
               agent: toolAgent,
             })
@@ -592,11 +597,19 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               traceEvents.push({ event_type: `turn.${type}`, at, run_id: traceId, payload: { chars: String(chunk.text || '').length } });
             }
           };
+          // Codex App Server can only ask for command/permission approvals
+          // while the thread policy is `on-request`. Lift it for this turn only
+          // when a managed interactive run owns this DSH session.
+          const managedApprovalSessionId = String(options.sessionId || '');
+          const managedApproval = hasManagedApprovalRun(managedApprovalSessionId);
           try {
             yield* codexFrames(codexRuntime, {
               agentId,
               ...(cwd ? { cwd } : {}),
               ...selected,
+              ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]
+                ? { reasoningEffort: studioCodexReasoningWire(options.reasoningEffort) }
+                : {}),
               sessionId: String(options.sessionId || ''),
               input,
               messages: Array.isArray(options.messages) ? options.messages : [],
@@ -605,6 +618,14 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               systemPrompt: resources.systemPrompt || '',
               dynamicTools: resources.dynamicTools || [],
               toolHandler: resources.toolHandler,
+              ...(managedApproval ? {
+                approvalPolicy: 'on-request',
+                requestApproval: info => requestManagedApproval({
+                  ...info,
+                  nativeSessionId: managedApprovalSessionId,
+                  sessionId: managedApprovalSessionId,
+                }),
+              } : {}),
             }, recordChunk, toolRecorder);
             if (typeof resources.writeMemory === 'function') {
               try {
@@ -646,12 +667,13 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           ...(buildId ? { buildId } : {}),
           ...(agentRevision ? {agentRevision} : {}),
           sessionId: String(options.sessionId || ''),
-          userId: String(options.userId || options.metadata?.userId || options.user?.id || ''),
+          userId,
           input,
           content,
           history,
           ...(nativeTools ? { systemPrompt: (Array.isArray(options.messages) ? options.messages : []).filter(message => message?.role === 'system').map(textOf).filter(Boolean).join('\n\n') } : {}),
           ...(options.provider ? { modelSelection: { provider: options.provider, model: options.studioSelectedModel || options.model } } : {}),
+          ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],
         }, { signal: options.signal, toolAdapter, agent: toolAgent }); }

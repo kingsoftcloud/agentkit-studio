@@ -1,6 +1,7 @@
 import { hostFetch } from './http-fetch.mjs';
 /** Studio-owned model configuration. Only redacted metadata crosses Connection RPC. */
 import { syncGlobalModelCredential } from './model-credential-sync.mjs';
+import { studioReasoning } from './model-reasoning.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 
@@ -70,7 +71,12 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const baseUrl = selected.baseUrl || (selected.provider === 'ksyun' ? 'http://kspmas.ksyun.com/v1' : '');
     const url = new URL(baseUrl);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw Object.assign(new Error('模型 API 地址无效'), { code: 'MODEL_URL_INVALID', status: 400 });
-    return { ...selected, baseUrl: baseUrl.replace(/\/$/, ''), apiKey: key };
+    // Configuration stores `reasoningEfforts: true` as the opt-in marker; the
+    // Harness needs the materialized wire map, so resolve it once here.
+    const reasoning = studioReasoning(selected);
+    return { ...selected,
+      ...(reasoning ? { reasoningEfforts: reasoning.efforts, defaultReasoningEffort: reasoning.defaultEffort } : {}),
+      baseUrl: baseUrl.replace(/\/$/, ''), apiKey: key };
   }
   async function gatewayModels(selected, refresh = false) {
     const key = createHash('sha256').update(selected.baseUrl + '\0' + selected.apiKey).digest('hex');

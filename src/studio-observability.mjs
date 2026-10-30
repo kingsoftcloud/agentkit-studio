@@ -5,7 +5,7 @@
  * serves overview, list, detail, and raw OTLP to the observability page.
  */
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, open, rename, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, unlink, open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NATIVE_SKILL_EVENTS, selectNativeSkillEvents } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
 
@@ -96,7 +96,9 @@ function normalizeTrace(record) {
   return { ...record, spans, otlp, durationMs: Number.isFinite(duration) ? Math.max(0, duration) : null, runId: record.runId || record.events?.find(event => event.run_id)?.run_id || record.traceId, tokenUsage, totalTokens: tokenUsage.totalTokens };
 }
 
-export function createStudioObservability({ storeDir } = {}) {
+export function createStudioObservability({ storeDir, retentionDays = 30, maxTraces = 500 } = {}) {
+  const retentionMs = Number.isFinite(Number(retentionDays)) && Number(retentionDays) > 0 ? Number(retentionDays) * 24 * 3600 * 1000 : 30 * 24 * 3600 * 1000;
+  const traceLimit = Number.isInteger(maxTraces) && maxTraces > 0 ? maxTraces : 500;
   async function ensureDir() { await mkdir(storeDir, { recursive: true, mode: 0o700 }); }
 
   async function syncTrace({ traceId, sessionId, agentId, agentName, status, startedAt, completedAt, executionLocation = 'local', provenance, events = [], measuredTokenUsage }) {
@@ -113,7 +115,24 @@ export function createStudioObservability({ storeDir } = {}) {
       otlp: { resourceSpans: [{ resource: { attributes: [{ key: 'agent.id', value: { stringValue: String(agentId || '') } }, { key: 'agent.name', value: { stringValue: String(agentName || '') } }] }, scopeSpans: [{ spans: spans.map(span => ({ traceId: traceId, spanId: span.spanId, parentSpanId: span.parentSpanId, name: span.name, kind: span.kind, startTimeUnixNano: String(new Date(span.startedAt).getTime() * 1e6), endTimeUnixNano: String(new Date(span.endedAt).getTime() * 1e6), attributes: Object.entries(span.attributes).map(([key, value]) => ({ key, value: { stringValue: String(value) } })) })) }] }] },
     };
     await saveTrace(join(storeDir, `${record.traceId}.json`), record);
+    await cleanup();
     return record;
+  }
+
+  async function cleanup() {
+    let names;
+    try { names = (await readdir(storeDir)).filter(item => item.endsWith('.json')); } catch { return; }
+    const now = Date.now(), records = [];
+    for (const name of names) {
+      try {
+        const value = JSON.parse(await readFile(join(storeDir, name), 'utf8'));
+        const started = Date.parse(value.startedAt);
+        if (!Number.isFinite(started) || now - started > retentionMs) { await unlink(join(storeDir, name)).catch(() => {}); continue; }
+        records.push({ name, started });
+      } catch { /* keep malformed files for diagnosis */ }
+    }
+    records.sort((a, b) => b.started - a.started);
+    for (const item of records.slice(traceLimit)) await unlink(join(storeDir, item.name)).catch(() => {});
   }
 
   async function loadAll() {

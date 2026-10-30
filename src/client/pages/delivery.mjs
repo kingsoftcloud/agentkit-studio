@@ -31,6 +31,9 @@ export function createDeliveryPages({
     const [target, setTarget] = useState('auto');
     const [useRecommendedImage, setUseRecommendedImage] = useState(true);
     const [recordsLoaded, setRecordsLoaded] = useState(false);
+    // Polling every 5s must not re-render the page when nothing changed; React
+    // state updates keep the list stable across refreshes of an idle deployment.
+    const recordsSignature = useRef('');
     const existing = records.filter(record => record.agentId === agentId && record.cloudAgentId && record.state !== 'DELETED').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const deploymentTarget = target === 'auto' ? existing[0]?.id || 'new' : target;
     const targetRecord = existing.find(record => record.id === deploymentTarget);
@@ -60,11 +63,15 @@ export function createDeliveryPages({
             if (!DEPLOYMENT_POLL_STATES.has(item.state)) return item;
             try { return await hostRemote.refreshDeployment(item.id); } catch { return item; }
           }));
-          if (!stopped) { setRecords(next); setRecordsLoaded(true); }
+          if (!stopped) {
+            const signature = JSON.stringify(next);
+            if (signature !== recordsSignature.current) { recordsSignature.current = signature; setRecords(next); }
+            setRecordsLoaded(true);
+          }
         } catch (reason) { if (!stopped) setError(reason?.message || '部署记录读取失败'); }
         finally { running = false; }
       };
-      void poll(); const timer = setInterval(poll, 5000);
+      void poll(); const timer = setInterval(() => { if (!document.hidden) void poll(); }, 5000);
       return () => { stopped = true; clearInterval(timer); };
     }, []);
     const inspect = async () => {
