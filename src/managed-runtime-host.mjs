@@ -9,6 +9,18 @@ import { managedResourceServerRoot, managedResourcesNeedServer } from './managed
 import { privateRuntimeDirectory, inspectRuntimeInstallation, prepareRuntimeProfile, runtimeProfileArgs } from './runtime-host-installation.mjs';
 
 const fail = (suffix, message) => { throw Object.assign(new Error(message), { code: `MANAGED_HOST_${suffix}` }); };
+
+// Platform-managed observability env. Runtime Service rebuilds the Langfuse
+// primary route and the Server forwards the trusted CloudMonitor bundle; both
+// are already applied to the pod's container env, so the Host only has to stop
+// filtering them from its child. DSH_OTEL_CA_PEM_BASE64 carries an optional
+// pinned trust anchor for deployments without a publicly trusted endpoint.
+const MANAGED_OBSERVABILITY_ENV_NAMES = ['OTEL_EXPORTER_OTLP_PROTOCOL', 'OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_EXPORTER_OTLP_ENDPOINT',
+  'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_HEADERS', 'OTEL_EXPORTER_OTLP_TRACES_PROTOCOL',
+  'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
+  'CLOUD_MONITOR_OTLP_ENDPOINT', 'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'CLOUD_MONITOR_OTLP_PROTOCOL',
+  'CLOUD_MONITOR_OTLP_TRACES_PROTOCOL', 'CLOUD_MONITOR_OTLP_TRACES_HEADERS', 'CLOUD_MONITOR_APP_KEY',
+  'DSH_OTEL_CA_PEM_BASE64', 'DSH_OBSERVABILITY_CAPTURE_CONTENT'];
 const exists = path => lstat(path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
 
 async function immutableJson(path, value) {
@@ -52,7 +64,8 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   const names = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
     'AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT',
     'AGENTENGINE_MANAGED_RUNTIME_NAME', 'AGENTENGINE_MANAGED_RUNTIME_VERSION', 'AGENTENGINE_MANIFEST_PROTOCOL', 'AGENTENGINE_MANIFEST_SHA256',
-    'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames];
+    'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
+    ...MANAGED_OBSERVABILITY_ENV_NAMES];
   const childEnv = Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: join(userHome, '.codex'),
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),

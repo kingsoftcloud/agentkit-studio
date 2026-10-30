@@ -111,8 +111,26 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     }
     return localRuntimeHandlerPromise;
   };
+  const { skillDefinitionsForBindings, withBuiltinSkillContextForBindings } = await import('../builtin-skills.mjs');
   const { createCodexResourceContext } = await import('../providers/codex-resource-context.mjs');
-  const codexResourceContext = createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise });
+  // Codex App Server turns receive developerInstructions instead of the DSH
+  // skill registry, so the builtin platform guide is inlined there. It is
+  // gated on the same platform bindings as getSkillDefinitions: a Codex Agent
+  // with no platform resource keeps its plain developerInstructions.
+  const resolveCodexBindings = async ({ agentId, buildId, agentRevision } = {}) => {
+    if (!agentId) return {};
+    // Same resolution order as createCodexResourceContext so the gate sees the
+    // exact revision/build bindings the context is built from.
+    const record = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId)
+      : agentRevision ? await (await agentStorePromise).getRevision(agentId, Number(agentRevision))
+      : await (await agentStorePromise).get(agentId);
+    return record?.spec?.bindings || record?.bindings || {};
+  };
+  const codexResourceContextBase = createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise });
+  const codexResourceContext = async request => {
+    const context = await codexResourceContextBase(request);
+    return withBuiltinSkillContextForBindings(context, await resolveCodexBindings(request));
+  };
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
   const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
@@ -195,10 +213,17 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       const bindings = agent?.spec?.bindings || {};
       const { boundSkillResources } = await import('../local-runtime.mjs');
       const ids = boundSkillResources(bindings).map(item => item.resourceId);
-      if (!ids.length) return [];
-      const adapter = await resourceAdaptersPromise;
-      const loaded = await Promise.all(ids.map(id => adapter.loadSkill(id)));
-      return loaded.flatMap(item => item.definitions || []);
+      const bound = [];
+      if (ids.length) {
+        const adapter = await resourceAdaptersPromise;
+        const loaded = await Promise.all(ids.map(id => adapter.loadSkill(id)));
+        for (const item of loaded) bound.push(...(item.definitions || []));
+      }
+      // Builtin platform skills only ship to Agents that actually bind a
+      // platform resource. A zero-binding Agent keeps the previous behavior:
+      // an empty skill list, so the preset gains neither
+      // @deepseek-ai/dsh-tool-skill nor the shell plugin.
+      return skillDefinitionsForBindings(bindings, bound);
     },
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
