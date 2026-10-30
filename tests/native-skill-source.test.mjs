@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { createStudioNativeSkillSource, loadConfiguredNativeSkills, SKILL_SOURCE_CONTRACT } from '../src/providers/native-skill-source.mjs';
+import { skillDefinitionsForBindings } from '../src/builtin-skills.mjs';
 
 const sha256Str = v => 'sha256:' + createHash('sha256').update(v).digest('hex');
 
@@ -18,6 +19,23 @@ function setupDir(t) {
 }
 function throwsCode(fn, code) { assert.throws(fn, e => e.code === code, `expected ${code}`); }
 async function rejectsCode(p, code) { await assert.rejects(p, e => e.code === code, `expected ${code}`); }
+
+test('platform builtin, bound and configured local Skills remain readable in the same Native source', async t => {
+  const root = setupDir(t), child = join(root, 'local-guide');
+  mkdirSync(child);
+  writeFileSync(join(child, 'SKILL.md'), '---\nname: local-guide\ndescription: Local guide\n---\nLocal instructions');
+  const bound = [{ name: 'bound-guide', content: 'Bound instructions' }];
+  const definitions = loadConfiguredNativeSkills({ directory: root,
+    definitions: skillDefinitionsForBindings({ skills: ['bound-guide'] }, bound) });
+  assert.deepEqual(definitions.map(item => item.name), ['agentengine-platform-resources', 'bound-guide', 'local-guide']);
+  const { source, binding } = createStudioNativeSkillSource({ definitions });
+  assert.equal(binding.skills.length, 3);
+  assert.match(await source.fullText('skill://agentengine-platform-resources@1.0.0'), /平台资源使用指南/);
+  assert.equal(await source.fullText('skill://bound-guide@1.0.0'), 'Bound instructions');
+  assert.match(await source.fullText('skill://local-guide@1.0.0'), /Local instructions/);
+  const localOnly = loadConfiguredNativeSkills({ directory: root, definitions: skillDefinitionsForBindings({}, []) });
+  assert.deepEqual(localOnly.map(item => item.name), ['local-guide'], 'a local directory does not grant platform bindings');
+});
 
 test('configured local Skills use immediate children in Python path order and pin complete packages', async t => {
   const root = setupDir(t);

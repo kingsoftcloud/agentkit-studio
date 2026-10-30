@@ -313,6 +313,65 @@ test('recovery keeps the preset registered when bound resources are temporarily 
   assert.equal(registered[1].plugins[0].config.resourcesUnavailable, undefined);
 });
 
+test('frozen runtime admission keeps its model route when resources are unavailable', async () => {
+  const registered = [];
+  const selection = { provider: 'agentkit-studio-ksyun-deepseek-v4-flash', model: 'deepseek-v4-flash' };
+  const revision = agent({
+    metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 4, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { skills: ['skill:retired'] } },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+    getModelSelection: async () => selection,
+    getSkillDefinitions: async () => { throw Object.assign(new Error('private resource snapshot unavailable'), { code: 'DSH_RESOURCE_OWNER_UNAVAILABLE' }); },
+  });
+  // This is the option object the frozen Build runtime admits with: a failed
+  // Resource snapshot must not cost the runtime its model route.
+  const result = await admission.ensure('demo/agent', { allowUnavailableResources: true, requireModelSelection: true });
+  assert.deepEqual(result.modelSelection, selection);
+  assert.equal(registered.length, 1);
+});
+
+test('preset restoration never asks for model selection when resources are unavailable', async () => {
+  let selections = 0;
+  const registered = [];
+  const revision = agent({
+    metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 5, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { skills: ['skill:old'] } },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+    getModelSelection: async () => { selections += 1; return { provider: 'configured-route', model: 'directory-model' }; },
+    getSkillDefinitions: async () => { throw new Error('Skill Space unavailable'); },
+  });
+  // 81b1355a: startup recovery may not serialize behind an external model
+  // directory, so only an explicit requireModelSelection caller resolves it.
+  await admission.ensure('demo/agent', { allowUnavailableResources: true });
+  assert.equal(selections, 0);
+  assert.equal(registered.length, 1);
+});
+
+test('degraded admission marks the registered preset resourcesUnavailable', async () => {
+  const registered = [];
+  const revision = agent({
+    metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 6, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { tools: [{ resourceId: 'component_status' }], skills: ['skill:retired'] } },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return async () => {}; } },
+    getAgent: async () => revision,
+    getToolContracts: async () => { throw Object.assign(new Error('resource owner unavailable'), { code: 'DSH_RESOURCE_OWNER_UNAVAILABLE' }); },
+    getSkillDefinitions: async () => { throw new Error('Skill Space unavailable'); },
+  });
+  await admission.ensure('demo/agent', { allowUnavailableResources: true, requireModelSelection: true });
+  const config = registered[0].plugins.find(row => row.name === '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin').config;
+  assert.equal(config.resourcesUnavailable, true);
+  assert.equal(config.toolContracts, undefined);
+  assert.equal(config.skillDefinitions, undefined);
+});
+
 test('the DSH runtime plugin exposes only bound registry tools to Studio', async () => {
   let listener;
   let forwarded;

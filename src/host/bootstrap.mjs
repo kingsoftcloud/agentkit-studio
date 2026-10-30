@@ -138,8 +138,26 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     }
     return localRuntimeHandlerPromise;
   };
+  const { skillDefinitionsForBindings, withBuiltinSkillContextForBindings } = await import('../builtin-skills.mjs');
   const { createCodexResourceContext } = await import('../providers/codex-resource-context.mjs');
-  const codexResourceContext = createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise });
+  // Codex App Server turns receive developerInstructions instead of the DSH
+  // skill registry, so the builtin platform guide is inlined there. It is
+  // gated on the same platform bindings as getSkillDefinitions: a Codex Agent
+  // with no platform resource keeps its plain developerInstructions.
+  const resolveCodexBindings = async ({ agentId, buildId, agentRevision } = {}) => {
+    if (!agentId) return {};
+    // Same resolution order as createCodexResourceContext so the gate sees the
+    // exact revision/build bindings the context is built from.
+    const record = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId)
+      : agentRevision ? await (await agentStorePromise).getRevision(agentId, Number(agentRevision))
+      : await (await agentStorePromise).get(agentId);
+    return record?.spec?.bindings || record?.bindings || {};
+  };
+  const codexResourceContextBase = createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise });
+  const codexResourceContext = async request => {
+    const context = await codexResourceContextBase(request);
+    return withBuiltinSkillContextForBindings(context, await resolveCodexBindings(request));
+  };
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
   const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
@@ -297,8 +315,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getModelSelection: createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }),
     getSkillDefinitions: async agent => {
       const bindings = agent?.spec?.bindings || {};
-      const definitions = boundSkillResources(bindings).length
+      const bound = boundSkillResources(bindings).length
         ? await loadBoundSkillDefinitions(bindings, await resourceAdaptersPromise) : [];
+      const definitions = skillDefinitionsForBindings(bindings, bound);
       const native = agent?.spec?.runtime?.type === 'harness'
         && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
       return native ? loadConfiguredNativeSkills({ directory: localSkillDirectory, definitions }) : definitions;
@@ -429,7 +448,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // Session prewarming substitutes for the native dependency lifecycle.
     readyService: portableRuntime || managedRuntime ? FROZEN_RUNTIME_READY : undefined,
     start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, managedRuntime, managedResourceContext, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
-      admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } } }) }),
+      admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } }, allowUnavailableResources: true, requireModelSelection: true }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
   });
   if (portableRuntime || managedRuntime) {

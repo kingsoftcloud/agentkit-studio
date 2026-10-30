@@ -176,7 +176,15 @@ export class DshPresetAdmission {
     if (registry) this.disposed = false;
   }
 
-  async ensure(agentId, { agent: suppliedAgent, allowUnavailableResources = false } = {}) {
+  async ensure(agentId, {
+    agent: suppliedAgent,
+    allowUnavailableResources = false,
+    // Restoring a persisted definition must never wait for an external model
+    // catalog (81b1355a), so recovery leaves this false. Only a caller that
+    // starts a runtime with degraded resources opts in, because that runtime
+    // cannot start without its model route (RUNTIME_MODEL_UNAVAILABLE).
+    requireModelSelection = false,
+  } = {}) {
     this.assertHostCompatible?.();
     if (!this.registry || typeof this.registry.register !== 'function') {
       const error = new Error('DSH agent preset registry 不可用');
@@ -194,7 +202,7 @@ export class DshPresetAdmission {
     // a definition must not serialize the registry behind an external model
     // catalog or credential lookup. Explicit new-session admission still checks
     // the requested model, including when it reuses a restored definition.
-    const modelSelection = !allowUnavailableResources && typeof this.getModelSelection === 'function' ? await this.getModelSelection(agent) : undefined;
+    const modelSelection = (requireModelSelection || !allowUnavailableResources) && typeof this.getModelSelection === 'function' ? await this.getModelSelection(agent) : undefined;
     const eligibility = dshPresetEligibility(agent, { activeModel });
     if (!eligibility.ok) {
       const error = new Error(eligibility.message);
