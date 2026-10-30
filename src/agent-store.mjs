@@ -9,6 +9,13 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile, rm, rename, link } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { defaultNativeToolBindings } from './native-tool-catalog.mjs';
+import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
+import { NATIVE_AGENT_POLICY_CONTRACT, nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
 export class AgentStoreError extends Error {
   constructor(code, message, details = {}) {
@@ -48,10 +55,44 @@ function normalizeRecord(record) {
   return { ...record, spec: { ...(record.spec || {}), bindings }, bindings };
 }
 
+/** New local Native Revisions always carry an explicit policy. Reading a
+ * historical Revision does not synthesize one or change its frozen behavior. */
+function bindNewNativePolicy(record) {
+  if (record.spec.runtime?.type !== 'harness') return;
+  const policy = nativeAgentPolicyFromSpec(record.spec) ?? {
+    contract: NATIVE_AGENT_POLICY_CONTRACT, mode: 'strict', rules: {},
+  };
+  record.spec.bindings = { ...record.spec.bindings, nativeAgentPolicy: policy };
+  record.bindings = record.spec.bindings;
+}
+
 export function createAgentStore({ storeDir } = {}) {
   const root = storeDir;
 
   async function ensureDir() { await mkdir(root, { recursive: true, mode: 0o700 }); }
+
+  // Serializes publication of an Agent's current pointer across Host processes.
+  // SQLite owns the lock lifetime, so process death cannot leave a stale file
+  // lock. busy_timeout=0 plus asynchronous retry keeps the Host event loop free.
+  async function withMutationLock(agentId, callback) {
+    pathFor(agentId);
+    await ensureDir();
+    const directory = join(root, '.mutation-locks');
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const deadline = performance.now() + 5000;
+    for (;;) {
+      const db = new DatabaseSync(join(directory, `${agentId}.sqlite`));
+      try { db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE;'); }
+      catch (error) {
+        db.close();
+        if (error.errcode !== 5 && error.errcode !== 6) throw error;
+        if (performance.now() >= deadline) throw new AgentStoreError('AGENT_MUTATION_BUSY', 'Agent 正在更新，请稍后重试', { agentId });
+        await delay(10); continue;
+      }
+      try { return await callback(); }
+      finally { try { db.exec('ROLLBACK'); } finally { db.close(); } }
+    }
+  }
 
   function pathFor(agentId) {
     if (!/^ar-local-[a-f0-9]{16}$/.test(agentId)) throw new AgentStoreError('INVALID_AGENT_ID', '本地 Agent ID 无效');
@@ -91,10 +132,13 @@ export function createAgentStore({ storeDir } = {}) {
     return revisions.filter(Boolean);
   }
 
-  async function create({ name, runtimeType = 'dsh-native', description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole, purpose }) {
+  async function create({ name, runtimeType, description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole, purpose }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-    const normalizedBindings = normalizeAgentBindings(spec.bindings ?? bindings);
+    const rawBindings = structuredClone(spec.bindings ?? bindings);
+    const type = runtimeType ?? spec.runtime?.type ?? STUDIO_DEFAULT_AUTHORING_RUNTIME;
+    if (type === 'harness' && !Object.hasOwn(rawBindings, 'tools')) rawBindings.tools = defaultNativeToolBindings();
+    const normalizedBindings = normalizeAgentBindings(rawBindings);
     const record = {
       metadata: {
         id: agentId,
@@ -109,9 +153,10 @@ export function createAgentStore({ storeDir } = {}) {
         ...(teamRole ? { teamRole: structuredClone(teamRole) } : {}),
         ...(creationKey ? { creationKey: String(creationKey) } : {}),
       },
-      spec: { ...spec, bindings: normalizedBindings, runtime: { type: runtimeType } },
+      spec: { ...spec, bindings: normalizedBindings, runtime: { ...spec.runtime, type: runtimeType ?? spec.runtime?.type ?? STUDIO_DEFAULT_AUTHORING_RUNTIME } },
       bindings: normalizedBindings,
     };
+    bindNewNativePolicy(record);
     const target = pathFor(agentId);
     await captureRevision(record);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
@@ -150,10 +195,31 @@ export function createAgentStore({ storeDir } = {}) {
     try { return normalizeRecord(JSON.parse(await readFile(pathFor(agentId), 'utf8'))); } catch { return null; }
   }
 
-  async function update(agentId, patch = {}) {
+  async function update(agentId, patch = {}, { assertCurrent = () => true } = {}) {
+    // An approved binding proposal is based on a particular revision. Retain
+    // its exact bytes across the async lock rather than reading a mutable object.
+    const fixed = structuredClone(patch);
+    if (fixed.expectedRevision !== undefined && (!Number.isSafeInteger(fixed.expectedRevision) || fixed.expectedRevision < 1))
+      throw new AgentStoreError('INVALID_EXPECTED_AGENT_REVISION', '预期 Agent Revision 无效');
+    const guard = () => {
+      const value = assertCurrent();
+      if (value && typeof value.then === 'function') Promise.resolve(value).catch(() => {});
+      if (value !== true) throw new AgentStoreError('AGENT_UPDATE_AUTHORITY_LOST', 'Agent update authority is no longer current');
+    };
+    guard(); return withMutationLock(agentId, () => updateLocked(agentId, fixed, guard));
+  }
+
+  async function updateLocked(agentId, patch, guard) {
+    guard();
     const record = await get(agentId);
+    guard();
     if (!record) throw new AgentStoreError('AGENT_NOT_FOUND', '本地 Agent 不存在', { agentId });
+    if (patch.expectedRevision !== undefined && record.metadata.revision !== patch.expectedRevision)
+      throw new AgentStoreError('AGENT_EXPECTED_REVISION_CONFLICT', 'Agent 已更新，请重新核对绑定', {
+        agentId, expectedRevision: patch.expectedRevision, actualRevision: record.metadata.revision,
+      });
     await captureRevision(record);
+    guard();
     if (patch.name) record.metadata.name = String(patch.name);
     if (patch.description !== undefined) record.metadata.description = String(patch.description);
     if (patch.spec) record.spec = { ...record.spec, ...patch.spec, runtime: patch.spec?.runtime || record.spec?.runtime || { type: 'dsh-native' } };
@@ -163,21 +229,41 @@ export function createAgentStore({ storeDir } = {}) {
     const normalized = normalizeAgentBindings(record.spec.bindings || record.bindings || {});
     record.spec.bindings = normalized;
     record.bindings = normalized;
+    bindNewNativePolicy(record);
     record.metadata.revision = (Number(record.metadata.revision) || 1) + 1;
     record.metadata.updatedAt = new Date().toISOString();
-    await captureRevision(record);
+    // No await between the final live-authority check and durable publication.
+    // Cancellation during asynchronous preparation cannot publish a new draft.
+    // A crash after revision publication but before pointer publication leaves
+    // an immutable revision for explicit recovery, never silent replacement.
     const target = pathFor(agentId);
     const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`;
-    await writeFile(tmp, JSON.stringify(record, null, 2));
-    await rename(tmp, target);
+    const revision = revisionPath(agentId, record.metadata.revision), text = JSON.stringify(record, null, 2);
+    guard(); mkdirSync(dirname(revision), { recursive: true, mode: 0o700 });
+    const fd = openSync(tmp, 'wx', 0o600);
+    try {
+      writeFileSync(fd, text); fsyncSync(fd);
+      try { linkSync(tmp, revision); }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        if (!isDeepStrictEqual(JSON.parse(readFileSync(revision, 'utf8')), JSON.parse(text)))
+          throw new AgentStoreError('AGENT_REVISION_CONFLICT', '已保存的 Agent Revision 不能被覆盖');
+      }
+      syncDirectory(dirname(revision));
+      // The editable pointer and immutable history must not share an inode.
+      const pointer = `${tmp}.pointer`, pointerFd = openSync(pointer, 'wx', 0o600);
+      try { writeFileSync(pointerFd, text); fsyncSync(pointerFd); renameSync(pointer, target); syncDirectory(dirname(target)); }
+      finally { closeSync(pointerFd); if (existsSync(pointer)) unlinkSync(pointer); }
+    } finally { closeSync(fd); if (existsSync(tmp)) unlinkSync(tmp); }
     return record;
   }
 
   async function remove(agentId) {
-    await ensureDir();
-    await rm(pathFor(agentId), { force: true });
-    await rm(dirname(revisionPath(agentId,1)),{recursive:true,force:true});
-    return { agentId, deleted: true };
+    return withMutationLock(agentId, async () => {
+      await rm(pathFor(agentId), { force: true });
+      await rm(dirname(revisionPath(agentId,1)),{recursive:true,force:true});
+      return { agentId, deleted: true };
+    });
   }
 
   return { create, list, get, update, remove, captureRevision, getRevision, listRevisions, root };

@@ -4,8 +4,26 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioObservability } from '../src/studio-observability.mjs';
+import { createNativeSkillEventJournal, nativeSkillEventEvidence } from '@kingsoftcloud/agentkit-harness-node/native/skill-events';
 
 async function makeStore() { return mkdtemp(join(tmpdir(), 'agentkit-traces-')); }
+
+test('durable Skill tool facts project into Studio trace detail and OTLP without duplicate spans', async () => {
+  const store = await makeStore(), obs = createStudioObservability({ storeDir: store }), events = [];
+  const journal = createNativeSkillEventJournal({ runtimeId: 'runtime', request: { runId: 'run' }, bindingDigest: 'binding', events });
+  journal.emit('skill.workflow.started', 'running'); journal.emit('skill.workflow.completed', 'completed');
+  const at = new Date().toISOString(), content = JSON.stringify({ ok: true, ...nativeSkillEventEvidence(events) });
+  try {
+    const facts = [1, 2].map(seq => ({ seq, event_type: 'tool.completed', at, payload: { name: 'execute_skills', content } }));
+    await obs.syncTrace({ traceId: 'skill-trace', sessionId: 'session', agentId: 'agent', status: 'completed', startedAt: at, completedAt: at, events: facts });
+    const first = await obs.get('skill-trace'), spans = first.spans.filter(span => span.name.startsWith('skill.'));
+    assert.deepEqual(spans.map(span => span.name), ['skill.workflow.started', 'skill.workflow.completed']);
+    assert.equal(spans[0].attributes['ksadk.skill.run_id'], 'run');
+    const reopened = createStudioObservability({ storeDir: store });
+    assert.deepEqual((await reopened.get('skill-trace')).spans, first.spans);
+    assert.ok((await reopened.getOtlp('skill-trace')).resourceSpans[0].scopeSpans[0].spans.some(span => span.name === 'skill.workflow.completed'));
+  } finally { await rm(store, { recursive: true, force: true }); }
+});
 
 test('syncTrace projects events into OTLP and persists', async () => {
   const store = await makeStore();

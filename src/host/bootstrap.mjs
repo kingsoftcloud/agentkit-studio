@@ -3,12 +3,20 @@ import { hostFetch } from '../http-fetch.mjs';
  * own their stores; route modules own RPC and HTTP transport adapters.
  */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { NATIVE_MCP_JSON_CODEC } from '../providers/native-mcp-json.mjs';
+import { snapshotNativeMcpSchema, snapshotNativeMcpPlanAccess } from '../providers/native-mcp-schema.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
+import { nativeHarnessHostContract, selectedNativeBuildContract } from '../build-engine.mjs';
+import { loadConfiguredNativeSkills } from '../providers/native-skill-source.mjs';
+import { nativeLocalToolContract } from '../native-tool-catalog.mjs';
 import { registerAuthoringTools } from '../authoring-tools.mjs';
 import { DshPresetAdmission, dshModelSelection } from '../agent-preset-admission.mjs';
 import { createStartupReconciler } from '../preset-recovery.mjs';
 import { bindPresetRegistry } from '../preset-registry-binding.mjs';
-import { mountRuntimeBridge } from './runtime-bridge.mjs';
+import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
@@ -19,8 +27,16 @@ import { createLegacyLocalConversationFactory } from './services/legacy-conversa
 import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
+import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
+import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
+import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
 
-export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory } = {}) {
+export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
+  nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
+  nativeA2aInbound, nativeManagedKernel } = {}) {
+  const nativeEngineContract = nativeHarnessHostContract(runtimeEnv);
+  const configuredLocalSkillDirectory = runtimeEnv.KSADK_LOCAL_SKILLS_DIR?.trim();
+  const localSkillDirectory = configuredLocalSkillDirectory ? resolve(configuredLocalSkillDirectory) : undefined;
   const hostCompatibility = await loadHostCompatibility(ctx);
   ctx.provide('studioHostCompatibility', hostCompatibility);
   const cloudEndpointOptions = {
@@ -28,6 +44,16 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     innerIamUrl: runtimeEnv.AGENTENGINE_INNER_IAM_URL || '',
   };
   const bridge = mountRuntimeBridge(ctx);
+  const a2aSessionSink = createStudioA2aSessionSink({ ctx });
+  ctx.effect(() => () => a2aSessionSink.close(), 'agentkit-studio: A2A observation delivery');
+  for (const registration of nativeHookRegistrations) {
+    const retire = bridge.nativeHooks.register(registration);
+    ctx.effect(() => retire, 'agentkit-studio: trusted Native hook source');
+  }
+  for (const registration of nativeContextSourceRegistrations) {
+    const retire = bridge.nativeContextSources.register(registration);
+    ctx.effect(() => retire, 'agentkit-studio: trusted Native context source');
+  }
   // Defer optional portable-bundle dependencies until Host activation.
   // The browser uses the separately declared ./client bundle; it must never
   // load this Host bootstrap or its Node-only configuration dependencies.
@@ -43,6 +69,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       runtime: managedRuntime, directory: join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
     })) : undefined;
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
+  let managedKernel;
   const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
@@ -154,6 +181,82 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // apply context used by the DSH loader.
   const credentials = credentialsService;
   const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
+  const { createNativeSkillConnection } = await import('../providers/native-skill-host.mjs');
+  const skillConnection = await createNativeSkillConnection({ configuration: await configurationPromise, env: runtimeEnv, ...cloudEndpointOptions });
+  const [{ createStudioSkillManagement }, { createGithubArchiveSkillSource }, skillDiscovery, skillAgents] = await Promise.all([
+    import('../skill-management.mjs'), import('../skill-github-archive-source.mjs'), skillDiscoveryPromise, agentStorePromise,
+  ]);
+  const githubSkills = createGithubArchiveSkillSource({ fetchImpl: githubSkillSourceFetch });
+  const getSkillManagement = agentId => createStudioSkillManagement({ workspaceRoot,
+    stateDir: join(studioStoreDir, 'builtin-workspace'), agentId, skillDiscovery, agents: skillAgents, source: githubSkills });
+  const { createKnowledgeConnection, createStudioKnowledgeTools } = await import('../knowledge-tools.mjs');
+  const knowledgeConnection = await createKnowledgeConnection({ configuration: await configurationPromise, env: runtimeEnv,
+    serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '', sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '', ...cloudEndpointOptions });
+  const getKnowledgeTools = config => createStudioKnowledgeTools({ agentId: config.agentId,
+    bindings: config.knowledgeBindings, connection: knowledgeConnection, env: runtimeEnv });
+  const { createLegacyMemoryConnection, createLegacyMemoryTools } = await import('../legacy-memory-tools.mjs');
+  const memoryConnection = await createLegacyMemoryConnection({ configuration: await configurationPromise, env: runtimeEnv,
+    serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '', sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '', ...cloudEndpointOptions });
+  const getLegacyMemoryTools = config => createLegacyMemoryTools({ agentId: config.agentId,
+    root: join(realpathSync(studioStoreDir), 'legacy-memory'), workspaceRoot: realpathSync(workspaceRoot),
+    bindings: config.legacyMemoryBindings, connection: memoryConnection, env: runtimeEnv });
+  {
+    const { createDshNodeBuiltins } = await import('../providers/dsh-node-builtins.mjs');
+    ctx.effect(() => bridge.setBuiltinToolsFactory(({ ctx: toolsCtx, config, isClosed, signal }) => createDshNodeBuiltins({
+      ctx: toolsCtx, workspaceRoot, stateDir: join(studioStoreDir, 'builtin-workspace'), agentId: config.agentId,
+      isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
+      a2aSessionEvents: a2aSessionSink.forPreset(config),
+      browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
+      getSkillManagement, getKnowledgeTools, knowledgeBindings: config.knowledgeBindings,
+      getLegacyMemoryTools, legacyMemoryBindings: config.legacyMemoryBindings,
+      toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
+      skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
+    })), 'agentkit-studio: Node builtin environment');
+  }
+  // A frozen Native Build retains its engine when the live-preset default is
+  // disabled. Register the capability; selection remains explicit per preset.
+  {
+    const { createNativeDshTools } = await import('../providers/native-dsh-tools.mjs');
+    ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
+      workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
+      browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
+      commandEnvironment: runtimeEnv,
+      a2aSessionEvents: a2aSessionSink.forPreset(config),
+      skillConnection,
+      getSkillManagement, getKnowledgeTools, getLegacyMemoryTools,
+      executeMcpTool: request => bridge.executeResourceTool(request),
+    })), 'agentkit-studio: Native tool environment');
+  }
+  let nativeHostPromise;
+  let dshA2aPromise;
+  const dshA2aControls = () => dshA2aPromise ||= ownAsyncResource(ctx,
+    Promise.all([import('./services/dsh-a2a-control.mjs'), import('@deepseek-ai/dsh-agent')])
+      .then(([{ createStudioDshA2aControls }, { agentEvents }]) => createStudioDshA2aControls({ ctx, agentEvents, signal: bridge.signal })),
+    'agentkit-studio: DSH A2A controls');
+  const nativeHost = () => nativeHostPromise ||= ownAsyncResource(ctx,
+    Promise.all([import('./services/native-harness.mjs'), import('@deepseek-ai/dsh-system-prompt'), agentStorePromise, studioBuildPromise, resourceAdaptersPromise,
+      import('@deepseek-ai/dsh-agent'), studioObservabilityPromise])
+      .then(([{ createStudioNativeHarness }, { renderPrompt }, agents, studio, resources, { emitAgentEvent, agentEvents, assembleContextFor }, observability]) => createStudioNativeHarness({
+        ctx, storeDir: studioStoreDir, workspaceRoot, agents, builds: studio.build, models, resources, fetchImpl: hostFetch, renderPrompt,
+        modelCompatibilityRule: runtimeEnv.KSADK_MODEL_COMPAT_RULE,
+        publishStreamFrame: ({ agent }, frame) => emitAgentEvent(ctx, agent, 'agent/assistant-stream', { frame }),
+        agentEvents, assembleContextFor, hookRegistry: bridge.nativeHooks, contextSourceRegistry: bridge.nativeContextSources, observability,
+      })), 'agentkit-studio: Native Harness lifetime');
+  ctx.effect(() => bridge.setNativeTurnExecutor(async payload => (await nativeHost()).executeTurn(payload)), 'agentkit-studio: Native whole-turn registration');
+  if (nativeManagedKernel !== undefined) {
+    // Materialize the shared Host before its managed borrower so teardown
+    // closes the receiver/Native loops before releasing Host-owned resources.
+    if (nativeManagedKernel.resolveBinding === undefined) await nativeHost();
+    const { registerStudioManagedNativeKernel } = await import('./services/native-managed-kernel.mjs');
+    managedKernel = registerStudioManagedNativeKernel(ctx, { storeDir: studioStoreDir,
+      configuration: nativeManagedKernel, resolveHost: nativeHost });
+  }
+  if (nativeA2aInbound !== undefined) {
+    const { registerStudioNativeA2aInbound } = await import('./services/native-a2a-inbound.mjs');
+    registerStudioNativeA2aInbound(ctx, { storeDir: studioStoreDir,
+      configuration: { ...nativeA2aInbound, events: nativeA2aInbound.events ?? managedKernel?.events } });
+  }
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
@@ -182,6 +285,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
+    nativeEngineContract,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),
     getBasePlugins: async agent => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
@@ -193,30 +297,33 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getModelSelection: createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }),
     getSkillDefinitions: async agent => {
       const bindings = agent?.spec?.bindings || {};
-      const { boundSkillResources } = await import('../local-runtime.mjs');
-      const ids = boundSkillResources(bindings).map(item => item.resourceId);
-      if (!ids.length) return [];
-      const adapter = await resourceAdaptersPromise;
-      const loaded = await Promise.all(ids.map(id => adapter.loadSkill(id)));
-      return loaded.flatMap(item => item.definitions || []);
+      const definitions = boundSkillResources(bindings).length
+        ? await loadBoundSkillDefinitions(bindings, await resourceAdaptersPromise) : [];
+      const native = agent?.spec?.runtime?.type === 'harness'
+        && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
+      return native ? loadConfiguredNativeSkills({ directory: localSkillDirectory, definitions }) : definitions;
     },
     getToolContracts: async agent => {
       const bindings = agent?.spec?.bindings && typeof agent.spec.bindings === 'object'
         ? agent.spec.bindings : {};
-      const refs = (Array.isArray(bindings.tools) ? bindings.tools : []).map(value => {
+      const bindingRefs = (Array.isArray(bindings.tools) ? bindings.tools : []).map(value => {
         if (typeof value === 'string') return value;
         return value?.resourceId || value?.id || value?.name || '';
       }).filter(Boolean).map(String);
       const mcpBindings = Array.isArray(bindings.mcpServers) ? bindings.mcpServers : [];
-      if (!refs.length && !mcpBindings.length) return [];
-      const builtinContracts = [];
+      if (!bindingRefs.length && !mcpBindings.length) return [];
+      const native = agent?.spec?.runtime?.type === 'harness'
+        && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
+      const builtinContracts = native ? bindingRefs.map(nativeLocalToolContract).filter(Boolean) : [];
+      const localNames = new Set(builtinContracts.map(tool => tool.resourceId));
+      const refs = bindingRefs.filter(ref => !localNames.has(ref));
       if (refs.length) {
         let page;
         try {
           page = await (await serverClientPromise).listCatalogResources({ kind: 'tool', limit: 200 });
         } catch (error) {
           // A local Agent can still be admitted when the optional catalog
-          // process is temporarily unavailable. The Python builtin executor
+          // process is temporarily unavailable. The bound runtime executor
           // remains the final authority and will fail closed for unknown names;
           // this avoids turning a valid binding into “暂不可读取”.
           if (error?.code !== 'CATALOG_UNAVAILABLE' && error?.code !== 'SERVER_UNAVAILABLE') throw error;
@@ -263,6 +370,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         }
       }
       const mcpContracts = [];
+      const nativeMcp = agent?.spec?.runtime?.type === 'harness'
+        && selectedNativeBuildContract(agent, nativeEngineContract) === NATIVE_DSH_TURN_CONTRACT;
       const seenNames = new Set(builtinContracts.map(contract => String(contract?.name || '')));
       const adapters = mcpBindings.length ? await resourceAdaptersPromise : null;
       for (const binding of mcpBindings) {
@@ -272,7 +381,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
           error.code = 'MCP_ID_MISSING';
           throw error;
         }
-        const listed = await adapters.listMcpTools(binding);
+        const listed = await adapters.listMcpTools(binding,
+          nativeMcp ? { jsonCodec: NATIVE_MCP_JSON_CODEC, snapshot: true } : undefined);
         for (const tool of listed || []) {
           const name = String(tool?.name || '').trim();
           if (!name) continue;
@@ -288,7 +398,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
             mcpResourceId: resourceId,
             name,
             description: String(tool.description || ''),
-            parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} },
+            ...(nativeMcp ? { nativeMcpSchema: snapshotNativeMcpSchema(tool), nativeMcpPlanAccess: snapshotNativeMcpPlanAccess(tool) }
+              : { parameters: tool.inputSchema || tool.parameters || { type: 'object', properties: {} } }),
             executor: 'mcp',
             timeoutSeconds: 120,
             sideEffect: 'unknown',
@@ -307,7 +418,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Cordis unloads and reruns this scope when the registry changes. An old
   // scope must dispose its own admission, never whichever admission is current
   // after an asynchronous reload. Catalog-only profiles retain typed failures.
-  bindPresetRegistry(ctx, { createAdmission: createPresetAdmission,
+  const presetRegistryStartup = bindPresetRegistry(ctx, { createAdmission: createPresetAdmission,
     publishAdmission: admission => { presetAdmission = admission; },
     reconcile: async admission => { await reconciler.run(admission); await studioTeams.restore(admission); },
   });
@@ -336,10 +447,15 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   } else {
     await bindRuntime();
   }
+  bindNativeBackgroundRuntime(ctx, { getHost: nativeHost,
+    readyService: portableRuntime ? FROZEN_RUNTIME_READY : undefined,
+    onError: error => console.error('[agentkit-studio] Native background startup failed:', error?.code || 'NATIVE_BACKGROUND_STARTUP_FAILED'),
+  });
   const routes = createStudioRoutes(ctx, {
     ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
-    listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
+    listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission, getNativeHost: nativeHost,
+    getDshA2aControls: dshA2aControls,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   const getLegacyLocalConversationHandler = createLegacyLocalConversationFactory(ctx, services);
@@ -350,4 +466,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   ctx.effect(async () => { const channels = await studioChannelsPromise; await channels?.ensureReady(); return () => channels?.dispose(); }, 'agentkit-studio: channels lifetime');
   ctx.effect(async () => { const scheduler = await studioSchedulerPromise; await scheduler?.ensureReady(); return () => scheduler?.dispose(); }, 'agentkit-studio: scheduler lifetime');
   ctx.effect(() => () => bridge.close(), 'agentkit-studio: stop owned runtime requests');
+  // A registry service may already exist while its asynchronously injected
+  // Studio definitions are still being recovered. Do not expose a completed
+  // Host mount before its persisted Session presets are registered. Keep the
+  // optional-registry catalog profile independent from this native startup.
+  if (ctx.get('agentPresets')) await presetRegistryStartup.ready;
+  if (nativeManagedKernel?.autoStart !== false) managedKernel?.startRecovery();
 }

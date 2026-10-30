@@ -1,4 +1,5 @@
 /** agents operations; authentication and lifetime belong to the dispatcher. */
+import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
 import { clampExecutionMode, readExecutionMode } from '../../execution-policy.mjs';
 
 export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, assistantSetup, cloudExecutionModes }) {
@@ -24,7 +25,7 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
                     const record = await templateAuthoring.create({
                         templateSource: payload?.templateSource,
                         name: payload?.name,
-                        runtimeType: payload?.runtimeType || payload?.spec?.runtime?.type || 'dsh-native',
+                        runtimeType: payload?.runtimeType || payload?.spec?.runtime?.type || STUDIO_DEFAULT_AUTHORING_RUNTIME,
                         description: payload?.description || payload?.spec?.description || '',
                         spec: payload?.spec || {},
                         bindings: payload?.bindings || payload?.spec?.bindings || {},
@@ -36,10 +37,12 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
                 const record = await store.update(String(payload?.agentId || ''), {
                     name: payload?.name, description: payload?.description,
                     spec: payload?.spec, bindings: payload?.bindings,
-                });
+                    ...(payload?.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
+                }, { assertCurrent: () => !signal?.aborted });
                 return { ok: true, value: { ...record, builds: [] } };
             }
             catch (error) {
+                signal?.throwIfAborted();
                 return { ok: false, error: { code: error?.code || 'LOCAL_AGENT_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
             }
         }

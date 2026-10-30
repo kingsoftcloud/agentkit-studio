@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { checkMaintenanceSource, exportMaintenanceSource, importMaintenanceSource } from '../scripts/dsh-maintenance-source.mjs';
 import { patchPaths } from '../scripts/check-patch-manifest.mjs';
 import { withDesktopCheckout } from '../scripts/desktop-checkout.mjs';
+import { prepareDevelopment } from '../scripts/prepare-development.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const json = value => JSON.stringify(value, null, 2) + '\n';
@@ -76,6 +77,24 @@ test('maintenance commits export reproducibly and import into an independent edi
   await assert.rejects(importMaintenanceSource({ ...input, output }), /already exists/);
   assert.equal(git(input.source, 'rev-parse', 'HEAD'), input.head);
   assert.equal(git(input.source, 'status', '--porcelain'), '');
+});
+
+test('development doctor accepts only the bound maintenance head and preserves local changes', async t => {
+  const input = await fixture(t); await exportMaintenanceSource(input);
+  const setup = { source: input.source, patches: input.patches, commit: input.manifest.baseCommit, checkOnly: true };
+  await writeFile(join(input.source, 'untracked.txt'), 'keep me\n');
+  const before = git(input.source, 'status', '--porcelain');
+  assert.deepEqual(await prepareDevelopment(setup), { status: 'already-applied', patches: 2 });
+  assert.equal(git(input.source, 'status', '--porcelain'), before);
+  await assert.rejects(prepareDevelopment({ ...setup, commit: '0'.repeat(40) }), /固定 commit/);
+  await writeFile(join(input.source, 'value.mjs'), 'developer change\n');
+  git(input.source, 'add', 'value.mjs');
+  const staged = git(input.source, 'diff', '--cached', '--binary');
+  await assert.rejects(prepareDevelopment(setup), /额外改动/);
+  assert.equal(git(input.source, 'diff', '--cached', '--binary'), staged);
+  assert.equal(await readFile(join(input.source, 'untracked.txt'), 'utf8'), 'keep me\n');
+  git(input.source, 'commit', '-qm', 'Unreviewed development commit');
+  await assert.rejects(prepareDevelopment(setup), /固定 commit/);
 });
 
 test('patch edits remain rejected even when both exported hash inventories are rewritten', async t => {

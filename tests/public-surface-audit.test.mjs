@@ -72,6 +72,39 @@ test('public surface audit allows binary product assets while still checking the
   assert.deepEqual(auditText('assets/icon.png', binary), []);
 });
 
+test('public examples are checked identically in current and historical package tests', () => {
+  const examples = [
+    ['https://user:', 'pass@example.com/card'].join(''),
+    ['AKIA', 'IOSFODNN7EXAMPLE'].join(''),
+    ['metadata.google.', 'internal'].join(''),
+    ['"10.', '5.5.5"'].join(''),
+  ].join('\n');
+  for (const historical of [false, true]) {
+    for (const file of ['tests/example.test.mjs', 'packages/agentkit-harness-node/test/example.test.mjs']) {
+      assert.deepEqual(auditText(file, buffer(examples), { historical }), []);
+      const credential = ['https://user:', 'actual-credential@example.com/'].join('');
+      assert.ok(auditText(file, buffer(examples + '\n' + credential), { historical })
+        .some(hit => hit.kind === 'embedded-url-credential'));
+      const token = ['ghp_', '123456789012345678901234567890'].join('');
+      assert.ok(auditText(file, buffer(examples + '\n' + token), { historical })
+        .some(hit => hit.kind === 'github-token'));
+    }
+  }
+  assert.ok(auditText('src/config.mjs', buffer(examples)).some(hit => hit.kind === 'embedded-url-credential'));
+});
+
+test('public network constants do not conceal private URLs or unknown hosts', () => {
+  const constants = ['const byMode = { internal: "public" }; const modes = [byMode.internal, byMode.public];',
+    ['const denied = ["10.', '0.0.0/8"];'].join('')].join('\n');
+  assert.deepEqual(auditText('src/policy.mjs', buffer(constants)), []);
+  const endpoint = ['https://10.', '0.0.0/private'].join('');
+  assert.ok(auditText('src/policy.mjs', buffer(constants + '\n' + endpoint))
+    .some(hit => hit.kind === 'private-network-address'));
+  const host = ['https://production.', 'internal'].join('');
+  assert.ok(auditText('tests/policy.test.mjs', buffer(constants + '\n' + host))
+    .some(hit => hit.kind === 'internal-service-host'));
+});
+
 test('historical synthetic test fixtures stay approved without loosening current files', () => {
   const loopbackFixture = ['http://10.0.', '0.7/'].join('');
   const internalFixture = ['http://metadata.', 'internal/'].join('');

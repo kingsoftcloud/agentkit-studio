@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-26",
+  "status": "complete",
+  "scope": "local TypeScript enterprise Agent Studio; no Python runtime; no new cloud scheduler",
+  "testedArchiveSha256": "187418ac164eae8d5fb394c41a11c3b0ff4a87a6899d933fefe631e2342ed376",
+  "maintainedDshCommit": "786f15474b99c012680e76326a55386848c8f45b",
+  "productionSha256": {
+    "src/providers/native-dsh-tools.mjs": "7fca722362235584a416c635dc17fdab719ed8e57865887eddbdf7cfd1d64458",
+    "src/providers/native-dsh-agent-tools.mjs": "540cc3b5aae8185f5d99fb0c04ed1205b15179d4009f1efe76e60d16d09531ca",
+    "src/host/services/native-harness.mjs": "9d2fe77302badd8fe1b123feab6dd04962710a463dc7a03a162b7ea568fe09bb",
+    "src/host/services/native-harness-bindings.mjs": "b3caa438213f9d92d1605fcb431917febe56fbad92624d27eb14396c97cd319a",
+    "packages/agentkit-harness/src/native/browser-workspace.mjs": "5fcab0c26544c4e8b8bb1691cf60b209bc672056c38cf52cf130afb18aa88705",
+    "packages/agentkit-harness/src/native/web-tools.mjs": "4502e51a6c8fd5f89635dd621f2479602507b78a4a318cdf406c0a92f6a4898f"
+  },
+  "enterprise": {
+    "passed": true,
+    "modelCalls": {
+      "business": 3,
+      "coding": 3,
+      "frozen": 2
+    },
+    "mcpToolCalls": 3,
+    "modelRequests": 10,
+    "coldContinuation": "passed",
+    "recordedBusinessMutations": 1
+  },
+  "skillWorkflow": {
+    "passed": true,
+    "counts": {
+      "model": 2,
+      "directory": 1,
+      "downloadUrl": 1,
+      "https": 1,
+      "scripts": 1
+    },
+    "coldHistory": true,
+    "exactBinaryAndTextArtifacts": true,
+    "ledgerSha256": "3d6aadb7e386c0004721e2af1964f4d15c14b4debaac2e74720697bda6bb3601"
+  },
+  "validation": {
+    "broadRun": {
+      "tests": 6736,
+      "passed": 6718,
+      "failed": 14,
+      "cancelled": 2,
+      "skipped": 2,
+      "succeeded": false,
+      "resolution": "All observed failures corrected; affected file suites and managed A2A cases rerun successfully. The broad suite was not repeated."
+    },
+    "targetedAfterCorrections": {
+      "hostRecoveryManifestReferenceAndComponents": 148,
+      "memoryBindings": 47,
+      "managedA2aQuestions": 4,
+      "agentGatewayAuthorityAndSourceSize": 102
+    },
+    "maintainedDshToolRuntime": {
+      "passed": 142,
+      "typecheckAndBuiltLibrary": true
+    },
+    "contractsAndSyntax": true,
+    "patchManifests": true,
+    "packageIntegrity": {
+      "passed": true,
+      "testedFiles": 1852
+    },
+    "sourceBoundLaunchersAndRedistributionLicenses": 4
+  },
+  "requirements": {
+    "agentRevisionBuildAndResourceLifecycle": "accepted; authenticated route-driven create/edit/build/admission and frozen bindings",
+    "sharedNativeEngine": "accepted; business, coding, child and auxiliary execution use NativeKernel",
+    "authorityAndRecovery": "accepted within trusted local Host composition; no blind effect replay; managed/local Memory isolation",
+    "memoryContextAndBudget": "accepted within recorded local capability scope",
+    "taskInteraction": "accepted in existing product evidence for public reasoning, approval, cancellation, history and reconnect",
+    "runtimeBoundaries": "Native, DSH and Codex remain distinct adapters; environment and harness are separate axes",
+    "sourceComments": "optional framework-reference commentary removed; required source attribution and licenses centralized in THIRD_PARTY_NOTICES.md",
+    "packagingAndLicenses": "accepted for recorded archive; final documentation-only archive repack checked separately"
+  },
+  "limitations": [
+    "Local maintained dependency graph reused; not a fresh dependency installation or a managed cloud deployment.",
+    "Mounted Host integration uses controlled model responses; actual-model task checks are separately recorded in real-model comparison reports.",
+    "Small paired real-model samples do not establish token or latency superiority over DSH, Codex or another harness.",
+    "Arbitrary JavaScript Host plugins are trusted code; this is not a hostile-plugin sandbox or a guarantee about every external service."
+  ]
+}

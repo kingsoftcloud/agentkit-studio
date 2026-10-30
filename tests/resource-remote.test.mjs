@@ -33,3 +33,12 @@ test('untyped runtime resource overview reaches Node Host rather than the absent
   await remote.resources({ limit: 200 });
   assert.deepEqual(calls, [{ channel: '/agentkit', endpoint: 'resources/list', payload: { limit: 200 } }]);
 });
+
+test('Agent tool picker forwards its selected engine to Native catalog discovery', async () => {
+  const calls = [];
+  const remote = createHostRemote({ rpc: { call: async (_channel, endpoint, payload) => {
+    calls.push({ endpoint, payload }); return { ok: true, value: { items: [] } };
+  } } }, { window: { location: { origin: 'http://localhost', hash: '' } } });
+  await remote.resources({ kind: 'tool', runtimeType: 'harness' });
+  assert.deepEqual(calls, [{ endpoint: 'resources/list', payload: { kind: 'tool', runtimeType: 'harness' } }]);
+});

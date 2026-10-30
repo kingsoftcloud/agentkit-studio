@@ -1,0 +1,352 @@
+# Native governance boundary follow-up
+
+Status: partial, 2026-10-26. P2's complete trusted extension/resource authority
+acceptance remains open. This record distinguishes versioned policy enforcement
+from historical display-only labels and areas still lacking end-to-end proof.
+
+## Fixed: browser authority after approval and owner initialization
+
+An actual Claude Code read-only review found that browser and Web builtins did
+not re-check Native authority inside their registered bodies. It described the
+browser approval window as theoretical; primary review disagreed with that
+classification. The DSH registry guard runs before the builtin body, while
+`authorizeNativeBuiltin` can await a read-only Session approval. A lease may
+end during that wait. Browser owner creation is also asynchronous and previously
+could continue to dispatch after a stale lease.
+
+The registered production Native builtin now re-reads exact current-intent
+authority after the approval wait. Web dispatch re-checks after constructing
+its adapter and before transport execution following its authorization wait.
+The browser adapter accepts the bound Native authority callback and checks it
+before owner allocation and after asynchronous owner creation, immediately
+before entering the browser workspace port. The trusted browser verifier does
+not carry a Native tool intent and keeps its existing separate contract.
+
+`tests/native-dsh-tools.test.mjs` reproduces the actual NativeKernel/SQLite
+approval wait: releasing the lease during approval yields `stale_fence`, with
+zero browser launches and only the original model call. A separate browser
+adapter test releases authority during owner creation and observes zero owner
+executions. A Web adapter test retires authority during its authorization
+callback and observes zero fetches. Focused checks passed: browser adapter
+13/13, the exact Native approval case 1/1, and Web adapter/gateway 20/20.
+This closes those pre-dispatch windows, not every
+possible lease change during a long-running browser action or an arbitrary
+third-party effect; the full extension/resource matrix remains open.
+
+## Fixed: Skill shell checks Native ownership after policy waits
+
+The maintained DSH ToolRegistry evaluates monotonic guards after its ordered
+pre-execute/approval stage and before the tool body. Native's builtin and MCP
+wrappers already checked current ledger authority, but a bound Skill's DSH-owned
+`skill`/`bash`/`pwsh` body did not have that wrapper. If a Native lease was
+released while the registry policy waited, its body could start under an old
+tool intent. `createNativeDshTools` now registers a live guard for every owned
+registry call; it checks the original Agent/call, signal and current Native
+intent after the wait. For Skill shell calls it also checks the exact name and
+arguments. A production Native preset fails closed if its ToolRegistry lacks
+the guard API. This does not claim to interrupt an already-started arbitrary
+third-party body after a lease expires; such an outcome still needs uncertain
+effect reconciliation rather than blind replay.
+
+The targeted real SQLite/NativeKernel test releases the lease during the
+simulated registry policy wait and proves the shell body has zero effects and
+no tool receipt. It also tests that a production preset rejects a registry
+without guards. The fresh packed Host and maintained DSH Skill workflow still
+complete with exact text/binary artifacts and durable ownership. The local
+check used controlled model responses and a local Skill service:
+
+The final extension audit found that this guard sealed name and arguments for
+Skill shell calls only. Other DSH-owned third-party bodies could be bound as
+Native tools; a mutable pre-execute listener could replace their arguments
+without changing the original Native intent. The monotonic guard now compares
+registry name and exact arguments against the owned intent for every call,
+including sandbox name translation, browser verification and operator-only
+workspace repair. It pins the arguments property before `tools/execute`
+wrappers run. A real SQLite/NativeKernel test changes an `external` call's
+arguments both before the early guard and after it, confirming zero third-party
+effects.
+
+DSH's `tools/execute` stage also has asynchronous wrappers, including Session
+checkpoint flush. A lease can expire during that wait even if arguments are
+unchanged. Maintained DSH patch 055 adds `ToolRuntime.dispatchGuard`: a separate
+scoped, monotonic check after all around-dispatch wrappers and immediately
+before the registered body. The Native gateway requires and registers that
+hook for whole-turn Native contracts. Its core test passed 142/142, including
+the new async-wait denial, and TypeScript compilation passed. Combined Studio
+authority/gateway/policy tests passed 79/79 with real SQLite/NativeKernel lease
+release at both pre-execute and around-dispatch. The maintained source export
+verified its 48-patch ancestry, final tree and bundle. Third-party Node code
+remains trusted Host composition, not a sandbox; an already-started external
+effect can still be uncertain rather than undone.
+
+The read-only Claude Code matrix review identified two additional current-
+intent gaps: Native Web followed redirects without checking the ledger again,
+and Browser could publish a screenshot or begin another action after a long
+action outlived its lease. Web now checks before every HTTP hop and before
+publishing oversized output. Browser checks after owner creation, waits and
+actions, before subsequent actions, at each network-policy decision and at
+the screenshot publication callback. An in-flight click cannot be rolled back;
+on a stale result the Session is marked uncertain. Four focused Browser/Web
+files passed 69/69, including one-hop-only redirect and zero screenshot after
+authority loss.
+
+The same review reported old frozen Revisions without a versioned Agent policy.
+That behavior is explicit compatibility policy: old Builds retain their
+original Host permissions; new saves create a strict policy Revision. No
+historical Python Session or database is being migrated in this phase. It also
+flagged DSH Node E2B/Skill/Knowledge paths; those serve separate DSH/Codex
+engines and cannot acquire a Native ledger, so they are governed by their own
+Session policy. `loose` intentionally inherits that policy. Remote Skill
+bindings freeze the selected service/space/name configuration, while a new
+Run may resolve the service's current version; the downloaded version and
+archive digest are recorded with the run. This is dynamic resource resolution,
+not an assertion that the remote bytes were frozen at Build time. Managed
+Teams callback permits belong to the cloud/managed boundary outside this
+local-only acceptance. These distinctions remain explicit in the runtime
+capability surface.
+
+```sh
+node --test --test-timeout=15000 tests/native-mcp-dispatch-authority.test.mjs
+node --test --test-timeout=15000 tests/studio-native-skills-disclosure.test.mjs
+node scripts/verify-studio-native-skill-workflow.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz
+```
+
+Claude Code's independent read-only audit confirmed the frozen Build and
+ToolRegistry boundaries, but its broad “no ordinary extension bypasses”
+conclusion missed this Skill shell lease window. It also found that direct API
+creation could omit `nativeAgentPolicy`: an MCP effect under a permissive
+Session then had no Revision-bound approval. The AgentStore now pins `strict`
+when creating any new local Native Revision without an explicit versioned
+policy, including an update to a historical record. Reading an existing
+Revision and Build retains its old behavior; an explicitly saved `loose` or
+`custom` policy is preserved. Focused store, admission and policy checks pass.
+The remaining full Skill/child/extension and resource-authority matrix still
+needs review before P2 is certified.
+
+## Optional Skill workflow locator review
+
+Actual Claude Code's bounded read-only review noticed that
+`createStudioNativeSkills` required a backend digest for the Skill loader and
+workflow executor but did not include the optional workflow locator in that
+guard or the provider digest. The direct provider now requires the same backend
+digest when a locator is supplied, and its digest records loader, executor and
+locator availability. Three focused Skill/provider files passed 53 checks.
+
+The review's claim that this alone bypassed the production permission boundary
+was not supported by the Host assembly: `prepareNativeSkillHost` always supplies
+the frozen backend digest, creates the locator and executor from the same
+session runtime, and the tool returns before invoking a locator when no
+executor is bound. The Host's frozen remote Skill binding comes from that
+runtime/connection configuration, not the direct provider's optional-capability
+digest. This change makes the provider contract explicit; it does not certify
+all Skill or extension authority, so P2 remains at 19/20.
+
+## Implemented: versioned Native Agent tool policy
+
+Newly authored Native Agents save `agentkit.native-agent-policy/v1` in their
+Revision. `strict` asks once for every effectful or unknown tool, including
+workspace, MCP, commands, Skill shell and child tools. `loose` inherits the
+mutable Session/Host policy: verified Node builtins keep their existing body
+authorizer; unknown external effects in a read-only Session require approval.
+`custom` has exact tool-name `inherit`/`ask`/`deny` rules and denies unlisted
+effectful tools. `inherit` cannot bypass the Host's own denial. Historical
+`policyTemplate` labels without the versioned object retain their original
+behavior; saving them in the form creates a new explicit policy Revision.
+
+The admitted preset installs one `tools/pre-execute` listener plus a monotonic
+`tools.guard`. A private WeakMap binds a successful `allowed-once` outcome to
+the exact ToolRegistry execution and its sealed arguments. The Node builtin
+authorizer and Memory's own consent reuse that same live grant, avoiding a
+second approval for the same call; no durable receipt or matching call ID can
+recreate it. Raw tool arguments stay out of the approval reason; the UI sees a
+call ID and argument digest. AgentStore validates the versioned contract on
+create/update. The policy is snapshotted in the admitted preset, included in
+the Host binding digest and checked by a digest in the Native recovery capsule.
+If another declarative pre-execute policy also asks for the same call, the
+listener combines the constraints into one ApprovalService request; a later
+denial wins before an approval is requested.
+
+The [packed Host evidence](enterprise-agent-bound-policy-evidence.json) runs
+business and coding Agents through production routes and the maintained DSH
+ToolRegistry under deliberately permissive `danger-full-access` Sessions. It
+observed four unique `approval/asked` events for three MCP calls and one
+workspace write, one CRM mutation, frozen Build behavior and cold continuation
+without repeated effects. This is controlled-model local integration evidence,
+not a real-model quality benchmark. Focused form, store, admission, policy and
+recovery tests pass; the full suite was not rerun for this batch.
+
+Actual Claude Code reviewed the implementation independently. Its first two
+legacy-recovery findings were based on a stale source snapshot: current code
+activates only an explicit versioned object, and focused tests check old labels.
+Its third finding exposed a possible second ask from another pre-execute
+listener; the listener now coalesces declarative asks. Claude did not rerun the
+packed Host verifier.
+
+The [negative packed-Host evidence](enterprise-agent-bound-policy-negative-evidence.json)
+now runs a coding Agent through the same authenticated admission, SDK turn,
+production ToolRegistry, ApprovalService and Native SQLite with a strict bound
+policy and a permissive Session. A rejected write settles as an error tool
+result and completed Run; a cancelled approval settles once as `cancelled` and
+the Run is `canceled`. In both cases the preceding workspace read succeeds,
+the write never creates a file, and no MCP effect occurs. The controlled model
+and approval responder are instrumentation; cancellation is initiated inside
+the trusted Host while the approval is pending, so this does not certify the
+Studio UI's cancel path. The original allow/frozen/cold verifier was rerun and
+still passes. Reproduce the two negative runs without a full suite:
+
+```sh
+node scripts/verify-enterprise-agent-platform.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz --approval-mode reject --keep
+node scripts/verify-enterprise-agent-platform.mjs --source .artifacts/dsh-native-zcode --archive /tmp/kingsoftcloud-agentkit-studio-0.0.2.tgz --approval-mode cancel --keep
+```
+
+Remaining governance evidence: all named Skill/child/extension surfaces under
+a versioned policy, and complete resource-authority and license audit. The
+Studio UI's cancel path remains a separate product acceptance gate.
+`security.allowedPermissions`
+is still Host capability metadata, not a one-shot permission grant; its labels
+must not be presented as authorization proof.
+
+Actual Claude Code's focused read-only follow-up found no concrete bypass in
+`native-bound-policy.mjs`, `native-dsh-tools.mjs`, `native-child-tools.mjs` and
+`agent-preset-admission.mjs` plus their direct dispatch helpers. Main review
+confirmed that the production parent constructs `forAgent` with `{ scope,
+store }` in `src/host/services/native-harness.mjs`; the audit's caveat about an
+unbound parent MCP call does not describe that production path. Child-owner
+internals, injected MCP execution, several capability ports and DSH Skill shell
+implementations were outside this focused audit, so it does not close the
+remaining extension/resource authority point.
+
+## Fixed: parent MCP retained authority across asynchronous waits
+
+The Native gateway previously supplied an exact current-intent checker only for
+child MCP calls. A parent had a bound MCP name and passed the ToolRegistry, but
+its remote adapter did not receive the checker. Releasing its actual SQLite
+lease during the registry-policy wait or credential resolution still caused one
+`tools/call` HTTP request before the kernel rejected its stale receipt.
+
+`tests/native-mcp-dispatch-authority.test.mjs` reproduced both failures before the
+fix against real NativeKernel, SQLite, the production resource adapter and a
+local HTTP MCP peer. The model and registry policy stage are controlled doubles;
+the ledger, credential/connection path, MCP client and transport are actual
+implementation. Ownership is released in the store, not simulated by editing a
+manifest or inventing a tool receipt.
+
+Parent and child calls now share the sealed-request/current-intent check. It is
+checked before entering the registry, at the owned tool body, through credential
+resolution before starting a connection, and after connection setup before the
+remote tool call. Completed calls cannot reuse the captured authority. A failure
+after an external effect remains uncertain; this does not provide external
+exactly-once semantics or automatically undo a remote operation.
+
+Four new cases verify:
+
+- normal MCP execution has one effect, a committed original tool receipt and no
+  repeated effect when the terminal run is inspected again;
+- ownership loss in the registry gate prevents entering the resource adapter;
+- ownership loss during credentials prevents even initializing a new connection;
+- ownership loss during MCP initialization prevents `tools/call`.
+
+A targeted existing child check also exposed an earlier error-normalization
+problem: the authority wrapper loaded a foreign run even after its ledger check
+had returned false, throwing `run_not_found`. The same failure was reproduced
+against the committed baseline. The wrapper now returns false immediately,
+before loading or adopting any conversation branch for an unauthorized request.
+
+Validation (targeted, no full suite):
+
+```sh
+node --test --test-timeout=15000 tests/native-mcp-dispatch-authority.test.mjs tests/mcp-transports.test.mjs tests/local-resource-adapters.test.mjs
+node --test --test-timeout=20000 --test-name-pattern='MCP|mcp' tests/studio-native-children.test.mjs tests/native-dsh-tools.test.mjs
+node --test --test-timeout=15000 tests/native-mcp-dispatch-authority.test.mjs tests/native-workspace-publication.test.mjs tests/native-tool-receipt-authority.test.mjs
+```
+
+These executions pass 27, 18 and 16 checks respectively; the new four cases
+appear in more than one command and are not counted as distinct extra evidence.
+
+The [fresh packed Host report](enterprise-agent-governance-host-evidence.json)
+revalidates both business and coding Agents, real MCP and workspace effects,
+frozen Build resource/instruction binding and cold continuation. The packed
+changed production modules were byte-compared with the worktree. This is the
+existing bounded vertical verifier, not a full suite or real-model benchmark.
+
+## Prior finding: display-only policy labels
+
+Actual Claude Code's read-only audit found that new-authoring
+`spec.security.allowedPermissions` / `toolPolicy` are written as metadata but
+are not read as a permission gate. Main review confirmed this and additionally
+found that `bindings.policyTemplate` (`strict`, `loose`, `custom`) is exposed by
+the form but has no execution consumer. A saved label is not proof of an
+enterprise permission constraint. The authoring capability annotations must not
+be described as enforced grants.
+
+Current enforcement instead lives in the trusted Host's ToolRegistry pipeline,
+`authorizeNativeBuiltin`, exact per-call Memory consent, Native intent/lease
+checks and resource/version bindings. Native's whole-turn gateway DOES register
+owned tools and call `ctx.tools.execute`; it does not bypass that pipeline.
+The existing native-workspace wrapper deliberately delegates its approval to
+this Host gate. Ordinary model tool calls cannot replace the Host authorizer;
+plugins that execute arbitrary Node code are trusted Host composition, not an
+untrusted code sandbox.
+
+A second Claude proposal to map “loose” to `approval: never` and seed session
+policy at creation was rejected. In the maintained DSH source, `never` rejects
+approval requests; it does not auto-approve them. Initial session defaults are
+also not an immutable enterprise ceiling. Its assertion of a separate,
+unconditionally bypassed Native workspace permission loop contradicted
+`src/providers/native-dsh-tools.mjs` and the mounted evidence.
+
+The original implementation checklist (now partially fulfilled):
+
+1. Define precise, user-visible semantics for the Agent's bound policy and its
+   relationship to mutable session settings. Resolve legacy/custom values
+   explicitly instead of silently granting a new meaning.
+2. Enforce the policy at the existing trusted dispatch boundary for workspace,
+   MCP, commands, inherited child tools and Skills. Host restrictions must still
+   be able to deny; an extension's earlier allow must not remove the constraint.
+3. Bind the policy to the Agent revision/Build and recovery capsule. Share a live
+   exact-call approval through the actual pipeline where needed; neither a
+   persisted boolean nor a model-visible receipt may recreate a one-shot grant.
+4. Verify strict policy under a permissive session, denial/cancellation during
+   approval, original-version cold restoration, and no duplicate approval for
+   the same action. Then update the form to describe the behavior actually
+   enforced and remove/deprecate misleading inert capability annotations.
+
+The first Claude audit independently ran 54 focused authority/archive/grant
+checks, but it did not inspect the parent MCP dispatch seam. Main review's
+reproduction above supersedes its broad “no bypass found” wording. None of these
+partial reviews certifies all extension/resource governance.
+
+Actual Claude Code's final read-only review inspected the parent/child guard,
+credential/connection rechecks and the ledger authority helper. It found no
+concrete regression in that bounded change. Its first review invocation reached
+its turn limit; the resumed final report completed. Primary ran and inspected
+the executable checks and the packed-Host evidence above; the review did not
+claim independently rerunning them or completing the remaining governance work.
+
+## Local matrix closure
+
+The later whole-surface Claude review and primary source/runtime checks cover
+Native workspace/commands, parent and inherited MCP, Skills and their shell
+dispatch, child lifecycle, browser/Web, Memory, Knowledge, context sources and
+A2A. The concrete asynchronous authority gaps are repaired above. Host code is
+trusted composition; the monotonic guards constrain registered Native calls,
+not arbitrary JavaScript executed directly by a Host plugin.
+
+Compatibility behavior is explicit: old unversioned Builds keep their admitted
+Host policy; saving creates a new versioned policy Revision. Loose mode inherits
+Host policy. Remote Skills resolve the current version from a frozen service,
+space and name binding for a new execution, then retain the resolved version and
+archive hash in its receipts. These are documented contracts, not evidence that
+an old Build's remote content bytes are frozen. DSH and Codex use their separate
+adapters rather than borrowing a Native execution lease. Managed Teams permits
+remain outside this local phase.
+
+The final repository run also exposed a product recovery defect: a Managed
+record was queried through the local principal's Memory-extraction service.
+The recovery composition now omits that local-only status for a foreign managed
+principal. All 148 affected Host/recovery/manifest/reference tests, 47 Memory
+binding tests and the four managed A2A question cases pass after correction.
+The existing foreign-principal Memory service rejection remains intact.
+
+This closes P2's last local authority point. Final post-change archive and
+mounted-Host checks remain the separate P5 release gate.
