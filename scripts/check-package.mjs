@@ -23,6 +23,7 @@ const expected = [
   'packages/agentkit-harness/src/index.mjs', 'packages/agentkit-harness/src/core.mjs',
   'packages/agentkit-harness/src/contract.mjs', 'packages/agentkit-harness/src/dsh-adapter.mjs',
   'packages/agentkit-harness/src/index.d.ts', 'scripts/start-agent-bundle.mjs',
+  'scripts/start-agent-manifest.mjs', 'scripts/verify-agent-manifest.mjs',
 ];
 const missing = expected.filter(path => !files.has(path));
 if (missing.length) throw new Error(`package missing required files: ${missing.join(', ')}`);

@@ -46,7 +46,8 @@
     "cordis.patch.yml",
     "README.md",
     "scripts/start-agent-bundle.mjs",
-    "scripts/verify-agent-manifest.mjs"
+    "scripts/verify-agent-manifest.mjs",
+    "scripts/start-agent-manifest.mjs"
   ],
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
