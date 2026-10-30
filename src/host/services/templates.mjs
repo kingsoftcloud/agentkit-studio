@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { listPlatformResources } from "../../platform-resource-bindings.mjs";
 import * as ExpertCatalogPlugin from "../../../packages/expert-catalog/src/index.mjs";
+import { listStudioTools } from '../../native-tool-catalog.mjs';
 async function createTemplateServices(ctx, { storeDir: studioStoreDir, env: runtimeEnv, configurationPromise, serverClientPromise, skillDiscoveryPromise, localMcpStorePromise, mcpProbePromise, agentStorePromise, credentialsService, models, listCodexAgentModels, codexModels, getTeamTemplates }) {
   const templateCatalog = await (await import("../../template-catalog-source.mjs")).createTemplateCatalogSource({ studioStoreDir, env: runtimeEnv, configuration: () => configurationPromise, serverClient: () => serverClientPromise });
   ctx.plugin(ExpertCatalogPlugin, { catalog: templateCatalog });
@@ -19,7 +20,7 @@ async function createTemplateServices(ctx, { storeDir: studioStoreDir, env: runt
     resources: async (kind, runtimeType) => {
       if (kind === "model" && runtimeType === "codex") return listCodexAgentModels({ models, catalog: codexModels });
       const serverClient = await serverClientPromise;
-      if (kind === "tool") return serverClient.listCatalogResources({ kind, limit: 200 });
+      if (kind === "tool") return listStudioTools({ query: { kind, runtimeType, limit: 200 }, serverClient });
       const { listStudioResources } = await import("../../resource-catalog.mjs");
       const items = [];
       let cursor;

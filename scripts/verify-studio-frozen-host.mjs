@@ -174,7 +174,7 @@ try {
   assert.ok(Object.values(compatibility.features).every(feature => feature.available));
   check('running-dsh-baseline-and-live-capabilities', { compatibility });
   stage = 'freeze-and-update-agent';
-  const agent = await rpc('agents/create-local', { name: 'Frozen Host fixture', runtimeType: 'harness', spec: { instructions: { system: 'FROZEN_SYSTEM_A' }, bindings: { modelProfileId: profiles[0].id, modelProfileIds: profiles.map(item => item.id), mcpServers: [{ resourceId: 'mcp-frozen-fixture' }] } } });
+  const agent = await rpc('agents/create-local', { name: 'Frozen Host fixture', runtimeType: 'harness', spec: { instructions: { system: 'FROZEN_SYSTEM_A' }, bindings: { modelProfileId: profiles[0].id, modelProfileIds: profiles.map(item => item.id), mcpServers: [{ resourceId: 'mcp-frozen-fixture' }], nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} } } } });
   const agentId = agent.metadata.id;
   const operation = await rpc('builds/create', { agentId, revision: 1 });
   let buildId = operation.buildId;

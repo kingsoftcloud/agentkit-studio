@@ -72,3 +72,12 @@ test('a model advertised by the configured gateway uses that profile credential 
   await assert.rejects(service.profile('unlisted'), { code: 'MODEL_NOT_FOUND' });
   await assert.rejects(service.profile('disabled'), { code: 'MODEL_NOT_FOUND' });
 });
+
+test('legacy credential-only configuration resolves the same default model advertised by settings', async () => {
+  const service = createModelService({ configuration: configuration({ modelApiKey: 'legacy-key' }),
+    credentials: { resolve: async () => null } });
+  const selected = await service.profile('');
+  assert.equal(selected.id, 'default');
+  assert.equal(selected.modelName, 'deepseek-v4.1-flash');
+  assert.equal(selected.apiKey, 'legacy-key');
+});

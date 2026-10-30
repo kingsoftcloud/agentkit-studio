@@ -1,0 +1,408 @@
+diff --git a/dist/cjs/client/sse.d.ts b/dist/cjs/client/sse.d.ts
+index acf99f1ea646da9c80cd8d6c4b69041cb900d4f7..3b22a6a8617cfa36a32f5362664fc77d73f180e8 100644
+--- a/dist/cjs/client/sse.d.ts
++++ b/dist/cjs/client/sse.d.ts
+@@ -11,6 +11,8 @@ export declare class SseError extends Error {
+  * Configuration options for the `SSEClientTransport`.
+  */
+ export type SSEClientTransportOptions = {
++    /** Parse an inbound JSON-RPC message before protocol validation; defaults to JSON.parse. */
++    jsonParser?: (text: string) => unknown;
+     /**
+      * An OAuth client provider to use for authentication.
+      *
+@@ -50,10 +52,13 @@ export type SSEClientTransportOptions = {
+  * @deprecated SSEClientTransport is deprecated. Prefer to use StreamableHTTPClientTransport where possible instead. Note that because some servers are still using SSE, clients may need to support both transports during the migration period.
+  */
+ export declare class SSEClientTransport implements Transport {
++    /** Supported opt-in JSON parser interface. */
++    static readonly jsonParserContract: 'mcp.json-parser/v1';
+     private _eventSource?;
+     private _endpoint?;
+     private _abortController?;
+     private _url;
++    private _jsonParser;
+     private _resourceMetadataUrl?;
+     private _scope?;
+     private _eventSourceInit?;
+diff --git a/dist/cjs/client/sse.js b/dist/cjs/client/sse.js
+index 8ca8dad652e76c299927f836cf622c0be877e1d4..4b03d3ee107462fe7d8bca785dd70bd98c1169a3 100644
+--- a/dist/cjs/client/sse.js
++++ b/dist/cjs/client/sse.js
+@@ -19,7 +19,10 @@ exports.SseError = SseError;
+  * @deprecated SSEClientTransport is deprecated. Prefer to use StreamableHTTPClientTransport where possible instead. Note that because some servers are still using SSE, clients may need to support both transports during the migration period.
+  */
+ class SSEClientTransport {
++    static jsonParserContract = 'mcp.json-parser/v1';
+     constructor(url, opts) {
++        if (opts?.jsonParser !== undefined && typeof opts.jsonParser !== "function") throw new TypeError("jsonParser must be a function");
++        this._jsonParser = opts?.jsonParser ?? JSON.parse;
+         this._url = url;
+         this._resourceMetadataUrl = undefined;
+         this._scope = undefined;
+@@ -121,7 +124,7 @@ class SSEClientTransport {
+                 const messageEvent = event;
+                 let message;
+                 try {
+-                    message = types_js_1.JSONRPCMessageSchema.parse(JSON.parse(messageEvent.data));
++                    message = types_js_1.JSONRPCMessageSchema.parse(this._jsonParser(messageEvent.data));
+                 }
+                 catch (error) {
+                     this.onerror?.(error);
+diff --git a/dist/cjs/client/stdio.d.ts b/dist/cjs/client/stdio.d.ts
+index 2c46ed64a006c1114536edd0eaf66e49c3b4ed85..921335555bb451685d93db1c202258d00bfd639b 100644
+--- a/dist/cjs/client/stdio.d.ts
++++ b/dist/cjs/client/stdio.d.ts
+@@ -3,6 +3,8 @@ import { Stream } from 'node:stream';
+ import { Transport } from '../shared/transport.js';
+ import { JSONRPCMessage } from '../types.js';
+ export type StdioServerParameters = {
++    /** Parse an inbound JSON-RPC message before protocol validation; defaults to JSON.parse. */
++    jsonParser?: (text: string) => unknown;
+     /**
+      * The executable to run to start the server.
+      */
+@@ -51,6 +53,8 @@ export declare function getDefaultEnvironment(): Record<string, string>;
+  * This transport is only available in Node.js environments.
+  */
+ export declare class StdioClientTransport implements Transport {
++    /** Supported opt-in JSON parser interface. */
++    static readonly jsonParserContract: 'mcp.json-parser/v1';
+     private _process?;
+     private _readBuffer;
+     private _serverParams;
+diff --git a/dist/cjs/client/stdio.js b/dist/cjs/client/stdio.js
+index aabab78421a9b2e3981cf2ca138ea33494603a26..83fc763ad586bdc7243ba453ae92d105955c87fc 100644
+--- a/dist/cjs/client/stdio.js
++++ b/dist/cjs/client/stdio.js
+@@ -53,10 +53,11 @@ function getDefaultEnvironment() {
+  * This transport is only available in Node.js environments.
+  */
+ class StdioClientTransport {
++    static jsonParserContract = 'mcp.json-parser/v1';
+     constructor(server) {
+         this._stderrStream = null;
+         this._serverParams = server;
+-        this._readBuffer = new stdio_js_1.ReadBuffer({ maxBufferSize: server.maxBufferSize });
++        this._readBuffer = new stdio_js_1.ReadBuffer({ maxBufferSize: server.maxBufferSize, jsonParser: server.jsonParser });
+         if (server.stderr === 'pipe' || server.stderr === 'overlapped') {
+             this._stderrStream = new node_stream_1.PassThrough();
+         }
+diff --git a/dist/cjs/client/streamableHttp.d.ts b/dist/cjs/client/streamableHttp.d.ts
+index 6035b24625d7e7227a71a57fb8d8beccc2cea2f4..7a6f668fe4819d4b6ac37c2d35838db5bc508a6a 100644
+--- a/dist/cjs/client/streamableHttp.d.ts
++++ b/dist/cjs/client/streamableHttp.d.ts
+@@ -56,6 +56,8 @@ export interface StreamableHTTPReconnectionOptions {
+  * Configuration options for the `StreamableHTTPClientTransport`.
+  */
+ export type StreamableHTTPClientTransportOptions = {
++    /** Parse an inbound JSON-RPC message before protocol validation; defaults to JSON.parse. */
++    jsonParser?: (text: string) => unknown;
+     /**
+      * An OAuth client provider to use for authentication.
+      *
+@@ -95,8 +97,11 @@ export type StreamableHTTPClientTransportOptions = {
+  * for receiving messages.
+  */
+ export declare class StreamableHTTPClientTransport implements Transport {
++    /** Supported opt-in JSON parser interface. */
++    static readonly jsonParserContract: 'mcp.json-parser/v1';
+     private _abortController?;
+     private _url;
++    private _jsonParser;
+     private _resourceMetadataUrl?;
+     private _scope?;
+     private _requestInit?;
+diff --git a/dist/cjs/client/streamableHttp.js b/dist/cjs/client/streamableHttp.js
+index 1b54595cc05a301e0332da7be9f98e46dd7e365b..04a2735727920320fcd0d164ab7b9e864a542ea2 100644
+--- a/dist/cjs/client/streamableHttp.js
++++ b/dist/cjs/client/streamableHttp.js
+@@ -26,7 +26,10 @@ exports.StreamableHTTPError = StreamableHTTPError;
+  * for receiving messages.
+  */
+ class StreamableHTTPClientTransport {
++    static jsonParserContract = 'mcp.json-parser/v1';
+     constructor(url, opts) {
++        if (opts?.jsonParser !== undefined && typeof opts.jsonParser !== "function") throw new TypeError("jsonParser must be a function");
++        this._jsonParser = opts?.jsonParser ?? JSON.parse;
+         this._hasCompletedAuthFlow = false; // Circuit breaker: detect auth success followed by immediate 401
+         this._url = url;
+         this._resourceMetadataUrl = undefined;
+@@ -204,7 +207,7 @@ class StreamableHTTPClientTransport {
+                     }
+                     if (!event.event || event.event === 'message') {
+                         try {
+-                            const message = types_js_1.JSONRPCMessageSchema.parse(JSON.parse(event.data));
++                            const message = types_js_1.JSONRPCMessageSchema.parse(this._jsonParser(event.data));
+                             if ((0, types_js_1.isJSONRPCResultResponse)(message)) {
+                                 // Mark that we received a response - no need to reconnect for this request
+                                 receivedResponse = true;
+@@ -397,7 +400,7 @@ class StreamableHTTPClientTransport {
+                 }
+                 else if (responseMediaType === 'application/json') {
+                     // For non-streaming servers, we might get direct JSON responses
+-                    const data = await response.json();
++                    const data = this._jsonParser(await response.text());
+                     const responseMessages = Array.isArray(data)
+                         ? data.map(msg => types_js_1.JSONRPCMessageSchema.parse(msg))
+                         : [types_js_1.JSONRPCMessageSchema.parse(data)];
+diff --git a/dist/cjs/shared/stdio.d.ts b/dist/cjs/shared/stdio.d.ts
+index 7ec09089d11d100e81de7ad3fada60c3f9e82e9e..b5fe9cc50424f64244ce858f40ec64dd1f0fd921 100644
+--- a/dist/cjs/shared/stdio.d.ts
++++ b/dist/cjs/shared/stdio.d.ts
+@@ -6,13 +6,16 @@ export declare const STDIO_DEFAULT_MAX_BUFFER_SIZE: number;
+ export declare class ReadBuffer {
+     private _buffer?;
+     private _maxBufferSize;
++    private _jsonParser;
+     constructor(options?: {
+         maxBufferSize?: number;
++        /** Parse before JSON-RPC validation; defaults to JSON.parse. */
++        jsonParser?: (text: string) => unknown;
+     });
+     append(chunk: Buffer): void;
+     readMessage(): JSONRPCMessage | null;
+     clear(): void;
+ }
+-export declare function deserializeMessage(line: string): JSONRPCMessage;
++export declare function deserializeMessage(line: string, jsonParser?: (text: string) => unknown): JSONRPCMessage;
+ export declare function serializeMessage(message: JSONRPCMessage): string;
+ //# sourceMappingURL=stdio.d.ts.map
+\ No newline at end of file
+diff --git a/dist/cjs/shared/stdio.js b/dist/cjs/shared/stdio.js
+index 94dad1ed8dc8f430966bf191b2a33003e6144d0d..f4c0c197af11bd15241fdf0c507213cdaec4b596 100644
+--- a/dist/cjs/shared/stdio.js
++++ b/dist/cjs/shared/stdio.js
+@@ -10,6 +10,8 @@ exports.STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+  */
+ class ReadBuffer {
+     constructor(options) {
++        if (options?.jsonParser !== undefined && typeof options.jsonParser !== "function") throw new TypeError("jsonParser must be a function");
++        this._jsonParser = options?.jsonParser ?? JSON.parse;
+         this._maxBufferSize = options?.maxBufferSize ?? exports.STDIO_DEFAULT_MAX_BUFFER_SIZE;
+     }
+     append(chunk) {
+@@ -30,15 +32,15 @@ class ReadBuffer {
+         }
+         const line = this._buffer.toString('utf8', 0, index).replace(/\r$/, '');
+         this._buffer = this._buffer.subarray(index + 1);
+-        return deserializeMessage(line);
++        return deserializeMessage(line, this._jsonParser);
+     }
+     clear() {
+         this._buffer = undefined;
+     }
+ }
+ exports.ReadBuffer = ReadBuffer;
+-function deserializeMessage(line) {
+-    return types_js_1.JSONRPCMessageSchema.parse(JSON.parse(line));
++function deserializeMessage(line, jsonParser = JSON.parse) {
++    return types_js_1.JSONRPCMessageSchema.parse(jsonParser(line));
+ }
+ function serializeMessage(message) {
+     return JSON.stringify(message) + '\n';
+diff --git a/dist/esm/client/sse.d.ts b/dist/esm/client/sse.d.ts
+index acf99f1ea646da9c80cd8d6c4b69041cb900d4f7..bd2745ebcd306d75625fa463ada76ddb9fa78dc8 100644
+--- a/dist/esm/client/sse.d.ts
++++ b/dist/esm/client/sse.d.ts
+@@ -11,6 +11,9 @@ export declare class SseError extends Error {
+  * Configuration options for the `SSEClientTransport`.
+  */
+ export type SSEClientTransportOptions = {
++    /** Parse an inbound JSON-RPC message before protocol validation; defaults to JSON.parse. */
++    jsonParser?: (text: string) => unknown;
++
+     /**
+      * An OAuth client provider to use for authentication.
+      *
+@@ -50,10 +53,13 @@ export type SSEClientTransportOptions = {
+  * @deprecated SSEClientTransport is deprecated. Prefer to use StreamableHTTPClientTransport where possible instead. Note that because some servers are still using SSE, clients may need to support both transports during the migration period.
+  */
+ export declare class SSEClientTransport implements Transport {
++    /** Supported opt-in JSON parser interface. */
++    static readonly jsonParserContract: 'mcp.json-parser/v1';
+     private _eventSource?;
+     private _endpoint?;
+     private _abortController?;
+     private _url;
++    private _jsonParser;
+     private _resourceMetadataUrl?;
+     private _scope?;
+     private _eventSourceInit?;
+diff --git a/dist/esm/client/sse.js b/dist/esm/client/sse.js
+index 58c474156ba4b33090ac092be6f3284e695a7ffd..276dd255f88e0ed9b7eb107269cd0022fad69804 100644
+--- a/dist/esm/client/sse.js
++++ b/dist/esm/client/sse.js
+@@ -15,7 +15,10 @@ export class SseError extends Error {
+  * @deprecated SSEClientTransport is deprecated. Prefer to use StreamableHTTPClientTransport where possible instead. Note that because some servers are still using SSE, clients may need to support both transports during the migration period.
+  */
+ export class SSEClientTransport {
++    static jsonParserContract = 'mcp.json-parser/v1';
+     constructor(url, opts) {
++        if (opts?.jsonParser !== undefined && typeof opts.jsonParser !== "function") throw new TypeError("jsonParser must be a function");
++        this._jsonParser = opts?.jsonParser ?? JSON.parse;
+         this._url = url;
+         this._resourceMetadataUrl = undefined;
+         this._scope = undefined;
+@@ -117,7 +120,7 @@ export class SSEClientTransport {
+                 const messageEvent = event;
+                 let message;
+                 try {
+-                    message = JSONRPCMessageSchema.parse(JSON.parse(messageEvent.data));
++                    message = JSONRPCMessageSchema.parse(this._jsonParser(messageEvent.data));
+                 }
+                 catch (error) {
+                     this.onerror?.(error);
+diff --git a/dist/esm/client/stdio.d.ts b/dist/esm/client/stdio.d.ts
+index 2c46ed64a006c1114536edd0eaf66e49c3b4ed85..56817cec9dd0ca45c198999365b5ca1dde30807a 100644
+--- a/dist/esm/client/stdio.d.ts
++++ b/dist/esm/client/stdio.d.ts
+@@ -3,6 +3,9 @@ import { Stream } from 'node:stream';
+ import { Transport } from '../shared/transport.js';
+ import { JSONRPCMessage } from '../types.js';
+ export type StdioServerParameters = {
++    /** Parse an inbound JSON-RPC message before protocol validation; defaults to JSON.parse. */
++    jsonParser?: (text: string) => unknown;
++
+     /**
+      * The executable to run to start the server.
+      */
+@@ -51,6 +54,8 @@ export declare function getDefaultEnvironment(): Record<string, string>;
+  * This transport is only available in Node.js environments.
+  */
+ export declare class StdioClientTransport implements Transport {
++    /** Supported opt-in JSON parser interface. */
++    static readonly jsonParserContract: 'mcp.json-parser/v1';
+     private _process?;
+     private _readBuffer;
+     private _serverParams;
+diff --git a/dist/esm/client/stdio.js b/dist/esm/client/stdio.js
+index 925ad2160eebfe8bc7390a889d850ba547c494fa..ac604985e0415d6ee882fd8603f873424b2943bd 100644
+--- a/dist/esm/client/stdio.js
++++ b/dist/esm/client/stdio.js
+@@ -46,10 +46,11 @@ export function getDefaultEnvironment() {
+  * This transport is only available in Node.js environments.
+  */
+ export class StdioClientTransport {
++    static jsonParserContract = 'mcp.json-parser/v1';
+     constructor(server) {
+         this._stderrStream = null;
+         this._serverParams = server;
+-        this._readBuffer = new ReadBuffer({ maxBufferSize: server.maxBufferSize });
++        this._readBuffer = new ReadBuffer({ maxBufferSize: server.maxBufferSize, jsonParser: server.jsonParser });
+         if (server.stderr === 'pipe' || server.stderr === 'overlapped') {
+             this._stderrStream = new PassThrough();
+         }
+diff --git a/dist/esm/client/streamableHttp.d.ts b/dist/esm/client/streamableHttp.d.ts
+index 6035b24625d7e7227a71a57fb8d8beccc2cea2f4..6bd420caa68be98169e7c04e20760865ee064020 100644
+--- a/dist/esm/client/streamableHttp.d.ts
++++ b/dist/esm/client/streamableHttp.d.ts
+@@ -56,6 +56,9 @@ export interface StreamableHTTPReconnectionOptions {
+  * Configuration options for the `StreamableHTTPClientTransport`.
+  */
+ export type StreamableHTTPClientTransportOptions = {
++    /** Parse an inbound JSON-RPC message before protocol validation; defaults to JSON.parse. */
++    jsonParser?: (text: string) => unknown;
++
+     /**
+      * An OAuth client provider to use for authentication.
+      *
+@@ -95,8 +98,11 @@ export type StreamableHTTPClientTransportOptions = {
+  * for receiving messages.
+  */
+ export declare class StreamableHTTPClientTransport implements Transport {
++    /** Supported opt-in JSON parser interface. */
++    static readonly jsonParserContract: 'mcp.json-parser/v1';
+     private _abortController?;
+     private _url;
++    private _jsonParser;
+     private _resourceMetadataUrl?;
+     private _scope?;
+     private _requestInit?;
+diff --git a/dist/esm/client/streamableHttp.js b/dist/esm/client/streamableHttp.js
+index 49c9662c58bd2079b4be982125e2b11a45723ba9..71e639261848cae1eb06f12b82cd43cc9b688f97 100644
+--- a/dist/esm/client/streamableHttp.js
++++ b/dist/esm/client/streamableHttp.js
+@@ -22,7 +22,10 @@ export class StreamableHTTPError extends Error {
+  * for receiving messages.
+  */
+ export class StreamableHTTPClientTransport {
++    static jsonParserContract = 'mcp.json-parser/v1';
+     constructor(url, opts) {
++        if (opts?.jsonParser !== undefined && typeof opts.jsonParser !== "function") throw new TypeError("jsonParser must be a function");
++        this._jsonParser = opts?.jsonParser ?? JSON.parse;
+         this._hasCompletedAuthFlow = false; // Circuit breaker: detect auth success followed by immediate 401
+         this._url = url;
+         this._resourceMetadataUrl = undefined;
+@@ -200,7 +203,7 @@ export class StreamableHTTPClientTransport {
+                     }
+                     if (!event.event || event.event === 'message') {
+                         try {
+-                            const message = JSONRPCMessageSchema.parse(JSON.parse(event.data));
++                            const message = JSONRPCMessageSchema.parse(this._jsonParser(event.data));
+                             if (isJSONRPCResultResponse(message)) {
+                                 // Mark that we received a response - no need to reconnect for this request
+                                 receivedResponse = true;
+@@ -393,7 +396,7 @@ export class StreamableHTTPClientTransport {
+                 }
+                 else if (responseMediaType === 'application/json') {
+                     // For non-streaming servers, we might get direct JSON responses
+-                    const data = await response.json();
++                    const data = this._jsonParser(await response.text());
+                     const responseMessages = Array.isArray(data)
+                         ? data.map(msg => JSONRPCMessageSchema.parse(msg))
+                         : [JSONRPCMessageSchema.parse(data)];
+diff --git a/dist/esm/shared/stdio.d.ts b/dist/esm/shared/stdio.d.ts
+index 7ec09089d11d100e81de7ad3fada60c3f9e82e9e..b5fe9cc50424f64244ce858f40ec64dd1f0fd921 100644
+--- a/dist/esm/shared/stdio.d.ts
++++ b/dist/esm/shared/stdio.d.ts
+@@ -6,13 +6,16 @@ export declare const STDIO_DEFAULT_MAX_BUFFER_SIZE: number;
+ export declare class ReadBuffer {
+     private _buffer?;
+     private _maxBufferSize;
++    private _jsonParser;
+     constructor(options?: {
+         maxBufferSize?: number;
++        /** Parse before JSON-RPC validation; defaults to JSON.parse. */
++        jsonParser?: (text: string) => unknown;
+     });
+     append(chunk: Buffer): void;
+     readMessage(): JSONRPCMessage | null;
+     clear(): void;
+ }
+-export declare function deserializeMessage(line: string): JSONRPCMessage;
++export declare function deserializeMessage(line: string, jsonParser?: (text: string) => unknown): JSONRPCMessage;
+ export declare function serializeMessage(message: JSONRPCMessage): string;
+ //# sourceMappingURL=stdio.d.ts.map
+\ No newline at end of file
+diff --git a/dist/esm/shared/stdio.js b/dist/esm/shared/stdio.js
+index cf20e652c2f8fb6444559e8dae7dc259b310acd6..bd7cae1de5cea0be9c3131f6b0bf94f86e2de4ff 100644
+--- a/dist/esm/shared/stdio.js
++++ b/dist/esm/shared/stdio.js
+@@ -5,6 +5,8 @@ export const STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+  */
+ export class ReadBuffer {
+     constructor(options) {
++        if (options?.jsonParser !== undefined && typeof options.jsonParser !== "function") throw new TypeError("jsonParser must be a function");
++        this._jsonParser = options?.jsonParser ?? JSON.parse;
+         this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
+     }
+     append(chunk) {
+@@ -25,14 +27,14 @@ export class ReadBuffer {
+         }
+         const line = this._buffer.toString('utf8', 0, index).replace(/\r$/, '');
+         this._buffer = this._buffer.subarray(index + 1);
+-        return deserializeMessage(line);
++        return deserializeMessage(line, this._jsonParser);
+     }
+     clear() {
+         this._buffer = undefined;
+     }
+ }
+-export function deserializeMessage(line) {
+-    return JSONRPCMessageSchema.parse(JSON.parse(line));
++export function deserializeMessage(line, jsonParser = JSON.parse) {
++    return JSONRPCMessageSchema.parse(jsonParser(line));
+ }
+ export function serializeMessage(message) {
+     return JSON.stringify(message) + '\n';

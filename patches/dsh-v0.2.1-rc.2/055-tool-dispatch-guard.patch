@@ -1,0 +1,111 @@
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index fd984f26343ac37cfa01623ac5332bf8242313f7..4624d6a75959422e776a7103d7ed6cb79967cafc 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -742,6 +742,7 @@ class ToolLayer implements ScopeLayer {
+   readonly tools: NamedEntries<ToolDefinition>
+   readonly restrictions = new AnonymousEntries<CompiledToolRestriction>()
+   readonly guards = new AnonymousEntries<ToolGuard>()
++  readonly dispatchGuards = new AnonymousEntries<ToolGuard>()
+   /**
+    * Presentation this scope's agent declared for itself, shadowing the
+    * deployment default. One cell rather than an entry table: two answers to
+@@ -757,7 +758,7 @@ class ToolLayer implements ScopeLayer {
+ 
+   /** Whether every contribution table in this aggregate layer is empty. */
+   isEmpty(): boolean {
+-    return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty()
++    return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty() && this.dispatchGuards.isEmpty()
+       && this.mode === undefined
+   }
+ 
+@@ -778,6 +779,14 @@ class ToolLayer implements ScopeLayer {
+     }
+     return undefined
+   }
++
++  dispatchGuardReason(exec: ToolExecution): string | undefined {
++    for (const guard of this.dispatchGuards.values()) {
++      const reason = guard(exec)
++      if (reason !== undefined) return reason
++    }
++    return undefined
++  }
+ }
+ 
+ /** Approval decision plus whether the approval channel reported cancellation. */
+@@ -1160,6 +1169,16 @@ export class ToolRuntime extends Service {
+     )
+   }
+ 
++  /** Check again at the last synchronous boundary before a tool body starts.
++   * Around-dispatch listeners may await after the normal policy guard. */
++  dispatchGuard(guard: ToolGuard): () => void {
++    return this.layers.effect(
++      this.ctx,
++      layer => layer.dispatchGuards.append(guard),
++      { label: 'tools.dispatchGuard()', notify: false },
++    )
++  }
++
+   /** First monotonic denial from the global then the scope chain's guard layers, farthest first. */
+   private guardReason(exec: ToolExecution): string | undefined {
+     const globalReason = this.layers.global.guardReason(exec)
+@@ -1172,6 +1191,17 @@ export class ToolRuntime extends Service {
+     return undefined
+   }
+ 
++  private dispatchGuardReason(exec: ToolExecution): string | undefined {
++    const globalReason = this.layers.global.dispatchGuardReason(exec)
++    if (globalReason !== undefined) return globalReason
++    if (exec.agent === undefined) return undefined
++    for (const layer of this.layers.chainLayers(exec.agent)) {
++      const reason = layer.dispatchGuardReason(exec)
++      if (reason !== undefined) return reason
++    }
++    return undefined
++  }
++
+   /**
+    * Resolve every registry fact one scope needs in one layer traversal. The
+    * visible map applies restrictions to the INHERITED surface, then the
+@@ -1608,6 +1638,8 @@ export class ToolRuntime extends Service {
+       if (tool !== accepted?.definition || tool.execute !== accepted.body) {
+         throw new Error('Tool definition changed after execution preparation; submit a new call')
+       }
++      const denialReason = this.dispatchGuardReason(exec)
++      if (denialReason !== undefined) throw new Error(denialReason)
+       state.bodyInvoked = true
+       const returned = await tool.execute(exec.arguments, exec)
+       const result = this.createSuccessResult(exec, tool, returned)
+diff --git a/packages/core/tools/tests/tools.spec.ts b/packages/core/tools/tests/tools.spec.ts
+index 3a1e8dcbf3044509e0f4fe24c6d762021a89f4fc..58296db16041610e0c97a557bc90a4e21fc17acb 100644
+--- a/packages/core/tools/tests/tools.spec.ts
++++ b/packages/core/tools/tests/tools.spec.ts
+@@ -52,6 +52,26 @@ const echoTool = defineTool({
+ })
+ 
+ describe('ToolRuntime', () => {
++  it('rechecks a dispatch guard after an asynchronous around-dispatch wait', async () => {
++    const ctx = await setup()
++    try {
++      let current = true, effects = 0
++      ctx.tools.register(defineContentToolFixture({ name: 'effect', description: '', parameters: {},
++        async execute() { effects++; return [{ type: 'text', text: 'effect ran' }] } }))
++      ctx.tools.dispatchGuard(() => current ? undefined : 'Native authority expired')
++      ctx.on('tools/execute', async (_exec, next) => {
++        await Promise.resolve()
++        current = false
++        return next()
++      })
++      const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('dispatch-lease'),
++        name: 'effect', arguments: {} })
++      expect(result.isError).toBe(true)
++      expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text', text: expect.stringContaining('Native authority expired') })]))
++      expect(effects).toBe(0)
++    } finally { await ctx.fiber.dispose() }
++  })
++
+   it('preserves deferred loading through registry and prompt schema projection', async () => {
+     const ctx = await setup()
+     try {

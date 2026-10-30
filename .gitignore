@@ -50,6 +50,7 @@ typings/
 
 # Output of 'npm pack'
 *.tgz
+!vendor/native/*.tgz
 
 # Yarn Integrity file
 .yarn-integrity
@@ -62,6 +63,8 @@ typings/
 # AgentKit Studio generated tarballs and artifacts
 .artifacts/
 /dist/
+packages/agentkit-harness-core/dist/
+packages/agentkit-harness-node/dist/
 .DS_Store
 
 # Browser acceptance artifacts
@@ -71,5 +74,6 @@ output/playwright/
 # Worker-owned offline tool cache; never part of public source
 .ci-tools/
 
+packages/agentkit-harness-ui/markdown/dist/
 # Local pnpm content store (never a build input)
 .pnpm-store/

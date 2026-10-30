@@ -1,0 +1,29 @@
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css b/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css
+index 070cb94a75fb5e15743866a9de1697174cab2bb5..a915e8e28ce4417f476022ff2d69243c496e19d3 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css
+@@ -7,6 +7,11 @@
+   background: var(--dsw-alias-bg-base);
+ }
+ 
++/* A viewport status presenter owns the task summary for this conversation. */
++.root:has(:global([data-chat-status-layout])) :global([data-conversation-todo-panel]) {
++  display: none;
++}
++
+ /* 76px with its rule: the height of the Sidebar's tab strip and header row
+    (ui-dockkit `.tabStrip` 38px + the pane header's 38px), so the two rules
+    meet at the column edge. The rows add up to it — 10px top inset, the 30px
+diff --git a/packages/client/ui-conversation/src/client/skeleton/TodoPanel.tsx b/packages/client/ui-conversation/src/client/skeleton/TodoPanel.tsx
+index bf59a54adae4b617e91f42a9452c932a4c265aaf..3a8efef8ffc085681d5ae3e526df1b54e1e59933 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/TodoPanel.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/TodoPanel.tsx
+@@ -67,7 +67,7 @@ export function TodoPanel({ todos, t }: TodoPanelProps) {
+   if (todos.length === 0) return null
+ 
+   return (
+-    <section className={css.root} data-testid="todo-panel" aria-label={t('todo.title')}>
++    <section className={css.root} data-testid="todo-panel" data-conversation-todo-panel="" aria-label={t('todo.title')}>
+       <div className={css.body}>
+         <button
+           type="button"

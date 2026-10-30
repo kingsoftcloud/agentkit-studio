@@ -1,6 +1,132 @@
+import { validateNativeInjectionRequest } from '../services/native-session-injection.mjs';
+import { validateNativeResourceRetirementRequest } from '../services/native-resource-retirement.mjs';
+import { validateNativeA2aControlRequest } from '../services/native-a2a-control.mjs';
+import { validateNativeReconciliationRequest, validateNativeBackgroundReviewRequest } from '../services/native-recovery.mjs';
+import { validateDshA2aRequest } from '../services/dsh-a2a-control.mjs';
+import { validateNativeConversationRequest } from '../services/native-conversation.mjs';
+import { validateNativeCommandOutputRequest } from '../services/native-command-output.mjs';
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
-export function createSessionRoutes({ ctx, getSessionLogExporter }) {
+export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost, getDshA2aControls }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-resource-retire') {
+            validateNativeResourceRetirementRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.retireResources(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-inject') {
+            validateNativeInjectionRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.injectSession(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-background-review') {
+            validateNativeBackgroundReviewRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.reviewBackgroundInterruption(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-child-file') {
+            if (!payload || Array.isArray(payload)
+                || Object.keys(payload).some(key => !['agentId', 'sessionId', 'runId', 'childRunId', 'path', 'offset', 'limit'].includes(key))
+                || ['agentId', 'sessionId', 'runId', 'childRunId'].some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || typeof payload.path !== 'string' || !payload.path || payload.path.length > 1024
+                || payload.offset !== undefined && (!Number.isSafeInteger(payload.offset) || payload.offset < 0)
+                || payload.limit !== undefined && (!Number.isSafeInteger(payload.limit) || payload.limit < 4 || payload.limit > 65536))
+                throw Object.assign(new Error('Invalid Native child file request'), { code: 'STUDIO_NATIVE_CHILD_FILE_INVALID' });
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.childFile(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-command-output') {
+            validateNativeCommandOutputRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.commandOutput(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-conversation-workspace-preview') {
+            validateNativeConversationRequest(payload, 'preview');
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.previewConversationWorkspace(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-conversation-status' || endpoint === 'sessions/native-conversation-rewind') {
+            const rewind = endpoint === 'sessions/native-conversation-rewind';
+            validateNativeConversationRequest(payload, rewind);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await (rewind ? host.rewindConversation(payload, signal) : host.conversationStatus(payload, signal)) };
+        }
+        if (endpoint === 'sessions/dsh-a2a-history' || endpoint === 'sessions/dsh-a2a-control') {
+            const control = endpoint === 'sessions/dsh-a2a-control'; validateDshA2aRequest(payload, control);
+            if (typeof getDshA2aControls !== 'function')
+                throw Object.assign(new Error('DSH A2A controls unavailable'), { code: 'STUDIO_DSH_A2A_UNAVAILABLE' });
+            signal?.throwIfAborted(); const service = await getDshA2aControls(); signal?.throwIfAborted();
+            return { ok: true, value: await (control ? service.control(payload, signal) : service.history(payload, signal)) };
+        }
+        if (endpoint === 'sessions/native-recovery-reconcile' || endpoint === 'sessions/native-workspace-repair') {
+            validateNativeReconciliationRequest(payload);
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native recovery unavailable'), { code: 'STUDIO_NATIVE_RECOVERY_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await (endpoint === 'sessions/native-workspace-repair'
+                ? host.repairWorkspace(payload, signal) : host.reconcileTool(payload, signal)) };
+        }
+        if (endpoint === 'sessions/native-a2a-control') {
+            validateNativeA2aControlRequest(payload);
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native A2A controls unavailable'), { code: 'STUDIO_NATIVE_A2A_CONTROL_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await host.controlA2aTask(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-recovery-status' || endpoint === 'sessions/native-recovery-resume') {
+            const resume = endpoint === 'sessions/native-recovery-resume';
+            if (!payload || Array.isArray(payload) || Object.keys(payload).some(key => !['agentId', 'sessionId', 'runId'].includes(key))
+                || ['agentId', 'sessionId', ...(resume ? ['runId'] : [])].some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256))
+                throw Object.assign(new Error('Invalid Native recovery request'), { code: 'STUDIO_NATIVE_RECOVERY_INVALID' });
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native recovery unavailable'), { code: 'STUDIO_NATIVE_RECOVERY_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await (resume ? host.resumeTurn(payload, signal) : host.recoveryStatus(payload, signal)) };
+        }
+        if (endpoint === 'sessions/native-child-history' || endpoint === 'sessions/native-child-result') {
+            const result = endpoint === 'sessions/native-child-result';
+            const allowed = ['agentId', 'sessionId', 'runId', 'offset', 'limit', ...(result ? ['childRunId'] : ['inventoryDigest'])];
+            const required = ['agentId', 'sessionId', ...(result ? ['childRunId'] : [])];
+            if (!payload || Array.isArray(payload) || Object.keys(payload).some(key => !allowed.includes(key))
+                || required.some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256)
+                || payload.offset !== undefined && (!Number.isSafeInteger(payload.offset) || payload.offset < 0)
+                || payload.limit !== undefined && (!Number.isSafeInteger(payload.limit) || payload.limit < 1 || payload.limit > (result ? 16000 : 64))
+                || !result && payload.inventoryDigest !== undefined && (typeof payload.inventoryDigest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.inventoryDigest)))
+                throw Object.assign(new Error('Invalid Native child history request'), { code: 'STUDIO_NATIVE_CHILD_HISTORY_INVALID' });
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native child history unavailable'), { code: 'STUDIO_NATIVE_CHILD_HISTORY_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: await (result ? host.childResult(payload, signal) : host.childHistory(payload, signal)) };
+        }
+        if (['sessions/native-child-tasks', 'sessions/native-child-promote', 'sessions/native-child-send', 'sessions/native-child-cancel'].includes(endpoint)) {
+            const promote = endpoint === 'sessions/native-child-promote';
+            const send = endpoint === 'sessions/native-child-send', cancel = endpoint === 'sessions/native-child-cancel';
+            const mutate = promote || send || cancel;
+            const allowed = mutate ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId', ...(send ? ['text', 'expectedGoalRevision'] : [])] : ['agentId', 'sessionId', 'runId'];
+            const required = mutate ? ['agentId', 'sessionId', 'runId', 'childRunId', 'commandId'] : ['agentId', 'sessionId'];
+            if (!payload || Object.keys(payload).some(key => !allowed.includes(key))
+                || required.some(key => typeof payload[key] !== 'string' || !payload[key].trim() || payload[key].length > 256)
+                || payload.runId !== undefined && (typeof payload.runId !== 'string' || !payload.runId.trim() || payload.runId.length > 256)
+                || send && (typeof payload.text !== 'string' || !payload.text.trim() || payload.text.length > 32768
+                  || !Number.isSafeInteger(payload.expectedGoalRevision) || payload.expectedGoalRevision < 0))
+                throw Object.assign(new Error('Invalid Native child control request'), { code: 'STUDIO_NATIVE_CHILD_CONTROL_INVALID' });
+            if (typeof getNativeHost !== 'function')
+                throw Object.assign(new Error('Native child controls unavailable'), { code: 'STUDIO_NATIVE_CHILD_CONTROL_UNAVAILABLE' });
+            signal?.throwIfAborted();
+            const host = await getNativeHost();
+            signal?.throwIfAborted();
+            return { ok: true, value: promote ? host.promoteChild(payload) : send ? host.sendChildInput(payload)
+                : cancel ? host.cancelChild(payload) : host.childTasks(payload) };
+        }
         if (endpoint === 'sessions/export-log') {
             const sessionId = String(payload?.sessionId || '').trim();
             if (!sessionId)

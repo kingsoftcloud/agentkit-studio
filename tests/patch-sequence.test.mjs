@@ -6,5 +6,5 @@ test('patch series exposes a contiguous canonical sequence without rewriting cry
   const report = await checkPatchSequence();
   assert.equal(report.first, 1);
   assert.equal(report.last, report.count);
-  assert.equal(report.count, 44);
+  assert.equal(report.count, 62);
 });
