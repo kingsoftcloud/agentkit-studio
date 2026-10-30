@@ -56,7 +56,8 @@ process.once('message', async message => {
       const deadline = Date.now() + 8000;
       for (;;) {
         const status = await runtime.getStatus(message.query, message.readPermit);
-        if (status.runs.length && ['completed', 'interrupted', 'canceled', 'failed'].includes(status.runs[0].phase)) break;
+        if (status.runs.length && ['completed', 'interrupted', 'canceled', 'failed'].includes(status.runs[0].phase)
+          && status.workerError === null) break;
         if (Date.now() > deadline) throw new Error('Automatic recovery did not finish');
         await new Promise(resolve => setTimeout(resolve, 20));
       }
