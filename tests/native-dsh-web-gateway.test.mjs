@@ -7,8 +7,8 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
-import { MemoryRunStore } from '@kingsoftcloud/agentkit-harness-core';
-import { scope, fixture } from './fixtures/native-core.mjs';
+import { MemoryRunStore, NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
+import { scope, fixture, digest } from './fixtures/native-core.mjs';
 
 async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'], contracts = [], fetch } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'native-web-gateway-'));
@@ -32,9 +32,6 @@ async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'],
     workspaceRoot, stateDir, webEnvironment: environment, ...(fetch ? { webFetch: fetch } : {}) });
   t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
   const agent = { session: { id: 'session' } }, authority = { scope, store: new MemoryRunStore() };
-  const seeded = fixture();
-  authority.store.create(seeded.config, seeded.snapshot);
-  const port = gateway.forAgent(agent, authority).tools;
   let sequence = 0;
   function request(name, args, overrides = {}) {
     sequence++;
@@ -44,7 +41,24 @@ async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'],
       definition: gateway.definitions(agent, [...registry.values()]).find(item => item.name === name),
       call: { callId: `call-${sequence}`, name, arguments: args }, ...overrides };
   }
-  return { gateway, agent, authority, port, request, stateDir, pipeline, registry,
+  async function execute(owner, request) {
+    const definitions = gateway.definitions(owner, [...registry.values()]);
+    const { config, snapshot } = fixture({ tools: definitions });
+    const runId = sequence === 1 ? 'run' : `run-${sequence}`;
+    const ports = gateway.forAgent(owner, authority); let models = 0, result;
+    const kernel = new NativeKernel({ store: authority.store, digest, owner: 'web-test', ports: { ...ports,
+      tools: { ...ports.tools, execute: async claimed => { result = await ports.tools.execute(claimed); return result; } },
+      model: { generate: async () => ++models === 1
+        ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [request.call] }
+        : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] } },
+    } });
+    kernel.start({ ...snapshot, runId, sessionId: owner.session.id }, config);
+    await kernel.runUntilIdle(scope, runId);
+    assert.ok(result, 'the Kernel must claim and dispatch the Web call');
+    return result;
+  }
+  const port = { execute: request => execute(agent, request) };
+  return { gateway, agent, authority, port, request, execute, stateDir, pipeline, registry,
     deny: () => { denied = true; }, postFail: () => { postFailed = true; } };
 }
 
@@ -99,13 +113,12 @@ test('Native Web binds configuration once and keeps sibling Session owners usabl
   assert.ok(binding?.bindingDigest); assert.equal(binding.contract, 'agentkit.native-web-tools/v1');
   environment.KSADK_WEB_SEARCH_PROVIDER = 'unsupported-after-binding';
   const sibling = { session: { id: 'sibling' } };
-  const other = host.gateway.forAgent(sibling, host.authority).tools;
   const first = await host.port.execute(host.request('web_search', { query: 'first' }));
   assert.equal(first.status, 'ok'); assert.equal(first.content.provider, 'fake');
   const siblingRequest = host.request('web_search', { query: 'second' }, { sessionId: 'sibling' });
-  assert.equal((await other.execute(siblingRequest)).status, 'ok');
+  assert.equal((await host.execute(sibling, siblingRequest)).status, 'ok');
   await host.gateway.releaseSession({ scope, sessionId: 'session' });
-  const again = await other.execute(host.request('web_search', { query: 'third' }, { sessionId: 'sibling' }));
+  const again = await host.execute(sibling, host.request('web_search', { query: 'third' }, { sessionId: 'sibling' }));
   assert.equal(again.status, 'ok'); assert.equal(again.content.provider, 'fake');
   assert.deepEqual(host.gateway.webBinding, binding);
 });

@@ -541,7 +541,7 @@ test('a lock held by a child process blocks and is released on process exit (rea
     const { acquireWorkspaceMutationLock } = await import('file://${lockModulePath}');
     const hold = acquireWorkspaceMutationLock(${JSON.stringify(sourceResolved)}, { timeoutMs: 100 });
     console.log('LOCKED');
-    setInterval(() => {}, 1000);
+    setInterval(() => { if (typeof hold !== 'function') process.exit(1); }, 1000);
   `], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
   void exited.catch(() => {});

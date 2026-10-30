@@ -449,4 +449,3 @@ test('after the Host closes, the Memory database is stable: no teardown or late 
   try { assert.equal(reopened.list().length, 1); assert.equal(reopened.list()[0].version, 1); }
   finally { reopened.close(); }
 });
-

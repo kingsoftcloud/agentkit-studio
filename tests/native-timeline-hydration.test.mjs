@@ -20,6 +20,7 @@ test('real mounted React never paints the transport footer before Native hydrati
     t.after(() => { server.closeAllConnections();return new Promise(resolve => server.close(resolve)); });
     const browser = await chromium.launch({ executablePath, headless: true });t.after(() => browser.close());
     const page = await browser.newPage(), errors = [];
+    page.setDefaultTimeout(5000);
     page.on('pageerror', error => errors.push(error.message));
     const origin = 'http://127.0.0.1:' + server.address().port;
     await page.route('**/*', route => route.request().url().startsWith(origin) ? route.continue() : route.abort());
@@ -29,11 +30,11 @@ test('real mounted React never paints the transport footer before Native hydrati
     await page.waitForTimeout(100);
     assert.equal(await page.locator('[data-testid="studio-task-timeline"]').count(), 0, 'status alone cannot paint a partial frame');
     await page.getByRole('button', { name: '释放子任务目录', exact: true }).click();
-    await page.getByText('模型响应未通过协议校验：alpha', { exact: false }).waitFor();
+    await page.getByText('本轮内容 alpha', { exact: true }).waitFor();
     assert.equal(await page.locator('#legacy-paints').textContent(), '0');
     await page.getByRole('button', { name: '模拟同步失败', exact: true }).click();
     await page.getByText('任务过程同步失败，请重试。', { exact: true }).waitFor();
-    assert.match(await page.locator('#presentation').textContent(), /模型响应未通过协议校验：alpha/);
+    assert.match(await page.locator('#presentation').textContent(), /本轮内容 alpha/);
     assert.equal(await page.locator('[data-testid="task-observation-loading"]').count(), 0);
     await page.getByRole('button', { name: '恢复同步', exact: true }).click();
     await page.getByText('任务过程同步失败，请重试。', { exact: true }).waitFor({ state: 'hidden' });
@@ -44,6 +45,6 @@ test('real mounted React never paints the transport footer before Native hydrati
     await page.waitForTimeout(100);assert.equal(await page.locator('[data-testid="studio-task-timeline"]').count(), 0);
     await page.getByRole('button', { name: '释放运行状态', exact: true }).click();
     await page.getByRole('button', { name: '释放子任务目录', exact: true }).click();
-    await page.getByText('模型响应未通过协议校验：beta', { exact: false }).waitFor();
+    await page.getByText('本轮内容 beta', { exact: true }).waitFor();
     assert.equal(await page.locator('#legacy-paints').textContent(), '0');assert.deepEqual(errors, []);
   });

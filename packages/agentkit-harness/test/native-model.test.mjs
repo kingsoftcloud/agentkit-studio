@@ -1441,4 +1441,3 @@ test('caller cancellation while reading a 400 body still propagates', async () =
     finally { clearTimeout(timer); }
   });
 });
-

@@ -360,4 +360,3 @@ test('execute passes the real AbortSignal to the authorize callback so it can ca
   assert.equal(received.definition.name, 'web_search');
   assert.equal(received.executionFence, 1);
 });
-
