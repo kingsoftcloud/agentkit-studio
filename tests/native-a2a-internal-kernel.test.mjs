@@ -42,6 +42,9 @@ for (const lost of [false, true]) test(`actual Native turn ${lost ? 'retains unk
   assert.equal(models, lost ? 1 : 2); assert.equal(approvals, 1);
   assert.equal(f.calls.filter(value => value.wireMethod?.startsWith('Send')).length, 1);
   assert.equal(f.record().request.native.runId, 'run');
+  // A cold executor replaces the original owner, including its asynchronous
+  // event delivery. Settle that owner before measuring any recovery traffic.
+  await gateway.close();
   const ledger = canonical(store.load(scope, 'run')), count = f.calls.length;
   const replacement = new NativeKernel({ store, digest, owner: 'cold', ports: { tools: { execute: () => assert.fail('cold tool replay') },
     model: { generate: () => assert.fail('cold model replay') } } });
