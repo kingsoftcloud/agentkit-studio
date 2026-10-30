@@ -6,14 +6,14 @@ AgentKit Harness 的产品入口包含 Studio Native 执行引擎和 DSH 服务�
 
 Studio 的新 `runtime.type = "harness"` Revision / Build 默认采用
 `agentkit.native-dsh-turn/v1`。`../agentkit-harness-core/` 提供独立 TypeScript
-状态机和完整执行循环，`src/native/` 提供 Node 模型、SQLite、工具和其他端口，
+状态机和完整执行循环，`../agentkit-harness-node/` 提供 Node 模型、SQLite、工具和其他端口，
 Studio Host 负责组装。Native 管理预算、重试、副作用和 Run 恢复；DSH 保留产品
 Session、工具权限及展示，通过维护版外部回合接口将执行权交给 Native。
 
 Native 有自己的持久化 Run / 意图 / 回执 / 事件格式，通过版本化投影写入 DSH
 Session，不能将它理解为仅替换模型调用。安装和执行不依赖 Python 或 uv。
 这部分由仓库根目录的 **Studio 包**分发，并需要维护版 DSH；下面的
-`pnpm pack:harness` 只生成 facade 包，不包含 `src/native/` 或 TS 核心。
+`pnpm pack:harness` 只生成 facade 包，不包含独立 Node 包或 TS 核心。
 Studio 通过根目录 `package.json` 安装并绑定独立的 Core、Node 和 UI 包。
 
 ## 独立 DSH facade 包

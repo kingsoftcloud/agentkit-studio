@@ -87,7 +87,8 @@ The verification command does not approve dependency build scripts automatically
 - `src/` — Studio Host and browser implementation
 - `src/client/` — browser ES Modules with scoped state and page composition, bundled into `dist/client.js`
 - `packages/agentkit-harness-core/` — host-independent TypeScript Native state machine and execution contracts
-- `packages/agentkit-harness/src/native/` — Node adapters distributed in the Studio package
+- `packages/agentkit-harness-node/` — Node model, persistence, tools and RPC adapters
+- `packages/agentkit-harness-ui/` — task process UI and host integration contracts
 - `packages/agentkit-harness/` — DSH facade with a separate, smaller standalone package
 - `examples/` — minimal public configuration examples
 - `docs/` — usage, architecture and release guides

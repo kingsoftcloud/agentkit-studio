@@ -15,7 +15,8 @@ specific capability policies compose above the general execution mechanisms.
 | `src/client/` | Browser modules, per-apply composition and DSH UI extensions |
 | `src/providers/` | DSH Native, AgentKit Harness and Codex runtime integration |
 | `packages/agentkit-harness-core/` | Host-independent TypeScript Native contracts, state machine and execution kernel |
-| `packages/agentkit-harness/src/native/` | Node model, SQLite, workspace and other Native port adapters, shipped with Studio |
+| `packages/agentkit-harness-node/` | Node model, SQLite, workspace and other Native port adapters |
+| `packages/agentkit-harness-ui/` | Task process UI and host integration contracts |
 | `packages/agentkit-harness/` | DSH facade; its standalone package contains only the facade and model adapter |
 | `patches/` | Reviewed changes against the pinned public DSH host |
 | `tests/` | Unit, contracts and packaging regressions |
