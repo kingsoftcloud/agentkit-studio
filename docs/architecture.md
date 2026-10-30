@@ -4,8 +4,6 @@ AgentKit Studio is a DSH product plugin. The host owns Agent composition, Sessio
 transcript persistence, stream events, tools, file delivery and desktop/browser surfaces.
 Studio adds Agent editing, resource bindings, product settings and release wiring.
 
-The active enterprise-platform objective, responsibility audit and local
-acceptance checklist live in [the implementation plan](enterprise-agent-platform-plan.md).
 Native serves business and coding Agents through the same execution authority;
 specific capability policies compose above the general execution mechanisms.
 
@@ -39,7 +37,7 @@ Native Run state, commands, intents, receipts and events in SQLite. DSH continue
 to own the product Session and transcript. Versioned ownership and delivery
 projections connect the two stores; recovery retains the original Run identity,
 configuration and effect history. Unknown side effects require reconciliation
-instead of blind replay. See [Native migration](native-harness-migration.md).
+instead of blind replay.
 
 Codex uses its existing child-process and tool adapter. DSH Native and Codex keep
 their execution paths; file delivery continues through DSH Session tools. The
@@ -48,8 +46,7 @@ consumers, but installing that facade alone does not install Studio's Native
 execution engine. See the [package boundary](../packages/agentkit-harness/README.md).
 
 Old Frozen Builds preserve their engine pin. The trusted Host can select `legacy`
-for new admissions without rewriting existing Native Runs; see
-[default selection and rollback](native-default-runtime.md).
+for new admissions without rewriting existing Native Runs.
 
 Resources and credentials are resolved in the trusted Host. Browser components
 receive capability/status information and typed operations. They do not own model

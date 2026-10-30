@@ -19,8 +19,7 @@ New Studio Agents and Builds with `runtime.type = "harness"` use the TypeScript
 Native Harness by default. Native owns the model/tool execution loop and durable
 Run state; DSH provides Sessions, permissions, tools and presentation. Installation
 and execution use Node.js without Python or uv. Existing Frozen Builds retain
-their pinned engine. See the [Native migration handoff](docs/native-handoff.md)
-for setup, recovery, evidence and remaining acceptance work.
+their pinned engine. See the [architecture](docs/architecture.md) for execution ownership.
 
 Cloud features require a compatible AgentEngine control plane and credentials configured in the Host. A local test or a visible catalog entry does not prove access to a cloud resource.
 
