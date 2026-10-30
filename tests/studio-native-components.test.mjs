@@ -108,8 +108,11 @@ test('actual Host + registered gateway + SQLite returns pinned component facts a
   assert.equal(h.bodies[1].messages.some(message => message.role === 'tool' && message.content.includes('first-model')), true);
   for (const secret of ['never-copy-this-key', 'imagined-e2b', 'model-secret']) assert.equal(JSON.stringify(saved).includes(secret), false);
   const count = saved.receipts.length;
-  const replay = await h.bound.get('session').tools.execute(h.nativeRequests[0]);
-  assert.equal(replay.status, 'error');
+  await assert.rejects(h.bound.get('session').tools.execute(h.nativeRequests[0]), {
+    code: 'studio_native_tool_authority_stale',
+  });
+  assert.equal(h.invocations.length, 1, 'completed replay must not reach the Host tool gateway');
+  assert.equal(h.bodies.length, 2, 'completed replay must not invoke the model again');
   assert.equal(h.store.load(h.scope, snapshot.runId).receipts.length, count);
 });
 
