@@ -24,6 +24,12 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
   invariant(Number.isSafeInteger(stopTimeoutMs) && stopTimeoutMs > 0 && stopTimeoutMs <= 90_000,
     'studio_native_conversation_stop_timeout_invalid');
   const pending = new Map();
+  const withStopDeadline = async (signal, work) => {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new DOMException('Native conversation cleanup timed out', 'TimeoutError')), stopTimeoutMs);
+    try { return await work(AbortSignal.any([signal, deadline.signal])); }
+    finally { clearTimeout(timer); }
+  };
   const inspect = async (request, signal) => {
     signal.throwIfAborted();
     const found = await ctx.get('sessionController').resolveAgent(request.sessionId);
@@ -145,7 +151,7 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
         invariant(live.kernel.submit(scope, record.snapshot.runId, cancel).status !== 'rejected', 'native_conversation_rewind_cancel_rejected');
         live.wake?.(); agent.cancel({ kind: 'user' });
       }
-      await awaitA2aControl(() => agent.whenIdle(), AbortSignal.any([signal, AbortSignal.timeout(stopTimeoutMs)]));
+      await withStopDeadline(signal, deadline => awaitA2aControl(() => agent.whenIdle(), deadline));
       current = await inspect(original, signal);
       invariant(current.agent === agent && current.session === session
         && current.record?.snapshot.runId === original.expectedHeadRunId, 'native_conversation_rewind_head_conflict');
@@ -165,9 +171,8 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
       marker.seed = seed;
     }
     const cleanup = current.record.snapshot.backgroundCommands.length > 0 && canCleanCommands(current);
-    const publish = async publishSignal => {
+    const publish = publishSignal => withStopDeadline(publishSignal, async cleanupSignal => {
       const frozen = canonical(current.record), frozenEvents = canonical(selected.events);
-      const cleanupSignal = AbortSignal.any([publishSignal, AbortSignal.timeout(stopTimeoutMs)]);
       const assertCurrent = () => {
         cleanupSignal.throwIfAborted();
         invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent
@@ -215,7 +220,7 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
           'native_conversation_workspace_cleanup_invalid');
       }
       const removed = selected.nodes.slice(selected.nodes.indexOf(target.seq));
-      publishSignal.throwIfAborted();
+      cleanupSignal.throwIfAborted();
       invariant(canonical(request) === bytes && agent.session === session && ctx.get('agents')?.get?.(agent.id) === agent && safe(current, commandsSettled)
         && canonical(session.snapshotEvents()) === canonical(selected.events)
         && store.sessionHead(scope, original.sessionId)?.runId === original.expectedHeadRunId, 'studio_native_conversation_changed');
@@ -226,7 +231,7 @@ export function createStudioNativeConversation({ ctx, store, workspaceId, lifeti
       { surfaceOp: { op: 'replace', startSeq: removed[0], endSeq: removed.at(-1) }, sourceEventSeqs: removed });
       invariant(await ctx.get('sessions').flush(session) === true, 'native_conversation_rewind_not_durable');
       return response(original, marker);
-    };
+    });
     if (cleanup || original.scope === 'both') {
       invariant(typeof agent.runMaintenance === 'function', 'native_conversation_command_maintenance_unavailable');
       return agent.runMaintenance(maintenanceSignal => publish(AbortSignal.any([signal, maintenanceSignal])));

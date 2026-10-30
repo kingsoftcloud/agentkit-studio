@@ -7,6 +7,7 @@ import { NativeKernel, configure, emptyUsage, canonical, CONTEXT_SOURCE_CONTRACT
 import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
+import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
 import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 import { createNativeVerification, nativeGoalContract } from '../src/providers/native-verification.mjs';
@@ -46,7 +47,9 @@ async function setup(t, { goal = '我喜欢用Emacs，不是Vim', write = true, 
       ownerChecks++; return tamperReceipt ? { committed: true, memoryId: 'forged' }
         : provider.receipt(request.operationKey, provider.mutationRequestDigest(mutationInput(request)));
     } } });
-  const ports = { verification, model: { generate: async () => {
+  const workspaceTools = createNativeWorkspaceTools({ workspaceRoot: workspace, stateDir: join(root, 'workspace-state'),
+    sessionId: 'session', authorize: async () => 'allow' });
+  const ports = { verification, workspace: { observe: request => workspaceTools.observe(request) }, model: { generate: async () => {
     if (++models === 1 && behavior !== 'promise' && !recall) return { ...final(''), kind: 'tool_calls', toolCalls: [{ callId: 'operation', name: definition.name,
       arguments: behavior === 'read' ? { memory_id: memoryId } : { action: 'correct', memory_id: memoryId, expected_version: 1, content: '我喜欢用Emacs' } }] };
     return final('I have remembered it.');

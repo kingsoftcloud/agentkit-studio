@@ -35,6 +35,10 @@ async function setup(t) {
   session.append('turn/start', { turn: 1 });
   const agent = { session, options: { maxTokens: 500 }, externalTurns: nativeOwnershipHost(session, events) };
   const server = createServer((req, res) => void (async () => {
+    if (req.method === 'GET' && req.url === '/v1/models') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: [{ id: 'original-model' }] })); return;
+    }
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8')); bodies.push(body);
     if (req.url === '/v1/chat/completions') {
