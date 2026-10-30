@@ -80,6 +80,7 @@ class FakePage {
   url() { return this._url; }
   mainFrame() { return this; }
   locator(selector) { this.selector = selector; return this; }
+  async count() { return this.selector === '#missing' ? 0 : 1; }
   async waitFor({ state, timeout } = {}) { if (this.selector === '#missing') throw new Error('fixture selector absent'); }
   async waitForElementState(state, { timeout } = {}) { if (this.selector === '#missing') throw new Error('fixture selector absent'); }
   async goto(url, opts = {}) {
@@ -335,7 +336,7 @@ test('an absent selector is safe feedback before any mutating action', async () 
   assert.equal(result.status, 'error');
   assert.equal(result.complete, true);
   assert.equal(result.retryability, 'safe');
-  assert.equal(result.errorCode, 'selector_not_visible');
+  assert.equal(result.errorCode, 'selector_not_found');
   assert.equal(result.controls[1].selector, '#name');
   assert.equal(browser.contexts[0].pages[0].calls.some((c) => c[0] === 'fill' && c[1] === 'text'), false);
   const recovered = await tool.act(ref, { actionId: 'correct', kind: 'fill', selector: '#name', value: 'text' });
