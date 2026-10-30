@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncDirectory } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
+import { defaultNativeToolBindings } from './native-tool-catalog.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
 import { NATIVE_AGENT_POLICY_CONTRACT, nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
@@ -134,7 +135,10 @@ export function createAgentStore({ storeDir } = {}) {
   async function create({ name, runtimeType, description = '', spec = {}, bindings = {}, templateSource, creationKey, teamRole, purpose }) {
     await ensureDir();
     const agentId = `ar-local-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-    const normalizedBindings = normalizeAgentBindings(spec.bindings ?? bindings);
+    const rawBindings = structuredClone(spec.bindings ?? bindings);
+    const type = runtimeType ?? spec.runtime?.type ?? STUDIO_DEFAULT_AUTHORING_RUNTIME;
+    if (type === 'harness' && !Object.hasOwn(rawBindings, 'tools')) rawBindings.tools = defaultNativeToolBindings();
+    const normalizedBindings = normalizeAgentBindings(rawBindings);
     const record = {
       metadata: {
         id: agentId,

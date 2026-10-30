@@ -1,15 +1,27 @@
-import type { CompletionCandidate, RunConfiguration, RunSnapshot, VerificationReport } from './contracts.mjs';
+import type { CompletionCandidate, RunConfiguration, RunSnapshot, VerificationReport, WorkspaceObservation } from './contracts.mjs';
 import { canonical, invariant } from './values.mjs';
 import { outstandingChildCalls } from './child-budget.mjs';
 import { NativePolicyRegistry } from './policy-registry.mjs';
+import { deliveryScopeEnabled, currentDeliveryManifest } from './deliverables.mjs';
+import { workspaceObservationSubject } from './workspace-subject.mjs';
 
 function modelFeedbackItem(check: VerificationReport['checks'][number]) {
   return { id: check.id, status: check.status, safeSummary: check.safeSummary ?? '', repairable: check.repairable === true };
 }
 
+/** Missing observation is not a positive observation of change. Only two
+ * observed revisions can establish that a candidate's workspace is stale. */
+export function candidateWorkspaceContinuity(candidate: CompletionCandidate, observation: WorkspaceObservation,
+  subject: string | null = null): 'same' | 'changed' | 'unobserved' {
+  if (candidate.workspaceSubject !== undefined && candidate.workspaceSubject !== subject) return 'unobserved';
+  if (observation.status !== 'ok' || !observation.revision || !candidate.workspaceRevision) return 'unobserved';
+  return candidate.workspaceRevision === observation.revision ? 'same' : 'changed';
+}
+
 /** Verify changed work while there is still model room to consume the observation. */
 export function checkpointCandidate(snapshot: RunSnapshot, config: RunConfiguration,
   digest: (value: unknown) => string): CompletionCandidate | null {
+  if (deliveryScopeEnabled(config) && !currentDeliveryManifest(snapshot)) return null;
   const remaining = config.limits.maxModelCalls === null ? Infinity
     : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls - outstandingChildCalls(snapshot, 'model');
   const reserve = config.limits.verificationReserveModelCalls, idle = config.limits.verificationIdleToolCalls ?? 0;
@@ -45,11 +57,18 @@ export function finishCheckpoint(snapshot: RunSnapshot): Partial<RunSnapshot> {
 /** Bind verification to the candidate, committed model context and host environment. */
 export function sealCandidate(candidate: CompletionCandidate, snapshot: RunSnapshot, configuration: RunConfiguration,
   digest: (value: unknown) => string): CompletionCandidate {
+  if (configuration.workspaceCapturePolicy === 'declared-subjects/v1') {
+    const subject = workspaceObservationSubject(snapshot, configuration), key = subject ? digest(subject) : null;
+    candidate = { ...candidate, workspaceSubject: key,
+      workspaceRevision: key === (snapshot.workspaceObservationSubject ?? null) ? candidate.workspaceRevision : null };
+  }
   return { ...candidate, binding: {
     subjectDigest: digest({ text: candidate.text, workspaceRevision: candidate.workspaceRevision,
+      ...(candidate.workspaceSubject !== undefined ? { workspaceSubject: candidate.workspaceSubject } : {}),
       ...(candidate.purpose === 'checkpoint' ? { purpose: 'checkpoint' } : {}) }),
     subjectContextDigest: digest({ messages: snapshot.messages, goalRevision: candidate.goalRevision,
       configDigest: snapshot.configDigest, artifactRefs: snapshot.artifactRefs,
+      ...(deliveryScopeEnabled(configuration) ? { deliveryManifest: snapshot.deliveryManifest ?? null } : {}),
       ...(snapshot.taskContract ? { taskContractDigest: snapshot.taskContractDigest } : {}),
       ...(snapshot.browserSessionRefs?.length || snapshot.lastBrowserObservation ? {
         browserSessionRefs: snapshot.browserSessionRefs, browserObservation: snapshot.lastBrowserObservation,
@@ -82,6 +101,11 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
   for (const key of ['subjectDigest', 'subjectContextDigest', 'environmentDigest'] as const) {
     if (report.binding[key] !== candidate.binding[key]) return finish('unverified', `${key}_mismatch`);
   }
+  if (report.workspaceDependency === 'required' && (!candidate.workspaceRevision || !snapshot.workspaceRevision))
+    return finish('unverified', 'workspace_observation_unavailable');
+  if (report.workspaceDependency !== 'none' && config.workspaceCapturePolicy === 'declared-subjects/v1'
+    && candidate.workspaceSubject !== (snapshot.workspaceObservationSubject ?? null))
+    return finish('unverified', 'workspace_subject_mismatch');
   if (report.workspaceDependency !== 'none' && report.workspaceRevision !== candidate.workspaceRevision) return finish('unverified', 'candidate_workspace_changed');
   for (const check of report.checks) {
     const item = items.get(check.id)!;
@@ -91,6 +115,9 @@ export function reduceVerification(snapshot: RunSnapshot, report: VerificationRe
       && check.evidenceRefs.every(ref => typeof ref === 'string' && ref.trim()), 'invalid_verification_evidence');
   }
   reportBound = true;
+  if (candidate.purpose === 'checkpoint' && deliveryScopeEnabled(config)
+    && report.checks.some(check => check.status === 'blocked' && items.get(check.id)?.required))
+    return finish('blocked', 'required_acceptance_blocked');
   if (candidate.purpose === 'checkpoint') return { pendingIntent: null, phase: 'finalizing', verification: report,
     verificationToolCalls: snapshot.usage.toolCalls, outcome: null, reason: null };
   const required = config.contract.acceptance.filter(item => item.required);

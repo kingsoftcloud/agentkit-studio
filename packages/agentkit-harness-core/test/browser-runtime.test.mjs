@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { NativeKernel, MemoryRunStore, emptyUsage, prepareEffect, plan, transition, reduceCommand, reduceBrowserReceipt,
-  browserRecoveryTransition, sealCandidate, validateBrowserObservation, validateBrowserSessionRef } from '../dist/index.mjs';
+  browserRecoveryTransition, isBrowserReobservationBatch, sealCandidate, validateBrowserObservation, validateBrowserSessionRef } from '../dist/index.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { fixture, tool, scope, digest } from './fixtures.mjs';
 const browser = tool({ name: 'browser', readOnly: false, concurrentSafe: false, observationRole: 'browser' });
@@ -163,22 +163,117 @@ for (const backend of ['memory', 'sqlite']) {
     assert.equal(result.lastBrowserObservation.toolCall, 2); assert.equal(result.outcome, 'unverified');
     assert.equal(store.events(scope, 'run').filter(event => event.kind === 'browser.candidate_rejected').length, 1);
   });
-  for (const claimed of [false, true]) test(`${backend}: ${claimed ? 'claimed' : 'prepared'} old actions cannot be replayed after page loss`, async t => {
+  for (const stage of ['proposed', 'prepared', 'claimed']) test(`${backend}: ${stage} old actions are never replayed; only undispatched work may replan`, async t => {
     const host = setup(t), oldStore = host.store, lease = oldStore.acquire(scope, 'run', 'lost-worker', 1, 1);
-    const batch = prepareEffect(host.snapshot, 'tool', 'executing_tools', { calls: [call], interaction: null }, {
+    const changes = {
+      pendingTools: [call], messages: [...host.snapshot.messages, { role: 'assistant', content: '', toolCalls: [call] }],
+    };
+    const batch = stage === 'proposed' ? transition(host.snapshot, { ...changes, phase: 'executing_tools' })
+      : prepareEffect(host.snapshot, 'tool', 'executing_tools', { calls: [call], interaction: null }, changes);
+    oldStore.commit(scope, 'run', lease, 1, host.snapshot.revision, batch);
+    if (stage === 'claimed') oldStore.claim(scope, 'run', lease, 1, batch.snapshot.pendingIntent);
+    const store = host.reopen(); let models = 0, captures = 0;
+    const result = await drive(store, { browser: { recoverSessions: async () => [report(host.ref, 'lost', { reobserveAvailable: true })] },
+      model: { generate: async request => {
+        assert.notEqual(stage, 'claimed', 'unknown original actions must not be silently retried');
+        const retired = request.messages.find(message => message.role === 'tool' && message.callId === call.callId);
+        assert.deepEqual(JSON.parse(retired.content), { status: 'not_dispatched', reason: 'browser_context_invalidated', executed: false });
+        return ++models === 1 ? { ...final(''), kind: 'tool_calls',
+          toolCalls: [{ ...call, callId: 'fresh-observation' }] } : final('Freshly observed');
+      } }, tools: { execute: async request => {
+        assert.equal(request.call.callId, 'fresh-observation', 'the old action must never dispatch');captures++;
+        const ref = reference({ generation: 2, leaseEpoch: 2 });
+        return { status: 'ok', content: 'new observation', browserSessionRef: ref, browserObservation: observation(ref) };
+      } },
+    }).runUntilIdle(scope, 'run');
+    assert.equal(models, stage === 'claimed' ? 0 : 2);assert.equal(captures, stage === 'claimed' ? 0 : 1);
+    assert.equal(result.phase, stage === 'claimed' ? 'interrupted' : 'completed');
+    assert.equal(result.reason, stage === 'claimed' ? 'effect_outcome_unknown' : 'verification_report_missing');
+    assert.equal(result.outcome, 'unverified', 'a fresh observation is not independent acceptance');
+    const record = store.load(scope, 'run');
+    if (stage !== 'proposed') {
+      const receipt = record.receipts.find(receipt => receipt.operationKey === batch.snapshot.pendingIntent);
+      assert.equal(receipt.status, stage === 'claimed' ? 'uncertain' : 'not_dispatched');
+      if(stage === 'prepared') assert.deepEqual(receipt.result, { code: 'browser_context_invalidated', executed: false });
+    }
+    if(stage === 'claimed') assert.equal(result.lastBrowserObservation, null);
+    else {
+      assert.deepEqual(result.browserReobservationRefs, []);assert.equal(result.lastBrowserObservation.sessionRef.generation, 2);
+      assert.equal(result.usage.toolCalls, host.snapshot.usage.toolCalls + 1, 'unclaimed retirement spends no tool attempt');
+      assert.equal(record.events.filter(event => event.kind === 'tool.not_dispatched' && event.payload.callId === call.callId).length, 1);
+    }
+  });
+  for (const kind of ['context', 'model']) test(`${backend}: an unclaimed ${kind} request is invalidated atomically before resource reobservation`, async t => {
+    const host = setup(t), lease = host.store.acquire(scope, 'run', 'lost-worker', 1, 1);
+    const prepared = prepareEffect(host.snapshot, kind, kind === 'model' ? 'requesting_model' : 'preparing_context',
+      kind === 'model' ? { purpose: 'task' } : { forceCompaction: false });
+    host.store.commit(scope, 'run', lease, 1, host.snapshot.revision, prepared);
+    const store = host.reopen();let models = 0;
+    const result = await drive(store, { browser: { recoverSessions: async () => [report(host.ref, 'lost', { reobserveAvailable: true })] },
+      model: { generate: async () => ++models === 1 ? { ...final(''), kind: 'tool_calls', toolCalls: [call] } : final('Complete') },
+      tools: { execute: async () => { const ref = reference({ generation: 2, leaseEpoch: 2 });
+        return { status: 'ok', content: 'new observation', browserSessionRef: ref, browserObservation: observation(ref) }; } },
+    }).runUntilIdle(scope, 'run');
+    assert.equal(result.phase, 'completed');assert.equal(result.usage.modelCalls, 2, 'an unclaimed model is not charged');
+    assert.deepEqual(store.load(scope, 'run').receipts.find(row => row.operationKey === prepared.snapshot.pendingIntent), {
+      operationKey: prepared.snapshot.pendingIntent, status: 'not_dispatched', result: { code: 'browser_context_invalidated', executed: false },
+    });
+  });
+  test(`${backend}: resource invalidation retires the entire unclaimed queue, including a prepared dispatch prefix`, async t => {
+    const write = { callId: 'queued-write', name: 'write', arguments: { path: 'artifact.txt', content: 'must not execute' } };
+    const host = setup(t, { tools: [browser, tool({ name: 'write', readOnly: false, concurrentSafe: false })] });
+    const lease = host.store.acquire(scope, 'run', 'lost-worker', 1, 1);
+    const prepared = prepareEffect(host.snapshot, 'tool', 'executing_tools', { calls: [call] }, {
+      pendingTools: [call, write], messages: [...host.snapshot.messages, { role: 'assistant', content: '', toolCalls: [call, write] }],
+    });
+    host.store.commit(scope, 'run', lease, 1, host.snapshot.revision, prepared);
+    const store = host.reopen();let models = 0, captures = 0;
+    const result = await drive(store, { browser: { recoverSessions: async () => [report(host.ref, 'lost', { reobserveAvailable: true })] },
+      model: { generate: async request => {
+        for (const id of [call.callId, write.callId]) {
+          const row = request.messages.find(message => message.role === 'tool' && message.callId === id);
+          assert.equal(JSON.parse(row.content).status, 'not_dispatched');
+        }
+        return ++models === 1 ? { ...final(''), kind: 'tool_calls', toolCalls: [{ ...call, callId: 'fresh-only' }] } : final('Observed');
+      } }, tools: { execute: async request => {
+        assert.equal(request.call.callId, 'fresh-only');captures++;
+        const ref = reference({ generation: 2, leaseEpoch: 2 });
+        return { status: 'ok', content: 'fresh', browserSessionRef: ref, browserObservation: observation(ref) };
+      } },
+    }).runUntilIdle(scope, 'run');
+    assert.equal(result.phase, 'completed');assert.equal(captures, 1);
+    const record = store.load(scope, 'run');
+    assert.deepEqual(record.events.filter(event => event.kind === 'tool.not_dispatched').map(event => event.payload.callId), [call.callId, write.callId]);
+    assert.equal(record.receipts.find(row => row.operationKey === prepared.snapshot.pendingIntent).status, 'not_dispatched');
+    assert.equal(record.intents.some(intent => intent.kind === 'tool' && intent.payload.calls.some(c => c.callId === write.callId)), false);
+  });
+  test(`${backend}: a fabricated resource-reobservation receipt cannot hide a claimed effect or modify the original transition`, t => {
+    const host = setup(t), lease = host.store.acquire(scope, 'run', 'worker', 1, 1000);
+    const prepared = prepareEffect(host.snapshot, 'tool', 'executing_tools', { calls: [call] }, {
       pendingTools: [call], messages: [...host.snapshot.messages, { role: 'assistant', content: '', toolCalls: [call] }],
     });
-    oldStore.commit(scope, 'run', lease, 1, host.snapshot.revision, batch);
-    if (claimed) oldStore.claim(scope, 'run', lease, 1, batch.snapshot.pendingIntent);
-    const store = host.reopen(); let effects = 0;
-    const result = await drive(store, { browser: { recoverSessions: async () => [report(host.ref, 'lost', { reobserveAvailable: true })] },
-      model: { generate: async () => { effects++; return final('unsafe'); } }, tools: { execute: async () => { effects++; return { status: 'ok', content: '' }; } },
-    }).runUntilIdle(scope, 'run');
-    assert.equal(effects, 0); assert.equal(result.phase, 'interrupted');
-    assert.equal(result.reason, claimed ? 'effect_outcome_unknown' : 'browser_session_unavailable');
-    const receipt = store.load(scope, 'run').receipts.find(receipt => receipt.operationKey === batch.snapshot.pendingIntent);
-    assert.equal(receipt.status, claimed ? 'uncertain' : 'not_dispatched');
-    assert.equal(result.lastBrowserObservation, null);
+    host.store.commit(scope, 'run', lease, 2, host.snapshot.revision, prepared);
+    const before = host.store.load(scope, 'run'), pending = before.intents.at(-1);
+    const good = browserRecoveryTransition(before.snapshot, [report(host.ref, 'lost', { reobserveAvailable: true })], pending, 3);
+    assert.equal(isBrowserReobservationBatch(before.snapshot, pending, good), true);
+    const variants = [
+      b => { b.snapshot.browserReobservationRefs = []; },
+      b => { b.snapshot.messages.splice(-2, 1); },
+      b => { b.requireNoPendingCommands = false; },
+      b => { b.events[0].payload.reobserveAvailable = false; },
+      b => { b.receipts[0].result.executed = true; },
+      b => { b.snapshot.goal = 'different goal'; },
+    ];
+    for (const mutate of variants) {
+      const bad = structuredClone(good);mutate(bad);
+      assert.equal(isBrowserReobservationBatch(before.snapshot, pending, bad), false);
+      assert.throws(() => host.store.commit(scope, 'run', lease, 3, before.snapshot.revision, bad), { code: 'receipt_without_claim' });
+      assert.deepEqual(host.store.load(scope, 'run'), before);
+    }
+    host.store.claim(scope, 'run', lease, 3, prepared.snapshot.pendingIntent);
+    const claimed = host.store.load(scope, 'run');
+    assert.equal(isBrowserReobservationBatch(claimed.snapshot, claimed.intents.at(-1), good), false);
+    assert.throws(() => host.store.commit(scope, 'run', lease, 4, claimed.snapshot.revision, good), { code: 'receipt_without_claim' });
   });
   test(`${backend}: cancel interrupts a stalled read-only probe and fences its late report`, async t => {
     const host = setup(t); let complete, entered;

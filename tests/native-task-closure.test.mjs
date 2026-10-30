@@ -6,6 +6,28 @@ import { nativeCapabilitySummary, NATIVE_CAPABILITY_PRESETS } from '../src/clien
 import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
 import { nativeToolDisplay } from '../src/client/dsh/native-tool-view.mjs';
 import { nativePublicTerminalError } from '../src/providers/native-terminal-failure.mjs';
+import { projectNativeKernelEvent } from '../src/providers/native-kernel-events.mjs';
+
+test('model errors use validated provenance rather than guessing credentials from a terminal failure', () => {
+  const failure = { contract: 'model-failure-diagnostic/v1', protocol: 'openai-chat', phase: 'stream', code: 'usage_conflict', frameIndex: 2 };
+  const protocol = nativePublicTerminalError('failed', 'provider_terminal_error', failure);
+  assert.match(protocol.message, /协议校验/);assert.doesNotMatch(protocol.message, /凭据/);
+  const auth = nativePublicTerminalError('failed', 'provider_terminal_error', {
+    ...failure, phase: 'http-error', code: 'http_authentication', httpStatus: 401, frameIndex: undefined,
+  });
+  assert.match(auth.message, /身份认证/);
+  assert.doesNotMatch(nativePublicTerminalError('failed', 'provider_terminal_error').message, /凭据/);
+  assert.doesNotMatch(nativePublicTerminalError('failed', 'provider_terminal_error', { ...failure, message: 'SECRET' }).message, /SECRET/);
+  const events = projectNativeKernelEvent({ eventId: 'event', runId: 'run', kind: 'run.terminal',
+    payload: { phase: 'failed', reason: 'provider_terminal_error', modelFailure: failure } });
+  assert.equal(events.find(e => e.event_type === 'run.failed').payload.error.message, protocol.message);
+  const withCounters = { ...failure, contract: 'model-failure-diagnostic/v2', usageConflict: { previousFrameIndex: 0,
+    previous: { inputTokens: 9, outputTokens: 1 }, reported: { inputTokens: 9, outputTokens: 2 } } };
+  assert.deepEqual(nativePublicTerminalError('failed', 'provider_terminal_error', withCounters), protocol);
+  const observed = projectNativeKernelEvent({ eventId: 'event-v2', runId: 'run', kind: 'run.terminal',
+    payload: { phase: 'failed', reason: 'provider_terminal_error', modelFailure: withCounters } });
+  assert.equal(observed.find(e => e.event_type === 'run.failed').payload.error.message, protocol.message);
+});
 
 test('plain conversation is allowed without pretending it can browse or edit files', () => {
   const pure = nativeCapabilitySummary();

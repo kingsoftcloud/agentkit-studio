@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { NativeKernel, MemoryRunStore, emptyUsage, initialSnapshot, projectSessionHistory,
-  normalizeToolIdentities, transition } from '../dist/index.mjs';
+  projectConversationHistory, normalizeToolIdentities, transition, RESULT_DELIVERY_POLICY, deliveryToolDefinitions } from '../dist/index.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { fixture, scope, digest, tool } from './fixtures.mjs';
 
@@ -117,4 +117,39 @@ test('a reused provider call id gets a stable fresh id without altering its seal
   assert.deepEqual(normalizeToolIdentities(snapshot, result, digest), projected);
   assert.equal(result.toolCalls[0].callId, 'same');
   assert.throws(() => normalizeToolIdentities(snapshot, { ...result, toolCalls: [...result.toolCalls, ...result.toolCalls] }, digest), { code: 'invalid_tool_call' });
+});
+
+test('atomic final answers retain their observed completion clock without replaying the internal submission protocol', () => {
+  const { config, snapshot } = fixture({ deliveryScopePolicy: RESULT_DELIVERY_POLICY, tools: deliveryToolDefinitions(RESULT_DELIVERY_POLICY) });
+  config.profile.providerReplayMode = 'anthropic_content';
+  const submission = { callId: 'final', name: 'submit_final_output', arguments: { answer: 'Published answer', artifacts: [] } };
+  const parent = { configuration: config, snapshot: { ...snapshot, phase: 'completed', finalText: 'Published answer', messages: [
+    { role: 'user', content: 'Task' },
+    { role: 'assistant', content: '', completedAtMs: 1000, toolCalls: [{ callId: 'read', name: 'read', arguments: {} }] },
+    { role: 'tool', name: 'read', callId: 'read', content: 'Original evidence' },
+    { role: 'assistant', kind: 'final_candidate', content: 'Published answer', completedAtMs: 42000, toolCalls: [submission],
+      providerReplay: { compatibilityDigest: 'fixture/v1', anthropicContent: [{ type: 'tool_use', id: 'final', name: 'submit_final_output', input: submission.arguments }] } },
+    { role: 'tool', name: 'submit_final_output', callId: 'final', content: '{"internal":"submitted"}' },
+  ] } };
+  const original = structuredClone(parent), messages = projectSessionHistory(parent, config, digest);
+  const answer = messages.at(-1);
+  assert.equal(answer.content, 'Published answer'); assert.equal(answer.completedAtMs, 42000);
+  assert.equal(answer.toolCalls, undefined); assert.equal(answer.providerReplay, undefined);
+  assert.equal(messages.filter(message => message.role === 'tool').length, 1);
+  assert.equal(messages.find(message => message.role === 'tool').content, 'Original evidence');
+  assert.doesNotMatch(JSON.stringify(messages), /submit_final_output|internal|unmatched_tool_result/);
+  const cut = projectConversationHistory(parent, parent.snapshot.messages, config, digest, { identityNamespace: 'cut' });
+  assert.doesNotMatch(JSON.stringify(cut), /Published answer|submit_final_output|internal|unmatched_tool_result/);
+  assert.deepEqual(parent, original, 'Projection cannot rewrite the source transcript or receipts');
+});
+
+test('a final answer never borrows the clock of an unrelated or invalid submission', () => {
+  const { config, snapshot } = fixture({ deliveryScopePolicy: RESULT_DELIVERY_POLICY, tools: deliveryToolDefinitions(RESULT_DELIVERY_POLICY) });
+  for (const arguments_ of [{ answer: 'A different answer' }, { answer: 42 }]) {
+    const parent = { configuration: config, snapshot: { ...snapshot, phase: 'completed', finalText: 'Published answer', messages: [
+      { role: 'assistant', kind: 'final_candidate', content: 'Published answer', completedAtMs: 42000,
+        toolCalls: [{ callId: 'other', name: 'submit_final_output', arguments: arguments_ }] },
+    ] } };
+    assert.equal(projectSessionHistory(parent, config, digest).at(-1).completedAtMs, undefined);
+  }
 });

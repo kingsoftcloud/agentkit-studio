@@ -132,6 +132,56 @@ async function runManagedKernel({ binding, store, runId, sessionId, signal, turn
   return kernel.runUntilIdle(binding.scope, runId, { signal });
 }
 
+test('Studio C2: authenticated session injection is silent, ordered and consumed by the ordinary Native turn', async t => {
+  const h = await setup(t);
+  h.agent.externalTurns = nativeOwnershipHost(h.session, h.events);
+  const route = createSessionRoutes({ getNativeHost: async () => h.host });
+  const request = { agentId: h.record.metadata.id, sessionId: h.session.id,
+    injectionId: 'external-0', text: 'Record 0', source: { kind: 'channel', ref: 'fixture-channel' } };
+  for (let index = 0; index < 100; index++) {
+    const value = await route('sessions/native-inject', { ...request, injectionId: `external-${index}`, text: `Record ${index}` });
+    assert.equal(value.value.status, 'accepted');
+  }
+  assert.equal(h.requests.length, 0); assert.equal(h.events.filter(event => event.type === 'user/message').length, 0);
+  for (const change of [{ agentId: 'other' }, { sessionId: 'other' }, { role: 'system' }])
+    await assert.rejects(route('sessions/native-inject', { ...request, ...change }));
+  assert.equal((await route('sessions/native-inject', request)).value.status, 'duplicate');
+  const payload = h.makePayload({ turn: 1, binding: h.agentBinding }); payload.input.assembly = h.assembly;
+  await h.host.executeTurn(payload);
+  const body = JSON.parse(h.requests[0].options.body);
+  const injected = body.messages.filter(message => typeof message.content === 'string' && message.content.includes('external_session_data'));
+  assert.equal(injected.length, 100);
+  assert.deepEqual(injected.map(message => JSON.parse(message.content).text), Array.from({ length: 100 }, (_, index) => `Record ${index}`));
+  assert.equal(h.events.filter(event => event.type === 'user/message').length, 1, 'Injected context must not impersonate a visible user message');
+  const user = h.events.find(event => event.type === 'user/message');
+  assert.match(JSON.stringify(user.data), /Finish the managed task/); assert.doesNotMatch(JSON.stringify(user.data), /external_session_data/);
+});
+
+test('Studio managed injection resolves only session ownership and routes data to the managed ledger before the first task', async t => {
+  const h = await setup(t), issuer = permitIssuer({ target: h.target });
+  const receiver = createStudioManagedNativeBinding({ ctx: h.ctx, target: h.target, principal: h.principal,
+    resolveHost: async () => h.host, execution: { run: request => {
+      h.agent.externalTurns ??= nativeOwnershipHost(h.session, h.events);
+      const ownership = { contract: 'dsh.external-turn/v1', engine: NATIVE_DSH_MANAGED_TURN_CONTRACT, turn: 1,
+        binding: canonical({ contract: NATIVE_DSH_MANAGED_TURN_CONTRACT, identity: request.identity, configDigest: hash(request.configuration) }) };
+      h.agent.externalTurns.claim(ownership);
+      return request.execute({ ownership, turn: 1 });
+    } } });
+  const runtime = createManagedNativeKernel({ directory: join(h.root, 'injection-receiver'), target: h.target,
+    permitVerifier: issuer.verifier, resolveBinding: receiver, assertCurrent: () => true, autoStart: false });
+  t.after(() => runtime.close());
+  const silent = serverCommand({ ...h.makeCommand(), command_id: randomUUID(), command_type: 'inject', payload: { content: 'Managed source record' } });
+  assert.equal((await runtime.receive(silent, issuer.issue(silent))).status, 'accepted');
+  assert.equal(h.requests.length, 0); assert.deepEqual(h.localStore.list(h.expectedScope), []);
+  const wake = serverCommand({ ...h.makeCommand(), command_id: randomUUID() });
+  const receipt = await runtime.receive(wake, issuer.issue(wake)); await runtime.drain(wake.session_id);
+  const view = runtime.inspectSession({ scope: h.expectedScope, sessionId: wake.session_id, runId: receipt.run_id });
+  assert.equal(view.record.snapshot.sessionInjections.length, 1);
+  assert.equal(view.record.snapshot.sessionInjections[0].injectionId, silent.command_id);
+  assert.equal(h.localStore.sessionHead(h.expectedScope, wake.session_id), null);
+  assert.match(JSON.stringify(JSON.parse(h.requests[0].options.body).messages), /Managed source record/);
+});
+
 test('existing Studio recovery route reads and retries the original managed ledger, then prefers a newer ordinary turn', async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const h = await setup(t, { respond: async () => { entered.resolve(); await finish.promise;

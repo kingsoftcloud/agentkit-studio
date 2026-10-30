@@ -2,12 +2,17 @@
  * capabilities; execution still requires an explicitly bound Native Build. */
 import { workspacePatchDefinition, workspaceRewindDefinitions, workspaceToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { nativeWebToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
+import { studioBrowserDefinition } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
+import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
 import { localCommandToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/local-command-tools';
 import { supportsLocalProcessPlatform } from '@kingsoftcloud/agentkit-harness-node/native/local-process';
 import { nativeCommandBackend } from './providers/native-e2b-host.mjs';
+import { resolveWebSearchConfig } from './providers/native-dsh-web.mjs';
+import { nativeDefaultToolsFromCatalog } from './native-capability-defaults.mjs';
 import { paginateResources } from './resource-catalog.mjs';
 const commandNames = new Set(['sandbox_status', 'run_command', 'read_command_output', 'stop_command']);
 const definitions = (env = process.env) => [workspacePatchDefinition(), ...workspaceRewindDefinitions(), ...workspaceToolDefinitions(), ...nativeWebToolDefinitions(),
+  studioBrowserDefinition(),
   ...(nativeCommandBackend(env) === 'local_process' && supportsLocalProcessPlatform() ? localCommandToolDefinitions() : [])];
 
 export function nativeLocalToolContract(name) {
@@ -22,11 +27,17 @@ function contractForDefinition(definition) {
 }
 
 export function nativeLocalToolResources({ env = process.env } = {}) {
+  const search = resolveWebSearchConfig(env);
+  const browserExecutable = resolveNativeBrowserExecutable({ env });
   return definitions(env).map(tool => {
     const contract = contractForDefinition(tool), { parameters, ...metadata } = contract;
+    const unavailableReason = tool.name === 'web_search' && !search.provider
+      ? '尚未配置网页搜索服务；公开网页读取仍可用。'
+      : tool.name === 'browser_inspect_workspace' && !browserExecutable ? '未找到可用的本地浏览器，无法交互验证网页。' : null;
     return { resourceId: contract.resourceId, name: contract.name,
       displayName: tool.name === 'apply_workspace_patch' ? '结构化文件补丁 · Native' : `${tool.name} · Native`, description: contract.description,
-      kind: 'tool', source: 'studio-native', status: 'available', contract: { ...metadata, inputSchema: parameters } };
+      kind: 'tool', source: 'studio-native', status: unavailableReason ? 'not-configured' : 'available',
+      ...(unavailableReason ? { disabled: true, unavailableReason } : {}), contract: { ...metadata, inputSchema: parameters } };
   });
 }
 
@@ -59,4 +70,8 @@ export async function listStudioTools({ query = {}, serverClient, signal }) {
   }
   // The distinct kind scopes merged cursors away from legacy remote cursors.
   return paginateResources([...local, ...rows], { ...query, kind: 'native-tool' }, { source: 'agentkit-studio', warnings });
+}
+
+export function defaultNativeToolBindings(options) {
+  return nativeDefaultToolsFromCatalog(nativeLocalToolResources(options)).map(resourceId => ({ resourceId }));
 }

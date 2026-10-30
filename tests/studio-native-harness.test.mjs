@@ -14,7 +14,8 @@ import { nativeDshBackgroundOwnership } from '@kingsoftcloud/agentkit-harness-no
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createBackgroundCommandPort } from '@kingsoftcloud/agentkit-harness-node/native/background-command-port';
 import { createAgentStore } from '../src/agent-store.mjs';
-import { createModelService, modelInput } from '../src/model-service.mjs';
+import { createModelService } from '../src/model-service.mjs';
+import { frozenNativeModelDescription } from '../src/providers/native-model-capabilities.mjs';
 import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
 import { createStudioObservability } from '../src/studio-observability.mjs';
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
@@ -31,8 +32,11 @@ import { createAgentEngineClient } from '../src/server-client.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../src/providers/native-cloud-memory-turn.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
+import { nativeLocalExecutionMethods } from '../src/providers/native-local-execution.mjs';
+import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
+import { nativeWorkspaceContextBinding } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
 
-async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqlite = false, recovery = false, storeAlias = false, trace = false, resources, inspection = false } = {}) {
+async function setup(t, { spec = {}, profile = {}, respond, renderPrompt, catalog = [], contextSources, sqlite = false, recovery = true, storeAlias = false, trace = false, resources, inspection = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
   const storeDir = storeAlias ? join(root, 'configured-home') : root;
   if (storeAlias) await symlink(root, storeDir, 'dir');
@@ -47,7 +51,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
   let apiKey = 'secret-one', unregisters = 0;
   const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'pinned', baseUrl: 'https://model.invalid/v1', ...profile }] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: apiKey }) },
-    fetchImpl: async () => new Response('{"data":[]}', { headers: { 'content-type': 'application/json' } }) });
+    fetchImpl: async () => new Response(JSON.stringify({data:catalog}), { headers: { 'content-type': 'application/json' } }) });
   const session = { id: 'session', append: (type, data, options) => events.push({ type, data, ...options, seq: events.length + 1 }) };
   session.append('turn/start', { turn: 1 });
   const services = { sessions: { flush: async () => true }, llm: {}, sessionProjections: {
@@ -68,7 +72,7 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     },
     ...(recovery ? { assembleContextFor: agent => ({ agent }) } : {}),
     contextSourceRegistry: bridge?.nativeContextSources,
-    renderPrompt: () => 'Trusted Host instructions', fetchImpl: async (url, options) => {
+    renderPrompt: renderPrompt ?? (() => 'Trusted Host instructions'), fetchImpl: async (url, options) => {
       requests.push({ url, options });
       const response = respond ? respond(requests.length, JSON.parse(options.body)) : { choices: [{ index: 0, delta: { content: 'Complete' }, finish_reason: 'stop' }] };
       return new Response(`data: ${JSON.stringify({ id: `response-${requests.length}`, ...response,
@@ -97,6 +101,83 @@ async function setup(t, { spec = {}, profile = {}, respond, contextSources, sqli
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
 
+test('Native Host uses admitted tool sources for counting/model/recovery and preserves user instructions verbatim', async t => {
+  const f = await setup(t, { sqlite: true, renderPrompt: assembly => assembly.sections.map(section => section.text).join('\n\n') });
+  const persona = 'User instructions mention read, glob, subagent and job_kill; keep this text unchanged.\n';
+  f.payload.input.assembly.sections = [
+    { name: 'harness:identity', text: 'HOST_ENGINE_IDENTITY' },
+    { name: 'harness:source', text: 'HOST_ENGINE_CHECKOUT' },
+    { name: 'harness:future-provider', text: 'HOST_ENGINE_FUTURE' },
+    { name: 'app:web-surface', text: 'HOST_APPLICATION_DEVELOPMENT' },
+    { name: 'ui:deliverable-file-references', text: 'HOST_UI_PRESENT_PROTOCOL' },
+    { name: 'deployment:persona-prefix', text: persona },
+    { name: 'tool:read', text: 'LEGACY_READ_UNAVAILABLE' },
+    { name: 'tool:glob', text: 'LEGACY_GLOB_UNAVAILABLE' },
+    { name: 'tool:jobs', text: 'LEGACY_JOBS_UNAVAILABLE' },
+    { name: 'tool:goal', text: 'LEGACY_GOAL_UNAVAILABLE' },
+    { name: 'tool:read_workspace_file', text: 'ADMITTED_FILE_GUIDANCE' },
+    { name: 'enterprise:policy', text: 'Preserve enterprise instructions.' },
+  ];
+  f.payload.binding.nativeTools.definitions = () => [tool({ name: 'read_workspace_file' })];
+  await f.host.executeTurn(f.payload);
+  const head = f.head(), original = f.ledger.load(head.scope, head.runId);
+  const expected = [persona, 'ADMITTED_FILE_GUIDANCE', 'Preserve enterprise instructions.'].join('\n\n');
+  assert.equal(original.configuration.hostRecoveryBinding.instructionAssemblyPolicy, 'native-owned-sections/v3');
+  assert.equal(original.configuration.hostRecoveryBinding.systemPrompt, expected);
+  assert.equal(original.snapshot.messages[0].content, expected);
+  const body = JSON.parse(f.requests[0].options.body);
+  assert.equal(body.messages[0].content, expected);
+  assert.equal(body.tools.some(item => ['read', 'glob', 'job_output', 'subagent'].includes(item.function.name)), false);
+  assert.doesNotMatch(JSON.stringify(body.messages), /LEGACY_.+_UNAVAILABLE/);
+  assert.doesNotMatch(JSON.stringify(body.messages), /HOST_ENGINE_|HOST_APPLICATION_|HOST_UI_/);
+  f.payload.input.assembly.sections.find(section => section.name === 'tool:read').text = 'Unrelated global plugin updated its unavailable tool guide';
+  f.payload.input.assembly.sections.find(section => section.name === 'harness:source').text = 'Host implementation moved';
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.requests.length, 1, 'inactive global guidance cannot restart the admitted model response');
+  assert.deepEqual(f.ledger.load(head.scope, head.runId), original);
+  f.payload.input.assembly.sections.find(section => section.name === 'tool:read_workspace_file').text = 'Changed admitted instructions';
+  await assert.rejects(f.host.executeTurn(f.payload), /recovery_prompt_changed/);
+  assert.equal(f.requests.length, 1);
+});
+
+test('Native GLM admission enables incremental tool arguments through its frozen provider policy', async t => {
+  const f = await setup(t, { profile: { modelName: 'glm-5.2' } });
+  f.payload.agent.options.model = 'glm-5.2';
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.head().phase, 'completed');assert.equal(f.requests.length, 1);
+  const body = JSON.parse(f.requests[0].options.body);
+  assert.equal(body.model, 'glm-5.2');assert.equal(body.stream, true);assert.equal(body.tool_stream, true);
+  assert.ok(body.tools.length > 0);
+});
+
+for (const historical of [false, true]) test(`same-turn redelivery restores ${historical ? 'historical' : 'new'} resource admission through the recovery resolver`, async t => {
+  const h = await setup(t, { sqlite: true, recovery: true });
+  const methods = nativeLocalExecutionMethods({ enabled: true, settings: {}, sourceEnv: { PATH: '/usr/bin:/bin' },
+    workspaceRoot: join(h.root, 'workspace'), commandBackend: 'local_process' });
+  const bound = [], originalTools = h.payload.binding.nativeTools;
+  const optionsForAdmission = options => historical ? { modern: options.modern } : options;
+  h.payload.binding.nativeTools = { ...originalTools,
+    localExecution: options => methods.localExecution(optionsForAdmission(options)),
+    executionEnvironment: options => methods.executionEnvironment(optionsForAdmission(options)),
+    forAgent: (_agent, authority) => { bound.push(authority.localExecution); return originalTools.forAgent(); } };
+  h.services.sessions.flush = async () => h.requests.length === 0;
+  await assert.rejects(h.host.executeTurn(h.payload), /native_delivery_not_durable/);
+  const head = h.head(), original = h.ledger.load(head.scope, head.runId);
+  assert.equal(original.configuration.hostRecoveryBinding.localExecutionProfile, historical ? undefined : 'local-development/v1');
+  Object.assign(h.payload.binding.nativeTools, methods);
+  h.services.sessions.flush = async () => true;
+  const changedInput = { ...h.payload, input: { ...h.payload.input,
+    messages: [{ ...h.payload.input.messages[0], id: 'substituted-user-input' }] } };
+  await assert.rejects(h.host.executeTurn(changedInput), /native_dsh_recovery_input_changed/);
+  assert.equal(h.requests.length, 1);
+  await h.host.executeTurn(h.payload);
+  assert.equal(h.requests.length, 1, 'a committed model response cannot run again on redelivery');
+  assert.equal(bound.length, 2);
+  assert.deepEqual(bound[1].settings, bound[0].settings);
+  assert.equal(bound[1].settings.maxFileBytes, historical ? 64 * 1024 ** 2 : 1024 ** 3);
+  assert.deepEqual(h.ledger.load(head.scope, head.runId).configuration, original.configuration);
+});
+
 test('Native session planning controls remain resident when local tool search is explicitly disabled', async t => {
   const f = await setup(t, { spec: { execution: { nativeToolSearchMode: 'off' } } });
   f.payload.input.assembly.sections = [];
@@ -108,6 +189,7 @@ test('Native session planning controls remain resident when local tool search is
   await f.host.executeTurn(f.payload);
   const { configuration, snapshot } = f.ledger.load(f.head().scope, f.head().runId);
   assert.equal(configuration.planModePolicy, 'session-plan/v1'); assert.equal(configuration.todoPolicy, 'session-todos/v1');
+  assert.equal(configuration.toolExecutionPolicy, 'owner-execution/v1');
   assert.equal(Object.hasOwn(configuration, 'toolDiscoveryPolicy'), false);
   for (const name of ['EnterPlanMode', 'ExitPlanMode', 'TodoRead', 'TodoWrite']) {
     assert.ok(configuration.tools.some(tool => tool.name === name));
@@ -262,6 +344,101 @@ test('a failed Native trace cache cannot fail the actual Host turn or authorize 
   assert.equal(f.head().phase, 'completed'); assert.equal(f.requests.length, 1);
 });
 
+test('workspace context preparation preserves original admission bytes across replay of the same UI Run', async t => {
+  const f = await setup(t, { sqlite: true }), executionRoot = await realpath(join(f.root, 'workspace'));
+  let cwd = f.root, prepared = false;
+  f.payload.input.messages.push({ id: 'wrong-root', role: 'user', source: { kind: 'agent-instructions' },
+    content: [{ type: 'text', text: 'WRONG_SESSION_RULE_3b9e' }] });
+  const original = structuredClone(f.payload.input.messages);
+  f.payload.binding.nativeTools.workspaceContext = () => ({
+    binding: { contract: 'agentkit.native-workspace-context/v1', workspaceRoot: executionRoot },
+    directory: { get: () => cwd, set: async value => { cwd = value; }, ensure: async () => cwd },
+  });
+  f.payload.prepareInput = async () => {
+    const messages = prepared ? [] : [{ id: 'right-root', role: 'user', source: { kind: 'agent-instructions' },
+      content: [{ type: 'text', text: 'BOUND_EXECUTION_RULE_85af' }] }];
+    prepared = true;
+    return { kind: 'enter', assembly: f.payload.input.assembly, messages };
+  };
+  await f.host.executeTurn(f.payload);
+  const head = f.head(), stored = f.ledger.load(head.scope, head.runId);
+  assert.deepEqual(stored.configuration.hostRecoveryBinding.messages, original,
+    'the original admission and the outer execution owner must freeze the same bytes');
+  assert.deepEqual(f.payload.input.messages, original);
+  const wire = JSON.stringify(JSON.parse(f.requests[0].options.body).messages);
+  assert.match(wire, /BOUND_EXECUTION_RULE_85af/); assert.doesNotMatch(wire, /WRONG_SESSION_RULE_3b9e/);
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.requests.length, 1, 'replaying the same completed Run cannot repeat the model');
+  assert.deepEqual(f.ledger.load(head.scope, head.runId), stored);
+});
+
+test('current instruction source owns actual model requests and freezes its recipe across same-Run replay', async t => {
+  const f = await setup(t, { sqlite: true }), executionRoot = await realpath(join(f.root, 'workspace'));
+  let cwd = f.root;
+  await writeFile(join(executionRoot, 'AGENTS.md'), 'CURRENT_FILE_RULE_431a');
+  const binding = nativeWorkspaceContextBinding(executionRoot, { instructionRoots: [] });
+  f.payload.binding.nativeTools.workspaceContext = () => ({ binding, directory: {
+    get: () => cwd, set: async value => { cwd = value; }, ensure: async () => cwd,
+  } });
+  f.payload.input.messages.push({ id: 'old-rules', role: 'user', source: { kind: 'agent-instructions' },
+    content: [{ type: 'text', text: 'OLD_HOST_FILE_RULE_132a' }] });
+  f.payload.prepareInput = async () => ({ kind: 'enter', messages: [{ id: 'refresh', role: 'user',
+    source: { kind: 'agent-instructions' }, content: [{ type: 'text', text: 'OLD_HOST_FILE_RULE_132a' }] }],
+  assembly: f.payload.input.assembly });
+  const original = structuredClone(f.payload.input.messages);
+  await f.host.executeTurn(f.payload);
+  const head = f.head(), saved = f.ledger.load(head.scope, head.runId);
+  assert.equal(head.phase, 'completed'); assert.equal(f.requests.length, 1);
+  const wire = JSON.stringify(JSON.parse(f.requests[0].options.body).messages);
+  assert.match(wire, /CURRENT_FILE_RULE_431a/); assert.doesNotMatch(wire, /OLD_HOST_FILE_RULE_132a/);
+  assert.equal(saved.configuration.hostRecoveryBinding.inputContextPolicy, 'agentkit.native-context-ownership/v4');
+  assert.deepEqual(saved.configuration.hostRecoveryBinding.messages, original);
+  assert.equal(saved.configuration.contextSources[0].instructionPolicy, 'current-files/v1');
+  assert.deepEqual(saved.snapshot.context.instructionScopes.directories, ['']);
+  assert.doesNotMatch(JSON.stringify(saved.snapshot.messages), /CURRENT_FILE_RULE_431a/,
+    'current file bodies do not accumulate in conversational history');
+  await f.host.executeTurn(f.payload); assert.equal(f.requests.length, 1);
+  assert.deepEqual(f.ledger.load(head.scope, head.runId), saved);
+});
+
+test('managed workspace context is admitted without touching the Session, then applied by its exclusive input owner', async t => {
+  const f = await setup(t), store = new MemoryRunStore(), executionRoot = await realpath(join(f.root, 'workspace'));
+  let cwd = f.root, directoryChanges = 0, driving = false, prepared = false;
+  const binding = { contract: 'agentkit.native-workspace-context/v1', workspaceRoot: executionRoot };
+  f.payload.binding.nativeTools.workspaceContext = () => ({ binding, directory: {
+    get: () => cwd,
+    set: async value => { assert.equal(driving, true, 'admission cannot mutate the Session context'); directoryChanges++; cwd = value; },
+    ensure: async () => cwd,
+  } });
+  f.payload.prepareInput = async () => {
+    assert.equal(driving, true, 'admission cannot claim the execution inbox');
+    assert.equal(cwd, executionRoot);
+    const messages = prepared ? [] : [{ id: 'bound-instructions', role: 'user',
+      source: { kind: 'agent-instructions' }, content: [{ type: 'text', text: 'MANAGED_EXECUTION_RULE_21c3' }] }];
+    prepared = true;
+    return { kind: 'enter', assembly: f.payload.input.assembly, messages };
+  };
+  const args = { store, admission: null, runId: 'managed-workspace-run',
+    target: { tenantId: 'managed-tenant', agentInstanceId: f.record.metadata.id }, principal: { userId: 'managed-user' } };
+  const bound = await f.host.resolveManagedBinding(f.payload, args);
+  assert.deepEqual(bound.configuration.hostRecoveryBinding.workspaceContext, { ...binding, sourceRoot: f.root });
+  assert.equal(directoryChanges, 0); assert.equal(cwd, f.root);
+  const kernel = new NativeKernel({ store, ports: bound.ports, owner: 'managed-workspace-owner', digest });
+  kernel.start({ scope: bound.scope, runId: args.runId, sessionId: 'session', turnId: 'managed-command',
+    buildId: bound.buildId, parentRunId: null, taskChainId: args.runId }, bound.configuration);
+  driving = true;
+  const done = await kernel.runUntilIdle(bound.scope, args.runId);
+  assert.equal(done.phase, 'completed'); assert.equal(directoryChanges, 1);
+  assert.match(JSON.stringify(JSON.parse(f.requests[0].options.body).messages), /MANAGED_EXECUTION_RULE_21c3/);
+  await bound.releaseResources?.({ scope: bound.scope, runId: args.runId, sessionId: 'session' });
+  driving = false; cwd = f.root;
+  const restored = await f.host.resolveManagedBinding(f.payload, { ...args,
+    admission: { scope: bound.scope, buildId: bound.buildId, configuration: bound.configuration } });
+  assert.deepEqual(restored.configuration, bound.configuration);
+  assert.equal(directoryChanges, 1); assert.equal(cwd, f.root);
+  await restored.releaseResources?.({ scope: bound.scope, runId: args.runId, sessionId: 'session' });
+});
+
 for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (const display of [undefined, false]) test(`managed binding reuses real Studio assembly with its own ledger and trusted principal${deliveryReviewPolicy ? ' and pinned review policy' : ''}${display === false ? ' with thinking hidden' : ''}`, async t => {
   const f = await setup(t, { recovery: true, ...(display === false ? { profile: { parameters: { provider_thinking_display: false } } } : {}),
     ...(deliveryReviewPolicy ? { spec: { execution: { deliveryReviewPolicy } } } : {}) }), store = new MemoryRunStore();
@@ -270,10 +447,11 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (
   const args = { store, admission: null, runId, target, principal };
   const bound = await f.host.resolveManagedBinding(f.payload, args);
   const scope = bound.scope;
-  assert.equal(bound.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
-  assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v1', rule: 'auto' });
-  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v1', rule: 'auto' });
+  assert.equal(bound.configuration.outputRecoveryPolicy, 'response-boundary/v2');
+  assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v2', rule: 'auto' });
+  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v2', rule: 'auto' });
   assert.equal(bound.configuration.profile.streamTimeoutPolicy, 'idle/v1');
+  assert.equal(bound.configuration.profile.chatUsagePolicy, 'cumulative-snapshots/v1');
   assert.equal(bound.configuration.profile.providerThinkingDisplay, display ?? true);
   assert.equal(bound.configuration.profile.providerThinkingDisplayPolicy, 'provider-visible/v1');
   assert.equal(bound.configuration.profile.controllerReasoningPolicy, 'disclosed-delegate/v1');
@@ -324,28 +502,39 @@ test('Studio Anthropic policy admission freezes journal and replay configuration
   await restored.releaseResources?.({ scope: bound.scope, runId, sessionId: f.payload.agent.session.id });
 });
 
-for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} delivers after a real model output restart`, async t => {
+for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} retains a text response when continuation is exhausted`, async t => {
   const f = await setup(t, { sqlite: true, respond: count => ({ choices: [{ index: 0,
     delta: { content: count <= 4 ? '{"unfinished":' : 'Complete delivered answer.' }, finish_reason: count <= 4 ? 'length' : 'stop' }] }) });
   if (frozen) f.payload.binding.buildId = 'output-recovery-build';
   await f.host.executeTurn(f.payload);
   const record = f.ledger.load(f.head().scope, f.head().runId);
-  assert.equal(record.configuration.outputRecoveryPolicy, 'task-or-delivery/v1');
-  assert.equal(record.snapshot.phase, 'completed'); assert.equal(record.snapshot.finalText, 'Complete delivered answer.');
-  assert.equal(record.snapshot.outputRestarts, 1); assert.equal(f.requests.length, 5);
-  assert.match(JSON.stringify(JSON.parse(f.requests[4].options.body).messages), /output limit repeatedly/);
-  assert.equal(record.events.filter(event => event.kind === 'output.restarted').length, 1);
-  const assistants = f.events.filter(event => event.type === 'assistant/message');
-  assert.ok(assistants.some(event => event.data.message.content.some(part => part.type === 'text' && part.text === 'Complete delivered answer.')));
-  assert.equal(assistants.filter(event => event.data.message.content.some(part => part.type === 'text' && part.text === 'Complete delivered answer.')).length, 1);
+  assert.equal(record.configuration.outputRecoveryPolicy, 'response-boundary/v2');
+  assert.equal(record.snapshot.phase, 'failed'); assert.equal(record.snapshot.finalText, '');
+  assert.equal(record.snapshot.outcome, 'unverified'); assert.equal(record.snapshot.reason, 'continuation_budget_exhausted');
+  assert.equal(record.snapshot.outputRestarts, 0); assert.equal(f.requests.length, 4);
+  assert.equal(record.events.filter(event => event.kind === 'output.restarted').length, 0);
+  assert.ok(record.snapshot.messages.some(message => message.kind === 'continuation_fragment' && message.content === '{"unfinished":'));
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'output-recovery-build'));
+});
+
+test('Studio capability admission uses actual catalog dimensions and same-turn replay never rediscovers them', async t => {
+  const f = await setup(t, { sqlite:true,catalog:[{id:'pinned',context_length:'1024k',max_output_tokens:16384,input_modalities:['text']}] });
+  await f.host.executeTurn(f.payload);
+  const head=f.head(), original=f.ledger.load(head.scope,head.runId);
+  assert.equal(original.configuration.profile.contextWindow,1048576); assert.equal(original.configuration.profile.maxOutputTokens,16384);
+  assert.equal(JSON.parse(f.requests[0].options.body).max_tokens,16384);
+  assert.equal(original.configuration.hostRecoveryBinding.modelBindings.items[0].capabilities.contextSource,'catalog');
+  f.models.capabilities=async()=>assert.fail('Redelivery must retain capability facts');
+  await f.host.executeTurn(f.payload); assert.equal(f.requests.length,1);
+  assert.deepEqual(f.ledger.load(head.scope,head.runId),original);
 });
 
 for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} diagnoses real errors before correcting a file`, async t => {
   const f = await setup(t, { sqlite: true, spec: { execution: { toolErrorRecoveryModelCalls: 3 } },
-    respond: count => ({ choices: [{ index: 0, delta: count < 9 ? { tool_calls: [{ index: 0, id: `diagnostic-${count}`, type: 'function',
-      function: { name: count === 7 ? 'read' : 'write', arguments: JSON.stringify({ text: count === 8 ? 'corrected' : 'wrong' }) } }] }
-      : { content: 'Corrected result delivered.' }, finish_reason: count < 9 ? 'tool_calls' : 'stop' }] }) });
+    respond: count => ({ choices: [{ index: 0, delta: count < 10 ? { tool_calls: [{ index: 0, id: `diagnostic-${count}`, type: 'function',
+      function: { name: count === 9 ? 'declare_deliverables' : count === 7 ? 'read' : 'write', arguments: JSON.stringify(count === 9
+        ? {artifacts:[{kind:'file',path:'result.txt'}]} : { text: count === 8 ? 'corrected' : 'wrong' }) } }] }
+      : { content: 'Corrected result delivered.' }, finish_reason: count < 10 ? 'tool_calls' : 'stop' }] }) });
   const file = join(f.root, 'workspace/result.txt'), executed = [];
   f.payload.binding.nativeTools = { definitions: () => [tool({ name: 'write', readOnly: false, concurrentSafe: false }),
     tool({ name: 'read', contextRole: 'workspace_read' })], forAgent: () => ({ tools: { execute: async request => {
@@ -361,10 +550,10 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
   assert.equal(record.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
   assert.equal(record.configuration.toolErrorRecoveryModelCalls, 3); assert.equal(record.snapshot.toolErrorRecovery, null);
   assert.equal(record.snapshot.finalText, 'Corrected result delivered.'); assert.equal(await readFile(file, 'utf8'), 'correct');
-  assert.deepEqual(executed, [...Array(6).fill('write'), 'read', 'write']); assert.equal(f.requests.length, 9);
+  assert.deepEqual(executed, [...Array(6).fill('write'), 'read', 'write']); assert.equal(f.requests.length, 10);
   assert.equal(record.events.filter(event => event.kind === 'tool.error_recovery_started').length, 1);
   assert.match(JSON.stringify(JSON.parse(f.requests[6].options.body).messages), /diagnosis_is_not_completion/);
-  assert.equal(f.events.filter(event => event.type === 'tool/result').length, 8);
+  assert.equal(f.events.filter(event => event.type === 'tool/result').length, 9);
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'diagnostic-recovery-build'));
 });
 
@@ -381,15 +570,16 @@ for (const frozen of [false, true]) test(`shared Native ${frozen ? 'Frozen Build
     if ([1, 4].includes(count) || [3, 6].includes(count)) return { choices: [{ index: 0, delta: { tool_calls: [{ index: 0,
       id: `review-flow-${count}`, type: 'function', function: { name: [1, 4].includes(count) ? 'write' : 'submit_delivery_review',
         arguments: JSON.stringify([1, 4].includes(count) ? { text: count === 1 ? 'broken' : 'fixed zero case' }
-          : reviewData(count === 3 ? [{ issue: 'Missing zero case.', recommended_check: 'Inspect and repair the source.' }] : [])) } }] }, finish_reason: 'tool_calls' }] };
+          : reviewData(count === 3 ? [{ issue: 'Missing zero case.', recommended_check: 'Inspect and repair the source.' }] : [])) } },
+      ...(count === 1 ? [{index:1,id:'review-delivery-subject',type:'function',function:{name:'declare_deliverables',
+        arguments:JSON.stringify({artifacts:[{kind:'file',path:'ledger.ts'}]})}}] : [])] }, finish_reason: 'tool_calls' }] };
     return { choices: [{ index: 0, delta: { content: count === 2 ? 'Candidate.' : 'Repaired.' }, finish_reason: 'stop' }] };
   } });
   const file = join(f.root, 'workspace', 'ledger.ts');
+  const workspace = createNativeWorkspaceTools({ workspaceRoot: join(f.root, 'workspace'), stateDir: join(f.root, 'review-workspace-state'),
+    sessionId: 'session', authorize: async () => 'allow' });
   f.payload.binding.nativeTools = { definitions: () => [tool({ name: 'write', readOnly: false, concurrentSafe: false })],
-    forAgent: () => ({ workspace: { observe: async () => ({ status: 'ok', changedPaths: [],
-      revision: createHash('sha256').update(await readFile(file).catch(error => {
-        if (error.code === 'ENOENT') return Buffer.alloc(0); throw error;
-      })).digest('hex') }) }, tools: { execute: async request => { await writeFile(file, request.call.arguments.text);
+    forAgent: () => ({ workspace, tools: { execute: async request => { await writeFile(file, request.call.arguments.text);
       return { status: 'ok', content: 'written', workspaceChangedPaths: ['ledger.ts'] }; } } }) };
   if (frozen) f.payload.binding.buildId = 'review-build';
   await f.host.executeTurn(f.payload);
@@ -397,14 +587,14 @@ for (const frozen of [false, true]) test(`shared Native ${frozen ? 'Frozen Build
   assert.equal(record.snapshot.usage.modelCalls, 6, JSON.stringify({ reason: record.snapshot.reason,
     policy: record.configuration.deliveryReviewPolicy, status: record.snapshot.workspaceObservationStatus,
     paths: record.snapshot.workspaceModifiedPaths, mutation: record.snapshot.lastWorkspaceMutationToolCall,
-    review: record.snapshot.deliveryReview, limits: record.configuration.limits })); assert.equal(record.snapshot.usage.toolCalls, 2);
+    review: record.snapshot.deliveryReview, limits: record.configuration.limits })); assert.equal(record.snapshot.usage.toolCalls, 3);
   assert.equal(record.snapshot.repairs, 1); assert.equal(record.snapshot.finalText, 'Repaired.'); assert.equal(record.snapshot.outcome, 'unverified');
   assert.equal(record.snapshot.deliveryReview.rounds, 2); assert.equal(await readFile(file, 'utf8'), 'fixed zero case');
   assert.deepEqual(record.configuration.deliveryReviewPolicy, { pathSuffixes: ['.ts'], maxRounds: 2, maxReadRounds: 2, reviewUnknownPaths: true });
   assert.deepEqual(f.requests.map(request => JSON.parse(request.options.body).tools?.map(definition => definition.function.name))
     .filter((_tools, index) => [2, 5].includes(index)),
     Array.from({ length: 2 }, () => ['ArtifactRead', 'ArtifactSearch', 'ArtifactList', 'submit_delivery_review']));
-  assert.equal(f.events.filter(event => event.type === 'tool/result').length, 2);
+  assert.equal(f.events.filter(event => event.type === 'tool/result').length, 3);
   assert.equal(JSON.stringify(f.events).includes('PRIVATE_REVIEW_BODY'), false);
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'review-build'));
 });
@@ -680,10 +870,11 @@ for (const drift of ['revision', 'model', 'tools']) test(`background Host reject
   if (drift === 'revision') h.payload.binding.agentRevision++;
   if (drift === 'model') h.values.modelProfiles[0].parameters = { temperature: .7 };
   if (drift === 'tools') h.payload.binding.nativeTools.definitions = () => [];
-  await assert.rejects(h.host.executeBackgroundTurn(n.payload), /recovery_(preset_changed|configuration_changed)/);
+  await assert.rejects(h.host.executeBackgroundTurn(n.payload), drift === 'model'
+    ? { code: 'studio_native_model_binding_changed' } : /recovery_(preset_changed|configuration_changed)/);
   assert.equal(h.requests.length, 2); assert.equal(h.counts().launches, 1);
   assert.equal(h.ledger.load(h.source.snapshot.scope, n.saved.snapshot.runId).snapshot.phase, 'created');
-  if (drift !== 'revision') assert.equal(h.counts().releases, before + 1);
+  assert.equal(h.counts().releases, before + Number(drift === 'tools'));
 });
 
 test('background Host product recovery keeps the numeric DSH position and original notice across an owner flush failure', async t => {
@@ -1107,16 +1298,24 @@ test('Studio Host seals pure inference replay only for its plain HTTP model bind
 test('Studio Host assembles local Memory PreCompact against original admitted user inputs and actual SQLite facts', async t => {
   const fixture = await setup(t, { spec: { memory: { enabled: true, providerRef: 'local-default', scopes: ['user'],
     write: { mode: 'candidate', flushBeforeCompaction: true, flushAfterTurn: false } },
-    context: { maxInputTokens: 2400, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
-      compaction: { targetRatio: .2, summaryMaxTokens: 80 } } }, profile: { contextWindow: 2400, maxOutputTokens: 128 } });
-  const original = ' '.repeat(2500) + '我喜欢用Vim', sources = [];
+    context: { maxInputTokens: 8000, reserveOutputTokens: 128, rollout: { memoryWrite: 'enabled' },
+      compaction: { thresholdRatio: .3, targetRatio: .2, summaryMaxTokens: 80 } } }, profile: { contextWindow: 8000, maxOutputTokens: 128 },
+    respond: (_count, body) => ({ choices: [{ index: 0, delta: { content: body.messages[0].content.startsWith('Summarize the quoted historical data')
+      ? JSON.stringify({ objective: [], constraints: [], completed: [], pending: [], evidence: [], failures: [], artifacts: [], nextSteps: [] })
+      : 'Complete' }, finish_reason: 'stop' }] }) });
+  const original = ' '.repeat(5000) + '我喜欢用Vim', sources = [];
   for (let turn = 1; turn <= 3; turn++) {
     if (turn > 1) fixture.payload.agent.session.append('turn/start', { turn });
     fixture.payload.input.messages = [{ id: 'input-' + turn, role: 'user', source: { kind: 'user' },
       content: [{ type: 'text', text: turn < 3 ? original : 'Vim' }] }];
     await fixture.host.executeTurn({ ...fixture.payload, turn });
-    const snapshot = fixture.head(); assert.equal(snapshot.phase, 'completed');
-    if (turn < 3) sources.push(`native-message://${snapshot.runId}#message=${turn === 1 ? 1 : 3}`);
+    const snapshot = fixture.head(); assert.equal(snapshot.phase, 'completed', JSON.stringify({ turn, reason: snapshot.reason,
+      context: snapshot.contextState, usage: snapshot.usage }));
+    if (turn < 3) {
+      const index = snapshot.messages.findIndex(message => message.role === 'user' && !message.history && message.content === original);
+      assert.ok(index >= 0, 'the original admitted user statement remains in its durable transcript');
+      sources.push(`native-message://${snapshot.runId}#message=${index}`);
+    }
   }
   const snapshot = fixture.head(), entries = fixture.ledger.list(snapshot.scope, 'session')
     .map(run => fixture.ledger.load(snapshot.scope, run.runId));
@@ -1252,6 +1451,9 @@ test('Studio Native cancellation during a Host approval rejects its late grant',
   grant('allowed-once');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(writes, 0); assert.equal(fixture.head().phase, 'canceled');
+  assert.deepEqual(fixture.ledger.events(fixture.head().scope, fixture.head().runId)
+    .filter(event => event.kind === 'tool.not_dispatched').map(event => event.payload.callId), ['guarded-1']);
+  assert.equal(JSON.parse(fixture.head().messages.find(message => message.role === 'tool').content).executed, false);
 });
 test('Studio Native retains a pending decision when the Host approval service is absent', async t => {
   const fixture = await setup(t, { respond: approvalResponse });
@@ -1268,6 +1470,40 @@ test('Studio Host releases the revision-bound resources with the settled Run ide
   await fixture.host.executeTurn(fixture.payload);
   assert.deepEqual(releases, [{ scope: fixture.head().scope, runId: fixture.head().runId, sessionId: 'session' }]);
 });
+for (const submission of ['early declaration', 'atomic result', 'ordinary prose']) test(`Studio research delivery (${submission}) never treats reference JavaScript as a web acceptance target`, async t => {
+  const registry=new Map(),effects=[];
+  const calls=[{name:'write_workspace_file',arguments:{path:'reference.js',content:'export const source = true;'}},
+    {name:'write_workspace_file',arguments:{path:'report.md',content:'# Research\nVerified source notes.'}},
+    ...(submission==='ordinary prose'?[]:submission==='early declaration'?
+      [{name:'declare_deliverables',arguments:{artifacts:[{kind:'file',path:'report.md'}]}}]:
+      [{name:'submit_final_output',arguments:{answer:'Source notes are in report.md; independent semantic acceptance remains unverified.',
+        artifacts:[{kind:'file',path:'report.md'}]}}])];
+  const f=await setup(t,{sqlite:true,respond:(count,body)=>{
+    assert.ok(body.tools.some(tool=>tool.function.name==='declare_deliverables'));
+    const call=calls[count-1];
+    return {choices:[{index:0,delta:call?{tool_calls:[{index:0,id:`research-${count}`,type:'function',
+      function:{name:call.name,arguments:JSON.stringify(call.arguments)}}]}:{content:'Source notes are in report.md; independent semantic acceptance remains unverified.'},
+      finish_reason:call?'tool_calls':'stop'}]};
+  }});
+  const gateway=createNativeDshTools({ctx:{effect:install=>install(),sandboxPolicy:{resolve:()=>({mode:'workspace-write'})},tools:{
+    resultRetentions:['caller/v1'],register(tool){registry.set(tool.name,tool);return()=>registry.delete(tool.name);},
+    async execute(input){effects.push(input.name);const tool=registry.get(input.name),value=await tool.execute(input.arguments,input);
+      return {isError:false,value,content:tool.output.render(input.arguments,value)};}
+  }},config:{agentId:f.record.metadata.id,toolBindings:['write_workspace_file','read_workspace_file']},
+    workspaceRoot:join(f.root,'workspace'),stateDir:join(f.root,'delivery-state')});
+  t.after(()=>gateway.close());f.payload.binding.nativeTools=gateway;f.payload.input.assembly.tools=[...registry.values()];
+  await f.host.executeTurn(f.payload);
+  const head=f.head();assert.equal(head.phase,'completed');assert.equal(head.outcome,'unverified');
+  assert.deepEqual(head.deliveryManifest.artifacts,submission==='ordinary prose'?[]:[{kind:'file',path:'report.md'}]);
+  const requests=submission==='early declaration'?4:3;
+  assert.equal(head.lastWebMutationToolCall,null);assert.equal(f.requests.length,requests);
+  assert.deepEqual(effects,['write_workspace_file','write_workspace_file']);
+  assert.equal(head.repairs,0);assert.equal(head.finalText,'Source notes are in report.md; independent semantic acceptance remains unverified.');
+  const publicResult=f.events.filter(event=>event.type==='assistant/message').map(event=>event.data.message.content);
+  if(submission==='atomic result')assert.doesNotMatch(JSON.stringify(publicResult),/submit_final_output/);
+  await f.host.executeTurn(f.payload);assert.equal(f.requests.length,requests);
+});
+
 test('Studio Native executes Web through its ledger, replays its result and rejects a changed provider binding', async t => {
   const fixture = await setup(t, { respond: (count, body) => {
     if (count === 1) return { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'web-query', type: 'function',
@@ -1278,6 +1514,7 @@ test('Studio Native executes Web through its ledger, replays its result and reje
   } });
   const registry = new Map(), calls = [];
   const gateway = createNativeDshTools({ ctx: { effect: install => install(), tools: {
+    resultRetentions: ['caller/v1'],
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(input) {
       calls.push(input.name);
@@ -1307,7 +1544,7 @@ test('Studio Native executes Web through its ledger, replays its result and reje
   // schemas but must not adopt an existing Run under a new capability digest.
   fixture.payload.binding.nativeTools = { ...gateway,
     webBinding: { ...gateway.webBinding, bindingDigest: 'changed-provider-binding' } };
-  await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'native_dsh_recovery_configuration_changed' });
   assert.equal(fixture.requests.length, 2); assert.deepEqual(calls, ['web_search']);
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), run);
 });
@@ -1324,7 +1561,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
     const definitions = body.tools.map(tool => tool.function);
     assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('prepared-execution-budget/v1')));
     assert.equal(definitions.some(tool => tool.name === 'search_workspace_files'), false);
-    if (count <= 2) assert.deepEqual(definitions.map(tool => tool.name).sort(), ['edit_workspace_file', 'write_workspace_file']);
+    if (count <= 2) assert.deepEqual(definitions.map(tool => tool.name).sort(), ['declare_deliverables', 'edit_workspace_file', 'submit_final_output', 'write_workspace_file']);
     if (count === 1) return responseCalls({ name: 'read_workspace_file', args: { path: 'source.py' } },
       { name: 'write_workspace_file', args: { path: 'must-not-write.md', content: 'forbidden mixed batch' } });
     if (count === 2) {
@@ -1333,12 +1570,14 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
       return responseCalls({ name: 'write_workspace_file', args: { path, content: text } });
     }
     assert.deepEqual(definitions.find(tool => tool.name === 'read_workspace_file').parameters.properties.path.enum, [path]);
-    if (count === 3) return responseCalls({ name: 'read_workspace_file', args: { path } });
-    assert.equal(count, 4); assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /independent acceptance/);
+    if (count === 3) return responseCalls({ name: 'read_workspace_file', args: { path } },
+      {name:'declare_deliverables',args:{artifacts:[{kind:'file',path}]}});
+    assert.equal(count, 4); assert.match(body.messages.find(message => message.role === 'tool' && message.content.includes('independent acceptance')).content, /independent acceptance/);
     return { choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] };
   } catch (error) { modelFailure ??= error; throw error; } } });
   const gateway = createNativeDshTools({ ctx: { effect: install => install(),
     sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+      resultRetentions: ['caller/v1'],
       register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
       async execute(input) {
         effects.push(input.name);
@@ -1384,13 +1623,15 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
       id: `product-deadline-${count}`, type: 'function', function: {
         name: count === 1 ? 'write_workspace_file' : 'read_workspace_file',
         arguments: JSON.stringify(count === 1 ? { path, content: text } : { path }),
-      } }] }, finish_reason: 'tool_calls' }] };
+      } }, ...(count === 2 ? [{index:1,id:'product-declare',type:'function',function:{name:'declare_deliverables',
+        arguments:JSON.stringify({artifacts:[{kind:'file',path}]})}}] : [])] }, finish_reason: 'tool_calls' }] };
     assert.equal(count, 3);
-    assert.match(body.messages.filter(message => message.role === 'tool').at(-1).content, /independent acceptance/);
+    assert.match(body.messages.find(message => message.role === 'tool' && message.content.includes('independent acceptance')).content, /independent acceptance/);
     return { choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] };
   } catch (error) { modelFailure ??= error; throw error; } } });
   const gateway = createNativeDshTools({ ctx: { effect: install => install(),
     sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+      resultRetentions: ['caller/v1'],
       register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
       async execute(input) {
         effects.push(input.name);
@@ -1448,7 +1689,7 @@ test('Studio Native pins the snippet registry name contract and rejects a change
   await fixture.host.executeTurn(fixture.payload);
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before, 'unchanged code binding reuses the original Run');
   fixture.payload.binding.nativeTools.codeBinding = { ...binding, registryName: 'foreign_code_transport' };
-  await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'native_dsh_recovery_configuration_changed' });
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
 });
 
@@ -1462,7 +1703,7 @@ test('Studio Native pins Skill management capability and rejects adopting an exi
   await fixture.host.executeTurn(fixture.payload);
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
   fixture.payload.binding.nativeTools.skillManagementBinding = { ...binding, source: 'changed-source/v2' };
-  await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'native_dsh_recovery_configuration_changed' });
   assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
 });
 
@@ -1476,7 +1717,7 @@ test('Studio Native pins knowledge datasets, retrieval parameters and connection
   await fixture.host.executeTurn(fixture.payload); assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
   for (const change of [{ datasetIds: ['other'] }, { connectionDigest: 'b'.repeat(64) }, { retrieval: { ...binding.retrieval, TopK: 9 } }]) {
     fixture.payload.binding.nativeTools.knowledgeBinding = { ...binding, ...change };
-    await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+    await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'native_dsh_recovery_configuration_changed' });
     assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
   }
 });
@@ -1491,7 +1732,7 @@ test('Studio Native pins legacy Memory backend, user partition mode, settings an
   await fixture.host.executeTurn(fixture.payload); assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
   for (const change of [{ collectionIds: ['other'] }, { backend: 'http' }, { bound: false }, { topK: 9 }, { connectionDigest: 'b'.repeat(64) }]) {
     fixture.payload.binding.nativeTools.legacyMemoryBinding = { ...binding, ...change };
-    await assert.rejects(fixture.host.executeTurn(fixture.payload), /run_creation_conflict/);
+    await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'native_dsh_recovery_configuration_changed' });
     assert.deepEqual(fixture.ledger.load(head.scope, head.runId), before);
   }
 });
@@ -1573,7 +1814,7 @@ test('Studio Native close is idempotent and retires its projection exactly once'
   assert.throws(() => fixture.host.executeTurn(fixture.payload), /studio_native_host_closed/);
 });
 test('Studio Native admits live typed input through Host policy and trusted attachment resolution', async t => {
-  const fixture = await setup(t), steps = [], reads = [];
+  const fixture = await setup(t, { catalog: [{ id: 'pinned', input_modalities: ['text', 'image'] }] }), steps = [], reads = [];
   fixture.services.attachments = { readImageRequest: async ref => {
     reads.push(ref); return { mediaType: 'image/png', data: Uint8Array.of(1, 2) };
   } };
@@ -1590,7 +1831,13 @@ test('Studio Native admits live typed input through Host policy and trusted atta
   await fixture.host.executeTurn(fixture.payload);
   assert.deepEqual(steps, [2, 3]); assert.equal(fixture.requests.length, 2); assert.equal(reads.length, 1);
   const messages = JSON.parse(fixture.requests[1].options.body).messages;
-  assert.deepEqual(messages.at(-2).content, [{ type: 'text', text: 'Use the new image' },
+  // The Host appends its context-continuity system record after the admitted user
+  // input, so the image-bearing message is located by its content rather than a
+  // fixed tail position (the dsh_context tool message stays a plain string).
+  const steering = messages.find(message => message.role === 'user' && Array.isArray(message.content)
+    && message.content.some(block => block.type === 'image_url'));
+  assert.ok(steering, 'the admitted image input reached the model request');
+  assert.deepEqual(steering.content, [{ type: 'text', text: 'Use the new image' },
     { type: 'image_url', image_url: { url: 'data:image/png;base64,AQI=', detail: 'auto' } }]);
   const delivered = fixture.events.filter(event => event.type === 'user/message' && event.data.content[0]?.text === 'Use the new image');
   assert.equal(delivered.length, 1); assert.deepEqual(delivered[0].data.content, content);
@@ -1670,7 +1917,8 @@ test('Studio Native refuses an over-budget request before HTTP when compaction i
   assert.equal(fixture.head().usage.modelCalls, 0);
 });
 test('Studio Native keeps an image-only admission with its independent objective through context planning', async t => {
-  const fixture = await setup(t, { spec: { context: { compaction: { thresholdRatio: .001 } } } });
+  const fixture = await setup(t, { catalog: [{ id: 'pinned', input_modalities: ['text', 'image'] }],
+    spec: { context: { compaction: { thresholdRatio: .001 } } } });
   fixture.services.attachments = { readImageRequest: async () => ({ mediaType: 'image/png', data: Uint8Array.of(1) }) };
   fixture.payload.input.messages[0].content = [{ type: 'image', attachment: { attachmentId: 'image-only' } }];
   await fixture.host.executeTurn(fixture.payload);
@@ -1696,22 +1944,25 @@ for (const legacyDisplay of [undefined, false]) test(`restored admitted thinking
   const bound = await f.host.resolveManagedBinding(f.payload, args), configuration = structuredClone(bound.configuration);
   await bound.releaseResources?.({ scope: bound.scope, runId: args.runId, sessionId: f.payload.agent.session.id });
   const profile = configuration.profile, p = await f.models.profile('fixture');
-  const description = { id: p.id, provider: p.provider, modelName: p.modelName, baseUrl: p.baseUrl,
-    protocol: p.protocol || 'openai-chat', contextWindow: p.contextWindow ?? 128000, maxOutputTokens: p.maxOutputTokens ?? 8192,
-    parameters: p.parameters ?? {}, requestTimeoutMs: p.requestTimeoutMs ?? 110000, input: modelInput(p) };
+  const description = frozenNativeModelDescription(p, configuration.hostRecoveryBinding.modelBindings);
+  if (legacyDisplay === undefined) delete profile.inlineReasoningPolicy;
+  else profile.inlineReasoningPolicy = { contract: 'profiled-content/v1', rule: 'auto' };
   delete profile.providerThinkingDisplayPolicy;
   delete profile.providerToolSearchPolicy;
-  const oldRuntime = { providerThinkingDisplay: false, streamTimeoutPolicy: 'idle/v1', controllerReasoningPolicy: 'disclosed-delegate/v1' };
+  const oldRuntime = { supportsImages: false, discoveredToolExposure: 'direct-after-search/v1',
+    providerThinkingDisplay: false, streamTimeoutPolicy: 'idle/v1', controllerReasoningPolicy: 'disclosed-delegate/v1',
+    ...(profile.chatUsagePolicy ? { chatUsagePolicy: profile.chatUsagePolicy } : {}) };
   if (legacyDisplay === undefined) for (const key of Object.keys(oldRuntime)) delete profile[key];
   else profile.providerThinkingDisplay = false;
   // Explicit previous admission format, before provider-visible/v1 existed.
-  profile.compatibilityDigest = digest({ description, inlineReasoningPolicy: profile.inlineReasoningPolicy,
+  profile.compatibilityDigest = digest({ description, ...(profile.inlineReasoningPolicy ? { inlineReasoningPolicy: profile.inlineReasoningPolicy } : {}),
     providerCompatibilityPolicy: profile.providerCompatibilityPolicy, ...(legacyDisplay === undefined ? {} : { modelRuntimeOptions: oldRuntime }) });
   const restored = await f.host.resolveManagedBinding(f.payload, { ...args,
     admission: { scope: bound.scope, buildId: bound.buildId, configuration } });
   assert.deepEqual(restored.configuration, configuration);
   assert.equal(restored.configuration.profile.providerThinkingDisplay, legacyDisplay);
   assert.equal(restored.configuration.profile.providerThinkingDisplayPolicy, undefined);
+  assert.deepEqual(restored.configuration.profile.inlineReasoningPolicy, profile.inlineReasoningPolicy);
   assert.equal(Object.hasOwn(restored.configuration.profile, 'providerToolSearchPolicy'), false);
   assert.equal(f.requests.length, 0);
   await restored.releaseResources?.({ scope: restored.scope, runId: args.runId, sessionId: f.payload.agent.session.id });

@@ -2,6 +2,7 @@ import { hostFetch } from './http-fetch.mjs';
 /** Studio-owned model configuration. Only redacted metadata crosses Connection RPC. */
 import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { createHash } from 'node:crypto';
+import { modelCatalogLimits, admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 
 function inputModalities(model = {}) {
   // KSPMAS/OpenAI-compatible gateways expose capabilities under
@@ -19,6 +20,7 @@ export function modelInput(model = {}) {
 
 export function createModelService({ configuration, credentials, fetchImpl = hostFetch }) {
   const catalogs = new Map();
+  const pendingCatalogs = new Map();
   const sync = () => syncGlobalModelCredential({ configuration, credentials });
   const settings = () => configuration.describe();
   const save = async patch => { await configuration.update(patch); catalogs.clear(); await sync(); return settings(); };
@@ -74,18 +76,34 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const key = createHash('sha256').update(selected.baseUrl + '\0' + selected.apiKey).digest('hex');
     const cached = catalogs.get(key);
     if (!refresh && cached && cached.expires > Date.now()) return cached.items;
+    if (pendingCatalogs.has(key)) return pendingCatalogs.get(key);
+    const operation = (async () => {
     const response = await fetchImpl(`${selected.baseUrl}/models`, { headers: { Authorization: `Bearer ${selected.apiKey}` }, signal: AbortSignal.timeout(15000), redirect: 'error' });
     if (!response.ok) throw Object.assign(new Error(`读取模型目录失败（${response.status}）`), { code: 'MODEL_CATALOG_FAILED' });
     const data = await response.json();
     const items = (data.data || data.models || []).filter(item => typeof item.id === 'string').map(item => ({ id: item.id, name: item.name || item.id, input: modelInput(item),
+      ...modelCatalogLimits(item),
       ...(Array.isArray(inputModalities(item)) && inputModalities(item).length ? {} : { inputKnown: false }) }));
     if (catalogs.size >= 32) catalogs.delete(catalogs.keys().next().value);
     catalogs.set(key, { items, expires: Date.now() + 60000 });
     return items;
+    })();
+    pendingCatalogs.set(key, operation);
+    try { return await operation; }
+    finally { if (pendingCatalogs.get(key) === operation) pendingCatalogs.delete(key); }
   }
   async function catalog(id) {
     const selected = await profile(id);
     return { defaultModel: selected.modelName, items: await gatewayModels(selected, true) };
   }
-  return { settings, save, create, sync, profile, catalog };
+  async function capabilities(selected, signal) {
+    signal?.throwIfAborted();
+    let items;
+    try { items = await gatewayModels(selected); }
+    catch { signal?.throwIfAborted(); return admitModelCapabilities(selected); }
+    signal?.throwIfAborted();
+    const item = items.find(item => item.id === selected.modelName);
+    return admitModelCapabilities(selected, item, item ? 'available' : 'not-listed');
+  }
+  return { settings, save, create, sync, profile, catalog, capabilities };
 }

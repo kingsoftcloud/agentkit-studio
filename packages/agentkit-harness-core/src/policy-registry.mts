@@ -24,6 +24,8 @@ export const defaultPolicyModules: readonly NativePolicyModule[] = Object.freeze
 
 export function defaultPolicyBindings(config: Pick<RunConfiguration, 'profile'> & Partial<RunConfiguration>): PolicyBinding[] {
   return BUILTIN_POLICY_BINDINGS.filter(binding => binding.id === 'native.provider-context'
+    || binding.id === 'native.delivery-scope' && config.deliveryScopePolicy === 'declared-deliverables/v1'
+    || binding.id === 'native.delivery-results' && config.deliveryScopePolicy === 'answer-artifacts/v2'
     || binding.id === 'native.todos' && config.todoPolicy
     || binding.id === 'native.planning' && (config.planModePolicy || config.childPlanPolicy)
     || binding.id === 'native.delivery-review' && config.deliveryReviewPolicy).map(binding => ({ ...binding }));
@@ -110,9 +112,25 @@ export class NativePolicyRegistry {
     }
     return null;
   }
+  /** Built-in controls stage values only. Their receipt commit owns every mutation. */
+  stagedToolPolicy(config: RunConfiguration, call: import('./contracts.mjs').ToolCall): string | null {
+    for (const binding of this.bindings(config)) {
+      const capability = builtinPolicyModules.find(item => item.id === binding.id)?.[builtinCapability];
+      if (capability && 'tool' in capability && capability.tool.matches(config, call)) return binding.implementation;
+    }
+    return null;
+  }
+  stagedToolRecoveryPolicy(config: RunConfiguration, calls: import('./contracts.mjs').ToolCall[]): string {
+    const ids = [...new Set(calls.map(call => this.stagedToolPolicy(config, call)).filter((id): id is string => id !== null))];
+    invariant(ids.length > 0, 'staged_tool_policy_missing');
+    if (ids.length === 1) return ids[0]!;
+    // Preserve the historical mixed Todo/Plan receipt identity.
+    return ids.every(id => ['session-todos/v1', 'session-plan/v1'].includes(id))
+      ? 'session-plan/v1' : 'staged-policy-controls/v1';
+  }
   reduceTool(snapshot: RunSnapshot, config: RunConfiguration, call: import('./contracts.mjs').ToolCall,
-    result: import('./contracts.mjs').ToolResult): Pick<Partial<RunSnapshot>, 'todos' | 'planMode'> {
-    const changes: Pick<Partial<RunSnapshot>, 'todos' | 'planMode'> = {};
+    result: import('./contracts.mjs').ToolResult): Pick<Partial<RunSnapshot>, 'todos' | 'planMode' | 'deliveryManifest' | 'lastWebMutationToolCall' | 'verification' | 'verificationToolCalls'> {
+    const changes: Pick<Partial<RunSnapshot>, 'todos' | 'planMode' | 'deliveryManifest' | 'lastWebMutationToolCall' | 'verification' | 'verificationToolCalls'> = {};
     for (const binding of this.bindings(config)) {
       const module = builtinPolicyModules.find(item => item.id === binding.id);
       const capability = module?.[builtinCapability];

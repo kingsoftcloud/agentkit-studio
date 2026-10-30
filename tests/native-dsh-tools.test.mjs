@@ -328,6 +328,8 @@ test('scoped instructions observe committed parent file receipts and can replay 
       const record = store.load(scope, 'run');
       assert.ok(record.events.some(event => event.kind === 'tool.completed' && event.payload.status === 'ok'));
       assert.deepEqual(h.gateway.instructionTouches(h.agent, record), calls === 1 ? [join(h.workspaceRoot, 'pkg/file.ts')] : []);
+      assert.deepEqual(h.gateway.instructionTouches(h.agent, store.workspaceTouchEvidence(scope, 'run')),
+        h.gateway.instructionTouches(h.agent, record));
       const executions = h.calls.length;
       assert.deepEqual(h.gateway.instructionTouches(h.agent, structuredClone(record)), h.gateway.instructionTouches(h.agent, record));
       assert.equal(h.calls.length, executions, 'replay observes receipts without repeating the filesystem operation');
@@ -357,6 +359,8 @@ test('committed structured patch receipts refresh every affected instruction sco
         observed = true;
         const expected = ['new/file.ts', 'old/file.ts', 'nested/AGENTS.md'].map(path => join(h.workspaceRoot, path));
         assert.deepEqual(new Set(h.gateway.instructionTouches(h.agent, record)), new Set(expected));
+        assert.deepEqual(h.gateway.instructionTouches(h.agent, store.workspaceTouchEvidence(scope, 'run')),
+          h.gateway.instructionTouches(h.agent, record));
         const executions = h.calls.length;
         assert.deepEqual(h.gateway.instructionTouches(h.agent, structuredClone(record)), h.gateway.instructionTouches(h.agent, record));
         assert.equal(h.calls.length, executions);
@@ -986,6 +990,28 @@ test('Native builtin effects require ledger authority and pass through the regis
   assert.equal(readFileSync(join(host.workspaceRoot, 'file.txt'), 'utf8'), 'value');
   assert.match(host.calls[0].callId, /^ak-native-/);
 });
+
+for (const exact of [false, true]) test(`ordinary Native publication guards do not load historical records${exact ? ', including exact-file goals' : ''}`, async t => {
+  const host = setup(t), store = new MemoryRunStore();
+  const definitions = host.gateway.definitions(host.agent, [...host.registry.values()], { exactContentPolicy: exact });
+  const data = fixture({ tools: definitions, ...(exact ? { contract: { objective: '在工作区创建 file.txt，内容恰好是 value。' } } : {}) });
+  const bound = host.gateway.forAgent(host.agent, { scope, store }); let models = 0, historicalReads = 0;
+  const execute = bound.tools.execute;
+  bound.tools.execute = async (...args) => {
+    const load = store.load;
+    store.load = () => { historicalReads++; throw Error('ordinary guard attempted historical hydration'); };
+    try { return await execute(...args); } finally { store.load = load; }
+  };
+  const kernel = new NativeKernel({ store, digest, owner: 'publication-guard', ports: { ...bound,
+    model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'write', name: 'write_workspace_file', arguments: { path: 'file.txt', content: 'value' } }] }
+      : { kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() } } } });
+  kernel.start(data.snapshot, data.config);
+  assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed');
+  assert.equal(historicalReads, 0); assert.equal(readFileSync(join(host.workspaceRoot, 'file.txt'), 'utf8'), 'value');
+  const record = store.load(scope, 'run');
+  assert.equal(record.events.find(event => event.kind === 'tool.completed').payload.status, 'ok');
+});
 test('registry denial prevents a Node write and post-write failure becomes uncertain', async t => {
   const denied = setup(t); denied.deny();
   assert.equal((await denied.gateway.forAgent(denied.agent).tools.execute(denied.request())).status, 'error');
@@ -1265,6 +1291,12 @@ for (const version of [1, 2, 3]) test(`directory v${version}: actual Node listin
   const tools = [...h.gateway.definitions(h.agent, [...h.registry.values()], { directoryObservationPolicy }), ...artifactToolDefinitions()];
   const { config, snapshot } = fixture({ artifactPolicy: 'runtime-artifacts/v1', tools, limits: { effectTimeoutMs: 200000, maxToolResultBytes: 8192 } });
   const ports = h.gateway.forAgent(h.agent, { scope, store }); let turns = 0, observed, firstPage;
+  const execute = ports.tools.execute; let historicalReadsDuringDispatch = 0;
+  ports.tools.execute = async (...args) => {
+    const load = store.load;
+    store.load = () => { historicalReadsDuringDispatch++; throw Error('directory dispatch attempted historical hydration'); };
+    try { return await execute(...args); } finally { store.load = load; }
+  };
   const kernel = new NativeKernel({ store, owner: 'directory-node', digest, ports: { ...ports, artifacts,
     model: { generate: async request => {
       if (++turns === 1) return { kind: 'tool_calls', text: '', toolCalls: [{ callId: 'directory', name: 'list_workspace_files',
@@ -1278,6 +1310,7 @@ for (const version of [1, 2, 3]) test(`directory v${version}: actual Node listin
     } } } });
   kernel.start(snapshot, config); const end = await kernel.runUntilIdle(scope, 'run'), record = store.load(scope, 'run');
   assert.equal(end.phase, 'completed'); assert.equal(turns, 3); assert.equal(firstPage.returned_chars, 64);
+  assert.equal(historicalReadsDuringDispatch, 0);
   const view = parseNativeJson(observed.observed_content).content;
   assert.equal(view.returned_entries, 242); assert.ok(view.paths.length > 0 && view.paths.length <= 100);
   assert.equal(view.shown_entries + view.omitted_entries, 242);

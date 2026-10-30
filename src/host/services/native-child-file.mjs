@@ -7,7 +7,10 @@ class ChildFileError extends Error {
   constructor(code) { super(code); this.code = code; }
 }
 const check = (value, code) => { if (!value) throw new ChildFileError(code); };
-const identity = stat => [stat.dev, stat.ino, stat.mode, stat.nlink, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+const identity = stat => [stat.dev, stat.ino, stat.mode, stat.uid, stat.gid, stat.nlink, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+// Sibling directory activity changes size, timestamps and link count without
+// replacing an ancestor. Keep path identity/ownership checks independent of it.
+const directoryIdentity = stat => [stat.dev, stat.ino, stat.mode, stat.uid, stat.gid].join(':');
 
 function requestBody(value) {
   check(value && typeof value === 'object' && !Array.isArray(value)
@@ -29,7 +32,7 @@ function inspect(root, file) {
   for (let path = dirname(file);; path = dirname(path)) {
     const stat = lstatSync(path, { bigint: true });
     check(stat.isDirectory() && !stat.isSymbolicLink(), 'native_child_file_path_unsafe');
-    ancestors.push([path, identity(stat)]);
+    ancestors.push([path, directoryIdentity(stat)]);
     if (dirname(path) === path) break;
   }
   check(ancestors.some(([path]) => path === root), 'native_child_file_path_unsafe');

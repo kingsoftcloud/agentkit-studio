@@ -84,6 +84,7 @@ export const TASK_TRANSITIONS = Object.freeze({
 
 /** Tool lifecycle statuses, keyed by callId. */
 export const ToolStatus = Object.freeze({
+  NotDispatched: "not_dispatched",
   Uncertain: "uncertain",
   Interrupted: "interrupted",
   Waiting: "waiting",
@@ -146,13 +147,19 @@ export function normalizeEvent(event) {
   const id = event.id == null ? "" : String(event.id);
   if (!id) throw new RangeError(`event.id is required for ${type}`);
   const base = { v, type, id, ts: typeof event.ts === "number" ? event.ts : null, seq: typeof event.seq === "number" ? event.seq : null };
+  // Optional presentation lineage, supplied by the Host's response boundary.
+  // It is never a Run identity, tool claim or an execution permission.
+  if (['text.delta', 'text.done', 'thinking.delta', 'thinking.done', 'tool.preview', 'tool.scheduled'].includes(type)
+    && typeof event.responseId === 'string' && event.responseId.length > 0 && event.responseId.length <= 1024)
+    base.responseId = event.responseId;
   return Object.assign(base, normalizePayload(type, event));
 }
 
 function normalizePayload(type, event) {
   switch (type) {
     case EventType.TaskStarted:
-      return { taskId: str(event.taskId), title: str(event.title) || null, runId: str(event.runId) || null };
+      return { taskId: str(event.taskId), title: str(event.title) || null, runId: str(event.runId) || null,
+        ...(hostTime(event.startedAt) !== null ? { startedAt: event.startedAt } : {}) };
     case EventType.TaskState:
       return { state: requiredChoice(event.state, TASK_STATES, "task state"), reason: str(event.reason) || null, message: str(event.message) || null };
     case EventType.TaskFinished: {
@@ -160,6 +167,8 @@ function normalizePayload(type, event) {
       if (event.executionState !== undefined && (event.executionState !== TaskState.Interrupted || outcome !== TaskOutcome.Unverified))
         throw new RangeError('interrupted execution requires an unverified outcome');
       return { outcome, summary: str(event.summary) || null, error: str(event.error) || null, reason: str(event.reason) || null,
+        ...(hostTime(event.endedAt) !== null ? { endedAt: event.endedAt } : {}),
+        ...(typeof event.finalAnswerId === 'string' && event.finalAnswerId ? { finalAnswerId: event.finalAnswerId } : {}),
         ...(event.executionState === TaskState.Interrupted ? { executionState: TaskState.Interrupted } : {}),
         verificationRequired: typeof event.verificationRequired === 'boolean' ? event.verificationRequired : null };
     }
@@ -309,6 +318,8 @@ function numberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
+
+function hostTime(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
 
 /** @returns {boolean} */
 export function isDisplayKind(value) {

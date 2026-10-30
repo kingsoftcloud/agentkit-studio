@@ -4,6 +4,9 @@ import type { Json, ObjectValue, RunConfiguration, ToolCall, ToolDefinition } fr
 import { canonical, copy, invariant } from './values.mjs';
 import { parseModelJson } from './model-json.mjs';
 import { compileWithExactIntegers, removeExactIntegerSchema } from './exact-integer-schema.mjs';
+import { RESULT_DELIVERY_POLICY, deliveryArtifactsSchema, deliveryArtifacts, deliveryManifestChanges,
+  currentDeliveryManifest } from './deliverables.mjs';
+import type { RunSnapshot } from './contracts.mjs';
 
 export const FINAL_SUBMISSION_TOOL = 'submit_final_output';
 const validator = new Ajv2020({ strict: false, validateFormats: false, ownProperties: true, addUsedSchema: false, passContext: true });
@@ -54,24 +57,47 @@ export function submissionOutputFormat(schema: ObjectValue, payloadKey: string |
 export function validateSubmissionContract(config: RunConfiguration): void {
   const { finalSubmissionSchema: schema, finalSubmissionPayloadKey: key } = config.contract;
   invariant(!config.tools.some(tool => tool.name === FINAL_SUBMISSION_TOOL), 'reserved_final_submission_tool');
+  if (config.deliveryScopePolicy === RESULT_DELIVERY_POLICY) compile(finalSubmissionTool(config)!.parameters);
   if (!schema) { invariant(key === null, 'final_submission_schema_missing'); return; }
   compile(schema);
   if (key !== null) invariant(key.trim() && Array.isArray(schema.required) && schema.required.includes(key), 'invalid_final_submission_payload');
   invariant(submissionOutputFormat(schema, key) === config.contract.finalOutputFormat, 'final_submission_format_mismatch');
 }
 export function finalSubmissionTool(config: RunConfiguration): ToolDefinition | null {
-  const schema = config.contract.finalSubmissionSchema;
+  const atomic = config.deliveryScopePolicy === RESULT_DELIVERY_POLICY;
+  const schema = atomic ? { type: 'object', additionalProperties: false, required: ['answer'], properties: {
+    answer: config.contract.finalSubmissionSchema ?? { type: 'string' }, artifacts: deliveryArtifactsSchema } }
+    : config.contract.finalSubmissionSchema;
   if (!schema) return null;
-  return { name: FINAL_SUBMISSION_TOOL, description: 'Submit the final structured answer for host verification. This does not execute a workspace action.',
+  return { name: FINAL_SUBMISSION_TOOL, description: atomic
+    ? 'Submit your final answer and optional workspace artifacts together. Use answer for the complete user-facing answer (or the required structured output object). Include only delivery artifacts, excluding references and temporary files. For a runnable web page use kind=web with its relative entry path and project root; documents and source files use kind=file. Omitted artifacts retain an earlier selection, otherwise the delivery is the text answer. This does not execute tools or establish acceptance. No separate declaration is needed.'
+    : 'Submit the final structured answer for host verification. This does not execute a workspace action.',
     parameters: schema, readOnly: true, concurrentSafe: false, permissions: [], timeoutMs: 1,
     contextRole: 'none', observationRole: 'none', progressObservation: false, contextRetention: 'normal' };
 }
 export function submittedFinalText(call: ToolCall, config: RunConfiguration): string | null {
   const { finalSubmissionSchema: schema, finalSubmissionPayloadKey: key, finalOutputFormat: format } = config.contract;
+  if (config.deliveryScopePolicy === RESULT_DELIVERY_POLICY) {
+    if (call.name !== FINAL_SUBMISSION_TOOL || call.wireArgumentsInvalid || !compile(finalSubmissionTool(config)!.parameters)(call.arguments)) return null;
+    try { if (Object.hasOwn(call.arguments, 'artifacts')) deliveryArtifacts(call.arguments.artifacts); }
+    catch { return null; }
+    if (!schema) return typeof call.arguments.answer === 'string' ? normalizedFinalText(call.arguments.answer, format) : null;
+    const legacy = { ...config }; delete legacy.deliveryScopePolicy;
+    return submittedFinalText({ ...call, arguments: call.arguments.answer as ObjectValue }, legacy);
+  }
   if (!schema || call.name !== FINAL_SUBMISSION_TOOL || call.wireArgumentsInvalid || !compile(schema)(call.arguments)) return null;
   const output = key === null ? call.arguments : call.arguments[key];
   if (format === 'text') return typeof output === 'string' ? output : null;
   return output === undefined ? null : canonical(output);
+}
+/** Artifact selection and answer become one committed model-result transition, with no tool effect. */
+export function finalDeliveryChanges(snapshot: RunSnapshot, config: RunConfiguration, call?: ToolCall): Partial<RunSnapshot> {
+  if (config.deliveryScopePolicy !== RESULT_DELIVERY_POLICY) return {};
+  if (call && Object.hasOwn(call.arguments, 'artifacts')) {
+    const artifacts = deliveryArtifacts(call.arguments.artifacts), current = currentDeliveryManifest(snapshot);
+    return current && canonical(current.artifacts) === canonical(artifacts) ? {} : deliveryManifestChanges(snapshot, artifacts);
+  }
+  return currentDeliveryManifest(snapshot) ? {} : deliveryManifestChanges(snapshot, []);
 }
 export function normalizedFinalText(text: string, format: RunConfiguration['contract']['finalOutputFormat']): string {
   if (format === 'text') return text;

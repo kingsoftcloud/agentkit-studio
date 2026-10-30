@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@kingsoftcloud/agentkit-harness-core': file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz
+  '@kingsoftcloud/agentkit-harness-core': file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
 
 patchedDependencies:
   '@modelcontextprotocol/sdk@1.31.0':
@@ -26,14 +26,14 @@ importers:
         specifier: 0.2.1-rc.2
         version: 0.2.1-rc.2(ff549d225165dccbc29e26503be2b60e)
       '@kingsoftcloud/agentkit-harness-core':
-        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz
-        version: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz
+        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
+        version: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
       '@kingsoftcloud/agentkit-harness-node':
-        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-fcce8120ac438a69.tgz
-        version: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-fcce8120ac438a69.tgz
+        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz
+        version: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz
       '@kingsoftcloud/agentkit-harness-ui':
-        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-971dc539259b075b.tgz
-        version: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-971dc539259b075b.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz
+        version: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@modelcontextprotocol/sdk':
         specifier: 1.31.0
         version: 1.31.0(patch_hash=905b5039a9965104e7ef24338020cfe96b5dd53fc4cf6f53e067a66677b28044)(zod@4.6.5)
@@ -557,19 +557,19 @@ packages:
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
     engines: {node: '>=18.0.0'}
 
-  '@kingsoftcloud/agentkit-harness-core@file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz':
-    resolution: {integrity: sha512-IC9eBBJ+0BdYjf1zAFmVVai/lBkmDIPslHQuZbQv5BxG9Z39Qg1PG11UYycE+mw2p5EjLtaO5mlmSR81THccCQ==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz}
+  '@kingsoftcloud/agentkit-harness-core@file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz':
+    resolution: {integrity: sha512-DwuFqR0SnIBFvpUiphobprq+NwRs0KKtzI2KbaPr8joEfl30DFDuqxefvbOaRJxk1LZu6n/3KvneJ52/l9im6A==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz}
     version: 0.0.1
     engines: {node: '>=22.19.0'}
 
-  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-fcce8120ac438a69.tgz':
-    resolution: {integrity: sha512-+KDQjFwDxwHCoE7B9GKNJ5C7sr0MzNIK4lzPYkTHesxR+EyYqLkqP03z9R68PEFE+QbOcAZaIEHt354wnqyb1A==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-fcce8120ac438a69.tgz}
+  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz':
+    resolution: {integrity: sha512-WAC77ucO+QlMQhsCAt0zadO/bfTX4h8xsysO01g22Og8u7jCJDVT/9Bfmk5tiGuoJnjs7Em1ebx/TvG7Hm96Xw==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz}
     version: 0.0.1
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-971dc539259b075b.tgz':
-    resolution: {integrity: sha512-Lg9kpuX9Vwz1oDuIGXzFKhPDSlDjbEeHtCWozZWwu1sLPg9wNvedmgn4oCughsVrqsclLI5+wdVl3SVz6afAZQ==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-971dc539259b075b.tgz}
+  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz':
+    resolution: {integrity: sha512-WxJnjUEw05fZuVuB9rDZ8ON8NE7KDfr3IPJQ4CchOmzE0UBxptl3efbQyJhdJjHh0guA8Q18vPckvkizNaTXLw==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz}
     version: 0.0.1
     engines: {node: '>=22'}
     peerDependencies:
@@ -2369,22 +2369,22 @@ snapshots:
     dependencies:
       minipass: 7.1.3
 
-  '@kingsoftcloud/agentkit-harness-core@file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz':
+  '@kingsoftcloud/agentkit-harness-core@file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz':
     dependencies:
       ajv: 8.17.1
       ajv-draft-04: 1.0.0(ajv@8.17.1)
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-fcce8120ac438a69.tgz':
+  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz':
     dependencies:
       '@astral-sh/ruff-wasm-nodejs': 0.16.8
-      '@kingsoftcloud/agentkit-harness-core': file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-c2f7a3635695c2cf.tgz
+      '@kingsoftcloud/agentkit-harness-core': file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
       diff: 9.0.0
       parse5: 7.3.0
       playwright-core: 1.58.2
       pngjs: 7.0.0
 
-  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-971dc539259b075b.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     optionalDependencies:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)

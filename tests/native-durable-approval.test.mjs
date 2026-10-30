@@ -20,6 +20,22 @@ function fixture() {
   return { bridge, ctx, exec, invocation, request, record, approve };
 }
 
+test('verification and workspace repair stay with their own authority instead of entering model-tool approval', () => {
+  for (const owner of [{ verificationDispatch() {} }, { repair: true }, {}]) {
+    const exec = { callId: 'owned', name: 'browser_inspect_workspace' };
+    const calls = new Map([[exec.callId, { ...owner, request: { operationKey: 'separate-owner' } }]]);
+    const bridge = createNativeDurableApproval({ ctx: {}, calls });
+    assert.equal(bridge.eligible(exec), false);
+    assert.equal(bridge.resolve(exec, 'A separate authority owns this request'), null);
+    // Even accidental definition copying cannot turn another owner's claim
+    // into a durable model-tool grant.
+    if (owner.verificationDispatch || owner.repair) {
+      calls.get(exec.callId).request.definition = { approvalPolicy: NATIVE_DURABLE_APPROVAL };
+      assert.equal(bridge.eligible(exec), false);assert.equal(bridge.resolve(exec, 'No transferred grant'), null);
+    }
+  }
+});
+
 test('an owned pending permission yields no grant until the ledger records the exact decision', () => {
   const f = fixture();
   f.request.interaction = { interactionId: 'forged', callId: 'c', decision: 'allow' };

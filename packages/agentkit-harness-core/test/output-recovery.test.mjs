@@ -10,6 +10,93 @@ import { fixture, digest, tool, scope, acceptance, verificationReport } from './
 
 const response = (text, kind = 'final_candidate', extra = {}) => ({ kind, text, toolCalls: [], usage: emptyUsage(), ...extra });
 const configuration = overrides => ({ outputRecoveryPolicy: 'task-or-delivery/v1', tools: [tool()], ...overrides });
+const limitedText = text => response(text, 'output_limit', { textCommitVersion: 'provider-finished-text/v1', outputBoundary: 'assistant-text/v1' });
+
+for (const sqlite of [false, true]) test(`response boundary ${sqlite ? 'sqlite' : 'memory'}: full tool catalog cannot turn a truncated answer into new work`, async t => {
+  let calls = 0;
+  const run = setup(t, { sqlite, options: { outputRecoveryPolicy: 'response-boundary/v2',
+    profile: { ...fixture().config.profile, providerFamily: 'anthropic-messages',
+      anthropicPolicy: { contract: 'anthropic-wire/v1', midSystem: true, blockBinding: 'drop_block' },
+      operatorGuidancePolicy: 'journaled-system/v1', toolCatalogPolicy: 'stable-task/v1' } },
+    model: async request => {
+      calls++;
+      if (calls === 1) { assert.ok(request.tools.some(tool => tool.name === 'read')); return limitedText('Verified report: '); }
+      assert.deepEqual(request.tools, []);
+      if (calls === 2) return response('', 'tool_calls', { toolCalls: [{ callId: 'must-not-run', name: 'read', arguments: {} }] });
+      if (calls === 3) return response('', 'output_limit', { textCommitVersion: 'provider-finished-text/v1', outputBoundary: 'no-visible-output/v1' });
+      return response('complete.');
+    } });
+  const result = await run.kernel().runUntilIdle(scope, 'run');
+  assert.equal(result.finalText, 'Verified report: complete.'); assert.equal(result.usage.toolCalls, 0); assert.equal(calls, 4);
+  assert.equal(result.messages.some(message => message.toolCalls?.length), false);
+});
+
+for (const cancel of [false, true]) test(`response boundary: cold SQLite restore preserves the suffix contract, cancellation=${cancel}`, async t => {
+  const run = setup(t, { sqlite: true, options: { outputRecoveryPolicy: 'response-boundary/v2' }, model: async () => limitedText('Persisted ') });
+  const first = run.kernel({ onCheckpoint: async state => {
+    if (state.messages.at(-1)?.continuationPolicy === 'response-boundary/v2' && state.phase === 'preparing_context')
+      first.submit(scope, 'run', { commandId: 'pause-text', kind: 'pause', payload: {} });
+  } });
+  assert.equal((await first.runUntilIdle(scope, 'run')).phase, 'paused'); run.reopen();
+  let resumedCalls = 0;
+  run.ports.model.generate = async request => { resumedCalls++; assert.deepEqual(request.tools, []); return response('suffix.'); };
+  run.kernel().submit(scope, 'run', { commandId: 'resume-text', kind: cancel ? 'cancel' : 'resume', payload: {} });
+  const result = await run.kernel().runUntilIdle(scope, 'run');
+  assert.equal(result.finalText, cancel ? '' : 'Persisted suffix.'); assert.equal(result.usage.toolCalls, 0);
+  assert.equal(resumedCalls, cancel ? 0 : 1); assert.equal(result.phase, cancel ? 'canceled' : 'completed');
+});
+
+for (const boundary of ['tool-call/v1', undefined]) test(`response boundary: ${boundary ?? 'legacy unknown'} never seals partial tool work as an answer`, async t => {
+  let calls = 0;
+  const run = setup(t, { options: { outputRecoveryPolicy: 'response-boundary/v2' }, model: async request => {
+    if (++calls === 1) return response('Incomplete action:', 'output_limit', { textCommitVersion: 'provider-finished-text/v1', ...(boundary ? { outputBoundary: boundary } : {}) });
+    assert.ok(request.tools.some(tool => tool.name === 'read'));
+    assert.equal(request.messages.at(-1).continuationMode, 'task_resume');
+    return response('Fresh answer.');
+  } });
+  assert.equal((await run.kernel().runUntilIdle(scope, 'run')).finalText, 'Fresh answer.');
+});
+
+test('response boundary: exhausting text continuation never discards the committed report or restarts research', async t => {
+  let calls = 0;
+  const run = setup(t, { options: { outputRecoveryPolicy: 'response-boundary/v2', limits: { maxOutputRestarts: 3 },
+    profile: { ...fixture().config.profile, maxContinuations: 1 } }, model: async () => { calls++; return limitedText('part '); } });
+  const result = await run.kernel().runUntilIdle(scope, 'run');
+  assert.equal(result.reason, 'continuation_budget_exhausted'); assert.equal(result.outputRestarts, 0); assert.equal(calls, 2);
+  assert.ok(result.messages.some(message => message.kind === 'continuation_fragment' && message.content === 'part '));
+  assert.equal(result.finalText, '');
+});
+
+test('response boundary: compaction retains the authenticated unfinished answer in full', async () => {
+  const { config, snapshot } = fixture({ outputRecoveryPolicy: 'response-boundary/v2', tools: [tool()],
+    contextPolicy: { tokenizerId: 'counter', tokenizerDigest: 'counter/v1', enabled: true, triggerRatio: .8,
+      targetRatio: .5, summaryMaxTokens: 80, maxCompactions: null, maxCompactionsWithoutProgress: 3,
+      minModelTurnsBetween: 0, maxSummaryRetries: 1 } });
+  snapshot.messages.push({ role: 'assistant', content: 'Old research '.repeat(1000) },
+    { role: 'assistant', kind: 'continuation_fragment', content: 'Report prefix ', continuationResponseId: 'sealed' },
+    { role: 'user', kind: 'continuation_observation', continuationMode: 'suffix', continuationPolicy: 'response-boundary/v2',
+      continuationResponseId: 'sealed', continuationFragmentDigest: digest('Report prefix '), content: 'Continue' });
+  const planned = await planNativeContext(snapshot, config, [], { countRequest: async () => 10, countText: async () => 10 }, digest, true, true);
+  assert.equal(planned.action, 'compact');
+  for (const index of [2, 3]) assert.ok(planned.state.compaction.retainedRefs.includes(contextMessageRef(snapshot.messages[index], index, digest)));
+  assert.ok(planned.state.compaction.removedRefs.includes(contextMessageRef(snapshot.messages[1], 1, digest)));
+});
+
+test('response boundary: only a full, bounded, exact unfinished-line replay is joined', () => {
+  const chain = prefix => [{ role: 'assistant', kind: 'continuation_fragment', content: prefix, continuationResponseId: 'sealed' },
+    { role: 'user', kind: 'continuation_observation', continuationMode: 'suffix', continuationPolicy: 'response-boundary/v2',
+      continuationResponseId: 'sealed', continuationFragmentDigest: digest(prefix), content: 'Continue' }];
+  assert.equal(completeContinuation(chain('first line\n019: This'), '019: This completes the line.', digest), 'first line\n019: This completes the line.');
+  assert.equal(completeContinuation(chain('first line\n019: This'), ' completes the line.', digest), 'first line\n019: This completes the line.');
+  for (const [prefix, suffix] of [['complete line\n', 'complete line\n'], ['short', 'short again'],
+    ['first line\n019: This', 'This completes the line.'], ['long '.repeat(300), 'long '.repeat(300) + 'end']])
+    assert.equal(completeContinuation(chain(prefix), suffix, digest), prefix + suffix);
+  const tampered = chain('019: This'); tampered[1].continuationFragmentDigest = digest('foreign');
+  assert.equal(completeContinuation(tampered, '019: This completes the line.', digest), '019: This completes the line.');
+  const legacy = chain('019: This'); delete legacy[1].continuationPolicy;
+  assert.equal(completeContinuation(legacy, '019: This completes the line.', digest), '019: This019: This completes the line.');
+  assert.equal(completeContinuation([...chain('019: This'), { role: 'user', kind: 'steering', content: 'New task' }], 'new answer', digest), 'new answer');
+});
 function setup(t, { sqlite = false, options = {}, model, tools, verification } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'native-output-')), filename = join(root, 'run.sqlite');
   let store = sqlite ? new SqliteRunStore(filename) : new MemoryRunStore();

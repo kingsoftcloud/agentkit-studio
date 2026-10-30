@@ -10,12 +10,14 @@ import {
 function ev(type, id, extra = {}) { return { v: 1, type, id, ...extra }; }
 function viewFor(state, options) { return buildViewModel(state, options); }
 
-test('closed interrupted task displays the host disposition without a failure or success claim', () => {
+test('closed interrupted task retains the host disposition without appending a transcript footer', () => {
   const state = reduceAll(initialState(), [ev(EventType.TaskStarted, 'start', { taskId: 'task' }),
     ev(EventType.TaskFinished, 'closed', { outcome: 'unverified', executionState: 'interrupted', summary: 'Original result still unknown' })]);
   const view = viewFor(state);
-  assert.ok(hasText(view, 'Original result still unknown'));
-  assert.equal(attr(findByTestId(view, 'task-state'), 'data-state'), 'interrupted');
+  assert.equal(state.taskSummary, 'Original result still unknown');
+  assert.equal(state.taskState, 'interrupted');
+  assert.equal(findByTestId(view, 'status-line'), null);
+  assert.equal(hasText(view, 'Original result still unknown'), false);
   assert.equal(findByTestId(view, 'task-error'), null);
 });
 
@@ -41,12 +43,8 @@ test("root has stable selectors and an accessible log role", () => {
 
 test("items render in provider stream order: thought, text, tool", () => {
   const tree = viewFor(streamScenario());
-  const items = findAllByTestId(tree, "thought-block").concat(
-    findAllByTestId(tree, "text-block"),
-    findAllByTestId(tree, "tool-block"),
-  );
-  // ordering by position in the tree
-  const list = findByTestId(tree, "harness-timeline-list");
+  // Provider order is preserved inside the single work-stage layout.
+  const list = findByTestId(tree, "work-process");
   const order = list.children.filter(isElement).map(n => n.props["data-testid"]);
   assert.deepEqual(order, ["thought-block", "text-block", "tool-block"]);
 });
@@ -96,13 +94,13 @@ test("thought summary carries a brain icon, a chevron, and reasoning mask data a
   assert.equal(attr(findByTestId(expanded, "thought-body"), "data-reasoning-scroll-mask"), "none");
 });
 
-test("execute tool block renders one part per callId, open while running, with $ command, progress and cwd", () => {
+test("execute tool block renders one collapsed part per callId with $ command, progress and cwd", () => {
   const tree = viewFor(streamScenario());
   const tool = findByTestId(tree, "tool-block");
   assert.equal(attr(tool, "data-call-id"), "call-1");
   assert.equal(attr(tool, "data-status"), "running");
   assert.equal(attr(tool, "data-renderer"), "execute");
-  assert.equal(attr(findByTestId(tool, "tool-details"), "open"), true, "running tools are open by default");
+  assert.equal(attr(findByTestId(tool, "tool-details"), "open"), false, "running tools stay collapsed until opened by the reader");
   assert.equal(textOf(findByTestId(tool, "tool-title")), "Bash");
   assert.equal(textOf(findByTestId(tool, "tool-command-summary")), "npm test", "collapsed summary shows the command");
   // ZCode DESKTOP execute: `$` prompt + monospace command in the body
@@ -186,17 +184,26 @@ test("normal completion has no extra transcript status row or invented success m
   assert.doesNotMatch(textOf(noTree), /succeeded|success|done!/i, "no invented success prose");
 });
 
-test("a failed task surfaces a redacted, bounded error with role=alert", () => {
+test("a task failure stays available to Host status controls without adding a transcript footer", () => {
   const s = reduceAll(initialState(), [
     ev(EventType.TaskStarted, "t0", { taskId: "T" }),
     ev(EventType.TaskFinished, "t1", { outcome: "failed", error: "token=abc exploded " + "x".repeat(500) }),
   ]);
   const tree = viewFor(s);
-  const err = findByTestId(tree, "task-error");
-  assert.ok(err);
-  assert.equal(attr(err, "role"), "alert");
-  assert.ok(!textOf(err).includes("abc"), "secret redacted");
-  assert.ok(textOf(err).length < 300, "error bounded");
+  assert.equal(s.taskState, 'failed'); assert.match(s.taskError, /exploded/);
+  assert.equal(findByTestId(tree, 'status-line'), null);
+  assert.equal(findByTestId(tree, 'task-error'), null);
+  assert.ok(!textOf(tree).includes('abc'));
+});
+
+test('waiting, paused and terminal states never append a redundant status label or rule', () => {
+  for (const taskState of Object.values(TaskState)) {
+    const state = { ...initialState(), taskState, verificationRequired: true,
+      taskSummary: 'HOST_STATUS_ONLY', taskError: 'HOST_ERROR_ONLY' };
+    const view = viewFor(state, { labels: { waiting: '等待确认或回执', paused: '已暂停' } });
+    assert.equal(findByTestId(view, 'status-line'), null, taskState);
+    assert.doesNotMatch(textOf(view), /等待确认或回执|已暂停|HOST_STATUS_ONLY|HOST_ERROR_ONLY/, taskState);
+  }
 });
 
 test("plan dock shows completed/total and the current in-progress item", () => {

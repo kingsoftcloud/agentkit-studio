@@ -34,7 +34,8 @@ export function browserInspectParameters({ maxActions = 20 } = {}) {
 export function studioBrowserDefinition() {
   return { name: 'browser_inspect_workspace', description: 'Inspect and interact with a local HTML workspace page in a run-owned browser.',
     parameters: browserInspectParameters(), readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 110000,
-    contextRole: 'none', observationRole: 'browser', progressObservation: true, contextRetention: 'normal' };
+    contextRole: 'none', observationRole: 'browser', progressObservation: true, contextRetention: 'normal',
+    recoveryPolicy: 'ephemeral-browser/v1' };
 }
 
 function relativePath(value, code) {

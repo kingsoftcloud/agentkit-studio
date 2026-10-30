@@ -38,7 +38,7 @@ import { parseModelJson, stringifyModelJson, modelWireToolCall, FINAL_SUBMISSION
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
-  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json'); }
+  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json', 'json_invalid'); }
 }
 
 // Body keys the host binding parameters may never override: model, input,
@@ -85,35 +85,35 @@ function securityHeaders() {
 
 function objectOf(value) {
   if (value == null) return {};
-  if (typeof value !== 'object' || Array.isArray(value)) throw new ProtocolError('invalid model frame');
+  if (typeof value !== 'object' || Array.isArray(value)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
   return value;
 }
 
 function textOf(value) {
-  if (value != null && typeof value !== 'string') throw new ProtocolError('invalid model frame');
+  if (value != null && typeof value !== 'string') throw new ProtocolError('invalid model frame', 'envelope_invalid');
   return value;
 }
 
 function identityOf(value) {
   const result = textOf(value);
-  if (result == null || !result.trim()) throw new ProtocolError('invalid model frame');
+  if (result == null || !result.trim()) throw new ProtocolError('invalid model frame', 'envelope_invalid');
   return result;
 }
 
 function optionalText(value) {
   if (value == null) return '';
-  if (typeof value !== 'string') throw new ProtocolError('invalid model frame');
+  if (typeof value !== 'string') throw new ProtocolError('invalid model frame', 'envelope_invalid');
   return value;
 }
 
 function indexOf(event, name, { required = false } = {}) {
   if (!(name in event)) {
-    if (required) throw new ProtocolError('invalid model frame');
+    if (required) throw new ProtocolError('invalid model frame', 'envelope_invalid');
     return null;
   }
   const value = event[name];
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-    throw new ProtocolError('invalid model frame');
+    throw new ProtocolError('invalid model frame', 'envelope_invalid');
   }
   return value;
 }
@@ -326,17 +326,17 @@ function projectMediaResponses(blocks) {
 // -> reasoningTokens.
 function parseResponsesUsage(value) {
   if (value == null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) throw new ProtocolError('invalid usage report');
+  if (typeof value !== 'object' || Array.isArray(value)) throw new ProtocolError('invalid usage report', 'usage_invalid');
   for (const field of ['input_tokens', 'output_tokens', 'total_tokens']) {
     if (Object.hasOwn(value, field)) toNonNegInt(value[field], field);
   }
   const inputDetails = value.input_tokens_details;
   const outputDetails = value.output_tokens_details;
   if (inputDetails != null && (typeof inputDetails !== 'object' || Array.isArray(inputDetails))) {
-    throw new ProtocolError('invalid usage details');
+    throw new ProtocolError('invalid usage details', 'usage_invalid');
   }
   if (outputDetails != null && (typeof outputDetails !== 'object' || Array.isArray(outputDetails))) {
-    throw new ProtocolError('invalid usage details');
+    throw new ProtocolError('invalid usage details', 'usage_invalid');
   }
   const cached = inputDetails && Object.hasOwn(inputDetails, 'cached_tokens')
     ? toNonNegInt(inputDetails.cached_tokens, 'cached_tokens') : undefined;
@@ -351,7 +351,7 @@ function parseResponsesUsage(value) {
 
 function toNonNegInt(value, field) {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ProtocolError(`invalid ${field} counter`);
+    throw new ProtocolError(`invalid ${field} counter`, 'usage_invalid');
   }
   return value;
 }
@@ -362,8 +362,8 @@ function toNonNegInt(value, field) {
 // calls, refused } for both the buffered 2xx parse and the stream snapshot
 // reconcile. The output array carries message/reasoning/function_call items.
 function projectResponsesOutput(payload, { status }) {
-  if (payload.status != null && payload.status !== status) throw new ProtocolError('invalid model frame');
-  if ('output' in payload && !Array.isArray(payload.output)) throw new ProtocolError('invalid model frame');
+  if (payload.status != null && payload.status !== status) throw new ProtocolError('invalid model frame', 'envelope_invalid');
+  if ('output' in payload && !Array.isArray(payload.output)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
   const output = Array.isArray(payload.output) ? payload.output : [];
   const messages = [];
   const reasoning = [];
@@ -376,7 +376,7 @@ function projectResponsesOutput(payload, { status }) {
     if ('status' in item) optionalText(item.status);
     if (status === 'completed' && (kind === 'message' || kind === 'function_call')
         && item.status != null && item.status !== 'completed') {
-      throw new ProtocolError('invalid model frame');
+      throw new ProtocolError('invalid model frame', 'envelope_invalid');
     }
     if (kind === 'function_call') {
       calls.push({
@@ -384,7 +384,7 @@ function projectResponsesOutput(payload, { status }) {
         arguments: optionalText(item.arguments), raw: item,
       });
     } else if (kind === 'message') {
-      if (item.role != null && item.role !== 'assistant') throw new ProtocolError('invalid model frame');
+      if (item.role != null && item.role !== 'assistant') throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const [text, itemRefused] = responseMessageContent(item.content);
       messages.push(text);
       refused = refused || itemRefused;
@@ -396,7 +396,7 @@ function projectResponsesOutput(payload, { status }) {
   const canonical = messages.join('');
   const convenience = optionalText(payload.output_text);
   if ('output' in payload && payload.output_text != null && canonical !== convenience) {
-    throw new ProtocolError('invalid model frame');
+    throw new ProtocolError('invalid model frame', 'envelope_invalid');
   }
   let finish;
   if (status === 'completed') {
@@ -418,7 +418,7 @@ function projectResponsesOutput(payload, { status }) {
 // Concatenate output_text/text parts of a message; a refusal part marks the
 // message refused (ports model_buffered_wire.response_message_content).
 function responseMessageContent(value) {
-  if (!Array.isArray(value)) throw new ProtocolError('invalid model frame');
+  if (!Array.isArray(value)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
   const texts = [];
   let refused = false;
   for (const raw of Array.isArray(value) ? value : []) {
@@ -430,14 +430,14 @@ function responseMessageContent(value) {
       optionalText(part.refusal);
       refused = true;
     } else {
-      throw new ProtocolError('invalid model frame');
+      throw new ProtocolError('invalid model frame', 'envelope_invalid');
     }
   }
   return [texts.join(''), refused];
 }
 
 function partsText(value, types) {
-  if (value != null && !Array.isArray(value)) throw new ProtocolError('invalid model frame');
+  if (value != null && !Array.isArray(value)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
   const result = [];
   for (const raw of Array.isArray(value) ? value : []) {
     const part = objectOf(raw);
@@ -453,15 +453,15 @@ function partsText(value, types) {
 // status (a 2xx body that claims failure is a protocol conflict, terminal).
 export function parseResponsesBuffered(bodyText, request, { captureReplay = false, onThinking } = {}) {
   let payload;
-  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
+  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json', 'json_invalid'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new ProtocolError('invalid response envelope');
+    throw new ProtocolError('invalid response envelope', 'envelope_invalid');
   }
   const status = identityOf(payload.status);
   // A 2xx body that carries an error alongside a purported successful answer,
   // or an explicit failed status, is a protocol conflict, never a final.
-  if (payload.error != null) throw new ProtocolError('invalid response envelope');
-  if (status === 'failed') throw new ProtocolError('invalid response envelope');
+  if (payload.error != null) throw new ProtocolError('invalid response envelope', 'envelope_invalid');
+  if (status === 'failed') throw new ProtocolError('invalid response envelope', 'envelope_invalid');
   validateBufferedIdentity(payload);
   const reportedUsage = parseResponsesUsage(payload.usage);
   const projection = projectResponsesOutput(payload, { status });
@@ -513,17 +513,17 @@ function createResponsesItems() {
 
     pin(event, item, kind = '') {
       const itemId = item != null ? identityOf(item.id) : identityOf(event.item_id);
-      if ('item_id' in event && identityOf(event.item_id) !== itemId) throw new ProtocolError('invalid model frame');
+      if ('item_id' in event && identityOf(event.item_id) !== itemId) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const index = indexOf(event, 'output_index');
       if (index != null) {
-        if (this.indexes.get(index) != null && this.indexes.get(index) !== itemId) throw new ProtocolError('invalid model frame');
-        if (this.itemIndexes.get(itemId) != null && this.itemIndexes.get(itemId) !== index) throw new ProtocolError('invalid model frame');
+        if (this.indexes.get(index) != null && this.indexes.get(index) !== itemId) throw new ProtocolError('invalid model frame', 'envelope_invalid');
+        if (this.itemIndexes.get(itemId) != null && this.itemIndexes.get(itemId) !== index) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         this.indexes.set(index, itemId);
         this.itemIndexes.set(itemId, index);
       }
       if (item != null) kind = identityOf(item.type);
       if (kind) {
-        if (this.kinds.has(itemId) && this.kinds.get(itemId) !== kind) throw new ProtocolError('invalid model frame');
+        if (this.kinds.has(itemId) && this.kinds.get(itemId) !== kind) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         this.kinds.set(itemId, kind);
       }
       return itemId;
@@ -568,10 +568,10 @@ function createResponsesContent(items) {
       const partKey = `${group}\0${index}`;
       const previous = item.parts.get(partKey);
       if (previous != null) {
-        if (previous.kind !== kind) throw new ProtocolError('invalid model frame');
+        if (previous.kind !== kind) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         return previous;
       }
-      if (item.closed) throw new ProtocolError('invalid model frame');
+      if (item.closed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const part = createContentPart(kind);
       item.parts.set(partKey, part);
       return part;
@@ -582,10 +582,10 @@ function createResponsesContent(items) {
       indexOf(event, 'output_index', { required: true });
       const item = this.getItem(event, kind === 'summary_text' || kind === 'reasoning_text'
         ? 'reasoning' : 'message');
-      if (delta && item.closed) throw new ProtocolError('invalid model frame');
+      if (delta && item.closed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const part = this.getPart(item, group, index, kind);
       if (delta) {
-        if (part.closed) throw new ProtocolError('invalid model frame');
+        if (part.closed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         part.text += text;
       } else {
         this.snapshotPart(part, text, closed);
@@ -595,7 +595,7 @@ function createResponsesContent(items) {
 
     snapshotPart(part, text, closed) {
       if ((part.closed && text !== part.text) || !text.startsWith(part.text)) {
-        throw new ProtocolError('invalid model frame');
+        throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
       part.text = text;
       part.closed = part.closed || closed;
@@ -604,24 +604,24 @@ function createResponsesContent(items) {
     itemSnapshot(event, { closed }) {
       const raw = objectOf(event.item);
       const kind = identityOf(raw.type);
-      if (kind === 'message' && raw.role != null && raw.role !== 'assistant') throw new ProtocolError('invalid model frame');
+      if (kind === 'message' && raw.role != null && raw.role !== 'assistant') throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const item = this.getItem(event, kind, raw);
-      if (!closed && item.closed) throw new ProtocolError('invalid model frame');
+      if (!closed && item.closed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const groups = kind === 'message' ? ['content']
         : kind === 'reasoning' ? ['summary', 'content'] : [];
       const seen = new Set();
       for (const group of groups) {
         const values = Object.hasOwn(raw, group) ? raw[group] : [];
-        if (!Array.isArray(values)) throw new ProtocolError('invalid model frame');
+        if (!Array.isArray(values)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         for (let index = 0; index < values.length; index++) {
           const value = objectOf(values[index]);
           let partKind = identityOf(value.type);
           if (kind === 'message' && !TEXT_KINDS.has(partKind) && partKind !== 'refusal') {
-            throw new ProtocolError('invalid model frame');
+            throw new ProtocolError('invalid model frame', 'envelope_invalid');
           }
           if (kind === 'reasoning') {
             const allowed = group === 'summary' ? ['summary_text', 'text'] : ['reasoning_text', 'text'];
-            if (!allowed.includes(partKind)) throw new ProtocolError('invalid model frame');
+            if (!allowed.includes(partKind)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
           }
           // Legacy alias 'text' shares the canonical part type.
           if (partKind === 'text') {
@@ -636,7 +636,7 @@ function createResponsesContent(items) {
         }
       }
       if (closed) {
-        for (const key of item.parts.keys()) if (!seen.has(key)) throw new ProtocolError('invalid model frame');
+        for (const key of item.parts.keys()) if (!seen.has(key)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         item.closed = true;
       }
     },
@@ -676,10 +676,10 @@ function createResponsesContent(items) {
       const text = this.prefix({ reasoning: false });
       const reasoning = this.prefix({ reasoning: true });
       if ((text && this.legacyText) || (reasoning && this.legacyReasoning)) {
-        throw new ProtocolError('invalid model frame');
+        throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
       if (!text.startsWith(this.emittedText) || !reasoning.startsWith(this.emittedReasoning)) {
-        throw new ProtocolError('invalid model frame');
+        throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
       const tails = [text.slice(this.emittedText.length), reasoning.slice(this.emittedReasoning.length)];
       this.emittedText = text;
@@ -698,7 +698,7 @@ function createResponsesContent(items) {
         const kind = identityOf(part.type);
         const summary = type.includes('reasoning_summary_part');
         const allowed = summary ? ['summary_text'] : ['output_text', 'refusal', 'reasoning_text'];
-        if (!allowed.includes(kind)) throw new ProtocolError('invalid model frame');
+        if (!allowed.includes(kind)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         this.partEvent(event, summary ? 'summary' : 'content', kind,
           summary ? 'summary_index' : 'content_index',
           optionalText(part[kind === 'refusal' ? 'refusal' : 'text']),
@@ -722,18 +722,18 @@ function createResponsesContent(items) {
           let tail;
           if (suffix === 'done') {
             if (!text.startsWith(previous) || (this.legacyClosed.has(attr) && text !== previous)) {
-              throw new ProtocolError('invalid model frame');
+              throw new ProtocolError('invalid model frame', 'envelope_invalid');
             }
             tail = text.slice(previous.length);
             this[attr] = text;
             this.legacyClosed.add(attr);
           } else {
-            if (this.legacyClosed.has(attr)) throw new ProtocolError('invalid model frame');
+            if (this.legacyClosed.has(attr)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
             tail = text;
             this[attr] = previous + text;
           }
           const indexed = attr === 'legacyText' ? this.emittedText : this.emittedReasoning;
-          if (indexed) throw new ProtocolError('invalid model frame');
+          if (indexed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
           return attr === 'legacyText' ? [tail, ''] : ['', tail];
         }
         this.partEvent(event, group, kind, indexField, text,
@@ -750,7 +750,7 @@ function createResponsesContent(items) {
         const item = output[index];
         if (!('id' in item) && !this.items.indexes.has(index)) continue;
         const key = identityOf(item.id);
-        if (seen.has(key)) throw new ProtocolError('invalid model frame');
+        if (seen.has(key)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         seen.add(key);
         const kind = item.type;
         if (!this.itemState.has(key) && (
@@ -761,7 +761,7 @@ function createResponsesContent(items) {
         }
         this.itemSnapshot({ output_index: index, item }, { closed: true });
       }
-      for (const key of this.itemState.keys()) if (!seen.has(key)) throw new ProtocolError('invalid model frame');
+      for (const key of this.itemState.keys()) if (!seen.has(key)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       return this.drain();
     },
 
@@ -769,23 +769,23 @@ function createResponsesContent(items) {
       if (requireClosed) {
         for (const item of this.itemState.values()) {
           if ((item.kind === 'message' || item.kind === 'reasoning') && !item.closed) {
-            throw new ProtocolError('invalid model frame');
+            throw new ProtocolError('invalid model frame', 'envelope_invalid');
           }
         }
       }
       const text = this.prefix({ reasoning: false });
       const reasoning = this.prefix({ reasoning: true });
       if (text !== this.emittedText || reasoning !== this.emittedReasoning) {
-        throw new ProtocolError('invalid model frame');
+        throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
       for (const [key, item] of this.itemState) {
         if ((item.kind === 'message' || item.kind === 'reasoning')
             && !this.items.itemIndexes.has(key)) {
-          throw new ProtocolError('invalid model frame');
+          throw new ProtocolError('invalid model frame', 'envelope_invalid');
         }
       }
       const indexes = [...this.items.indexes.keys()].sort((a, b) => a - b);
-      if (indexes.some((index, expected) => index !== expected)) throw new ProtocolError('invalid model frame');
+      if (indexes.some((index, expected) => index !== expected)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       for (const [kind, expected] of [['message', this.emittedText], ['reasoning', this.emittedReasoning]]) {
         const pieces = [];
         for (const [, key] of [...this.items.indexes.entries()].sort((a, b) => a[0] - b[0])) {
@@ -798,7 +798,7 @@ function createResponsesContent(items) {
             for (const [, part] of parts) if (part.kind !== 'refusal') pieces.push(part.text);
           }
         }
-        if (pieces.join('') !== expected) throw new ProtocolError('invalid model frame');
+        if (pieces.join('') !== expected) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
     },
   };
@@ -815,7 +815,7 @@ function pinToolIdentity(tool, item, idName) {
   for (const [source, target] of [[idName, 'callId'], ['name', 'name']]) {
     if (!(source in item)) continue;
     const value = identityOf(item[source]);
-    if (tool[target] && tool[target] !== value) throw new ProtocolError('invalid model frame');
+    if (tool[target] && tool[target] !== value) throw new ProtocolError('invalid model frame', 'envelope_invalid');
     tool[target] = value;
   }
 }
@@ -847,7 +847,7 @@ function createResponsesToolCalls() {
         const key = this.key(event, item);
         let current = this.calls.get(key);
         if (type === 'response.output_item.added') {
-          if (current != null) throw new ProtocolError('invalid model frame');
+          if (current != null) throw new ProtocolError('invalid model frame', 'envelope_invalid');
           current = createWireTool();
           pinToolIdentity(current, item, 'call_id');
           if ('arguments' in item) current.arguments = optionalText(item.arguments);
@@ -865,7 +865,7 @@ function createResponsesToolCalls() {
           const arguments_ = optionalText(item.arguments);
           if (!arguments_.startsWith(current.arguments)
             || (current.closed || current.argumentsDone) && arguments_ !== current.arguments) {
-            throw new ProtocolError('invalid model frame');
+            throw new ProtocolError('invalid model frame', 'envelope_invalid');
           }
           current.arguments = arguments_;
         }
@@ -876,12 +876,12 @@ function createResponsesToolCalls() {
       if (type === 'response.function_call_arguments.delta' || type === 'response.function_call_arguments.done') {
         const key = this.key(event);
         const current = this.calls.get(key);
-        if (current == null || current.closed || current.argumentsDone) throw new ProtocolError('invalid model frame');
+        if (current == null || current.closed || current.argumentsDone) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         if (type.endsWith('.delta')) {
           current.arguments += optionalText(event.delta);
         } else {
           const arguments_ = optionalText(event.arguments);
-          if (!arguments_.startsWith(current.arguments)) throw new ProtocolError('invalid model frame');
+          if (!arguments_.startsWith(current.arguments)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
           current.arguments = arguments_;
           current.argumentsDone = true;
         }
@@ -890,7 +890,7 @@ function createResponsesToolCalls() {
     },
 
     finish() {
-      for (const tool of this.calls.values()) if (!tool.closed) throw new ProtocolError('invalid model frame');
+      for (const tool of this.calls.values()) if (!tool.closed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
     },
 
     // Complete snapshots may fill gaps, never remove or rewrite closed calls.
@@ -901,18 +901,18 @@ function createResponsesToolCalls() {
         const item = output[index];
         if (item.type !== 'function_call') continue;
         const key = identityOf(item.id);
-        if (seen.has(key)) throw new ProtocolError('invalid model frame');
+        if (seen.has(key)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         seen.add(key);
         const current = this.calls.get(key);
         if (current != null && !current.closed && current.arguments) {
-          if (!item.arguments.startsWith(current.arguments)) throw new ProtocolError('invalid model frame');
+          if (!item.arguments.startsWith(current.arguments)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         }
         const tool = this.accept({ type: 'response.output_item.done', item, output_index: index });
         if (tool != null) completed.push(tool);
       }
       const callsKeys = new Set(this.calls.keys());
       if (callsKeys.size !== seen.size || [...callsKeys].some((k) => !seen.has(k))) {
-        throw new ProtocolError('invalid model frame');
+        throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
       this.finish();
       return completed;
@@ -928,14 +928,14 @@ function createWireIdentity() {
     model: null,
     pin(field, value) {
       if (value == null) return;
-      if (typeof value !== 'string' || !value.trim()) throw new ProtocolError('invalid model frame');
-      if (this[field] != null && this[field] !== value) throw new ProtocolError('invalid model frame');
+      if (typeof value !== 'string' || !value.trim()) throw new ProtocolError('invalid model frame', 'envelope_invalid');
+      if (this[field] != null && this[field] !== value) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       this[field] = value;
     },
     accept(event) {
-      if (typeof event !== 'object' || Array.isArray(event)) throw new ProtocolError('invalid model frame');
+      if (typeof event !== 'object' || Array.isArray(event)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const type = event.type;
-      if (typeof type !== 'string' || !type.trim()) throw new ProtocolError('invalid model frame');
+      if (typeof type !== 'string' || !type.trim()) throw new ProtocolError('invalid model frame', 'envelope_invalid');
       const response = objectOf(event.response);
       this.pin('responseId', response.id);
       this.pin('responseId', event.response_id);
@@ -977,9 +977,9 @@ export function createResponsesStreamState(profile) {
       if (!data.trim()) return;
       if (data.trim() === '[DONE]') return;  // [DONE] is a transport marker; the
       let event;                             // terminal is response.completed/incomplete.
-      try { event = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json'); }
+      try { event = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json', 'json_invalid'); }
       if (!event || typeof event !== 'object' || Array.isArray(event)) {
-        throw new ProtocolError('invalid stream envelope');
+        throw new ProtocolError('invalid stream envelope', 'envelope_invalid');
       }
       identity.accept(event);
       const type = String(event.type || '');
@@ -1029,7 +1029,7 @@ export function createResponsesStreamState(profile) {
       let failedBody;
       if (event.type === 'response.failed') {
         failedBody = objectOf(event.response);
-        if (failedBody.status != null && failedBody.status !== 'failed') throw new ProtocolError('invalid model frame');
+        if (failedBody.status != null && failedBody.status !== 'failed') throw new ProtocolError('invalid model frame', 'envelope_invalid');
         failedBody = { ...failedBody, status: 'failed' };
       } else {
         failedBody = { error: event.error != null ? event.error : event, usage: event.usage };
@@ -1058,13 +1058,13 @@ export function createResponsesStreamState(profile) {
       // A terminal `status` field that disagrees with the event type is a
       // protocol conflict, checked before any metadata-only short-circuit.
       if (responsePayload.status != null && responsePayload.status !== this.status) {
-        throw new ProtocolError('invalid model frame');
+        throw new ProtocolError('invalid model frame', 'envelope_invalid');
       }
       const usageValue = parseResponsesUsage(responsePayload.usage);
       if (usageValue != null) this.usage = usageValue;
       // A successful terminal cannot simultaneously carry an error. In
       // particular, no function_call from that conflicting body may dispatch.
-      if (responsePayload.error != null) throw new ProtocolError('invalid model frame');
+      if (responsePayload.error != null) throw new ProtocolError('invalid model frame', 'envelope_invalid');
 
       // Reconcile the terminal body with the observed stream. A metadata-only
       // terminal (no output) keeps the streamed text/tools as observed.
@@ -1077,27 +1077,27 @@ export function createResponsesStreamState(profile) {
         let projection;
         try {
           projection = projectResponsesOutput(responsePayload, { status: this.status });
-        } catch { throw new ProtocolError('invalid model frame'); }
+        } catch { throw new ProtocolError('invalid model frame', 'envelope_invalid'); }
         if (projection.refused) this.refused = true;
         if (!this.refused) {
           if (hasOutput && contentItems) {
             try {
               const [ct, cr] = contentItems.reconcileOutput(responsePayload.output || []);
               textTail = ct; reasoningTail = cr;
-            } catch { throw new ProtocolError('invalid model frame'); }
+            } catch { throw new ProtocolError('invalid model frame', 'envelope_invalid'); }
           }
           // The projection's content must extend the observed text+tail.
           const observedText = this.text + drainText + textTail;
-          if (!projection.content.startsWith(observedText)) throw new ProtocolError('invalid model frame');
+          if (!projection.content.startsWith(observedText)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
           textTail += projection.content.slice(observedText.length);
           if (hasOutput) {
             const observedReasoning = this.reasoning + drainReasoning + reasoningTail;
-            if (!projection.reasoning.startsWith(observedReasoning)) throw new ProtocolError('invalid model frame');
+            if (!projection.reasoning.startsWith(observedReasoning)) throw new ProtocolError('invalid model frame', 'envelope_invalid');
             reasoningTail += projection.reasoning.slice(observedReasoning.length);
           }
           if (hasOutput && this.status === 'completed') {
             try { completedCalls = toolItems.reconcileOutput(responsePayload.output || []); }
-            catch { throw new ProtocolError('invalid model frame'); }
+            catch { throw new ProtocolError('invalid model frame', 'envelope_invalid'); }
           }
         }
       }
@@ -1116,13 +1116,13 @@ export function createResponsesStreamState(profile) {
       if (this.refused) {
         finish = 'content_filter';
       } else if (this.status === 'completed') {
-        try { toolItems.finish(); contentItems.finish(); } catch { throw new ProtocolError('invalid model frame'); }
+        try { toolItems.finish(); contentItems.finish(); } catch { throw new ProtocolError('invalid model frame', 'envelope_invalid'); }
         finish = toolItems.calls.size ? 'tool_calls' : 'stop';
       } else {
         const details = responsePayload.incomplete_details;
         const reason = details != null ? optionalText(objectOf(details).reason) : '';
         if (reason === 'max_output_tokens') {
-          try { contentItems.finish({ requireClosed: false }); } catch { throw new ProtocolError('invalid model frame'); }
+          try { contentItems.finish({ requireClosed: false }); } catch { throw new ProtocolError('invalid model frame', 'envelope_invalid'); }
         }
         // An unclosed tool input must not grant bounded-text commit authority
         // even when output exhaustion is confirmed.
@@ -1182,7 +1182,7 @@ export function createResponsesStreamState(profile) {
       for (const [, key] of indexes) {
         const tool = toolItems.calls.get(key);
         if (!tool) continue;
-        if (!tool.closed) throw new ProtocolError('invalid model frame');
+        if (!tool.closed) throw new ProtocolError('invalid model frame', 'envelope_invalid');
         let arguments_;
         let invalid = false;
         try {

@@ -15,13 +15,23 @@ export const STUDIO_NATIVE_CLOUD_MEMORY_STATUS = 'agentkit.studio-native-cloud-m
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 
 /** Called only after the recovery service resolves the original Session/Run. */
-export function readStudioNativeCloudMemoryTurn({ record, storeDir }) {
+export function readStudioNativeCloudMemoryTurn({ record, store, storeDir }) {
   const { scope, sessionId, runId, configDigest } = record.snapshot;
   const identity = { contract: STUDIO_NATIVE_CLOUD_MEMORY_STATUS, sessionId, runId };
   try {
     const effect = readLegacyMemoryEffect(join(realpathSync(storeDir), 'native-harness', 'cloud-memory-turns', hash(scope)),
       { kind: 'native', identity: { contract: STUDIO_NATIVE_CLOUD_MEMORY_TURN, scope, sessionId, runId } });
     if (!effect) return null;
+    if (record.contract === 'agentkit.native-run-observation/v1') {
+      // An existing Memory effect needs its original frozen binding, not a
+      // presentation projection. Metadata authority does not read tool receipts.
+      invariant(typeof store?.authority === 'function', 'native_cloud_memory_authority_unavailable');
+      const authority = store.authority(scope, runId);
+      invariant(authority.snapshot.sessionId === sessionId && authority.snapshot.runId === runId
+        && canonical(authority.snapshot.scope) === canonical(scope) && authority.snapshot.configDigest === configDigest
+        && authority.snapshot.revision === record.snapshot.revision, 'native_cloud_memory_status_changed');
+      record = authority;
+    }
     const capsule = readNativeRecoveryBinding(record, { agentId: scope.agentId, sessionId, runId });
     const { binding, prepared, result } = effect;
     invariant(effect.request?.configDigest === configDigest && effect.request.finalText === record.snapshot.finalText

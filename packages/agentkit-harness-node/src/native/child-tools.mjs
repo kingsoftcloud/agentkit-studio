@@ -1,7 +1,10 @@
 import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { CHILD_CAPABILITY_POLICY, childRequiredToolsSchema } from './child-capabilities.mjs';
+export { CHILD_CAPABILITY_POLICY, childCapabilityDirectory, admitChildCapabilities, childRequiredToolsSchema } from './child-capabilities.mjs';
 
 export const NATIVE_CHILD_TOOLS_CONTRACT = 'agentkit.native-child-tools/v1';
-export function nativeChildToolDefinitions(roles, startTimeoutMs = 120000) {
+export function nativeChildToolDefinitions(roles, startTimeoutMs = 120000, { childCapabilityPolicy, capabilities } = {}) {
+  invariant(childCapabilityPolicy === undefined || childCapabilityPolicy === CHILD_CAPABILITY_POLICY, 'invalid_child_capability_policy');
   invariant(Array.isArray(roles) && roles.length > 0 && roles.length <= 32
     && roles.every(role => typeof role === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(role))
     && new Set(roles).size === roles.length, 'native_child_roles_invalid');
@@ -30,5 +33,14 @@ export function nativeChildToolDefinitions(roles, startTimeoutMs = 120000) {
   delegate.description = 'Run a bounded approved child and wait for its original delivery. continuation_of reuses a terminal, collected child Session with a fresh Run and budget. Its findings do not verify the parent task. background=true returns a budget reservation instead.';
   delegate.parameters.properties.background.default = false;
   for (const key of ['model_call_limit', 'tool_call_limit']) delete delegate.parameters.properties[key];
+  if (childCapabilityPolicy) {
+    invariant(Array.isArray(capabilities) && capabilities.length === roles.length
+      && roles.every(role => capabilities.some(item => item.role === role && Array.isArray(item.tools))), 'invalid_child_capability_directory');
+    for (const definition of [definitions[0], delegate]) {
+      definition.parameters.properties.required_tools = childRequiredToolsSchema();
+      definition.parameters.required.push('required_tools');
+      definition.description += '\nApproved role capabilities: ' + JSON.stringify(capabilities);
+    }
+  }
   return [...definitions, delegate];
 }

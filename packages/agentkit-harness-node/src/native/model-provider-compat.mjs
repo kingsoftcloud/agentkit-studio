@@ -9,6 +9,13 @@ const mandatory = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet
 const ranks = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 5 };
 const normalized = model => String(model ?? '').trim().toLowerCase().replaceAll('_', '-');
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
+// Provider capability, independent of text streaming. Without tool_stream,
+// these services may buffer a large argument until generation completes.
+// https://docs.bigmodel.cn/cn/guide/capabilities/stream-tool
+// Unknown models retain their configured wire behavior, including explicit
+// tool_stream. Freeze v2 at admission; v1 recovery must retain its old bytes.
+const incrementalToolModels = new Set(['glm-5', 'glm-5.1', 'glm-5.2', 'glm-5.2-fast-preview',
+  'glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx']);
 
 // Exact pinned catalog entries. Aliases and future names retain legacy wire behavior.
 export function admitAnthropicPolicies(protocol, model) {
@@ -37,18 +44,20 @@ export function applyAnthropicThinking(payload, profile, binding) {
 }
 
 export function admitProviderCompatibilityPolicy(override) {
-  return { contract: 'provider-compat/v1', rule: admitInlineReasoningPolicy(override).rule };
+  return { contract: 'provider-compat/v2', rule: admitInlineReasoningPolicy(override).rule };
 }
 
 export function resolveProviderCompatibility(policy, binding) {
   if (!policy) return null;
-  if (policy.contract !== 'provider-compat/v1') throw new ProtocolError('invalid_provider_compatibility_policy');
+  if (!['provider-compat/v1', 'provider-compat/v2'].includes(policy.contract)) throw new ProtocolError('invalid_provider_compatibility_policy');
   const rule = resolveCompatibilityRule(policy.rule, binding);
   const name = String(binding.model ?? '').trim().toLowerCase();
   const kimi = ['kspmas-gateway', 'moonshot'].includes(rule)
     && ['kimi-k2.7-code', 'kimi-k2.7-code-highspeed'].includes(name);
   const disabledEfforts = mandatory.has(name) ? [] : name === 'claude-haiku-5-5' ? ['low', 'medium', 'high'] : null;
   return { rule, supportsUsage: !strict.has(rule), supportsThinking: !strict.has(rule) && !kimi,
+    supportsToolArgumentStreaming: policy.contract === 'provider-compat/v2'
+      && ['zai', 'kspmas-gateway'].includes(rule) && incrementalToolModels.has(normalized(binding.model)),
     supportsEffort: !kimi, toolThinkingOff: ['zai', 'kspmas-gateway'].includes(rule) && !kimi,
     thinkingBudget: rule === 'zai' && !kimi && !disabledEfforts ? 32000 : null,
     disabledEfforts, requiredAuto: kimi || requiredAuto.has(name),
@@ -78,6 +87,10 @@ export function applyProviderChatCompatibility(payload, request, binding) {
   const compat = resolveProviderCompatibility(request.profile.providerCompatibilityPolicy, binding);
   if (!compat) return payload;
   const result = { ...payload }, options = request.profile;
+  if (compat.supportsToolArgumentStreaming && result.stream && result.tools?.length && result.tool_choice !== 'none') {
+    if (result.tool_stream !== undefined && typeof result.tool_stream !== 'boolean') throw new ProtocolError('invalid_tool_stream');
+    result.tool_stream ??= true;
+  }
   const model = binding.model, name = normalized(model);
   const requested = options.reasoningEffort ?? result.reasoning_effort ?? null;
   let effort = requested;

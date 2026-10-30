@@ -29,7 +29,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
   inputParts, childInput = ['text'], childTool = 'native_start_child', beforeChildModel, onParentContinuation, parentPlan,
   childPlan, boundTools = ['read_workspace_file'], mcp, beforeToolDispatch, skills = false, a2a,
-  managed = false, releasePending, toolSearch = false, filePreview = false } = {}) {
+  managed = false, releasePending, toolSearch = false, filePreview = false, additionalRoles = [], governed = false, instructionOwnership = false } = {}) {
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'studio-native-children-'))), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot); await writeFile(join(workspaceRoot, 'proof.txt'), 'Actual child evidence');
   let skillDefinitions;
@@ -40,13 +40,13 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     skillDefinitions = [{ name: 'alpha', content, path: join(path, 'SKILL.md'), resourceBase: { kind: 'directory', path } }];
   }
   const roles = [{ name: 'reader', instructions: 'Read the requested workspace evidence.', tools: ['read_workspace_file'],
-    modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2, ...role }];
+    modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2, ...role }, ...additionalRoles];
   const agents = createAgentStore({ storeDir: join(root, 'agents') });
   const record = await agents.create({ name: 'Parent', runtimeType: 'harness', spec: { subAgents: roles,
     ...(mcp && !toolSearch ? { execution: { nativeToolSearchMode: 'off' } } : {}),
-    bindings: { modelProfileIds: ['parent-profile', 'child-profile'], tools: boundTools } } });
+    bindings: { modelProfileIds: ['parent-profile', 'child-profile', ...additionalRoles.map(role => role.modelProfileId)], tools: boundTools } } });
   const ledger = sqlite ? new SqliteRunStore(join(root, 'runs.sqlite')) : new MemoryRunStore();
-  const events = [], registered = new Map(), projections = new Map(), dispatches = [], requests = [];
+  const events = [], registered = new Map(), projections = new Map(), dispatches = [], dispatchErrors = [], requests = [], guards = new Set(), dispatchGuards = new Set();
   const session = { id: 'parent-session', append(type, data, options) { events.push({ type, data, ...options, seq: events.length + 1 }); } };
   session.append('turn/start', { turn: 1 });
   const services = { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, sessions: { flush: async () => true }, llm: {},
@@ -55,44 +55,68 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       stateOf: (_session, key) => { const projection = projections.get(key); return projection ? events.reduce(projection.apply, projection.init()) : undefined; } } };
   const ctx = { get: name => services[name], effect: install => install(), tools: {
     resultRetentions: ['caller/v1'],
+    ...(governed ? {
+      guard: callback => { guards.add(callback); return () => guards.delete(callback); },
+      dispatchGuard: callback => { dispatchGuards.add(callback); return () => dispatchGuards.delete(callback); },
+    } : {}),
     register: definition => { registered.set(definition.name, definition); return () => registered.delete(definition.name); },
     execute: async request => {
       dispatches.push({ name: request.name, callId: request.callId, agent: request.agent });
+      for (const guard of guards) { const reason = guard(request); if (reason) throw Error(reason); }
       await beforeToolDispatch?.(request);
-      const definition = registered.get(request.name), value = await definition.execute(request.arguments, request);
+      for (const guard of dispatchGuards) { const reason = guard(request); if (reason) throw Error(reason); }
+      const definition = registered.get(request.name); let value;
+      try { value = await definition.execute(request.arguments, request); }
+      catch (error) { dispatchErrors.push(error); throw error; }
       return { isError: false, content: definition.output.render(request.arguments, value) };
     },
   } };
+  if (instructionOwnership) {
+    let directory = realpathSync(workspaceRoot);
+    services.workingDirectory = { get: () => directory, set: async (_agent, value) => { directory = value; }, ensure: async () => directory };
+  }
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, subAgents: roles, toolBindings: boundTools,
+    ...(governed ? { nativeEngineContract: 'agentkit.native-dsh-turn/v1' } : {}),
     toolContracts: mcp?.contracts, skillDefinitions, ...(a2a ? { a2aBindings: [a2aSpec] } : {}) }, workspaceRoot,
+    ...(instructionOwnership ? { instructionRoots: [] } : {}),
     ...(a2a ? { commandEnvironment: a2a.env } : {}), stateDir: join(root, 'tools'), executeMcpTool: mcp?.execute });
   a2a?.setRecordDirectory(join(root, 'tools/a2a-calls'));
   const values = { modelProfiles: [{ id: 'parent-profile', provider: 'openai-compatible', modelName: 'parent-model', baseUrl: 'https://parent.invalid/v1' },
-    { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput }] };
+    { id: 'child-profile', provider: 'openai-compatible', modelName: 'child-model', baseUrl: 'https://child.invalid/v1', input: childInput },
+    ...additionalRoles.map(role => ({ id: role.modelProfileId, provider: 'openai-compatible', modelName: `${role.modelProfileId}-model`,
+      baseUrl: `https://${role.modelProfileId}.invalid/v1`, input: childInput }))] };
   const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: 'fixture-secret' }) } });
   let parentModels = 0, childModels = 0;
-  const host = await createStudioNativeHarness({ ctx, storeDir: root, workspaceRoot, agents, models, ledger,
+  const hostOptions = { ctx, storeDir: root, workspaceRoot, agents, models, ledger,
     ...((managed || a2a || filePreview) ? { agentEvents: () => ({ serial: async () => payload.binding }) } : {}),
     ...(managed ? { assembleContextFor: () => ({ agent: payload.agent }) } : {}),
     renderPrompt: () => 'Delegate a bounded read; use its evidence without treating it as parent acceptance.',
     fetchImpl: async (url, options) => {
       const body = JSON.parse(options.body); requests.push({ url, body });
-      const child = body.model === 'child-model';
+      const child = body.model !== 'parent-model';
       let call, text;
       if (child) {
         childModels++;
         await beforeChildModel?.(childModels, body);
-        assert.equal(url, 'https://child.invalid/v1/chat/completions');
-        const expectedTools = [...roles[0].tools, ...(roles[0].inheritMcp && mcp ? toolSearch
+        const childProfile = values.modelProfiles.find(profile => profile.modelName === body.model);
+        assert.equal(url, childProfile.baseUrl + '/chat/completions');
+        const childRole = roles.find(role => role.modelProfileId === childProfile.id);
+        const expectedTools = [...childRole.tools, ...(childRole.inheritMcp && mcp ? toolSearch
           && !mcp.contracts.some(tool => ['ToolSearch', 'DeferredToolCall'].includes(tool.name))
           ? ['ToolSearch', 'DeferredToolCall'] : mcp.contracts.map(item => item.name).sort() : []),
-          ...(roles[0].inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : []),
-          ...(roles[0].inheritMcp && mcp && toolSearch && !mcp.contracts.some(tool => ['ToolSearch', 'DeferredToolCall'].includes(tool.name))
+          ...(childRole.inheritSkills !== false && skills ? gateway.childSkillBinding.toolNames : []),
+          ...(childRole.inheritMcp && mcp && toolSearch && !mcp.contracts.some(tool => ['ToolSearch', 'DeferredToolCall'].includes(tool.name))
             ? [] : [...todoToolDefinitions().map(tool => tool.name), coordinatorResponseDefinition().name]),
           ...artifactToolDefinitions().map(tool => tool.name)];
+        // A successful search can now expose loaded schemas directly. Derive
+        // the additional names from committed search results, not the offer itself.
+        const loaded = body.messages.filter(message => message.role === 'tool').flatMap(message => {
+          try { return (JSON.parse(message.content).definitions ?? []).filter(item => item.call === 'direct').map(item => item.name); }
+          catch { return []; }
+        });
         const offeredTools = body.tools ?? [];
-        assert.deepEqual(offeredTools.map(item => item.function.name).filter(name => name !== 'submit_final_output'),
-          childModels > 1 && !offeredTools.length ? [] : expectedTools);
+        assert.deepEqual(offeredTools.map(item => item.function.name).filter(name => name !== 'submit_final_output').sort(),
+          childModels > 1 && !offeredTools.length ? [] : [...new Set([...expectedTools, ...loaded])].sort());
         if (childPlan) ({ call, text } = await childPlan(body, childModels));
         else if (childModels === 1) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
         else {
@@ -121,14 +145,24 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
         } else text = parentResult;
       }
       if (text && body.tools?.some(item => item.function.name === 'submit_final_output')) {
-        call = { name: 'submit_final_output', arguments: { output: JSON.parse(text) } }; text = undefined;
+        const definition = body.tools.find(item => item.function.name === 'submit_final_output').function.parameters;
+        // The fake provider must answer the actual advertised final protocol.
+        // Plain parent text is not JSON merely because final delivery is a tool.
+        const answer = definition.properties?.answer;
+        call = { name: 'submit_final_output', arguments: answer
+          ? { answer: answer.type === 'object' ? answer.properties?.output ? { output: JSON.parse(text) } : JSON.parse(text) : text,
+            artifacts: [] } : { output: JSON.parse(text) } }; text = undefined;
       }
+      if (call && ['native_start_child', 'native_delegate'].includes(call.name)
+        && body.tools?.some(item => item.function.name === call.name && item.function.parameters.properties.required_tools))
+        call.arguments = { required_tools: [], ...call.arguments };
       const delta = call ? { tool_calls: [{ index: 0, id: `call-${requests.length}`, type: 'function',
         function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] } : { content: text };
       return new Response(`data: ${JSON.stringify({ id: `r-${requests.length}`, choices: [{ index: 0, delta,
         finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 2, completion_tokens: 3 } })}\n\ndata: [DONE]\n\n`,
       { headers: { 'content-type': 'text/event-stream' } });
-    } });
+    } };
+  let host = await createStudioNativeHarness(hostOptions);
   let receiver, managedLedger;
   t.after(async () => { releasePending?.(); await receiver?.close(); await host.close(); await gateway.close();
     managedLedger?.close(); ledger.close?.(); await rm(root, { recursive: true, force: true }); });
@@ -174,7 +208,8 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       resolveBinding: createStudioManagedNativeBinding({ ctx, target, principal, execution, resolveHost: async () => host }) };
     openManaged();
   }
-  return { root, workspaceRoot, host, payload, ledger, gateway, roles, requests, dispatches, record, scope, services, ctx, events,
+  return { root, workspaceRoot, get host() { return host; }, payload, ledger, gateway, roles, requests, dispatches, dispatchErrors, record, scope, services, ctx, events,
+    async reopenHost() { await host.close(); host = await createStudioNativeHarness(hostOptions); },
     modelValues: values, childModels: () => childModels,
     get managedLedger() { return managedLedger; }, get receiver() { return receiver; },
     managedScope: managed ? { ...scope, tenantId: target.tenantId, userId: principal.userId } : undefined,
@@ -192,8 +227,217 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     async reopenManaged() { await receiver.close(); managedLedger.close(); openManaged(); } };
 }
 
+test('cold Studio child continuation refreshes inherited scoped rule addresses without importing old file bodies', async t => {
+  let source;
+  const f = await setup(t, { sqlite: true, governed: true, instructionOwnership: true, childTool: 'native_delegate',
+    parentPlan: async (_body, index) => index === 1 || index === 3 ? { call: { name: 'native_delegate', arguments: {
+      role: 'reader', task: index === 1 ? 'Read pkg/file.ts' : 'Report current workspace guidance',
+      ...(index === 3 ? { continuation_of: source } : {}) } } } : { text: 'Child findings collected.' },
+    childPlan: async (body, index) => {
+      const wire = JSON.stringify(body.messages);
+      assert.match(wire, /CHILD_ROOT_CURRENT_c124/);
+      if (index === 1) {
+        assert.doesNotMatch(wire, /CHILD_NESTED_OLD_c124|CHILD_NESTED_NEW_c124/);
+        return { call: { name: 'read_workspace_file', arguments: { path: 'pkg/file.ts' } } };
+      }
+      assert.match(wire, index === 2 ? /CHILD_NESTED_OLD_c124/ : /CHILD_NESTED_NEW_c124/);
+      if (index === 3) assert.doesNotMatch(wire, /CHILD_NESTED_OLD_c124/);
+      return { text: 'Current rule snapshot observed.' };
+    } });
+  await mkdir(join(f.workspaceRoot, 'pkg'));
+  await writeFile(join(f.workspaceRoot, 'AGENTS.md'), 'CHILD_ROOT_CURRENT_c124');
+  await writeFile(join(f.workspaceRoot, 'pkg/AGENTS.md'), 'CHILD_NESTED_OLD_c124');
+  await writeFile(join(f.workspaceRoot, 'pkg/file.ts'), 'export const value = 1;');
+  await f.host.executeTurn(f.payload);
+  const first = f.ledger.sessionHead(f.scope, 'parent-session'), reservation = first.childBudgetReservations[0];
+  source = reservation.childRunId;
+  const original = f.ledger.load(reservation.childScope, source);
+  assert.equal(original.snapshot.phase, 'completed'); assert.equal(f.childModels(), 2);
+  assert.deepEqual(original.snapshot.context.instructionScopes.directories, ['', 'pkg']);
+  assert.doesNotMatch(canonical(original.snapshot.messages), /CHILD_NESTED_OLD_c124|CHILD_ROOT_CURRENT_c124/);
+  await f.reopenHost();
+  await writeFile(join(f.workspaceRoot, 'pkg/AGENTS.md'), 'CHILD_NESTED_NEW_c124');
+  f.payload.agent.session.append('turn/start', { turn: 2 });
+  await f.host.executeTurn({ ...f.payload, turn: 2, input: { ...f.payload.input, messages: [{ id: 'continue-rules', role: 'user',
+    source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue the original child.' }] }] } });
+  assert.equal(f.childModels(), 3);
+  const nextParent = f.ledger.sessionHead(f.scope, 'parent-session');
+  const next = f.ledger.load(reservation.childScope, nextParent.childRunIds[0]);
+  assert.equal(next.snapshot.phase, 'completed'); assert.equal(next.snapshot.parentRunId, source);
+  assert.deepEqual(next.configuration.hostRecoveryBinding.workspaceContext, original.configuration.hostRecoveryBinding.workspaceContext);
+  assert.deepEqual(f.ledger.load(reservation.childScope, source), original);
+});
+
+test('a real reader child does not acquire its command-enabled parent resource capability', async t => {
+  const f = await setup(t, { sqlite: true, boundTools: ['read_workspace_file', 'run_command'],
+    childArguments: { background: false } });
+  let bound;
+  const original = f.gateway.forChild;
+  f.gateway.forChild = function(agent, authority) { bound = authority.localExecution; return original.call(this, agent, authority); };
+  await f.host.executeTurn(f.payload);
+  assert.ok(bound, 'the child tool owner receives the frozen Host policy without granting extra tools');
+  assert.equal(bound.resourceProfile, 'local-development/v1');
+  // The child owner stores a narrower scope; use its parent-owned lineage ref.
+  const parent = f.ledger.load(f.scope, f.ledger.sessionHead(f.scope, f.payload.agent.session.id).runId);
+  const reservation = parent.snapshot.childBudgetReservations[0]; assert.ok(reservation);
+  const stored = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(parent.configuration.modelSurface.environment.commandResources.requestedLimits.maxFileBytes, bound.settings.maxFileBytes);
+  assert.equal(stored.configuration.modelSurface.environment.commandResources, undefined);
+  assert.equal(stored.configuration.modelSurface.environment.commandBackend, 'none');
+  assert.equal(stored.configuration.tools.some(tool => tool.name === 'run_command'), false);
+  const result = stored.events.find(event => event.kind === 'tool.completed' && event.payload.name === 'read_workspace_file');
+  assert.ok(result); assert.equal(result.payload.status, 'ok');
+  assert.match(canonical(result.payload.content), /Actual child evidence/);
+});
+
+test('an explicitly granted child command uses its own workspace, change capture and frozen execution resource', { timeout: 30000 }, async t => {
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', governed: true,
+    boundTools: ['read_workspace_file', 'run_command'],
+    role: { tools: ['run_command'], maxTurns: 3, maxToolCalls: 2, timeoutSeconds: 120 },
+    childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'run_command', arguments: {
+        command: "printf 'Child command bytes' > proof.txt; printf 'Created by child' > child-created.txt; pwd" } } };
+      const result = JSON.parse(body.messages.findLast(message => message.role === 'tool').content);
+      assert.equal(result.exit_code, 0);
+      assert.match(result.stdout, /child-workspaces\/.+\/work/);
+      return { text: 'The child command changed its own copy.' };
+    } });
+  let bindingFailure;
+  const bind = f.gateway.forChild.bind(f.gateway);
+  f.gateway.forChild = (agent, authority) => {
+    assert.throws(() => bind(agent, { ...authority, workspaceRoot: f.workspaceRoot }), /child_workspace_binding_changed/);
+    assert.throws(() => bind(agent, { ...authority, executionResource: { ...authority.executionResource, bindingDigest: '0'.repeat(64) } }), /child_command_resource_changed/);
+    try { return bind(agent, authority); } catch (error) { bindingFailure = error; throw error; }
+  };
+  try { await f.host.executeTurn(f.payload); } catch (error) { throw bindingFailure ?? f.dispatchErrors.at(-1) ?? error; }
+  const parent = f.ledger.sessionHead(f.scope, 'parent-session'), reservation = parent.childBudgetReservations[0];
+  assert.ok(reservation);
+  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(child.snapshot.phase, 'completed');
+  const binding = child.configuration.hostRecoveryBinding.childWorkspace;
+  const resource = child.configuration.hostRecoveryBinding.childExecutionResource;
+  assert.equal(resource.contract, 'agentkit.child-local-command-resource/v1');
+  assert.equal(resource.workspaceBindingDigest, createHash('sha256').update(canonical(binding)).digest('hex'));
+  assert.equal(child.configuration.backgroundNotificationPolicy, 'completed-before-model/v1');
+  assert.ok(child.configuration.limits.effectTimeoutMs > child.configuration.tools.find(tool => tool.name === 'run_command').timeoutMs);
+  assert.equal(child.configuration.limits.maxWallMs, 120000, 'tool admission does not enlarge the role wall budget');
+  const root = join(f.root, 'native-harness', 'child-workspaces', binding.isolationId, 'work');
+  assert.equal(child.configuration.modelSurface.environment.cwd, root);
+  assert.equal(child.configuration.modelSurface.environment.commandCwd, root);
+  assert.equal(child.configuration.modelSurface.environment.commandBackend, 'local_process');
+  assert.equal(await readFile(join(root, 'proof.txt'), 'utf8'), 'Child command bytes');
+  assert.equal(await readFile(join(root, 'child-created.txt'), 'utf8'), 'Created by child');
+  assert.equal(await readFile(join(f.workspaceRoot, 'proof.txt'), 'utf8'), 'Actual child evidence');
+  await assert.rejects(readFile(join(f.workspaceRoot, 'child-created.txt')), { code: 'ENOENT' });
+  assert.deepEqual(child.snapshot.workspaceModifiedPaths.sort(), ['child-created.txt', 'proof.txt']);
+  assert.equal(f.dispatches.filter(row => row.name === 'run_command').length, 1);
+});
+
+test('child background commands retain child-owned handles and collect output through the same resource', { timeout: 30000 }, async t => {
+  const f = await setup(t, { sqlite: true, childTool: 'native_delegate', governed: true,
+    boundTools: ['run_command', 'read_command_output'],
+    role: { tools: ['run_command', 'read_command_output'], maxTurns: 4, maxToolCalls: 3 },
+    childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'run_command', arguments: {
+        command: "sleep 0.05; printf 'Child background output'", background: true } } };
+      const launches = body.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content));
+      const launch = launches.find(result => result.task_id);
+      assert.ok(launch?.task_id);
+      if (index === 2) return { call: { name: 'read_command_output', arguments: { task_id: launch.task_id, wait_seconds: 1 } } };
+      assert.ok(launches.some(result => result.stdout?.includes('Child background output')));
+      return { text: 'Collected the existing child command output.' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const reservation = f.ledger.sessionHead(f.scope, 'parent-session').childBudgetReservations[0];
+  const child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(child.snapshot.phase, 'completed'); assert.equal(child.snapshot.backgroundCommands.length, 1);
+  assert.equal(child.snapshot.backgroundCommands[0].ref.sourceRunId, child.snapshot.runId);
+  assert.equal(child.snapshot.backgroundCommands[0].notified, true);
+  assert.equal(f.dispatches.filter(row => row.name === 'run_command').length, 1, 'collecting never relaunches a job');
+});
+
+test('parallel-safe roles cannot acquire a mutable command resource', async t => {
+  const f = await setup(t, { boundTools: ['run_command'], role: { tools: ['run_command'], concurrentSafe: true } });
+  await assert.rejects(f.host.executeTurn(f.payload), /child_command_resource_unavailable/);
+  assert.equal(f.requests.length, 0); assert.equal(f.dispatches.length, 0);
+});
+
+test('a child command reader cannot borrow its parent command handle', { timeout: 30000 }, async t => {
+  let parentTask;
+  const f = await setup(t, { sqlite: true, governed: true, childTool: 'native_delegate',
+    boundTools: ['run_command', 'read_command_output'], role: { tools: ['read_command_output'] },
+    parentPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'run_command', arguments: { command: "printf 'Parent private output'", background: true } } };
+      if (index === 2) {
+        parentTask = JSON.parse(body.messages.findLast(message => message.role === 'tool').content).task_id;
+        assert.ok(parentTask);
+        return { call: { name: 'native_delegate', arguments: { role: 'reader', task: 'Inspect your own command inventory' } } };
+      }
+      return { text: 'Child cannot read the parent-owned handle.' };
+    },
+    childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'read_command_output', arguments: { task_id: parentTask } } };
+      const result = body.messages.findLast(message => message.role === 'tool').content;
+      assert.match(result, /background_command_not_owned/); assert.doesNotMatch(result, /Parent private output/);
+      return { text: 'No child-owned command output exists.' };
+    } });
+  await f.host.executeTurn(f.payload);
+  assert.equal(f.dispatches.filter(row => row.name === 'run_command').length, 1);
+  const parent = f.ledger.sessionHead(f.scope, 'parent-session');
+  assert.equal(parent.phase, 'completed');
+  const reservation = parent.childBudgetReservations[0], child = f.ledger.load(reservation.childScope, reservation.childRunId);
+  assert.equal(child.snapshot.backgroundCommands.length, 0);
+});
+
+test('a cold Native Host owner continues child commands in the original workspace without replaying committed commands', { timeout: 30000 }, async t => {
+  let source;
+  const f = await setup(t, { sqlite: true, governed: true, childTool: 'native_delegate',
+    boundTools: ['run_command'], role: { tools: ['run_command'], maxTurns: 3, maxToolCalls: 2 },
+    parentPlan: async (_body, index) => index === 1 || index === 3 ? { call: { name: 'native_delegate', arguments: {
+      role: 'reader', task: index === 1 ? 'Create a child-owned file' : 'Read your original file',
+      ...(index === 3 ? { continuation_of: source } : {}) } } } : { text: 'Child command collected.' },
+    childPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'run_command', arguments: { command: "printf 'once\\n' >> child-command.txt" } } };
+      if (index === 3) return { call: { name: 'run_command', arguments: { command: 'cat child-command.txt' } } };
+      if (index === 4) assert.match(body.messages.findLast(message => message.role === 'tool').content, /once/);
+      return { text: 'Child command evidence.' };
+    } });
+  await f.host.executeTurn(f.payload);
+  const firstParent = f.ledger.sessionHead(f.scope, 'parent-session'), reservation = firstParent.childBudgetReservations[0];
+  source = reservation.childRunId;
+  const original = f.ledger.load(reservation.childScope, source);
+  await f.reopenHost();
+  f.payload.agent.session.append('turn/start', { turn: 2 });
+  await f.host.executeTurn({ ...f.payload, turn: 2, input: { ...f.payload.input, messages: [{ id: 'continue-command', role: 'user',
+    source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue the original child command evidence.' }] }] } });
+  const nextParent = f.ledger.sessionHead(f.scope, 'parent-session');
+  const next = f.ledger.load(reservation.childScope, nextParent.childRunIds[0]);
+  assert.equal(next.snapshot.parentRunId, source); assert.equal(next.snapshot.sessionId, original.snapshot.sessionId);
+  assert.deepEqual(next.configuration.hostRecoveryBinding, original.configuration.hostRecoveryBinding);
+  assert.deepEqual(f.ledger.load(reservation.childScope, source), original);
+  const binding = original.configuration.hostRecoveryBinding.childWorkspace;
+  assert.equal(await readFile(join(f.root, 'native-harness', 'child-workspaces', binding.isolationId, 'work', 'child-command.txt'), 'utf8'), 'once\n');
+  await assert.rejects(readFile(join(f.workspaceRoot, 'child-command.txt')), { code: 'ENOENT' });
+  assert.equal(f.dispatches.filter(row => row.name === 'run_command').length, 2);
+});
+
 const childMcpContract = { name: 'remote_lookup', executor: 'mcp', mcpResourceId: 'bound-catalog',
   parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false } };
+
+test('actual Studio gateway refuses a child capability mismatch before creating a child Run', async t => {
+  const f = await setup(t, { sqlite: true, childArguments: { required_tools: ['web_search'] } });
+  await f.host.executeTurn(f.payload);
+  const parent = f.ledger.list(f.scope, 'parent-session')[0];
+  assert.equal(parent.phase, 'completed'); assert.equal(f.childModels(), 0);
+  assert.deepEqual(parent.childBudgetReservations, []); assert.deepEqual(parent.childRunIds, []);
+  const record = f.ledger.load(f.scope, parent.runId);
+  assert.equal(record.configuration.childCapabilityPolicy, 'required-tools/v1');
+  const definition = record.configuration.tools.find(tool => tool.name === 'native_start_child');
+  assert.ok(definition.parameters.required.includes('required_tools'));
+  assert.match(definition.description, /read_workspace_file/);
+  assert.ok(record.receipts.some(receipt => receipt.result.results?.some(result =>
+    result.status === 'error' && result.content?.code === 'child_capability_unavailable' && result.content.executed === false)));
+});
 
 function enableParentPlan(f) {
   f.payload.input.assembly.sections = [];
@@ -754,8 +998,7 @@ test('SQLite Host borrows formal Skills into a child without inheriting the pare
       const saved = { ...structuredClone(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'signal'))), signal: request.signal };
       captured.push({ request: saved, execute });
       await assert.rejects(execute({ ...saved, scope: { ...saved.scope, tenantId: 'foreign' } }), /child_tool_not_bound/);
-      const foreignBuild = await execute({ ...saved, buildId: 'foreign-build' });
-      assert.notEqual(foreignBuild.status, 'ok');
+      await assert.rejects(execute({ ...saved, buildId: 'foreign-build' }), /tool_authority_stale/);
       return execute(request);
     };
     return port;
@@ -774,7 +1017,7 @@ test('SQLite Host borrows formal Skills into a child without inheriting the pare
   assert.deepEqual(results.map(result => result.status), ['error', 'ok', 'ok']);
   assert.equal(results[2].content.text, 'CHILD_SKILL_RESOURCE');
   assert.ok(captured.length >= 3);
-  assert.notEqual((await captured.at(-1).execute(captured.at(-1).request)).status, 'ok', 'completed child cannot replay a disclosure');
+  await assert.rejects(captured.at(-1).execute(captured.at(-1).request), /tool_authority_stale/, 'completed child cannot replay a disclosure');
 });
 
 test('Host inheritSkills false omits formal Skills and discovery metadata from the child', async t => {
@@ -1217,7 +1460,8 @@ for (const sqlite of [false, true]) {
       childResult: '{"count":2}', parentResult: '{"count":2}' });
     await fixture.host.executeTurn(fixture.payload);
     const parent = fixture.ledger.sessionHead(fixture.scope, 'parent-session');
-    assert.equal(parent.phase, 'completed'); assert.equal(parent.childRunIds.length, 1);
+    assert.equal(parent.phase, 'completed', parent.reason);
+    assert.equal(parent.childRunIds.length, 1);
     const recovery = readNativeRecoveryBinding(fixture.ledger.load(fixture.scope, parent.runId), {
       agentId: fixture.record.metadata.id, sessionId: 'parent-session', runId: parent.runId });
     assert.equal(recovery.agentRevision, 1); assert.equal(recovery.buildId, null);
@@ -1256,6 +1500,62 @@ for (const sqlite of [false, true]) {
     assert.ok(fixture.dispatches.some(item => item.name === 'native_child_control'));
   });
 }
+test('C4: Studio runs two differently bound child models concurrently with tool sets no broader than the parent', { timeout: 10000 }, async t => {
+  const both = Promise.withResolvers(), release = Promise.withResolvers(), entered = new Set(), counts = new Map();
+  const f = await setup(t, { sqlite: true, releasePending: () => release.resolve(),
+    additionalRoles: [{ name: 'reflector', instructions: 'Review evidence.', tools: ['read_workspace_file'],
+      modelProfileId: 'strong-profile', maxTurns: 3, maxToolCalls: 2 }],
+    beforeChildModel: async (_index, body) => {
+      if (entered.has(body.model)) return;
+      entered.add(body.model); if (entered.size === 2) both.resolve(); await release.promise;
+    },
+    parentPlan: async (_body, index) => index <= 2 ? { call: { name: 'native_start_child',
+      arguments: { role: index === 1 ? 'reader' : 'reflector', task: 'Read proof.txt', background: true } } }
+      : { text: 'Both role results received.' },
+    childPlan: async body => {
+      const count = (counts.get(body.model) ?? 0) + 1; counts.set(body.model, count);
+      return count === 1 ? { call: { name: 'read_workspace_file', arguments: { path: 'proof.txt' } } } : { text: 'Read-only evidence verified.' };
+    } });
+  const running = f.host.executeTurn(f.payload);
+  try {
+    await both.promise;
+    assert.deepEqual([...entered].sort(), ['child-model', 'strong-profile-model']);
+    const histories = f.ledger.list({ ...f.scope, agentId: `${f.scope.agentId}:child:reader` })
+      .concat(f.ledger.list({ ...f.scope, agentId: `${f.scope.agentId}:child:reflector` }));
+    assert.equal(histories.length, 2); assert.ok(histories.every(snapshot => snapshot.phase === 'requesting_model'));
+    for (const request of f.requests.filter(item => item.body.model !== 'parent-model')) {
+      const tools = request.body.tools.map(tool => tool.function.name);
+      assert.ok(tools.includes('read_workspace_file')); assert.equal(tools.includes('write_workspace_file'), false);
+      assert.equal(tools.includes('run_command'), false);
+    }
+  } finally { release.resolve(); }
+  await running;
+  assert.equal(f.ledger.sessionHead(f.scope, 'parent-session').childRunIds.length, 2);
+  assert.equal(f.dispatches.filter(call => call.name === 'read_workspace_file').length, 2);
+});
+
+test('C3: main conversation accepts inline user input while its background child remains active', { timeout: 10000 }, async t => {
+  const started = Promise.withResolvers(), release = Promise.withResolvers(); let injected = false;
+  const f = await setup(t, { sqlite: true, releasePending: () => release.resolve(),
+    beforeChildModel: async index => { if (index === 1) { started.resolve(); await release.promise; } },
+    parentPlan: async (body, index) => {
+      if (index === 1) return { call: { name: 'native_start_child', arguments: { role: 'reader', task: 'Read proof.txt', background: true } } };
+      assert.match(JSON.stringify(body.messages), /Reply to my additional question while the child works/);
+      release.resolve(); return { text: 'Main input handled and child evidence collected.' };
+    } });
+  f.payload.prepareInput = async () => {
+    if (injected) return { kind: 'enter', messages: [], assembly: f.payload.input.assembly };
+    await started.promise; injected = true;
+    return { kind: 'enter', assembly: f.payload.input.assembly, messages: [{ id: 'main-interjection', role: 'user',
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'Reply to my additional question while the child works' }] }] };
+  };
+  await f.host.executeTurn(f.payload);
+  const root = f.ledger.sessionHead(f.scope, 'parent-session');
+  assert.equal(root.phase, 'completed'); assert.equal(injected, true);
+  assert.equal(root.childBudgetReservations.length, 1);
+  assert.ok(root.childBudgetReservations[0].settledUsageDigest);
+});
+
 test('model arguments cannot select an unbound child profile', async t => {
   const fixture = await setup(t, { forged: true });
   await fixture.host.executeTurn(fixture.payload);
@@ -1316,7 +1616,7 @@ test(`${sqlite ? 'sqlite' : 'memory'}: continuation preserves source image histo
     assert.equal(next.descendantUsage.modelCalls, 1); assert.equal(next.descendantUsage.toolCalls, 0);
   } else {
     assert.equal(next.childRunIds.length, 0); assert.equal(childRequests.length, 2);
-    assert.match(next.messages.filter(message => message.role === 'tool').at(-1).content, /child_followup_model_image_unavailable/);
+    assert.ok(next.messages.some(message => message.role === 'tool' && /child_followup_model_image_unavailable/.test(message.content)));
     assert.equal(f.ledger.list(reservation.childScope).length, 1);
   }
 });

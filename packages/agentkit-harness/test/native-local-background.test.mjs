@@ -71,7 +71,7 @@ test('existing receipts remain readable when a replacement installation has no e
   const f = fixture(t), request = f.input('printf retained', { operationKey: 'lookup-only' });
   const h = await f.store.start(request); f.handles.push(h); await h.wait({ timeoutMs: 5000 });
   const copy = join(f.root, 'replacement'); mkdirSync(copy);
-  for (const file of ['local-background.mjs', 'local-command-state.mjs', 'local-process.mjs'])
+  for (const file of ['local-background.mjs', 'local-command-state.mjs', 'local-command-evidence.mjs', 'local-process.mjs', 'local-output-policy.mjs'])
     cpSync(new URL(file, import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/local-background')), join(copy, file));
   const replacement = await import(pathToFileURL(join(copy, 'local-background.mjs')).href);
   const store = new replacement.LocalCommandStore(f.config), same = await store.start(request);

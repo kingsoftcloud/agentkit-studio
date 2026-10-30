@@ -1,5 +1,11 @@
 @kingsoftcloud/agentkit-harness-ui — THIRD-PARTY NOTICES
 
+Browser response grouping follows the response classification and stable CUA
+stage semantics in ZCode packages/ui/src/v4/conversationCuaGroups.ts
+(reference commit 3c5b227649371507ddc4eb46ac5133afe6db1cab, Apache-2.0).
+It is reimplemented as a read-only ESM projection over Host response identities;
+the Apache-2.0 license text is included as LICENSE.
+
 This package is Apache-2.0 licensed (see LICENSE).
 
 Portions of the presentation semantics in the thought (reasoning) block —
@@ -99,3 +105,12 @@ and conversationLayout.ts of ZCode, revision
 3c5b227649371507ddc4eb46ac5133afe6db1cab, Apache-2.0.
 The host supplies committed activity facts, Git observations and navigation
 actions; this independent component carries no execution authority.
+
+src/explore-tool-call.mjs adapts packages/ui/src/lib/exploreToolCall.ts from
+ZCode revision 3c5b227649371507ddc4eb46ac5133afe6db1cab, Apache-2.0. The copied
+presentation classifier retains its command extraction and Explore/Execute
+rules, with TypeScript erased and application identity imports replaced by
+the independent tool identity registry. It never decides execution permissions.
+The stage grouping defaults and Explore count buckets in activity-groups.mjs
+follow that revision's v4/conversationAssistantWorkItems.ts and
+ToolCallBlocks/renderers/explore.tsx.

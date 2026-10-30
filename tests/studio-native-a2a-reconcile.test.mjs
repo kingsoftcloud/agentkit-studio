@@ -83,6 +83,7 @@ async function setup(t) {
         ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
     } };
   const ctx = { effect: install => install(), get: key => services[key], tools: {
+    resultRetentions: ['caller/v1'],
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(exec) { const tool = registry.get(exec.name), value = await tool.execute(exec.arguments, exec);
       return { isError: false, value, content: tool.output.render(exec.arguments, value) }; },

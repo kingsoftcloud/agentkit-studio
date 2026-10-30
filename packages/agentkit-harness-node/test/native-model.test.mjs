@@ -8,7 +8,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deepEqual as looseEqual } from 'node:assert';
 import http from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createNativeModelPort } from '../src/native/model-port.mjs';
+import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 import { readModelSse } from '../src/native/model-sse.mjs';
 import { admitInlineReasoningPolicy, inlineReasoningMarker, projectInlineReasoning } from '../src/native/model-inline-reasoning.mjs';
 import { admitProviderCompatibilityPolicy } from '../src/native/model-provider-compat.mjs';
@@ -31,6 +35,12 @@ test('idle policy HTTP: hidden reasoning keeps a long real stream alive across a
     assert.equal(result.finalText, 'Answer'); assert.equal(result.usage.modelCalls, 1); assert.equal(server.requests.length, 1);
     assert.deepEqual(seen, [{ kind: 'text', text: 'Answer' }]);
     const receipt = store.load(coreScope, 'run').receipts[0];
+    assert.equal(receipt.result.transportObservation.phase, 'stream');
+    assert.ok(receipt.result.transportObservation.elapsedMs > 600);
+    assert.ok(receipt.result.transportObservation.bodyBytes > 0);
+    assert.ok(receipt.result.transportObservation.lastOutputMs >= receipt.result.transportObservation.headersMs);
+    assert.equal(receipt.result.transportObservation.lastToolDeltaMs, null);
+    assert.ok(store.load(coreScope, 'run').events.some(event => event.kind === 'model.transport_observed'));
     assert.equal(receipt.result.providerReplay.reasoningContent, 'private '.repeat(14));
     assert.deepEqual(receipt.result.displayStream.records.map(record => record.event), seen);
   });
@@ -42,6 +52,19 @@ test('idle policy HTTP: comments cannot keep a silent provider alive', async () 
   makeRequest({ profile: makeProfile({ streaming: true, streamTimeoutPolicy: 'idle/v1', requestTimeoutMs: 80 }) }));
   assert.equal(result.kind, 'provider_retryable_error'); assert.equal(result.failureKind, 'request_timeout');
   assert.equal(events.length, 0); assert.equal(requests.length, 1);
+  assert.equal(result.transportObservation.phase, 'stream');assert.ok(result.transportObservation.bodyBytes > 0);
+  assert.equal(result.transportObservation.lastFrameMs, null);assert.equal(result.transportObservation.lastOutputMs, null);
+});
+
+test('transport observation distinguishes waiting for headers from a silent response stream', async () => {
+  await withServer(async () => { await sleep(150);return { headers: SSE_HEADERS, body: sseDone() }; }, async server => {
+    const port = makePort({ port: server.port, protocol: 'openai-chat' });
+    const result = await port.generate(makeRequest({ profile: makeProfile({ requestTimeoutMs: 60 }) }));
+    assert.equal(result.failureKind, 'request_timeout');assert.equal(result.transportObservation.phase, 'headers');
+    assert.equal(result.transportObservation.headersMs, null);assert.equal(result.transportObservation.lastByteMs, null);
+    assert.equal(result.transportObservation.bodyBytes, 0);assert.ok(result.transportObservation.elapsedMs >= 50);
+    assert.doesNotMatch(JSON.stringify(result.transportObservation), /fake-key|http:|localhost/);
+  });
 });
 
 test('thinking display HTTP: OpenAI display and private replay are independent', async t => {
@@ -72,6 +95,66 @@ test('provider compatibility HTTP: pinned options reach the actual buffered requ
   });
 });
 
+test('tool argument streaming HTTP: provider capability preserves explicit options and frozen legacy requests', async () => {
+  for (const [contract, rule, model, streaming, parameters, tools, expected] of [
+    ['provider-compat/v2', 'auto', 'glm-5.2', true, {}, undefined, true],
+    ['provider-compat/v2', 'kspmas-gateway', 'glm-5.2', true, {}, undefined, true],
+    ['provider-compat/v2', 'zai', 'glm-5.3', true, { tool_stream: false }, undefined, false],
+    ['provider-compat/v1', 'zai', 'glm-5.2', true, {}, undefined, undefined],
+    [undefined, 'zai', 'glm-5.2', true, {}, undefined, undefined],
+    ['provider-compat/v1', 'zai', 'glm-5.2', true, { tool_stream: true }, undefined, true],
+    ['provider-compat/v2', 'strict-openai', 'glm-5.2', true, {}, undefined, undefined],
+    ['provider-compat/v2', 'zai', 'glm-future', true, {}, undefined, undefined],
+    ['provider-compat/v2', 'zai', 'glm-5.2', false, {}, undefined, undefined],
+    ['provider-compat/v2', 'zai', 'glm-5.2', true, {}, [], undefined],
+  ]) {
+    const { requests } = await collect(null, 'openai-chat', () => ({ headers: JSON_HEADERS, body: '{}' }),
+      makeRequest({ tools, profile: makeProfile({ streaming,
+        ...(contract ? { providerCompatibilityPolicy: { contract, rule } } : {}) }) }),
+      { bindingExtra: { model, parameters } });
+    assert.equal(requests.length, 1);
+    assert.equal(JSON.parse(requests[0].body).tool_stream, expected, `${contract}/${rule}/${model}/${streaming}`);
+  }
+});
+
+test('tool argument streaming HTTP: large incremental calls cross the idle duration and seal only complete arguments', async () => {
+  const content = 'large file content '.repeat(500), argumentsText = JSON.stringify({ path: 'index.html', content });
+  const parts = argumentsText.match(/.{1,1800}/gs);
+  for (const contract of ['provider-compat/v1', 'provider-compat/v2']) {
+    const { result, events, requests } = await collect(null, 'openai-chat', (_, body) => ({ headers: SSE_HEADERS,
+      body: (async function* () {
+        if (!JSON.parse(body).tool_stream) yield { delay: 450 };
+        for (let index = 0; index < parts.length; index++) {
+          yield sse(ochunk({ tool_calls: [{ index: 0, ...(index ? {} : { id: 'write-1', type: 'function' }),
+            function: { ...(index ? {} : { name: 'write' }), arguments: parts[index] } }] }));
+          yield { delay: 60 };
+        }
+        yield sse(ochunk({}, 'tool_calls')); yield sseDone();
+      })() }), makeRequest({ profile: makeProfile({ streaming: true, streamTimeoutPolicy: 'idle/v1', requestTimeoutMs: 200,
+        providerCompatibilityPolicy: { contract, rule: 'zai' } }), tools: [makeTool('write')] }),
+      { bindingExtra: { model: 'glm-5.2' } });
+    assert.equal(requests.length, 1, 'the model port cannot retry a timed-out attempt');
+    if (contract === 'provider-compat/v1') {
+      assert.equal(result.kind, 'provider_retryable_error');assert.equal(result.failureKind, 'request_timeout');
+      assert.deepEqual(result.toolCalls, []);
+    } else {
+      assert.equal(result.kind, 'tool_calls');assert.equal(result.toolCalls.length, 1);
+      assert.equal(result.toolCalls[0].arguments.path, 'index.html');assert.equal(result.toolCalls[0].arguments.content, content);
+      assert.ok(events.filter(event => event.kind === 'tool_delta').length > 1);
+      assert.ok(result.transportObservation.elapsedMs > 200);
+      assert.ok(result.transportObservation.lastToolDeltaMs > result.transportObservation.headersMs);
+    }
+  }
+});
+
+test('tool argument streaming HTTP: invalid explicit capability option fails before dispatch', async () => {
+  const { result, requests } = await collect(null, 'openai-chat', () => assert.fail('invalid request cannot dispatch'),
+    makeRequest({ profile: makeProfile({ providerCompatibilityPolicy: admitProviderCompatibilityPolicy('zai') }) }),
+    { bindingExtra: { model: 'glm-5.2', parameters: { tool_stream: 'yes' } } });
+  assert.equal(result.kind, 'provider_terminal_error');assert.equal(result.failureKind, 'invalid_response');
+  assert.equal(requests.length, 0);
+});
+
 test('inline reasoning: reference provider selection preserves unrelated and legacy content', () => {
   const text = 'private</think>public', auto = admitInlineReasoningPolicy();
   for (const [policy, binding, expected] of [
@@ -86,7 +169,7 @@ test('inline reasoning: reference provider selection preserves unrelated and leg
 });
 
 test('inline reasoning: real HTTP stream and buffered responses follow the Python projection', async t => {
-  const profile = makeProfile({ inlineReasoningPolicy: admitInlineReasoningPolicy('zai') });
+  const profile = makeProfile({ inlineReasoningPolicy: admitInlineReasoningPolicy('zai', { contract: 'profiled-content/v1' }) });
   for (const streaming of [false, true]) for (const [chunks, expected] of [
     [['The screenshot shows 6428.</thi', 'nk>64', '28'], '6428'],
     [['Ordinary ', 'answer'], 'Ordinary answer'],
@@ -116,6 +199,190 @@ test('inline reasoning: incomplete streams never release pending private content
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // --- fixtures -------------------------------------------------------------
+
+test('failure diagnostic HTTP: protocol failures retain typed provenance without dispatching tool fragments or copying provider data', async () => {
+  const cases = [
+    ['usage_conflict', [sse(ochunk({}, null, { usage: { prompt_tokens: 9, completion_tokens: 1 } })),
+      sse(ochunk({}, null, { usage: { prompt_tokens: 9, completion_tokens: 2 } }))], 1],
+    ['identity_conflict', [sse(ochunk({})), sse({ ...ochunk({}), id: 'other-private-completion' })], 1],
+    ['json_invalid', [sse('{PRIVATE_PROVIDER_BYTES')], 0],
+    ['provider_error', [sse({ error: { message: 'PRIVATE_PROVIDER_BYTES fake-key', code: 'private-code' } })], 0],
+    ['delta_invalid', [sse(ochunk({ content: { secret: 'PRIVATE_PROVIDER_BYTES' } }))], 0],
+    ['choice_invalid', [sse({ ...ochunk({}), choices: [{ index: 1, delta: {} }] })], 0],
+  ];
+  for (const [code, body, frameIndex] of cases) {
+    const { result, requests } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS, body }), makeRequest());
+    assert.equal(result.kind, 'provider_terminal_error', code);
+    assert.deepEqual(result.toolCalls, [], code);assert.equal(requests.length, 1);
+    assert.deepEqual(result.failureDiagnostic, { contract: code === 'usage_conflict'
+      ? 'model-failure-diagnostic/v2' : 'model-failure-diagnostic/v1', protocol: 'openai-chat', phase: 'stream', code, frameIndex,
+      ...(code === 'usage_conflict' ? { usageConflict: { previousFrameIndex: 0,
+        previous: { inputTokens: 9, outputTokens: 1 }, reported: { inputTokens: 9, outputTokens: 2 } } } : {}) });
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_PROVIDER_BYTES|fake-key|private-code|other-private-completion/);
+  }
+});
+
+test('usage conflict HTTP: retain only the two validated counter snapshots and their frame positions', async () => {
+  const usage = (output, cached, reasoning) => ({ prompt_tokens: 9, completion_tokens: output,
+    prompt_tokens_details: { cached_tokens: cached }, completion_tokens_details: { reasoning_tokens: reasoning },
+    private: 'PRIVATE_PROVIDER_BYTES fake-key' });
+  const { result, requests } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS, body: [
+    sse(ochunk({ tool_calls: [{ index: 0, id: 'pending', type: 'function', function: { name: 'read', arguments: '{}' } }] },
+      null, { usage: usage(1, 4, 1) })),
+    sse(ochunk({})), sse(ochunk({}, null, { usage: usage(1, 4, 1) })),
+    sse(ochunk({}, null, { usage: usage(2, 5, 2) })), sseDone(),
+  ] }), makeRequest());
+  assert.equal(result.kind, 'provider_terminal_error');assert.equal(requests.length, 1);
+  assert.deepEqual(result.toolCalls, []);
+  assert.equal(result.usage.outputTokens, 1, 'Rejected report does not silently replace accounted usage');
+  assert.deepEqual(result.failureDiagnostic, { contract: 'model-failure-diagnostic/v2', protocol: 'openai-chat',
+    phase: 'stream', code: 'usage_conflict', frameIndex: 3, usageConflict: { previousFrameIndex: 2,
+      previous: { inputTokens: 9, outputTokens: 1, cachedInputTokens: 4, reasoningTokens: 1 },
+      reported: { inputTokens: 9, outputTokens: 2, cachedInputTokens: 5, reasoningTokens: 2 } } });
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_PROVIDER_BYTES|fake-key/);
+});
+
+test('cumulative usage HTTP: recorded live counter growth updates one request total and final details can arrive late', async () => {
+  const usage = (output, details = {}) => ({ prompt_tokens: 45666, completion_tokens: output, ...details });
+  const { result, requests } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS, body: [
+    sse(ochunk({ reasoning_content: 'First' }, null, { usage: usage(1, {
+      prompt_tokens_details: { cached_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 1 } }) })),
+    sse(ochunk({ reasoning_content: 'Second' }, null, { usage: usage(2, {
+      prompt_tokens_details: { cached_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 2 } }) })),
+    sse(ochunk({ content: 'Delivered.' }, 'stop', { usage: usage(5) })),
+    sse({ ...ochunk(), choices: [], usage: usage(7, { prompt_tokens_details: { cached_tokens: 4000 },
+      completion_tokens_details: { reasoning_tokens: 2 } }) }), sseDone(),
+  ] }), makeRequest({ profile: makeProfile({ chatUsagePolicy: 'cumulative-snapshots/v1' }) }));
+  assert.equal(result.kind, 'final_candidate'); assert.equal(result.text, 'Delivered.'); assert.equal(requests.length, 1);
+  assert.equal(result.usageReported, true); assert.equal(result.usage.inputTokens, 45666);
+  assert.equal(result.usage.outputTokens, 7, 'snapshots are replaced, never added as deltas');
+  assert.equal(result.usage.reasoningTokens, 2); assert.equal(result.usage.cachedInputTokens, 4000);
+});
+
+test('cumulative usage HTTP: absent final statistics stay incomplete without discarding a sealed answer or inventing zero usage', async () => {
+  for (const complete of [false, true]) {
+    const { result } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS, body: [
+      sse(ochunk({}, null, { usage: { prompt_tokens: 9, completion_tokens: 1 } })),
+      sse(ochunk({ content: 'Answer' }, complete ? 'stop' : null)), ...(complete ? [sseDone()] : []),
+    ] }), makeRequest({ profile: makeProfile({ chatUsagePolicy: 'cumulative-snapshots/v1' }) }));
+    assert.equal(result.kind, complete ? 'final_candidate' : 'provider_retryable_error');
+    assert.equal(result.usageReported, false); assert.equal(result.usage.inputTokens, 9); assert.equal(result.usage.outputTokens, 1);
+    assert.deepEqual(result.toolCalls, []);
+  }
+});
+
+test('cumulative usage HTTP: a regression or contradictory second final report remains a typed conflict', async () => {
+  const usage = output => ({ prompt_tokens: 9, completion_tokens: output });
+  for (const body of [
+    [sse(ochunk({}, null, { usage: usage(2) })), sse(ochunk({}, null, { usage: usage(1) }))],
+    [sse(ochunk({ content: 'Answer' }, 'stop')), sse({ ...ochunk(), choices: [], usage: usage(2) }),
+      sse({ ...ochunk(), choices: [], usage: usage(3) })],
+  ]) {
+    const { result } = await collect(null, 'openai-chat', () => ({ headers: SSE_HEADERS, body: [...body, sseDone()] }),
+      makeRequest({ profile: makeProfile({ chatUsagePolicy: 'cumulative-snapshots/v1' }) }));
+    assert.equal(result.kind, 'provider_terminal_error'); assert.equal(result.failureDiagnostic.code, 'usage_conflict');
+    assert.equal(result.usageReported, false, 'conflicting reports cannot establish complete billing even after finish');
+    assert.deepEqual(result.toolCalls, []); assert.equal(result.usage.outputTokens, 2);
+  }
+});
+
+test('cumulative usage HTTP and SQLite: a sealed tool batch executes once and its request totals survive cold replay', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'native-cumulative-usage-'));
+  let store = new SqliteRunStore(join(root, 'runs.sqlite'));
+  t.after(() => { store?.close(); rmSync(root, { recursive: true, force: true }); });
+  let generations = 0, executions = 0;
+  await withServer(() => ({ headers: SSE_HEADERS, body: ++generations === 1 ? [
+    sse(ochunk({ tool_calls: [{ index: 0, id: 'read-1', type: 'function', function: { name: 'read', arguments: '{' } }] },
+      null, { usage: { prompt_tokens: 9, completion_tokens: 1 } })),
+    sse(ochunk({ tool_calls: [{ index: 0, function: { arguments: '}' } }] },
+      null, { usage: { prompt_tokens: 9, completion_tokens: 2 } })),
+    sse(ochunk({}, 'tool_calls', { usage: { prompt_tokens: 9, completion_tokens: 3 } })), sseDone(),
+  ] : [sse(ochunk({ content: 'Delivered.' }, 'stop', { usage: { prompt_tokens: 10, completion_tokens: 4 } })), sseDone()] }), async server => {
+    const { config, snapshot } = coreFixture({ tools: [coreTool()], profile: makeProfile({
+      chatUsagePolicy: 'cumulative-snapshots/v1', compatibilityDigest: 'cumulative-proof/v1', requestTimeoutMs: 2000 }) });
+    store.create(config, snapshot);
+    const ports = { model: makePort({ port: server.port, protocol: 'openai-chat' }),
+      tools: { execute: async () => { executions++; return { status: 'ok', content: 'Observed once' }; } } };
+    const result = await new NativeKernel({ store, digest: coreDigest, owner: 'cumulative-proof', ports }).runUntilIdle(coreScope, 'run');
+    assert.equal(result.phase, 'completed'); assert.equal(executions, 1); assert.equal(server.requests.length, 2);
+    assert.equal(result.usage.inputTokens, 19); assert.equal(result.usage.outputTokens, 7);
+    assert.notEqual(result.diagnostics.providerUsageIncomplete, true);
+    store.close(); store = new SqliteRunStore(join(root, 'runs.sqlite'));
+    assert.equal((await new NativeKernel({ store, digest: coreDigest, owner: 'cold-owner', ports }).runUntilIdle(coreScope, 'run')).phase, 'completed');
+    assert.equal(executions, 1); assert.equal(server.requests.length, 2);
+  });
+});
+
+test('failure diagnostic HTTP: buffered framing, transport limits and HTTP authentication stay distinct', async () => {
+  const cases = [
+    [{ headers: JSON_HEADERS, body: '{private' }, {}, 'buffered', 'json_invalid'],
+    [{ headers: SSE_HEADERS, body: 'data: {"private":1}' }, {}, 'stream', 'framing_invalid'],
+    [{ headers: SSE_HEADERS, body: sse(ochunk({ content: 'x'.repeat(500) })) }, { maxResponseBytes: 50 }, 'stream', 'body_limit'],
+    [{ status: 401, headers: JSON_HEADERS, body: '{"error":"private"}' }, {}, 'http-error', 'http_authentication'],
+  ];
+  for (const [wire, opts, phase, code] of cases) {
+    const { result } = await collect(null, 'openai-chat', () => wire, makeRequest(), opts);
+    assert.equal(result.kind, 'provider_terminal_error');assert.equal(result.failureDiagnostic.phase, phase);
+    assert.equal(result.failureDiagnostic.code, code);
+    assert.doesNotMatch(JSON.stringify(result), /"private"|fake-key/);
+  }
+});
+
+test('failure diagnostic HTTP: a rejected real stream is durable through kernel terminal events', async () => {
+  await withServer(() => ({ headers: SSE_HEADERS, body: [sse(ochunk({}, null,
+    { usage: { prompt_tokens: 9, completion_tokens: 1 } })), sse({ ...ochunk({}), id: 'different' })] }), async server => {
+    const { config, snapshot } = coreFixture({ profile: makeProfile({ compatibilityDigest: 'failure-diagnostic/v1', requestTimeoutMs: 2000, maxProviderRetries: 0 }) });
+    const store = new MemoryRunStore();store.create(config, snapshot);
+    const kernel = new NativeKernel({ store, digest: coreDigest, owner: 'failure-diagnostic',
+      ports: { model: makePort({ port: server.port, protocol: 'openai-chat' }) } });
+    const result = await kernel.runUntilIdle(coreScope, 'run');
+    assert.equal(result.phase, 'failed');assert.equal(result.reason, 'provider_terminal_error');
+    const record = store.load(coreScope, 'run');
+    const receipt = record.receipts.find(r => r.result.failureDiagnostic);
+    assert.equal(receipt.result.failureDiagnostic.code, 'identity_conflict');
+    assert.deepEqual(record.events.find(e => e.kind === 'model.failure_observed').payload, receipt.result.failureDiagnostic);
+    assert.deepEqual(record.events.find(e => e.kind === 'run.terminal').payload.modelFailure, receipt.result.failureDiagnostic);
+    assert.equal(server.requests.length, 1);assert.equal(result.usage.toolCalls, 0);
+  });
+});
+
+test('usage conflict provenance survives SQLite reopen; partial tool calls and terminal attempts never replay', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'native-usage-conflict-'));
+  let store = new SqliteRunStore(join(root, 'runs.sqlite'));
+  t.after(() => { store?.close(); rmSync(root, { recursive: true, force: true }); });
+  await withServer(() => ({ headers: SSE_HEADERS, body: [
+    sse(ochunk({ tool_calls: [{ index: 0, id: 'read-1', type: 'function', function: { name: 'read', arguments: '{}' } }] },
+      null, { usage: { prompt_tokens: 9, completion_tokens: 1 } })),
+    sse(ochunk({}, 'tool_calls', { usage: { prompt_tokens: 9, completion_tokens: 2, private: 'PRIVATE_PROVIDER_BYTES' } })),
+    sseDone(),
+  ] }), async server => {
+    const { config, snapshot } = coreFixture({ tools: [coreTool()], profile: makeProfile({
+      compatibilityDigest: 'usage-conflict-proof/v1', requestTimeoutMs: 2000, maxProviderRetries: 0 }) });
+    store.create(config, snapshot);
+    let executions = 0;
+    const ports = { model: makePort({ port: server.port, protocol: 'openai-chat' }),
+      tools: { execute: async () => { executions++; throw Error('Rejected fragments must never execute'); } } };
+    const kernel = new NativeKernel({ store, digest: coreDigest, owner: 'usage-conflict-proof', ports });
+    const result = await kernel.runUntilIdle(coreScope, 'run');
+    assert.equal(result.phase, 'failed');assert.equal(result.reason, 'provider_terminal_error');
+    const diagnostic = result.diagnostics.lastModelFailure;
+    assert.deepEqual(diagnostic, { contract: 'model-failure-diagnostic/v2', protocol: 'openai-chat', phase: 'stream',
+      code: 'usage_conflict', frameIndex: 1, usageConflict: { previousFrameIndex: 0,
+        previous: { inputTokens: 9, outputTokens: 1 }, reported: { inputTokens: 9, outputTokens: 2 } } });
+    store.close(); store = null;
+    store = new SqliteRunStore(join(root, 'runs.sqlite'));
+    const record = store.load(coreScope, 'run');
+    assert.deepEqual(record.snapshot.diagnostics.lastModelFailure, diagnostic);
+    assert.deepEqual(record.receipts.find(receipt => receipt.result.failureDiagnostic)?.result.failureDiagnostic, diagnostic);
+    assert.deepEqual(record.events.find(event => event.kind === 'model.failure_observed')?.payload, diagnostic);
+    assert.deepEqual(record.events.find(event => event.kind === 'run.terminal')?.payload.modelFailure, diagnostic);
+    assert.deepEqual(store.observation(coreScope, 'run').snapshot.diagnostics.lastModelFailure, diagnostic);
+    assert.doesNotMatch(JSON.stringify(record), /PRIVATE_PROVIDER_BYTES/);
+    const restored = new NativeKernel({ store, digest: coreDigest, owner: 'usage-conflict-cold', ports });
+    assert.equal((await restored.runUntilIdle(coreScope, 'run')).phase, 'failed');
+    assert.equal(server.requests.length, 1);assert.equal(executions, 0);
+  });
+});
 
 function makeProfile(overrides = {}) {
   return {
@@ -226,6 +493,34 @@ const ae = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 
 const SSE_HEADERS = { 'content-type': 'text/event-stream' };
 const JSON_HEADERS = { 'content-type': 'application/json' };
+
+for (const streaming of [false, true]) for (const boundary of ['text', 'tool', 'empty']) {
+  test(`response boundary HTTP: chat ${boundary}, streaming=${streaming}`, async () => {
+    const content = boundary === 'empty' ? '' : 'Visible prefix';
+    const tool_calls = boundary === 'tool' ? [{ index: 0, id: 'partial', type: 'function', function: { name: 'read', arguments: '{' } }] : [];
+    const delta = { content, reasoning_content: 'private', ...(tool_calls.length ? { tool_calls } : {}) };
+    const { result } = await collect(0, 'openai-chat', () => streaming
+      ? { headers: SSE_HEADERS, body: [sse(ochunk(delta, 'length')), sseDone()] }
+      : { headers: JSON_HEADERS, body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { role: 'assistant', ...delta } }] }) },
+      makeRequest({ profile: makeProfile({ streaming }) }));
+    assert.equal(result.kind, 'output_limit'); assert.equal(result.text, content); assert.deepEqual(result.toolCalls, []);
+    assert.equal(result.outputBoundary, boundary === 'text' ? 'assistant-text/v1' : boundary === 'tool' ? 'tool-call/v1' : 'no-visible-output/v1');
+  });
+}
+
+test('response boundary HTTP: actual chat adapter and Native journal continue a report without advertising or dispatching tools', async () => {
+  await withServer((_request, _body, index) => ({ headers: JSON_HEADERS,
+    body: JSON.stringify({ choices: [{ finish_reason: index ? 'stop' : 'length', message: { role: 'assistant', content: index ? 'suffix.' : 'Report ' } }] }) }), async server => {
+    const { config, snapshot } = coreFixture({ outputRecoveryPolicy: 'response-boundary/v2', tools: [coreTool()],
+      profile: makeProfile({ streaming: false, compatibilityDigest: 'boundary-http/v1', requestTimeoutMs: 5000 }) });
+    const store = new MemoryRunStore(); store.create(config, snapshot);
+    const result = await new NativeKernel({ store, digest: coreDigest, owner: 'boundary-http',
+      ports: { model: makePort({ port: server.port, protocol: 'openai-chat' }), tools: { execute: async () => assert.fail('No tool may execute') } } }).runUntilIdle(coreScope, 'run');
+    assert.equal(result.finalText, 'Report suffix.'); assert.equal(server.requests.length, 2);
+    const bodies = server.requests.map(request => JSON.parse(request.body));
+    assert.ok(bodies[0].tools?.length); assert.equal(bodies[1].tools, undefined);
+  });
+});
 
 for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages']) test(`buffered thinking display HTTP: ${protocol} separates public content from replay and opaque bytes`, async t => {
   const body = protocol === 'openai-chat' ? { choices: [{ finish_reason: 'stop', message: {
@@ -645,6 +940,7 @@ for (const streaming of [false, true]) {
         stop_reason: 'model_context_window_exceeded', usage: { input_tokens: 7, output_tokens: 3 } }) }, makeRequest());
     assert.equal(result.kind, 'output_limit');
     assert.equal(result.text, 'Continue this');
+    assert.equal(result.outputBoundary, 'assistant-text/v1');
     assert.equal(result.textCommitVersion, 'provider-finished-text/v1');
     assert.deepEqual(result.toolCalls, []);
     assert.equal(result.usage.inputTokens, 7);
@@ -657,6 +953,7 @@ test('zcode alignment: context-window truncation cannot dispatch a parseable but
     body: JSON.stringify({ content: [{ type: 'tool_use', id: 'unfinished', name: 'read', input: {} }],
       stop_reason: 'model_context_window_exceeded', usage: { input_tokens: 7, output_tokens: 3 } }) }), makeRequest());
   assert.equal(result.kind, 'output_limit');
+  assert.equal(result.outputBoundary, 'tool-call/v1');
   assert.deepEqual(result.toolCalls, []);
 });
 

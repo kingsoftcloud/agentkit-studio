@@ -274,6 +274,26 @@ function workspaceFixture() {
   } };
 }
 
+skip('actual workspace browser enforces its advertised network boundary and can verify a local replacement without external requests', async () => {
+  const fixture = workspaceFixture();
+  try {
+    writeFileSync(join(fixture.root, 'app', 'index.html'), '<!doctype html><title>Boundary</title><script src="https://external.invalid/dependency.js"></script>');
+    const { port } = await fixture.openOwner();
+    const capability = port.capability;
+    assert.equal(capability.availability, 'available'); assert.equal(capability.externalNetwork, false);
+    assert.equal(capability.networkPolicy, 'workspace-origin/v1'); assert.deepEqual(capability.viewport, [1280, 720]);
+    const request = (...args) => ({ ...fixture.request(...args), definition: port.definition });
+    const denied = await port.execute(request('external-dependency'));
+    assert.equal(denied.status, 'error'); assert.equal(denied.content.rendered, true);
+    assert.match(denied.content.request_failures.join('\n'), /network_denied: https:\/\/external\.invalid\/dependency\.js/);
+    writeFileSync(join(fixture.root, 'app', 'index.html'), '<!doctype html><title>Local dependency</title><script src="app.js"></script><button>Ready</button>');
+    const local = await port.execute(request('local-dependency', [{ type: 'reload' }]));
+    assert.equal(local.status, 'ok'); assert.equal(local.content.status_code, 200);
+    assert.equal(local.content.request_failures.length, 0); assert.equal(local.content.page_errors.length, 0);
+    assert.equal(port.capability.externalNetwork, false, 'successful local fallback did not widen permissions');
+  } finally { await fixture.close(); }
+});
+
 skip('real Studio page owner serves workspace assets, retains interactions and captures fresh cold verification', async () => {
   const fixture = workspaceFixture();
   try {
@@ -354,4 +374,50 @@ skip('actual Chromium owner and reopened SQLite require new evidence without rep
     assert.deepEqual(done.browserReobservationRefs, []);
     assert.equal(fixture.trace.filter(row => row.action.kind === 'click').length, 1);
   } finally { store.close(); await fixture.close(); }
+});
+
+for (const stage of ['proposed', 'prepared']) skip(`Chromium + SQLite: lost owner retires a ${stage} click and completes a fresh capture in the same Run`, async () => {
+  const fixture = workspaceFixture(), filename = join(fixture.directory, 'run.sqlite');
+  let store = new SqliteRunStore(filename), recovering = false, freshRequested = false, models = 0;
+  const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
+  const runId = 'workspace-run';
+  try {
+    const original = await fixture.openOwner();
+    const config = configure({ profile: { profileId: 'fixture', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'live/v1' },
+      tools: [original.port.definition], contract: { objective: 'Inspect the actual page after recovery' },
+      hostBindingDigest: 'chromium-replan/v1', limits: { maxModelCalls: 5 } });
+    const ports = owner => ({ browser: owner, tools: owner, model: { generate: async request => {
+      models++;
+      if (recovering) {
+        const retired = request.messages.find(row => row.role === 'tool' && row.callId === 'old-action');
+        assert.ok(retired);assert.equal(JSON.parse(retired.content).executed, false);
+        if (freshRequested) return { kind: 'final_candidate', text: 'Fresh page observed; acceptance remains unverified.', toolCalls: [], usage: emptyUsage() };
+        freshRequested = true;
+      }
+      const id = recovering ? 'fresh-observation' : models === 1 ? 'initial-click' : 'old-action';
+      return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: id,
+        name: 'browser_inspect_workspace', arguments: { path: 'app', wait_ms: 0,
+          actions: recovering ? [{ type: 'reload' }] : [{ type: 'click', selector: '#start' }] } }] };
+    } } });
+    const first = new NativeKernel({ store, digest, owner: 'original', ports: ports(original.port), onCheckpoint: async snapshot => {
+      if (snapshot.phase !== 'executing_tools' || snapshot.pendingTools[0]?.callId !== 'old-action') return;
+      const pending = store.authority(SCOPE, runId).pendingIntent;
+      if (stage === 'proposed' ? pending === null : pending?.status === 'prepared') throw Error('delivery boundary lost');
+    } });
+    first.start({ scope: SCOPE, runId, sessionId: 'session', turnId: '1', buildId: 'test', parentRunId: null, taskChainId: runId }, config);
+    await assert.rejects(first.runUntilIdle(SCOPE, runId), /delivery boundary lost/);
+    const before = store.load(SCOPE, runId), ref = before.snapshot.browserSessionRefs[0];
+    assert.equal(fixture.trace.filter(row => row.action.kind === 'click').length, 1);
+    await original.port.close();store.close();store = new SqliteRunStore(filename);
+    recovering = true;const replacement = await fixture.openOwner();
+    const done = await new NativeKernel({ store, digest, owner: 'replacement', ports: ports(replacement.port) }).runUntilIdle(SCOPE, runId);
+    assert.equal(done.runId, runId);assert.equal(done.phase, 'completed');assert.equal(done.outcome, 'unverified');
+    assert.equal(models, 4);assert.deepEqual(done.browserReobservationRefs, []);
+    assert.equal(done.lastBrowserObservation.sessionRef.generation, ref.generation + 1);
+    assert.equal(done.lastBrowserObservation.sessionRef.leaseEpoch, ref.leaseEpoch + 1);
+    assert.equal(fixture.trace.filter(row => row.action.kind === 'click').length, 1, 'the proposed old click never reaches Chromium');
+    const record = store.load(SCOPE, runId);
+    assert.equal(record.events.filter(event => event.kind === 'tool.not_dispatched' && event.payload.callId === 'old-action').length, 1);
+    if (stage === 'prepared') assert.equal(record.receipts.find(row => row.operationKey === before.snapshot.pendingIntent).status, 'not_dispatched');
+  } finally { store.close();await fixture.close(); }
 });

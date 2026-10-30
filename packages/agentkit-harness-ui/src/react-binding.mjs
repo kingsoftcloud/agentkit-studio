@@ -91,12 +91,13 @@ export function createHarnessComponents(React) {
 
   function HarnessTimeline(props) {
     const {
-      state, className, workspaceRoot, labels, theme = "system", renderText, initiallyExpandedThoughts,
+      state, className, workspaceRoot, labels, locale, showPlanDock, theme = "system", renderText, initiallyExpandedThoughts,
       initiallyExpandedTools, autoFollow, styleSheet, onJumpLatest, onOpenFile, onCopy,
       onOpenTerminal, onRetrieveFullDiff, onInspectTool, onOpenSubagent,
     } = props || {};
     const [thoughtOpen, setThoughtOpen] = useState(() => new Map((initiallyExpandedThoughts || []).map(id => [id, true])));
     const [toolOpen, setToolOpen] = useState(() => new Map((initiallyExpandedTools || []).map(id => [id, true])));
+    const [historyOpen, setHistoryOpen] = useState(() => new Map());
     const [following, setFollowing] = useState(true);
     const [reducedMotion, setReducedMotion] = useState(false);
     const scrollRef = useRef(null);
@@ -215,6 +216,11 @@ export function createHarnessComponents(React) {
         }
       }
       // Disclosure toggles (thought/tool summaries).
+      const history = target.closest('summary[data-testid="work-history-toggle"]');
+      if (history) {
+        event.preventDefault(); const details = history.parentElement, id = details.getAttribute('data-item-id');
+        setHistoryOpen(previous => new Map(previous).set(id, !details.open)); return;
+      }
       const summary = target.closest('summary[data-testid="thought-toggle"], summary[data-testid="tool-toggle"]');
       if (summary) {
         const details = summary.parentElement;
@@ -240,7 +246,7 @@ export function createHarnessComponents(React) {
     const callbacks = useMemo(() => ({ onOpenFile, onCopy, onOpenTerminal, onRetrieveFullDiff, onInspectTool, onOpenSubagent }),
       [onOpenFile, onCopy, onOpenTerminal, onRetrieveFullDiff, onInspectTool, onOpenSubagent]);
     const tree = buildViewModel(state, {
-      thoughtOpen, toolOpen, labels, workspaceRoot, following, rootProps, ...callbacks,
+      thoughtOpen, toolOpen, historyOpen, labels, locale, showPlanDock, workspaceRoot, following, rootProps, ...callbacks,
     });
     const rendered = renderTree(tree, renderText, callbacks, React, reducedMotion);
     if (styleSheet === null) return rendered;

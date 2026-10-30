@@ -2,6 +2,7 @@ import { openSync, closeSync, fstatSync, readSync, realpathSync, statSync } from
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { parse } from 'parse5';
 import { realpathExisting } from '@kingsoftcloud/agentkit-harness-node/native/workspace-paths';
+import { deliveryScopeEnabled, currentDeliveryManifest } from '@kingsoftcloud/agentkit-harness-core';
 
 export class NativeWebEntryBindingError extends Error {
   constructor(message) { super(message); this.code = 'studio_native_web_entry_unavailable'; }
@@ -55,7 +56,17 @@ function pageReferencesAsset(page, asset, root) {
 }
 
 /** Select only from committed workspace facts and a canonical Host observation. */
-export function writtenNativeWebEntry(snapshot, workspaceRoot) {
+export function writtenNativeWebEntry(snapshot, workspaceRoot, { deliveryScopePolicy } = {}) {
+  if (deliveryScopePolicy !== undefined) {
+    if (!deliveryScopeEnabled({ deliveryScopePolicy })) blocked('unsupported delivery scope policy.');
+    const manifest = currentDeliveryManifest(snapshot), artifact = manifest?.artifacts.find(item => item.kind === 'web');
+    if (!artifact) return null;
+    const root = realpathSync(workspaceRoot), project = realpathExisting(resolve(root, artifact.root));
+    const entry = realpathExisting(resolve(root, artifact.path));
+    if (!inside(root, project) || !inside(project, entry)) blocked('declared entry leaves the project workspace.');
+    if (!PAGE_SUFFIXES.has(extname(entry)) || !available(entry)) blocked('declared web entry is missing or is not an HTML page.');
+    return relative(root, entry).split(sep).join('/');
+  }
   const root = realpathSync(workspaceRoot), changed = snapshot.workspaceModifiedPaths;
   if (!Array.isArray(changed) || Array.from(changed).some(path => typeof path !== 'string')) blocked('invalid committed workspace paths.');
   const written = [...new Set(changed.filter(path => WEB_SUFFIXES.has(extname(path))))];

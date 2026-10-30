@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NativeKernel, MemoryRunStore, canonical, configure, emptyUsage, reduceVerification } from '@kingsoftcloud/agentkit-harness-core';
+import { NativeKernel, MemoryRunStore, canonical, configure, emptyUsage, reduceVerification, DELIVERY_SCOPE_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeVerification, nativeGoalContract } from '../src/providers/native-verification.mjs';
@@ -16,7 +16,7 @@ const digest = value => createHash('sha256').update(canonical(value)).digest('he
 const cleanBrowser = overrides => ({ status: 'ok', complete: true, statusCode: 200, errorCode: null,
   screenshot: { contentRef: 'host-owned-browser-image' }, controls: [], console: [], pageErrors: [], pageErrorLocations: [], networkFailures: [], ...overrides });
 
-async function fixture(t, { goal = 'Finish the requested work.', text = 'Done', browser = cleanBrowser(), web = false } = {}) {
+async function fixture(t, { goal = 'Finish the requested work.', text = 'Done', browser = cleanBrowser(), web = false, deliveryScopePolicy } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'native-verification-')), workspace = join(directory, 'workspace');
   const evidenceDirectory = join(directory, 'evidence');
   await mkdir(workspace); await writeFile(join(workspace, 'index.html'), '<button>Start</button>');
@@ -25,12 +25,14 @@ async function fixture(t, { goal = 'Finish the requested work.', text = 'Done', 
   const identity = { scope, runId: 'run', sessionId: 'session', turnId: '1', buildId: 'build', parentRunId: null, taskChainId: 'chain' };
   const candidate = { candidateId: 'candidate', text, goalRevision: 1, workspaceRevision: 'revision',
     binding: { subjectDigest: digest(text), subjectContextDigest: 'context', environmentDigest: 'host' } };
-  const snapshot = { ...identity, candidate, goalRevision: 1, repairs: 0, messages: [], usage: emptyUsage(),
+  const snapshot = { ...identity, candidate, workspaceRevision: candidate.workspaceRevision,
+    goalRevision: 1, repairs: 0, messages: [], usage: emptyUsage(),
     workspaceModifiedPaths: web ? ['index.html'] : [], lastWebMutationToolCall: web ? 3 : null,
     lastBrowserObservation: web ? { entryPath: 'index.html', toolCall: 3, goalRevision: 1 } : null,
     unresolvedInteractionObservation: null };
   const request = { ...identity, operationKey: 'verify', signal: new AbortController().signal, snapshot, candidate, contract };
   const verification = await createNativeVerification({ scope, sessionId: 'session', workspaceRoot: workspace, evidenceDirectory,
+    ...(deliveryScopePolicy ? {deliveryScopePolicy} : {}),
     verifyBrowserPage: async request => { browserCalls.push(request); if (browser instanceof Error) throw browser; return browser; } });
   const inspect = async report => {
     const ref = report.checks[0].evidence.artifact;
@@ -41,6 +43,39 @@ async function fixture(t, { goal = 'Finish the requested work.', text = 'Done', 
   };
   return { directory, workspace, evidenceDirectory, request, verification, browserCalls, inspect };
 }
+
+test('research references never require an invented HTML delivery; declarations remain unverified', async t => {
+  const f=await fixture(t,{deliveryScopePolicy:DELIVERY_SCOPE_POLICY});
+  f.request.snapshot.workspaceModifiedPaths=['refs/code.js','refs/deleted.html','report.md'];
+  const missing=await f.verification.verify(f.request);
+  assert.equal(missing.checks[0].status,'failed');assert.equal(missing.repairable,true);
+  assert.match(missing.checks[0].safeSummary,/declare_deliverables/);assert.equal(f.browserCalls.length,0);
+  f.request.snapshot.deliveryManifest={goalRevision:1,revision:1,artifacts:[]};
+  f.request.operationKey='verify-declared';
+  const report=await f.verification.verify(f.request);
+  assert.equal(report.status,'unverified');assert.equal(report.checks[0].status,'not_run');
+  assert.equal(f.browserCalls.length,0);assert.equal((await f.inspect(report)).facts.entryPath,null);
+});
+
+test('declared web delivery retains browser failure checks while ignoring unrelated reference files', async t => {
+  const f=await fixture(t,{deliveryScopePolicy:DELIVERY_SCOPE_POLICY,web:true,
+    browser:cleanBrowser({pageErrors:['ReferenceError: game is not defined']})});
+  f.request.snapshot.workspaceModifiedPaths.push('refs/code.js','refs/deleted.html');
+  f.request.snapshot.deliveryManifest={goalRevision:1,revision:1,artifacts:[{kind:'web',path:'index.html',root:'.'}]};
+  const report=await f.verification.verify(f.request);
+  assert.equal(f.browserCalls.length,1);assert.equal(report.status,'failed');assert.equal(report.repairable,true);
+  assert.match(report.checks[0].safeSummary,/game is not defined/);
+});
+
+test('missing declared documents fail without invoking a browser or upgrading to verified', async t => {
+  const f=await fixture(t,{deliveryScopePolicy:DELIVERY_SCOPE_POLICY});
+  f.request.snapshot.deliveryManifest={goalRevision:1,revision:1,artifacts:[{kind:'file',path:'report.md'}]};
+  assert.equal((await f.verification.verify(f.request)).checks[0].status,'failed');
+  await writeFile(join(f.workspace,'report.md'),'source-grounded report');
+  f.request.operationKey='verify-existing-file';
+  const report=await f.verification.verify(f.request);
+  assert.equal(report.status,'unverified');assert.equal(report.checks[0].status,'not_run');assert.equal(f.browserCalls.length,0);
+});
 
 test('Studio goal contracts pin general evidence authority, output schemas and literal files', () => {
   const goal = 'Return only a JSON object.';
@@ -57,6 +92,7 @@ test('Studio goal contracts pin general evidence authority, output schemas and l
 test('an ordinary response remains not_run with durable, readable scoped evidence', async t => {
   const f = await fixture(t), report = await f.verification.verify(f.request);
   assert.equal(report.checks[0].status, 'not_run'); assert.equal(report.status, 'unverified');
+  assert.equal(report.workspaceDependency, 'required', 'legacy undeclared delivery retains its original dependency');
   assert.equal(report.repairable, false); assert.deepEqual(report.binding, f.request.candidate.binding);
   const facts = await f.inspect(report); assert.equal(facts.candidate.text, 'Done');
   const config = { contract: f.request.contract, limits: { maxRepairs: 3 } };
@@ -64,6 +100,19 @@ test('an ordinary response remains not_run with durable, readable scoped evidenc
   await assert.rejects(f.verification.verify({ ...f.request, scope: { ...scope, userId: 'other' } }), /scope_mismatch/);
   await assert.rejects(f.verification.verify({ ...f.request, sessionId: 'other' }), /scope_mismatch/);
   await assert.rejects(f.verification.verify({ ...f.request, candidate: { ...f.request.candidate, text: 'forged' } }), /candidate_mismatch/);
+});
+
+test('an explicitly declared text-only delivery can retain its answer when workspace capture is unavailable without claiming semantic acceptance', async t => {
+  const f = await fixture(t, { deliveryScopePolicy: DELIVERY_SCOPE_POLICY });
+  f.request.snapshot.deliveryManifest = { goalRevision: 1, revision: 1, artifacts: [] };
+  f.request.candidate.workspaceRevision = null; f.request.snapshot.workspaceRevision = null;
+  f.request.snapshot.workspaceObservationStatus = 'unavailable';
+  const report = await f.verification.verify(f.request);
+  assert.equal(report.workspaceDependency, 'none'); assert.equal(report.checks[0].status, 'not_run');
+  assert.equal(f.browserCalls.length, 0);
+  const reduced = reduceVerification(f.request.snapshot, report, { contract: f.request.contract, limits: { maxRepairs: 3 } });
+  assert.equal(reduced.outcome, 'unverified'); assert.equal(reduced.reason, 'required_verification_incomplete');
+  assert.equal(reduced.phase, 'finalizing', 'an unavailable source inventory must not request an answer rewrite');
 });
 
 test('a checkpoint observes work without requiring a final-answer shape', async t => {
@@ -111,6 +160,16 @@ for (const [name, observation, status, summary] of [
   const f = await fixture(t, { web: true, browser: observation }), report = await f.verification.verify(f.request);
   assert.equal(report.checks[0].status, status); assert.match(report.checks[0].safeSummary, summary);
   assert.equal(report.repairable, status === 'failed'); await f.inspect(report);
+});
+
+for (const code of ['studio_native_tool_authority_stale', 'unsafe\nprivate-code']) test(`unavailable browser evidence seals a bounded owner code: ${JSON.stringify(code)}`, async t => {
+  const error = Object.assign(new Error('PRIVATE_OWNER_EXCEPTION_WITH_CREDENTIALS'), { code });
+  const f = await fixture(t, { web: true, browser: error }), report = await f.verification.verify(f.request);
+  const evidence = await f.inspect(report);
+  assert.equal(report.checks[0].status, 'blocked'); assert.equal(report.repairable, false);
+  assert.deepEqual(evidence.facts.browserFailure, { kind: 'unavailable',
+    code: code.includes('\n') ? 'browser_observation_unavailable' : code });
+  assert.doesNotMatch(JSON.stringify(evidence), /PRIVATE_OWNER_EXCEPTION_WITH_CREDENTIALS|unsafe\\nprivate-code/);
 });
 
 test('only the precise headless pointer-lock warning is ignored', async t => {

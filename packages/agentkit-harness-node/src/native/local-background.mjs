@@ -7,8 +7,10 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { localControlSettings, resolveLocalProcessLauncher } from './local-process.mjs';
+import { localEnvironmentPolicy, localOutputPolicy } from './local-output-policy.mjs';
+import { shellCommandArgv } from './command-shell.mjs';
 import { LOCAL_BACKGROUND_CONTRACT, START_GRACE_MS, TERMINAL, LocalCommandError,
-  check, createPrivate, delay, digest, lockUntil, openPrivate, privateDirectory, privateFile,
+  check, createPrivate, delay, digest, fsyncPrivate, lockUntil, openPrivate, privateDirectory, privateFile,
   readAll, readRecord, readWindow, syncDirectory, tryLock, unknownRecord, validId, writeRecord } from './local-command-state.mjs';
 
 export { LOCAL_BACKGROUND_CONTRACT, LocalCommandError };
@@ -17,8 +19,15 @@ const inside = (path, root) => path === root || path.startsWith(root + sep);
 const workerEnvironment = Object.freeze({ PATH: '/bin:/usr/bin', LANG: 'C.UTF-8', NODE_NO_WARNINGS: '1' });
 const deadline = () => performance.now() + START_GRACE_MS;
 
-export function commandRequest({ command, cwd, env, timeoutMs, settings = {} }) {
+// commandRequest validates raw policy inputs at this public entrypoint. The
+// policies travel as separate optional fields, NOT inside settings, so the
+// normalized settings object (and thus the request digest) is byte-identical
+// to legacy when no policy is supplied. Omit absent policies: canonical
+// serialization rejects undefined, and the digest must stay deterministic.
+export function commandRequest({ command, cwd, env, timeoutMs, settings = {}, outputPolicy = null, environmentPolicy = null, shellPolicy = null } = {}) {
   settings = localControlSettings(settings);
+  const outPolicy = localOutputPolicy(outputPolicy);
+  const envPolicy = localEnvironmentPolicy(environmentPolicy);
   check(typeof command === 'string' && command.length > 0 && !command.includes('\0')
     && typeof cwd === 'string' && cwd.length > 0 && !cwd.includes('\0'), 'invalid_background_command');
   check(env && typeof env === 'object' && !Array.isArray(env) && Object.entries(env).every(([name, value]) =>
@@ -26,6 +35,10 @@ export function commandRequest({ command, cwd, env, timeoutMs, settings = {} }) 
   timeoutMs ??= settings.wallSeconds * 1000;
   check(Number.isSafeInteger(timeoutMs) && timeoutMs > 0, 'invalid_background_command_timeout');
   const request = { command, cwd: resolve(cwd), env: Object.fromEntries(Object.entries(env)), timeoutMs, settings };
+  if (outPolicy) request.outputPolicy = outPolicy;
+  if (envPolicy) request.environmentPolicy = envPolicy;
+  shellCommandArgv(command, shellPolicy);
+  if (shellPolicy) request.shellPolicy = shellPolicy;
   check(Buffer.byteLength(JSON.stringify(request)) <= 1024 * 1024, 'background_command_request_too_large');
   return request;
 }

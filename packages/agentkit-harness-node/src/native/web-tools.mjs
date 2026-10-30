@@ -44,7 +44,7 @@
  */
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { BlockList, isIPv4, isIPv6 } from 'node:net';
-import { canonical, copy, invariant, scopeKey, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant, scopeKey, toolInputRejection, matchesToolExecutionContract } from '@kingsoftcloud/agentkit-harness-core';
 import { parse as parseHtml, defaultTreeAdapter } from 'parse5';
 
 export const NATIVE_WEB_TOOLS_CONTRACT = 'agentkit.native-web-tools/v1';
@@ -524,7 +524,7 @@ export function createWebToolTransport({ fetch: fetchImpl, searchFetch = fetchIm
       const call = request?.call, definition = formal.get(call?.name);
       if (!definition) return { status: 'error', content: { code: 'unknown_tool' } };
       if (!(request.signal instanceof AbortSignal)) return { status: 'error', content: { code: 'invalid_request' } };
-      if (request.definition == null || canonical(request.definition) !== canonical(definition)) {
+      if (!matchesToolExecutionContract(request.definition, definition)) {
         return { status: 'error', content: { code: 'web_definition_mismatch', executed: false } };
       }
       const rejection = toolInputRejection(definition, call);
@@ -584,7 +584,7 @@ export function createNativeWebTools({
     // The Host ledger pins the formal definition for this call; if the request
     // carries a definition that does not match the locked formal one, it is
     // forged and must not execute.
-    if (request.definition == null || canonical(request.definition) !== canonical(definition)) {
+    if (!matchesToolExecutionContract(request.definition, definition)) {
       return { status: 'error', content: { code: 'web_definition_mismatch', executed: false } };
     }
     try {
@@ -599,7 +599,7 @@ export function createNativeWebTools({
     const rejection = toolInputRejection(definition, call);
     if (rejection) return { status: 'error', content: rejection };
     request.signal.throwIfAborted();
-    const snapshot = snapshotContext(request, definition);
+    const snapshot = snapshotContext(request, request.definition);
     let decision;
     try {
       // The authorize callback receives the full trusted context. The real

@@ -6,6 +6,16 @@ const same = (left, right) => canonical(left) === canonical(right);
 const identity = value => Object.fromEntries(['scope', 'runId', 'sessionId', 'turnId', 'buildId', 'parentRunId', 'taskChainId']
   .map(key => [key, copy(value[key])]));
 
+/** A saved decision awaiting consumption is runnable work, not a new request
+ * for approval. This observation grants nothing: the child Kernel still checks
+ * and consumes the original command against its own pending interaction. */
+export function childNeedsApproval(record) {
+  const pending = record.snapshot.pendingInteraction;
+  return record.snapshot.phase === 'awaiting_interaction' && (!pending || !record.commands.some(row => !row.consumed
+    && row.command.kind === 'submit_interaction' && row.command.payload.interactionId === pending?.interactionId
+    && ['allow', 'deny'].includes(row.command.payload.decision)));
+}
+
 export function resolveChildToolIntent(parentRecord, operationKey) {
   const intent = parentRecord.intents.find(item => item.operationKey === operationKey);
   if (intent && Array.isArray(intent.payload.calls) && intent.payload.calls.length === 1)

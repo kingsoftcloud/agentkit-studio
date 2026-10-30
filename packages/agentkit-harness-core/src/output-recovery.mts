@@ -1,11 +1,18 @@
-import type { CommitBatch, Message, ObjectValue, RunConfiguration, RunSnapshot, StoredRun } from './contracts.mjs';
+import type { CommitBatch, Message, ModelResult, ObjectValue, RunConfiguration, RunSnapshot, StoredRun } from './contracts.mjs';
+import { responseContinuationPairs, responseContinuationPending, joinResponseContinuation } from './response-continuation.mjs';
 import { canonical, copy, invariant } from './values.mjs';
 import { contextMessageRef } from './context-planning.mjs';
 
 type Digest = (value: unknown) => string;
 
 /** Select from actual admission after the completed model claim, never the catalog. */
-export function outputRecoveryMode(snapshot: RunSnapshot, config: RunConfiguration, toolsAvailable: boolean): 'suffix' | 'task_resume' {
+export function outputRecoveryMode(snapshot: RunSnapshot, config: RunConfiguration, toolsAvailable: boolean, result?: ModelResult): 'suffix' | 'task_resume' {
+  if (config.outputRecoveryPolicy === 'response-boundary/v2' && config.contract.finalOutputFormat === 'text') {
+    if (responseContinuationPending(snapshot, config)
+      || result?.textCommitVersion === 'provider-finished-text/v1' && result.outputBoundary === 'assistant-text/v1') return 'suffix';
+    if (result?.outputBoundary === 'tool-call/v1') return 'task_resume';
+    return toolsAvailable ? 'task_resume' : 'suffix';
+  }
   if (config.outputRecoveryPolicy !== 'task-or-delivery/v1' || config.contract.finalOutputFormat !== 'text') return 'suffix';
   const last = snapshot.messages.at(-1);
   // An already admitted suffix contract survives a restore and policy upgrade.
@@ -23,6 +30,11 @@ function authenticatedFragment(fragment: Message, observation: Message, digest: 
 
 /** Only a contiguous host-sealed suffix chain can contribute to a delivery. */
 export function completeContinuation(messages: Message[], suffix: string, digest: Digest): string {
+  const response = responseContinuationPairs(messages, digest);
+  if (response.length) {
+    const prefix = response.reduce((text, [fragment]) => joinResponseContinuation(text, messages[fragment]!.content), '');
+    return joinResponseContinuation(prefix, suffix);
+  }
   const fragments: string[] = [];
   for (let index = messages.length - 1; index >= 1; index -= 2) {
     const fragment = messages[index - 1]!, observation = messages[index]!;
@@ -70,7 +82,7 @@ export function restartContinuation(snapshot: RunSnapshot, config: RunConfigurat
 /** Store exception to append-only messages: only sealed, contiguous unfinished
  * output can retire, in the SAME original model receipt transaction. Events,
  * intents, receipts, tool observations and all preceding messages remain. */
-export function isOutputRestartBatch(record: StoredRun, batch: CommitBatch): boolean {
+export function isOutputRestartBatch(record: Pick<StoredRun, 'configuration' | 'snapshot' | 'intents'>, batch: CommitBatch): boolean {
   const before = record.snapshot, after = batch.snapshot, config = record.configuration;
   const intent = record.intents.find(item => item.operationKey === before.pendingIntent);
   const receipt = batch.receipts[0];

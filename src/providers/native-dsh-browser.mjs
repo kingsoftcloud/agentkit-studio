@@ -5,32 +5,38 @@ import { canonical, invariant, scopeKey } from '@kingsoftcloud/agentkit-harness-
 import { createStudioBrowserWorkspacePort } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace';
 import { NativePlaywrightBrowser } from '@kingsoftcloud/agentkit-harness-node/native/browser-playwright';
 import { studioBrowserDefinition } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
+import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
+import { workspaceBrowserCapability } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-policy';
 
 /** Preset-owned resources; session and ledger scope, never model arguments, select the owner. */
 export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, browserExecutablePath, evidenceRoot,
-  createOwner = createStudioBrowserWorkspacePort, toolTimeoutForSession = () => 110000 } = {}) {
+  environment = process.env, createOwner = createStudioBrowserWorkspacePort, toolTimeoutForSession = () => 110000 } = {}) {
   const workspace = resolve(workspaceRoot), pinnedRoot = realpathSync(workspace);
   invariant(browserExecutablePath === undefined || typeof browserExecutablePath === 'string'
     && isAbsolute(browserExecutablePath), 'studio_native_browser_executable_invalid');
+  const executablePath = browserExecutablePath ?? resolveNativeBrowserExecutable({ env: environment });
+  const available = createOwner !== createStudioBrowserWorkspacePort || typeof createBrowser === 'function'
+    || !!(executablePath && resolveNativeBrowserExecutable({
+    env: { KSADK_BROWSER_EXECUTABLE_PATH: executablePath } }));
   const backend = createBrowser ?? (options => new NativePlaywrightBrowser({ ...options, launchBrowser: async () => {
+    invariant(executablePath, 'studio_native_browser_unavailable');
     const { chromium } = await import('playwright-core');
-    return chromium.launch({ headless: true, ...(browserExecutablePath ? { executablePath: browserExecutablePath } : {}) });
+    return chromium.launch({ headless: true, executablePath });
   } }));
   const owners = new Map(), lifetime = new AbortController();
   let closed = false, closing;
-  const identity = (sessionId, scope) => {
+  const identity = (sessionId, scope, toolTimeoutMs = toolTimeoutForSession(sessionId)) => {
     invariant(typeof sessionId === 'string' && sessionId.length > 0, 'studio_native_tool_agent_missing');
     scopeKey(scope);
     return `studio-browser-${createHash('sha256').update(canonical({
       schema: 'agentkit.studio-browser-owner/v1', root: pinnedRoot, sessionId, scope,
-      ...(toolTimeoutForSession(sessionId) !== 110000 ? { toolTimeoutMs: toolTimeoutForSession(sessionId) } : {}),
+      ...(toolTimeoutMs !== 110000 ? { toolTimeoutMs } : {}),
     })).digest('hex')}`;
   };
-  const owner = (sessionId, scope) => {
+  const owner = (sessionId, scope, toolTimeoutMs = toolTimeoutForSession(sessionId)) => {
     invariant(!closed, 'studio_native_browser_closed');
     invariant(realpathSync(workspace) === pinnedRoot, 'workspace_root_changed');
-    const runtimeId = identity(sessionId, scope);
-    const toolTimeoutMs = toolTimeoutForSession(sessionId);
+    const runtimeId = identity(sessionId, scope, toolTimeoutMs);
     if (!owners.has(runtimeId)) {
       const record = { lifetime: new AbortController(), active: new Set(), closing: null };
       const pending = Promise.resolve().then(() => {
@@ -64,6 +70,7 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
     return record.closing;
   };
   return {
+    get capability() { return workspaceBrowserCapability({ available }); },
     definition: studioBrowserDefinition(),
     forSession(sessionId) {
       invariant(typeof sessionId === 'string' && sessionId.length > 0, 'studio_native_tool_agent_missing');
@@ -76,7 +83,9 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
         const admission = AbortSignal.any([request.signal, lifetime.signal]);
         admission.throwIfAborted();
         assertOwned();
-        const record = owner(sessionId, request.scope);
+        if (method === 'execute' && !available) return { status: 'error', content: {
+          code: 'browser_backend_unavailable', executed: false, capability: workspaceBrowserCapability({ available: false }) } };
+        const record = owner(sessionId, request.scope, method === 'retireResources' ? request.definition?.timeoutMs : undefined);
         const signal = AbortSignal.any([admission, record.lifetime.signal]);
         signal.throwIfAborted();
         const pending = (async () => {
@@ -89,7 +98,8 @@ export function createNativeDshBrowserTools({ workspaceRoot, createBrowser, brow
         try { return await pending; } finally { record.active.delete(pending); }
       };
       return { execute: request => invoke(request, 'execute'),
-        recoverSessions: request => invoke(request, 'recoverSessions'), verifyPage: request => invoke(request, 'verifyPage') };
+        recoverSessions: request => invoke(request, 'recoverSessions'), verifyPage: request => invoke(request, 'verifyPage'),
+        retireResources: request => invoke(request, 'retireResources') };
     },
     releaseSession({ sessionId, scope }) {
       const runtimeId = identity(sessionId, scope), record = owners.get(runtimeId);

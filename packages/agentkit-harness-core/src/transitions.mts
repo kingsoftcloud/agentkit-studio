@@ -20,6 +20,8 @@ export function transition(snapshot: RunSnapshot, changes: Partial<RunSnapshot>,
   const diagnostics = changes.diagnostics ?? snapshot.diagnostics;
   facts = facts.map(fact => fact.kind === 'run.terminal' ? { ...fact, payload: { ...fact.payload,
     usageComplete: diagnostics.providerUsageIncomplete !== true && diagnostics.descendantUsageIncomplete !== true,
+    ...(diagnostics.lastModelFailure && ['provider_terminal_error', 'provider_retryable_error_retry_exhausted', 'malformed_tool_call_retry_exhausted', 'model_policy_abort'].includes(String(fact.payload.reason))
+      ? { modelFailure: copy(diagnostics.lastModelFailure) } : {}),
   } } : fact);
   const prefix = runKey(snapshot.scope, snapshot.runId);
   const events: NativeEvent[] = facts.map((fact, index) => ({ ...copy(fact),
@@ -115,6 +117,23 @@ export function reduceCommand(snapshot: RunSnapshot, command: RunCommand, pendin
         outcome: command.kind === 'cancel' ? 'unverified' : 'blocked',
         reason: command.kind === 'cancel' ? 'user_canceled' : 'policy_revoked', finalText: '',
         pendingIntent: null, pendingTools: [], pendingInteraction: null, interaction: null };
+      // Retiring a queue is a committed lifecycle fact, not a UI inference from
+      // "canceled". Approval waits and prepared requests have not dispatched
+      // these calls. A claimed/unknown effect or child/receipt reconciliation
+      // must retain its original uncertainty instead of gaining this fact.
+      if (!snapshot.childApproval && !snapshot.toolReconciliation
+        && (snapshot.pendingIntent === null || pending?.status === 'prepared'
+          && pending.operationKey === snapshot.pendingIntent)) {
+        const paired = new Set(snapshot.messages.filter(message => message.role === 'tool').map(message => message.callId));
+        const queued = snapshot.pendingTools.filter(call => !paired.has(call.callId));
+        if (queued.length) {
+          changes.messages = [...snapshot.messages, ...queued.map(call => ({ role: 'tool' as const,
+            callId: call.callId, name: call.name,
+            content: canonical({ status: 'not_dispatched', reason: changes.reason, executed: false }) }))];
+          facts.push(...queued.map(call => ({ kind: 'tool.not_dispatched', payload: {
+            callId: call.callId, name: call.name, reason: changes.reason! } })));
+        }
+      }
       if (deferredChildCancel) Object.assign(changes, { phase: 'finalizing', childLifecycleFailure: null,
         childTerminalPhase: command.kind === 'cancel' ? 'canceled' : 'failed', childApproval: null, candidate: null, verification: null });
       break;

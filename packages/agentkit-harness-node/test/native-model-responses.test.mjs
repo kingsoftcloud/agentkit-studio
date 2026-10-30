@@ -477,6 +477,7 @@ test('responses: incomplete with max_output_tokens and no tools is output_limit'
   assert.equal(result.kind, 'output_limit');
   assert.equal(result.textCommitVersion, 'provider-finished-text/v1');
   assert.equal(result.text, 'partial');
+  assert.equal(result.outputBoundary, 'assistant-text/v1');
   assert.deepEqual(result.toolCalls, []);
 });
 
@@ -501,6 +502,7 @@ test('responses: incomplete with an unclosed tool input is incomplete (output_li
   // An unclosed tool input cannot grant bounded-text commit; the finish is
   // 'incomplete' which the normalizer maps to output_limit (never executes tools).
   assert.equal(result.kind, 'output_limit');
+  assert.equal(result.outputBoundary, 'tool-call/v1');
   assert.deepEqual(result.toolCalls, []);
 });
 

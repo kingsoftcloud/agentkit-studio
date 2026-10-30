@@ -11,7 +11,7 @@
 // and read-only startup (minimal permissions).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -19,17 +19,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const pkgDir = resolve(here, '..');
-const coreDir = resolve(pkgDir, '../agentkit-harness-core');
 
-// Link the local core into this package's node_modules so the dist's external
-// @kingsoftcloud/agentkit-harness-core import resolves to the real core dist.
-// Self-healing: a stale or broken link from a prior run is replaced.
-const scopeDir = resolve(pkgDir, 'node_modules/@kingsoftcloud');
-const coreLink = resolve(scopeDir, 'agentkit-harness-core');
-mkdirSync(scopeDir, { recursive: true });
-let linkOk = false;
-try { linkOk = realpathSync(coreLink) === coreDir; } catch {}
-if (!linkOk) { rmSync(coreLink, { force: true }); symlinkSync(coreDir, coreLink, 'dir'); }
+// Resolve the declared public Core dependency normally. Tests never rewrite
+// node_modules: concurrent process/protocol suites share the same installation.
+
 
 const { createNativeRpcServer, buildStartup, RPC_PROTOCOL_VERSION } = await import('../dist/rpc-entry.mjs');
 const { SqliteRunStore } = await import('../dist/index.mjs');

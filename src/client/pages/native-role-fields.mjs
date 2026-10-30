@@ -23,8 +23,8 @@ export function validateNativeRoleDrafts(roles, { modelIds, toolIds, hasMcp, too
       return contract?.sideEffect && contract.sideEffect !== 'none';
     })) return `${role.name} 要求并发安全，不能选择会修改状态的工具；请移除该工具或关闭并发安全要求。`;
     if (role.inheritMcp && !hasMcp) return `${role.name} 启用了 MCP 继承，请先绑定 MCP。`;
-    if (!Number.isInteger(role.maxTurns ?? 4) || (role.maxTurns ?? 4) < 1 || (role.maxTurns ?? 4) > 32
-      || !Number.isFinite(role.timeoutSeconds ?? 120) || (role.timeoutSeconds ?? 120) <= 0 || (role.timeoutSeconds ?? 120) > 3600
+    if (role.maxTurns !== undefined && (!Number.isInteger(role.maxTurns) || role.maxTurns < 1 || role.maxTurns > 32)
+      || role.timeoutSeconds !== undefined && (!Number.isFinite(role.timeoutSeconds) || role.timeoutSeconds <= 0 || role.timeoutSeconds > 3600)
       || role.maxToolCalls != null && (!Number.isInteger(role.maxToolCalls) || role.maxToolCalls < 0 || role.maxToolCalls > 100000))
       return `${role.name} 的预算无效：模型调用 1–32 次，超时大于 0 且不超过 3600 秒，工具调用 0–100000 次。`;
   }
@@ -34,6 +34,10 @@ export function validateNativeRoleDrafts(roles, { modelIds, toolIds, hasMcp, too
 export function createNativeRoleFields({ React: { createElement: h }, buttonStyle, inputStyle }) {
   return function fields({ roles, onChange, models, selectedModels, tools, selectedTools, hasMcp }) {
     const update = (index, patch) => onChange(roles.map((role, at) => at === index ? { ...role, ...patch } : role));
+    const updateLimit = (index, key, value) => onChange(roles.map((role, at) => {
+      if (at !== index) return role;
+      const next = { ...role }; if (value === '') delete next[key]; else next[key] = Number(value); return next;
+    }));
     const label = (text, control) => h('label', { style: { display: 'block', marginTop: '10px' } }, text, control);
     return h('section', { 'aria-label': 'Native 子任务角色', style: { marginTop: '18px' } },
       h('h3', null, '子任务角色（可选）'),
@@ -56,12 +60,14 @@ export function createNativeRoleFields({ React: { createElement: h }, buttonStyl
           h('input', { type: 'checkbox', 'aria-label': `角色 ${index + 1} 工具 ${id}`, checked: (role.tools ?? []).includes(id),
             onChange: e => update(index, { tools: e.target.checked ? [...(role.tools ?? []), id] : (role.tools ?? []).filter(tool => tool !== id) }) }),
           tools.find(tool => tool.resourceId === id)?.displayName || id, selectedTools.includes(id) ? '' : '（未绑定，请移除或重新绑定）')),
-        label('模型调用上限', h('input', { type: 'number', 'aria-label': `角色 ${index + 1} 模型调用上限`, min: 1, max: 32, value: role.maxTurns ?? 4,
-          onChange: e => update(index, { maxTurns: e.target.value === '' ? '' : Number(e.target.value) }), style: inputStyle() })),
+        label('模型调用上限（留空自动分配）', h('input', { type: 'number', 'aria-label': `角色 ${index + 1} 模型调用上限`, min: 1, max: 32,
+          value: role.maxTurns ?? '', placeholder: '共享父任务预算',
+          onChange: e => updateLimit(index, 'maxTurns', e.target.value), style: inputStyle() })),
         label('工具调用上限（留空使用默认值）', h('input', { type: 'number', 'aria-label': `角色 ${index + 1} 工具调用上限`, min: 0, max: 100000, value: role.maxToolCalls ?? '',
           onChange: e => update(index, { maxToolCalls: e.target.value === '' ? null : Number(e.target.value) }), style: inputStyle() })),
-        label('超时（秒）', h('input', { type: 'number', 'aria-label': `角色 ${index + 1} 超时秒数`, min: 1, max: 3600, value: role.timeoutSeconds ?? 120,
-          onChange: e => update(index, { timeoutSeconds: e.target.value === '' ? '' : Number(e.target.value) }), style: inputStyle() })),
+        label('超时秒数（留空自动分配）', h('input', { type: 'number', 'aria-label': `角色 ${index + 1} 超时秒数`, min: 1, max: 3600,
+          value: role.timeoutSeconds ?? '', placeholder: '使用运行时上限',
+          onChange: e => updateLimit(index, 'timeoutSeconds', e.target.value), style: inputStyle() })),
         label('继承父任务 Skills', h('input', { type: 'checkbox', 'aria-label': `角色 ${index + 1} 继承 Skills`, checked: role.inheritSkills ?? true,
           onChange: e => update(index, { inheritSkills: e.target.checked }) })),
         label('继承父任务 MCP', h('input', { type: 'checkbox', 'aria-label': `角色 ${index + 1} 继承 MCP`, checked: role.inheritMcp ?? false,
@@ -70,6 +76,6 @@ export function createNativeRoleFields({ React: { createElement: h }, buttonStyl
           onChange: e => update(index, { concurrentSafe: e.target.checked }) })),
         h('button', { type: 'button', style: buttonStyle(), onClick: () => onChange(roles.filter((_, at) => at !== index)) }, `移除角色 ${index + 1}`))),
       h('button', { type: 'button', style: buttonStyle(), disabled: roles.length >= 32,
-        onClick: () => onChange([...roles, { name: '', instructions: '', tools: [], maxTurns: 4, timeoutSeconds: 120 }]) }, '添加子任务角色'));
+        onClick: () => onChange([...roles, { name: '', instructions: '', tools: [] }]) }, '添加子任务角色'));
   };
 }

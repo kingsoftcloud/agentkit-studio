@@ -7,6 +7,7 @@ import { contextTimelineItems } from './context-markers.mjs';
 // the same projections can be tested and reused by hosts and screens readers.
 
 import { TaskState, ToolStatus } from "./protocol.mjs";
+import { toolConversationVisible } from './tool-identity.mjs';
 
 /**
  * Ordered timeline items in stream order. The reducer already maintains order;
@@ -14,9 +15,24 @@ import { TaskState, ToolStatus } from "./protocol.mjs";
  * @param {object} state
  * @returns {object[]}
  */
-export function visibleItems(state) {
+export function visibleItems(state, { includeInternal = false } = {}) {
   const items = Array.isArray(state?.items) ? state.items : [];
-  return contextTimelineItems(items, state?.contextMarkers);
+  const timeline = contextTimelineItems(items, state?.contextMarkers);
+  if (includeInternal) return timeline;
+  const visible = [];
+  for (const item of timeline) {
+    if (['tool', 'tool-preview'].includes(item.kind) && !toolConversationVisible(item)) continue;
+    if (item.kind === 'thought' && !String(item.text ?? '').trim()) continue;
+    const previous = visible.at(-1);
+    if (item.kind === 'thought' && previous?.kind === 'thought') {
+      const parts = [...previous.parts ?? [previous], item];
+      visible[visible.length - 1] = { ...previous, parts, memberIds: parts.map(part => part.id),
+        ...(parts.some(part => part.responseId) ? { responseId: parts.every(part => part.responseId === parts[0].responseId) ? parts[0].responseId : undefined } : {}),
+        text: parts.map(part => part.text).join('\n\n'), streaming: parts.some(part => part.streaming),
+        duration: parts.every(part => Number.isFinite(part.duration)) ? parts.reduce((sum, part) => sum + part.duration, 0) : undefined };
+    } else visible.push(item);
+  }
+  return visible;
 }
 
 /** True when any text or thought is still streaming. */

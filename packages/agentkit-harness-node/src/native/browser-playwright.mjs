@@ -44,6 +44,7 @@ import {
   browserObservationDigest, BrowserSessionError,
 } from '@kingsoftcloud/agentkit-harness-core/browser-contract';
 import { BrowserElementRefs, domCapture } from './browser-dom.mjs';
+import { createBrowserActionAttempt } from './browser-action-observation.mjs';
 
 const HTTP_WS_SCHEMES = new Set(['http:', 'https:', 'ws:', 'wss:']);
 const DEFAULT_VIEWPORT = [1280, 720];
@@ -654,13 +655,15 @@ export class NativePlaywrightBrowser {
     }
   }
 
-  async _observe(session, action, signal) {
+  async _observe(session, action, signal, attempt) {
     fence(signal);
     const page = session.page;
+    if (attempt) attempt.phase = 'capture_dom';
     const before = await this._captureDom(page, signal);
     fence(signal);
     let data;
     try {
+      if (attempt) attempt.phase = 'capture_screenshot';
       data = await page.screenshot({
         type: 'png', fullPage: false,
         timeout: Math.max(1, Math.min(4000, Math.floor(action.timeoutMs / 3))),
@@ -673,6 +676,7 @@ export class NativePlaywrightBrowser {
     // disclose detected drift, rather than pairing pre-screenshot text with a later frame as
     // though both were current. This observation does not wait for stability or repeat an input.
     let meta, tokens;
+    if (attempt) attempt.phase = 'capture_controls';
     try { ({ meta, tokens } = await session.elementRefs.capture(page)); }
     catch (err) { if (isAbortError(err)) throw err; throw new ObservationCaptureFailure(); }
     fence(signal);
@@ -704,6 +708,7 @@ export class NativePlaywrightBrowser {
     const height = data.readUInt32BE(20);
     let contentRef = 'sha256:' + createHash('sha256').update(data).digest('hex');
     if (this._sink) {
+      if (attempt) attempt.phase = 'publish';
       fence(signal); // do not call the sink after an abort
       let sinkRef = this._sink(session.ref, data, 'image/png');
       if (sinkRef && typeof sinkRef.then === 'function') sinkRef = await sinkRef;
@@ -739,9 +744,9 @@ export class NativePlaywrightBrowser {
     return observation;
   }
 
-  async _selectorError(session, action, code = 'selector_not_visible', signal) {
+  async _selectorError(session, action, code = 'selector_not_visible', signal, attempt) {
     try {
-      const observation = await this._observe(session, action, signal);
+      const observation = await this._observe(session, action, signal, attempt);
       return validateBrowserObservation({ ...observation, status: 'error', errorCode: code, complete: true, retryability: 'safe' });
     } catch (err) {
       if (isAbortError(err)) throw err; // propagate abort; never synthesize a safe error after cancel
@@ -753,7 +758,21 @@ export class NativePlaywrightBrowser {
     }
   }
 
-  async _navigate(session, url, timeoutMs, signal) {
+  // Only call before input dispatch. A later locator failure cannot prove that
+  // an input did not happen and must retain the existing uncertain outcome.
+  async _selectorFailureCode(locator, action, signal, fallback) {
+    if (action.elementRef != null) return fallback;
+    try {
+      const matches = await locator.count();fence(signal);
+      if (matches > 1) return 'selector_ambiguous';
+      return matches === 0 && fallback !== null ? 'selector_not_found' : fallback;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return 'selector_resolution_failed';
+    }
+  }
+
+  async _navigate(session, url, timeoutMs, signal, attempt) {
     await session.elementRefs.clear();
     for (let hop = 0; hop < 10; hop++) {
       fence(signal);
@@ -761,7 +780,9 @@ export class NativePlaywrightBrowser {
       if (!(await this._allowed(session.ref, url, signal))) throw new BrowserSessionError('network_denied');
       fence(signal); // after async policy, before dispatch
       try {
+        if (attempt) { attempt.phase = 'navigate'; attempt.dispatchStarted = true; attempt.dispatchCompleted = false; }
         const response = await session.page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+        if (attempt) attempt.dispatchCompleted = true;
         session.lastResponseStatus = response ? response.status() : null;
       } catch (err) {
         if (isAbortError(err)) throw err;
@@ -774,10 +795,11 @@ export class NativePlaywrightBrowser {
     throw new BrowserSessionError('redirect_limit_exceeded');
   }
 
-  async _perform(session, action, signal) {
+  async _perform(session, action, signal, attempt) {
     fence(signal);
     const page = session.page;
     if (action.kind === 'close') {
+      if (attempt) attempt.phase = 'close';
       await this._closeSession(session);
       return validateBrowserObservation({
         sessionRef: session.ref, actionId: action.actionId, actionSeq: session.actionSeq,
@@ -785,17 +807,20 @@ export class NativePlaywrightBrowser {
       });
     }
     if (action.kind === 'navigate') {
-      await this._navigate(session, action.url, action.timeoutMs, signal);
+      await this._navigate(session, action.url, action.timeoutMs, signal, attempt);
     } else {
       session.navigationRedirect = null;
       let locator = null;
       if (action.kind === 'click' || action.kind === 'fill' || action.kind === 'press') {
+        if (attempt) attempt.phase = 'target';
         if (action.elementRef != null) {
           fence(signal);
           locator = await session.elementRefs.resolve(action.elementRef);
-          if (!locator) return await this._selectorError(session, action, 'element_ref_stale', signal);
+          if (!locator) return await this._selectorError(session, action, 'element_ref_stale', signal, attempt);
         } else {
           locator = page.locator(action.selector);
+          const code = await this._selectorFailureCode(locator, action, signal, null);
+          if (code) return await this._selectorError(session, action, code, signal, attempt);
         }
         try {
           fence(signal);
@@ -807,7 +832,8 @@ export class NativePlaywrightBrowser {
           fence(signal);
         } catch (err) {
           if (isAbortError(err)) throw err;
-          return await this._selectorError(session, action, 'selector_not_visible', signal);
+          const code = await this._selectorFailureCode(locator, action, signal, 'selector_not_visible');
+          return await this._selectorError(session, action, code, signal, attempt);
         }
       }
       try {
@@ -817,51 +843,61 @@ export class NativePlaywrightBrowser {
           // error BEFORE any dispatch. The real click then commits; a throw AFTER it is a committed
           // input (ActionDispatchFailure -> uncertain), never a safe selector_not_actionable.
           try {
+            if (attempt) attempt.phase = 'actionability';
             fence(signal);
             await locator.click({ trial: true, timeout: Math.min(3000, Math.max(1, Math.floor(action.timeoutMs / 3))), button: action.button || 'left' });
           } catch (err) {
             if (isAbortError(err)) throw err;
-            return await this._selectorError(session, action, 'selector_not_actionable', signal);
+            const code = await this._selectorFailureCode(locator, action, signal, 'selector_not_actionable');
+            return await this._selectorError(session, action, code, signal, attempt);
           }
           fence(signal); // do not commit the real click after an abort
+          if (attempt) { attempt.phase = 'dispatch'; attempt.dispatchStarted = true; }
           await locator.click({ timeout: Math.max(1, Math.min(10000, Math.floor(action.timeoutMs / 2))), delay: action.durationMs || 0, button: action.button || 'left' });
         } else if (action.kind === 'fill') {
+          if (attempt) { attempt.phase = 'dispatch'; attempt.dispatchStarted = true; }
           await locator.fill(action.value, { timeout: Math.max(1, Math.min(10000, Math.floor(action.timeoutMs / 2))) });
         } else if (action.kind === 'press') {
+          if (attempt) { attempt.phase = 'dispatch'; attempt.dispatchStarted = true; }
           await locator.press(action.key, { timeout: Math.max(1, Math.min(10000, Math.floor(action.timeoutMs / 2))), delay: action.durationMs || 0 });
         } else if (action.kind === 'move') {
           if (action.x >= this._viewport[0] || action.y >= this._viewport[1]) return this._readOnlyFailure(session, action, 'position_outside_viewport');
           fence(signal);
+          if (attempt) { attempt.phase = 'dispatch'; attempt.dispatchStarted = true; }
           await page.mouse.move(action.x, action.y, { steps: action.steps || 1 });
         } else if (action.kind === 'scroll') {
           if (action.x != null) {
             if (action.x >= this._viewport[0] || action.y >= this._viewport[1]) return this._readOnlyFailure(session, action, 'position_outside_viewport');
             fence(signal);
+            if (attempt) { attempt.phase = 'dispatch'; attempt.dispatchStarted = true; }
             await page.mouse.move(action.x, action.y);
           }
           fence(signal);
           // Wheel can target an inner scroll container. Observe the actual result; dispatch
           // completion is not settled motion.
+          if (attempt) { attempt.phase = 'dispatch'; attempt.dispatchStarted = true; }
           await page.mouse.wheel(action.deltaX, action.deltaY);
         }
+        if (attempt?.dispatchStarted) attempt.dispatchCompleted = true;
       } catch (err) {
         if (isAbortError(err)) throw err;
         if (session.navigationRedirect === null) throw new ActionDispatchFailure(err);
       }
       fence(signal);
       if (session.navigationRedirect != null) {
-        await this._navigate(session, session.navigationRedirect, action.timeoutMs, signal);
+        await this._navigate(session, session.navigationRedirect, action.timeoutMs, signal, attempt);
       } else if (action.kind === 'click') {
         // A click can dispatch an async fetch whose DOM result is not visible when Playwright's
         // click returns. Give that request a bounded chance to settle before capturing the
         // observation; an idle timeout cannot justify replaying the committed click.
+        if (attempt) attempt.phase = 'settle';
         try { await page.waitForLoadState('networkidle', { timeout: Math.min(1500, Math.max(1, Math.floor(action.timeoutMs / 4))) }); }
         catch {}
         fence(signal);
       }
     }
     fence(signal);
-    return await this._observe(session, action, signal);
+    return await this._observe(session, action, signal, attempt);
   }
 
   /** Race a unit of async work against the signal. On abort, reject with AbortError immediately so
@@ -884,7 +920,7 @@ export class NativePlaywrightBrowser {
     });
   }
 
-  async act(ref, action, { signal } = {}) {
+  async act(ref, action, { signal, observeAction } = {}) {
     const session = this._lookup(ref);
     action = validateBrowserAction(action);
     const controller = new AbortController();
@@ -896,7 +932,8 @@ export class NativePlaywrightBrowser {
     const timer = setTimeout(() => controller.abort(), action.timeoutMs);
     if (typeof timer.unref === 'function') timer.unref();
     const internal = controller.signal;
-    const attempt = { started: false };
+    const attempt = createBrowserActionAttempt(action);
+    let observation, failureCode;
     // _act holds the session lock until _perform (and any capture retry) FULLY drains. act returns
     // boundedly via this race, but _act may keep running in the background (a JS abort cannot forcibly
     // interrupt an in-flight Playwright call). An aborted started attempt revokes the page; later
@@ -904,8 +941,10 @@ export class NativePlaywrightBrowser {
     // The late _act drain quarantines the action (action_canceled) and never
     // publishes late media (fence checks + signal.aborted guard).
     try {
-      return await this._race(() => this._act(ref, action, internal, attempt), internal);
+      observation = await this._race(() => this._act(ref, action, internal, attempt), internal);
+      return observation;
     } catch (err) {
+      failureCode = err instanceof BrowserSessionError ? err.code : 'browser_action_error';
       if (isAbortError(err)) {
         // The aborted action may have an in-flight input dispatch on the current page that JS
         // cannot cancel. Quarantine the session: close its context (real Playwright cancels the
@@ -924,6 +963,7 @@ export class NativePlaywrightBrowser {
     } finally {
       clearTimeout(timer);
       if (signal) signal.removeEventListener('abort', onExternal);
+      attempt.publish(observeAction, { signal, internal, observation, failureCode });
     }
   }
 
@@ -948,6 +988,7 @@ export class NativePlaywrightBrowser {
       const prior = session.results.get(action.actionId);
       if (prior) {
         if (prior.fingerprint !== fingerprint) throw new BrowserSessionError('action_conflict');
+        attempt.phase = 'replay';
         return validateBrowserObservation(prior.observation);
       }
       return validateBrowserObservation({
@@ -958,6 +999,7 @@ export class NativePlaywrightBrowser {
     }
     const release = await session.lock.acquire();
     try {
+      attempt.phase = 'preflight';
       if (!refEquals(ref, session.ref)) throw new BrowserSessionError('stale_session_ref');
       const prior = session.results.get(action.actionId);
       if (prior && prior.fingerprint !== fingerprint) throw new BrowserSessionError('action_conflict');
@@ -979,7 +1021,7 @@ export class NativePlaywrightBrowser {
           }
         }
       }
-      if (prior) return validateBrowserObservation(prior.observation);
+      if (prior) { attempt.phase = 'replay'; return validateBrowserObservation(prior.observation); }
       if (session.results.size >= this._maxActions && action.kind !== 'close') throw new BrowserSessionError('action_capacity_reached');
       attempt.started = true;
       session.actionSeq += 1;
@@ -988,7 +1030,7 @@ export class NativePlaywrightBrowser {
       session.results.set(action.actionId, { fingerprint, observation: this._incomplete(session, action, 'action_in_flight') });
       let result;
       try {
-        result = await this._perform(session, action, signal);
+        result = await this._perform(session, action, signal, attempt);
       } catch (err) {
         if (isAbortError(err)) {
           // A dispatch may have already happened. Quarantine the page: a new action revives a fresh
@@ -1003,7 +1045,7 @@ export class NativePlaywrightBrowser {
           // blocked retry screenshot cannot outlive the action's timeout. The no-replay invariant
           // holds: _observe only reads (DOM/screenshot/sink), never re-dispatches the input.
           try {
-            result = await this._race(() => this._observe(session, action, signal), signal);
+            result = await this._race(() => this._observe(session, action, signal, attempt), signal);
           } catch (e) {
             if (isAbortError(e)) {
               session.results.set(action.actionId, { fingerprint, observation: this._incomplete(session, action, 'action_canceled') });
@@ -1113,12 +1155,19 @@ export class NativePlaywrightBrowser {
     } finally { release(); }
   }
 
-  async close(ref, { signal } = {}) {
+  async close(ref, { signal, confirmClosed = false } = {}) {
     fence(signal);
     const session = this._lookup(ref);
-    if (session.quarantined) return this._race(() => this._closeSession(session), signal);
+    const close = async () => {
+      await this._closeSession(session);
+      // Normal disposal is best effort. A recovery fence is stronger: the
+      // context driver must acknowledge closure, including after quarantine's
+      // background cleanup rejected. Never infer that from session.closed.
+      if (confirmClosed) await session.context.close();
+    };
+    if (session.quarantined) return this._race(close, signal);
     const release = await session.lock.acquire();
-    try { fence(signal); await this._closeSession(session); } finally { release(); }
+    try { fence(signal); await this._race(close, signal); } finally { release(); }
   }
 
   async aclose() {

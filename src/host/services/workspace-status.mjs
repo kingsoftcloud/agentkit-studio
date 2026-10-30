@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve, relative, isAbsolute } from 'node:path';
+import { realpath } from 'node:fs/promises';
 const execute = promisify(execFile);
 const sum = output => {
   const records = output.split('\0'), total = { added: 0, removed: 0 };
@@ -27,11 +28,12 @@ export function createWorkspaceGitStatus({ workspaceRoot, now = Date.now, ttlMs 
   const read = async signal => {
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
     Object.assign(env, { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LC_ALL: 'C' });
-    const prefix = ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+    const prefix = ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'status.relativePaths=false'];
     const run = async (args, allowed = [0]) => {
       try { return (await execute('git', [...prefix, ...args], { cwd: root, env, signal, timeout: 2500, maxBuffer: 512 * 1024, encoding: 'utf8' })).stdout; }
       catch (error) { if (allowed.includes(error.code) && typeof error.stdout === 'string') return error.stdout; throw error; }
     };
+    const canonicalRoot = await realpath(root);
     let repo;
     try { repo = (await run(['rev-parse', '--show-toplevel'])).trim(); }
     catch (error) { if (error.code === 128 && /not a git repository/.test(error.stderr ?? '')) return { state: 'not_repository', git: null }; throw error; }
@@ -39,7 +41,9 @@ export function createWorkspaceGitStatus({ workspaceRoot, now = Date.now, ttlMs 
     const filters = await run(['config', '--null', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|process|smudge|required)$'], [0, 1]);
     for (const key of filters.split('\0').filter(Boolean)) prefix.push('-c', `${key}=${key.endsWith('.required') ? 'false' : ''}`);
     const branchName = (await run(['symbolic-ref', '--quiet', '--short', 'HEAD'], [0, 1])).trim() || null;
-    const status = (await run(['status', '--porcelain=v1', '-z', '--untracked-files=all'])).split('\0');
+    // Git discovers parent repositories. Both inventory and tracked diffs must
+    // stay within the selected workspace, including when it is a subdirectory.
+    const status = (await run(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'])).split('\0');
     const untracked = []; let dirtyFileCount = 0;
     for (let i = 0; i < status.length; i++) {
       const row = status[i]; if (!row) continue;
@@ -52,11 +56,13 @@ export function createWorkspaceGitStatus({ workspaceRoot, now = Date.now, ttlMs 
     try { head = (await run(['rev-parse', '--verify', 'HEAD'])).trim(); }
     catch (error) { if (error.code !== 128) throw error; head = (await run(['hash-object', '-t', 'tree', '/dev/null'])).trim(); }
     if (!/^[a-f0-9]{40,64}$/.test(head)) throw Error('invalid_git_head');
-    let counts = sum(await run(['diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', head, '--']));
+    let counts = sum(await run(['diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', head, '--', '.']));
     for (const path of untracked) {
       signal.throwIfAborted();
       const absolute = resolve(repo, path), rel = relative(repo, absolute);
       if (isAbsolute(rel) || rel === '..' || rel.startsWith('../')) throw Error('invalid_git_path');
+      const workspaceRelative = relative(canonicalRoot, absolute);
+      if (isAbsolute(workspaceRelative) || workspaceRelative === '..' || workspaceRelative.startsWith('../')) throw Error('git_path_outside_workspace');
       const next = sum(await run(['diff', '--no-index', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--', '/dev/null', absolute], [0, 1]));
       counts.added += next.added; counts.removed += next.removed;
     }

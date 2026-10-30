@@ -4,10 +4,11 @@ import type { CommitBatch, EffectIntent, EffectReceipt, Message, ModelResult, Ob
 import { copy, invariant, canonical } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
 import { retryDelay } from './retry.mjs';
-import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normalizedFinalText } from './final-submission.mjs';
+import { FINAL_SUBMISSION_TOOL, finalSubmissionTool, submittedFinalText, normalizedFinalText, finalDeliveryChanges } from './final-submission.mjs';
 import { currentHookState, pendingHookFeedback, planHook } from './hook-runtime.mjs';
-import { toolContext, deferredToolContexts } from './tool-context.mjs';
-import { reduceBrowserReceipt } from './browser-runtime.mjs';
+import { projectToolResultContext, deferredToolContexts } from './tool-context.mjs';
+import { validateWorkspaceChange, workspaceChangeUnobserved } from './workspace-change.mjs';
+import { isolatedBrowserFailure, reduceBrowserReceipt } from './browser-runtime.mjs';
 import { advanceInteractionObservation, browserTaskMessages, browserTaskTools, invalidatesBrowserObservation, webObservationDue, webVerificationOnly } from './task-policy.mjs';
 import { checkpointCandidate, finishCheckpoint } from './verification.mjs';
 import { effectiveGuidanceResponse } from './guidance.mjs';
@@ -16,6 +17,7 @@ import { admittedToolBudget, outstandingChildCalls, reduceChildBudget } from './
 import { prepareChildLifecycle, unsettledChildren } from './child-runtime.mjs';
 import { toolResourceUsage, toolUsageIncomplete } from './tool-resource-usage.mjs';
 import { completeContinuation, outputRecoveryMode, restartContinuation } from './output-recovery.mjs';
+import { responseContinuationPending } from './response-continuation.mjs';
 import { advanceDiagnosticRecovery, advanceObservedProgress, advanceToolErrorStreak, guardedToolErrorAction,
   refuseUndiagnosedToolAction, reserveDiagnosticTrial, toolErrorRecoveryBoundary, toolErrorRecoveryEnabled,
   toolErrorStreakExhausted } from './tool-error-recovery.mjs';
@@ -24,6 +26,9 @@ import { contextContinuity } from './context-planning.mjs';
 import { discoveryModelTools, resolveDiscoveredCalls, discoveredCallExposed, TOOL_SEARCH } from './tool-discovery.mjs';
 import { NativePolicyRegistry } from './policy-registry.mjs';
 import { reduceCoordinatorResponses } from './coordinator-response.mjs';
+import { RESULT_DELIVERY_POLICY } from './deliverables.mjs';
+import { validateModelTransport } from './model-transport.mjs';
+import { validateModelFailure } from './model-failure.mjs';
 
 export function objectValue(value: unknown): ObjectValue {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), 'expected_json_object');
@@ -62,17 +67,20 @@ export function finalizationOnly(snapshot: RunSnapshot, config: RunConfiguration
   return calls <= config.limits.finalizationReserveModelCalls;
 }
 export function advertisedTools(snapshot: RunSnapshot, config: RunConfiguration, policies = new NativePolicyRegistry()) {
+  if (responseContinuationPending(snapshot, config)) return [];
   if (policies.forRun(config).review.reviewPending(snapshot)) return policies.forRun(config).review.deliveryReviewTools(snapshot, config);
   const submission = finalSubmissionTool(config);
   const tools = finalizationOnly(snapshot, config) || toolRoom(snapshot, config) <= 0 ? []
     : browserTaskTools(snapshot, config, wallDeliveryOnly(snapshot, config) && !webObservationDue(snapshot, config) && !webVerificationOnly(snapshot, config)
-      ? config.tools.flatMap(tool => { const reader = scopedDeliveryReader(tool, snapshot); return reader ? [reader] : tool.deliveryWrite ? [tool] : []; }) : config.tools).filter(tool => config.contract.allowedToolNames === null
+      ? config.tools.flatMap(tool => { const reader = scopedDeliveryReader(tool, snapshot); return reader ? [reader]
+        : tool.deliveryWrite || policies.forRun(config).delivery.isDeliveryCall(config, tool) ? [tool] : []; }) : config.tools).filter(tool => config.contract.allowedToolNames === null
       || config.contract.allowedToolNames.includes(tool.name));
   return [...tools, ...(submission ? [submission] : [])];
 }
 export interface PlanCapabilities { context: boolean; workspace: boolean; verification: boolean; input?: boolean }
 /** Stable declaration is distinct from the per-turn execution admission above. */
 export function modelToolCatalog(snapshot: RunSnapshot, config: RunConfiguration, policies = new NativePolicyRegistry()) {
+  if (responseContinuationPending(snapshot, config)) return [];
   if ((config.profile.toolCatalogPolicy !== 'stable-task/v1' && config.profile.providerToolSearchPolicy !== 'anthropic-deferred/v1')
     || policies.forRun(config).review.reviewPending(snapshot)) return discoveryModelTools(snapshot, config, advertisedTools(snapshot, config, policies));
   const submission = finalSubmissionTool(config);
@@ -130,11 +138,16 @@ export function plan(snapshot: RunSnapshot, config: RunConfiguration, capabiliti
         content: canonical({ freshObservationRequired: true, candidateAccepted: false }) }],
     }, [{ kind: 'browser.candidate_rejected', payload: { reason: 'fresh_observation_required' } }]);
   }
-  // The first input was admitted before start. Later boundaries drain Host
+  // Ordinary callers admit complete initial context before start. Deferred
+  // execution owners admit only the original user input, so the frozen policy
+  // requires a durable preparation receipt before their first inference too.
+  if (config.inputPolicy === 'before-first-model/v1' && !capabilities.input)
+    return finalizing(snapshot, 'blocked', 'input_port_missing');
+  // Later boundaries drain Host
   // steering only after every result in the previous tool batch is committed.
   // Check candidates too, so input received during the final request is not
   // silently left behind when the delegated engine settles the whole turn.
-  if (capabilities.input && snapshot.usage.modelCalls > 0
+  if (capabilities.input && (snapshot.usage.modelCalls > 0 || config.inputPolicy === 'before-first-model/v1')
     && ['preparing_context', 'verifying'].includes(snapshot.phase)
     && snapshot.context.inputModelCursor !== snapshot.usage.modelCalls) {
     return prepareEffect(snapshot, 'input', snapshot.phase, {
@@ -263,11 +276,20 @@ function boundReplay(result: ModelResult, config: RunConfiguration): ObjectValue
 }
 export function validateModelResult(input: ModelResult): ModelResult {
   const result = copy(input);
+  validateModelTransport(result.transportObservation);
+  validateModelFailure(result.failureDiagnostic);
+  invariant(!result.failureDiagnostic || ['provider_terminal_error', 'provider_retryable_error', 'policy_abort', 'malformed_tool_call'].includes(result.kind),
+    'model_failure_diagnostic_requires_failure');
   invariant(['tool_calls', 'final_candidate', 'output_limit', 'context_overflow', 'empty_response', 'malformed_tool_call',
     'provider_retryable_error', 'provider_terminal_error', 'policy_abort', 'user_abort'].includes(result.kind)
     && typeof result.text === 'string' && Array.isArray(result.toolCalls), 'invalid_model_result');
   addUsage(emptyUsage(), result.usage);
   invariant(result.usageReported === undefined || typeof result.usageReported === 'boolean', 'invalid_usage_report_status');
+  invariant(result.outputBoundary === undefined || result.kind === 'output_limit'
+    && result.textCommitVersion === 'provider-finished-text/v1'
+    && ['assistant-text/v1', 'tool-call/v1', 'no-visible-output/v1'].includes(result.outputBoundary)
+    && (result.outputBoundary !== 'assistant-text/v1' || !!result.text.trim() && result.toolCalls.length === 0)
+    && (result.outputBoundary !== 'no-visible-output/v1' || !result.text.trim() && result.toolCalls.length === 0), 'invalid_output_boundary');
   const ids = new Set<string>();
   for (const call of result.toolCalls) {
     invariant(typeof call.callId === 'string' && call.callId.trim() && typeof call.name === 'string' && call.name.trim()
@@ -290,7 +312,11 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
   const usage = addUsage(snapshot.usage, { ...result.usage, modelCalls: 0, toolCalls: 0 });
   const base: Partial<RunSnapshot> = { pendingIntent: null, preparedContext: null, usage,
     ...(snapshot.pendingGuidanceIds?.length && effectiveGuidanceResponse(result) ? { pendingGuidanceIds: [] } : {}),
-    ...(result.usageReported === false ? { diagnostics: { ...snapshot.diagnostics, providerUsageIncomplete: true } } : {}) };
+    ...(result.usageReported === false || result.failureDiagnostic || snapshot.diagnostics.lastModelFailure
+      ? { diagnostics: { ...snapshot.diagnostics,
+        ...(result.usageReported === false ? { providerUsageIncomplete: true } : {}),
+        ...(result.failureDiagnostic || snapshot.diagnostics.lastModelFailure
+          ? { lastModelFailure: result.failureDiagnostic ? objectValue(result.failureDiagnostic) : null } : {}) } } : {}) };
   if (policies.forRun(config).review.reviewPending(snapshot)) {
     const beforeCall = { ...snapshot, usage: { ...snapshot.usage, modelCalls: snapshot.usage.modelCalls - 1 } };
     const readers = policies.forRun(config).review.deliveryReviewReaders(beforeCall, config);
@@ -314,18 +340,30 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
     ...(replay ? { providerReplay: replay, ...(result.replayToolIds ? { replayToolIds: result.replayToolIds } : {}) } : {}) };
   switch (result.kind) {
     case 'tool_calls':
+      if (responseContinuationPending(snapshot, config)) {
+        const errors = snapshot.modelErrors + 1, exhausted = errors > config.profile.maxRetries;
+        return { ...base, pendingTools: [], modelErrors: errors, phase: exhausted ? 'finalizing' : 'preparing_context',
+          outcome: exhausted ? 'unverified' : null, reason: exhausted ? 'response_continuation_tool_call' : null,
+          messages: [...snapshot.messages, { role: 'user', kind: 'response_continuation_feedback',
+            content: 'The interrupted text response is still being continued. Tool calls were not dispatched. Return its missing text suffix only.' }] };
+      }
       if (deliveryReadOutsidePaths(snapshot, config, result.toolCalls)) return { ...base, phase: 'preparing_context', pendingTools: [],
         messages: [...snapshot.messages, { ...message, toolCalls: result.toolCalls }, ...result.toolCalls.map(call => ({ role: 'tool' as const,
           callId: call.callId, name: call.name, content: canonical({ status: 'error', content: { reason: 'delivery_read_path_not_written', executed: false } }) }))] };
-      if (config.contract.finalSubmissionSchema && result.toolCalls.some(call => call.name === FINAL_SUBMISSION_TOOL)) {
+      if (finalSubmissionTool(config) && result.toolCalls.some(call => call.name === FINAL_SUBMISSION_TOOL)) {
         const text = result.toolCalls.length === 1 ? submittedFinalText(result.toolCalls[0]!, config) : null;
         const messages: Message[] = [...snapshot.messages, { ...message, toolCalls: result.toolCalls },
           ...result.toolCalls.map(call => ({ role: 'tool' as const, callId: call.callId, name: call.name,
             content: canonical({ status: text === null ? 'not_dispatched' : 'accepted',
               reason: text === null ? 'final_submission_schema_or_batch_invalid' : 'final_submission_candidate' }) }))];
-        if (text !== null) return { ...base, phase: 'verifying', messages, pendingTools: [], modelErrors: 0, continuations: 0,
+        if (text !== null) {
+          if (config.deliveryScopePolicy === RESULT_DELIVERY_POLICY) messages[snapshot.messages.length] = {
+            ...messages[snapshot.messages.length]!, content: text, kind: 'final_candidate' };
+          return { ...base, ...finalDeliveryChanges(snapshot, config, result.toolCalls[0]),
+          phase: 'verifying', messages, pendingTools: [], modelErrors: 0, continuations: 0,
           candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`, text,
             goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision } };
+        }
         const errors = snapshot.modelErrors + 1, exhausted = errors > config.profile.maxRetries;
         return { ...base, messages, pendingTools: [], modelErrors: errors, phase: exhausted ? 'finalizing' : 'preparing_context',
           outcome: exhausted ? 'unverified' : null, reason: exhausted ? 'final_submission_retry_exhausted' : null };
@@ -359,12 +397,13 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
             { role: 'user', kind: 'final_submission_required', content: 'Submit the complete final answer through submit_final_output.' }] };
       }
       const text = normalizedFinalText(completeContinuation(snapshot.messages, result.text, digest), config.contract.finalOutputFormat);
-      return { ...base, phase: 'verifying', modelErrors: 0, candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`,
+      return { ...base, ...finalDeliveryChanges(snapshot, config), phase: 'verifying', modelErrors: 0, candidate: { candidateId: `${snapshot.runId}:candidate:${snapshot.usage.modelCalls}`,
         text, goalRevision: snapshot.goalRevision, workspaceRevision: snapshot.workspaceRevision },
         messages: [...snapshot.messages, { ...message, content: text, kind: 'final_candidate' }] };
     }
     case 'output_limit': {
       if (snapshot.continuations >= config.profile.maxContinuations) {
+        if (responseContinuationPending(snapshot, config)) return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'continuation_budget_exhausted' };
         if (snapshot.outputRestarts < config.limits.maxOutputRestarts) {
           try { return { ...base, ...restartContinuation(snapshot, config, result.text, digest), phase: 'preparing_context',
             continuations: 0, outputRestarts: snapshot.outputRestarts + 1 }; }
@@ -373,15 +412,23 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
         }
         return { ...base, phase: 'finalizing', outcome: 'unverified', reason: 'continuation_budget_exhausted' };
       }
+      if (!result.text && responseContinuationPending(snapshot, config)) return { ...base, phase: 'preparing_context',
+        continuations: snapshot.continuations + 1,
+        messages: [...snapshot.messages, { role: 'user', kind: 'response_continuation_feedback',
+          content: 'No visible continuation was returned. The interrupted text response is still pending. Return only its missing text suffix.' }] };
       const mode = result.text ? outputRecoveryMode({ ...snapshot, ...base }, config,
-        advertisedTools({ ...snapshot, ...base }, config, policies).length > 0) : 'empty_output';
+        advertisedTools({ ...snapshot, ...base }, config, policies).length > 0, result) : 'empty_output';
       const responseId = snapshot.pendingIntent ?? `${snapshot.runId}:model:${snapshot.usage.modelCalls}`;
       return { ...base, phase: 'preparing_context', continuations: snapshot.continuations + 1,
         messages: [...snapshot.messages, ...(result.text ? [{ ...message, kind: 'continuation_fragment', continuationResponseId: responseId }] : []),
           { role: 'user', kind: 'continuation_observation', continuationMode: mode, continuationResponseId: responseId,
+            ...(config.outputRecoveryPolicy === 'response-boundary/v2' && config.contract.finalOutputFormat === 'text' && mode === 'suffix'
+              ? { continuationPolicy: 'response-boundary/v2' as const } : {}),
             continuationFragmentDigest: digest(result.text), content: mode === 'task_resume'
               ? 'The previous output was interrupted while task tools remain available. It is work in progress, not a completed delivery. Continue from the last committed state using the available tools as needed; break remaining work into smaller actions. Incomplete tool calls were not executed. Give a fresh final answer only after the task is complete.'
-              : result.text ? 'The last response hit its output limit. Return only the exact missing suffix of that response. Incomplete tool calls were not executed.'
+              : result.text ? 'The last response hit its output limit. Return only the exact missing suffix of that response. '
+                + (config.outputRecoveryPolicy === 'response-boundary/v2' ? 'You may replay the final incomplete line verbatim before continuing; the Host joins this exact overlap. Do not replay any complete line. ' : '')
+                + 'Incomplete tool calls were not executed.'
                 : 'The last response hit its output limit without visible content or a committed tool call. Continue the task from the last committed state; take the next useful action or answer only if the task is complete.' }] };
     }
     case 'context_overflow':
@@ -397,7 +444,8 @@ export function reduceModel(snapshot: RunSnapshot, input: ModelResult, config: R
         reason: exhausted ? `${result.kind}_retry_exhausted` : null,
         providerErrors: provider ? attempts : snapshot.providerErrors,
         modelErrors: provider ? snapshot.modelErrors : attempts, retryNotBefore: exhausted ? 0 : now + delay,
-        messages: provider ? snapshot.messages : [...snapshot.messages, { role: 'user', kind: 'model_feedback',
+        messages: provider ? snapshot.messages : [...snapshot.messages, { role: 'user', kind: responseContinuationPending(snapshot, config)
+          ? 'response_continuation_feedback' : 'model_feedback',
           content: result.kind === 'empty_response' ? 'The last response was empty. Continue the task or provide a complete answer.' : 'The last tool call was malformed and was not executed. Return complete valid tool arguments.' }] };
     }
     case 'policy_abort': return { ...base, phase: 'finalizing', outcome: 'blocked', reason: 'model_policy_abort' };
@@ -418,6 +466,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
       descendantUsage: addUsage(snapshot.descendantUsage, resources[0]!),
       diagnostics: { ...snapshot.diagnostics, descendantUsageIncomplete: true } };
   }
+  let browserIsolated = false;
   let updated = { ...copy(snapshot), browserSessionRefs: copy(snapshot.browserSessionRefs ?? []),
     backgroundCommands: copy(snapshot.backgroundCommands),
     browserReobservationRefs: copy(snapshot.browserReobservationRefs ?? []), lastBrowserObservation: snapshot.lastBrowserObservation ?? null,
@@ -429,6 +478,8 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
   for (const [index, call] of calls.entries()) {
     const result = copy(results[index]!);
     invariant(['ok', 'error', 'approval_required', 'uncertain'].includes(result.status), 'invalid_tool_result');
+    const definition = config.tools.find(tool => tool.name === call.name);
+    const workspaceChange = validateWorkspaceChange(result, definition);
     if (calls.length > 1 && (result.status === 'approval_required' || result.status === 'uncertain'
       || result.workspaceChangedPaths?.length || result.childRunIds?.length || result.childBudgetReservation || result.childBudgetSettlement || result.browserSessionRef || result.browserObservation || result.backgroundCommandRef
       || (result.resourceUsage?.modelCalls ?? 0) > 0)) {
@@ -451,11 +502,14 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
     updated.usage.toolCalls += 1;
     Object.assign(updated, policies.reduceTool(updated, config, call, result));
-    if (result.workspaceChangedPaths?.length) {
+    if (result.workspaceChangedPaths?.length || workspaceChangeUnobserved(result)) {
       updated.workspaceDirtySinceCheckpoint = true;
       updated.lastWorkspaceMutationToolCall = updated.usage.toolCalls;
     }
-    const definition = config.tools.find(tool => tool.name === call.name);
+    if (workspaceChange) {
+      updated.workspaceRevision = workspaceChange.revision;
+      updated.workspaceObservationStatus = workspaceChange.status;
+    }
     Object.assign(updated, rememberDeliveryWrite(updated, call, result, definition));
     const childBudget = reduceChildBudget(updated, result, definition, intent.operationKey, call,
       admittedToolBudget(snapshot, config, calls.length), digest);
@@ -469,7 +523,7 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     updated.descendantUsage = addUsage(updated.descendantUsage, childBudget.usage);
     if (toolUsageIncomplete(result)) updated.diagnostics.descendantUsageIncomplete = true;
     updated.backgroundCommands = rememberCommand(updated, result, definition);
-    if (invalidatesBrowserObservation(result, config)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
+    if (invalidatesBrowserObservation(result, config, updated)) updated.lastWebMutationToolCall = updated.usage.toolCalls;
     if (definition) {
       updated.unresolvedInteractionObservation = advanceInteractionObservation(updated.unresolvedInteractionObservation,
         definition, updated.usage.toolCalls, result, digest);
@@ -484,13 +538,23 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     if (updated.phase === 'finalizing') return { ...browserFields, pendingIntent: null, phase: 'finalizing',
       outcome: updated.outcome, reason: updated.reason, preparedContext: updated.preparedContext, contextState: updated.contextState,
       candidate: updated.candidate, verification: updated.verification, finalText: updated.finalText, usage: updated.usage };
-    if (result.status === 'uncertain') return { ...browserFields, pendingIntent: null, phase: 'finalizing', outcome: 'unverified', reason: 'effect_outcome_unknown', usage: updated.usage };
+    if (result.status === 'uncertain') {
+      const isolation = isolatedBrowserFailure(updated, result, definition, intent.operationKey);
+      if (!isolation || snapshot.recoveryRetriesUsed >= config.limits.maxRecoveryRetries) return {
+        ...browserFields, ...(isolation ?? {}), pendingIntent: null, phase: 'finalizing', outcome: 'unverified',
+        reason: isolation ? 'recovery_retry_exhausted' : 'effect_outcome_unknown', usage: updated.usage,
+        recoveryRetriesUsed: snapshot.recoveryRetriesUsed };
+      Object.assign(updated, isolation);
+      browserIsolated = true;
+      // Preserve this tool result and the remainder of the admitted tool batch.
+      // The next model request sees a failed observation, never a successful action.
+    }
     updated.toolErrorStreak = advanceToolErrorStreak(updated, call, result, definition, config, digest);
     if (toolErrorRecoveryEnabled(config)) {
       if (result.sourceObservationState !== 'unread') Object.assign(updated, advanceObservedProgress(updated, result, definition, digest));
       Object.assign(updated, advanceDiagnosticRecovery(updated, updated, call, result, definition, digest));
     }
-    updated.messages.push({ ...(result.context === undefined ? { content: canonical(result.content) } : toolContext(result.context)),
+    updated.messages.push({ ...projectToolResultContext(result, config),
       role: 'tool', callId: call.callId, name: call.name,
       ...(config.contextPolicy?.pruneToolResults || config.contextPolicy?.sourceReusePolicy ? { toolOutcome: result.status } : {}),
       ...(definition?.contextRetention === 'persistent' ? { persistent: true } : {}) });
@@ -531,8 +595,15 @@ export function reduceTools(snapshot: RunSnapshot, results: ToolResult[], calls:
     }
   }
   return { pendingIntent: null, pendingTools: snapshot.pendingTools.slice(calls.length), usage: updated.usage,
+    ...(updated.recoveryRetriesUsed !== snapshot.recoveryRetriesUsed ? { recoveryRetriesUsed: updated.recoveryRetriesUsed } : {}),
+    ...(browserIsolated ? { preparedContext: updated.preparedContext, contextState: updated.contextState,
+      candidate: updated.candidate, verification: updated.verification, finalText: updated.finalText } : {}),
+    ...(updated.workspaceObservationStatus ? { workspaceObservationStatus: updated.workspaceObservationStatus,
+      workspaceRevision: updated.workspaceRevision } : {}),
     ...(updated.toolDiscovery ? { toolDiscovery: updated.toolDiscovery } : {}),
     ...(updated.todos ? { todos: updated.todos } : {}),
+    ...(updated.deliveryManifest ? { deliveryManifest: updated.deliveryManifest } : {}),
+    ...(config.deliveryScopePolicy ? { verification: updated.verification, verificationToolCalls: updated.verificationToolCalls } : {}),
     ...(updated.planMode ? { planMode: updated.planMode } : {}),
     ...(updated.childResponseCursors ? { childResponseCursors: updated.childResponseCursors } : {}),
     context: updated.context,

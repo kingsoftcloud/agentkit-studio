@@ -33,7 +33,8 @@ import { buildNativeModelRequest } from './model-request.mjs';
 // parseModelJson is the kernel's strict finite JSON parser; used here for the
 // 400 context-length error heuristic so a malformed error body is never parsed
 // as a lenient ambiguity.
-import { parseModelJson } from '@kingsoftcloud/agentkit-harness-core';
+import { parseModelJson, MODEL_FAILURE_CODES } from '@kingsoftcloud/agentkit-harness-core';
+import { observeModelTransportPort } from './model-transport-observation.mjs';
 
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 const DEFAULT_IDLE_MS = 180000;
@@ -70,11 +71,9 @@ export function createNativeModelPort({
   const maxBytes = maxResponseBytes;
   const idleTimeout = idleTimeoutMs;
 
-  return {
-    async generate(request, emit) {
-      const emitEvent = typeof emit === 'function' ? emit : () => {};
+  return observeModelTransportPort(async (request, emitEvent, observation) => {
       if (!request || typeof request !== 'object' || !request.profile) {
-        return terminalResult('invalid_response');
+        return withFailure(terminalResult('invalid_response'), null, 'request', 'request_invalid');
       }
 
       // 1. Resolve the host-owned binding. A host hook failure is terminal and
@@ -83,7 +82,7 @@ export function createNativeModelPort({
       try {
         binding = await resolveProfile(request.profile, request);
       } catch {
-        return terminalResult('host_error');
+        return withFailure(terminalResult('host_error'), null, 'binding', 'host_binding');
       }
 
       // 2. Build the wire request. Pre-flight validation of the binding, profile
@@ -94,7 +93,7 @@ export function createNativeModelPort({
       } catch (error) {
         const failureKind = (error instanceof ProtocolError || error instanceof MediaError)
           ? 'invalid_response' : 'client_error';
-        return terminalResult(failureKind);
+        return withFailure(terminalResult(failureKind), binding, 'request', 'request_invalid');
       }
 
       // 3. One fetch with a combined signal: the caller's signal plus an internal
@@ -113,6 +112,7 @@ export function createNativeModelPort({
 
       let response;
       try {
+        observation.phase('headers');
         response = await fetchImpl(built.url, {
           method: 'POST',
           headers: built.headers,
@@ -120,12 +120,13 @@ export function createNativeModelPort({
           signal: combined,
           redirect: 'manual',
         });
+        observation.headers();
       } catch (error) {
         clearTimer(overallTimer);
         // Honor a caller-initiated abort by propagating it.
         if (request.signal?.aborted) throw error;
-        if (internal.signal.aborted) return retryableResult('request_timeout');
-        return retryableResult(sanitizeFailureKind(error, 'network_error'));
+        if (internal.signal.aborted) return withFailure(retryableResult('request_timeout'), binding, 'headers', 'stream_timeout');
+        return withFailure(retryableResult(sanitizeFailureKind(error, 'network_error')), binding, 'headers', 'transport_error');
       }
 
       // 4. Dispatch. The overall timer stays armed through body reads so a
@@ -134,35 +135,42 @@ export function createNativeModelPort({
       // (e.g. a 429 whose body was never read).
       try {
         if (!response.ok) {
+          observation.phase('http-error');
           const result = await classifyHttpError(response, { maxBytes });
           request.signal?.throwIfAborted();
-          return result;
+          const code = response.status === 401 ? 'http_authentication' : response.status === 403 ? 'http_permission'
+            : response.status === 429 ? 'http_rate_limit' : response.status === 408 ? 'http_timeout'
+              : response.status >= 500 ? 'http_server' : 'http_client';
+          return withFailure(result, binding, 'http-error', code, { httpStatus: response.status });
         }
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('text/event-stream')) {
+          observation.phase('stream');
           const idlePolicy = request.profile.streaming !== false && request.profile.streamTimeoutPolicy === 'idle/v1';
           if (idlePolicy) { clearTimer(overallTimer); overallTimer = null; }
           return await streamResponse(response, request, binding, emitEvent, internal, maxBytes,
-            idlePolicy && overallMs > 0 ? Math.min(idleTimeout, overallMs) : idleTimeout);
+            idlePolicy && overallMs > 0 ? Math.min(idleTimeout, overallMs) : idleTimeout, observation);
         }
-        return await bufferedResponse(response, request, binding, maxBytes, emitEvent);
+        observation.phase('buffered');
+        return await bufferedResponse(response, request, binding, maxBytes, emitEvent, observation);
       } catch (error) {
         if (request.signal?.aborted) throw error;
         if (error instanceof IdleTimeout || internal.signal.aborted) {
-          return retryableResult('request_timeout');
+          return withFailure(retryableResult('request_timeout'), binding, 'buffered', 'stream_timeout');
         }
         // Overflow, bad UTF-8, or a transport error mid-body: a partial body is
         // never sealed as a final; the attempt is terminal invalid_response.
-        return terminalResult('invalid_response');
+        return withFailure(terminalResult('invalid_response'), binding, 'buffered', error instanceof OverflowError
+          ? 'body_limit' : error instanceof TypeError && error.code === 'ERR_ENCODING_INVALID_ENCODED_DATA'
+            ? 'body_encoding' : protocolCode(error));
       } finally {
         clearTimer(overallTimer);
         cancelBody(response);
       }
-    },
-  };
+  });
 }
 
-async function streamResponse(response, request, binding, emit, internal, maxBytes, idleTimeoutMs) {
+async function streamResponse(response, request, binding, emit, internal, maxBytes, idleTimeoutMs, observation) {
   const profile = request.profile;
   const idlePolicy = profile.streaming !== false && profile.streamTimeoutPolicy === 'idle/v1';
   const state = binding.protocol === 'anthropic-messages'
@@ -173,9 +181,15 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
   // Idle silence aborts the fetch via the internal controller so the pending
   // body read rejects cleanly instead of leaving an orphaned read to cancel.
   const abort = (reason) => internal.abort(reason);
+  let frameIndex = -1;
+  const failed = (result, code) => withFailure(result, binding, 'stream', code,
+    { ...(frameIndex < 0 ? {} : { frameIndex }),
+      ...(code === 'usage_conflict' && state.usageConflict ? { usageConflict: state.usageConflict } : {}) });
   try {
-    for await (const frame of readModelSse(response.body, { maxBytes, idleTimeoutMs, abort })) {
+    for await (const frame of readModelSse(response.body, { maxBytes, idleTimeoutMs, abort, observeBytes: observation.bytes })) {
       if (idlePolicy && !frame.data.trim()) continue;
+      frameIndex++;
+      observation.frame();
       state.consume(frame, emit);
       if (idlePolicy) emit({ kind: 'activity', text: '' });
       if (state.done) break;
@@ -183,30 +197,32 @@ async function streamResponse(response, request, binding, emit, internal, maxByt
   } catch (error) {
     if (request.signal?.aborted) throw error; // caller cancel propagates
     if (error instanceof IdleTimeout) {
-      return state.finalize({ errorKind: 'provider_retryable_error', failureKind: 'request_timeout' });
+      return failed(state.finalize({ errorKind: 'provider_retryable_error', failureKind: 'request_timeout' }), 'stream_timeout');
     }
     if (error instanceof SseFramingError) {
-      return state.finalize({ errorKind: 'provider_terminal_error', failureKind: 'invalid_response' });
+      return failed(state.finalize({ errorKind: 'provider_terminal_error', failureKind: 'invalid_response' }), protocolCode(error));
     }
     if (error instanceof ProtocolError) {
       // An Anthropic in-stream `error` event carries its own classification.
       if (error.streamError) {
-        return state.finalize({ errorKind: error.streamError.kind, failureKind: error.streamError.failureKind });
+        return failed(state.finalize({ errorKind: error.streamError.kind, failureKind: error.streamError.failureKind }), 'provider_error');
       }
-      return state.finalize({ errorKind: 'provider_terminal_error', failureKind: 'invalid_response' });
+      return failed(state.finalize({ errorKind: 'provider_terminal_error', failureKind: 'invalid_response' }), protocolCode(error));
     }
     if (internal.signal.aborted) {
       // An overall-timeout abort (and any idle abort that surfaced as a
       // transport error) is a retryable request timeout, never a final.
-      return state.finalize({ errorKind: 'provider_retryable_error', failureKind: 'request_timeout' });
+      return failed(state.finalize({ errorKind: 'provider_retryable_error', failureKind: 'request_timeout' }), 'stream_timeout');
     }
-    return state.finalize({ errorKind: 'provider_retryable_error', failureKind: sanitizeFailureKind(error, 'network_error') });
+    return failed(state.finalize({ errorKind: 'provider_retryable_error', failureKind: sanitizeFailureKind(error, 'network_error') }), 'transport_error');
   }
-  return state.finalize();
+  const result = state.finalize();
+  return failed(result, state.streamError ? 'provider_error' : result.kind === 'malformed_tool_call' ? 'tool_payload_invalid'
+    : result.failureKind === 'incomplete_response' ? 'stream_incomplete' : 'protocol_invalid');
 }
 
-async function bufferedResponse(response, request, binding, maxBytes, emit) {
-  const bodyText = await readBoundedText(response, maxBytes);
+async function bufferedResponse(response, request, binding, maxBytes, emit, observation) {
+  const bodyText = await readBoundedText(response, maxBytes, observation.bytes);
   const captureReplay = request.profile?.providerReplayMode !== 'none';
   // Keep legacy buffered admissions unchanged. New visibility admissions also
   // retain explicitly provided display reasoning when a server returns JSON.
@@ -214,14 +230,14 @@ async function bufferedResponse(response, request, binding, maxBytes, emit) {
     && request.profile.providerThinkingDisplay === true ? text => { if (text) emit({ kind: 'thinking', text }); } : undefined;
   try {
     if (binding.protocol === 'anthropic-messages') {
-      return parseAnthropicBuffered(bodyText, request, { captureReplay, onThinking });
+      return withFailure(parseAnthropicBuffered(bodyText, request, { captureReplay, onThinking }), binding, 'buffered', 'protocol_invalid');
     }
     if (binding.protocol === 'openai-responses') {
-      return parseResponsesBuffered(bodyText, request, { captureReplay, onThinking });
+      return withFailure(parseResponsesBuffered(bodyText, request, { captureReplay, onThinking }), binding, 'buffered', 'protocol_invalid');
     }
-    return parseOpenAIBuffered(bodyText, request, { captureReplay, binding, onThinking });
-  } catch {
-    return terminalResult('invalid_response');
+    return withFailure(parseOpenAIBuffered(bodyText, request, { captureReplay, binding, onThinking }), binding, 'buffered', 'protocol_invalid');
+  } catch (error) {
+    return withFailure(terminalResult('invalid_response'), binding, 'buffered', protocolCode(error));
   }
 }
 
@@ -266,6 +282,19 @@ function terminalResult(failureKind) {
   return { kind: 'provider_terminal_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false, failureKind };
 }
 
+// A closed enum, rather than exception messages, crosses the model boundary.
+// This is diagnostic evidence only; original classification/retry policy stays intact.
+function protocolCode(error) {
+  return (error instanceof ProtocolError || error instanceof SseFramingError) && MODEL_FAILURE_CODES.includes(error.code)
+    ? error.code : 'protocol_invalid';
+}
+function withFailure(result, binding, phase, code, fields = {}) {
+  if (!['provider_terminal_error', 'provider_retryable_error', 'policy_abort', 'malformed_tool_call'].includes(result.kind)) return result;
+  const protocol = ['openai-chat', 'openai-responses', 'anthropic-messages'].includes(binding?.protocol) ? binding.protocol : 'unknown';
+  return { ...result, failureDiagnostic: { contract: fields.usageConflict
+    ? 'model-failure-diagnostic/v2' : 'model-failure-diagnostic/v1', protocol, phase, code, ...fields } };
+}
+
 function retryableResult(failureKind, retryAfterMs = null) {
   const result = { kind: 'provider_retryable_error', text: '', toolCalls: [], usage: emptyUsage(), usageReported: false, failureKind };
   if (Number.isFinite(retryAfterMs) && retryAfterMs != null && retryAfterMs >= 0) {
@@ -293,7 +322,7 @@ function cancelBody(response) {
 // truncating a prefix (a JSON prefix + overflow suffix must not masquerade as a
 // complete response). Reads to EOF before sealing. Throws OverflowError on
 // overflow; propagates abort and bad-UTF-8 errors for the caller to classify.
-async function readBoundedText(response, maxBytes) {
+async function readBoundedText(response, maxBytes, observeBytes) {
   const body = response.body;
   if (body == null) return '';
   const reader = body.getReader ? body.getReader() : null;
@@ -308,6 +337,7 @@ async function readBoundedText(response, maxBytes) {
         if (!value) continue;
         if (!(value instanceof Uint8Array) && !(value instanceof ArrayBuffer)) throw new ProtocolError('body requires bytes');
         total += value.byteLength;
+        observeBytes?.(value.byteLength);
         if (total > maxBytes) throw new OverflowError();
         chunks.push(decoder.decode(value, { stream: true }));
       }
@@ -322,6 +352,7 @@ async function readBoundedText(response, maxBytes) {
     if (!value) continue;
     if (!(value instanceof Uint8Array) && !(value instanceof ArrayBuffer)) throw new ProtocolError('body requires bytes');
     total += value.byteLength;
+    observeBytes?.(value.byteLength);
     if (total > maxBytes) throw new OverflowError();
     chunks.push(decoder.decode(value, { stream: true }));
   }

@@ -1,7 +1,7 @@
 import type { ArtifactPort, ArtifactRef, Json, ObjectValue, PortContext, RunConfiguration, RunSnapshot,
   ToolCall, ToolDefinition, ToolResult, SourceReadBudget } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
-import { toolContext } from './tool-context.mjs';
+import { toolContext, modelObservationBytes, projectToolResultContext } from './tool-context.mjs';
 import { artifactSearchSource } from './artifact-search-source.mjs';
 import { CAPTURED_SOURCE_MEDIA_TYPE, encodeCapturedSource } from './captured-source.mjs';
 import { workspaceSourceModelReply, archivedSourceObservation } from './workspace-source-model.mjs';
@@ -97,6 +97,7 @@ export async function governArtifactResult(context: PortContext, definition: Too
   config: RunConfiguration, artifacts?: ArtifactPort): Promise<ToolResult> {
   if (config.artifactPolicy !== RUNTIME_ARTIFACT_POLICY) return input;
   const result = copy(input);
+  if (config.modelSurface && result.context === undefined) result.context = projectToolResultContext(result, config);
   // Tool payloads and callback-provided locators cannot mint capabilities. Only the runtime's write return is admitted.
   delete result.artifactRefs; delete result.artifactObservationDigest; delete result.sourceObservationState;
   const source = definition.sourceObservationPolicy === 'workspace-source-model/v1'
@@ -125,7 +126,7 @@ export async function governArtifactResult(context: PortContext, definition: Too
   result.artifactObservationDigest = await sha256(canonical({ status: result.status, content: result.content,
     context: result.context ?? null, additionalContexts: result.additionalContexts ?? [] }));
   if (isArtifactTool(definition.name)) return result;
-  const tooLarge = modelSize(result) > config.limits.maxToolResultBytes;
+  const tooLarge = modelObservationBytes(result, config) > config.limits.maxToolResultBytes;
   const force = ['archived-model-view/v4', 'archived-model-view/v5'].includes(definition.resultArchivePolicy ?? '') && result.status === 'ok';
   if (!tooLarge && !force) return result;
   // Preserve the canonical receipt in SQLite. The readable archive follows the actual post-policy model view;
@@ -145,6 +146,8 @@ export async function governArtifactResult(context: PortContext, definition: Too
     }
   } catch { /* The original tool outcome remains authoritative even when storage fails. */ }
   if (ref) result.artifactRefs = [ref];
+  // Pixel observations use the independent image allowance; a forced text archive cannot erase them.
+  if (config.modelSurface && !tooLarge && result.context?.media?.length) return result;
   if (sourceView && !result.context?.media?.length && !result.additionalContexts?.length) {
     const content = archivedSourceObservation(sourceView, ref?.uri ?? null);
     if (modelSize({ ...result, context: { content } }) <= config.limits.maxToolResultBytes) {

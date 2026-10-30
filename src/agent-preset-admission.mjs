@@ -12,7 +12,7 @@
  */
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { selectedNativeBuildContract } from './build-engine.mjs';
-import { nativeChildRoles } from './providers/native-subagents.mjs';
+import { nativeChildRoleDeclarations } from './native-child-declarations.mjs';
 import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
 import { knowledgeBindings } from './knowledge-tools.mjs';
 import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
@@ -312,7 +312,7 @@ export class DshPresetAdmission {
             .filter(resource => resource?.kind === 'skill-space').map(resource => resource.id || resource.resourceId).filter(Boolean))] } : {}),
           ...(eligibility.local && agent.spec.bindings?.a2a?.length
             ? { a2aBindings: structuredClone(agent.spec.bindings.a2a) } : {}),
-          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { subAgents: nativeChildRoles(agent.spec) } : {}),
+          ...(nativeEngineContract && eligibility.runtime === 'harness' ? { subAgents: nativeChildRoleDeclarations(agent.spec) } : {}),
         },
       });
     }

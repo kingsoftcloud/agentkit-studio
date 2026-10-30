@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Host-independent Native Harness contracts, transitions and durable execution.",
   "exports": {
+    "./model-capabilities": {
+      "types": "./dist/model-capabilities.d.mts",
+      "default": "./dist/model-capabilities.mjs"
+    },
     ".": {
       "types": "./dist/index.d.mts",
       "default": "./dist/index.mjs"
@@ -56,6 +60,14 @@
     "./context-microcompact": {
       "types": "./dist/context-microcompact.d.mts",
       "default": "./dist/context-microcompact.mjs"
+    },
+    "./child-workspace-tools": {
+      "types": "./dist/child-workspace-tools.d.mts",
+      "default": "./dist/child-workspace-tools.mjs"
+    },
+    "./capability-profile": {
+      "types": "./dist/capability-profile.d.mts",
+      "default": "./dist/capability-profile.mjs"
     }
   },
   "files": [

@@ -12,7 +12,7 @@
  * authority via the required assertCurrent callback, and status never lets the
  * model choose an environment, service endpoint, or backend.
  */
-import { canonical, copy, invariant, scopeKey, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant, scopeKey, toolInputRejection, matchesToolExecutionContract } from '@kingsoftcloud/agentkit-harness-core';
 
 export const NATIVE_COMPONENT_TOOLS_CONTRACT = 'agentkit.native-component-tools/v1';
 
@@ -186,7 +186,6 @@ export function createNativeComponentTools({ scope, sessionId, status, assertCur
 
   const frozenDefinition = deepFreeze(copy(FORMAL_DEFINITION));
   const definitions = Object.freeze([frozenDefinition]);
-  const formalDefinitionCanonical = canonical(frozenDefinition);
 
   let closed = false;
 
@@ -229,10 +228,9 @@ export function createNativeComponentTools({ scope, sessionId, status, assertCur
     const rejection = toolInputRejection(frozenDefinition, request.call);
     if (rejection) return { status: 'error', content: rejection };
 
-    // The incoming definition must be canonically identical to the fixed formal
-    // definition — not merely self-consistent. A forged {name:'forged'} is
-    // rejected here before any authority check.
-    if (canonical(request.definition) !== formalDefinitionCanonical)
+    // Compare the fixed execution protocol; the full original definition is
+    // still sealed into, and checked by, the current intent authority.
+    if (!matchesToolExecutionContract(request.definition, frozenDefinition))
       return errorResult('component_status_definition_mismatch');
 
     // Require a real AbortSignal by instance identity.

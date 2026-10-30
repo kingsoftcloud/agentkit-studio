@@ -12,6 +12,7 @@ import { NativeKernel, emptyUsage, transition } from '../../agentkit-harness-cor
 import { fixture as coreFixture, scope, digest as coreDigest, tool } from '../../agentkit-harness-core/test/fixtures.mjs';
 import { SqliteRunStore } from '../src/native/sqlite-store.mjs';
 import { createBackgroundCommandPort } from '../src/native/background-command-port.mjs';
+import { LOCAL_COMMAND_SHELL } from '../src/native/command-shell.mjs';
 
 const moduleUrl = new URL('../src/native/local-background.mjs', import.meta.url).href;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -47,6 +48,18 @@ function nodeChild(code) {
   return { child, exit, line: () => stdout.split('\n').find(line => line.trim()) };
 }
 
+test('shell selection is persisted, reconnects without replay and cannot change an existing operation', async t => {
+  const f = fixture(t), command = 'test -n "$BASH_VERSION" && printf x >> once.txt';
+  const h = await f.start(command, { operationKey: 'bash-contract', shellPolicy: LOCAL_COMMAND_SHELL });
+  assert.equal((await h.wait()).exitCode, 0);
+  const reopened = new LocalCommandStore(f.config);
+  const same = await reopened.start(f.input(command, { operationKey: 'bash-contract', shellPolicy: LOCAL_COMMAND_SHELL }));
+  assert.equal(same.commandId, h.commandId);
+  assert.equal(readFileSync(join(f.workspace, 'once.txt'), 'utf8'), 'x');
+  await assert.rejects(reopened.start(f.input(command, { operationKey: 'bash-contract' })), { code: 'background_operation_arguments_changed' });
+  await assert.rejects(f.start('printf never', { shellPolicy: 'unknown-shell/v1' }), /unsupported_command_shell/);
+});
+
 test('real supervisor publishes a complete result and reconnects after store re-open', async t => {
   const f = fixture(t), h = await f.start('printf hello; printf diagnostic >&2; exit 7');
   const result = await h.wait({ timeoutMs: 5000 });
@@ -71,7 +84,7 @@ test('existing receipts remain readable when a replacement installation has no e
   const f = fixture(t), request = f.input('printf retained', { operationKey: 'lookup-only' });
   const h = await f.store.start(request); f.handles.push(h); await h.wait({ timeoutMs: 5000 });
   const copy = join(f.root, 'replacement'); mkdirSync(copy);
-  for (const file of ['local-background.mjs', 'local-command-state.mjs', 'local-command-evidence.mjs', 'local-process.mjs'])
+  for (const file of ['local-background.mjs', 'local-command-state.mjs', 'local-command-evidence.mjs', 'local-process.mjs', 'local-output-policy.mjs'])
     cpSync(new URL('../src/native/' + file, import.meta.url), join(copy, file));
   const replacement = await import(pathToFileURL(join(copy, 'local-background.mjs')).href);
   const store = new replacement.LocalCommandStore(f.config), same = await store.start(request);

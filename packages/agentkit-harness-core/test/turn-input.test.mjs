@@ -17,6 +17,44 @@ function database(t, sqlite) {
 }
 for (const sqlite of [false, true]) {
   const kind = sqlite ? 'SQLite' : 'memory';
+  test(`${kind}: deferred initial context is observed before inference and a committed preparation is not claimed again after restart`, async t => {
+    const db = database(t, sqlite), steps = []; let models = 0, disconnected = false;
+    const { config, snapshot } = fixture({ inputPolicy: 'before-first-model/v1' });
+    const ports = { model: { generate: async request => {
+      models++;
+      assert.ok(request.messages.some(m => m.kind === 'host_input' && m.content === 'Execution workspace rules'));
+      return final('Done');
+    } }, input: { prepare: async request => {
+      steps.push(request.step);
+      return { status: 'admitted', messages: request.step === 1 ? [{ content: 'Execution workspace rules' }] : [] };
+    } } };
+    const first = new NativeKernel({ store: db.store, ports, owner: 'first', digest, onCheckpoint: async current => {
+      if (!disconnected && current.context.inputModelCursor === 0) { disconnected = true; throw Error('Lost initial input delivery'); }
+    } });
+    first.start(snapshot, config);
+    await assert.rejects(first.runUntilIdle(scope, 'run'), /Lost initial input delivery/);
+    assert.equal(models, 0);
+    const next = new NativeKernel({ store: db.reopen(), ports, owner: 'second', digest });
+    const done = await next.runUntilIdle(scope, 'run');
+    assert.equal(done.phase, 'completed'); assert.equal(models, 1);
+    assert.deepEqual(steps, [1, 2]);
+    assert.equal(done.messages.filter(m => m.content === 'Execution workspace rules').length, 1);
+    assert.equal(db.store.load(scope, 'run').configuration.inputPolicy, 'before-first-model/v1');
+  });
+  test(`${kind}: a required initial input owner cannot be omitted or reject after a first model already ran`, async t => {
+    const db = database(t, sqlite); let models = 0;
+    const { config, snapshot } = fixture({ inputPolicy: 'before-first-model/v1' });
+    for (const input of [undefined, { prepare: async () => ({ status: 'rejected', messages: [] }) }]) {
+      const runId = input ? 'rejected-input' : 'missing-input';
+      const kernel = new NativeKernel({ store: db.store, owner: 'worker', digest, ports: {
+        model: { generate: async () => { models++; return final('Must not run'); } }, ...(input ? { input } : {}),
+      } });
+      kernel.start({ ...snapshot, runId, sessionId: runId }, config);
+      const done = await kernel.runUntilIdle(scope, runId);
+      assert.equal(done.reason, input ? 'host_input_rejected' : 'input_port_missing');
+      assert.equal(models, 0);
+    }
+  });
   test(`${kind}: Host input follows the complete tool batch and survives the next turn`, async t => {
     const db = database(t, sqlite), steps = [], requests = []; let writes = 0;
     const { config, snapshot } = fixture({ tools: [tool({ readOnly: false, concurrentSafe: false })] });

@@ -64,6 +64,14 @@ export function syncDirectory(directory) {
   const fd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
+// Fsync an existing private file's complete contents in place, without reading
+// it into memory. Used by the supervisor to durably persist streamed output files
+// before publishing the terminal receipt, so a crash never loses full output
+// that the preview-only receipt cannot reconstruct. Never overwrites the file.
+export function fsyncPrivate(path) {
+  const fd = openPrivate(path, constants.O_WRONLY);
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
 export function atomicPrivate(path, bytes) {
   privateDirectory(dirname(path)); privateFile(path, true);
   const temporary = join(dirname(path), `.${randomUUID()}.tmp`);

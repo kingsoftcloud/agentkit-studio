@@ -27,9 +27,18 @@ function decisionFor(record, request, interactionId) {
 /** The gateway owns this bridge and its live invocation map. Durable grants
  * come only from the original Native ledger, never from registry arguments. */
 export function createNativeDurableApproval({ ctx, calls }) {
+  // This registry also contains verification and workspace-repair owners.
+  // Their claims have their own authority checks and normal Host permission
+  // pipeline; a model-tool approval contract cannot be borrowed by them.
+  const durableInvocation = exec => {
+    const invocation = calls.get(String(exec.callId));
+    return !invocation?.verificationDispatch && !invocation?.repair
+      && invocation?.request?.definition?.approvalPolicy === NATIVE_DURABLE_APPROVAL ? invocation : null;
+  };
   const invocationFor = exec => {
-    const invocation = calls.get(String(exec.callId)), request = invocation?.request;
-    if (request?.definition.approvalPolicy !== NATIVE_DURABLE_APPROVAL) return null;
+    const invocation = durableInvocation(exec);
+    if (!invocation) return null;
+    const request = invocation.request;
     invariant(ctx.tools?.preflightDeferContract === HOST_PREFLIGHT_DEFER && exec.preflightDefer === HOST_PREFLIGHT_DEFER,
       'studio_native_durable_approval_host_unavailable');
     invariant(invocation.agent === exec.agent && invocation.registryName === exec.name
@@ -42,7 +51,7 @@ export function createNativeDurableApproval({ ctx, calls }) {
   return {
     // Eligibility only selects the stricter policy path. Resolve rechecks the
     // complete live ledger authority before yielding or consuming a grant.
-    eligible: exec => calls.get(String(exec.callId))?.request.definition.approvalPolicy === NATIVE_DURABLE_APPROVAL,
+    eligible: exec => durableInvocation(exec) !== null,
     resolve(exec, reason) {
       const invocation = invocationFor(exec);
       if (!invocation) return null;

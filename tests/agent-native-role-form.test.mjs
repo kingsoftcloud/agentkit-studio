@@ -4,7 +4,7 @@ import { createAgentForm } from '../src/client/pages/agent-form.mjs';
 import { nativeChildRoles } from '../src/providers/native-subagents.mjs';
 
 const walk = node => node && typeof node === 'object' ? [node, ...(node.children ?? []).flatMap(walk)] : [];
-function form(initialAgent) {
+function form(initialAgent, { toolResources } = {}) {
   const state = [], effects = []; let cursor = 0, effectCursor = 0, updated;
   const React = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity).filter(value => value != null && value !== false) }),
@@ -18,8 +18,9 @@ function form(initialAgent) {
     RUNTIME_LABELS: {}, buttonStyle: () => ({}), inputStyle: () => ({}), SectionHeading: 'heading', PlatformResourcePicker: 'platform', Pill: 'pill' },
     hostRemote: { resources: async value => (typeof value === 'string' ? value : value.kind) === 'model'
       ? { items: [{ resourceId: 'fixture', displayName: 'Fixture' }], defaultModel: 'fixture' }
-      : { items: [{ resourceId: 'read_workspace_file', displayName: 'read_workspace_file', contract: { sideEffect: 'none' } },
+      : { items: toolResources ?? [{ resourceId: 'read_workspace_file', displayName: 'read_workspace_file', contract: { sideEffect: 'none' } },
         { resourceId: 'write_workspace_file', displayName: 'write_workspace_file', contract: { sideEffect: 'workspace' } }] },
+    quickAuthorAgent: async payload => { updated = payload; return { metadata: { id: payload.slug, revision: 1 } }; },
     updateAgent: async (id, spec, revision) => { updated = { id, spec, revision }; return { metadata: { id, revision: revision + 1 } }; } } });
   let nodes;
   const render = () => { cursor = 0; effectCursor = 0; nodes = walk(Form({ initialAgent, onCreated() {}, onBack() {} })); };
@@ -34,6 +35,23 @@ const existing = roles => ({ source: 'local', metadata: { id: 'role-agent', name
   runtime: { type: 'harness' }, instructions: { system: 'Parent instructions' }, security: { allowedPermissions: ['process:host-user'] },
   bindings: { modelProfileId: 'fixture', modelProfileIds: ['fixture'], tools: [{ resourceId: 'read_workspace_file' }] }, sub_agents: roles,
 } });
+
+test('ordinary Native creation needs no manual tool binding and does not admit unavailable or external resources', async () => {
+  const editor = form(null, { toolResources: [
+    { resourceId: 'read_workspace_file', source: 'studio-native', status: 'available' },
+    { resourceId: 'run_command', source: 'studio-native', status: 'available' },
+    { resourceId: 'web_fetch', source: 'studio-native', status: 'available' },
+    { resourceId: 'web_search', source: 'studio-native', status: 'not-configured', disabled: true,
+      unavailableReason: '尚未配置网页搜索服务；公开网页读取仍可用。' },
+    { resourceId: 'enterprise-payments', source: 'external', status: 'available' },
+  ] });
+  await editor.flush(); editor.next();
+  assert.ok(editor.nodes().some(node => node.type === 'summary' && node.children.includes('高级：调整工具范围')));
+  assert.ok(editor.nodes().some(node => node.props.role === 'status' && node.children.some(text => String(text).includes('尚未配置网页搜索服务'))));
+  editor.next(); editor.next(); await editor.button('创建 Agent').props.onClick();
+  assert.deepEqual(editor.result().spec.bindings.tools.map(item => item.resourceId), ['read_workspace_file', 'web_fetch', 'run_command']);
+  assert.equal(editor.result().spec.security.toolPolicy, 'deny-by-default');
+});
 
 test('Native capability presets require an explicit click and preserve the Agent permission boundary', async () => {
   const original = existing([]); original.spec.bindings.tools = [];
@@ -103,4 +121,6 @@ test('a newly authored role inherits no additional tool permission and passes th
   const roles = nativeChildRoles(editor.result().spec);
   assert.deepEqual(roles[0].tools, ['read_workspace_file']); assert.equal(roles[0].modelProfileId, null);
   assert.equal(roles[0].inheritMcp, false); assert.equal(roles[0].maxTurns, 4);
+  assert.equal(Object.hasOwn(editor.result().spec.subAgents[0], 'maxTurns'), false);
+  assert.equal(Object.hasOwn(editor.result().spec.subAgents[0], 'timeoutSeconds'), false);
 });

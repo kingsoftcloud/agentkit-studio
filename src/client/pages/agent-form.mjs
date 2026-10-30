@@ -1,5 +1,6 @@
 import { memorySourceContext, readAgentMemoryConfig, writeAgentMemoryConfig, validateAgentMemoryConfig, memoryRequiresCloudBinding, clampInt, clampFloat, MEMORY_WRITE_MODES, MEMORY_ROLLOUTS, MEMORY_PROVIDER_CLOUD } from '../state/agent-memory-config.mjs';
 import { createNativeRoleFields, readNativeRoleDrafts, validateNativeRoleDrafts } from './native-role-fields.mjs';
+import { nativeDefaultToolsFromCatalog } from '../../native-capability-defaults.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
 import { NATIVE_AGENT_POLICY_CONTRACT, normalizeNativeAgentPolicy } from '../../native-agent-policy.mjs';
 import { NATIVE_CAPABILITY_PRESETS, nativeCapabilitySummary } from '../state/native-capabilities.mjs';
@@ -80,6 +81,8 @@ export function createAgentForm({
               ? results[index].value.items : [];
           });
           setCatalog(next);
+          if (!editing && form.runtime === 'harness' && !Object.hasOwn(originalBindings, 'tools'))
+            setSelectedTools(nativeDefaultToolsFromCatalog(next.tool));
           const defaultId = results[0]?.value?.defaultModel || next.model?.[0]?.resourceId || '';
           if (!editing || form.runtime === 'codex') {
             setSelectedModel(current => next.model.some(item => item.resourceId === current) ? current : defaultId);
@@ -200,8 +203,8 @@ export function createAgentForm({
       const id = resource.resourceId;
       const checked = values.includes(id);
       return h('label', { key: id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 10px', border: '1px solid ' + (checked ? BRAND.accentStrong : BRAND.border), borderRadius: '8px', background: checked ? BRAND.accentSoft : BRAND.surface, color: BRAND.ink, cursor: 'pointer' } },
-        h('input', { type: 'checkbox', checked, onChange: event => setValues(current => event.target.checked ? [...current, id] : current.filter(value => value !== id)) }),
-        h('span', null, h('strong', { style: { display: 'block', fontSize: '12px' } }, resource.displayName || resource.name || id), h('span', { style: { display: 'block', marginTop: '2px', color: BRAND.inkMuted, fontSize: '10px' } }, resource.description || resource.version || id)));
+        h('input', { type: 'checkbox', checked, disabled: resource.disabled === true, onChange: event => setValues(current => event.target.checked ? [...current, id] : current.filter(value => value !== id)) }),
+        h('span', null, h('strong', { style: { display: 'block', fontSize: '12px' } }, resource.displayName || resource.name || id), h('span', { style: { display: 'block', marginTop: '2px', color: BRAND.inkMuted, fontSize: '10px' } }, resource.unavailableReason || resource.description || resource.version || id)));
     })) : h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', padding: '6px 0' } }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源'));
 
     // Native memory configuration. The local-default path (harness, blank/edit)
@@ -278,15 +281,18 @@ export function createAgentForm({
       !cloudEditing && form.runtime === 'dsh-native'
         ? h('div', { style: { marginBottom: '10px', padding: '11px 12px', borderRadius: '9px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, 'DSH Native 使用 DSH 自身的工具循环；本次创建不会绑定 KsADK 原生 Tool。MCP、Skill 和平台资源仍可按需绑定。')
         : !cloudEditing ? h(Fragment, null,
-          form.runtime === 'harness' ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' } },
-            ...NATIVE_CAPABILITY_PRESETS.map(preset => {
-              const available = preset.tools.filter(name => catalog.tool.some(tool => tool.resourceId === name));
+          form.runtime === 'harness' ? h('details', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' } },
+            h('summary', null, '按能力组调整（可选）'), ...NATIVE_CAPABILITY_PRESETS.map(preset => {
+              const available = preset.tools.filter(name => catalog.tool.some(tool => tool.resourceId === name && !tool.disabled));
               return h('button', { key: preset.id, type: 'button', style: buttonStyle(), title: preset.detail,
                 disabled: !available.length, onClick: () => setSelectedTools(current => [...new Set([...current, ...available])]) }, preset.label);
             })) : null,
-          capabilitySummary(), capabilityPicker('tool', 'Tools', selectedTools, setSelectedTools)) : null,
-      !cloudEditing ? capabilityPicker('mcp', 'MCP Servers', selectedMcp, setSelectedMcp) : null,
-      !cloudEditing ? capabilityPicker('skill', 'Skills', selectedSkills, setSelectedSkills) : null,
+          form.runtime === 'harness' ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, 'Native 自动配备可用的文件、命令和网页工具，Agent 按需调用；写入与命令仍遵循会话审批。企业资源按授权使用。') : null,
+          form.runtime === 'harness' && catalog.tool.find(tool => tool.resourceId === 'web_search')?.disabled
+            ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, catalog.tool.find(tool => tool.resourceId === 'web_search').unavailableReason) : null,
+          h('details', null, h('summary', { style: { cursor: 'pointer' } }, '高级：调整工具范围'), capabilitySummary(), capabilityPicker('tool', '工具', selectedTools, setSelectedTools))) : null,
+      !cloudEditing ? capabilityPicker('mcp', 'MCP 服务', selectedMcp, setSelectedMcp) : null,
+      !cloudEditing ? capabilityPicker('skill', '技能', selectedSkills, setSelectedSkills) : null,
       missingRequirements.length ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, '此模板需要：' + missingRequirements.map(item => item.label).join('、')) : null,
       h(PlatformResourcePicker, { value: platformBindings, onChange: setPlatformBindings, onMemory: value => updateMemory({ enabled: value, source: value ? 'cloud' : (memoryCtx.canLocal ? 'local' : 'cloud') }) }),
     ) : step === 2 ? h(Fragment, null,

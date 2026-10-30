@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NativeKernel, canonical, emptyUsage, todoToolDefinitions, planModeToolDefinitions, projectConversationHistory } from '@kingsoftcloud/agentkit-harness-core';
+import { NativeKernel, canonical, emptyUsage, todoToolDefinitions, planModeToolDefinitions, projectConversationHistory,
+  RESULT_DELIVERY_POLICY, deliveryToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeSessionDelivery, nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { NATIVE_DSH_CONTENT_FORMAT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { fixture, tool, scope, digest } from './fixtures/native-core.mjs';
 import { nativeConversationCut } from '../src/providers/native-conversation-cut.mjs';
+import { nativeLiveStream } from '@kingsoftcloud/agentkit-harness-node/native/assistant-stream';
 
 // A fault-injectable durable consumer for transport tests; the shipped SDK
 // verification separately exercises actual DSH Session validation/persistence.
@@ -29,6 +31,30 @@ function consumer(seed = [{ type: 'turn/start', data: { turn: 1 }, seq: 1 }]) {
 const source = { provider: 'fixture', model: 'native-model' };
 const inputMessages = [{ id: 'user-input', role: 'user', content: [{ type: 'text', text: 'Complete the task' }] }];
 const final = () => ({ kind: 'final_candidate', text: 'Delivered', toolCalls: [], usage: { ...emptyUsage(), inputTokens: 3, outputTokens: 4 } });
+
+test('atomic final result delivers one streamed answer without envelope tools, and cold replay keeps the same projection', async t => {
+  const f = setup(t, undefined, { deliveryScopePolicy: RESULT_DELIVERY_POLICY, tools: deliveryToolDefinitions(RESULT_DELIVERY_POLICY) });
+  const sink = consumer(), answer = 'A completed report.\n引用已保留。', args = { answer,
+    artifacts: [{ path: 'report.md', kind: 'file' }] };
+  const kernel = new NativeKernel({ store: f.store, digest, owner: 'atomic-delivery', onCheckpoint: delivery(f.store, sink), ports: {
+    model: { generate: async (_request, emit) => {
+      const json = JSON.stringify(args);
+      for (let n = 0;n < json.length;n += 7) emit({ kind: 'tool_delta', text: json.slice(n, n + 7),
+        metadata: { index: 0, name: 'submit_final_output', callId: 'final' } });
+      return { ...final(), kind: 'tool_calls', text: '', toolCalls: [{ callId: 'final', name: 'submit_final_output', arguments: args }] };
+    } }, tools: { execute: async () => assert.fail('result is not an executable tool') } } });
+  const done = await kernel.runUntilIdle(scope, 'run');assert.equal(done.finalText, answer);
+  const published = sink.events.filter(event => event.type === 'assistant/message');
+  const text = published.flatMap(event => event.data.message.content.filter(part => part.type === 'text').map(part => part.text));
+  assert.deepEqual(text, [answer]);
+  assert.equal(sink.events.filter(event => ['tool/call', 'tool/result'].includes(event.type)).length, 0);
+  assert.doesNotMatch(JSON.stringify(sink.events), /submit_final_output|report\.md/);
+  assert.equal(published.flatMap(event => event.data.stream ?? []).filter(item => item.chunk?.type === 'text-delta')
+    .map(item => item.chunk.text).join(''), answer);
+  const before = structuredClone(sink.events);f.reopen();
+  await delivery(f.store, sink)(f.store.load(scope, 'run').snapshot);assert.deepEqual(sink.events, before);
+  const cold = consumer();await delivery(f.store, cold)(f.store.load(scope, 'run').snapshot);assert.deepEqual(cold.events, before);
+});
 
 // Low-level timeline tests insert a position marker, not an ownership capsule.
 // Authenticated admission is covered by native-conversation-fork.test.mjs.
@@ -174,6 +200,112 @@ function ports() {
   } },
   tools: { execute: async () => { calls.write++; return { status: 'ok', content: 'Published once' }; } } };
 }
+
+test('warm Session checkpoints and live-step lookup use the delivery journal, never full ledger reconstruction', async t => {
+  const f = setup(t), sink = consumer(), execute = delivery(f.store, sink);
+  const originalLoad = f.store.load.bind(f.store);
+  // A display consumer must not silently fall back to complete receipts. The
+  // actual Kernel/store remain responsible for execution and reconciliation.
+  f.store.load = () => { throw Error('Unexpected full ledger read on the presentation path'); };
+  let models = 0; const attempts = new Set();
+  const result = await new NativeKernel({ store: f.store, digest, owner: 'journal-consumer', onCheckpoint: async snapshot => {
+    await execute(snapshot);
+    if (snapshot.phase === 'requesting_model' && snapshot.pendingIntent && !attempts.has(snapshot.pendingIntent)) {
+      attempts.add(snapshot.pendingIntent);execute.beginStream();
+    }
+  }, ports: {
+    model: { generate: async () => ++models === 1
+      ? { ...final(), kind: 'tool_calls', toolCalls: [{ callId: 'journal-read', name: 'read', arguments: {} }] }
+      : final() },
+    tools: { execute: async () => ({ status: 'ok', content: { raw: 'PRIVATE_ARCHIVED_BODY' + 'x'.repeat(1024 * 1024) },
+      context: { content: 'Visible observation.' } }) },
+  } }).runUntilIdle(scope, 'run');
+  assert.equal(result.phase, 'completed');assert.equal(models, 2);
+  assert.match(JSON.stringify(sink.events), /Visible observation/);
+  assert.doesNotMatch(JSON.stringify(sink.events), /PRIVATE_ARCHIVED_BODY/);
+  const saved = structuredClone(sink.events), snapshot = originalLoad(scope, 'run').snapshot;
+  f.reopen();
+  await delivery(f.store, sink)(snapshot);assert.deepEqual(sink.events, saved);
+});
+
+test('live settlement waits for durable Session flush and releases before any later tool event', async t => {
+  const f=setup(t),sink=consumer(),calls=ports(),order=[];
+  let release, entered, held=false;
+  const persisted = new Promise(resolve => { entered=resolve; }), hold = new Promise(resolve => { release=resolve; });
+  const originalAppend=sink.session.append;
+  sink.session.append=(type,data,options)=>{ originalAppend(type,data,options);order.push({type,seq:sink.events.at(-1).seq}); };
+  let deliver;
+  const live=nativeLiveStream({agent:sink.session,runId:'run',turn:1,revisions:new WeakMap(),beginStep:()=>deliver.beginStream(),
+    publish:frame=>{if(frame.type==='end')order.push({type:'stream/end',seq:frame.outcome.seq,settlement:frame.outcome.eventType,
+      durable:sink.durable.some(event=>event.seq===frame.outcome.seq)});}});
+  deliver=delivery(f.store,sink,{isStreamPending:key=>live.pending(key),onStreamSettled:(...args)=>live.settled(...args),
+    flush:async()=>{
+      if(!held&&sink.events.some(event=>event.type==='assistant/message')) {
+        held=true;entered();await hold;
+      }
+      return sink.flush();
+    }});
+  const running=new NativeKernel({store:f.store,digest,owner:'live-order',ports:calls,onCheckpoint:deliver,
+    onStream:(identity,_event,record)=>live.accept(identity,record)}).runUntilIdle(scope,'run');
+  try {
+    await persisted;
+    assert.equal(order.some(row=>row.type==='stream/end'),false,'no committed end while the Session write is held');
+    assert.equal(sink.events.some(event=>event.type==='tool/call'),false,'no tool event can overtake the held assistant');
+    assert.equal(calls.calls.write,0,'no effect executes before durable delivery');
+  } finally { release(); }
+  const result=await running;
+  assert.equal(result.phase,'completed');assert.equal(calls.calls.write,1);assert.equal(order.filter(row=>row.type==='stream/end').length,2);
+  for(let i=0;i<order.length;i++) if(order[i].type==='assistant/message') {
+    assert.equal(order[i+1]?.type,'stream/end','release the durable assistant before later tool events');
+    assert.equal(order[i+1].seq,order[i].seq);assert.equal(order[i+1].durable,true);
+  }
+});
+
+test('resource replanning publishes additive non-dispatch facts before coarse errors and replays legacy Session atoms unchanged', async t => {
+  const browser = tool({ name: 'browser_inspect_workspace', readOnly: false, concurrentSafe: false, observationRole: 'browser' });
+  const f = setup(t, undefined, { tools: [browser], limits: { maxModelCalls: 5 } }), sink = consumer();
+  const ref = { sessionId: 'page', scope, runId: 'run', runtimeId: 'owner', workspaceRevision: 'fixture', generation: 1, leaseEpoch: 1 };
+  let models = 0, captures = 0, recovering = false, freshRequested = false;
+  const ports = { browser: { recoverSessions: async () => [{ status: 'lost', sessionRef: ref,
+    lastActionSeq: 1, reason: 'owner_unavailable', reobserveAvailable: true }] },
+    model: { generate: async () => {
+      models++;
+      if (recovering && freshRequested) return final();
+      const id = recovering ? 'fresh-observation' : models === 1 ? 'initial' : 'old-action';
+      if(recovering) freshRequested = true;
+      return { ...final(), kind: 'tool_calls', text: '', toolCalls: [{ callId: id, name: browser.name, arguments: {} }] };
+    } }, tools: { execute: async request => {
+      assert.notEqual(request.call.callId, 'old-action');captures++;
+      const sessionRef = recovering ? { ...ref, generation: 2, leaseEpoch: 2 } : ref;
+      return { status: 'ok', content: 'observed', browserSessionRef: sessionRef, browserObservation: {
+        sessionRef, actionId: request.call.callId, actionSeq: 1, status: 'ok', complete: true, retryability: 'safe',
+        viewport: [1280, 720], text: 'observed', screenshot: { contentRef: 'host:screenshot', width: 1280, height: 720,
+          contentBlock: { type: 'image_url', image_url: { url: 'data:image/png;base64,cG5n' } } },
+      } };
+    } } };
+  const deliver = delivery(f.store, sink);
+  const original = new NativeKernel({ store: f.store, digest, owner: 'original', ports, onCheckpoint: async snapshot => {
+    await deliver(snapshot);
+    if(snapshot.pendingTools[0]?.callId === 'old-action' && snapshot.pendingIntent === null) throw Error('original driver stopped');
+  } });
+  await assert.rejects(original.runUntilIdle(scope, 'run'), /original driver stopped/);
+  recovering = true;f.reopen();
+  const done = await new NativeKernel({ store: f.store, digest, owner: 'replacement', ports,
+    onCheckpoint: delivery(f.store, sink) }).runUntilIdle(scope, 'run');
+  assert.equal(done.phase, 'completed');assert.equal(models, 4);assert.equal(captures, 2);
+  const fact = sink.events.find(event => event.type === 'agentkit-native/tool-outcome');
+  assert.equal(fact.ignorable, true);assert.equal(fact.data.status, 'not_dispatched');
+  const coarse = sink.events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === fact.data.callId);
+  assert.equal(coarse.data.message.isError, true);assert.ok(fact.seq < coarse.seq);
+  const before = structuredClone(sink.events);
+  await delivery(f.store, sink)(done);assert.deepEqual(sink.events, before);
+  const legacy = consumer(before.filter(event => event.type !== 'agentkit-native/tool-outcome').map((event, i) => ({ ...event, seq: i + 1 })));
+  const originalResults = structuredClone(legacy.events.filter(event => event.type === 'tool/result').map(event => event.data));
+  await delivery(f.store, legacy)(done);
+  assert.deepEqual(legacy.events.filter(event => event.type === 'tool/result').map(event => event.data), originalResults);
+  assert.equal(legacy.events.filter(event => event.type === 'agentkit-native/tool-outcome').length, 1);
+  const replayed = structuredClone(legacy.events);await delivery(f.store, legacy)(done);assert.deepEqual(legacy.events, replayed);
+});
 
 test('managed ownership delivers the sealed user/media, tools and usage at an independent SDK turn and deduplicates a lost flush', async t => {
   const messages = [{ id: 'remote-command', role: 'user', source: { kind: 'user', rpcId: 'remote-command' }, content: [

@@ -1,23 +1,28 @@
+import { createStudioNativeModelBinding } from './native-model-binding.mjs';
+import { createStudioNativeSessionInjection } from './native-session-injection.mjs';
+import { createStudioNativeChildViews } from './native-child-views.mjs';
 import { createNativeChildObservationCache } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
 import { createWorkspaceGitStatus } from './workspace-status.mjs';
-import { createStudioNativeCommandOutput } from './native-command-output.mjs';
+import { createStudioNativeCommandOutput, createStudioNativeCommandPreview } from './native-command-output.mjs';
 import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions, deliveryToolDefinitions, RESULT_DELIVERY_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
-import { createNativeModelPort, nativeModelRecoveryPolicy } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
-import { createNativeDshTurnExecutor, freezeNativeDshConfiguration, NATIVE_DSH_TURN_CONTRACT, canCloseNativeReadInterruption } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
+import { createNativeDshTurnExecutor, freezeNativeDshConfiguration, NATIVE_DSH_TURN_CONTRACT, canCloseNativeReadInterruption, nativeDshRunId } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { nativeLiveStream } from '@kingsoftcloud/agentkit-harness-node/native/assistant-stream';
-import { createNativeChildHistory, mergeNativeChildHistory } from '@kingsoftcloud/agentkit-harness-node/native/child-history';
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
-import { NATIVE_HOST_CONTEXT_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../../providers/native-context-ownership.mjs';
+import { NATIVE_EXECUTION_CONTEXT_OWNERSHIP, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../../providers/native-context-ownership.mjs';
+import { bindNativeModelSurface, nativeChildInputMediaSources } from '../../providers/native-model-surface.mjs';
+import { NATIVE_INSTRUCTION_ASSEMBLY, nativeInstructionAssembly } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
+import { admitNativeWorkspaceContext, ensureNativeWorkspaceContext } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
+import { createNativeWorkspaceInstructions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-instructions';
 import { nativeConversationForkSeed } from '../../providers/native-conversation-fork.mjs';
-import { bindNativeContext } from '../../providers/native-context.mjs';
+import { bindNativeContext, nativeContextDefaults } from '../../providers/native-context.mjs';
 import { bindStudioNativeMemoryRecall } from '../../providers/native-memory-recall.mjs';
 import { bindNativeDeadlinePolicy, bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
 import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../providers/native-verification.mjs';
@@ -26,9 +31,11 @@ import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
 import { createStudioNativeChildWorkspaces } from '../../providers/native-child-workspace-host.mjs';
+import { childCommandResource } from '@kingsoftcloud/agentkit-harness-node/native/child-command-resource';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
-import { hash, restoredPolicyConfiguration, profileDescription, profileIds, admittedModelSelection, recoveredPromptAssembly, nativePlanAssembly, createStudioNativeBackgroundBinding, createStudioNativeMemoryExtractionBinding } from './native-harness-bindings.mjs';
+import { hash, restoredPolicyConfiguration, profileIds, admittedModelSelection, recoveredPromptAssembly, nativePlanAssembly, createStudioNativeBackgroundBinding, createStudioNativeMemoryExtractionBinding } from './native-harness-bindings.mjs';
+import { createNativeModelDescriptions } from '../../providers/native-model-capabilities.mjs';
 import { createStudioNativeConversation } from './native-conversation.mjs';
 import { nativeConversationRewindAdmission } from '../../providers/native-conversation-rewind.mjs';
 import { createStudioNativeA2aControl } from './native-a2a-control.mjs';
@@ -43,9 +50,6 @@ import { createStudioNativeVisionBinding } from '../../providers/native-vision-b
 import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
 import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
 import { readNativeDshManagedOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-managed-ownership';
-import { admitInlineReasoningPolicy } from '@kingsoftcloud/agentkit-harness-node/native/model-inline-reasoning';
-import { admitAnthropicPolicies, admitProviderCompatibilityPolicy, resolveProviderCompatibility } from '@kingsoftcloud/agentkit-harness-node/native/model-provider-compat';
-import { admitProviderToolSearchPolicy } from '@kingsoftcloud/agentkit-harness-node/native/model-tool-search-policy';
 import { createStudioNativeCommandProgress } from './native-command-progress.mjs';
 import { createStudioNativeChildFile } from './native-child-file-binding.mjs';
 /** Host services and credentials stay outside the serializable Native core. */
@@ -87,15 +91,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let waitRecoveryOwner, waitRecoveryStart = Promise.resolve();
   const childObservations = createNativeChildObservationCache();
   const workspaceId = hash(resolve(workspaceRoot));
-  const projectOperatorCommandOutput = async (source, execution) => {
-      const policy = ctx.get('studioNativeCommandOutputPolicy');
-      if (policy) return typeof policy.projectPreview === 'function' ? policy.projectPreview(source, execution) : null;
-      if (projectCommandPreview) return projectCommandPreview(source, execution);
-      // The authenticated local operator already authorized this command.
-      // This explicit operator-view policy does not inject bytes into model
-      // context; final tool content still traverses all Host result policies.
-      return { kind: 'command_preview', stdout: source.stdout, stderr: source.stderr };
-    };
+  const sessionInjection = createStudioNativeSessionInjection({ ctx, store, agents, builds, workspaceId, lifetime, agentEvents });
+  const projectOperatorCommandOutput = createStudioNativeCommandPreview({ ctx, projectCommandPreview });
   const commandProgress = createStudioNativeCommandProgress({ workspaceId, project: projectOperatorCommandOutput });
   const controlKey = (agentId, sessionId) => canonical({ agentId, sessionId });
   const installControl = (payload, control) => {
@@ -117,83 +114,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     control.assertCurrent?.();
     return control;
   };
-  const childCommand = (request, command, invoke) => {
-    const current = controls.get(controlKey(request.agentId, request.sessionId));
-    if (current?.runId === request.runId) return invoke(controlFor(request));
-    // A lost reply may be confirmed after the original turn releases its live
-    // ports. Only an exact already-persisted command is a read-only duplicate;
-    // history cannot authorize a new child operation or install another driver.
-    invariant(!closed && typeof request.runId === 'string' && request.runId.trim(), 'studio_native_child_control_run_unavailable');
-    const managed = ctx.get('studioManagedNativeSessionControl');
-    let record = managed?.agentId === request.agentId ? managed.inspect({ agentId: request.agentId,
-      sessionId: request.sessionId, runId: request.runId, workspaceId })?.record : null;
-    if (!record) {
-      try { record = localStore.load({ tenantId: 'local', workspaceId, userId: 'local-user', agentId: request.agentId }, request.runId); }
-      catch (error) { if (error.code !== 'run_not_found') throw error; }
-    }
-    invariant(record?.snapshot.sessionId === request.sessionId, 'studio_native_child_control_run_unavailable');
-    const existing = record.commands.find(row => row.command.commandId === command.commandId);
-    invariant(existing, 'studio_native_child_control_run_unavailable');
-    invariant(canonical(existing.command) === canonical(command), 'command_replay_conflict');
-    return { commandId: command.commandId, status: 'duplicate', reason: null };
-  };
-  const liveChildTasks = (request, scope, selectedStore) => runId => {
-    const control = controls.get(controlKey(request.agentId, request.sessionId));
-    if (!control || control.runId !== runId || canonical(control.scope) !== canonical(scope)
-      || (control.store ?? localStore) !== selectedStore) return [];
-    control.assertCurrent?.();
-    return selectedStore.load(scope, runId).configuration.childLifecyclePolicy === 'owned-background/v2'
-      ? control.kernel.childTasks(scope, runId) : [];
-  };
-  const childHistory = request => {
-    invariant(!closed && typeof request?.agentId === 'string' && request.agentId.trim()
-      && request.agentId.length <= 256, 'studio_native_child_history_invalid');
-    const scope = { tenantId: 'local', workspaceId, userId: 'local-user', agentId: request.agentId };
-    return createNativeChildHistory({ scope, store, liveTasks: liveChildTasks(request, scope, store), liveObservation: childObservations.read });
-  };
-  const readChildren = (request, signal, result = false) => {
-    signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
-    const service = ctx.get('studioManagedNativeSessionControl');
-    const managedView = service?.agentId === request.agentId ? service.inspect({ agentId: request.agentId,
-      sessionId: request.sessionId, workspaceId, ...(request.runId === undefined ? {} : { runId: request.runId }) }) : null;
-    if (!managedView)
-      return childHistory(request)[result ? 'result' : 'list'](request);
-    if (request.runId !== undefined) {
-      // A historical read is not recovery of the current SDK turn. The bound
-      // service checks this exact original admission/principal and ancestry,
-      // even while a different ordinary/managed turn owns the Session.
-      const control = controls.get(controlKey(request.agentId, request.sessionId));
-      return service.childHistory({ ...request, workspaceId }, { result,
-        liveTasks: control?.store ? liveChildTasks(request, managedView.scope, control.store) : undefined });
-    }
-    const original = copy(request), bytes = canonical(request);
-    return recovery.inspect({ agentId: original.agentId, sessionId: original.sessionId,
-      ...(original.runId === undefined ? {} : { runId: original.runId }) }, signal).then(inspected => {
-      signal?.throwIfAborted(); lifetime.signal.throwIfAborted();
-      invariant(canonical(request) === bytes, 'studio_native_child_history_invalid');
-      const control = controls.get(controlKey(original.agentId, original.sessionId));
-      const managed = inspected.managedControl ?? service;
-      invariant(ctx.get('studioManagedNativeSessionControl') === managed, 'NATIVE_MANAGED_STATUS_IDENTITY_MISMATCH');
-      const managedOptions = { liveTasks: control?.store ? liveChildTasks(original, managedView.scope, control.store) : undefined };
-      // Each history authenticates its own tenant/principal, frozen roles and
-      // ancestry. Merge only read models; commands still target the original
-      // parent and its existing owner. Explicit runId reads remain owner-local.
-      const local = childHistory(original), identity = { sessionId: original.sessionId };
-      const localInventory = local.inventory(identity);
-      const managedInventory = managed.childHistory({ agentId: original.agentId, sessionId: original.sessionId, workspaceId },
-        { ...managedOptions, inventory: true });
-      const inventories = inspected.managed ? [managedInventory, localInventory] : [localInventory, managedInventory];
-      const page = mergeNativeChildHistory(result ? identity : original, inventories);
-      if (!result) return page;
-      const matches = inventories.filter(value => value.tasks.some(task => task.childRunId === original.childRunId));
-      invariant(matches.length === 1, 'child_history_result_unavailable');
-      const task = matches[0].tasks.find(task => task.childRunId === original.childRunId);
-      const selected = { ...original, runId: task.parentRunId };
-      const detail = matches[0] === localInventory ? local.result(selected)
-        : managed.childHistory({ ...selected, workspaceId }, { ...managedOptions, result: true });
-      return { ...detail, runId: page.runId };
-    });
-  };
+  const { childCommand, childHistory, readChildren } = createStudioNativeChildViews({ ctx, controls, controlKey, controlFor, store, localStore,
+    workspaceId, lifetime, childObservations, isClosed: () => closed, getRecovery: () => recovery });
   const resolveBinding = async ({ agent, input, binding, signal, prepareInput, turn }, original, execution) => {
       // Both entrypoints assemble identical ports; managed Runs must use the
       // receiver's actual ledger and trusted principal, never the local ledger.
@@ -215,6 +137,32 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         && record.metadata.revision === binding.agentRevision && record.spec?.runtime?.type === 'harness', 'studio_native_revision_binding_changed');
       if (binding.buildId) invariant(selectedNativeBuildContract({ ...record, buildId: binding.buildId }) === NATIVE_DSH_TURN_CONTRACT,
         'studio_native_build_engine_mismatch');
+      const scope = execution?.scope ?? { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
+      const sessionId = String(agent.session.id);
+      let capabilityCapsule = original?.capsule;
+      let capabilityConfiguration = original?.configuration;
+      if (!original && !execution) {
+        const runId = nativeDshRunId(scope, sessionId, turn);
+        let existing;
+        try { existing = store.load(scope, runId); } catch (error) { if (error.code !== 'run_not_found') throw error; }
+        if (existing) {
+          capabilityConfiguration = existing.configuration;
+          capabilityCapsule = existing.configuration.hostRecoveryBinding
+            ? readNativeRecoveryBinding(existing, { agentId: binding.agentId, sessionId, runId }) : {};
+        }
+      }
+      // Session headers identify their storage/container project; Native tools
+      // own the execution workspace. Context discovery must use that same
+      // workspace inside the durable input effect, including UI Sessions.
+      // Historical capsules retain the absence of this binding on recovery.
+      const workspaceContextPort = binding.nativeTools.workspaceContext?.(agent);
+      const workspaceContext = capabilityCapsule ? capabilityCapsule.workspaceContext : workspaceContextPort
+        ? admitNativeWorkspaceContext(workspaceContextPort.binding, workspaceContextPort.directory) : undefined;
+      if (workspaceContext) {
+        invariant(workspaceContextPort && workspaceContextPort.binding.contract === workspaceContext.contract
+          && workspaceContextPort.binding.workspaceRoot === workspaceContext.workspaceRoot,
+          'studio_native_workspace_context_binding_changed');
+      }
       const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : [''])
         .map(async id => structuredClone(await models.profile(id))));
       signal.throwIfAborted();
@@ -232,49 +180,52 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         }
       }
       invariant(selected, 'studio_native_bound_model_unavailable');
-      const description = profileDescription(selected);
+      const descriptions = createNativeModelDescriptions({ models, originalCapsule: capabilityCapsule, signal });
+      await Promise.all(profiles.map(profile => descriptions.describe(profile)));
+      const description = await descriptions.describe(selected);
       const visionId = nativeVisionProfileId(record);
       const visionProfile = visionId ? structuredClone(await models.profile(visionId)) : null;
       signal.throwIfAborted();
-      const visionDescription = visionProfile ? profileDescription(visionProfile) : null;
+      const visionDescription = visionProfile ? await descriptions.describe(visionProfile) : null;
       invariant(!visionDescription || visionDescription.input.includes('image'), 'studio_native_vision_model_image_input_required');
       // Older TS runs could contain an unconsumed product field. Restore their
       // actual admission, rather than activating a newly supported policy.
       const deadlineExecution = original && !Object.hasOwn(original.configuration, 'wallDeliveryPolicy') ? undefined : record.spec.execution;
       const deadline = bindNativeDeadlinePolicy(deadlineExecution);
-      const readWorkingSetDefaults = !original || Object.hasOwn(original.configuration.contextPolicy ?? {}, 'readWorkingSetCount');
-      const recentToolBatchDefaults = !original || Object.hasOwn(original.configuration.contextPolicy ?? {}, 'recentToolBatchCount');
-      const pruningThresholdDefaults = !original || original.configuration.contextPolicy?.pruneThresholdPolicy === 'zcode-local/v1';
-      const pruningSummaryDefaults = !original || original.configuration.contextPolicy?.pruneSummaryPolicy === 'zcode-local/v1';
-      const pruningIdleDefaults = !original || original.configuration.contextPolicy?.pruneIdleThresholdMinutes !== undefined;
-      const preModelBudgetDefaults = !original || original.configuration.contextPolicy?.budgetTiming === 'before-model/v1';
-      const orderedContextDefaults = !original || original.configuration.contextPolicy?.continuityPlacement === 'after-history/v1';
-      const sourceReuseDefaults = !original || original.configuration.contextPolicy?.sourceReusePolicy === 'captured-source/v1';
+      const contextDefaults = nativeContextDefaults(original?.configuration);
+      const surfaceEpoch = !original || original.configuration.modelSurface !== undefined;
+      const childAllocationPolicy = original ? original.configuration.childAllocationPolicy
+        : typeof binding.nativeTools.childBindingFor === 'function' ? 'parent-shared/v1' : undefined;
+      // Absence on historical capsules means their exact original controls,
+      // even when that Run already has the modern output/environment policy.
+      const executionOptions = { modern: surfaceEpoch,
+        resourceProfile: original ? original.capsule.localExecutionProfile : 'local-development/v1' };
+      const localExecution = binding.nativeTools.localExecution?.(executionOptions);
+      const commandBinding = localExecution?.binding ?? binding.nativeTools.commandBinding;
+      const modelSurface = surfaceEpoch ? bindNativeModelSurface({
+        ...(!original || original.configuration.modelSurface?.executionCapabilities !== undefined
+          ? { executionCapabilities: binding.nativeTools.executionCapabilities?.() ?? [] } : {}),
+        environment: binding.nativeTools.executionEnvironment?.(executionOptions) ?? {
+          workspaceRoot: await realpath(workspaceRoot), cwd: await realpath(workspaceRoot), platform: process.platform, commandBackend: 'none' },
+        description, original: original?.configuration.modelSurface }) : undefined;
       const context = bindNativeContext({ description, context: record.spec.context, maxTokens: selection.maxTokens,
-        preModelBudgetDefaults, orderedContextDefaults, sourceReuseDefaults, readWorkingSetDefaults, recentToolBatchDefaults, pruningThresholdDefaults, pruningSummaryDefaults, pruningIdleDefaults });
+        ...contextDefaults });
       const source = { provider: selection.provider || dshModelRoute(selected), model: selected.modelName };
       const inputSelection = original ? admittedModelSelection(agent, input.assembly) : { ...selection, ...source };
       const inputServices = { attachments: () => ctx.get('attachments'),
         fileRequestText: typeof llm?.fileRequestText === 'function' ? ref => llm.fileRequestText(ref) : undefined };
       // Replay the already-admitted bytes and resource context. Mutable files,
       // attachments and memory are not a substitute for the original input.
-      const inputContextPolicy = original ? original.capsule.inputContextPolicy : NATIVE_HOST_CONTEXT_OWNERSHIP;
-      const inputRows = nativeHostInputRows(input.messages, inputContextPolicy);
+      const inputContextPolicy = original ? original.capsule.inputContextPolicy
+        : capabilityCapsule ? capabilityCapsule.inputContextPolicy
+          : workspaceContext?.instructionSource ? NATIVE_CURRENT_INSTRUCTION_OWNERSHIP
+            : workspaceContext ? NATIVE_WORKSPACE_CONTEXT_OWNERSHIP : NATIVE_EXECUTION_CONTEXT_OWNERSHIP;
+      const inputRows = nativeHostInputRows(input.messages, inputContextPolicy, {
+        initial: !!workspaceContext && workspaceContext.sourceRoot !== workspaceContext.workspaceRoot });
       const admission = original ? { objective: original.configuration.contract.objective,
         messages: structuredClone(original.configuration.inputMessages) }
         : await projectNativeDshInput(inputRows.map(row => row.message), { ...inputServices, signal });
-      // Preserve original content-part indices: a text or omitted image must
-      // never shift a model's reference onto a different admitted image.
-      let childMediaSources = new Map();
-      inputRows.forEach(({ message }, index) => {
-        if (admission.messages[index].kind !== 'user_input') return;
-        childMediaSources = new Map(); let image = 0;
-        message.content.forEach((part, partIndex) => {
-          if (part.type === 'image' && part.offloaded !== true) childMediaSources.set(partIndex, admission.messages[index].media?.[image++]);
-        });
-      });
-      const scope = execution?.scope ?? { tenantId: 'local', workspaceId, userId: 'local-user', agentId: binding.agentId };
-      const sessionId = String(agent.session.id);
+      const childMediaSources = nativeChildInputMediaSources(inputRows, admission);
       const buildId = binding.buildId || `revision-${hash({ agentId: binding.agentId, revision: binding.agentRevision, spec: record.spec })}`;
       // Pin the combined browser + observer deadline in the same formal tool
       // definition used by the Kernel, registry gateway and browser owner.
@@ -285,6 +236,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // Memory locked digest can bind it without a circular dependency. The
       // profile/plugin digests pin the Build's model and non-hook bindings.
       const baseTools = binding.nativeTools.definitions(agent, input.assembly.tools);
+      const instructionAssemblyPolicy = capabilityCapsule ? capabilityCapsule.instructionAssemblyPolicy : NATIVE_INSTRUCTION_ASSEMBLY;
       invariant(record.spec.execution?.nativePlanMode === undefined || ['auto', 'off'].includes(record.spec.execution.nativePlanMode),
         'studio_native_plan_mode_invalid');
       const planModePolicy = original ? original.configuration.planModePolicy
@@ -300,7 +252,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const profileDigest = hash(description);
       const pluginLockDigest = hash({ mcpBindingDigest: binding.nativeTools.mcpBindingDigest ?? null,
         ...(binding.nativeTools.skillDisclosureBindingDigest ? { skillDisclosureBindingDigest: binding.nativeTools.skillDisclosureBindingDigest } : {}),
-        commandBinding: binding.nativeTools.commandBinding ?? null,
+        commandBinding: commandBinding ?? null,
         ...(binding.nativeTools.codeBinding ? { codeBinding: binding.nativeTools.codeBinding } : {}),
         ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
         ...(binding.nativeTools.a2aBinding ? { a2aBinding: binding.nativeTools.a2aBinding } : {}),
@@ -316,13 +268,17 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // a non-local provider so the cloud Memory path stays unchanged. The
       // verification wrapper is always produced for local-default so an explicit
       // Memory task fails closed when the owner is not installed.
-      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(nativePlanAssembly(input.assembly, planModePolicy));
+      const promptAssembly = assembly => nativeInstructionAssembly(nativePlanAssembly(assembly, planModePolicy), {
+        policy: instructionAssemblyPolicy, toolNames: baseTools.map(tool => tool.name) });
+      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(promptAssembly(input.assembly));
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['outputRecoveryPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy', 'childPlanPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['workspaceCapturePolicy', 'deliveryScopePolicy', 'outputRecoveryPolicy', 'toolExecutionPolicy', 'childCapabilityPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'inputPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy', 'childPlanPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
-        : { outputRecoveryPolicy: 'task-or-delivery/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
-          ...(nativeChildRoles(record.spec).length ? { childTaskPolicy: 'session-controls/v1' } : {}),
+        : { workspaceCapturePolicy: 'declared-subjects/v1', deliveryScopePolicy: RESULT_DELIVERY_POLICY, outputRecoveryPolicy: 'response-boundary/v2', toolExecutionPolicy: 'owner-execution/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
+          ...(workspaceContext && (!capabilityCapsule || [NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP].includes(capabilityCapsule.inputContextPolicy))
+            ? { inputPolicy: 'before-first-model/v1' } : {}),
+          ...(nativeChildRoles(record.spec).length ? { childTaskPolicy: 'session-controls/v1', childCapabilityPolicy: 'required-tools/v1' } : {}),
           ...(planModePolicy && nativeChildRoles(record.spec).length ? { childPlanPolicy: 'inherit-plan/v1' } : {}),
           ...(planModePolicy ? { planModePolicy, planModeInitialActive: currentPlanActive() } : {}),
           ...(Object.hasOwn(deadline, 'wallDeliveryPolicy') ? { wallDeliveryPolicy: deadline.wallDeliveryPolicy } : {}),
@@ -330,13 +286,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
           ...(record.spec.execution?.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: record.spec.execution.deliveryReviewPolicy === null
             ? null : normalizeDeliveryReviewPolicy(record.spec.execution.deliveryReviewPolicy) }) };
-      if (original) invariant(renderPrompt(nativePlanAssembly(recoveredPromptAssembly(input.assembly, source), planModePolicy)) === systemPrompt,
+      if (original) invariant(renderPrompt(promptAssembly(recoveredPromptAssembly(input.assembly, source))) === systemPrompt,
         'studio_native_recovery_prompt_changed');
       // Seal the Host recovery capsule once per Build. The Memory owner guard
       // compares the CURRENT configuration's capsule to THIS sealed identity
       // (revision, buildId, system prompt, source, messages), so a legitimately
       // advanced/replaced Run or a new owner cannot authorize a stale write.
-      const sealedCapsule = nativeRecoveryBinding({ binding, input, source, selection, systemPrompt, inputContextPolicy });
+      const sealedCapsule = nativeRecoveryBinding({ binding, input, source, selection, systemPrompt, inputContextPolicy,
+        modelBindings: descriptions.manifest(), localExecutionProfile: localExecution?.resourceProfile, instructionAssemblyPolicy, workspaceContext });
       const memoryHost = bindStudioNativeMemoryHost({ record, scope, sessionId, store, storeDir,
         buildId: binding.buildId ?? null, context, ctx, bundleDigest, profileDigest, pluginLockDigest, sealedCapsule });
       let memoryDispose, registeredContext, vision, cloudMemory;
@@ -356,7 +313,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         : record.spec.execution?.nativeToolSearchMode === 'off'
           || baseTools.some(tool => toolDiscoveryDefinitions().some(control => control.name === tool.name))
           ? undefined : 'local-tool-search/v1';
+      if (childAllocationPolicy && nativeChildRoles(record.spec).length) recoveryPolicies.childAllocationPolicy = childAllocationPolicy;
       const toolOptions = { ...(toolDiscoveryPolicy ? { toolDiscoveryPolicy } : {}),
+        ...(recoveryPolicies.childCapabilityPolicy ? { childCapabilityPolicy: recoveryPolicies.childCapabilityPolicy } : {}),
+        ...(childAllocationPolicy ? { childAllocationPolicy } : {}),
+        ...(surfaceEpoch ? { workspaceMediaPolicy: 'bounded-image-read/v1' } : {}),
+        ...((original ? original.configuration.tools.some(tool => tool.modelGuidance) : surfaceEpoch)
+          ? { modelSurfacePolicy: 'bound-model-surface/v1' } : {}),
         ...(original ? { approvalDefinitions: original.configuration.tools }
           : binding.nativeTools.durableApprovalContract ? { approvalPolicy: binding.nativeTools.durableApprovalContract } : {}),
         ...(original ? { workspaceCheckpointDefinitions: original.configuration.tools,
@@ -383,6 +346,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       if (!original && toolDiscoveryPolicy && (boundToolDefinitions.some(tool => tool.discovery) || planModePolicy))
         recoveryPolicies.toolDiscoveryPolicy = toolDiscoveryPolicy;
       const tools = [...boundToolDefinitions, ...(recoveryPolicies.toolDiscoveryPolicy ? toolDiscoveryDefinitions() : []),
+        ...(recoveryPolicies.deliveryScopePolicy ? deliveryToolDefinitions(recoveryPolicies.deliveryScopePolicy) : []),
         ...(recoveryPolicies.todoPolicy ? todoToolDefinitions(!!recoveryPolicies.toolDiscoveryPolicy) : []),
         ...(planModePolicy ? planModeToolDefinitions(!!recoveryPolicies.toolDiscoveryPolicy) : []),
         ...(recoveryPolicies.artifactPolicy ? artifactToolDefinitions() : [])];
@@ -394,78 +358,21 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       cloudMemory = await bindStudioNativeCloudMemoryTurn({ record, scope, sessionId, store, storeDir, resources,
         sealedCapsule, input: admission.objective, agent });
       invariant(!materialized.memoryWrite || cloudMemory, 'studio_native_memory_write_port_unavailable');
-      const skillInstructions = await binding.nativeTools.skillInstructions?.(signal);
+      const skillInstructions = await binding.nativeTools.skillInstructions?.(signal, { completeDirectory: surfaceEpoch });
       const instructions = original ? original.configuration.instructions : [systemPrompt, materialized.resourceContext,
         skillInstructions].filter(Boolean).join('\n\n');
       const verification = await createNativeVerification({ scope, sessionId, workspaceRoot,
+        ...(recoveryPolicies.deliveryScopePolicy ? { deliveryScopePolicy: recoveryPolicies.deliveryScopePolicy } : {}),
         evidenceDirectory: join(storeDir, 'native-harness', 'verification-evidence'),
         verifyBrowserPage: taskPolicy.workspaceObservationPolicy && typeof binding.nativeTools.verifyBrowserPage === 'function'
-          ? request => binding.nativeTools.verifyBrowserPage(agent, request) : undefined });
+          ? request => binding.nativeTools.verifyBrowserPage(agent, request, { scope, store }) : undefined });
       // Combine the baseline delivery verifier with the Memory owner verifier.
       // The wrapper is always present for a local-default Build (fail-closed for
       // explicit Memory tasks) and delegates to the baseline otherwise.
       const memoryVerification = memoryHost ? memoryHost.wrapVerification(verification) : null;
-      const modelBinding = (profile, id, boundContext, primary = false) => {
-        const desc = profileDescription(profile), digest = hash(desc);
-        const inlineReasoningPolicy = original ? original.configuration.profile.inlineReasoningPolicy
-          : admitInlineReasoningPolicy(modelCompatibilityRule);
-        const providerCompatibilityPolicy = original ? original.configuration.profile.providerCompatibilityPolicy
-          : admitProviderCompatibilityPolicy(modelCompatibilityRule);
-        const modelOptions = providerCompatibilityPolicy ? Object.fromEntries([
-          ['streaming', desc.parameters.stream], ['reasoningEffort', desc.protocol === 'openai-chat' ? desc.parameters.reasoning_effort : undefined],
-          ['thinkingMode', desc.protocol === 'openai-chat' ? desc.parameters.thinking?.type : undefined], ['parallelToolCalls', desc.parameters.parallel_tool_calls],
-          ['temperature', desc.parameters.temperature], ['topP', desc.parameters.top_p],
-        ].filter(([, value]) => value !== undefined)) : {};
-        // Presence versions the new display/idle defaults. Restore old Runs
-        // without activating them, and let each child use its own parameters.
-        const runtimePolicy = !original || Object.hasOwn(original.configuration.profile, 'providerThinkingDisplay');
-        const providerThinkingDisplayPolicy = original ? original.configuration.profile.providerThinkingDisplayPolicy : 'provider-visible/v1';
-        const controllerReasoningPolicy = original ? original.configuration.profile.controllerReasoningPolicy : 'disclosed-delegate/v1';
-        const toolSearchEpoch = !original || Object.hasOwn(original.configuration.profile, 'providerToolSearchPolicy');
-        const providerToolSearchPolicy = toolSearchEpoch ? original && primary
-          ? original.configuration.profile.providerToolSearchPolicy
-          : admitProviderToolSearchPolicy({ protocol: desc.protocol, model: desc.modelName,
-            requested: desc.parameters.provider_tool_search, discovery: !!recoveryPolicies.toolDiscoveryPolicy }) : undefined;
-        const anthropicKeys = ['anthropicPolicy', 'promptCachePolicy', 'operatorGuidancePolicy', 'toolCatalogPolicy', 'providerReplayProjectionPolicy'];
-        const anthropicPolicies = original && primary
-          ? Object.fromEntries(anthropicKeys.filter(key => original.configuration.profile[key] !== undefined)
-            .map(key => [key, original.configuration.profile[key]]))
-          : !original || original.configuration.profile.anthropicPolicy ? admitAnthropicPolicies(desc.protocol, desc.modelName) : {};
-        const modelRuntimeOptions = runtimePolicy ? {
-          providerThinkingDisplay: desc.parameters.provider_thinking_display ?? (providerThinkingDisplayPolicy === 'provider-visible/v1'),
-          ...(providerThinkingDisplayPolicy ? { providerThinkingDisplayPolicy } : {}),
-          ...(modelOptions.streaming !== false ? { streamTimeoutPolicy: 'idle/v1' } : {}),
-          ...(controllerReasoningPolicy ? { controllerReasoningPolicy } : {}),
-          ...(providerToolSearchPolicy ? { providerToolSearchPolicy } : {}),
-          ...anthropicPolicies,
-        } : {};
-        const compat = providerCompatibilityPolicy && resolveProviderCompatibility(providerCompatibilityPolicy,
-          { model: desc.modelName, baseUrl: desc.baseUrl });
-        invariant(!compat || modelOptions.reasoningEffort === undefined || compat.supportsEffort,
-          'native_model_profile_reasoning_effort_unsupported');
-        invariant(!compat || modelOptions.thinkingMode === undefined || compat.supportsThinking,
-          'native_model_profile_thinking_mode_unsupported');
-        const planned = boundContext ?? bindNativeContext({ description: desc, context: record.spec.context,
-          preModelBudgetDefaults, orderedContextDefaults, sourceReuseDefaults, readWorkingSetDefaults, recentToolBatchDefaults, pruningThresholdDefaults, pruningSummaryDefaults, pruningIdleDefaults });
-        return { supportsImages: desc.input.includes('image'), modelRecoveryPolicy: nativeModelRecoveryPolicy(desc),
-        profile: { profileId: profile.id || id || 'default', profileVersion: digest, providerFamily: desc.protocol,
-          compatibilityDigest: providerCompatibilityPolicy ? hash({ description: desc, inlineReasoningPolicy, providerCompatibilityPolicy,
-            ...(runtimePolicy ? { modelRuntimeOptions } : {}) })
-            : inlineReasoningPolicy ? hash({ description: desc, inlineReasoningPolicy }) : digest,
-          ...(inlineReasoningPolicy ? { inlineReasoningPolicy } : {}),
-          ...(providerCompatibilityPolicy ? { providerCompatibilityPolicy, ...modelOptions } : {}),
-          ...modelRuntimeOptions,
-          ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
-          providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
-        context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
-          resolveProfile: async () => {
-            const current = { ...await models.profile(id), modelName: profile.modelName };
-            invariant(hash(profileDescription(current)) === digest, 'studio_native_model_binding_changed');
-            return { protocol: desc.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
-              model: profile.modelName, parameters: desc.parameters };
-          } }) };
-      };
-      const parentModel = modelBinding(selected, selectedId, context, true), roles = nativeChildRoles(record.spec);
+      const modelBinding = createStudioNativeModelBinding({ descriptions, models, fetchImpl, original, capabilityCapsule,
+        capabilityConfiguration, modelCompatibilityRule, surfaceEpoch, recoveryPolicies, contextSpec: record.spec.context, contextDefaults });
+      const parentModel = modelBinding(selected, selectedId, context, true), roles = nativeChildRoles(record.spec, { childAllocationPolicy });
       invariant(original || !execution || !agent.session.header?.isSeeded || !agent.session.header.parentSession
         || store.sessionHead(scope, sessionId), 'native_conversation_fork_managed_not_supported');
       const branchHead = !original && !execution ? store.sessionHead(scope, sessionId) : null;
@@ -486,16 +393,24 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         vision = createStudioNativeVisionBinding({ scope, sessionId, store, model: observer.model,
           profile: { ...observer.profile, imageInputMode: 'native' }, isClosed: () => lifetime.signal.aborted });
       }
-      invariant(!roles.length || canonical(binding.nativeTools.childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
+      const childBinding = binding.nativeTools.childBindingFor?.({ childAllocationPolicy }) ?? binding.nativeTools.childBinding;
+      invariant(!roles.length || canonical(childBinding?.roles) === canonical(roles), 'studio_native_child_revision_binding_changed');
       const childQuestionPreset = roles.length && binding.nativeTools.a2aBinding
         ? ctx.get('sessionProjections')?.stateOf?.(agent.session, 'agentPreset') : undefined;
       const children = await createStudioNativeChildren({ onStream: (identity, _event, record) => childObservations.accept(identity, record),
         roles, scope, sessionId, store, tools, mediaSources: childMediaSources,
+        ...(inputContextPolicy === NATIVE_CURRENT_INSTRUCTION_OWNERSHIP ? { workspaceContext } : {}),
+        ...(recoveryPolicies.childCapabilityPolicy ? { childCapabilityPolicy: recoveryPolicies.childCapabilityPolicy,
+          outputRecoveryPolicy: recoveryPolicies.outputRecoveryPolicy } : {}),
         ...(recoveryPolicies.childTaskPolicy ? { childTaskPolicy: recoveryPolicies.childTaskPolicy } : {}),
+        ...(recoveryPolicies.toolExecutionPolicy ? { toolExecutionPolicy: recoveryPolicies.toolExecutionPolicy } : {}),
+        ...(childAllocationPolicy ? { childAllocationPolicy } : {}),
+        ...(modelSurface ? { modelSurface } : {}),
         ...(recoveryPolicies.childPlanPolicy ? { childPlanPolicy: recoveryPolicies.childPlanPolicy } : {}),
         isClosed: () => lifetime.signal.aborted,
         fileWorkspaces: roles.length ? createStudioNativeChildWorkspaces({ workspaceRoot,
           stateDir: join(storeDir, 'native-harness') }) : null,
+        commandResource: childCommandResource(commandBinding),
         hasSkills: Boolean(record.spec.bindings?.skills?.length || binding.nativeTools.childCapabilities?.skills),
         hasMcp: Boolean(record.spec.bindings?.mcpServers?.length || binding.nativeTools.childCapabilities?.mcp),
         mcpBinding: binding.nativeTools.childMcpBinding,
@@ -514,7 +429,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           invariant(index >= 0, 'studio_native_child_model_unbound');
           return modelBinding(profiles[index], id);
         },
-        bindTools: authority => binding.nativeTools.forChild(agent, authority),
+        bindTools: authority => binding.nativeTools.forChild(agent, { ...authority,
+          ...(localExecution?.resourceProfile ? { localExecution } : {}),
+          ...(childAllocationPolicy ? { childAllocationPolicy } : {}) }),
         ...(recoveryPolicies.artifactPolicy ? { artifactPolicy: recoveryPolicies.artifactPolicy, artifactFactory } : {}),
         ...(recoveryPolicies.sourceReadPolicy ? { sourceReadPolicy: recoveryPolicies.sourceReadPolicy } : {}),
         verificationFactory: child => createNativeVerification({ ...child, workspaceRoot: child.workspaceRoot ?? workspaceRoot,
@@ -526,10 +443,14 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const hookOptions = { scope, sessionId, record, buildId: binding.buildId ?? null, store };
       const memoryRecall = bindStudioNativeMemoryRecall({ ...hookOptions, storeDir });
       registeredContext = contextSourceRegistry?.bind({ ...hookOptions, expectedRuntimeBuildId: buildId });
-      const contextSources = [...(memoryRecall ? [memoryRecall.source] : []), ...(registeredContext?.sources ?? [])];
+      const workspaceInstructions = inputContextPolicy === NATIVE_CURRENT_INSTRUCTION_OWNERSHIP
+        ? createNativeWorkspaceInstructions(workspaceContext) : null;
+      const contextSources = [...(workspaceInstructions ? [workspaceInstructions.source] : []),
+        ...(memoryRecall ? [memoryRecall.source] : []), ...(registeredContext?.sources ?? [])];
       invariant(new Set(contextSources.map(source => source.sourceId)).size === contextSources.length,
         'studio_native_context_source_collision');
       const readContextSource = request => {
+        if (workspaceInstructions && request.source.sourceId === workspaceInstructions.source.sourceId) return workspaceInstructions.readSource(request);
         if (memoryRecall && request.source.sourceId === memoryRecall.source.sourceId) return memoryRecall.readSource(request);
         invariant(registeredContext?.sources.some(source => source.sourceId === request.source.sourceId),
           'studio_native_context_source_unbound');
@@ -541,10 +462,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       catch (error) { await registeredHooks?.close(); await memoryHooks?.close(); throw error; }
       const memoryProviderRef = memoryHost?.policy.providerRef ?? 'local-default';
       const componentBinding = binding.nativeTools.componentContract ? studioNativeComponentStatus({ record,
-        modelName: selected.modelName, workspaceRoot, tools, commandBinding: binding.nativeTools.commandBinding, codeBinding: binding.nativeTools.codeBinding,
+        modelName: selected.modelName, workspaceRoot, tools, commandBinding, codeBinding: binding.nativeTools.codeBinding,
         remoteSkillBinding: binding.nativeTools.remoteSkillBinding,
         localMemoryBound: Boolean(memoryHost?.policy.enabled) }) : null;
       const toolPorts = binding.nativeTools.forAgent(agent, { scope, store, commandProgress,
+        ...(localExecution ? { localExecution } : {}),
         ...(componentBinding ? { componentBinding } : {}), ...(children ? { children } : {}) });
       if (vision) toolPorts.tools = vision.wrapTools(toolPorts.tools);
       const resolved = { scope, buildId, source,
@@ -584,7 +506,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           try {
             let questionError;
             try {
-              const snapshot = store.load(scope, request.runId).snapshot;
+              const snapshot = (store.authority ? store.authority(scope, request.runId) : store.load(scope, request.runId)).snapshot;
               if (typeof toolPorts.tools.settleQuestions === 'function') {
                 toolPorts.tools.settleQuestions(snapshot);
                 if (['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase))
@@ -596,7 +518,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             if (ownedChildren) {
               ownedChildren.runIds.add(request.runId);
               let phase;
-              try { phase = store.load(scope, request.runId).snapshot.phase; }
+              try { phase = (store.authority ? store.authority(scope, request.runId) : store.load(scope, request.runId)).snapshot.phase; }
               catch (error) { if (error.code !== 'run_not_found') throw error; }
               if (!phase || signal.aborted || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
                 await children.owner.releaseRun(request); childOwners.delete(ownedChildren);
@@ -612,7 +534,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         taskContractFactory: facts => extendNativeMemoryGoal(facts.goal,
           nativeGoalContract({ sessionId: facts.sessionId, parentRunId: facts.parentRunId, goal: facts.goal }),
           { providerRef: memoryProviderRef }),
-        configuration: { ...restoredPolicyConfiguration(original), profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy, ...recoveryPolicies,
+        configuration: { ...restoredPolicyConfiguration(original),
+        ...(modelSurface ? { modelSurface } : {}),
+        ...(!original ? { sessionInjectionPolicy: 'next-turn-inbox/v1' } : {}), profile: parentModel.profile, modelRecoveryPolicy: parentModel.modelRecoveryPolicy, ...recoveryPolicies,
         ...(conversationSeed === undefined ? {} : { conversationSeed }),
         ...(branchAdmission.conversationRewind === undefined ? {} : { conversationRewind: branchAdmission.conversationRewind }),
         ...(contextSources.length ? { contextSources } : {}),
@@ -633,7 +557,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           toolPermissionContract: binding.nativeTools.permissionContract ?? null,
           ...(binding.nativeTools.workspaceSyntax ? { workspaceSyntax: binding.nativeTools.workspaceSyntax } : {}),
           ...(binding.nativeTools.workspaceMutationContract ? { workspaceMutationContract: binding.nativeTools.workspaceMutationContract } : {}),
-          ...(binding.nativeTools.commandBinding ? { commandBinding: binding.nativeTools.commandBinding } : {}),
+          ...(commandBinding ? { commandBinding } : {}),
           ...(binding.nativeTools.codeBinding ? { codeBinding: binding.nativeTools.codeBinding } : {}),
           ...(componentBinding ? { componentBinding } : {}),
           ...(binding.nativeTools.webBinding ? { webBinding: binding.nativeTools.webBinding } : {}),
@@ -654,7 +578,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ...(children ? { childLifecyclePolicy: 'owned-background/v2', childApprovalPolicy: 'owned-child-approval/v1',
           childPromotionPolicy: 'owned-child-promotion/v1', childInputPolicy: 'owned-child-input/v1' } : {}),
         workspaceObservationPolicy: taskPolicy.workspaceObservationPolicy,
-        ...(binding.nativeTools.commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
+        ...(commandBinding ? { backgroundNotificationPolicy: 'completed-before-model/v1' } : {}),
         contract: extendNativeMemoryGoal(admission.objective,
           nativeGoalContract({ sessionId, goal: admission.objective }), { providerRef: memoryProviderRef }),
         instructions, inputMessages: admission.messages,
@@ -668,8 +592,15 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           ...(children ? { children: children.owner } : {}), verification: memoryVerification ?? verification,
           context: { ...context.port, ...(contextSources.length ? { readSource: readContextSource } : {}) }, input: { prepare: async request => {
           request.signal.throwIfAborted();
-          const instructionPaths = binding.nativeTools.instructionTouches?.(agent, store.load(scope, request.runId)) ?? [];
-          if (instructionPaths.length) {
+          if (workspaceContext) await ensureNativeWorkspaceContext({ binding: workspaceContext,
+            directory: workspaceContextPort.directory, signal: request.signal });
+          const instructionEvidence = store.workspaceTouchEvidence
+            ? store.workspaceTouchEvidence(scope, request.runId) : store.load(scope, request.runId);
+          const instructionPaths = binding.nativeTools.instructionTouches?.(agent, instructionEvidence) ?? [];
+          const instructionInput = workspaceInstructions ? { instructionScopes: await workspaceInstructions.scopes(
+            instructionEvidence.instructionScopes ?? instructionEvidence.snapshot?.context.instructionScopes,
+            instructionPaths, request.signal) } : {};
+          if (!workspaceInstructions && instructionPaths.length) {
             invariant(typeof agentEvents === 'function', 'studio_native_instruction_dispatch_unavailable');
             agentEvents(ctx, agent).emit('agent-instructions/touch', { paths: instructionPaths });
           }
@@ -683,7 +614,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           const nextSelection = admittedModelSelection({ options: inputSelection }, next.assembly);
           invariant(nextSelection.provider === inputSelection.provider && nextSelection.model === inputSelection.model,
             'studio_native_input_model_binding_changed');
-          invariant(renderPrompt(nativePlanAssembly(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly, planModePolicy)) === systemPrompt,
+          invariant(renderPrompt(promptAssembly(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly)) === systemPrompt,
             'studio_native_input_prompt_binding_changed');
           invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools, toolOptions)) === canonical(boundToolDefinitions),
             'studio_native_input_tool_binding_changed');
@@ -692,11 +623,11 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           // step preparation also samples clock/runtime snapshots even when
           // no work arrived; treating those refreshers as new work would
           // discard every final answer and loop until the model budget ends.
-          const candidate = store.load(scope, request.runId).snapshot.candidate;
+          const candidate = (store.authority ? store.authority(scope, request.runId) : store.load(scope, request.runId)).snapshot.candidate;
           const modeInput = planModePolicy ? { planMode: currentPlanActive() } : {};
           const nextRows = nativeHostInputRows(next.messages, inputContextPolicy);
           if (candidate && nativeHostInputIsRefresh(nextRows, inputContextPolicy))
-            return { status: 'admitted', messages: [], ...modeInput };
+            return { status: 'admitted', messages: [], ...modeInput, ...instructionInput };
           const messages = [], images = new Map();
           for (const { message } of nextRows) {
             invariant(message?.role === 'user' && Array.isArray(message.content), 'studio_native_prepared_input_invalid');
@@ -705,7 +636,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             messages.push({ ...context, retention: !message.source || ['user', 'schedule'].includes(message.source.kind) ? 'persistent' : 'normal' });
           }
           request.signal.throwIfAborted();
-          return { status: 'admitted', messages, ...modeInput };
+          return { status: 'admitted', messages, ...modeInput, ...instructionInput };
         } }, model: parentModel.model },
       };
       if (cloudMemory) {
@@ -757,7 +688,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, workspaceRoot, lifetime, active, controls, controlKey, execute, agentEvents,
     commandProgressStatus: record => commandProgress.read(record),
     workspaceStatus: signal => workspaceStatus.read(signal),
-    cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, storeDir }),
+    cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, store, storeDir }),
     memoryExtractionStatus: record => record.snapshot.scope.tenantId === 'local'
       && record.snapshot.scope.workspaceId === workspaceId && record.snapshot.scope.userId === 'local-user'
       ? memoryExtraction.status({ scope: record.snapshot.scope, sessionId: record.snapshot.sessionId }) : undefined });
@@ -912,6 +843,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     return starting;
   };
   return {
+    injectSession: sessionInjection.inject,
+    resolveInjectionScope: sessionInjection.resolveScope,
     async resolveManagedBinding(payload, { store: managedStore, admission, runId, target, principal }) {
       invariant(!closed && typeof managedStore?.load === 'function'
         && typeof runId === 'string' && runId && typeof principal?.userId === 'string' && principal.userId.trim(),
@@ -974,7 +907,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             return installControl(payload, { ...control, store: managedStore, assertCurrent });
           },
           createLiveStream: ({ turn, beginStep }) => nativeLiveStream({ agent: payload.agent, runId, turn,
-            beginStep, revisions: streamRevisions,
+            beginStep, revisions: streamRevisions, configuration,
             publish: publishStreamFrame ? frame => publishStreamFrame(payload, frame) : undefined }) };
       } catch (error) {
         await resolved?.releaseResources?.({ scope, sessionId: payload.agent.session.id, runId });
@@ -990,6 +923,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     recoveryStatus: recovery.status,
     resumeTurn: recovery.resume,
     reviewBackgroundInterruption: recovery.reviewBackground,
+    retireResources: recovery.retireResources,
     reconcileTool: recovery.reconcile,
     repairWorkspace: recovery.repairWorkspace,
     conversationStatus: conversation.status,

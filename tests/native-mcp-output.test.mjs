@@ -4,6 +4,15 @@ import { nativeMcpOutcome } from '../src/providers/native-mcp-output.mjs';
 import { nativeMcpSchemaValidator } from '../src/providers/native-mcp-json.mjs';
 
 const text = value => ({ type: 'text', text: value });
+test('admitted model observations remove duplicate JSON mirrors while retaining prose and the complete program receipt', () => {
+  const structuredContent = { id: 'unique-document', count: 7 };
+  const reply = { content: [text(JSON.stringify(structuredContent)), text('Additional observation')], structuredContent };
+  const projected = nativeMcpOutcome(reply, { deduplicateStructured: true });
+  assert.deepEqual(projected.content, reply);
+  assert.equal(projected.context.content.split('unique-document').length - 1, 1);
+  assert.match(projected.context.content, /Additional observation/);
+  assert.equal(nativeMcpOutcome(reply).context.content.split('unique-document').length - 1, 2);
+});
 test('a missing required structured result stays a known error receipt while declared remote errors remain usable', () => {
   const validateOutput = nativeMcpSchemaValidator.getValidator({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] });
   const reply = { content: [text('Unvalidated remote assertion')], _meta: { privateAudit: 'hidden' } };

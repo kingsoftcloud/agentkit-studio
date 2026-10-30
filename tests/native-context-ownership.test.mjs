@@ -1,10 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NATIVE_HOST_CONTEXT_OWNERSHIP as policy, nativeHostInputRows, nativeHostInputIsRefresh } from '../src/providers/native-context-ownership.mjs';
+import { NATIVE_HOST_CONTEXT_OWNERSHIP as policy, NATIVE_EXECUTION_CONTEXT_OWNERSHIP,
+  NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../src/providers/native-context-ownership.mjs';
 import { nativeRecoveryBinding, readNativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 import { digest, scope } from './fixtures/native-core.mjs';
 
 const user = (id, kind, content) => ({ id, role: 'user', source: { kind }, content: [{ type: 'text', text: content }] });
+
+test('current-file ownership removes historical Host rule projections at every boundary and preserves direct user input', () => {
+  const messages = [user('root', 'agent-instructions', 'Old file snapshot'), user('direct', 'user', 'My explicit instruction'),
+    user('event', 'enterprise-custom-input', 'Authorized event'), user('cwd', 'working-directory', 'Old root')];
+  for (const initial of [false, true]) assert.deepEqual(nativeHostInputRows(messages,
+    NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, { initial }).map(row => row.sourceIndex), [1, 2]);
+  assert.equal(nativeHostInputIsRefresh(nativeHostInputRows([messages[0]], NATIVE_CURRENT_INSTRUCTION_OWNERSHIP),
+    NATIVE_CURRENT_INSTRUCTION_OWNERSHIP), true);
+  assert.throws(() => nativeRecoveryBinding({ binding: { agentId: scope.agentId, agentRevision: 1 },
+    input: { messages: [messages[1]] }, source: { provider: 'fixture', model: 'fixture' }, selection: {}, systemPrompt: '',
+    inputContextPolicy: NATIVE_CURRENT_INSTRUCTION_OWNERSHIP,
+    workspaceContext: { contract: 'agentkit.native-workspace-context/v1', workspaceRoot: '/workspace', sourceRoot: '/workspace' } }),
+  /recovery_binding_invalid/);
+});
+
+test('bound workspace ownership defers only initial instruction projections and retains subsequent scoped updates', () => {
+  const messages = [user('rules', 'agent-instructions', 'AGENTS from a Session container'),
+    user('user', 'user', 'Follow my AGENTS.md requirement'),
+    user('directory', 'working-directory', 'Old Session directory'),
+    user('external', 'enterprise-custom-input', 'An authorized event')];
+  const original = structuredClone(messages);
+  const initial = nativeHostInputRows(messages, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, { initial: true });
+  assert.deepEqual(initial.map(row => row.sourceIndex), [1, 3]);
+  const refreshed = nativeHostInputRows(messages, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP);
+  assert.deepEqual(refreshed.map(row => row.sourceIndex), [0, 1, 3]);
+  assert.equal(refreshed[0].message, messages[0]);
+  assert.equal(nativeHostInputIsRefresh(refreshed, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP), false);
+  for (const historical of [undefined, policy, NATIVE_EXECUTION_CONTEXT_OWNERSHIP])
+    assert.deepEqual(nativeHostInputRows(messages, historical, { initial: true }).map(row => row.sourceIndex), [0, 1, 2, 3]);
+  assert.deepEqual(messages, original);
+});
 
 test('Native resource ownership removes the host catalog without moving attachment identities or dropping unknown host work', () => {
   const catalog = user('catalog', 'skill-catalog', 'Unbound host skill descriptions');

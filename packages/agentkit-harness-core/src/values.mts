@@ -1,7 +1,29 @@
 import type { RunScope } from './contracts.mjs';
 
+// Module instances are not an error contract: two legitimate npm installations
+// have different constructors. This in-process marker survives that boundary,
+// while JSON/remote exception envelopes remain ordinary untrusted values.
+const nativeErrorBrand = Symbol.for('@kingsoftcloud/agentkit-harness-core/NativeError/v1');
 export class NativeError extends Error {
-  constructor(readonly code: string) { super(code); this.name = 'NativeError'; }
+  constructor(readonly code: string) {
+    super(code); this.name = 'NativeError';
+    Object.defineProperty(this, nativeErrorBrand, { value: true });
+  }
+}
+/** Recognize package-authored errors without trusting arbitrary name/code pairs. */
+export function isNativeError(value: unknown): value is NativeError {
+  try {
+    if (value instanceof NativeError) return true;
+    if (!(value instanceof Error)) return false;
+    const brand = Object.getOwnPropertyDescriptor(value, nativeErrorBrand);
+    const code = Object.getOwnPropertyDescriptor(value, 'code');
+    const name = Object.getOwnPropertyDescriptor(value, 'name');
+    return brand?.value === true && brand.writable === false && brand.enumerable === false
+      && brand.configurable === false && typeof code?.value === 'string' && name?.value === 'NativeError';
+  } catch {
+    // A thrown Proxy/accessor is not a package-authored error proof.
+    return false;
+  }
 }
 export function invariant(value: unknown, code: string): asserts value {
   if (!value) throw new NativeError(code);

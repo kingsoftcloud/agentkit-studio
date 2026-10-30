@@ -51,9 +51,12 @@ export interface Message extends ToolContextMessage {
   inputId?: string; inputGoalRevision?: number;
   /** Host-sealed output fragments; model prose cannot authorize assembly. */
   continuationMode?: 'suffix' | 'task_resume' | 'empty_output';
+  continuationPolicy?: 'response-boundary/v2';
   continuationResponseId?: string; continuationFragmentDigest?: string;
 }
 export interface ToolDefinition {
+  modelGuidance?: string[];
+  workspaceMediaPolicy?: 'bounded-image-read/v1';
   name: string; description: string; parameters: ObjectValue;
   readOnly: boolean; concurrentSafe: boolean;
   permissions: string[]; timeoutMs: number;
@@ -78,6 +81,7 @@ export interface ToolDefinition {
   childBudgetPolicy?: 'start/v1' | 'settle/v1' | 'delegate/v1';
   childApprovalPolicy?: 'owned-child-approval/v1';
   backgroundCommandPolicy?: 'owned-command-launch/v1';
+  workspaceChangePolicy?: 'observed-command/v1';
   delegatedReadOnly?: boolean; deliveryWrite?: boolean;
   deliveryArtifactRole?: 'none' | 'read' | 'write';
   exactContentPolicy?: 'current-goal-utf8/v1' | 'complete-write-only/v1';
@@ -87,9 +91,11 @@ export interface ToolDefinition {
   directoryObservationPolicy?: 'studio-directory-observation/v1' | 'studio-directory-observation/v2' | 'studio-directory-observation/v3';
   /** safe-read permits a fresh repeatable read; receipt-observation waits for a
    * separately persisted lookup of the original effect and never re-executes it. */
-  recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1';
+  recoveryPolicy?: 'manual' | 'safe-read/v1' | 'receipt-observation/v1' | 'ephemeral-browser/v1';
 }
 export interface ModelProfile {
+  supportsImages?: boolean;
+  discoveredToolExposure?: 'direct-after-search/v1';
   profileId: string; profileVersion: string; providerFamily: string;
   maxOutputTokens: number; contextWindow: number; maxRetries: number; maxProviderRetries: number;
   maxContinuations: number; requestTimeoutMs: number; retryInitialDelayMs: number;
@@ -97,11 +103,13 @@ export interface ModelProfile {
   providerReplayMode: 'none' | 'reasoning_content' | 'anthropic_content';
   compatibilityDigest: string;
   /** Absent on older Runs; projection policy is frozen at admission. */
-  inlineReasoningPolicy?: { contract: 'profiled-content/v1'; rule: 'auto' | 'permissive' | 'openai'
+  inlineReasoningPolicy?: { contract: 'profiled-content/v1' | 'profiled-content/v2'; rule: 'auto' | 'permissive' | 'openai'
     | 'strict-openai' | 'cerebras' | 'groq' | 'deepseek' | 'zai' | 'kspmas-gateway' | 'moonshot' | 'mimo' };
-  providerCompatibilityPolicy?: { contract: 'provider-compat/v1'; rule: NonNullable<ModelProfile['inlineReasoningPolicy']>['rule'] };
+  providerCompatibilityPolicy?: { contract: 'provider-compat/v1' | 'provider-compat/v2'; rule: NonNullable<ModelProfile['inlineReasoningPolicy']>['rule'] };
   streaming?: boolean; outputTokenParameter?: 'max_tokens' | 'max_completion_tokens';
   streamTimeoutPolicy?: 'idle/v1'; providerThinkingDisplay?: boolean;
+  /** Absent on historical Runs, whose OpenAI usage reports required equality. */
+  chatUsagePolicy?: 'cumulative-snapshots/v1';
   /** Version the Host's visible-provider-reasoning default without upgrading admitted Runs. */
   providerThinkingDisplayPolicy?: 'provider-visible/v1';
   /** Absence retains old local discovery; each new model binding freezes its own mode. */
@@ -172,6 +180,7 @@ export interface HookState {
   feedback: Message[];
 }
 export interface ContextPlanningPolicy {
+  summaryFormatPolicy?: 'task-continuity/v1';
   tokenizerId: string; tokenizerDigest: string; enabled: boolean;
   /** Estimates bound complete requests; exact counters keep the strict summary ceiling. */
   summaryBudgetMode?: 'strict' | 'context_bounded_estimate';
@@ -242,6 +251,8 @@ export interface ToolResultPruning {
 export interface ContextSourceDefinition {
   contract: 'agentkit.native-context-source/v1'; sourceId: string; bindingDigest: string;
   priority: number; timeoutMs: number; required: boolean; maxTokens: number; maxBytes: number;
+  /** Current file guidance is refreshed before inference, never substituted by a historical summary. */
+  instructionPolicy?: 'current-files/v1';
 }
 /** A frozen transcript import, never a parent Run or an execution checkpoint. */
 export interface ConversationSeed {
@@ -253,6 +264,12 @@ export interface ConversationSeed {
   discoveredToolNames?: string[];
 }
 export interface RunConfiguration {
+  workspaceCapturePolicy?: 'declared-subjects/v1';
+  deliveryScopePolicy?: 'declared-deliverables/v1' | 'answer-artifacts/v2';
+  childCapabilityPolicy?: 'required-tools/v1';
+  childAllocationPolicy?: 'parent-shared/v1';
+  modelSurface?: import('./model-surface.mjs').ModelSurface;
+  sessionInjectionPolicy?: 'next-turn-inbox/v1';
   /** Omitted only on historical configurations; new admissions freeze policy identities. */
   policyModules?: import('./policy-registry.mjs').PolicyBinding[];
   conversationRewind?: { contract: 'native-conversation-rewind/v1'; commandId: string;
@@ -261,11 +278,15 @@ export interface RunConfiguration {
   childTaskPolicy?: 'session-controls/v1';
   coordinatorResponsePolicy?: 'owned-parent-response/v1';
   todoPolicy?: 'session-todos/v1';
+  /** I/O deadlines belong to the execution owner, not kernel staging or result projection. */
+  toolExecutionPolicy?: 'owner-execution/v1';
   planModePolicy?: 'session-plan/v1' | 'inherited-child-plan/v1';
   planModeInitialActive?: boolean;
   childPlanPolicy?: 'inherit-plan/v1';
   toolDiscoveryPolicy?: 'local-tool-search/v1';
   artifactPolicy?: 'runtime-artifacts/v1' | null;
+  /** The execution owner must prepare Host context before the first inference. */
+  inputPolicy?: 'before-first-model/v1';
   sourceReadPolicy?: 'studio-source-read/v1' | null;
   wallDeliveryPolicy?: 'deadline-delivery/v1' | 'deadline-delivery/v2' | 'deadline-delivery/v3'
     | 'deadline-delivery/v4' | 'deadline-delivery/v5' | 'deadline-delivery/v6' | 'deadline-delivery/v7' | null;
@@ -280,12 +301,14 @@ export interface RunConfiguration {
   stopHookContinuationLimit: number; delegationDepth: number;
   modelRecoveryPolicy: 'manual' | 'pure-inference/v1';
   guidancePolicy?: 'boundary-guide/v1' | null;
-  outputRecoveryPolicy?: 'task-or-delivery/v1' | null;
+  outputRecoveryPolicy?: 'task-or-delivery/v1' | 'response-boundary/v2' | null;
   toolErrorRecoveryPolicy?: 'diagnose-before-repeat/v1' | null;
   toolErrorRecoveryModelCalls?: number | null;
   deliveryReviewPolicy?: DeliveryReviewPolicy | null;
   /** Opaque, Host-owned recovery locator. The core never interprets it as authority. */
   hostRecoveryBinding?: ObjectValue;
+  /** Trusted execution binding shared across turns; excludes each turn's input bytes. */
+  backgroundSessionBindingDigest?: string;
   backgroundNotificationPolicy?: 'completed-before-model/v1' | null;
   childLifecyclePolicy?: 'owned-background/v2' | null;
   childApprovalPolicy?: 'owned-child-approval/v1' | null;
@@ -324,6 +347,7 @@ export interface ToolResult {
   /** Deferred until every call in the model's tool batch has a result. */
   additionalContexts?: ToolContextMessage[];
   interactionId?: string; workspaceChangedPaths?: string[]; artifactRefs?: ArtifactRef[];
+  workspaceChangeObservation?: import('./workspace-change.mjs').WorkspaceChangeObservation;
   /** A negotiated Host permission reply stays in the ledger; it is not a tool-owned interaction. */
   approvalPolicy?: 'durable-preflight/v1';
   /** Kernel-derived observation identity excludes freshly minted archive locators. */
@@ -336,6 +360,9 @@ export interface ToolResult {
   coordinatorResponses?: import('./child-contract.mjs').CoordinatorResponse[];
   /** Only a tool pinned with observationRole=browser can admit these host capabilities. */
   browserSessionRef?: BrowserSessionRef; browserSessionClosed?: boolean;
+  /** Owner proof that an unknown action's private page is fenced. The action
+   * remains uncertain; only a new generation may produce usable evidence. */
+  browserIsolation?: import('./browser-runtime.mjs').BrowserIsolation;
   browserObservation?: BrowserObservation;
   backgroundCommandRef?: BackgroundCommandRef; backgroundCommandFinished?: boolean;
 }
@@ -344,7 +371,11 @@ export type ModelResponseKind = 'tool_calls' | 'final_candidate' | 'output_limit
   | 'policy_abort' | 'user_abort';
 export interface ModelResult {
   kind: ModelResponseKind; text: string; toolCalls: ToolCall[]; usage: Usage;
+  transportObservation?: import('./model-transport.mjs').ModelTransportObservation;
+  failureDiagnostic?: import('./model-failure.mjs').ModelFailureDiagnostic;
   textCommitVersion?: 'provider-finished-text/v1';
+  /** Adapter classification before incomplete tool fragments are discarded. */
+  outputBoundary?: 'assistant-text/v1' | 'tool-call/v1' | 'no-visible-output/v1';
   /** False means counters are partial/absent; zero must not imply known free usage. */
   usageReported?: boolean;
   providerReplay?: ObjectValue; retryAfterMs?: number; failureKind?: string;
@@ -367,6 +398,7 @@ export interface VerificationReport {
 export interface CandidateBinding { subjectDigest: string; subjectContextDigest: string; environmentDigest: string }
 export interface CompletionCandidate {
   candidateId: string; text: string; goalRevision: number; workspaceRevision: string | null;
+  workspaceSubject?: string | null;
   purpose?: 'final' | 'checkpoint';
   binding?: CandidateBinding;
 }
@@ -410,6 +442,10 @@ export interface PreparedContext {
 }
 export type TodoItem = { content: string; status: 'pending' | 'in_progress' | 'completed'; priority: 'high' | 'medium' | 'low' };
 export interface RunSnapshot extends RunIdentity {
+  workspaceObservationSubject?: string | null;
+  deliveryManifest?: import('./deliverables.mjs').DeliveryManifest;
+  /** Inbox rows atomically assigned to this initial turn; immutable after admission. */
+  sessionInjections?: { injectionId: string; sequence: number }[];
   /** Last committed strategy-context boundary; no execution authority. */
   policyContextCursor?: string;
   conversationBranch?: { commandId: string; generation: number };
@@ -490,6 +526,7 @@ export interface CommitBatch {
   childControlDelivery?: ChildControlDelivery;
 }
 export interface StoredRun {
+  resourceRetirementReview?: import('./resource-retirement.mjs').ResourceRetirementReview;
   /** Operator disposition is separate from the immutable execution verdict. */
   backgroundInterruptionReview?: import('./background-interruption.mjs').BackgroundInterruptionReview;
   configuration: RunConfiguration; snapshot: RunSnapshot; lease: Lease | null; fence: number;
@@ -498,19 +535,60 @@ export interface StoredRun {
   commits: { commitId: string; fingerprint: string }[];
   projections: Record<string, number>;
 }
+/** Atomic current authority, independent of the append-only execution journal. */
+export interface RunAuthority extends Pick<StoredRun, 'configuration' | 'snapshot' | 'lease' | 'fence'> {
+  pendingIntent: EffectIntent | null;
+}
+/** Atomic input for the driver: current authority and control inbox only.
+ * Historical effect evidence remains available through load() for reconciliation. */
+export interface RunDrivingState extends RunAuthority {
+  pendingCommands: RunCommand[];
+}
+/** Current tool-dispatch authority. Deliberately excludes historical results,
+ * transcript and admission input; the last declaration is retained only as a
+ * source-budget witness. This is not a display projection or recovery record. */
+export interface RunToolAuthority {
+  snapshot: Pick<RunSnapshot, 'scope' | 'runId' | 'sessionId' | 'turnId' | 'buildId' | 'parentRunId' | 'taskChainId'
+    | 'phase' | 'pendingIntent' | 'configDigest' | 'goalRevision' | 'goal' | 'planMode' | 'sourceReadQuote' | 'conversationBranch'>;
+  configuration: Pick<RunConfiguration, 'tools' | 'artifactPolicy' | 'sourceReadPolicy' | 'contextPolicy' | 'planModePolicy' | 'limits' | 'hostBindingDigest'>;
+  sourceReadMessage: Message | null;
+  splitModelObservation: boolean;
+  pendingIntent: EffectIntent | null;
+  lease: Lease | null; fence: number;
+}
+/** Presentation only. Deliberately lacks configuration, transcript and journals;
+ * it must never substitute for StoredRun in recovery or execution. */
+export interface RunObservation {
+  contract: 'agentkit.native-run-observation/v1';
+  snapshot: Pick<RunSnapshot, 'scope' | 'runId' | 'sessionId' | 'turnId' | 'buildId' | 'parentRunId' | 'taskChainId'
+    | 'configDigest' | 'phase' | 'revision' | 'eventSeq' | 'usage' | 'descendantUsage' | 'outcome' | 'reason'
+    | 'pendingIntent' | 'toolReconciliation' | 'diagnostics'>;
+  lease: Lease | null; fence: number; projections: Record<string, number>; facts: ObjectValue;
+}
 /** All mutations are atomic. Implementations must fence even duplicate commits. */
 /** Discovery metadata; polling must not materialize transcript or tool receipts. */
 export interface RunScanHead extends Pick<RunSnapshot, 'scope' | 'runId' | 'sessionId' | 'phase' | 'revision' | 'eventSeq' | 'backgroundCommands'> {
   lease: Lease | null;
 }
 export interface RunStore {
+  /** Persist external data without starting, steering or waking a Run. */
+  inject?(scope: RunScope, sessionId: string, input: import('./session-inbox.mjs').SessionInjectionInput): import('./session-inbox.mjs').SessionInjectionReceipt;
   create(configuration: RunConfiguration, snapshot: RunSnapshot): RunSnapshot;
   createNotification(configuration: RunConfiguration, snapshot: RunSnapshot): { snapshot: RunSnapshot; created: boolean };
   load(scope: RunScope, runId: string): StoredRun;
+  authority?(scope: RunScope, runId: string): RunAuthority;
+  toolAuthority?(scope: RunScope, runId: string): RunToolAuthority;
+  drivingState?(scope: RunScope, runId: string): RunDrivingState;
+  /** Exact committed workspace-touch facts since the last completed model. */
+  workspaceTouchEvidence?(scope: RunScope, runId: string): import('./workspace-touch.mjs').WorkspaceTouchEvidence;
+  observation?(scope: RunScope, runId: string): RunObservation;
+  /** Read-only delivery positions, without materializing execution receipts. */
+  projectionCursors?(scope: RunScope, runId: string): Record<string, number>;
   /** Unconsumed control inputs without reading the effect journal. */
   pendingCommands?(scope: RunScope, runId: string): RunCommand[];
   list(scope: RunScope, sessionId?: string): RunSnapshot[];
   listHeads?(scope: RunScope, sessionId?: string): RunScanHead[];
+  sessionHeadView?(scope: RunScope, sessionId: string): RunScanHead | null;
   sessionHead(scope: RunScope, sessionId: string): RunSnapshot | null;
   acquire(scope: RunScope, runId: string, owner: string, now: number, ttlMs: number): Lease;
   renew(scope: RunScope, runId: string, lease: Lease, now: number, ttlMs: number): Lease;
@@ -523,6 +601,8 @@ export interface RunStore {
   acknowledge(scope: RunScope, runId: string, projection: string, through: number): void;
   reviewBackgroundInterruption?(scope: RunScope, runId: string,
     review: import('./background-interruption.mjs').BackgroundInterruptionReview, now: number): void;
+  retireResources?(scope: RunScope, runId: string,
+    review: import('./resource-retirement.mjs').ResourceRetirementReview, now: number): void;
 }
 export interface PortContext extends RunIdentity {
   operationKey: string; signal: AbortSignal;
@@ -571,8 +651,13 @@ export interface WorkspaceRepairRequest extends Omit<ToolReceiptRequest, 'contra
 export interface WorkspaceRepairResult extends Omit<ToolReceiptObservation, 'contract'> {
   contract: 'agentkit.workspace-compensation/v1';
 }
-export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null }
-export interface WorkspacePort { observe(request: PortContext): Promise<WorkspaceObservation> }
+export interface WorkspaceObservationSubject {
+  contract: 'agentkit.delivery-observation-subject/v1'; goalRevision: number; manifestRevision: number;
+  artifacts: import('./deliverables.mjs').DeliveryArtifact[];
+}
+export interface WorkspaceObservation { revision: string | null; changedPaths: string[]; status: 'ok' | 'unavailable'; reason: string | null;
+  subject?: WorkspaceObservationSubject }
+export interface WorkspacePort { observe(request: PortContext & { subject?: WorkspaceObservationSubject }): Promise<WorkspaceObservation> }
 /** Claim Host-admitted input only after its Native intent has been persisted. */
 export interface TurnInputMessage extends ToolContextMessage { retention?: 'persistent' | 'normal' }
 export interface TurnInputPort {

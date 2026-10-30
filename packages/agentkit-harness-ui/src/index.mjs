@@ -45,6 +45,7 @@ export {
 } from "./view.mjs";
 
 export { styles } from "./styles.mjs";
+export { toolIdentity, toolConversationVisible, localizedToolTitle } from './tool-identity.mjs';
 
 // React binding. Imported lazily-safe only because this barrel re-exports it;
 // hosts that do not need React should import the subpaths directly.

@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -19,17 +19,12 @@ import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const pkgDir = resolve(here, '..');
-const coreDir = resolve(pkgDir, '../agentkit-harness-core');
 const distEntry = resolve(pkgDir, 'dist/rpc-entry.mjs');
 const crashLauncher = resolve(pkgDir, 'test/fixtures/rpc-crash-launcher.mjs');
 
-// Link core so the dist's external core import resolves (same as adapters.test).
-const scopeDir = resolve(pkgDir, 'node_modules/@kingsoftcloud');
-const coreLink = resolve(scopeDir, 'agentkit-harness-core');
-mkdirSync(scopeDir, { recursive: true });
-let linkOk = false;
-try { linkOk = realpathSync(coreLink) === coreDir; } catch {}
-if (!linkOk) { rmSync(coreLink, { force: true }); symlinkSync(coreDir, coreLink, 'dir'); }
+// Resolve the declared public Core dependency normally. Tests never rewrite
+// node_modules: concurrent process/protocol suites share the same installation.
+
 
 // ---- CONTROLLED openai-chat HTTP fixture (test-only) --------------------------
 function toolCall(id, name, args) {

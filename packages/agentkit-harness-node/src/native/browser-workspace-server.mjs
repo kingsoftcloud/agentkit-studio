@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { allowsWorkspaceBrowserUrl } from './browser-workspace-policy.mjs';
 
 const within = (root, path) => path === root || path.startsWith(root + sep);
 const fail = code => { const error = new Error(code); error.code = code; throw error; };
@@ -151,9 +152,7 @@ export async function createBrowserWorkspaceServer({ root, path, maxFileBytes = 
   return { workspace, servedRoot, entry, origin, url: `${origin}${prefix}${encodeURIComponent(basename(entry))}`, initialRevision,
     revision, close,
     allows(value) {
-      if (closed || typeof value !== 'string') return false;
-      try { const url = new URL(value); return url.origin === origin && !url.username && !url.password && url.pathname.startsWith(prefix); }
-      catch { return false; }
+      return allowsWorkspaceBrowserUrl(value, { origin, prefix, closed });
     },
     markGenerated(filename) {
       const target = bound(workspace, filename);

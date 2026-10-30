@@ -28,9 +28,11 @@ import { budgetWorkspaceSourcePage, validateSourcePageBudget } from './source-pa
 import { prepareWorkspaceEdits } from './workspace-edit-match.mjs';
 import { prepareWorkspacePatch } from './workspace-patch.mjs';
 import { workspaceChangeDisplay } from './workspace-display.mjs';
+import { readBoundedWorkspaceImage } from './workspace-image.mjs';
 import { createWorkspaceCheckpointJournal, captureCheckpointFile, checkpointStatesEqual, WORKSPACE_CHECKPOINT_POLICY, CONVERSATION_WORKSPACE_CONTROL } from './workspace-checkpoints.mjs';
 import { parseStructuredPatch } from '@kingsoftcloud/agentkit-harness-core/patch-parser';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { captureWorkspaceSubject } from './workspace-subject-observer.mjs';
 
 import {
   WorkspacePathError, escapeRegex, fnmatch, publishWorkspaceBytes, sha256,
@@ -79,6 +81,7 @@ export function createNativeWorkspaceTools({
   const root = workspaceRoot;
   const store = new WorkspaceStateStore(stateDir, sessionId);
   const authorizeFn = authorize || defaultAuthorize;
+  const imageObservations = new WeakMap();
   // Mutating implementations below are synchronous. Track publications within the
   // current invocation so a later state-write failure cannot masquerade as a
   // definite failure before execution. No tracking state crosses an await.
@@ -323,6 +326,13 @@ export function createNativeWorkspaceTools({
       return { ok: false, error_message: `workspace file not found: ${path}` };
     }
     if (!stat.isFile()) return { ok: false, error_message: `workspace file not found: ${path}` };
+    if (request?.definition?.workspaceMediaPolicy === 'bounded-image-read/v1') {
+      const image = readBoundedWorkspaceImage(target, relativeOf(target), () => {
+        activeGuard?.();
+        if (resolvePath(path) !== target) throw Object.assign(Error('workspace_image_changed'), { code: 'workspace_image_changed' });
+      });
+      if (image) { imageObservations.set(image.content, image.context); return image.content; }
+    }
     if (Number(stat.size) > TWO_MB) return { ok: false, error_message: 'file is larger than 2MB' };
     const { text, error } = readWorkspaceText(target);
     if (error) return { ...error, path };
@@ -1197,6 +1207,7 @@ export function createNativeWorkspaceTools({
 
     if (result && result.ok === true) {
       const out = { status: 'ok', content: result };
+      if (imageObservations.has(result)) out.context = imageObservations.get(result);
       // Durable Host facts, excluded from model/display output. Restore only
       // exact full observations from successful selected historical calls.
       if (reads.size && ['read_workspace_file', 'write_workspace_file', 'write_workspace_files',
@@ -1264,12 +1275,24 @@ export function createNativeWorkspaceTools({
       return { revision: null, changedPaths: [], status: 'unavailable', reason: 'workspace_missing' };
     }
     try {
+      if (request.subject !== undefined) {
+        const observation = await captureWorkspaceSubject({ root: real, subject: request.subject, signal: request.signal });
+        checkRootBoundary();
+        return observation;
+      }
       const revision = computeRevision(real);
       return { revision, changedPaths: [], status: 'ok', reason: null };
     } catch (e) {
       if (e instanceof CaptureError) {
         return { revision: null, changedPaths: [], status: 'unavailable', reason: e.code };
       }
+      request.signal?.throwIfAborted();
+      if (request.subject !== undefined) return { revision: null, changedPaths: [], status: 'unavailable',
+        reason: ['capture_limit_exceeded', 'workspace_changed_during_capture', 'workspace_root_changed',
+          'workspace_path_outside_scope', 'unsupported_workspace_entry', 'workspace_subject_file_required',
+          'invalid_workspace_observation_subject', 'invalid_delivery_artifact', 'invalid_delivery_artifacts',
+          'invalid_web_delivery_scope', 'delivery_scope_too_large'].includes(e.code) ? e.code : 'capture_failed',
+        subject: request.subject };
       return { revision: null, changedPaths: [], status: 'unavailable', reason: 'capture_failed' };
     }
   }

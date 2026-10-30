@@ -43,7 +43,7 @@ function pathsFor(directory, runId, operationKey) {
 // 1. strict per-run publication quota with real concurrency (no double-count)
 
 const WRITER_SCRIPT = `
-const { createNativeArtifactStore } = await import('./src/native/artifact-store.mjs');
+const { createNativeArtifactStore } = await import('@kingsoftcloud/agentkit-harness-node/native/artifact-store');
 const args = process.argv.slice(1).filter((a) => a !== '[eval]');
 const [dir, runId, opKey, content, mediaType, metadataJson, maxTotal, maxItem] = args;
 const scope = { tenantId: 'tenant', workspaceId: 'ws', userId: 'user', agentId: 'agent' };

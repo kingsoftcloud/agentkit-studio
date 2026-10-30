@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { writtenNativeWebEntry } from '../src/providers/native-web-entry.mjs';
+import { DELIVERY_SCOPE_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 function workspace(t) {
   const directory = mkdtempSync(join(tmpdir(), 'native-web-entry-')), root = join(directory, 'workspace'); mkdirSync(root);
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -59,4 +60,26 @@ test('internal aliases are resolved and source-equivalent non-web suffixes do no
   symlinkSync(join(root, 'app/index.html'), join(root, 'alias.html'));
   assert.equal(entry(['alias.html']), 'app/index.html');
   assert.equal(entry(['server.py', 'app/source.tsx', 'README.md']), null);
+});
+
+test('declared delivery scope excludes downloaded, deleted and unrelated reference pages from web acceptance', t => {
+  const {root,write} = workspace(t);write('game/index.html');write('refs/example.html');write('refs/source.js');
+  const snapshot = {goalRevision:2,workspaceModifiedPaths:['refs/source.js','refs/example.html','refs/deleted.html','game/index.html']};
+  const options = {deliveryScopePolicy:DELIVERY_SCOPE_POLICY};
+  assert.equal(writtenNativeWebEntry(snapshot,root,options),null);
+  snapshot.deliveryManifest={goalRevision:2,revision:1,artifacts:[{kind:'file',path:'report.md'}]};
+  assert.equal(writtenNativeWebEntry(snapshot,root,options),null);
+  snapshot.deliveryManifest={goalRevision:2,revision:2,artifacts:[{kind:'web',path:'game/index.html',root:'game'}]};
+  assert.equal(writtenNativeWebEntry(snapshot,root,options),'game/index.html');
+  assert.equal(writtenNativeWebEntry({...snapshot,goalRevision:3},root,options),null);
+  assert.throws(()=>writtenNativeWebEntry({...snapshot,deliveryManifest:{...snapshot.deliveryManifest,artifacts:[
+    {kind:'web',path:'missing.html',root:'.'}]}},root,options),/declared web entry is missing/);
+});
+
+test('a declared web entry cannot cross a symlink project boundary', t => {
+  const {root,directory,write}=workspace(t);write('game/index.html');
+  writeFileSync(join(directory,'external.html'),'outside');symlinkSync(join(directory,'external.html'),join(root,'game/linked.html'));
+  const snapshot={goalRevision:1,workspaceModifiedPaths:[],deliveryManifest:{goalRevision:1,revision:1,artifacts:[
+    {kind:'web',path:'game/linked.html',root:'game'}]}};
+  assert.throws(()=>writtenNativeWebEntry(snapshot,root,{deliveryScopePolicy:DELIVERY_SCOPE_POLICY}),/leaves the project workspace/);
 });

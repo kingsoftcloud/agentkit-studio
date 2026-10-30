@@ -5,16 +5,19 @@ import { constants as osConstants } from 'node:os';
 import { LocalCommandStore, createLocalBackgroundReader } from './local-background.mjs';
 import { TERMINAL, delay, readRecord } from './local-command-state.mjs';
 import { buildScriptEnvironment, localControlSettings, runBoundedProcess, LOCAL_PROCESS_CONTRACT } from './local-process.mjs';
+import { localEnvironmentPolicy, localOutputPolicy, resolveOutputPolicy } from './local-output-policy.mjs';
 import { checkGovernedCommand, LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY } from './local-command-policy.mjs';
 import { checkPlanCommand, PLAN_COMMAND_POLICY } from './command-plan.mjs';
 import { commandFailureEvidence, commandExceptionCause } from './local-command-evidence.mjs';
+import { captureCommandWorkspace, commandWorkspaceChange } from './command-workspace-observation.mjs';
+import { LOCAL_COMMAND_SHELL, shellCommandArgv } from './command-shell.mjs';
 
 export const LOCAL_COMMAND_TOOLS_CONTRACT = 'agentkit.local-command-tools/v1';
 export const LOCAL_COMMAND_PROGRESS_CONTRACT = 'agentkit.local-command-progress/v1';
 const schemas = { nullableSeconds: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
   cursor: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER } };
 const base = (name, properties, required, mutating, timeoutMs) => ({ name,
-  description: name === 'run_command' ? 'Run a governed shell command inside the bound local workspace. background=true returns an owned task_id; read_command_output observes it and stop_command requests cancellation. This shares the Host filesystem and network; it is not an isolated OS sandbox.'
+  description: name === 'run_command' ? 'Run a governed Bash command inside the bound local workspace. background=true returns an owned task_id; read_command_output observes it and stop_command requests cancellation. This shares the Host filesystem and network; it is not an isolated OS sandbox.'
     : name === 'read_command_output' ? 'Read an owned command status and UTF-8 byte cursors. Reusing a cursor is read-only. Waiting never changes the command deadline.'
       : name === 'stop_command' ? 'Request cancellation of one command launched by this Session. Read its output to confirm the final status; a cancel request is not proof of completion.'
         : 'Report the bound command backend and its execution boundary.',
@@ -29,7 +32,7 @@ export function localCommandToolDefinitions(settings = {}) {
     { ...base('run_command', { command: { type: 'string', minLength: 1 }, cwd: { anyOf: [{ type: 'string' }, { type: 'null' }] },
       timeout: schemas.nullableSeconds, env: { anyOf: [{ type: 'object', additionalProperties: { type: 'string' } }, { type: 'null' }] },
       background: { type: 'boolean' }, background_timeout: schemas.nullableSeconds }, ['command'], true, limits.wallSeconds * 1000 + 15000),
-    backgroundCommandPolicy: 'owned-command-launch/v1' },
+    backgroundCommandPolicy: 'owned-command-launch/v1', workspaceChangePolicy: 'observed-command/v1' },
     base('read_command_output', { task_id: { type: 'string', pattern: '^[a-f0-9]{64}$' }, stdout_cursor: schemas.cursor,
       stderr_cursor: schemas.cursor, max_bytes: { type: 'integer', minimum: 4, maximum: 65536 },
       wait_seconds: { type: 'integer', minimum: 0, maximum: 600 } }, ['task_id'], false, 610000),
@@ -54,11 +57,23 @@ function utf8Preview(text, maxBytes) {
  */
 export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionId, settings = {}, sourceEnv = {},
   authorize, resolveOwnedCommand, captureWorkspace, artifacts, assertAuthority = () => true,
-  durableForeground = false } = {}) {
+  durableForeground = false, outputPolicy = null, environmentPolicy = null } = {}) {
   invariant(typeof authorize === 'function' && typeof resolveOwnedCommand === 'function'
     && typeof captureWorkspace === 'function' && typeof assertAuthority === 'function'
     && typeof durableForeground === 'boolean', 'local_command_host_capabilities_missing');
+  // Validate raw policy inputs at this public entrypoint. The output policy
+  // forces the durable foreground path: full output lives in supervisor-owned
+  // files located by task_id/cursors, so an in-process runBoundedProcess receipt
+  // (which holds only a preview under persisted-stream/v1) must never be used.
+  const outPolicy = localOutputPolicy(outputPolicy);
+  const envPolicy = localEnvironmentPolicy(environmentPolicy);
+  if (outPolicy) durableForeground = true;
   const root = realpathSync(workspaceRoot), policy = localControlSettings(settings), definitions = localCommandToolDefinitions(policy);
+  // Under persisted-stream/v1 the automatic foreground receipt uses a bounded
+  // window matching previewBytes (clamped to the 4..65536 UTF-8 cursor range).
+  // Explicit read_command_output retains its own independent pagination.
+  const previewWindow = outPolicy
+    ? Math.min(65536, Math.max(4, resolveOutputPolicy(policy, outPolicy).previewBytes)) : null;
   const environment = { ...sourceEnv }, formal = new Map(definitions.map(item => [item.name, copy(item)]));
   // Exact model integers may be bigint. Clamp before converting rather than
   // throwing after claiming a dispatch for an otherwise valid large timeout.
@@ -150,6 +165,7 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
       if (request.call.name === 'sandbox_status') return { status: 'ok', content: { ok: true, backend: 'local_process', enabled: true,
         isolated: false, sandbox_id: `local_process:${sessionId}`, timeout_seconds: policy.wallSeconds,
         boundary: 'Shares Host filesystem, allowlisted environment and network. Not an OS security sandbox.',
+        shell: '/bin/bash', shell_policy: LOCAL_COMMAND_SHELL,
         contracts: [LOCAL_COMMAND_TOOLS_CONTRACT, LOCAL_PROCESS_CONTRACT, LOCAL_COMMAND_POLICY, GOVERNED_COMMAND_POLICY] } };
       if (request.call.name === 'read_command_output' || request.call.name === 'stop_command') {
         const owned = resolveOwnedCommand(request, args.task_id);
@@ -182,14 +198,16 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
         return { status: 'error', content: { code: 'plan_mode_write_denied', executed: false } };
       guard();
       request.signal.throwIfAborted(); checkRoot(); cwdFor(args.cwd || args.env?.KSADK_COMMAND_CWD);
-      const env = buildScriptEnvironment({ ...environment, ...args.env }, { settings: policy });
-      const before = captureWorkspace(request);
+      const env = buildScriptEnvironment({ ...environment, ...args.env }, { settings: policy, environmentPolicy: envPolicy });
+      const observedChanges = request.definition?.workspaceChangePolicy === 'observed-command/v1';
+      const before = observedChanges ? await captureCommandWorkspace(captureWorkspace, request) : captureWorkspace(request);
       guard();
       if (args.background || durableForeground) {
         dispatched = true;
         const operationKey = request.operationKey, expectedTaskId = store.commandId(operationKey);
         known = { content: { backend: 'sandbox/local_process', task_id: expectedTaskId } };
-        const handle = await store.start({ operationKey, command, cwd, env, settings: policy,
+        const handle = await store.start({ operationKey, command, cwd, env, settings: policy, shellPolicy: LOCAL_COMMAND_SHELL,
+          outputPolicy: outPolicy, environmentPolicy: envPolicy,
           timeoutMs: deadline(args.background ? args.background_timeout : args.timeout), assertCurrent: guard });
         if (!args.background) {
           const cancel = () => { try { handle.requestCancel(); } catch { /* retain unknown */ } };
@@ -215,8 +233,15 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
           } catch (error) { cancel(); throw error;
           } finally { original.removeEventListener('abort', cancel); }
         }
-        let observed = handle.readOutput();
-        if (!args.background && TERMINAL.has(observed.status) && observed.status !== 'unknown')
+        // The automatic foreground receipt is a bounded PREVIEW under the new
+        // policy (previewWindow bytes); full output stays cursor-readable via
+        // read_command_output's independent pagination. wait() reads the whole
+        // file in legacy mode only — under the policy it must not pull the full
+        // output into the receipt, so re-read with the bounded window instead.
+        let observed = previewWindow ? handle.readOutput({ maxBytes: previewWindow })
+          : handle.readOutput();
+        if (!args.background && TERMINAL.has(observed.status) && observed.status !== 'unknown'
+          && !previewWindow)
           observed = await handle.wait({ timeoutMs: 100 });
         const uncertain = observed.status === 'unknown' || observed.evidenceIncomplete
           || !args.background && !TERMINAL.has(observed.status);
@@ -227,7 +252,7 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
         ...(args.background ? { launchedCommand: { taskId: handle.commandId, operationKey } } : {}) };
       } else {
         dispatched = true;
-        const result = await runBoundedProcess({ argv: ['/bin/sh', '-c', command], cwd, env, settings: policy, signal: request.signal,
+        const result = await runBoundedProcess({ argv: shellCommandArgv(command, LOCAL_COMMAND_SHELL), cwd, env, settings: policy, signal: request.signal,
           timeoutMs: deadline(args.timeout), onOutput: progress });
         const incomplete = result.controls.status === 'failed' || !!result.cleanupError;
         const resourceReason = result.exitCode === -osConstants.signals.SIGXCPU ? 'cpu_time'
@@ -243,7 +268,11 @@ export function createLocalCommandTransport({ workspaceRoot, stateRoot, sessionI
           ...(incomplete ? { command_evidence: commandFailureEvidence('execute', { result }) } : {}) } };
       }
       guard();
-      const after = captureWorkspace(request); known.workspaceChangedPaths = changed(before, after);
+      const after = observedChanges ? await captureCommandWorkspace(captureWorkspace, request) : captureWorkspace(request);
+      if (observedChanges) {
+        Object.assign(known, commandWorkspaceChange(before, after));
+        known.content.workspace_observation = known.workspaceChangeObservation;
+      } else known.workspaceChangedPaths = changed(before, after);
       guard(); const result = await budget(known, request); guard(); return result;
     } catch (error) {
       // After dispatch, an exception cannot prove that a command did not run.

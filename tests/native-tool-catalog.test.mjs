@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { listStudioTools, nativeLocalToolContract, nativeLocalToolResources } from '../src/native-tool-catalog.mjs';
 import { localCommandToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/local-command-tools';
+import { studioBrowserDefinition } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
 import { workspacePatchDefinition, workspaceToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { nativeWebToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/web-tools';
 import { createResourceRoutes } from '../src/host/routes/resources.mjs';
@@ -16,11 +17,11 @@ test('Native catalog merges all legacy pages before paging and keeps the local w
   const query = { kind: 'tool', runtimeType: 'harness', limit: 1 };
   const rows = []; let cursor;
   do { const page = await listStudioTools({ query: { ...query, cursor }, serverClient });
-    assert.equal(page.items.length, 1); assert.equal(page.total, 22); rows.push(...page.items); cursor = page.nextCursor;
+    assert.equal(page.items.length, 1); assert.equal(page.total, 23); rows.push(...page.items); cursor = page.nextCursor;
   } while (cursor);
   assert.deepEqual(rows.map(row => row.resourceId), ['apply_workspace_patch', 'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files',
     ...workspaceToolDefinitions().map(tool => tool.name), ...nativeWebToolDefinitions().map(tool => tool.name),
-    ...localCommandToolDefinitions().map(tool => tool.name), 'first', 'second']);
+    studioBrowserDefinition().name, ...localCommandToolDefinitions().map(tool => tool.name), 'first', 'second']);
   assert.equal(rows[0].contract.executor, 'builtin');
   assert.deepEqual(rows[0].contract.inputSchema, workspacePatchDefinition().parameters);
   assert.ok(calls.every(call => call.limit === 200));

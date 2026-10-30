@@ -13,7 +13,7 @@ jobs:
   test:
     name: public-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +31,7 @@ jobs:
       - run: |
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"
-      - run: make public-gate
+      - run: bash ci/run-public-gate.sh
   patched-host:
     name: patched-dsh-host
     runs-on: ${{ matrix.os }}

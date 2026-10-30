@@ -14,7 +14,7 @@ const HARNESS_DIR = new URL('..', import.meta.url).pathname; // packages/agentki
 // instance against the same directory. Inert unless NATIVE_ARTIFACT_CRASH_AFTER
 // is set, in which case the store exits at a controlled publish position.
 const WRITER_SCRIPT = `
-const { createNativeArtifactStore } = await import('./src/native/artifact-store.mjs');
+const { createNativeArtifactStore } = await import('@kingsoftcloud/agentkit-harness-node/native/artifact-store');
 const args = process.argv.slice(1).filter((a) => a !== '[eval]');
 const [dir, runId, opKey, content, mediaType, metadataJson] = args;
 const scope = { tenantId: 'tenant', workspaceId: 'ws', userId: 'user', agentId: 'agent' };

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MemoryRunStore, NativeKernel, configure } from '@kingsoftcloud/agentkit-harness-core';
+import { MemoryRunStore, NativeKernel, configure, RESULT_DELIVERY_POLICY, deliveryToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest, tool } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { freezeNativeDshConfiguration, rebindNativeDshConfiguration } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../src/providers/native-recovery-binding.mjs';
+import { NATIVE_INSTRUCTION_ASSEMBLY } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
 
 function admission() {
   const binding = { agentId: scope.agentId, agentRevision: 3, buildId: 'frozen-build', runtime: 'harness', local: true,
@@ -21,6 +22,66 @@ function admission() {
   return { binding, input, capsule, payload: { input, agent: { session: { id: 'session' } }, turn: 1 }, execution: { scope, buildId: binding.buildId, source,
     configuration: { ...config, hostRecoveryBinding: capsule }, ports: {} } };
 }
+
+test('workspace context identity is frozen without upgrading historical admissions or granting paths', () => {
+  const f = admission();
+  assert.equal(Object.hasOwn(f.capsule, 'workspaceContext'), false);
+  const workspaceContext = { contract: 'agentkit.native-workspace-context/v1', workspaceRoot: '/bound/execution' };
+  const capsule = nativeRecoveryBinding({ binding: f.binding, input: f.input, source: f.execution.source,
+    selection: {}, systemPrompt: 'Frozen prompt', workspaceContext });
+  const execution = { ...f.execution, configuration: { ...f.execution.configuration, hostRecoveryBinding: capsule } };
+  const configuration = freezeNativeDshConfiguration(execution, f.input);
+  const record = { configuration, snapshot: { scope, sessionId: 'session', runId: 'run', turnId: '1',
+    buildId: f.binding.buildId, configDigest: digest(configuration) } };
+  const recovered = readNativeRecoveryBinding(record, { agentId: scope.agentId, sessionId: 'session', runId: 'run' });
+  assert.deepEqual(recovered.workspaceContext, workspaceContext);
+  recovered.workspaceContext.workspaceRoot = '/changed';
+  assert.equal(configuration.hostRecoveryBinding.workspaceContext.workspaceRoot, '/bound/execution');
+  for (const next of [undefined, { ...workspaceContext, workspaceRoot: '/different/root' }]) {
+    const hostRecoveryBinding = { ...capsule }; delete hostRecoveryBinding.workspaceContext;
+    if (next) hostRecoveryBinding.workspaceContext = next;
+    assert.throws(() => rebindNativeDshConfiguration(record, { ...execution,
+      configuration: { ...execution.configuration, hostRecoveryBinding } }, f.payload), /recovery_configuration_changed/);
+  }
+  for (const next of [{ ...workspaceContext, workspaceRoot: 'relative' }, { ...workspaceContext, permissions: ['workspace:*'] }])
+    assert.throws(() => nativeRecoveryBinding({ binding: f.binding, input: f.input, source: f.execution.source,
+      selection: {}, systemPrompt: '', workspaceContext: next }), /workspace_context_binding_invalid/);
+});
+
+for (const instructionAssemblyPolicy of ['admitted-tool-sections/v1', 'native-owned-sections/v2', NATIVE_INSTRUCTION_ASSEMBLY]) test(`${instructionAssemblyPolicy}: instruction ownership is frozen and never added to an old capsule`, () => {
+  const f = admission();
+  assert.equal(Object.hasOwn(f.capsule, 'instructionAssemblyPolicy'), false);
+  const capsule = nativeRecoveryBinding({ binding: f.binding, input: f.input, source: f.execution.source,
+    selection: {}, systemPrompt: 'Admitted instructions', instructionAssemblyPolicy });
+  const execution = { ...f.execution, configuration: { ...f.execution.configuration, hostRecoveryBinding: capsule } };
+  const configuration = freezeNativeDshConfiguration(execution, f.input);
+  const record = { configuration, snapshot: { scope, sessionId: 'session', runId: 'run', turnId: '1',
+    buildId: f.binding.buildId, configDigest: digest(configuration) } };
+  assert.equal(readNativeRecoveryBinding(record, { agentId: scope.agentId, sessionId: 'session', runId: 'run' }).instructionAssemblyPolicy, instructionAssemblyPolicy);
+  const changed = { ...execution, configuration: { ...execution.configuration, hostRecoveryBinding: { ...capsule } } };
+  delete changed.configuration.hostRecoveryBinding.instructionAssemblyPolicy;
+  assert.throws(() => rebindNativeDshConfiguration(record, changed, f.payload), /recovery_configuration_changed/);
+  changed.configuration.hostRecoveryBinding.instructionAssemblyPolicy = instructionAssemblyPolicy === NATIVE_INSTRUCTION_ASSEMBLY
+    ? 'admitted-tool-sections/v1' : NATIVE_INSTRUCTION_ASSEMBLY;
+  assert.throws(() => rebindNativeDshConfiguration(record, changed, f.payload), /recovery_configuration_changed/);
+  assert.throws(() => nativeRecoveryBinding({ binding: f.binding, input: f.input, source: f.execution.source,
+    selection: {}, systemPrompt: '', instructionAssemblyPolicy: 'current-default' }), /recovery_binding_invalid/);
+});
+
+test('workspace capture scope is frozen recovery policy, including historical absence', () => {
+  for (const modern of [false, true]) {
+    const f = admission();
+    f.execution.configuration = configure({ ...f.execution.configuration, deliveryScopePolicy: RESULT_DELIVERY_POLICY,
+      tools: deliveryToolDefinitions(RESULT_DELIVERY_POLICY), ...(modern ? { workspaceCapturePolicy: 'declared-subjects/v1' } : {}) });
+    const configuration = freezeNativeDshConfiguration(f.execution, f.input);
+    const record = { configuration, snapshot: { scope, sessionId: 'session', turnId: '1', buildId: f.binding.buildId, configDigest: digest(configuration) } };
+    assert.deepEqual(rebindNativeDshConfiguration(record, f.execution, f.payload), configuration);
+    const changed = { ...configuration };
+    if (modern) delete changed.workspaceCapturePolicy;
+    else changed.workspaceCapturePolicy = 'declared-subjects/v1';
+    assert.throws(() => rebindNativeDshConfiguration(record, { ...f.execution, configuration: changed }, f.payload), /recovery_configuration_changed/);
+  }
+});
 
 for (const sqlite of [false, true]) test(`${sqlite ? 'SQLite reopen' : 'memory'}: recovery admission and exact configuration survive without creating a replacement Run`, t => {
   const directory = mkdtempSync(join(tmpdir(), 'native-recovery-binding-'));
@@ -80,4 +141,25 @@ test('opaque Host locators are validated and included in the core configuration 
     const invalid = { ...configuration, hostRecoveryBinding: { ...f.capsule, ...changed } };
     assert.throws(() => readNativeRecoveryBinding({ configuration: invalid, snapshot: { ...snapshot, configDigest: digest(invalid) } }, identity), /recovery_binding_invalid/);
   }
+});
+
+test('a selected local resource profile is durable admission data and a recovery drift cannot reach any effect', () => {
+  const f = admission();
+  for (const profile of [undefined, 'bounded/v1', 'local-development/v1']) {
+    const capsule = nativeRecoveryBinding({ binding: f.binding, input: f.input, source: f.execution.source,
+      selection: { maxTokens: 4096 }, systemPrompt: 'Frozen prompt', localExecutionProfile: profile });
+    assert.equal(Object.hasOwn(capsule, 'localExecutionProfile'), profile !== undefined);
+    const execution = { ...f.execution, configuration: { ...f.execution.configuration, hostRecoveryBinding: capsule } };
+    const configuration = freezeNativeDshConfiguration(execution, f.input);
+    const record = { configuration, snapshot: { scope, sessionId: 'session', runId: 'run', turnId: '1',
+      buildId: f.binding.buildId, configDigest: digest(configuration) } };
+    assert.equal(readNativeRecoveryBinding(record, { agentId: scope.agentId, sessionId: 'session', runId: 'run' }).localExecutionProfile, profile);
+    assert.deepEqual(rebindNativeDshConfiguration(record, execution, f.payload), configuration);
+    const changed = { ...execution, configuration: { ...execution.configuration, hostRecoveryBinding: {
+      ...capsule, localExecutionProfile: profile === 'bounded/v1' ? 'local-development/v1' : 'bounded/v1' } } };
+    assert.throws(() => rebindNativeDshConfiguration(record, changed, f.payload), /recovery_configuration_changed/);
+  }
+  for (const localExecutionProfile of ['unlimited', null, 'toString'])
+    assert.throws(() => nativeRecoveryBinding({ binding: f.binding, input: f.input, source: f.execution.source,
+      selection: {}, systemPrompt: '', localExecutionProfile }), /recovery_binding_invalid/);
 });

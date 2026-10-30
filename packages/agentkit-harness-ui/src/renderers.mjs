@@ -16,18 +16,16 @@
 // delegates a single click handler on the root and dispatches to the host
 // callbacks, so the tree stays serializable and testable with node:test.
 
-import { h, terminalIcon, fileTextIcon, searchIcon, pencilIcon, wrenchIcon, chevronIcon } from "./view.mjs";
+import { h, terminalIcon, fileTextIcon, searchIcon, pencilIcon, wrenchIcon, chevronIcon, skillIcon, globeIcon } from "./view.mjs";
 import { ToolStatus } from "./protocol.mjs";
 import { toolTitle, toolDetailLines, workspaceRelative, redactError } from "./tool-detail.mjs";
 import { truncateText, latestNonEmptyLine, redactValue, boundedDetailLines } from "./summary.mjs";
 import { parseDiffHunks, countChangeStat, inferOperationKind } from "./diff.mjs";
 import { extractCommand, extractOutput } from "./terminal.mjs";
+import { toolIdentity, localizedToolTitle } from './tool-identity.mjs';
+import { toolErrorSummary } from './tool-error.mjs';
 
 /** Tool-name → renderer classification. Host tool names vary across runtimes. */
-const EXECUTE_NAMES = new Set(["Bash", "bash", "execute", "run_command", "Execute", "ExecuteCommand", "execute_command", "RunCommand", "shell", "Shell"]);
-const READ_NAMES = new Set(["Read", "read", "read_workspace_file"]);
-const SEARCH_NAMES = new Set(["Glob", "Grep", "glob", "grep", "list_workspace_files", "search_workspace_files", "Search", "search"]);
-const EDIT_NAMES = new Set(["Edit", "Write", "edit_workspace_file", "write_workspace_file", "write_workspace_files", "multi_edit_workspace_file", "delete_workspace_file", "apply_workspace_patch", "MultiEdit", "edit", "write", "StrReplace", "Patch"]);
 
 /**
  * Pick a renderer for a tool name. Unknown names fall through to the default
@@ -36,19 +34,16 @@ const EDIT_NAMES = new Set(["Edit", "Write", "edit_workspace_file", "write_works
  * @returns {"execute"|"read"|"edit"|"default"}
  */
 export function toolRendererKind(name) {
-  const n = String(name || "");
-  if (["native_start_child", "native_delegate", "Agent", "Task", "subagent"].includes(n)) return "agent";
-  if (EXECUTE_NAMES.has(n)) return "execute";
-  if (READ_NAMES.has(n) || SEARCH_NAMES.has(n)) return "read";
-  if (EDIT_NAMES.has(n)) return "edit";
-  return "default";
+  const family = toolIdentity(name).family;
+  if (family === 'agent' || family === 'execute') return family;
+  if (['file', 'list', 'search'].includes(family)) return 'read';
+  if (['edit', 'write', 'delete'].includes(family)) return 'edit';
+  return 'default';
 }
 
 /** "read" splits internally into a file read vs a search/list summary. */
 function readSubKind(name, input) {
-  const n = String(name || "");
-  if (READ_NAMES.has(n)) return "file";
-  if (SEARCH_NAMES.has(n)) return "search";
+  if (['list', 'search'].includes(toolIdentity(name).family)) return "search";
   // A file_read display or an explicit file path ⇒ treat as a file read even
   // when the host reused a generic tool name.
   return "file";
@@ -61,6 +56,13 @@ function readSubKind(name, input) {
  * @param {object} opts view options (workspaceRoot, labels, diffMaxLines, toolOpen, callbacks)
  */
 export function renderTool(item, opts) {
+  // An argument draft shares the tool's presentation family, but has no call
+  // authority, result or host actions. Never turn it into a scheduled tool.
+  if (item.kind === 'tool-preview') {
+    item = { kind: item.kind, id: item.id, name: item.name, input: item.input, streaming: item.streaming };
+    opts = { ...opts, onOpenFile: undefined, onOpenTerminal: undefined, onRetrieveFullDiff: undefined,
+      onOpenSubagent: undefined, onInspectTool: undefined, onCopy: undefined };
+  }
   if (item.child) return agentRenderer(item, opts);
   switch (toolRendererKind(item.name)) {
     case "agent": return agentRenderer(item, opts);
@@ -70,6 +72,9 @@ export function renderTool(item, opts) {
     default: return defaultRenderer(item, opts);
   }
 }
+
+const toolIsLive = item => item.kind === 'tool-preview' ? item.streaming === true
+  : item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
 
 /**
  * Common shell that owns the compact summary row (icon + title/content +
@@ -85,13 +90,17 @@ export function renderTool(item, opts) {
  */
 function toolShell(item, opts, { icon, summary, body, canToggle = true, defaultOpen, actions = [], summaryAction }) {
   const status = item.status;
-  const streaming = status === ToolStatus.Running || status === ToolStatus.Scheduled;
+  const provisional = item.kind === 'tool-preview';
+  const streaming = toolIsLive(item);
+  if (provisional) { canToggle = false; summaryAction = undefined; actions = []; }
+  const error = status === ToolStatus.Failed && item.error ? redactError(item.error) : null;
+  if (error && !canToggle) { canToggle = true; defaultOpen = false; }
   const open = resolveOpen(item, opts, defaultOpen == null ? streaming : defaultOpen, canToggle);
   const summaryKids = [];
   if (icon && opts.showToolIcon !== false) summaryKids.push(icon);
   if (Array.isArray(summary)) summaryKids.push(...summary);
   else if (summary) summaryKids.push(summary);
-  const error = status === ToolStatus.Failed && item.error ? redactError(item.error) : null;
+  const errorSummary = error ? toolErrorSummary(item.error, opts) : null;
   // Non-toggleable tools have no body to expand into, so their error must live
   // in the summary; toggleable tools show it inline only when collapsed.
   const showInlineError = error && (canToggle ? !open : true);
@@ -99,8 +108,8 @@ function toolShell(item, opts, { icon, summary, body, canToggle = true, defaultO
     className: "harness-tool-error harness-tool-error-inline",
     role: "alert",
     "data-testid": "tool-error",
-  }, error));
-  if ([ToolStatus.Failed, ToolStatus.Uncertain, ToolStatus.Interrupted, ToolStatus.Waiting].includes(status)) summaryKids.push(h("span", {
+  }, errorSummary));
+  if ([ToolStatus.Failed, ToolStatus.Uncertain, ToolStatus.Interrupted, ToolStatus.Waiting, ToolStatus.NotDispatched].includes(status)) summaryKids.push(h("span", {
     className: `harness-tool-status harness-tool-status-${status}`,
     "data-testid": "tool-status",
     "data-status": status,
@@ -124,6 +133,9 @@ function toolShell(item, opts, { icon, summary, body, canToggle = true, defaultO
     className: `harness-tool harness-tool-${toolRendererKind(item.name)}`,
     "data-testid": "tool-block",
     "data-call-id": item.callId,
+    ...(provisional ? { 'data-item-id': item.id, 'data-preview-id': item.id, 'data-uncommitted': 'true',
+      'aria-label': streaming ? opts.labels?.toolPreparing || 'Generating tool arguments'
+        : opts.labels?.previewStopped || 'Argument generation interrupted' } : {}),
     "data-status": status,
     "data-renderer": toolRendererKind(item.name),
     "data-streaming": streaming ? "true" : "false",
@@ -134,7 +146,7 @@ function toolShell(item, opts, { icon, summary, body, canToggle = true, defaultO
 
 function agentRenderer(item, opts) {
   const child = item.child;
-  const running = item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
+  const running = toolIsLive(item);
   const title = child?.title || item.input?.description || item.input?.task || item.input?.prompt || item.name;
   const activity = running && child?.activity && toolRendererKind(child.activity.name) === 'read' ? child.activity : null;
   const activityPath = activity && readMeta(activity).path;
@@ -167,6 +179,7 @@ function statusLabel(status, opts) {
     case "running": return l.toolRunning || "running";
     case "completed": return l.toolCompleted || "done";
     case "failed": return l.toolFailed || "failed";
+    case "not_dispatched": return l.toolNotDispatched || (String(opts.locale ?? '').startsWith('zh') ? '未执行' : 'not executed');
     case "uncertain": return l.toolUncertain || "outcome unknown";
     case "interrupted": return l.interrupted || "interrupted";
     case "waiting": return l.waiting || "waiting";
@@ -178,7 +191,7 @@ function statusLabel(status, opts) {
 
 function executeRenderer(item, opts) {
   const command = extractCommand(item.input);
-  const running = item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
+  const running = toolIsLive(item);
   const out = extractOutput(item.result, item.display);
   // cwd: prefer the result display, fall back to the input the host scheduled.
   const cwd = out.cwd || (typeof item.input?.cwd === "string" ? item.input.cwd.trim() : "");
@@ -187,7 +200,7 @@ function executeRenderer(item, opts) {
   // real streaming bytes supplied through the other supported representation.
   const stdout = out.stdout;
   const hasOutput = Boolean(stdout || out.stderr || out.exit != null);
-  const title = toolTitle(item.name, item.input) || item.name;
+  const title = localizedToolTitle(item.name, toolTitle(item.name, item.input) || item.name, opts.locale);
   const summary = [h("span", {
     className: running
       ? "harness-tool-title harness-tool-title-streaming"
@@ -212,7 +225,7 @@ function executeRenderer(item, opts) {
     }, item.progress));
   }
 
-  return toolShell(item, opts, { icon: terminalIcon("harness-tool-kind-icon"), summary, body, canToggle: true, defaultOpen: running });
+  return toolShell(item, opts, { icon: terminalIcon("harness-tool-kind-icon"), summary, body, canToggle: true, defaultOpen: false });
 }
 
 function commandBlock(callId, command, cwd, opts) {
@@ -301,7 +314,7 @@ function readFileRenderer(item, opts) {
   const meta = readMeta(item);
   const path = meta.path;
   const fileName = leafName(path) || toolTitle(item.name, item.input) || item.name;
-  const running = item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
+  const running = toolIsLive(item);
   const kindLabel = running
     ? (opts.labels && opts.labels.readReading || "Reading")
     : (opts.labels && opts.labels.readKind || "Read");
@@ -334,17 +347,16 @@ function readFileRenderer(item, opts) {
 }
 
 function searchListRenderer(item, opts) {
-  const running = item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
+  const running = toolIsLive(item);
   const isList = isListInput(item.name, item.input);
-  const query = searchQuery(item.input);
+  const query = isList ? '' : searchQuery(item.input);
   const cwd = searchCwd(item.input);
   const labels = opts.labels || {};
   const kindLabel = running
     ? (isList ? (labels.listSearching || "Listing") : (labels.searchSearching || "Searching"))
     : (isList ? (labels.listKind || "List") : (labels.searchKind || "Search"));
   const primary = isList
-    ? (cwd ? (labels.searchListIn || "List in {cwd}").replace("{cwd}", truncateText(cwd, { maxLines: 1, maxChars: 60 }))
-      : (labels.searchList || "List"))
+    ? (cwd ? truncateText(cwd, { maxLines: 1, maxChars: 60 }) : '')
     : (query ? (labels.searchFindQuery || "Find {query}").replace("{query}", truncateText(query, { maxLines: 1, maxChars: 80 }))
       : (labels.searchFind || "Find"));
   const summary = [
@@ -354,10 +366,10 @@ function searchListRenderer(item, opts) {
         : "harness-tool-title",
       "data-testid": "tool-title",
     }, kindLabel),
-    h("span", {
+    ...((isList ? cwd : query) ? [h("span", {
       className: "harness-tool-primary harness-search-primary",
       "data-testid": "search-primary",
-    }, primary),
+    }, primary)] : []),
   ];
   return toolShell(item, opts, {
     icon: searchIcon("harness-tool-kind-icon"),
@@ -384,12 +396,12 @@ function searchQuery(input) {
     for (const p of pc) {
       if (!p || typeof p !== "object") continue;
       if (p.type === "search" || p.type === "grep" || p.type === "glob") {
-        const q = [p.pattern, p.query, p.path].find(v => typeof v === "string" && v.trim());
+        const q = [p.pattern, p.query].find(v => typeof v === "string" && v.trim());
         if (q) return q.trim();
       }
     }
   }
-  for (const key of ["search_query", "searchQuery", "query", "pattern", "path", "url", "prompt", "target", "name"]) {
+  for (const key of ["search_query", "searchQuery", "query", "pattern"]) {
     if (typeof input[key] === "string" && input[key].trim()) return input[key].trim();
   }
   return "";
@@ -397,12 +409,14 @@ function searchQuery(input) {
 
 function searchCwd(input) {
   if (!input || typeof input !== "object") return "";
-  if (typeof input.cwd === "string" && input.cwd.trim()) return input.cwd.trim().replace(/\/+$/, "");
+  for (const path of [input.cwd, input.path]) {
+    if (typeof path === 'string' && path.trim()) return path.trim().replace(/\/+$/, '') || '/';
+  }
   const pc = Array.isArray(input.parsed_cmd) ? input.parsed_cmd : null;
   if (pc) {
     for (const p of pc) {
       if (p && typeof p === "object" && p.type === "list_files" && typeof p.path === "string" && p.path.trim()) {
-        return p.path.trim().replace(/\/+$/, "");
+        return p.path.trim().replace(/\/+$/, "") || '/';
       }
     }
   }
@@ -427,7 +441,7 @@ function readInputPath(input) {
 
 function editRenderer(item, opts) {
   const files = editFiles(item);
-  const running = item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
+  const running = toolIsLive(item);
   // Never infer a write succeeded: the diff/count come from the result display
   // only. While running (no result), show the intent + file chips, no diff.
   const opKind = files.length ? inferOperationKind(files[0].operationKind, null, files[0].patch) : "edit";
@@ -489,6 +503,8 @@ function editFiles(item) {
 
 function editKindLabel(opKind, running, opts) {
   const l = opts.labels || {};
+  if (String(opts.locale ?? '').startsWith('zh')) return opKind === 'write' ? (running ? '写入中' : '写入')
+    : opKind === 'delete' ? (running ? '删除中' : '删除') : (running ? '修改中' : '修改');
   if (opKind === "write") return running ? (l.editWriting || "writing") : (l.editWrite || "write");
   if (opKind === "delete") return running ? (l.editDeleting || "deleting") : (l.editDelete || "delete");
   return running ? (l.editEditing || "editing") : (l.editEdit || "edit");
@@ -577,15 +593,21 @@ function leafName(path) {
 // ── default (unknown / MCP) ────────────────────────────────────────────────
 
 function defaultRenderer(item, opts) {
-  const title = toolTitle(item.name, item.input) || item.name;
+  const title = localizedToolTitle(item.name, toolTitle(item.name, item.input) || item.name, opts.locale);
   const detail = toolDetailLines(item.name, item.input, { workspaceRoot: opts.workspaceRoot });
-  const running = item.status === ToolStatus.Running || item.status === ToolStatus.Scheduled;
+  const running = toolIsLive(item);
   const summary = [h("span", {
     className: running
       ? "harness-tool-title harness-tool-title-streaming"
       : "harness-tool-title",
     "data-testid": "tool-title",
   }, title)];
+  const family = toolIdentity(item.name).family;
+  const primary = family === 'skill' ? item.input?.skill_id ?? item.input?.name ?? item.input?.skill
+    : family === 'web-search' || family === 'skill-catalog' ? item.input?.query
+      : family === 'web-fetch' ? item.input?.url : null;
+  if (typeof primary === 'string' && primary) summary.push(h('span', { className: 'harness-tool-primary' },
+    truncateText(primary, { maxLines: 1, maxChars: 120 })));
   const body = [];
   if (detail.length) {
     body.push(h("dl", { className: "harness-tool-detail", "data-testid": "tool-detail" },
@@ -608,7 +630,11 @@ function defaultRenderer(item, opts) {
     const parsed = parseDiffHunks(item.display.patch, { maxLines: opts.diffMaxLines || 200 });
     if (parsed) body.push(diffBlock(item.callId, { path: item.display.path, patch: item.display.patch, changeStat: item.display.changeStat }, parsed, opts));
   }
-  return toolShell(item, opts, { icon: wrenchIcon("harness-tool-kind-icon"), summary, body, canToggle: true, defaultOpen: running });
+  const icon = ({ skill: skillIcon, 'skill-catalog': skillIcon, 'web-search': searchIcon,
+    'web-fetch': globeIcon, browser: globeIcon, 'tool-search': searchIcon })[family] ?? wrenchIcon;
+  // Input parameters are inspection data, rather than a live output stream.
+  // Tool execution state must not change the user's disclosure choice.
+  return toolShell(item, opts, { icon: icon("harness-tool-kind-icon"), summary, body, canToggle: true, defaultOpen: false });
 }
 
 function safeStringify(value) {

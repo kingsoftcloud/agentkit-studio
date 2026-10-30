@@ -10,7 +10,7 @@
 // handler to seal termination.
 
 export class SseFramingError extends Error {
-  constructor(message) { super(message); this.name = 'SseFramingError'; }
+  constructor(message, code = 'framing_invalid') { super(message); this.name = 'SseFramingError'; this.code = code; }
 }
 
 // No nonempty model data arrived within the host's read interval.
@@ -102,7 +102,7 @@ class SseFramer {
  *   pending read rejects cleanly (no orphaned read to cancel). Throws
  *   SseFramingError (terminal) or propagates transport/abort errors.
  */
-export async function* readModelSse(body, { maxBytes = 8 * 1024 * 1024, idleTimeoutMs, abort } = {}) {
+export async function* readModelSse(body, { maxBytes = 8 * 1024 * 1024, idleTimeoutMs, abort, observeBytes } = {}) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new SseFramingError('model SSE needs a positive byte budget');
   }
@@ -131,12 +131,13 @@ export async function* readModelSse(body, { maxBytes = 8 * 1024 * 1024, idleTime
         throw new SseFramingError('model SSE requires byte chunks');
       }
       total += chunk.byteLength;
-      if (total > maxBytes) throw new SseFramingError('model SSE byte budget exceeded');
+      observeBytes?.(chunk.byteLength);
+      if (total > maxBytes) throw new SseFramingError('model SSE byte budget exceeded', 'body_limit');
       let text;
       try {
         text = decoder.decode(chunk, { stream: true });
       } catch {
-        throw new SseFramingError('invalid utf-8 in model stream');
+        throw new SseFramingError('invalid utf-8 in model stream', 'body_encoding');
       }
       frames.length = 0;
       framer.feed(text, frames);
@@ -151,7 +152,7 @@ export async function* readModelSse(body, { maxBytes = 8 * 1024 * 1024, idleTime
     try {
       tail = decoder.decode();
     } catch {
-      throw new SseFramingError('invalid utf-8 in model stream');
+      throw new SseFramingError('invalid utf-8 in model stream', 'body_encoding');
     }
     if (tail) {
       frames.length = 0;

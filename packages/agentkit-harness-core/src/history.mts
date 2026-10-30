@@ -1,10 +1,11 @@
 import { terminal } from './contracts.mjs';
 import type { Message, ModelResult, RunConfiguration, RunSnapshot, StoredRun } from './contracts.mjs';
 import { canonical, copy, invariant } from './values.mjs';
+import { FINAL_SUBMISSION_TOOL, submittedFinalText } from './final-submission.mjs';
 
 type Identify = (value: unknown) => string;
 const inheritedKinds = new Set(['user_guidance', 'historical_tool_observation',
-  'guidance', 'steering', 'user_input', 'dsh_context', 'tool_context', 'host_input',
+  'guidance', 'steering', 'session_injection', 'user_input', 'dsh_context', 'tool_context', 'host_input',
   'historical_verification_observation', 'user_document_observation', 'background_child_observation', 'background_command_observation', 'delivery_review_source']);
 
 /** Imported protocol ids are stable across later turns; observations grant no new execution. */
@@ -63,6 +64,10 @@ function projectHistory(parent: StoredRun, transcript: Message[], configuration:
     pending.clear();
   };
   for (const [index, original] of transcript.entries()) {
+    // Final submission is Core's answer protocol, not a workspace effect.
+    // Its answer is published below; its internal receipt cannot become an
+    // orphan tool observation in a later conversation or conversation cut.
+    if (original.role === 'tool' && original.name === FINAL_SUBMISSION_TOOL) continue;
     if (original.role === 'system' || original.kind && !inheritedKinds.has(original.kind) && original.role !== 'tool') continue;
     const message = copy(original);
     // Journal sections belong to the old Run and are not imported as system authority.
@@ -116,11 +121,15 @@ function projectHistory(parent: StoredRun, transcript: Message[], configuration:
     const last = output.at(-1);
     if (!(last?.role === 'assistant' && !last.toolCalls?.length && last.content === snapshot.finalText)) {
       const candidate = [...snapshot.messages].reverse().find(message => message.role === 'assistant'
-        && !message.toolCalls?.length && message.content === snapshot.finalText);
+        && message.content === snapshot.finalText && (!message.toolCalls?.length || message.kind === 'final_candidate'
+          && message.toolCalls.length === 1 && submittedFinalText(message.toolCalls[0]!, parent.configuration) === snapshot.finalText));
       output.push({ role: 'assistant', content: snapshot.finalText,
         ...(candidate?.completedAtMs === undefined ? {} : { completedAtMs: candidate.completedAtMs }),
         history: candidate?.history ?? { sourceRunId: snapshot.runId, sourceIndex: snapshot.messages.length },
-        ...(replayAllowed && candidate?.providerReplay ? { providerReplay: copy(candidate.providerReplay) } : {}) });
+        // A tool submission's private replay still refers to its omitted tool
+        // frame. Only a native text answer can carry that replay as text.
+        ...(replayAllowed && !candidate?.toolCalls?.length && candidate?.providerReplay
+          ? { providerReplay: copy(candidate.providerReplay) } : {}) });
     }
   }
   return output;

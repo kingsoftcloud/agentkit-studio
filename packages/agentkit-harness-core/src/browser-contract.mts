@@ -27,7 +27,7 @@
  *    (excluded identity/timing fields, elementRef stripping, image identification) are preserved.
  */
 import type { Json, ObjectValue, RunScope } from './contracts.mjs';
-import { invariant, NativeError, scopeKey } from './values.mjs';
+import { invariant, NativeError, isNativeError, scopeKey } from './values.mjs';
 
 export const BROWSER_SESSION_SCHEMA = 'agentkit.browser-session/v1' as const;
 export const BROWSER_OBSERVATION_SCHEMA = 'agentkit.browser-observation/v1' as const;
@@ -459,7 +459,7 @@ export function validateBrowserImage(input: unknown): BrowserImage {
   try {
     contentBlock = cloneJson(contentBlockRaw, new Set(), code) as ObjectValue;
   } catch (error) {
-    if (error instanceof NativeError) throw error;
+    if (isNativeError(error)) throw error;
     throw new NativeError(code);
   }
   return { contentRef, mimeType: 'image/png', width, height, contentBlock };

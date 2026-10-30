@@ -3,6 +3,7 @@ import type { ChildBudgetReservation, ChildState, ObjectValue, PortContext, RunC
 export const CHILD_OWNER_CONTRACT = 'agentkit.native-child-owner/v1' as const;
 /** Immutable causal binding; session parentRunId continues to mean session ancestry. */
 export interface ChildOwnerBinding {
+  childAllocationPolicy?: 'parent-shared/v1';
   contract: typeof CHILD_OWNER_CONTRACT; parent: RunIdentity;
   parentOperationKey: string; parentToolCallId: string; parentExecutionFence: number; childRequestDigest: string; role: string;
   maxModelCalls: number; maxToolCalls: number;

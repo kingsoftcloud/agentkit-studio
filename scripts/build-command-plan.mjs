@@ -21,7 +21,8 @@ while (!(await readFile(join(parserRoot, 'package.json'), 'utf8').then(JSON.pars
 }
 const parser = JSON.parse(await readFile(join(parserRoot, 'package.json'), 'utf8'));
 if (parser.name !== 'unbash' || parser.version !== '4.0.1') throw Error('Command Plan parser version mismatch');
-const result = await build({ entryPoints: [join(sourceRoot, 'index.ts')], bundle: true,
+const adapter = join(root, 'scripts/native-command-plan-entry.mjs');
+const result = await build({ entryPoints: [adapter], bundle: true,
   platform: 'node', format: 'esm', target: 'node22', write: false, minify: true, legalComments: 'eof' });
 const code = result.outputFiles[0].text;
 await mkdir(join(root, 'packages/agentkit-harness-node/dist'), { recursive: true });
@@ -30,5 +31,6 @@ await writeFile(join(root, 'packages/agentkit-harness-node/dist/native-command-p
   `ZCode ${source.commit}\n${await readFile(join(root, 'third-party/ZCode-LICENSE'), 'utf8')}\n\nunbash@4.0.1\n${await readFile(join(parserRoot, 'LICENSE'), 'utf8')}`);
 await writeFile(join(root, 'packages/agentkit-harness-node/dist/native-command-plan.json'), JSON.stringify({ contract, sha256: hash(code),
   referenceCommit: source.commit, sourceDigest: hash(await readFile(join(sourceRoot, 'source.json'))),
+  adapterDigest: hash(await readFile(adapter)), syntaxContract: 'unbash-4.0.1/v1',
   dependencies: [{ name: parser.name, version: parser.version, license: parser.license }], bytes: Buffer.byteLength(code) }, null, 2) + '\n');
 console.log(`Built ${contract}: ${Buffer.byteLength(code)} bytes, pinned ZCode + unbash@4.0.1.`);

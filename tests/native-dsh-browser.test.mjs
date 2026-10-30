@@ -99,6 +99,29 @@ test('Host browser executable configuration must be an absolute path', t => {
   assert.throws(() => createNativeDshBrowserTools({ workspaceRoot, browserExecutablePath: 'from-model' }),
     /studio_native_browser_executable_invalid/);
 });
+
+test('owner capability preflight is lazy and an unavailable backend returns a known non-execution result without allocating an owner', async t => {
+  const { workspaceRoot } = setup(t, () => {});
+  const missing = join(workspaceRoot, 'missing-browser');
+  const gateway = createNativeDshBrowserTools({ workspaceRoot, browserExecutablePath: missing });
+  t.after(() => gateway.close());
+  const capability = gateway.capability;
+  assert.equal(capability.availability, 'unavailable'); assert.equal(capability.externalNetwork, false);
+  assert.equal(capability.networkPolicy, 'workspace-origin/v1'); assert.deepEqual(capability.viewport, [1280, 720]);
+  assert.doesNotMatch(JSON.stringify(capability), /missing-browser|\/Users\/|127\.0\.0\.1/);
+  capability.viewport[0] = 1;
+  assert.equal(gateway.capability.viewport[0], 1280);
+  const outcome = await gateway.forSession('session').execute(request());
+  assert.equal(outcome.status, 'error'); assert.equal(outcome.content.code, 'browser_backend_unavailable');
+  assert.equal(outcome.content.executed, false);
+  assert.deepEqual(outcome.content.capability, gateway.capability);
+  const trace = [], injected = createNativeDshBrowserTools({ workspaceRoot, browserExecutablePath: missing,
+    createOwner: options => owner(options, trace) });
+  t.after(() => injected.close());
+  assert.equal(injected.capability.availability, 'available'); assert.equal(trace.length, 0);
+  await injected.forSession('session').execute(request());
+  assert.deepEqual(trace.map(row => row.kind), ['create', 'execute']);
+});
 test('activation release closes only the selected session and scope, without allocating unused owners', async t => {
   const trace = [], { gateway } = setup(t, options => owner(options, trace));
   await gateway.releaseSession({ sessionId: 'unused', scope });

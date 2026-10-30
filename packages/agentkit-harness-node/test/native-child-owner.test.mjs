@@ -35,6 +35,7 @@ function setup(t, backend, { approval = false, uncertain = false, hold = false, 
   } },
   tools: { execute: async request => {
     if (approval && !request.interaction) return { status: 'approval_required', content: {}, interactionId: 'child-host-approval' };
+    if (approval && request.interaction.decision === 'deny') return { status: 'error', content: { code: 'user_denied', executed: false } };
     if (approval) assert.equal(request.interaction.decision, 'allow');
     await gate;
     request.signal.throwIfAborted();
@@ -428,6 +429,25 @@ for (const backend of ['memory', 'sqlite']) {
     const result = await kernel.runUntilIdle(scope, 'run');
     assert.equal(result.phase, 'completed'); assert.equal(writes(), 1);
     assert.equal(result.descendantUsage.toolCalls, 1);
+  });
+
+  test(`${backend}: a queued stale child decision cannot replace the parent's denial or repeat its approval`, { timeout: 10000 }, async t => {
+    const f = setup(t, backend, { approval: true });
+    const waiting = await f.kernel.runUntilIdle(scope, 'run');
+    assert.equal(waiting.phase, 'awaiting_interaction');assert.equal(f.writes(), 0);
+    const childId = waiting.childApproval.childRunId;
+    f.store.enqueue(childScope, childId, { commandId: 'stale-child-decision', kind: 'submit_interaction',
+      payload: { interactionId: 'another-interaction', decision: 'allow' } });
+    f.kernel.submit(scope, 'run', { commandId: 'deny-child', kind: 'submit_interaction',
+      payload: { interactionId: waiting.pendingInteraction.interactionId, decision: 'deny' } });
+    f.release();
+    const result = await f.kernel.runUntilIdle(scope, 'run');
+    assert.equal(result.phase, 'completed');assert.equal(f.writes(), 0);assert.equal(f.starts(), 1);
+    assert.equal(f.store.events(scope, 'run').filter(event => event.kind === 'approval.requested').length, 1);
+    assert.equal(f.store.events(childScope, childId).find(event => event.kind === 'command.applied'
+      && event.payload.commandId === 'stale-child-decision')?.payload.reason, 'interaction_mismatch');
+    assert.equal(f.store.load(childScope, childId).commands.filter(row => row.command.kind === 'submit_interaction'
+      && row.command.payload.decision === 'deny').length, 1);
   });
 
   test(`${backend}: an uncertain child write is never retried or accepted as a complete child result`, { timeout: 10000 }, async t => {

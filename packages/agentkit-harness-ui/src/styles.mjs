@@ -23,8 +23,10 @@ export const styles = `
   border: 0;
   overflow: visible;
   box-sizing: border-box;
+  padding-block: 0 20px;
   container: harness-process / inline-size;
 }
+.harness-timeline-shell[data-has-user-input="true"] { padding-block-start: 56px; }
 @media (prefers-color-scheme: dark) {
   .harness-timeline-shell {
     --harness-running: #4493f8;
@@ -39,7 +41,7 @@ export const styles = `
 .harness-timeline {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--harness-section-gap, 20px);
   padding: 0;
 }
 .harness-plan-dock {
@@ -70,7 +72,7 @@ export const styles = `
 .harness-text { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
 .harness-thought, .harness-tool {
   border: 0;
-  padding: 2px 0;
+  padding: 0;
   background: transparent;
 }
 .harness-thought-details, .harness-tool-details { margin: 0; }
@@ -224,19 +226,13 @@ export const styles = `
   .harness-diff-split-col { border: 1px solid var(--harness-border); }
 }
 
-.harness-status-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding-top: 6px; border-top: 1px solid var(--harness-border); font-size: 0.85rem; }
-.harness-status-label { font-weight: 600; }
-.harness-status-label[data-state="failed"] { color: var(--harness-error); }
-.harness-status-label[data-state="completed"] { color: var(--harness-added); }
-.harness-status-summary, .harness-status-error { color: var(--harness-fg-muted); }
-.harness-status-error { color: var(--harness-error); }
 .harness-jump-latest {
   align-self: center; border: 1px solid var(--harness-border); background: var(--harness-bg);
   color: var(--harness-fg); border-radius: 999px; padding: 4px 12px; cursor: pointer;
 }
 .harness-jump-latest:hover { border-color: var(--harness-running); color: var(--harness-running); }
 
-.harness-user-message { margin: 1rem 0 1.5rem auto; padding: .8rem 1rem; max-width: 85%; border-radius: 14px; background: color-mix(in srgb, currentColor 7%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; }
+.harness-user-message { margin: 0 0 0 auto; padding: .8rem 1rem; max-width: 85%; border-radius: 14px; background: color-mix(in srgb, currentColor 7%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .harness-summary-roll { position: relative; display: inline-grid; vertical-align: middle; overflow: hidden; }
 .harness-summary-roll > span { grid-area: 1 / 1; white-space: nowrap; }
@@ -265,4 +261,18 @@ button.harness-tool-summary { border: 0; background: none; color: inherit; font:
 
 .harness-subagent-pane { padding: 16px; height: 100%; min-height: 0; overflow: auto; }
 .harness-subagent-window-notice { font-size: 12px; color: var(--harness-fg-muted, #888); }
+.harness-work-items { display: flex; flex-direction: column; gap: var(--harness-work-gap, 16px); }
+.harness-work-history { margin: 0; }
+.harness-work-history-summary { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--harness-border); color: var(--harness-fg-muted); cursor: pointer; list-style: none; }
+.harness-work-history-summary::-webkit-details-marker { display: none; }
+.harness-work-history-chevron { opacity: .7; }
+.harness-work-history[open] > summary .harness-work-history-chevron { transform: rotate(90deg); }
+.harness-work-history-content { padding-top: var(--harness-section-gap, 20px); }
+.harness-activity-summary { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; color: var(--harness-fg-muted); list-style: none; }
+.harness-activity-summary::-webkit-details-marker { display: none; }
+.harness-activity-summary > svg { flex-shrink: 0; }
+.harness-activity-summary .harness-tool-chevron { opacity: 0; }
+.harness-activity-summary:hover .harness-tool-chevron, .harness-activity-summary:focus-visible .harness-tool-chevron { opacity: 1; }
+.harness-activity-details[open] > summary .harness-tool-chevron { transform: rotate(90deg); opacity: 1; }
+.harness-activity-children { border-left: 1px solid var(--harness-border); margin: 8px 0 8px 7px; padding-left: 16px; display: flex; flex-direction: column; gap: 8px; }
 `;

@@ -24,6 +24,53 @@ const digest = (v) => createHash('sha256').update(canonical(v)).digest('hex');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+test('action diagnostics distinguish an unacknowledged dispatch from a completed dispatch awaiting capture', async () => {
+  for (const boundary of ['dispatch', 'capture_screenshot']) {
+    const {adapter,browser}=makeAdapter();const ref=await adapter.open('run');
+    const page=browser.contexts[0].pages[0];let release;
+    const gate=new Promise(resolve=>{release=resolve;});
+    if(boundary==='dispatch')page.block=gate;
+    else page.screenshot=async()=>{await gate;return PNG_1280;};
+    const facts=[];
+    try {
+      const action={actionId:'diagnostic',kind:'click',selector:'#start',timeoutMs:40};
+      const out=await adapter.act(ref,action,{observeAction:fact=>facts.push(fact)});
+      assert.equal(out.status,'uncertain');assert.equal(out.complete,false);
+      assert.equal(facts.length,1);assert.equal(facts[0].phase,boundary);
+      assert.equal(facts[0].dispatchStarted,true);assert.equal(facts[0].dispatchCompleted,boundary!=='dispatch');
+      assert.equal(facts[0].outcome,'timeout');assert.equal(facts[0].errorCode,'action_timed_out');
+      const replay=await adapter.act(ref,action,{observeAction:fact=>facts.push(fact)});
+      assert.equal(replay.status,'uncertain');assert.equal(facts.at(-1).phase,'replay');
+      assert.equal(page.calls.filter(row=>row[0]==='click').length,1);
+      assert.doesNotMatch(JSON.stringify(facts),/#start|url|text|image|token/);
+    } finally {release();await adapter.aclose();}
+  }
+});
+
+test('observer exceptions and rejected promises cannot alter browser execution or its receipt', async () => {
+  const {adapter}=makeAdapter();const ref=await adapter.open('run');
+  try {
+    for(const [index,observeAction] of [()=>{throw Error('observer failure');},async()=>{throw Error('async observer failure');}].entries()) {
+      const out=await adapter.act(ref,{actionId:'observer-'+index,kind:'screenshot',timeoutMs:1000},{observeAction});
+      assert.equal(out.status,'ok');assert.ok(out.screenshot);
+    }
+    await sleep(0);
+  } finally {await adapter.aclose();}
+});
+
+test('a recovery fence requires acknowledged context closure, even when best-effort cleanup suppressed the failure', async () => {
+  const { adapter, browser } = makeAdapter(); const ref = await adapter.open('run');
+  const context = browser.contexts[0], close = context.close.bind(context);
+  context.close = async () => { throw new Error('driver close failed'); };
+  try {
+    await adapter.close(ref);
+    await assert.rejects(adapter.close(ref, { confirmClosed: true }), /driver close failed/);
+    assert.equal((await adapter.recover(ref)).status, 'lost');
+    context.close = close;
+    await adapter.close(ref, { confirmClosed: true });
+  } finally { context.close = close; await adapter.aclose(); }
+});
+
 class FakeRoute {
   constructor(url) { this._request = new FakeRequest(url); this.allowed = false; this.denied = false; this._fetch = null; }
   request() { return this._request; }
@@ -80,6 +127,10 @@ class FakePage {
   url() { return this._url; }
   mainFrame() { return this; }
   locator(selector) { this.selector = selector; return this; }
+  async count() {
+    if (this.selector === '#unresolvable') throw Error('fixture resolution failed');
+    return this.selector === '#ambiguous' ? 2 : this.selector === '#missing' ? 0 : 1;
+  }
   async waitFor({ state, timeout } = {}) { if (this.selector === '#missing') throw new Error('fixture selector absent'); }
   async waitForElementState(state, { timeout } = {}) { if (this.selector === '#missing') throw new Error('fixture selector absent'); }
   async goto(url, opts = {}) {
@@ -313,6 +364,20 @@ test('scroll dispatches wheel once even when capture fails', async () => {
 });
 
 // --- safe feedback before mutation ---
+test('target ambiguity and resolution failures are distinct safe errors for every selector input action', async () => {
+  const { adapter, browser } = makeAdapter({ networkPolicy: allowLocal });const ref = await adapter.open('run');
+  try {
+    for (const [selector, code] of [['#ambiguous', 'selector_ambiguous'], ['#unresolvable', 'selector_resolution_failed']])
+      for (const kind of ['click', 'fill', 'press']) {
+        const facts = [], result = await adapter.act(ref, { actionId: kind + selector, kind, selector,
+          ...(kind === 'fill' ? { value: 'text' } : kind === 'press' ? { key: 'w' } : {}) }, { observeAction: fact => facts.push(fact) });
+        assert.equal(result.status, 'error');assert.equal(result.errorCode, code);
+        assert.equal(result.complete, true);assert.equal(result.retryability, 'safe');
+        assert.equal(facts.at(-1).dispatchStarted, false);
+      }
+    assert.equal(browser.contexts[0].pages[0].calls.some(([kind]) => ['click', 'fill', 'press'].includes(kind)), false);
+  } finally { await adapter.aclose(); }
+});
 test('an unconfirmed input dispatch is a distinct uncertain error', async () => {
   const { adapter: tool, browser } = makeAdapter({ networkPolicy: allowLocal });
   const ref = await tool.open('run');
@@ -322,6 +387,17 @@ test('an unconfirmed input dispatch is a distinct uncertain error', async () => 
   assert.equal(observed.status, 'uncertain');
   assert.equal(observed.errorCode, 'action_dispatch_failed_or_timed_out');
   await tool.aclose();
+});
+
+test('target cardinality is rechecked after a failed click trial without authorizing an input', async () => {
+  const { adapter, browser } = makeAdapter({ networkPolicy: allowLocal });const ref = await adapter.open('run');
+  const page = browser.contexts[0].pages[0];let matches = 1;
+  page.count = async () => matches;
+  page.click = async options => { assert.equal(options.trial, true);matches = 2;throw Error('DOM changed before input'); };
+  try {
+    const result = await adapter.act(ref, { actionId: 'changing-target', kind: 'click', selector: '.target' });
+    assert.equal(result.status, 'error');assert.equal(result.errorCode, 'selector_ambiguous');
+  } finally { await adapter.aclose(); }
 });
 
 test('an absent selector is safe feedback before any mutating action', async () => {
@@ -335,7 +411,7 @@ test('an absent selector is safe feedback before any mutating action', async () 
   assert.equal(result.status, 'error');
   assert.equal(result.complete, true);
   assert.equal(result.retryability, 'safe');
-  assert.equal(result.errorCode, 'selector_not_visible');
+  assert.equal(result.errorCode, 'selector_not_found');
   assert.equal(result.controls[1].selector, '#name');
   assert.equal(browser.contexts[0].pages[0].calls.some((c) => c[0] === 'fill' && c[1] === 'text'), false);
   const recovered = await tool.act(ref, { actionId: 'correct', kind: 'fill', selector: '#name', value: 'text' });

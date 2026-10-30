@@ -23,9 +23,17 @@ export function createContextPruningProof({ summary = false, idle = false } = {}
       assert.ok(!/EVIDENCE_1_\d+ stable token data/.test(source.text),
         'Summary never consumes the cleared old command output; original call arguments remain available');
       summarySources.push(source);
-      delta = { content: 'The local commands completed. Newer EVIDENCE_2_ observations are available in the original transcript.' };
-    } else if (cold || cleared || summaryCalls) delta = { content: cold ? 'Cold cleanup verified'
-      : summary ? 'Cleaned summary verified' : 'Early cleanup verified' };
+      // Follow the structured continuity contract advertised by the real Host;
+      // prose-only summaries exercise validation failures rather than cleanup.
+      delta = { content: JSON.stringify({ objective: [], constraints: [], completed: [],
+        pending: [], evidence: ['Older command output was cleared; original receipts remain available.'],
+        failures: [], artifacts: [], nextSteps: [] }) };
+    } else if (cold || cleared || summaryCalls) {
+      const answer = cold ? 'Cold cleanup verified' : summary ? 'Cleaned summary verified' : 'Early cleanup verified';
+      const finalTool = body.tools?.find(tool => tool.function.name === 'submit_final_output');
+      delta = finalTool ? { tool_calls: [{ index: 0, id: `pruning-final-${requests.length}`, type: 'function',
+        function: { name: finalTool.function.name, arguments: JSON.stringify({ answer, artifacts: [] }) } }] } : { content: answer };
+    }
     else {
       assert.ok(++issued <= 10, 'Expected early cleanup of older successful command output');
       assert.ok(!summary || issued <= 2, 'Summary scenario requires exactly two real commands');
@@ -61,7 +69,11 @@ export function createContextPruningProof({ summary = false, idle = false } = {}
         assert.equal(issued, 2); assert.ok(summaryCalls >= 1 && summaryCalls <= 6);
         assert.ok(facts.some(event => event.payload.postInputTokens >= full && event.payload.savedTokens >= policy.pruneMinSavedTokens));
         assert.ok(summarySources.some(source => source.text.includes('historical_tool_result_cleared')));
-        assert.ok(summarySources.some(source => source.text.includes('EVIDENCE_2_')));
+        assert.ok(summarySources.every(source => !source.text.includes('EVIDENCE_2_')),
+          'The newest command batch stays outside the historical summary');
+        const summaryIndex = requests.findIndex(body => body.messages[0]?.content.startsWith('Summarize the quoted historical data'));
+        assert.ok(requests.slice(summaryIndex + 1).some(body => body.messages.some(message => message.role === 'tool'
+          && message.content.includes('EVIDENCE_2_'))), 'The next real model request retains the newest command evidence');
         assert.equal(original.snapshot.contextState.compactions, 1);
       } else {
         assert.ok(facts.some(event => event.payload.preInputTokens < full && event.payload.savedTokens >= policy.pruneMinSavedTokens),

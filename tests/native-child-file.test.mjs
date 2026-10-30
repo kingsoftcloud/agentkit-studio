@@ -1,6 +1,7 @@
+import { syncBuiltinESMExports } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, realpathSync, writeFileSync, symlinkSync, linkSync, rmSync } from 'node:fs';
+import fs, { mkdtempSync, mkdirSync, realpathSync, writeFileSync, symlinkSync, linkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -83,4 +84,28 @@ test('cancellation settles an uncooperative resolver and revoked ownership suppr
   await assert.rejects(asyncGuard.read(request()), { code: 'native_child_file_binding_invalid' });
   const closed = createNativeChildFileReader({ isClosed: () => true, resolveChild: () => { throw Error('must not resolve'); } });
   await assert.rejects(closed.read(request()), { code: 'native_child_file_closed' });
+});
+
+// Force the exact read/check boundary without timing sleeps or background jobs.
+async function duringRead(t, change, action) {
+  const original = fs.readSync; let changed = false;
+  fs.readSync = (...args) => {
+    const bytes = original(...args);
+    if (!changed) { changed = true; change(); }
+    return bytes;
+  };
+  syncBuiltinESMExports();
+  try { return await action(); }
+  finally { fs.readSync = original; syncBuiltinESMExports(); }
+}
+test('unrelated sibling creation cannot invalidate a stable child file observation', async t => {
+  const f = fixture(t);
+  const page = await duringRead(t, () => mkdirSync(join(f.root, 'sibling')), () => f.reader.read(request()));
+  assert.equal(page.text, 'Child bytes');
+});
+test('a concurrent file replacement is still rejected before any bytes are disclosed', async t => {
+  const f = fixture(t);
+  await assert.rejects(duringRead(t, () => {
+    rmSync(join(f.root, 'same.txt')); writeFileSync(join(f.root, 'same.txt'), 'Other bytes');
+  }, () => f.reader.read(request())), { code: 'native_child_file_changed' });
 });

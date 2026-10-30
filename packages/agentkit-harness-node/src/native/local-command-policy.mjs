@@ -1,7 +1,8 @@
 import { Worker } from 'node:worker_threads';
+export { LOCAL_COMMAND_SHELL } from './command-shell.mjs';
 
-export const LOCAL_COMMAND_POLICY = 'agentkit.local-command-policy/v1';
-export const GOVERNED_COMMAND_POLICY = 'agentkit.governed-command-policy/v1';
+export const LOCAL_COMMAND_POLICY = 'agentkit.local-command-policy/v2';
+export const GOVERNED_COMMAND_POLICY = 'agentkit.governed-command-policy/v2';
 const failure = code => Object.assign(new Error(code), { code });
 
 /** Same-container risk checks, not an OS sandbox. Approval and workspace

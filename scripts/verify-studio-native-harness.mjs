@@ -32,7 +32,7 @@ import { createConversationWorkspaceRewindProof } from './native-conversation-wo
 import { createEditCreationProof } from './native-edit-creation-proof.mjs';
 import { createContextPruningProof } from './native-context-pruning-proof.mjs';
 import { createThinkingDisplayProof } from './native-thinking-display-proof.mjs';
-import { artifactToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
+import { artifactToolDefinitions, deliveryToolDefinitions } from '@kingsoftcloud/agentkit-harness-core';
 const { values } = parseArgs({ options: { source: { type: 'string' }, installation: { type: 'string' }, keep: { type: 'boolean', default: false },
   'mount-host': { type: 'boolean', default: false }, 'mcp-schema': { type: 'boolean', default: false }, trace: { type: 'boolean', default: false },
   commands: { type: 'boolean', default: false }, frozen: { type: 'boolean', default: false },
@@ -55,7 +55,8 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   'deadline-policy': { type: 'boolean', default: false }, 'artifact-policy': { type: 'boolean', default: false },
   'tool-search': { type: 'boolean', default: false }, 'provider-tool-search': { type: 'boolean', default: false }, todos: { type: 'boolean', default: false },
   'plan-mode': { type: 'boolean', default: false }, 'plan-mcp': { type: 'boolean', default: false },
-  'plan-commands': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false } } });
+  'plan-commands': { type: 'boolean', default: false }, instructions: { type: 'boolean', default: false },
+  'instructions-mismatched-cwd': { type: 'boolean', default: false } } });
 assert.ok(Boolean(values.source) !== Boolean(values.installation), 'Use --source <built maintained DSH checkout> OR --installation <fresh installed Host>');
 assert.ok(!values.installation || values.archive && values['mount-host'] && !values['studio-dependencies'],
   '--installation requires --archive --mount-host and owns the complete dependency graph');
@@ -94,7 +95,9 @@ assert.ok(!values.instructions || values['mount-host'] && !values.frozen && !art
   && !deliveryReviewProof && !webProof && !values.memory && !managedMemory && !parallelMemory && !values.automation
   && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery && !values.trace,
   '--instructions is a separate mounted Host instruction proof');
-const instructionsProof = values.instructions ? createInstructionsProof() : null;
+assert.ok(!values['instructions-mismatched-cwd'] || values.instructions,
+  '--instructions-mismatched-cwd requires --instructions');
+const instructionsProof = values.instructions ? createInstructionsProof({ mismatchedCwd: values['instructions-mismatched-cwd'] }) : null;
 assert.ok(!values['tool-search'] || values['mount-host'] && values['mcp-schema'] && !values.frozen && !values.trace && !values.recovery, '--tool-search requires --mount-host --mcp-schema');
 assert.ok(!values['provider-tool-search'] || values['tool-search'], '--provider-tool-search requires --tool-search');
 const toolSearchProof = values['tool-search'] ? createToolSearchProof({ native: values['provider-tool-search'] }) : null;
@@ -175,6 +178,13 @@ async function waitForPublicPrefix(count, expected) {
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
+    // The real Host discovers provider models before admitting a preset. This
+    // is not a completion request and must not advance the deterministic task.
+    if (request.method === 'GET' && request.url === '/v1/models') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ object: 'list', data: [{ id: 'pinned', object: 'model' }] }));
+      return;
+    }
     if (conversationForkProof) { await conversationForkProof.respond({ request, response, raw, requests }); return; }
     if (conversationRewindProof) { await conversationRewindProof.respond({ request, response, raw, requests }); return; }
     if (workspaceRepairProof) { await workspaceRepairProof.respond({ request, response, raw, requests }); return; }
@@ -226,7 +236,11 @@ const server = createServer(async (request, response) => {
       assert.equal(JSON.stringify(body.messages).includes('LATEST_NATIVE_SYSTEM_B'), false);
     }
     const artifactTools = artifactToolDefinitions();
-    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName, ...artifactTools.map(tool => tool.name)]);
+    const finalTool = body.tools.find(tool => tool.function.name === 'submit_final_output');
+    const [declaration] = deliveryToolDefinitions();
+    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName, declaration.name,
+      ...artifactTools.map(tool => tool.name), ...(finalTool ? ['submit_final_output'] : [])]);
+    assert.deepEqual(body.tools.find(tool => tool.function.name === declaration.name).function.parameters, declaration.parameters);
     for (const definition of artifactTools) assert.deepEqual(body.tools.find(tool => tool.function.name === definition.name).function.parameters, definition.parameters);
     if (values['mcp-schema']) {
       const parameters = parseNativeJson(raw).tools[0].function.parameters;
@@ -236,8 +250,10 @@ const server = createServer(async (request, response) => {
     const count = requests.length, turn = Math.ceil(count / 2);
     if (count === 2 || count === 4) {
       assert.equal(body.messages.filter(message => message.role === 'tool').at(-1).content, `Published published-${turn}.txt (policy view)`);
-      assert.equal(body.messages.at(-1).role, 'user');
-      assert.equal(body.messages.at(-1).content, `Live instruction for published-${turn}.txt`);
+      // Core may append authoritative execution facts after the Host inbox.
+      // The steering message must still be the latest actual user input.
+      assert.equal(body.messages.filter(message => message.role === 'user').at(-1)?.content,
+        `Live instruction for published-${turn}.txt`);
       assert.ok(body.messages.some(message => message.role === 'user' && message.content === `Loaded context for published-${turn}.txt`));
     }
     if (count === 3) {
@@ -249,20 +265,28 @@ const server = createServer(async (request, response) => {
     const args = values.commands ? { command: `printf publication-${turn} > ${turn === 3 ? 'denied.txt' : `published-${turn}.txt`}`, timeout: 2 }
       : { path: turn === 3 ? 'denied.txt' : `published-${turn}.txt`, content: `publication-${turn}`,
         ...(values['mcp-schema'] ? { id: exactInteger } : {}) };
+    const answer = turn === 3 ? 'Policy denied the write.' : `Native turn ${turn} completed.`;
     const delta = count % 2 ? { tool_calls: [{ index: 0, id: 'reused-provider-id', type: 'function',
       function: { name: toolName, arguments: values['mcp-schema'] ? canonical(args) : JSON.stringify(args) } }] }
-      : { content: turn === 3 ? 'Policy denied the write.' : `Native turn ${turn} completed.` };
+      : finalTool ? { tool_calls: [{ index: 0, id: `final-${turn}`, type: 'function',
+        function: { name: 'submit_final_output', arguments: JSON.stringify({ answer, artifacts: [] }) } }] }
+        : { content: answer };
     response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
     const complete = delta.content;
-    const prefix = complete ? complete.slice(0, 7) : delta.tool_calls[0].function.arguments;
+    // Atomic final submissions stream their answer as public text; their
+    // internal JSON/tool name must never appear as a user-facing tool preview.
+    const prefix = complete ? complete.slice(0, 7)
+      : delta.tool_calls[0].function.name === 'submit_final_output' ? answer : delta.tool_calls[0].function.arguments;
     const first = complete ? { content: prefix } : delta;
     response.write(`data: ${JSON.stringify({ id: `response-${count}`, choices: [{ index: 0, delta: first, finish_reason: null }] })}\n\n`);
     await waitForPublicPrefix(count, prefix);
     const rest = complete ? { content: complete.slice(7) } : {};
     response.end(`data: ${JSON.stringify({ id: `response-${count}`, choices: [{ index: 0, delta: rest,
-      finish_reason: count % 2 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
+      finish_reason: delta.tool_calls ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 7 } })}\n\ndata: [DONE]\n\n`);
   } catch (error) {
     failures.push(error);
+    if (values.keep) await writeFile(join(root, 'model-errors.json'), JSON.stringify(
+      failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (conversationRewindProof) await writeFile(join(root, 'conversation-rewind-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (planModeProof) await writeFile(join(root, 'plan-mode-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
     if (todosProof) await writeFile(join(root, 'todos-model-errors.json'), JSON.stringify(failures.map(item => ({ message: item.message, stack: item.stack })), null, 2));
@@ -377,7 +401,7 @@ try {
     : join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
   const options = { dshBin: installation ? join(installation, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
     : join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
-    cwd: values.instructions ? join(root, 'workspace') : root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
+    cwd: values.instructions ? join(root, values['instructions-mismatched-cwd'] ? 'session-project' : 'workspace') : root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);

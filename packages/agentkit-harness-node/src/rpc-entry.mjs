@@ -31,7 +31,7 @@ import { realpathSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as readline from 'node:readline';
-import { NativeKernel, configure, initialSnapshot, canonical, terminal, runKey, NativeError }
+import { NativeKernel, configure, initialSnapshot, canonical, terminal, runKey, NativeError, isNativeError }
   from '@kingsoftcloud/agentkit-harness-core';
 import { SqliteRunStore, createNativeModelPort, nativeModelRecoveryPolicy }
   from './index.mjs';
@@ -61,7 +61,7 @@ const digest = value => createHash('sha256').update(canonical(value)).digest('he
 const runIdFor = requestId => 'rpc:' + createHash('sha256').update(requestId).digest('hex');
 
 function nativeErrorToRpc(e) {
-  if (e instanceof NativeError) {
+  if (isNativeError(e)) {
     if (e.code === 'run_not_found') return ERR.run_not_found;
     if (e.code === 'worker_already_driving') return ERR.not_dispatchable;
   }

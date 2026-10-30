@@ -7,7 +7,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-const { values } = parseArgs({ options: { source: { type: 'string' }, context: { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { source: { type: 'string' }, context: { type: 'boolean', default: false },
+  live: { type: 'boolean', default: false } } });
 assert.ok(values.source, 'Use --source <built maintained DSH checkout>');
 const source = resolve(values.source), root = await mkdtemp(join(tmpdir(), 'studio-native-dsh-'));
 const requests = [], failures = [];
@@ -48,8 +49,9 @@ try {
     '- insert:', '    - id: studio-native-turn-verification', `      name: ${JSON.stringify(pathToFileURL(fixture).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`,
     `        promptModule: ${JSON.stringify(join(source, 'packages/core/system-prompt/lib/index.js'))}`,
+    `        agentModule: ${JSON.stringify(join(source, 'packages/core/agent/lib/index.js'))}`,
     `        modelUrl: ${JSON.stringify(`http://127.0.0.1:${server.address().port}/v1`)}`,
-    `        contextPlanning: ${values.context}`,
+    `        contextPlanning: ${values.context}`, `        publishLive: ${values.live}`,
     '',
   ].join('\n'));
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches: [patch],
@@ -59,11 +61,21 @@ try {
   harness = new DeepSeekHarness(options);
   let session = harness.session('native-sdk-session');
   for (let turn = 1; turn <= 2; turn++) {
-    const requestStart = requests.length, summaryStart = summaryRequests;
+    const requestStart = requests.length, summaryStart = summaryRequests, taskRequestStart = taskRequests;
     const result = await session.run(`Publish marker ${turn} and report completion.`);
     assert.equal(result.finalResponse, `Native turn ${turn} completed.`, JSON.stringify({ turn, requests: requests.length,
       end: result.events.filter(event => event.type === 'turn/end').map(event => event.data) }));
     const events = result.events;
+    if (values.live) {
+      const records = JSON.parse(await readFile(join(root, `native-turn-${turn}-live.json`), 'utf8'));
+      const ends = records.filter(item => item.frame.type === 'end');
+      assert.equal(ends.length, taskRequests - taskRequestStart, 'one live settlement per public Native model response');
+      for (const { frame, durablyFlushed } of ends) {
+        assert.equal(durablyFlushed, true, 'live committed end must follow an actual SDK flush');
+        assert.equal(frame.outcome.kind, 'committed');
+        assert.equal(events.find(event => event.seq === frame.outcome.seq)?.type, frame.outcome.eventType);
+      }
+    }
     if (values.context) assert.ok(summaryRequests > summaryStart, `Turn ${turn} must use actual summary HTTP requests`);
     for (const kind of ['turn/start', 'turn/end', 'tool/call', 'tool/result']) {
       assert.equal(events.filter(event => event.type === kind).length, 1, `${kind} count for turn ${turn}`);
@@ -123,7 +135,7 @@ try {
   }
   const ids = stored.filter(event => event.type === 'tool/call').map(event => event.data.callId);
   assert.equal(new Set(ids).size, 2, 'Reused provider call IDs stay distinct across turns and process restart');
-  console.log(`Native shipped SDK verification passed: 2 Native turns across process restart, ${requests.length} real HTTP attempts (${summaryRequests} summaries), 2 actual writes, then 1 delegated default turn; duplicate delivery adds no events.`);
+  console.log(`Native shipped SDK verification passed: 2 Native turns across process restart, ${requests.length} real HTTP attempts (${summaryRequests} summaries), 2 actual writes, then 1 delegated default turn; duplicate delivery adds no events.${values.live ? ' Live end frames follow actual SDK durability.' : ''}`);
 } finally {
   await harness?.close();
   server.closeAllConnections();

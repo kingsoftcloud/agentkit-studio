@@ -30,8 +30,9 @@ async function owner(t, options = {}) {
       const ref = validateBrowserSessionRef({ scope, runId, runtimeId: 'owner', workspaceRevision: backendOptions.workspaceRevision, sessionId: `page-${++nextId}` });
       trace.push({ kind: 'open', ref }); refs.set(runId, ref); return ref;
     },
-    async act(ref, action, { signal }) {
+    async act(ref, action, { signal, observeAction }) {
       trace.push({ kind: 'act', ref, action });
+      hooks.observe?.(action, observeAction);
       await hooks.act?.(ref, action, signal);
       signal.throwIfAborted();
       if (action.kind === 'navigate') {
@@ -72,6 +73,168 @@ test('trusted combined vision deadline preserves strict full formal admission at
   const count = h.trace.length;
   assert.equal((await h.port.execute(forged)).content.code, 'scope_or_tool_mismatch');
   assert.equal(h.trace.length, count, 'changing a non-timeout formal field cannot execute');
+});
+
+test('workspace browser persists bounded action diagnostics without changing uncertainty or authorizing a replay', async t => {
+  const h=await owner(t);
+  h.hooks({observe(action,observer){observer({contract:'browser-action-observation/v1',actionId:action.actionId,
+    kind:action.kind,phase:'capture_screenshot',dispatchStarted:true,dispatchCompleted:true,
+    elapsedMs:action.timeoutMs,timeoutMs:action.timeoutMs,outcome:'timeout',errorCode:'action_timed_out'});},
+    observation(){return {status:'uncertain',complete:false,retryability:'requires_reconcile',errorCode:'action_timed_out',screenshot:null};}});
+  const out=await h.port.execute(request('diagnostic'));
+  assert.equal(out.status,'uncertain');assert.equal(out.browserObservation.complete,false);
+  assert.equal(out.metadata.browserActionObservations.length,1);
+  assert.equal(out.content.browser_action_diagnostic.phase,'capture_screenshot');
+  assert.equal(out.content.browser_action_diagnostic.dispatch_completed,true);
+  assert.equal(out.context.content,canonical(out.content));
+  const again=await h.port.execute(request('next'));
+  assert.equal(again.content.code,'browser_session_lost');
+  assert.deepEqual(again.content.required_actions,[{type:'reload'}]);
+  assert.equal(h.trace.filter(row=>row.kind==='act').length,1,'Diagnostics do not replay the original action');
+});
+
+test('private-page isolation requires confirmed close, and a legacy definition never opts in implicitly', async t => {
+  const h = await owner(t);
+  h.hooks({ observation(_ref, action) { return action.kind === 'click'
+    ? { status: 'uncertain', complete: false, retryability: 'requires_reconcile', errorCode: 'action_timed_out', screenshot: null } : {}; } });
+  const input = { ...baseInput, actions: [{ type: 'click', selector: '#start' }] };
+  const legacy = request('legacy', input, 'legacy'); delete legacy.definition.recoveryPolicy;
+  const before = await h.port.execute(legacy);
+  assert.equal(before.status, 'uncertain'); assert.equal(before.browserIsolation, undefined);
+  assert.equal(h.trace.some(row => row.kind === 'close'), false);
+  const close = h.fake.close;
+  h.fake.close = async () => { throw new Error('close failed'); };
+  const failed = await h.port.execute(request('failed-close', input));
+  assert.equal(failed.status, 'uncertain'); assert.equal(failed.browserIsolation, undefined);
+  assert.throws(() => h.backendOptions.artifactSink(failed.browserSessionRef, png, 'image/png'), { code: 'screenshot_target_unavailable' });
+  h.fake.close = close;
+  const isolated = await h.port.execute(request('confirmed-close', input, 'confirmed'));
+  assert.equal(isolated.status, 'uncertain'); assert.equal(isolated.browserIsolation.fenced, true);
+  assert.equal(isolated.browserIsolation.operationKey, 'confirmed-close');
+  assert.equal(isolated.content.resource_continuity.fresh_observation_required, true);
+  assert.equal(h.trace.filter(row => row.kind === 'close' && row.ref.runId === 'confirmed').length, 1);
+  const lost = await h.port.execute(request('no-implicit-replay', baseInput, 'confirmed'));
+  assert.equal(lost.content.code, 'browser_session_lost');
+  h.hooks({});
+  const fresh = await h.port.execute(request('new-observation', { ...baseInput, actions: [{ type: 'reload' }] }, 'confirmed'));
+  assert.equal(fresh.status, 'ok'); assert.equal(fresh.browserSessionRef.generation, 2);
+  assert.equal(h.trace.filter(row => row.kind === 'act' && row.ref.runId === 'confirmed' && row.action.kind === 'click').length, 1);
+});
+
+for (const backend of ['memory', 'sqlite']) for (const crash of [false, true]) {
+  test(`${backend}: isolated unknown input continues under one budget${crash ? ' after cold restore' : ''}, without replay or stale acceptance`, async t => {
+    const h = await owner(t), file = join(h.evidenceRoot, 'isolation.sqlite');
+    let store = backend === 'sqlite' ? new SqliteRunStore(file) : new MemoryRunStore();
+    t.after(() => store.close?.());
+    h.hooks({ observation(_ref, action) { return action.kind === 'click'
+      ? { status: 'uncertain', complete: false, retryability: 'requires_reconcile', errorCode: 'action_timed_out', screenshot: null } : {}; } });
+    const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
+    const config = configure({ profile: { profileId: 'fixture', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'v1' },
+      hostBindingDigest: 'fixture-owner', tools: [studioBrowserDefinition()], contract: { objective: 'inspect page' },
+      limits: { maxModelCalls: 6, maxRecoveryRetries: 1 } });
+    const snapshot = initialSnapshot({ scope, runId: 'run', sessionId: 'session', turnId: 'turn', buildId: 'build', parentRunId: null, taskChainId: 'chain' }, config, digest(config));
+    let models = 0;
+    const ports = { browser: h.port, tools: h.port, model: { generate: async () => {
+      models++;
+      if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'original',
+        name: 'browser_inspect_workspace', arguments: { ...baseInput, actions: [{ type: 'click', selector: '#start' }, { type: 'press', key: 'Enter' }] } }] };
+      h.hooks({});
+      if (models === 3) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'fresh',
+        name: 'browser_inspect_workspace', arguments: { ...baseInput, actions: [{ type: 'reload' }] } }] };
+      return { kind: 'final_candidate', text: models === 2 ? 'claims success without observation' : 'freshly observed', usage: emptyUsage(), toolCalls: [] };
+    } } };
+    const first = new NativeKernel({ store, digest, owner: 'first', now: () => 1, ports,
+      ...(crash ? { onCheckpoint: async state => { if (state.recoveryRetriesUsed === 1) throw new Error('crash after isolation receipt'); } } : {}) });
+    first.start(snapshot, config);
+    let finished;
+    if (crash) {
+      await assert.rejects(first.runUntilIdle(scope, 'run'), /crash after isolation receipt/);
+      if (backend === 'sqlite') { store.close(); store = new SqliteRunStore(file); }
+      const next = new NativeKernel({ store, digest, owner: 'next', now: () => 100, ports });
+      finished = await next.runUntilIdle(scope, 'run');
+    } else finished = await first.runUntilIdle(scope, 'run');
+    assert.equal(finished.phase, 'completed'); assert.equal(finished.finalText, 'freshly observed');
+    assert.equal(finished.recoveryRetriesUsed, 1); assert.equal(finished.usage.toolCalls, 2);
+    assert.equal(models, 4); assert.deepEqual(finished.browserReobservationRefs, []);
+    assert.equal(finished.lastBrowserObservation.sessionRef.generation, 2);
+    const record = store.load(scope, 'run');
+    const uncertain = record.receipts.find(row => row.result.results?.some(value => value.browserIsolation));
+    assert.equal(uncertain.status, 'committed', 'the owner response is durably received');
+    assert.equal(uncertain.result.results[0].status, 'uncertain', 'the original action outcome remains unknown');
+    assert.equal(record.events.filter(row => row.kind === 'browser.candidate_rejected').length, 1);
+    const isolated = record.events.find(row => row.kind === 'browser.isolated');
+    assert.equal(isolated.payload.continued, true); assert.equal(isolated.payload.originalActionOutcome, 'unknown');
+    assert.equal(h.trace.filter(row => row.kind === 'act' && row.action.kind === 'click').length, 1);
+    assert.equal(h.trace.filter(row => row.kind === 'act' && row.action.kind === 'press').length, 0);
+    assert.equal(h.trace.filter(row => row.kind === 'restart').length, 1);
+  });
+}
+
+test('foreign or overbroad browser diagnostics cannot leak arbitrary backend data into a tool receipt', async t => {
+  const h=await owner(t);
+  h.hooks({observe(action,observer){const fact={contract:'browser-action-observation/v1',actionId:action.actionId,
+    kind:action.kind,phase:'publish',dispatchStarted:true,dispatchCompleted:true,elapsedMs:1,
+    timeoutMs:action.timeoutMs,outcome:'ok',errorCode:null};
+    observer({...fact,actionId:'foreign'});observer({...fact,url:'https://invalid/?token=secret'});
+    observer({...fact,phase:'secret page contents'});observer({...fact,dispatchStarted:false});
+  }});
+  const out=await h.port.execute(request('foreign-diagnostic'));
+  assert.equal(out.status,'ok');assert.equal(out.metadata.browserActionObservations,undefined);
+  assert.equal(out.content.browser_action_diagnostic,undefined);
+  assert.doesNotMatch(JSON.stringify(out.metadata),/secret|foreign/);
+});
+
+test('resource retirement fences one run, rejects late artifacts and old actions, and preserves another run',async t=>{
+ const h=await owner(t);const first=await h.port.execute(request('first'));
+ const second=await h.port.execute(request('second',baseInput,'other'));
+ const before=h.trace.filter(row=>row.kind==='act').length;
+ const fence=await h.port.retireResources({scope,sessionId:'session',runId:'run',refs:[first.browserSessionRef]});
+ assert.equal(fence.fenced,true);assert.equal(fence.externalEffects,false);assert.equal(fence.oldActionsReplayed,false);
+ assert.equal(h.backendOptions.networkPolicy(first.browserSessionRef,'http://127.0.0.1/'),false);
+ assert.throws(()=>h.backendOptions.artifactSink(first.browserSessionRef,png,'image/png'),/screenshot_target_unavailable/);
+ const old=await h.port.execute(request('old-retry',{...baseInput,actions:[{type:'reload'}]}));
+ assert.equal(old.content.code,'browser_run_retired');assert.equal(old.content.executed,false);
+ assert.equal(h.trace.filter(row=>row.kind==='act').length,before);
+ assert.equal((await h.port.recoverSessions({refs:[first.browserSessionRef]}))[0].reobserveAvailable,false);
+ assert.equal((await h.port.execute(request('other-still-live',baseInput,'other'))).status,'ok');
+ assert.equal(h.trace.filter(row=>row.kind==='close'&&row.ref.runId==='other').length,0);
+ assert.equal(second.browserSessionRef.runId,'other');
+});
+
+test('cold owners can fence a lost namespace without creating or replaying a browser page',async t=>{
+ const h=await owner(t),first=await h.port.execute(request('first'));await h.port.close();let actions=0;
+ const cold=await createStudioBrowserWorkspacePort({scope,root:h.root,runtimeId:'owner',createBrowser:()=>({
+  open:async()=>{actions++;assert.fail('Retirement cannot open a page');},act:async()=>assert.fail('No old input replay'),
+  recover:async ref=>({status:'lost',sessionRef:ref,lastActionSeq:0,reason:'owner_unavailable'}),
+  restart:async()=>assert.fail('No replacement page'),close:async()=>{},
+ })});t.after(()=>cold.close());
+ const fence=await cold.retireResources({scope,sessionId:'session',runId:'run',refs:[first.browserSessionRef]});
+ assert.equal(fence.fenced,true);assert.equal(actions,0);
+ await assert.rejects(cold.retireResources({scope,sessionId:'session',runId:'foreign',refs:[first.browserSessionRef]}),/browser_reference_scope_mismatch/);
+});
+
+test('a failed resource close cannot issue a fence proof, and subsequent actions remain disabled',async t=>{
+ const h=await owner(t),first=await h.port.execute(request('first'));const close=h.fake.close;
+ h.fake.close=async()=>{throw Error('close failed');};
+ await assert.rejects(h.port.retireResources({scope,sessionId:'session',runId:'run',refs:[first.browserSessionRef]}),/close failed/);
+ assert.equal((await h.port.execute(request('late'))).content.code,'browser_run_retired');
+ h.fake.close=close;
+ assert.equal((await h.port.retireResources({scope,sessionId:'session',runId:'run',refs:[first.browserSessionRef]})).fenced,true);
+});
+
+test('host governance does not change the browser execution protocol, while forged effects and unknown metadata stay rejected', async t => {
+  const h = await owner(t), original = request('governed-page');
+  const governed = { ...original, definition: { ...original.definition, approvalPolicy: 'durable-preflight/v1',
+    executionTimeoutPolicy: 'dispatch/v2', modelGuidance: ['Use the admitted page.'] } };
+  const result = await h.port.execute(governed);
+  assert.equal(result.status, 'ok'); assert.ok(result.browserObservation);
+  const count = h.trace.length;
+  for (const fields of [{ permissions: ['workspace:write'] }, { timeoutMs: 1 }, { approvalPolicy: 'unknown-policy' },
+    { arbitraryMetadata: true }, { parameters: { type: 'object', properties: {} } }]) {
+    const refused = await h.port.execute({ ...governed, definition: { ...governed.definition, ...fields } });
+    assert.equal(refused.content.code, 'scope_or_tool_mismatch'); assert.equal(refused.content.executed, false);
+  }
+  assert.equal(h.trace.length, count);
 });
 
 test('expired Native authority during a browser action blocks screenshot publication and later actions', async t => {

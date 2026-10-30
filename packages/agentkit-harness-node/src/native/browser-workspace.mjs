@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { canonical, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, scopeKey, matchesToolExecutionContract } from '@kingsoftcloud/agentkit-harness-core';
 import { validateBrowserAction, validateBrowserObservation, validateBrowserRecovery, validateBrowserSessionRef,
   browserObservationDigest } from '@kingsoftcloud/agentkit-harness-core/browser-contract';
 import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from './browser-workspace-server.mjs';
 import { parseWorkspaceBrowserInput, studioBrowserDefinition } from './browser-workspace-protocol.mjs';
 import { publishWorkspaceBytes, realpathExisting } from './workspace-paths.mjs';
+import { admitBrowserActionObservation } from './browser-action-observation.mjs';
+import { WORKSPACE_BROWSER_BOUNDARY, workspaceBrowserCapability } from './browser-workspace-policy.mjs';
 
 const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
 const same = (left, right) => canonical(left) === canonical(right);
@@ -51,10 +53,11 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
     if (within(workspace, evidence)) fail('browser_verification_evidence_must_be_outside_workspace');
     mkdirSync(evidence, { recursive: true }); evidence = realpathSync(evidence);
   }
-  const pages = new Map(), lost = new Map(), locks = new Map(), targets = new Map();
+  const pages = new Map(), lost = new Map(), locks = new Map(), targets = new Map(), retired = new Set();
   const lifetime = new AbortController(); let closed = false, closing, verificationAttempt = 0;
   const owns = ref => same(ref.scope, scope) && ref.runtimeId === runtimeId && ref.workspaceRevision === workspaceRevision;
-  const browser = await createBrowser({ scope: structuredClone(scope), runtimeId, workspaceRevision, viewport: [1280, 720],
+  const browser = await createBrowser({ scope: structuredClone(scope), runtimeId, workspaceRevision,
+    viewport: [...WORKSPACE_BROWSER_BOUNDARY.viewport],
     networkPolicy(ref, url) {
       const page = pages.get(ref.runId), target = targets.get(ref.runId);
       let current = true;
@@ -87,10 +90,10 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
     finally { release(); for (const runId of ids) if (locks.get(runId) === barrier) locks.delete(runId); }
   }
   const serial = (runId, signal, callback) => serialMany([runId], signal, callback);
-  async function closePage(runId, { closeBrowser = true } = {}) {
+  async function closePage(runId, { closeBrowser = true, signal, confirmClosed = false } = {}) {
     const page = pages.get(runId); pages.delete(runId); targets.delete(runId);
     if (!page) return;
-    try { if (closeBrowser) await browser.close(page.ref); }
+    try { if (closeBrowser) await browser.close(page.ref, { signal, confirmClosed }); }
     finally { await page.server.close(); }
   }
   async function openPage(runId, input, operationKey, signal, prior) {
@@ -100,7 +103,7 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
         : validateBrowserSessionRef(await browser.open(runId, { operationKey, signal }));
       if (!owns(ref) || ref.runId !== runId || prior && !same(ref, { ...prior,
         generation: prior.generation + 1, leaseEpoch: prior.leaseEpoch + 1 })) fail('browser_backend_identity_mismatch');
-      const page = { server, ref, sourceRevision: server.initialRevision };
+      const page = { server, ref, sourceRevision: server.initialRevision, actionObservations: new Map() };
       pages.set(runId, page); return page;
     } catch (error) { await server.close(); throw error; }
   }
@@ -109,14 +112,22 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
     const action = validateBrowserAction({ actionId: `${operationKey}:${index}`, kind,
       timeoutMs: ['navigate', 'click', 'fill', 'press', 'move'].includes(kind) ? 30000 : 20000,
       ...(kind === 'navigate' ? { url: page.server.url } : {}), ...arguments_ });
-    const dispatch = actionSignal => browser.act(page.ref, action, { signal: actionSignal ? AbortSignal.any([signal, actionSignal]) : signal });
+    const dispatch = actionSignal => browser.act(page.ref, action, {
+      signal: actionSignal ? AbortSignal.any([signal, actionSignal]) : signal,
+      observeAction(value) {
+        const fact = admitBrowserActionObservation(value, action);
+        if (!fact || closed || page.revoked) return;
+        page.actionObservations.set(action.actionId, fact);
+        while (page.actionObservations.size > 32) page.actionObservations.delete(page.actionObservations.keys().next().value);
+      },
+    });
     const observation = validateBrowserObservation(await (executeAction ? executeAction({
       entryPath: relative(workspace, page.server.entry).split(sep).join('/'), action: structuredClone(action),
     }, dispatch) : dispatch()));
     if (!same(observation.sessionRef, page.ref) || observation.actionId !== action.actionId) fail('browser_backend_identity_mismatch');
     return observation;
   }
-  function result(observations, page, target, actions, navigationReason) {
+  async function result(observations, page, target, actions, navigationReason, request) {
     const latest = observations.at(-1), all = key => observations.flatMap(row => row[key]);
     const consoleErrors = all('console').filter(value => /^(error:|assert:)/.test(value));
     const pageErrors = all('pageErrors'), networkFailures = all('networkFailures');
@@ -125,7 +136,11 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
       && (latest.statusCode === null || latest.statusCode < 400) && rendered
       && ![...consoleErrors, ...pageErrors].some(value => !warning(value)) && !networkFailures.length
       && actions.every(row => row.ok);
+    const actionObservations = observations.flatMap(row => page.actionObservations.get(row.actionId) ?? []);
+    const diagnostic = actionObservations.findLast(row => row.outcome !== 'ok');
     const content = { ok, browser_channel: browser.browserChannel ?? 'unknown', browser_version: browser.browserVersion ?? 'unknown',
+      ...(diagnostic ? { browser_action_diagnostic: { phase: diagnostic.phase, outcome: diagnostic.outcome,
+        dispatch_started: diagnostic.dispatchStarted, dispatch_completed: diagnostic.dispatchCompleted, elapsed_ms: diagnostic.elapsedMs } } : {}),
       entry_path: relative(workspace, page.server.entry).split(sep).join('/'), page_navigation_reason: navigationReason,
       title: latest.title, status_code: latest.statusCode, rendered, body_text_preview: [...latest.text].slice(0, 2000).join(''),
       dom_changed_during_capture: latest.domChangedDuringCapture, scroll_x: latest.scrollX, scroll_y: latest.scrollY,
@@ -138,18 +153,39 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
         clickable: control.clickable, hit_test_reachable: control.hitTestReachable, duplicate_id: control.duplicateId,
       })), ...(latest.screenshot ? { screenshot_path: relative(workspace, target).split(sep).join('/') } : {}) };
     const uncertain = observations.some(row => row.status === 'uncertain');
-    if (uncertain) { page.revoked = true; lost.set(page.ref.runId, structuredClone(page.ref)); }
+    const browserIsolation = uncertain ? await isolateUnknownPage(page, request) : undefined;
+    if (browserIsolation) content.resource_continuity = isolationObservation();
     return { status: uncertain ? 'uncertain' : ok ? 'ok' : 'error', content,
+      ...(browserIsolation ? { browserIsolation } : {}),
       browserSessionRef: structuredClone(latest.sessionRef), browserObservation: structuredClone(latest),
-      metadata: { progressObservationDigest: browserObservationDigest(latest, hash) },
+      metadata: { progressObservationDigest: browserObservationDigest(latest, hash),
+        ...(actionObservations.length ? { browserActionObservations: actionObservations } : {}) },
       context: { content: canonical(content), ...(latest.screenshot ? { media: [structuredClone(latest.screenshot.contentBlock)] } : {}) } };
   }
 
+  const isolationObservation = () => ({ status: 'lost', original_action_outcome: 'unknown',
+    old_page_fenced: true, old_actions_replayed: false, fresh_observation_required: true,
+    required_actions: [{ type: 'reload' }] });
+  async function isolateUnknownPage(page, request) {
+    page.revoked = true; lost.set(page.ref.runId, structuredClone(page.ref));
+    if (!reobserveAfterLoss || request.definition.recoveryPolicy !== 'ephemeral-browser/v1') return;
+    try {
+      const signal = combine(request.signal); signal.throwIfAborted();
+      if (request.assertCurrent && request.assertCurrent() !== true) return;
+      await closePage(page.ref.runId, { signal, confirmClosed: true });
+      signal.throwIfAborted();
+      if (request.assertCurrent && request.assertCurrent() !== true) return;
+      return { contract: 'agentkit.browser-isolation/v1', sessionRef: structuredClone(page.ref),
+        operationKey: request.operationKey, fenced: true, externalEffects: false, oldActionsReplayed: false };
+    } catch { /* Without completed owner cleanup, uncertainty still stops the Run. */ }
+  }
+
   return {
+    get capability() { return workspaceBrowserCapability(); },
     get definition() { return structuredClone(definition); },
     async execute(request) {
       if (!same(request.scope, scope) || request.call?.name !== 'browser_inspect_workspace'
-        || !same(request.definition, definition)) return { status: 'error', content: { code: 'scope_or_tool_mismatch' } };
+        || !matchesToolExecutionContract(request.definition, definition)) return { status: 'error', content: { code: 'scope_or_tool_mismatch', executed: false } };
       const signal = combine(request.signal); signal.throwIfAborted();
       const checkOwned = () => {
         signal.throwIfAborted();
@@ -165,6 +201,7 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
       } catch (error) { return { status: 'error', content: { code: safeInput.has(error.code) ? error.code : 'browser_entry_not_found' } }; }
       return serial(request.runId, signal, async () => {
         checkOwned();
+        if (retired.has(request.runId)) return { status: 'error', content: { code: 'browser_run_retired', executed: false } };
         const prior = lost.get(request.runId);
         if (prior && (input.actions.length !== 1 || input.actions[0].kind !== 'reload')) return {
           status: 'error', content: { code: 'browser_session_lost', required_actions: [{ type: 'reload' }] }, browserSessionRef: structuredClone(prior) };
@@ -191,7 +228,7 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
           const initial = await act(page, request.operationKey, 0, first || changed ? 'navigate' : 'screenshot', signal);
           checkOwned();
           observations.push(initial);
-          if (initial.status !== 'ok' || !initial.complete) return result(observations, page, target, actionResults, navigationReason);
+          if (initial.status !== 'ok' || !initial.complete) return result(observations, page, target, actionResults, navigationReason, request);
           page.sourceRevision = sourceRevision;
           if (input.waitMs) { await sleep(input.waitMs, signal); checkOwned(); }
           for (const [index, action] of actions.entries()) {
@@ -202,15 +239,42 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
               Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== null)));
             checkOwned();
             observations.push(seen); actionResults.push({ index, type: kind, ok: seen.status === 'ok' });
-            if (seen.status !== 'ok' || !seen.complete) return result(observations, page, target, actionResults, navigationReason);
+            if (seen.status !== 'ok' || !seen.complete) return result(observations, page, target, actionResults, navigationReason, request);
           }
           observations.push(await act(page, request.operationKey, actions.length + 1, 'screenshot', signal));
           checkOwned();
-          return result(observations, page, target, actionResults, navigationReason);
+          return result(observations, page, target, actionResults, navigationReason, request);
         } catch (error) {
-          if (dispatched) { page.revoked = true; lost.set(request.runId, structuredClone(page.ref)); }
-          return { status: dispatched ? 'uncertain' : 'error', content: { code: 'browser_action_outcome_unknown' }, browserSessionRef: structuredClone(page.ref) };
+          const browserIsolation = dispatched ? await isolateUnknownPage(page, { ...request, signal }) : undefined;
+          const content = { code: 'browser_action_outcome_unknown', ...(browserIsolation ? { resource_continuity: isolationObservation() } : {}) };
+          return { status: dispatched ? 'uncertain' : 'error', content, browserSessionRef: structuredClone(page.ref),
+            ...(browserIsolation ? { browserIsolation, context: { content: canonical(content) } } : {}) };
         }
+      });
+    },
+    /** Host-only capability retirement. This local resource serves only static
+     * GET/HEAD files, and its sink checks the live owner namespace. Removing the
+     * namespace fences late network/artifact work even after a lost context.
+     * It cannot assert that the original browser action succeeded. */
+    async retireResources({ scope: requestedScope, sessionId, runId, refs, signal: rawSignal }) {
+      const signal = combine(rawSignal); signal.throwIfAborted();
+      if (!same(requestedScope, scope) || typeof sessionId !== 'string' || !sessionId.trim()
+        || !Array.isArray(refs) || !refs.length || refs.length > 16) fail('browser_retirement_invalid');
+      const checked = refs.map(validateBrowserSessionRef);
+      if (checked.some(ref => !owns(ref) || ref.runId !== runId)) fail('browser_reference_scope_mismatch');
+      return serial(runId, signal, async () => {
+        retired.add(runId);
+        const page = pages.get(runId);
+        if (page) await closePage(runId, { signal, confirmClosed: true });
+        else for (const ref of checked) {
+          const report = validateBrowserRecovery(await browser.recover(ref, { signal }));
+          if (!same(report.sessionRef, ref) || report.status === 'restarted') fail('browser_recovery_reference_mismatch');
+          if (report.status === 'reconnected') await browser.close(ref, { signal, confirmClosed: true });
+        }
+        signal.throwIfAborted(); lost.delete(runId); targets.delete(runId);
+        return { contract: 'agentkit.resource-fence/v1', resourceKind: 'ephemeral-browser',
+          scope: structuredClone(scope), runId, sessionId, refs: structuredClone(checked),
+          fenced: true, externalEffects: false, oldActionsReplayed: false };
       });
     },
     async recoverSessions({ refs, runId, signal: rawSignal }) {
@@ -225,6 +289,8 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
       return serialMany(checked.map(ref => ref.runId), signal, async () => {
         const reports = [];
         for (const ref of checked) {
+          if (retired.has(ref.runId)) { reports.push({ status: 'lost', sessionRef: ref,
+            lastActionSeq: 0, reason: 'resource_retired', reobserveAvailable: false }); continue; }
           let report = validateBrowserRecovery(await browser.recover(ref, { signal }));
           if (!same(report.sessionRef, ref) || report.status === 'restarted') fail('browser_recovery_reference_mismatch');
           const page = pages.get(ref.runId);
@@ -249,6 +315,7 @@ export async function createStudioBrowserWorkspacePort({ scope: rawScope, root, 
       resolveBrowserWorkspaceEntry(workspace, input.path);
       const signal = combine(rawSignal);
       return serial(runId, signal, async () => {
+        if (retired.has(runId)) fail('browser_run_retired');
         const verificationRunId = `${runId}:host-verify:${hash(candidateId).slice(0, 16)}:${++verificationAttempt}`;
         const operationKey = `verify:${candidateId}:${verificationAttempt}`;
         let page;

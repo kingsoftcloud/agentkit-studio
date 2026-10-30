@@ -101,6 +101,17 @@ export function projectRequestMedia(request) {
     if (media.length && message.role !== 'user' && message.role !== 'tool') throw new MediaError('image observations require user or tool content');
     return { ...message, media };
   });
+  if (request.profile?.supportsImages === false) {
+    for (const message of messages) if (message.media?.length) {
+      delete message.providerReplay;
+      message.content = `${message.content || ''}\n${JSON.stringify({
+        type: 'agentkit.request-media-omission/v1', reason: 'model_does_not_support_images',
+        status: 'not_sent_in_this_request',
+        observation: 'Image pixels were not sent to this model. Do not claim visual inspection or repeat side effects for missing pixels.',
+      })}`;
+      message.media = [];
+    }
+  }
   const actualUser = messages.findLastIndex(message => message.role === 'user' && !message.history
     && (message.kind == null || ['user_input', 'guidance', 'steering'].includes(message.kind)
       || message.kind === 'host_input' && message.persistent === true));

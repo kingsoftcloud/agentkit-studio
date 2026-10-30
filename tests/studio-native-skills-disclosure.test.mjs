@@ -37,6 +37,7 @@ async function setup(t, plan = calls, intercept = async () => {}) {
       return definition ? events.reduce(definition.apply, definition.init()) : undefined; },
   } };
   const ctx = { get: key => services[key], effect: install => install(), tools: {
+    resultRetentions: ['caller/v1'],
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(input) {
       await intercept(input);
@@ -82,7 +83,8 @@ test('actual Native Host exposes four pinned Skills tools and commits disclosure
   const saved = h.result(), results = saved.receipts.filter(receipt => saved.intents.some(intent => intent.kind === 'tool'
     && intent.operationKey === receipt.operationKey)).flatMap(receipt => receipt.result?.results ?? []);
   assert.equal(saved.snapshot.phase, 'completed'); assert.equal(h.bodies.length, 5);
-  assert.equal(results.length, 4); assert.ok(results.every(result => result.status === 'ok'));
+  assert.equal(results.length, 4); assert.ok(results.every(result => result.status === 'ok'),
+    JSON.stringify(results.map(result => ({ status: result.status, code: result.content?.code }))));
   assert.equal(results[0].content.bound_skills[0].skillId, skillId);
   assert.equal(results[2].content.instructions.includes('INSTRUCTIONS_BODY_ONLY_AFTER_READ'), true);
   assert.equal(results[3].content.text, 'ACTUAL_SKILL_RESOURCE');

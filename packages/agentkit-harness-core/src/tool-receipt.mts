@@ -4,6 +4,7 @@ import { canonical, copy, invariant } from './values.mjs';
 import { prepareEffect, transition } from './transitions.mjs';
 import { reduceTools } from './machine.mjs';
 import { stagePostHooks } from './hook-runtime.mjs';
+import { modelObservationBytes } from './tool-context.mjs';
 
 export const TOOL_RECEIPT_OBSERVATION_CONTRACT = 'agentkit.tool-receipt-observation/v1' as const;
 export function waitingToolReceipt(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent): Partial<RunSnapshot> | null {
@@ -65,9 +66,8 @@ export function reduceToolReceipt(record: StoredRun, intent: EffectIntent, obser
     && Object.keys(result).every(key => ['status', 'content', 'context', 'additionalContexts', 'workspaceChangedPaths', 'artifactRefs',
       'resourceUsage', 'resourceUsageReported', 'metadata',
       ...(configuration.artifactPolicy === 'runtime-artifacts/v1' ? ['artifactObservationDigest', 'archiveContext'] : [])].includes(key))
-    && new TextEncoder().encode(configuration.artifactPolicy === 'runtime-artifacts/v1'
-      ? canonical({ content: result.context?.content ?? canonical(result.content), media: result.context?.media ?? [],
-        additionalContexts: result.additionalContexts ?? [] }) : canonical(result)).byteLength
+    && (configuration.artifactPolicy === 'runtime-artifacts/v1' ? modelObservationBytes(result, configuration)
+      : new TextEncoder().encode(canonical(result)).byteLength)
       <= configuration.limits.maxToolResultBytes, 'tool_receipt_result_invalid');
   // The original attempt was charged once while entering the wait. The new
   // receipt query is an observation, never another tool execution or retry.

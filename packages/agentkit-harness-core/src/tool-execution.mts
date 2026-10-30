@@ -1,5 +1,5 @@
 import type { ToolResult } from './contracts.mjs';
-import { NativeError } from './values.mjs';
+import { NativeError, isNativeError } from './values.mjs';
 import { effectFailureCause } from './effect-diagnostics.mjs';
 
 export interface ToolExecutionLifecycle {
@@ -52,7 +52,7 @@ export async function executeTimedTool({ signal, timeoutMs, dispatchTimed, lifec
     if (started !== undefined && now() - started >= timeoutMs) throw new NativeError('tool_timeout');
     return result;
   } catch (error) {
-    try { void Promise.resolve(onFailure?.({ cause: effectFailureCause(error instanceof NativeError ? error.code : 'effect_port_error', error instanceof NativeError),
+    try { void Promise.resolve(onFailure?.({ cause: effectFailureCause(isNativeError(error) ? error.code : 'effect_port_error', isNativeError(error)),
       signalAborted: toolSignal.aborted, dispatchEvidence: !dispatchProof ? 'unavailable' : dispatchProof.dispatched ? 'some_dispatched' : 'none_dispatched' })).catch(() => {}); }
     catch { /* Observation cannot change settlement or grant replay. */ }
     return dispatchTimed && !dispatched

@@ -4,7 +4,7 @@ import { terminal } from './contracts.mjs';
 import { backgroundCommandObservation, backgroundCommandRef } from './background-contract.mjs';
 import { initialSnapshot, configure } from './configuration.mjs';
 import { projectSessionHistory } from './history.mjs';
-import { canonical, copy, invariant, NativeError, scopeKey } from './values.mjs';
+import { canonical, copy, invariant, NativeError, isNativeError, scopeKey } from './values.mjs';
 
 export const BACKGROUND_NOTIFICATION_ADMISSION = 'agentkit.background-notification-admission/v1' as const;
 type Digest = (value: unknown) => string;
@@ -91,7 +91,7 @@ export async function admitBackgroundNotification({ store, scope, sourceRunId, t
     sourceConfigDigest: source.snapshot.configDigest };
   let existing: StoredRun | null = null;
   try { existing = store.load(fixedScope, runId); }
-  catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
+  catch (error) { if (!(isNativeError(error) && error.code === 'run_not_found')) throw error; }
   const duplicate = (record: StoredRun) => {
     const { admissionElapsedMs: _, ...existingOrigin } = record.snapshot.backgroundNotification ?? {};
     invariant(canonical(existingOrigin) === canonical(origin)
@@ -111,7 +111,10 @@ export async function admitBackgroundNotification({ store, scope, sourceRunId, t
     const { maxContinuations: _, ...binding } = configuration.profile;
     return canonical(binding);
   };
-  invariant(parent.configuration.hostBindingDigest === source.configuration.hostBindingDigest
+  const sessionBinding = source.configuration.backgroundSessionBindingDigest;
+  invariant((sessionBinding === undefined
+    ? parent.configuration.backgroundSessionBindingDigest === undefined && parent.configuration.hostBindingDigest === source.configuration.hostBindingDigest
+    : parent.configuration.backgroundSessionBindingDigest === sessionBinding)
     && profileBinding(parent.configuration) === profileBinding(source.configuration)
     && canonical(parent.configuration.tools) === canonical(source.configuration.tools), 'background_notification_binding_changed');
   const began = now(), used = spent(store, fixedScope, source);
@@ -144,7 +147,7 @@ export async function admitBackgroundNotification({ store, scope, sourceRunId, t
   const latest = sourceRecord(store, fixedScope, sourceRunId, taskId, digest).source;
   invariant(canonical(latest) === canonical(source), 'background_notification_admission_changed');
   try { existing = store.load(fixedScope, runId); }
-  catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
+  catch (error) { if (!(isNativeError(error) && error.code === 'run_not_found')) throw error; }
   if (existing) return duplicate(existing);
   invariant(canonical(store.sessionHead(fixedScope, source.snapshot.sessionId)) === canonical(head), 'background_notification_admission_changed');
   invariant(observation !== null, 'background_notification_not_terminal');
@@ -179,7 +182,7 @@ export async function admitBackgroundNotification({ store, scope, sourceRunId, t
   signal.throwIfAborted();
   try { return { ...store.createNotification(configuration, snapshot), configuration }; }
   catch (error) {
-    if (!(error instanceof NativeError && ['run_creation_conflict', 'session_head_conflict'].includes(error.code))) throw error;
+    if (!(isNativeError(error) && ['run_creation_conflict', 'session_head_conflict'].includes(error.code))) throw error;
     try { existing = store.load(fixedScope, runId); }
     catch { throw error; }
     return duplicate(existing);

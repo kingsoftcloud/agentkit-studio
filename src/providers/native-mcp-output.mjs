@@ -1,7 +1,7 @@
-import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
 
 /** Project a known MCP receipt without fetching resource URIs or exposing binary data as text. */
-export function nativeMcpOutcome(result, { validateOutput } = {}) {
+export function nativeMcpOutcome(result, { validateOutput, deduplicateStructured = false } = {}) {
   invariant(result && typeof result === 'object' && !Array.isArray(result) && Array.isArray(result.content)
     && (result.isError === undefined || typeof result.isError === 'boolean'), 'studio_native_mcp_result_invalid');
   canonical(result);
@@ -24,7 +24,14 @@ export function nativeMcpOutcome(result, { validateOutput } = {}) {
     if (!block || typeof block !== 'object' || Array.isArray(block)) {
       omissions.push({ block: index, code: 'mcp_content_invalid' }); continue;
     }
-    if (block.type === 'text' && typeof block.text === 'string') { text.push(block.text); continue; }
+    if (block.type === 'text' && typeof block.text === 'string') {
+      // SDKs often publish identical structured data as both JSON text and structuredContent.
+      // Keep the original receipt intact; the model only needs one copy of the same observation.
+      let duplicate = false;
+      if (deduplicateStructured && structured != null) { try { duplicate = canonical(parseNativeJson(block.text)) === canonical(structured); } catch { /* ordinary prose */ } }
+      if (!duplicate) text.push(block.text);
+      continue;
+    }
     const resource = block.type === 'resource' && block.resource && typeof block.resource === 'object' ? block.resource : null;
     const data = resource ? resource.blob : block.data, mime = resource ? resource.mimeType : block.mimeType;
     if (typeof data === 'string' && data) binary.add(data);

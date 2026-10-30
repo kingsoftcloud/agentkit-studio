@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonical, NativeKernel, MemoryRunStore, emptyUsage, artifactToolDefinitions,
-  sourceReadBudgetFor, prepareSourceReadQuote } from '../dist/index.mjs';
+  sourceReadBudgetFor, sourceReadBudgetForState, prepareSourceReadQuote } from '../dist/index.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { fixture, scope, tool, digest } from './fixtures.mjs';
 
@@ -81,7 +81,14 @@ for (const backend of ['memory', 'sqlite']) test(`${backend}: Kernel commits ori
   t.after(() => store.close?.());
   const { config, snapshot } = fixture(options), budgets = []; let models = 0, saved;
   const ports = { context, model: { generate: async () => ++models === 1 ? response(calls) : response() },
-    tools: { execute: async request => { budgets.push(request.sourceReadBudget); return { status: 'ok', content: { read: request.call.arguments.path } }; } } };
+    tools: { execute: async request => {
+      const current = store.toolAuthority(scope, snapshot.runId);
+      assert.equal(current.snapshot.messages, undefined);
+      assert.equal(current.sourceReadMessage.toolCalls.length, 6, 'the original declaration survives split dispatch');
+      assert.deepEqual(sourceReadBudgetForState(current.snapshot, current.configuration, current.sourceReadMessage,
+        request.call, digest), request.sourceReadBudget);
+      budgets.push(request.sourceReadBudget); return { status: 'ok', content: { read: request.call.arguments.path } };
+    } } };
   const kernel = new NativeKernel({ store, owner: 'first', digest, ports, onCheckpoint: async checkpoint => {
     if (checkpoint.phase === 'executing_tools' && checkpoint.usage.toolCalls === 2 && checkpoint.pendingIntent === null) {
       saved = checkpoint; throw Error('controlled_driver_restart');

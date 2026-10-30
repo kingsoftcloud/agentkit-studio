@@ -58,16 +58,16 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [], l
       invariant(request.runId === undefined, 'child_history_run_unavailable');
       return { head: null, parents };
     }
-    let cursor = head;
+    const authority = runId => store.authority?.(scope, runId) ?? store.load(scope, runId);
+    let parent = authority(head.runId), cursor = parent.snapshot;
     while (cursor) {
       invariant(!seen.has(cursor.runId) && cursor.sessionId === request.sessionId
         && canonical(cursor.scope) === canonical(scope), 'child_history_ancestry_invalid');
       seen.add(cursor.runId);
-      const parent = store.load(scope, cursor.runId);
       invariant(hash(parent.configuration) === cursor.configDigest, 'stored_configuration_mismatch');
       parents.push(parent);
       if (!cursor.parentRunId) break;
-      cursor = store.load(scope, cursor.parentRunId).snapshot;
+      parent = authority(cursor.parentRunId); cursor = parent.snapshot;
       invariant(terminal(cursor.phase), 'child_history_ancestry_invalid');
     }
     if (request.runId !== undefined) {
@@ -79,12 +79,21 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [], l
   };
   const inventory = request => {
     const { head, parents } = hierarchy(request), records = [];
-    for (const parent of parents) {
-      // Historical grants come from the frozen original tool, never current
-      // model arguments or a caller-provided child scope/role.
-      const roles = [...new Set(parent.configuration.tools.filter(tool => ['start/v1', 'delegate/v1'].includes(tool.childBudgetPolicy))
+    for (const view of parents) {
+      const active = view.snapshot.runId === head?.runId ? liveTasks(view.snapshot.runId) : [];
+      const roles = [...new Set(view.configuration.tools.filter(tool => ['start/v1', 'delegate/v1'].includes(tool.childBudgetPolicy))
         .flatMap(tool => tool.parameters.properties?.role?.enum ?? []))];
       invariant(roles.every(role => typeof role === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(role)), 'child_history_roles_invalid');
+      // Browsing an empty child directory needs lineage authority, not every
+      // historical model result and screenshot. Only actual child observations
+      // materialize the journal needed to authenticate their settled delivery.
+      if (!(view.snapshot.childRunIds ?? []).length && !active.length) continue;
+      const parent = store.load(scope, view.snapshot.runId);
+      invariant(parent.snapshot.sessionId === request.sessionId
+        && parent.snapshot.configDigest === view.snapshot.configDigest
+        && canonical(parent.snapshot.scope) === canonical(scope), 'child_history_ancestry_invalid');
+      // Historical grants come from the frozen original tool, never current
+      // model arguments or a caller-provided child scope/role.
       const childScopes = roles.map(role => ({ ...scope, agentId: `${scope.agentId}:child:${role}` }));
       const children = [], descendants = new Set();
       for (const childRunId of parent.snapshot.childRunIds ?? []) {
@@ -93,7 +102,6 @@ export function createNativeChildHistory({ scope, store, liveTasks = () => [], l
       }
       const direct = new Set(children.map(child => child.snapshot.runId));
       invariant((parent.snapshot.childRunIds ?? []).every(runId => direct.has(runId) || descendants.has(runId)), 'child_history_not_available');
-      const active = parent.snapshot.runId === head?.runId ? liveTasks(parent.snapshot.runId) : [];
       // The owning Kernel can authenticate a start before its parent receipt
       // commits. Such a row has controls, but never a settled delivery.
       for (const task of active) if (!direct.has(task.childRunId)) {

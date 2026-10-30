@@ -52,7 +52,8 @@ export function normalizeResponse({
   if (!streamComplete || finishReason === 'provider_retryable_error') {
     return out('provider_retryable_error');
   }
-  if (OUTPUT_LIMITS.has(finishReason)) return { ...out('output_limit'), textCommitVersion: 'provider-finished-text/v1' };
+  if (OUTPUT_LIMITS.has(finishReason)) return { ...out('output_limit'), textCommitVersion: 'provider-finished-text/v1',
+    outputBoundary: toolCalls.length ? 'tool-call/v1' : text.trim() ? 'assistant-text/v1' : 'no-visible-output/v1' };
   if (finishReason === 'malformed_tool_call') return out('malformed_tool_call');
   if (finishReason === 'empty_response') return out('empty_response');
   if (!COMPLETE_FINISHES.has(finishReason)) return out('provider_terminal_error');
@@ -94,7 +95,7 @@ function validateToolCall(call) {
 export function parseOpenAIUsage(value) {
   if (value == null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new ProtocolError('invalid usage report');
+    throw new ProtocolError('invalid usage report', 'usage_invalid');
   }
   for (const field of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
     if (Object.hasOwn(value, field)) toNonNegInt(value[field], field);
@@ -102,10 +103,10 @@ export function parseOpenAIUsage(value) {
   const details = value.prompt_tokens_details;
   const completionDetails = value.completion_tokens_details;
   if (details != null && (typeof details !== 'object' || Array.isArray(details))) {
-    throw new ProtocolError('invalid usage details');
+    throw new ProtocolError('invalid usage details', 'usage_invalid');
   }
   if (completionDetails != null && (typeof completionDetails !== 'object' || Array.isArray(completionDetails))) {
-    throw new ProtocolError('invalid usage details');
+    throw new ProtocolError('invalid usage details', 'usage_invalid');
   }
   const cached = details && Object.hasOwn(details, 'cached_tokens')
     ? toNonNegInt(details.cached_tokens, 'cached_tokens') : undefined;
@@ -124,7 +125,7 @@ export function parseOpenAIUsage(value) {
 // cache). reasoning_tokens, when a provider reports it, -> reasoningTokens.
 export function parseAnthropicUsageFragment(value) {
   if (value == null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new ProtocolError('invalid anthropic usage');
+    throw new ProtocolError('invalid anthropic usage', 'usage_invalid');
   }
   const fragment = {};
   if (Object.hasOwn(value, 'input_tokens')) {
@@ -160,7 +161,7 @@ function toNonNegInt(value, field) {
   // reject NaN/booleans/strings/unsafe integers so a bad report is a protocol
   // error here, not an invalid_usage crash in the kernel.
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw new ProtocolError(`invalid ${field} counter`);
+    throw new ProtocolError(`invalid ${field} counter`, 'usage_invalid');
   }
   return value;
 }
@@ -195,9 +196,10 @@ export function parseRetryAfterMs(headerValue) {
 // translates these to provider_terminal_error with failureKind 'invalid_response'
 // (or retryable for transport/idle). Provider bytes never enter the message.
 export class ProtocolError extends Error {
-  constructor(message) {
+  constructor(message, code = 'protocol_invalid') {
     super(message);
     this.name = 'ProtocolError';
+    this.code = code;
   }
 }
 

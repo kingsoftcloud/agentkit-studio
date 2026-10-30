@@ -15,6 +15,7 @@ import { sealModelReplay, openAIReplayFields } from './model-replay.mjs';
 import { validateMediaBlock, projectMediaOpenAI, MediaError } from './model-media.mjs';
 import { inlineReasoningMarker, projectInlineReasoning, createInlineReasoningProjector } from './model-inline-reasoning.mjs';
 import { applyProviderChatCompatibility } from './model-provider-compat.mjs';
+import { mergeChatUsage } from './model-chat-usage.mjs';
 // parseModelJson is the kernel's strict finite JSON parser: it rejects
 // duplicate object keys and non-finite numbers (e.g. 1e400). Using it here keeps
 // provider-envelope and tool-argument decoding consistent with the kernel's
@@ -25,7 +26,7 @@ import { parseModelJson, stringifyModelJson, modelWireToolCall, FINAL_SUBMISSION
 // Wrap parseModelJson so its NativeError codes become the adapter's ProtocolError.
 function strictParseJson(text) {
   try { return parseModelJson(text); }
-  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json'); }
+  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json', 'json_invalid'); }
 }
 
 // Body keys the host binding parameters may never override: messages, tools,
@@ -204,14 +205,14 @@ function validateAssistantToolIds(calls) {
 // validation. Throws ProtocolError on a malformed envelope.
 export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, binding, onThinking } = {}) {
   let payload;
-  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
+  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json', 'json_invalid'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new ProtocolError('invalid response envelope');
+    throw new ProtocolError('invalid response envelope', 'envelope_invalid');
   }
-  if ('error' in payload) throw new ProtocolError('invalid response envelope');
+  if ('error' in payload) throw new ProtocolError('invalid response envelope', 'provider_error');
   const choices = payload.choices;
   if (!Array.isArray(choices) || choices.length > 1) {
-    throw new ProtocolError('expected one completion choice');
+    throw new ProtocolError('expected one completion choice', 'choice_invalid');
   }
   // parseOpenAIUsage returns null when no usage was reported; an invalid report
   // throws a protocol error (terminal), never a fabricated zero-cost claim.
@@ -220,9 +221,9 @@ export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, 
     return finalizeResult({ kind: 'empty_response', text: '', toolCalls: [], reportedUsage, request, reasoning: '', captureReplay });
   }
   const choice = choices[0];
-  if (!choice || typeof choice !== 'object') throw new ProtocolError('invalid completion choice');
+  if (!choice || typeof choice !== 'object') throw new ProtocolError('invalid completion choice', 'choice_invalid');
   let finish = choice.finish_reason;
-  if (finish != null && typeof finish !== 'string') throw new ProtocolError('invalid finish reason');
+  if (finish != null && typeof finish !== 'string') throw new ProtocolError('invalid finish reason', 'termination_conflict');
   const message = choice.message;
   if (!message || typeof message !== 'object' || message.role !== 'assistant') {
     throw new ProtocolError('invalid assistant message');
@@ -231,7 +232,7 @@ export function parseOpenAIBuffered(bodyText, request, { captureReplay = false, 
   let text = message.content;
   if (text == null) text = '';
   if (typeof text !== 'string') throw new ProtocolError('unsupported assistant content');
-  text = projectInlineReasoning(text, inlineReasoningMarker(request.profile.inlineReasoningPolicy, binding));
+  text = projectInlineReasoning(text, inlineReasoningMarker(request.profile.inlineReasoningPolicy, binding), request.profile.inlineReasoningPolicy);
   let calls;
   // tool_calls truthiness mirrors Python: an empty array carries no calls.
   const rawCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
@@ -319,7 +320,7 @@ function parseToolCalls(raw) {
 
 function chatRefusal(value) {
   if (value == null) return false;
-  if (typeof value !== 'string') throw new ProtocolError('invalid model refusal field');
+  if (typeof value !== 'string') throw new ProtocolError('invalid model refusal field', 'delta_invalid');
   return value.length > 0;
 }
 
@@ -327,9 +328,9 @@ function chatReasoning(message) {
   const native = message.reasoning_content;
   const alias = message.reasoning;
   for (const value of [native, alias]) {
-    if (value != null && typeof value !== 'string') throw new ProtocolError('invalid private reasoning field');
+    if (value != null && typeof value !== 'string') throw new ProtocolError('invalid private reasoning field', 'delta_invalid');
   }
-  if (native && alias && native !== alias) throw new ProtocolError('conflicting private reasoning fields');
+  if (native && alias && native !== alias) throw new ProtocolError('conflicting private reasoning fields', 'delta_invalid');
   return native || alias || '';
 }
 
@@ -341,13 +342,17 @@ export function createOpenAIStreamTurn(profile, binding) {
   const captureReplay = profile.providerReplayMode !== 'none';
   const emitThinking = profile.providerThinkingDisplay ?? profile.providerReplayMode !== 'none';
   const marker = inlineReasoningMarker(profile.inlineReasoningPolicy, binding);
-  const projector = createInlineReasoningProjector(marker);
+  const projector = createInlineReasoningProjector(marker, profile.inlineReasoningPolicy);
   let emitContent;
   return {
     text: '',
     reasoning: '',
     finish: null,
     usage: null,
+    usageFrameIndex: null,
+    usageFinalized: false,
+    usageAtFinish: false,
+    frameIndex: -1,
     completionId: null,
     tools: new Map(),
     malformedTools: false,
@@ -355,59 +360,71 @@ export function createOpenAIStreamTurn(profile, binding) {
     done: false,
 
     consume(frame, emit) {
+      this.frameIndex++;
       emitContent = emit;
       const data = frame.data;
       if (data.trim() === '[DONE]') { this.done = true; return; }
       let payload;
-      try { payload = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json'); }
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload) || 'error' in payload) {
-        throw new ProtocolError('invalid stream envelope');
+      try { payload = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json', 'json_invalid'); }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new ProtocolError('invalid stream envelope', 'envelope_invalid');
       }
+      if ('error' in payload) throw new ProtocolError('invalid stream envelope', 'provider_error');
       if (payload.id != null) {
-        if (typeof payload.id !== 'string' || !payload.id) throw new ProtocolError('invalid completion ID');
+        if (typeof payload.id !== 'string' || !payload.id) throw new ProtocolError('invalid completion ID', 'identity_conflict');
         if (this.completionId != null && payload.id !== this.completionId) {
-          throw new ProtocolError('stream mixed completion identities');
+          throw new ProtocolError('stream mixed completion identities', 'identity_conflict');
         }
         this.completionId = payload.id;
       }
       const reported = parseOpenAIUsage(payload.usage);
       if (reported != null) {
-        if (this.usage != null && !usageEquals(this.usage, reported)) {
-          throw new ProtocolError('conflicting usage reports in one attempt');
+        let next;
+        try { next = mergeChatUsage(this.usage, reported, profile.chatUsagePolicy, this.usageFinalized); }
+        catch (error) {
+          if (error.code !== 'usage_conflict') throw error;
+          this.usageConflict = { previousFrameIndex: this.usageFrameIndex,
+            previous: usageCounters(this.usage), reported: usageCounters(reported) };
+          throw error;
         }
-        this.usage = reported;
+        this.usage = next;
+        this.usageFrameIndex = this.frameIndex;
       }
       const choices = payload.choices;
-      if (!Array.isArray(choices) || choices.length > 1) throw new ProtocolError('stream requires one choice');
-      if (!choices.length) return;
+      if (!Array.isArray(choices) || choices.length > 1) throw new ProtocolError('stream requires one choice', 'choice_invalid');
+      if (!choices.length) {
+        if (reported && this.finish != null) { this.usageFinalized = true; this.usageAtFinish = true; }
+        return;
+      }
       const choice = choices[0];
       if (!choice || typeof choice !== 'object' || typeof choice.index !== 'number' || choice.index !== 0 || 'message' in choice) {
-        throw new ProtocolError('snapshot or alternate choice cannot be merged into a delta stream');
+        throw new ProtocolError('snapshot or alternate choice cannot be merged into a delta stream', 'choice_invalid');
       }
       let delta = choice.delta;
       if (delta == null) delta = {};
-      if (typeof delta !== 'object' || Array.isArray(delta)) throw new ProtocolError('invalid stream delta');
+      if (typeof delta !== 'object' || Array.isArray(delta)) throw new ProtocolError('invalid stream delta', 'delta_invalid');
       if (delta.role != null && delta.role !== 'assistant') {
-        throw new ProtocolError('invalid stream delta');
+        throw new ProtocolError('invalid stream delta', 'delta_invalid');
       }
       const refusal = chatRefusal(delta.refusal);
-      if (this.finish != null && refusal) throw new ProtocolError('refusal continued after finish');
+      if (this.finish != null && refusal) throw new ProtocolError('refusal continued after finish', 'termination_conflict');
       this.refused = refusal || this.refused;
       let content = delta.content;
       if (content == null) content = '';
-      if (typeof content !== 'string') throw new ProtocolError('invalid visible content delta');
+      if (typeof content !== 'string') throw new ProtocolError('invalid visible content delta', 'delta_invalid');
       const reasoning = chatReasoning(delta);
-      if (this.finish != null && reasoning) throw new ProtocolError('private reasoning continued after finish');
+      if (this.finish != null && reasoning) throw new ProtocolError('private reasoning continued after finish', 'termination_conflict');
       if (captureReplay) this.reasoning += reasoning;
       if (this.finish != null && (content || delta.tool_calls)) {
-        throw new ProtocolError('content continued after finish');
+        throw new ProtocolError('content continued after finish', 'termination_conflict');
       }
       const finish = choice.finish_reason;
       if (finish != null) {
         if (typeof finish !== 'string' || (this.finish != null && finish !== this.finish)) {
-          throw new ProtocolError('conflicting finish reasons');
+          throw new ProtocolError('conflicting finish reasons', 'termination_conflict');
         }
         this.finish = finish;
+        if (reported) this.usageAtFinish = true;
       }
       this.text += content;
       const publicContent = projector.push(content);
@@ -437,7 +454,7 @@ export function createOpenAIStreamTurn(profile, binding) {
             // establish or conflict with the original tool identity.
             if (value == null) continue;
             if (typeof value !== 'string' || !value || (call[field] != null && call[field] !== value)) {
-              throw new ProtocolError('conflicting tool identity');
+              throw new ProtocolError('conflicting tool identity', 'identity_conflict');
             }
             call[field] = value;
           }
@@ -469,14 +486,17 @@ export function createOpenAIStreamTurn(profile, binding) {
         const tail = projector.seal();
         if (tail) emitContent?.({ kind: 'text', text: tail });
       }
-      const text = projectInlineReasoning(result.text, marker);
+      const text = projectInlineReasoning(result.text, marker, profile.inlineReasoningPolicy);
       return text === result.text ? result : { ...result, text,
+        ...(result.outputBoundary === 'assistant-text/v1' && !text.trim() ? { outputBoundary: 'no-visible-output/v1' } : {}),
         kind: result.kind === 'final_candidate' && !text.trim() ? 'empty_response' : result.kind };
     },
 
     rawResult({ errorKind = null, failureKind = null } = {}) {
       const finish = this.refused ? 'content_filter' : this.finish;
-      const { usage, usageReported } = sealUsage(this.usage);
+      const { usage, usageReported: observedUsage } = sealUsage(this.usage);
+      const usageReported = observedUsage && (profile.chatUsagePolicy === undefined
+        || this.usageAtFinish && !this.usageConflict);
       if (errorKind && errorKind !== 'provider_retryable_error') {
         return {
           kind: errorKind, text: this.text, toolCalls: [], usage, usageReported,
@@ -534,6 +554,8 @@ export function createOpenAIStreamTurn(profile, binding) {
   };
 }
 
-function usageEquals(a, b) {
-  return a.inputTokens === b.inputTokens && a.outputTokens === b.outputTokens;
+// Copy only validated numeric facts, never the provider envelope or its text.
+function usageCounters(usage) {
+  return Object.fromEntries(['inputTokens', 'outputTokens', 'cachedInputTokens', 'reasoningTokens']
+    .filter(key => Object.hasOwn(usage, key)).map(key => [key, usage[key]]));
 }

@@ -1,8 +1,9 @@
 /** Public explanations for stable Native terminal reasons. Never copy a raw
  * provider, tool or exception message into the task conversation. */
+import { validateModelFailure } from '@kingsoftcloud/agentkit-harness-core';
 const messages = Object.freeze({
   effect_outcome_unknown: '操作结果尚未确认。请核对原操作，不会自动重复执行。',
-  provider_terminal_error: '模型服务返回不可恢复的错误，请检查模型配置和凭据。',
+  provider_terminal_error: '模型请求未能完成，请查看运行诊断。',
   model_policy_abort: '模型请求被服务端策略拒绝，请检查模型与任务配置。',
   model_budget_exhausted: '本次运行已达到模型调用预算。',
   execution_budget_exhausted: '本次运行已达到执行时间预算。',
@@ -25,12 +26,28 @@ const messages = Object.freeze({
   recovery_retry_exhausted: '原运行的恢复预算已耗尽，请核对执行记录。',
 });
 
-export function nativePublicTerminalError(phase, reason) {
+const modelReasons = new Set(['provider_terminal_error', 'provider_retryable_error_retry_exhausted',
+  'malformed_tool_call_retry_exhausted', 'model_policy_abort']);
+function modelFailureMessage(value) {
+  if (!value) return null;
+  try { validateModelFailure(value); } catch { return null; }
+  if (value.code === 'http_authentication') return '模型服务拒绝身份认证，请检查模型凭据。';
+  if (value.code === 'http_permission') return '模型请求被服务端权限或策略拒绝。';
+  if (value.code === 'http_rate_limit') return '模型服务持续限流，本次运行的重试次数已耗尽。';
+  if (value.code === 'host_binding') return '模型连接配置未能加载，请检查运行配置。';
+  if (value.phase === 'request') return '模型请求在发送前未通过校验，请查看运行诊断。';
+  if (value.code === 'stream_timeout' || value.code === 'http_timeout') return '等待模型服务响应超时，本次运行未能完成。';
+  if (value.code === 'transport_error') return '与模型服务的连接中断，本次运行未能完成。';
+  if (value.code === 'provider_error' || value.code === 'http_server') return '模型服务返回执行错误，本次运行未能完成。';
+  if (value.phase === 'stream' || value.phase === 'buffered') return '模型响应未通过协议校验，本次运行已停止，请查看运行诊断。';
+  return null;
+}
+export function nativePublicTerminalError(phase, reason, modelFailure) {
   if (phase !== 'failed' && phase !== 'interrupted') return null;
   return {
     code: phase === 'interrupted' ? 'NATIVE_EXECUTION_INTERRUPTED' : 'NATIVE_EXECUTION_NOT_COMPLETED',
-    message: Object.hasOwn(messages, reason) ? messages[reason] : (phase === 'interrupted'
+    message: (modelReasons.has(reason) ? modelFailureMessage(modelFailure) : null) ?? (Object.hasOwn(messages, reason) ? messages[reason] : (phase === 'interrupted'
       ? '原运行需要核对后才能继续，不会自动重复可能产生副作用的操作。'
-      : 'Native 运行未完成，请检查运行记录和配置。'),
+      : 'Native 运行未完成，请检查运行记录和配置。')),
   };
 }

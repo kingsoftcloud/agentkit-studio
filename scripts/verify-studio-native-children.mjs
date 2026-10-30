@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,7 +13,7 @@ import { createChildRewindProof } from './native-child-rewind-proof.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' }, 'conversation-rewind': { type: 'boolean' },
-  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' }, 'structured-patch': { type: 'boolean' }, 'workspace-rewind': { type: 'boolean' } } });
+  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' }, 'structured-patch': { type: 'boolean' }, 'workspace-rewind': { type: 'boolean' }, 'command-workspace': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 if (values['conversation-rewind']) assert.ok(!Object.entries(values).some(([key, value]) => value === true
   && !['conversation-rewind', 'keep'].includes(key)), '--conversation-rewind is a separate child lifecycle proof');
@@ -27,12 +27,14 @@ if (values['edit-matching']) assert.ok(values['continue-child'] && values.histor
 if (values['structured-patch']) assert.ok(values['continue-child'] && values.history && !values['task-controls'] && !values['child-controls'] && !values.promote && !values['edit-matching'],
   '--structured-patch requires --continue-child --history without other child scenarios');
 const editedChild = values['edit-matching'] || values['structured-patch'];
+if (values['command-workspace']) assert.ok(values['continue-child'] && values.history && !editedChild
+  && !values.promote && !values['task-controls'] && !values['child-controls'], '--command-workspace requires --continue-child --history on its own');
 if (values['workspace-rewind']) assert.ok(values['structured-patch'], '--workspace-rewind requires --structured-patch');
 const repository = resolve(fileURLToPath(new URL('..', import.meta.url))), source = resolve(values.source);
-const root = await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-'));
+const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-children-sdk-')));
 console.log(`Studio child evidence: ${root}`);
 let harness, turn = 1, parentStep = 0, childStep = 0, firstChildId, firstCheckpoint;
-const requests = [], failures = [];
+const requests = [], failures = [], httpMetadata = [];
 let releaseChild, promotion = null;
 const parentContinued = new Promise(resolve => { releaseChild = resolve; });
 async function control(method, payload) {
@@ -47,17 +49,25 @@ const latestChild = body => [...JSON.stringify(body.messages).matchAll(/native-c
 const server = createServer(async (request, response) => {
   try {
     let raw = ''; for await (const part of request) raw += part;
+    httpMetadata.push({ method: request.method, path: request.url, bytes: Buffer.byteLength(raw) });
+    if (request.method === 'GET' && request.url === '/v1/models') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ object: 'list', data: ['parent-proof', 'child-proof'].map(id => ({ id, object: 'model' })) }));
+      return;
+    }
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(request.url, '/v1/chat/completions');
     if (conversationRewindProof) return conversationRewindProof.respond({ body, response });
     const child = body.model === 'child-proof';
     assert.ok(child || body.model === 'parent-proof');
+    if (values['command-workspace'] && !child) assert.doesNotMatch(body.messages[0].content,
+      /Use the read tool —|Use the glob tool —|Track every background job id|create_goal may infer|Start independent delegations with/);
     let call, calls, text;
     if (child) {
       const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3
         || editedChild && (values['workspace-rewind'] ? turn === 2 && childStep === 3 : childStep === 2);
       assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? []
-        : ['read_workspace_file', ...(values['child-plan'] ? ['write_workspace_file'] : []),
+        : ['read_workspace_file', ...(values['command-workspace'] ? ['run_command'] : []), ...(values['child-plan'] ? ['write_workspace_file'] : []),
           ...(values['edit-matching'] ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []),
           ...(values['structured-patch'] ? ['apply_workspace_patch'] : []),
           ...(values['workspace-rewind'] ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : []),
@@ -125,6 +135,9 @@ const server = createServer(async (request, response) => {
           await parentContinued;
         }
         call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
+        if (values['command-workspace']) call = { name: 'run_command', arguments: { command: turn === 1
+          ? "printf 'Child-owned command bytes\\n' > child-command.txt; /bin/cat proof.txt; pwd"
+          : '/bin/cat child-command.txt; pwd' } };
         if (values['structured-patch']) call = { name: 'apply_workspace_patch', arguments: { patch_text: ['*** Begin Patch',
           '*** Update File: proof.txt', '@@', `-${turn === 1 ? 'Evidence from the actual child workspace' : 'Child patched 1'}`, `+Child patched ${turn}`,
           ...(turn === 1 ? ['*** Add File: move-source.txt', '+move old', '*** Add File: obsolete.txt', '+obsolete']
@@ -163,7 +176,12 @@ const server = createServer(async (request, response) => {
       else { if (values['edit-matching']) assert.match(results.at(-1).content, turn === 1 ? /line_number_prefix_stripped/ : /unicode_escape_normalized/);
         else if (values['structured-patch']) assert.match(results.at(-1).content, values['workspace-rewind'] && turn === 2
           ? /"rewound_checkpoint_ids"/ : new RegExp(`Child patched ${turn}`));
-        else assert.match(results.at(-1).content, /Evidence from the actual child workspace/);
+        else if (values['command-workspace']) {
+          const command = JSON.parse(results.at(-1).content);
+          assert.equal(command.exit_code, 0);
+          assert.match(command.stdout, turn === 1 ? /Evidence from the actual child workspace/ : /Child-owned command bytes/);
+          assert.match(command.stdout, /child-workspaces\/.+\/work/);
+        } else assert.match(results.at(-1).content, /Evidence from the actual child workspace/);
         if (values['child-plan']) {
           const writeCall = body.messages.flatMap(message => message.tool_calls ?? []).findLast(item => item.function.name === 'write_workspace_file');
           const written = results.findLast(message => message.tool_call_id === writeCall?.id);
@@ -202,9 +220,17 @@ const server = createServer(async (request, response) => {
       }
     }
     if (text && (body.tools ?? []).some(tool => tool.function.name === 'submit_final_output')) {
-      call = { name: 'submit_final_output', arguments: { output: JSON.parse(text) } }; text = undefined;
+      const schema = body.tools.find(tool => tool.function.name === 'submit_final_output').function.parameters;
+      const answer = schema.properties?.answer;
+      call = { name: 'submit_final_output', arguments: answer ? {
+        answer: answer.type === 'object' ? answer.properties?.output ? { output: JSON.parse(text) } : JSON.parse(text) : text,
+        artifacts: [] } : { output: JSON.parse(text) } }; text = undefined;
     }
-    const toolCalls = calls ?? (call ? [call] : []);
+    const toolCalls = (calls ?? (call ? [call] : [])).map(item => {
+      const definition = body.tools?.find(tool => tool.function.name === item.name)?.function.parameters;
+      return ['native_start_child', 'native_delegate'].includes(item.name) && definition?.properties?.required_tools
+        ? { ...item, arguments: { required_tools: [], ...item.arguments } } : item;
+    });
     const delta = toolCalls.length ? { tool_calls: toolCalls.map((item, index) => ({ index, id: `tool-${requests.length}-${index}`, type: 'function',
       function: { name: item.name, arguments: JSON.stringify(item.arguments) } })) } : { content: text };
     response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -244,6 +270,7 @@ try {
     ...(values['edit-matching'] ? ['        editMatching: true'] : []),
     ...(values['structured-patch'] ? ['        structuredPatch: true'] : []),
     ...(values['workspace-rewind'] ? ['        workspaceRewind: true'] : []),
+    ...(values['command-workspace'] ? ['        commandWorkspace: true'] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
@@ -265,8 +292,13 @@ try {
     const tools = result.events.filter(event => event.type === 'tool/call');
     const expectedTools = [turn === 1 || values['continue-child'] ? 'native_delegate' : 'native_start_child', 'native_child_control', 'native_child_result', 'native_child_tasks',
       ...(turn === 2 ? ['submit_final_output'] : [])];
-    assert.deepEqual(tools.map(event => event.data.name), expectedTools);
-    assert.equal(result.events.filter(event => event.type === 'tool/result').length, expectedTools.length);
+    if (values['command-workspace']) {
+      assert.deepEqual(tools.map(event => event.data.name).filter(name => name !== 'submit_final_output'), expectedTools.filter(name => name !== 'submit_final_output'));
+      assert.equal(result.events.filter(event => event.type === 'tool/result').length, tools.length);
+    } else {
+      assert.deepEqual(tools.map(event => event.data.name), expectedTools);
+      assert.equal(result.events.filter(event => event.type === 'tool/result').length, expectedTools.length);
+    }
     if (values.history) {
       const { agentId } = JSON.parse(await readFile(join(root, 'identity.json'), 'utf8'));
       const identity = { agentId, sessionId: 'native-child-parent' };
@@ -326,6 +358,17 @@ try {
       const child = store.load(reservation.childScope, reservation.childRunId);
       assert.equal(child.snapshot.phase, canceled ? 'canceled' : 'completed'); assert.equal(child.configuration.profile.profileId, 'child-profile');
       assert.equal(child.configuration.childOwnerBinding.parent.runId, parent.runId);
+      if (values['command-workspace']) {
+        assert.equal(record.configuration.hostRecoveryBinding.instructionAssemblyPolicy, 'admitted-tool-sections/v1');
+        const binding = child.configuration.hostRecoveryBinding.childWorkspace;
+        assert.equal(child.configuration.hostRecoveryBinding.childExecutionResource.contract, 'agentkit.child-local-command-resource/v1');
+        const workspace = join(root, 'studio/native-harness/child-workspaces', binding.isolationId, 'work');
+        assert.equal(child.configuration.modelSurface.environment.commandCwd, workspace);
+        assert.equal(await readFile(join(workspace, 'child-command.txt'), 'utf8'), 'Child-owned command bytes\n');
+        await assert.rejects(readFile(join(root, 'workspace/child-command.txt')), { code: 'ENOENT' });
+        const receipts = child.events.filter(event => event.kind === 'tool.completed' && event.payload.name === 'run_command');
+        assert.equal(receipts.length, 1);assert.equal(receipts[0].payload.status, 'ok');
+      }
       if (values['structured-patch']) {
         assert.equal(child.configuration.tools.find(tool => tool.name === 'apply_workspace_patch').workspacePatchPolicy, 'zcode-patch/v1');
         if (values['workspace-rewind']) assert.equal(child.configuration.tools.find(tool => tool.name === 'apply_workspace_patch').workspaceCheckpointPolicy, 'file-preimages/v1');
@@ -457,10 +500,23 @@ try {
       ...(values['child-plan'] ? { childPlanModes: [true, false], originalRunModePreserved: true, deniedPlanWrites: 1,
         actualIsolatedWrites: 1, parentWorkspaceUnchanged: true } : {}) }, null, 2));
   }
+  if (values['command-workspace']) {
+    const hosts = (await readFile(join(root, 'host-processes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(new Set(hosts.map(host => host.pid)).size, 2);
+    const instructionSources = (await readFile(join(root, 'host-instruction-sources.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.ok(instructionSources.some(row => row.sections.includes('tool:read') && row.sections.includes('tool:jobs')),
+      'the real global Host assembly still contains unavailable DSH guidance before Native source selection');
+    await writeFile(join(root, 'command-workspace-proof.json'), JSON.stringify({ contract: 'agentkit.native-child-command-proof/v1',
+      hostProcesses: hosts, parentTurns: 2, childModelRequests: requests.filter(body => body.model === 'child-proof').length,
+      actualCommandCalls: 2, continuedChildSession: true, committedCommandsReplayed: 0, parentWorkspaceUnchanged: true,
+      noPython: true, instructionAssemblyPolicy: 'admitted-tool-sections/v1', instructionSourceRows: instructionSources.length,
+      inactiveGlobalToolGuidanceExcludedFromModel: true, archive: resolve(values.archive) }, null, 2));
+  }
   const controlsProof = values['child-controls'] ? `authenticated same-ID guidance and child cancellation, no tool after cancellation, ${values['guidance-fifo'] ? 'two FIFO guidance commands consumed by distinct model receipts' : 'one original child inbox command'}, ` : '';
-  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${controlsProof}${values['task-controls'] ? 'child-local Todo continuity and exactly-once coordinator reports across two Host PIDs, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
+  console.log(`Studio Native children PASS: actual packed mountStudioHost, authenticated preset admission, ${values.promote ? 'authenticated foreground promotion before parent continuation, original child and budget preserved' : 'foreground native_delegate result before the next parent model'}, ${values['continue-child'] ? 'same child Session continued with a fresh Run and budget after Host restart, original history preserved' : 'background child after Host restart'}, ${values.history ? 'authenticated read-only live and historical inventory, sealed result pages and history after restart, ' : ''}${controlsProof}${values['command-workspace'] ? 'child-scoped commands across two Host PIDs without parent file changes or committed-command replay, ' : ''}${values['task-controls'] ? 'child-local Todo continuity and exactly-once coordinator reports across two Host PIDs, ' : ''}independent approved child model, real scoped workspace reads, explicit parent output constraint with separate child acceptance, one budget settlement per child, two parent turns, Node-only PATH.`);
   }
 } finally {
+  if (values.keep) await writeFile(join(root, 'http-metadata.json'), JSON.stringify(httpMetadata, null, 2));
   releaseChild();
   await harness?.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   if (!values.keep) await rm(root, { recursive: true, force: true });

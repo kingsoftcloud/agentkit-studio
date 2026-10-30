@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { constants as osConstants } from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 import { performance } from 'node:perf_hooks';
+import { localEnvironmentPolicy, localOutputPolicy, resolveEnvironmentPolicy, resolveOutputPolicy } from './local-output-policy.mjs';
 
 export const LOCAL_PROCESS_CONTRACT = 'agentkit.local-process-control/v1';
 const directory = fileURLToPath(new URL('./', import.meta.url));
@@ -37,9 +38,9 @@ export function localControlSettings(input = {}) {
   settings.extraEnvNames = Object.freeze([...new Set(settings.extraEnvNames)]);
   return Object.freeze(settings);
 }
-export function buildScriptEnvironment(source, { settings = localControlSettings(), required = {} } = {}) {
-  const policy = localControlSettings(settings), result = Object.create(null);
-  for (const name of ['PATH', 'LANG', 'LC_ALL', 'TZ', 'SYSTEMROOT', ...policy.extraEnvNames])
+export function buildScriptEnvironment(source, { settings = localControlSettings(), required = {}, environmentPolicy = null } = {}) {
+  const policy = localControlSettings(settings), env = resolveEnvironmentPolicy(policy, localEnvironmentPolicy(environmentPolicy)), result = Object.create(null);
+  for (const name of ['PATH', 'LANG', 'LC_ALL', 'TZ', 'SYSTEMROOT', ...env.names, ...policy.extraEnvNames])
     if (Object.hasOwn(source, name)) result[name] = String(source[name]);
   result.PATH ??= '/bin:/usr/bin'; result.LANG ??= 'C.UTF-8'; result.CI = '1';
   for (const [name, value] of Object.entries(required)) { check(namePattern.test(name), 'invalid_local_process_environment'); result[name] = String(value); }
@@ -84,14 +85,17 @@ function controlReport(text, settings) {
 }
 
 /** argv/env are already Host-authorized. Shell/AST/workspace policy belongs to
- * the caller; no retries and no durable handle ownership is inferred here. */
-export async function runBoundedProcess({ argv, cwd, env, settings: input = {}, timeoutMs = null, signal, onOutput, onSpawn } = {}) {
+ * the caller; no retries and no durable handle ownership is inferred here.
+ * outputPolicy is opt-in (persisted-stream/v1); when absent, legacy
+ * maxOutputBytes-then-kill semantics and result shape are preserved exactly. */
+export async function runBoundedProcess({ argv, cwd, env, settings: input = {}, timeoutMs = null, signal, onOutput, onSpawn, outputPolicy = null } = {}) {
   const settings = localControlSettings(input); signal?.throwIfAborted();
   check(Array.isArray(argv) && argv.length > 0 && argv.every(value => typeof value === 'string' && !value.includes('\0'))
     && argv[0].length > 0 && typeof cwd === 'string' && cwd.length > 0, 'invalid_local_process_command');
   check(env && typeof env === 'object' && !Array.isArray(env) && Object.entries(env).every(([name, value]) =>
     namePattern.test(name) && typeof value === 'string' && !value.includes('\0')), 'invalid_local_process_environment');
   check(timeoutMs === null || Number.isFinite(timeoutMs) && timeoutMs > 0, 'invalid_local_process_timeout');
+  const outPolicy = resolveOutputPolicy(settings, localOutputPolicy(outputPolicy));
   const executable = resolveLocalProcessLauncher();
   const started = performance.now(), duration = Math.min(timeoutMs ?? Infinity, settings.wallSeconds * 1000);
   const child = spawn(executable, [...limitNames.map(key => String(settings[key])), '3', '4', '--', ...argv], {
@@ -108,16 +112,66 @@ export async function runBoundedProcess({ argv, cwd, env, settings: input = {}, 
   child.once('exit', (code, signal) => { exited = true; exitCode = code; exitSignal = signal; exitDone(); stop(); });
   child.once('close', () => { closed = true; closeDone(); });
   child.once('spawn', () => { try { onSpawn?.({ pid: child.pid }); } catch { cleanupErrors.add('spawn_observer_failed'); stop(); } });
+  // persisted-stream/v1: the full capped UTF-8 output is streamed out via onOutput
+  // to the existing supervisor-owned files; result.stdout/stderr hold ONLY a bounded
+  // preview. No full 64MiB buffer is held in memory here. The supervisor fsyncs the
+  // streamed files before its terminal receipt and never overwrites them with the
+  // preview. Only the hard persisted cap, timeout, cancellation, or real resource
+  // limits stop the process; preview overflow never kills a successful process.
+  const persistedStream = outPolicy.mode === 'persistedStream';
+  const preview = persistedStream ? { stdout: [], stderr: [], lengths: { stdout: 0, stderr: 0 },
+    truncated: { stdout: false, stderr: false } } : null;
+  const stream = persistedStream ? { lengths: { stdout: 0, stderr: 0 }, emitted: { stdout: 0, stderr: 0 }, truncated: { stdout: false, stderr: false },
+    decoders: { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') } } : null;
+  const utf8Prefix = (text, limit) => new StringDecoder('utf8').write(Buffer.from(text).subarray(0, limit));
+  const emitPersisted = (channel, text) => {
+    // Invalid source bytes may expand into replacement characters. Bound the
+    // encoded observation too, so normalization cannot exceed the persisted cap.
+    const remaining = outPolicy.persistedBytes - stream.emitted[channel];
+    const bounded = utf8Prefix(text, remaining);
+    stream.emitted[channel] += Buffer.byteLength(bounded);
+    if (bounded) { try { onOutput?.(channel, bounded); } catch { /* supervisor records its own write failure */ } }
+    if (bounded !== text) { stream.truncated[channel] = true; outputLimitExceeded = true; stop(); }
+  };
   for (const channel of ['stdout', 'stderr']) {
     child[channel].on('error', () => { cleanupErrors.add(`${channel}_read_error`); stop(); });
     child[channel].on('data', chunk => {
-      const remaining = settings.maxOutputBytes - lengths[channel], kept = chunk.subarray(0, Math.max(0, remaining));
-      if (kept.length) {
-        output[channel].push(kept); lengths[channel] += kept.length;
-        const text = decoders[channel].write(kept);
-        if (text) { try { onOutput?.(channel, text); } catch { /* observation never changes execution */ } }
+      if (!persistedStream) {
+        const remaining = settings.maxOutputBytes - lengths[channel], kept = chunk.subarray(0, Math.max(0, remaining));
+        if (kept.length) {
+          output[channel].push(kept); lengths[channel] += kept.length;
+          const text = decoders[channel].write(kept);
+          if (text) { try { onOutput?.(channel, text); } catch { /* observation never changes execution */ } }
+        }
+        if (chunk.length > remaining) { truncated[channel] = true; outputLimitExceeded = true; stop(); }
+        return;
       }
-      if (chunk.length > remaining) { truncated[channel] = true; outputLimitExceeded = true; stop(); }
+      // Hard persisted cap: stream all bytes up to this bound via onOutput (to the
+      // owned files). Beyond it the process is stopped — this is the real boundary.
+      const pRemaining = outPolicy.persistedBytes - stream.lengths[channel];
+      const pKept = chunk.subarray(0, Math.max(0, pRemaining));
+      const overcap = chunk.length > pRemaining;
+      if (pKept.length) {
+        stream.lengths[channel] += pKept.length;
+        // Stream complete characters only; the StringDecoder holds a trailing
+        // partial multibyte sequence rather than emitting it. We never flush that
+        // held tail as replacement bytes (end()), so the file holds at most
+        // persistedBytes of valid UTF-8 — a cap-cut multibyte sequence is dropped,
+        // not written as a 3-byte replacement char beyond the cap.
+        const text = stream.decoders[channel].write(pKept);
+        if (text) emitPersisted(channel, text);
+      }
+      // Bounded in-memory preview: keep only up to previewBytes for the receipt,
+      // captured from pKept BEFORE the hard-cap return so an overcap first chunk
+      // still yields a non-empty preview. Preview overflow is honest (truncated
+      // flag) but never stops the process.
+      const vRemaining = outPolicy.previewBytes - preview.lengths[channel];
+      if (vRemaining > 0) {
+        const vKept = pKept.subarray(0, Math.min(pKept.length, vRemaining));
+        if (vKept.length) { preview[channel].push(vKept); preview.lengths[channel] += vKept.length; }
+        if (pKept.length > vRemaining) preview.truncated[channel] = true;
+      } else if (chunk.length) preview.truncated[channel] = true;
+      if (overcap) { stream.truncated[channel] = true; outputLimitExceeded = true; stop(); }
     });
   }
   child.stdio[3].on('error', () => { cleanupErrors.add('control_report_read_error'); stop(); });
@@ -156,14 +210,37 @@ export async function runBoundedProcess({ argv, cwd, env, settings: input = {}, 
     for (const stream of child.stdio) stream?.destroy();
     if (!exited) child.unref();
   }
-  for (const channel of ['stdout', 'stderr']) {
-    const tail = decoders[channel].end();
-    if (tail) { try { onOutput?.(channel, tail); } catch { /* observation never changes execution */ } }
+  if (!persistedStream) {
+    for (const channel of ['stdout', 'stderr']) {
+      const tail = decoders[channel].end();
+      if (tail) { try { onOutput?.(channel, tail); } catch { /* observation never changes execution */ } }
+    }
+  }
+  if (persistedStream) for (const channel of ['stdout', 'stderr']) {
+    // Do not synthesize a replacement for a sequence cut by the hard cap.
+    // Natural invalid tails are normalized within the same encoded-byte bound.
+    if (!stream.truncated[channel]) emitPersisted(channel, stream.decoders[channel].end());
   }
   if (spawnError) throw new LocalProcessError(`local_process_spawn_failed:${spawnError.code ?? 'error'}`);
   const controls = controlReport(Buffer.concat(report).toString('utf8'), settings);
   const code = exitCode ?? (exitSignal && osConstants.signals[exitSignal] ? -osConstants.signals[exitSignal] : null);
-  return { stdout: Buffer.concat(output.stdout).toString('utf8'), stderr: Buffer.concat(output.stderr).toString('utf8'),
+  if (!persistedStream)
+    return { stdout: Buffer.concat(output.stdout).toString('utf8'), stderr: Buffer.concat(output.stderr).toString('utf8'),
+      exitCode: outputLimitExceeded ? 122 : code, timedOut, canceled, outputLimitExceeded,
+      stdoutTruncated: truncated.stdout, stderrTruncated: truncated.stderr, cleanupError: [...cleanupErrors].join(',') || null, controls };
+  // persisted-stream/v1: stdout/stderr hold ONLY the bounded preview. The full
+  // capped output lives in the supervisor-owned files (streamed via onOutput and
+  // located by task_id/cursors). Honest truncation flags distinguish preview vs
+  // hard persisted bounds; outputPersistedTruncated marks the real boundary.
+  const previewText = channel => {
+    const decoded = Buffer.concat(preview[channel]).toString('utf8'), bounded = utf8Prefix(decoded, outPolicy.previewBytes);
+    if (bounded !== decoded) preview.truncated[channel] = true;
+    return bounded;
+  };
+  return { stdout: previewText('stdout'), stderr: previewText('stderr'),
     exitCode: outputLimitExceeded ? 122 : code, timedOut, canceled, outputLimitExceeded,
-    stdoutTruncated: truncated.stdout, stderrTruncated: truncated.stderr, cleanupError: [...cleanupErrors].join(',') || null, controls };
+    stdoutTruncated: preview.truncated.stdout, stderrTruncated: preview.truncated.stderr,
+    stdoutPersistedTruncated: stream.truncated.stdout, stderrPersistedTruncated: stream.truncated.stderr,
+    previewBytes: outPolicy.previewBytes, persistedBytes: outPolicy.persistedBytes,
+    cleanupError: [...cleanupErrors].join(',') || null, controls };
 }

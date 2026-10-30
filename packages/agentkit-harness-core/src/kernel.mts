@@ -2,15 +2,16 @@ import { NativePolicyRegistry } from './policy-registry.mjs';
 import type { NativePolicyModule } from './policy-registry.mjs';
 import { emptyUsage, terminal } from './contracts.mjs';
 import type { CommitBatch, EffectIntent, EffectReceipt, Lease, Message, ModelRequest, ModelResult, ModelStreamEvent, ModelStreamRecord, NativePorts, ObjectValue, PortContext,
-  RunCommand, RunConfiguration, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
+  RunCommand, RunConfiguration, RunDrivingState, RunIdentity, RunScope, RunSnapshot, RunStore, ToolCall, ToolResult, VerificationReport, WorkspaceObservation,
   HookInvocation, HookInvocationResult, ContextPlanningResult } from './contracts.mjs';
 import { initialSnapshot } from './configuration.mjs';
-import { discoveryAfterCleanup, executeToolDiscovery, TOOL_SEARCH, DEFERRED_TOOL_CALL } from './tool-discovery.mjs';
+import { discoveryAfterCleanup } from './tool-discovery.mjs';
 import { executeArtifactTool, governArtifactResult, isArtifactTool, RUNTIME_ARTIFACT_POLICY } from './artifact-runtime.mjs';
-import { coordinatorResponseFacts, executeCoordinatorResponse, isCoordinatorResponse, COORDINATOR_RESPONSE_POLICY } from './coordinator-response.mjs';
+import { coordinatorResponseFacts, isCoordinatorResponse, COORDINATOR_RESPONSE_POLICY } from './coordinator-response.mjs';
 import { runnableCommands } from './store.mjs';
-import { NativeError, canonical, copy, invariant, runKey } from './values.mjs';
+import { NativeError, isNativeError, canonical, copy, invariant, runKey } from './values.mjs';
 import { executeTimedTool } from './tool-execution.mjs';
+import { executeKernelTool, kernelToolPolicy } from './kernel-tool-staging.mjs';
 import type { ToolDispatchProof, ToolFailureObservation } from './tool-execution.mjs';
 import { reduceCommand, transition } from './transitions.mjs';
 import { addUsage, modelToolCatalog, modelRoom, objectValue, plan, reduceModel, reduceTools, settle, validateModelResult } from './machine.mjs';
@@ -18,7 +19,8 @@ import { browserTaskMessages } from './task-policy.mjs';
 import { normalizeToolIdentities, projectSessionHistory } from './history.mjs';
 import { prepareSourceReadQuote, sourceReadBudgetFor, SOURCE_READ_POLICY } from './source-read-budget.mjs';
 import { quoteArtifactRequestCapacity, quoteSingleArtifactReadAdmission, selectArtifactRequestResults } from './artifact-request-capacity.mjs';
-import { reduceVerification, sealCandidate } from './verification.mjs';
+import { reduceVerification, sealCandidate, candidateWorkspaceContinuity } from './verification.mjs';
+import { workspaceObservationSubject } from './workspace-subject.mjs';
 import { effectiveRunConfiguration } from './task-contract.mjs';
 import { prepareToolReceipt, reduceToolReceipt, toolReceiptRequest, waitingToolReceipt } from './tool-receipt.mjs';
 import { prepareWorkspaceRepair, reduceWorkspaceRepair, workspaceRepairRequest } from './workspace-repair.mjs';
@@ -31,6 +33,7 @@ import { hookBytes, hookResult } from './hook-contract.mjs';
 import { planNativeContext, reduceContextModel } from './context-planning.mjs';
 import type { ContextCounters } from './context-planning.mjs';
 import { collectContextContributions } from './context-contributions.mjs';
+import { validateInstructionScopes } from './instruction-scopes.mjs';
 import { refreshContextSources } from './context-source-refresh.mjs';
 import { outputRestartPayload } from './output-recovery.mjs';
 import { reduceTurnInput } from './turn-input.mjs';
@@ -89,7 +92,7 @@ export class NativeKernel {
     const configDigest = this.digest(configuration);
     let existing: RunSnapshot | null = null;
     try { existing = this.store.load(identity.scope, identity.runId).snapshot; }
-    catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
+    catch (error) { if (!(isNativeError(error) && error.code === 'run_not_found')) throw error; }
     if (existing) {
       invariant(identity.parentRunId === null || identity.parentRunId === existing.parentRunId, 'session_head_conflict');
       return this.store.create(configuration, initialSnapshot({ ...identity, parentRunId: existing.parentRunId }, configuration, configDigest));
@@ -125,6 +128,11 @@ export class NativeKernel {
         && (configuration.contract.allowedToolNames === null || configuration.contract.allowedToolNames.includes(name)));
       initial.toolDiscovery = { discovered: names, promoted: [...names] };
     }
+    const scopes = inherited?.snapshot.context.instructionScopes;
+    if (scopes && typeof scopes === 'object' && !Array.isArray(scopes)
+      && configuration.contextSources.some(source => source.instructionPolicy === 'current-files/v1'
+        && source.sourceId === scopes.sourceId && source.bindingDigest === scopes.bindingDigest))
+      initial.context.instructionScopes = validateInstructionScopes(scopes, configuration);
     const history = projectSessionHistory(inherited, configuration, this.digest);
     const snapshot: RunSnapshot = { ...initial,
       messages: [...initial.messages.filter(message => message.role === 'system'), ...history,
@@ -186,7 +194,7 @@ export class NativeKernel {
     return this.submit(scope, runId, command);
   }
   private childTaskStates(snapshot: RunSnapshot): ChildTaskControlState[] {
-    const config = this.store.load(snapshot.scope, snapshot.runId).configuration;
+    const config = this.drivingState(snapshot.scope, snapshot.runId).configuration;
     const controls = Boolean(this.ports.children?.controlTarget && this.ports.children.wakeControl);
     return copy(this.ports.children?.tasks?.({ scope: copy(snapshot.scope), runId: snapshot.runId, sessionId: snapshot.sessionId,
       turnId: snapshot.turnId, buildId: snapshot.buildId, parentRunId: snapshot.parentRunId, taskChainId: snapshot.taskChainId }) ?? [])
@@ -215,7 +223,7 @@ export class NativeKernel {
       batch = { ...transition(snapshot, changes, facts, { commandId: command.commandId, requireNoPendingCommands: false }), childControlDelivery: delivery };
       this.commit(snapshot, lease, batch);
     } catch (error) {
-      const code = error instanceof NativeError ? error.code : '';
+      const code = isNativeError(error) ? error.code : '';
       if (!['child_controls_unavailable', 'child_control_not_owned', 'invalid_child_control', 'child_control_unavailable',
         'child_control_origin_changed', 'child_control_delivery_changed', 'child_control_result_unknown',
         'parent_control_preempts_child_control', 'child_control_preempts_input', 'stale_child_goal_revision'].includes(code)) throw error;
@@ -225,17 +233,28 @@ export class NativeKernel {
     }
     // The child inbox is already durable. A failed wake leaves it for the
     // original owner's ordinary recovery/collection path; never re-enqueue it.
-    await port!.wakeControl!(this.store.load(snapshot.scope, snapshot.runId).snapshot, batch.childControlDelivery!);
+    await port!.wakeControl!(this.drivingState(snapshot.scope, snapshot.runId).snapshot, batch.childControlDelivery!);
+  }
+  private drivingState(scope: RunScope, runId: string): RunDrivingState {
+    if (this.store.drivingState) return this.store.drivingState(scope, runId);
+    const record = this.store.load(scope, runId);
+    return { configuration: record.configuration, snapshot: record.snapshot, lease: record.lease, fence: record.fence,
+      pendingIntent: record.intents.find(item => item.operationKey === record.snapshot.pendingIntent) ?? null,
+      pendingCommands: record.commands.filter(row => !row.consumed).map(row => row.command) };
+  }
+  private drivingCommands(state: RunDrivingState): RunCommand[] {
+    return runnableCommands({ configuration: state.configuration, snapshot: state.snapshot,
+      commands: state.pendingCommands.map(command => ({ command, consumed: false })) });
   }
   private startupPromotion(snapshot: RunSnapshot, config: RunConfiguration, results: ToolResult[], changes: Partial<RunSnapshot>) {
-    const command = runnableCommands(this.store.load(snapshot.scope, snapshot.runId))[0];
+    const command = this.drivingCommands(this.drivingState(snapshot.scope, snapshot.runId))[0];
     if (command?.kind !== 'promote_child' || results.length !== 1 || results[0]?.childBudgetSettlement
       || results[0]?.childBudgetReservation?.deliveryMode !== 'foreground') return null;
     const promotion = admitChildPromotion({ ...snapshot, ...changes }, config, command, this.childTaskStates(snapshot));
     return promotion.reason === 'applied' ? { ...promotion, commandId: command.commandId } : null;
   }
   async runUntilIdle(scope: RunScope, runId: string, { signal, waitForRetry = true }: { signal?: AbortSignal; waitForRetry?: boolean } = {}): Promise<RunSnapshot> {
-    const initial = this.store.load(scope, runId);
+    const initial = this.drivingState(scope, runId);
     invariant(this.digest(initial.configuration) === initial.snapshot.configDigest, 'stored_configuration_mismatch');
     this.policies.bindings(effectiveRunConfiguration(initial.snapshot, initial.configuration, this.digest));
     if (terminal(initial.snapshot.phase)) {
@@ -267,32 +286,36 @@ export class NativeKernel {
     let browserChecked = !(initial.snapshot.browserSessionRefs?.length || initial.snapshot.lastBrowserObservation);
     try {
       while (true) {
+        // Immediate ports and synchronous storage can otherwise form an
+        // unbounded microtask chain that starves lease renewal and cancellation.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
         if (leaseError) throw leaseError;
         if (this.onCheckpoint) {
-          const checkpoint = this.store.load(scope, runId).snapshot;
+          const checkpoint = (this.store.authority?.(scope, runId) ?? this.store.load(scope, runId)).snapshot;
           if (checkpoint.revision !== deliveredRevision) {
             await this.onCheckpoint(copy(checkpoint));
             deliveredRevision = checkpoint.revision;
           }
           if (leaseError) throw leaseError;
         }
-        const record = this.store.load(scope, runId), snapshot = record.snapshot;
+        const record = this.drivingState(scope, runId), snapshot = record.snapshot;
         const config = effectiveRunConfiguration(snapshot, record.configuration, this.digest);
         this.policies.bindings(config);
         if (terminal(snapshot.phase)) return snapshot;
-        const commands = runnableCommands(record);
+        const commands = this.drivingCommands(record);
         const command = commands[0];
         if (command) {
           if (command.kind === 'reconcile_tool' || command.kind === 'repair_workspace') {
             this.commit(snapshot, lease, command.kind === 'repair_workspace'
-              ? prepareWorkspaceRepair(record, command) : prepareToolReceipt(record, command));
+              ? prepareWorkspaceRepair(this.store.load(scope, runId), command)
+              : prepareToolReceipt(this.store.load(scope, runId), command));
             continue;
           }
           if (['message_child', 'cancel_child'].includes(command.kind)) {
             await this.consumeChildControl(snapshot, config, command, lease);
             continue;
           }
-          const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
+          const intent = record.pendingIntent;
           // A lost claim must be classified before steering can invalidate any
           // request. An undispatched intent can instead be retired definitively.
           if (intent?.status === 'running' && (command.kind === 'steer'
@@ -310,7 +333,7 @@ export class NativeKernel {
           continue;
         }
         if (!browserChecked) {
-          const pending = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
+          const pending = record.pendingIntent;
           // Resource loss must not conceal an already claimed effect. Classify
           // its uncertainty before any continuity report can stop the run.
           if (pending?.status === 'running') {
@@ -320,13 +343,13 @@ export class NativeKernel {
           const probeStarted = this.monotonicNow();
           const reports = await this.inspectBrowserResources(snapshot, config, controller.signal);
           if (leaseError) throw leaseError;
-          if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
+          if (controller.signal.aborted || this.drivingCommands(this.drivingState(scope, runId)).length) continue;
           const batch = browserRecoveryTransition(snapshot, reports, pending, Math.max(0, this.monotonicNow() - probeStarted));
           browserChecked = true;
           if (batch) {
             try { this.commit(snapshot, lease, batch); }
             catch (error) {
-              if (error instanceof NativeError && error.code === 'pending_command_conflict') { browserChecked = false; continue; }
+              if (isNativeError(error) && error.code === 'pending_command_conflict') { browserChecked = false; continue; }
               throw error;
             }
             continue;
@@ -344,21 +367,21 @@ export class NativeKernel {
           await new Promise(resolve => setTimeout(resolve, Math.min(50, snapshot.retryNotBefore - this.now())));
           continue;
         }
-        const backgroundIntent = record.intents.find(item => item.operationKey === snapshot.pendingIntent) ?? null;
+        const backgroundIntent = record.pendingIntent;
         const childProbe = childReadyProbe(snapshot, config, backgroundIntent);
         if (childProbe && this.ports.children?.readyChildren) {
           let ready: { childRunIds: string[] };
           try { ready = await this.ports.children.readyChildren({ ...childProbe, signal: controller.signal }); }
           catch (error) {
-            if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
+            if (controller.signal.aborted || this.drivingCommands(this.drivingState(scope, runId)).length) continue;
             throw error;
           }
           if (leaseError) throw leaseError;
-          if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
+          if (controller.signal.aborted || this.drivingCommands(this.drivingState(scope, runId)).length) continue;
           const batch = stageChildReady(snapshot, config, backgroundIntent!, childProbe, ready.childRunIds);
           if (batch) {
             try { this.commit(snapshot, lease, batch); }
-            catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
+            catch (error) { if (isNativeError(error) && error.code === 'pending_command_conflict') continue; throw error; }
             continue;
           }
         }
@@ -367,13 +390,13 @@ export class NativeKernel {
           const started = this.monotonicNow();
           const observations = await this.inspectBackgroundCommands(backgroundRequest, snapshot, config, controller.signal);
           if (leaseError) throw leaseError;
-          if (controller.signal.aborted || runnableCommands(this.store.load(scope, runId)).length) continue;
+          if (controller.signal.aborted || this.drivingCommands(this.drivingState(scope, runId)).length) continue;
           const elapsed = Math.max(0, this.monotonicNow() - started);
           let batch: CommitBatch;
           try { batch = stageCommandObservations(snapshot, config, backgroundRequest, observations, backgroundIntent, elapsed); }
           catch { batch = stageCommandObservations(snapshot, config, backgroundRequest, unavailableCommands(backgroundRequest), backgroundIntent, elapsed); }
           try { this.commit(snapshot, lease, batch); }
-          catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
+          catch (error) { if (isNativeError(error) && error.code === 'pending_command_conflict') continue; throw error; }
           continue;
         }
         const refreshed = refreshContextSources(snapshot, config, backgroundIntent, lease.fence);
@@ -382,7 +405,7 @@ export class NativeKernel {
           continue;
         }
         if (snapshot.pendingIntent !== null) {
-          const intent = record.intents.find(item => item.operationKey === snapshot.pendingIntent);
+          const intent = record.pendingIntent;
           invariant(intent, 'pending_intent_missing');
           if (intent.status === 'running') {
             this.commit(snapshot, lease, await this.recoverEffect(snapshot, config, intent));
@@ -394,8 +417,8 @@ export class NativeKernel {
           }
           let claimed: EffectIntent;
           try { claimed = this.store.claim(scope, runId, lease, this.now(), intent.operationKey); }
-          catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
-          const claimedSnapshot = this.store.load(scope, runId).snapshot;
+          catch (error) { if (isNativeError(error) && error.code === 'pending_command_conflict') continue; throw error; }
+          const claimedSnapshot = (this.store.authority?.(scope, runId) ?? this.store.load(scope, runId)).snapshot;
           const batch = await this.execute(claimedSnapshot, config, claimed, controller.signal, lease.fence);
           this.commit(claimedSnapshot, lease, batch);
           continue;
@@ -404,13 +427,13 @@ export class NativeKernel {
           verification: !!this.ports.verification, input: !!this.ports.input }, this.digest, this.policies);
         if (!next) return snapshot;
         try { this.commit(snapshot, lease, next); }
-        catch (error) { if (error instanceof NativeError && error.code === 'pending_command_conflict') continue; throw error; }
+        catch (error) { if (isNativeError(error) && error.code === 'pending_command_conflict') continue; throw error; }
       }
     } finally {
       clearInterval(heartbeat); this.active.delete(key); this.clockAnchors.delete(key);
       signal?.removeEventListener('abort', externalAbort);
       try { this.store.release(scope, runId, lease); }
-      catch (error) { if (!(error instanceof NativeError && error.code === 'stale_fence')) throw error; }
+      catch (error) { if (!(isNativeError(error) && error.code === 'stale_fence')) throw error; }
     }
   }
   private async inspectBackgroundCommands(request: BackgroundCommandRequest, snapshot: RunSnapshot, config: RunConfiguration, signal: AbortSignal): Promise<unknown> {
@@ -477,17 +500,17 @@ export class NativeKernel {
   private async recoverEffect(snapshot: RunSnapshot, config: RunConfiguration, intent: EffectIntent, elapsedMs = 0,
     observedFacts: { kind: string; payload: ObjectValue }[] = []): Promise<CommitBatch> {
     const stagedCalls = intent.payload.calls as unknown as ToolCall[] | undefined;
-    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => this.policies.forRun(config).todo.isTodoCall(config, call) || this.policies.forRun(config).planning.isPlanModeCall(config, call) || isCoordinatorResponse(config, call))) {
+    if (intent.kind === 'tool' && stagedCalls?.length && stagedCalls.every(call => config.toolExecutionPolicy === 'owner-execution/v1'
+      ? kernelToolPolicy(config, call, this.policies) : this.policies.stagedToolPolicy(config, call) || isCoordinatorResponse(config, call))) {
       // These controls stage pure values. The fenced receipt commit is the only
       // state mutation, so a lost claim cannot have changed external state.
       const results = stagedCalls.map(call => deniedByHook(snapshot, call)
         ? { status: 'error' as const, content: { code: 'pre_tool_hook_denied', executed: false } }
-        : isCoordinatorResponse(config, call) ? executeCoordinatorResponse(snapshot, config, call, this.digest)
-        : this.policies.forRun(config).planning.isPlanModeCall(config, call)
-          ? this.policies.forRun(config).planning.executePlanMode(snapshot, config, call, (intent.payload.interaction ?? null) as ObjectValue | null) : this.policies.forRun(config).todo.executeTodo(snapshot, config, call));
+        : executeKernelTool(snapshot, config, call, (intent.payload.interaction ?? null) as ObjectValue | null, this.digest, this.policies)!);
       const changes = stagePostHooks(snapshot, reduceTools(snapshot, results, stagedCalls, intent, config, this.digest, this.policies), config, stagedCalls, results);
-      const recoveryPolicy = stagedCalls.some(call => isCoordinatorResponse(config, call)) ? COORDINATOR_RESPONSE_POLICY
-        : stagedCalls.some(call => this.policies.forRun(config).planning.isPlanModeCall(config, call)) ? this.policies.forRun(config).planning.PLAN_MODE_POLICY : 'session-todos/v1';
+      const recoveryPolicy = config.toolExecutionPolicy === 'owner-execution/v1' ? 'kernel-tool-staging/v1'
+        : stagedCalls.some(call => isCoordinatorResponse(config, call)) ? COORDINATOR_RESPONSE_POLICY
+        : this.policies.stagedToolRecoveryPolicy(config, stagedCalls);
       return settle(snapshot, intent, { operationKey: intent.operationKey, status: 'committed',
         result: { results: results as never, recoveryPolicy } }, changes, elapsedMs,
       [...observedFacts, { kind: 'effect.reconciled', payload: { operationKey: intent.operationKey, policy: recoveryPolicy } },
@@ -668,6 +691,8 @@ export class NativeKernel {
           if (changes.outputRestarts === snapshot.outputRestarts + 1)
             facts.push({ kind: 'output.restarted', payload: outputRestartPayload(snapshot, { ...snapshot, ...changes }) });
           if (changes.candidate) changes.candidate = sealCandidate(changes.candidate, { ...snapshot, ...changes }, configuration, this.digest);
+          if (result.transportObservation) facts.push({ kind: 'model.transport_observed', payload: objectValue(result.transportObservation) });
+          if (result.failureDiagnostic) facts.push({ kind: 'model.failure_observed', payload: objectValue(result.failureDiagnostic) });
           const rejectedDraft = configuration.contract.finalSubmissionSchema !== null && result.kind === 'final_candidate';
           const appended = changes.messages?.slice(snapshot.messages.length) ?? [];
           const assistantOffset = appended.findIndex(message => message.role === 'assistant');
@@ -713,6 +738,13 @@ export class NativeKernel {
           const calls = intent.payload.calls as unknown as ToolCall[];
           const results = raw.results as unknown as ToolResult[];
           changes = stagePostHooks(snapshot, reduceTools(snapshot, results, calls, intent, configuration, this.digest, this.policies), configuration, calls, results);
+          for (const [index, result] of results.entries()) if (result.browserIsolation
+            && configuration.tools.find(tool => tool.name === calls[index]!.name)?.recoveryPolicy === 'ephemeral-browser/v1') {
+            facts.push({ kind: 'browser.isolated', payload: { operationKey: intent.operationKey, callId: calls[index]!.callId,
+              sessionId: result.browserIsolation.sessionRef.sessionId, generation: result.browserIsolation.sessionRef.generation,
+              originalActionOutcome: 'unknown', oldActionsReplayed: false, freshObservationRequired: true,
+              continued: changes.phase !== 'finalizing', retriesUsed: changes.recoveryRetriesUsed ?? snapshot.recoveryRetriesUsed } });
+          }
           facts.push(...coordinatorResponseFacts(snapshot, configuration, calls, results, this.digest));
           if (changes.todos && changes.todos.revision !== snapshot.todos?.revision)
             facts.push({ kind: 'todo.updated', payload: this.policies.forRun(configuration).todo.todoUpdateFact({ ...snapshot, ...changes }, changes.messages!.length) });
@@ -732,23 +764,60 @@ export class NativeKernel {
           break;
         }
         case 'workspace': {
-          const observation = raw as unknown as WorkspaceObservation;
+          let observation = raw as unknown as WorkspaceObservation;
           invariant(['ok', 'unavailable'].includes(observation.status) && Array.isArray(observation.changedPaths), 'invalid_workspace_observation');
+          const scoped = configuration.workspaceCapturePolicy === 'declared-subjects/v1';
+          const subject = workspaceObservationSubject(snapshot, configuration), subjectKey = subject ? this.digest(subject) : null;
+          if (scoped && canonical(observation.subject ?? null) !== canonical(subject))
+            observation = { revision: null, changedPaths: [], status: 'unavailable', reason: 'workspace_subject_mismatch',
+              ...(subject ? { subject } : {}) };
           const revisionChanged = snapshot.usage.toolCalls > 0 && snapshot.workspaceRevision !== null
+            && (!scoped || (snapshot.workspaceObservationSubject ?? null) === subjectKey)
             && observation.revision !== null && observation.revision !== snapshot.workspaceRevision;
           const browserArtifactOnly = !observation.changedPaths.length
             && snapshot.lastBrowserObservation?.toolCall === snapshot.usage.toolCalls
             && snapshot.lastWorkspaceMutationToolCall !== snapshot.usage.toolCalls;
           changes = { pendingIntent: null, workspaceRevision: observation.revision,
-            ...(configuration.deliveryReviewPolicy ? { workspaceObservationStatus: observation.status === 'ok' ? 'captured' as const : 'unavailable' as const } : {}),
+            ...(scoped ? { workspaceObservationSubject: subjectKey } : {}),
+            workspaceObservationStatus: observation.status === 'ok' && observation.revision ? 'captured' as const : 'unavailable' as const,
             workspaceDirtySinceCheckpoint: snapshot.workspaceDirtySinceCheckpoint || observation.changedPaths.length > 0
               || revisionChanged && !browserArtifactOnly,
             lastWorkspaceMutationToolCall: revisionChanged && !browserArtifactOnly ? snapshot.usage.toolCalls : snapshot.lastWorkspaceMutationToolCall,
             ...(snapshot.workspaceRevision !== observation.revision ? { preparedContext: null } : {}),
             context: { ...snapshot.context, [intent.payload.purpose === 'terminal' ? 'terminalWorkspaceCursor' : 'workspaceCursor']: intent.payload.cursor ?? null },
             workspaceModifiedPaths: [...new Set([...snapshot.workspaceModifiedPaths, ...observation.changedPaths])] };
-          if (snapshot.candidate && ['verifying', 'finalizing'].includes(snapshot.phase)
-            && (observation.status !== 'ok' || snapshot.candidate.workspaceRevision !== observation.revision)) {
+          // A new declaration has no baseline in the previous scope. Seal its
+          // first observation before any verifier, never after an established
+          // revision or a report has already been committed.
+          let candidate = snapshot.candidate;
+          if (scoped && subject && snapshot.phase === 'verifying' && !snapshot.verification && candidate
+            && candidate.workspaceRevision === null && candidate.workspaceSubject === subjectKey
+            && observation.status === 'ok' && observation.revision) {
+            candidate = sealCandidate({ ...candidate, workspaceRevision: observation.revision }, { ...snapshot, ...changes }, configuration, this.digest);
+            changes.candidate = candidate;
+            facts.push({ kind: 'verification.subject_observed', payload: { candidateId: candidate.candidateId,
+              subjectDigest: subjectKey, workspaceRevision: observation.revision } });
+          }
+          const continuity = candidate ? candidateWorkspaceContinuity(candidate, observation, subjectKey) : null;
+          if (observation.status !== 'ok' || !observation.revision) facts.push({ kind: 'workspace.observation_unavailable', payload: {
+            reason: typeof observation.reason === 'string' && /^[a-z0-9_:-]{1,128}$/.test(observation.reason)
+              ? observation.reason : 'workspace_observation_unavailable',
+            candidateId: snapshot.candidate?.candidateId ?? null, changeEstablished: false,
+          } });
+          if (snapshot.candidate && ['verifying', 'finalizing'].includes(snapshot.phase) && continuity === 'unobserved') {
+            if (snapshot.candidate.purpose === 'checkpoint') {
+              changes = { ...changes, phase: 'preparing_context', candidate: null, verification: null,
+                preparedContext: null, outcome: null, reason: null };
+              facts.push({ kind: 'verification.checkpoint_unavailable', payload: {
+                candidateId: snapshot.candidate.candidateId, reason: 'workspace_observation_unavailable' } });
+            } else if (snapshot.phase === 'finalizing' && snapshot.verification?.workspaceDependency !== 'none') {
+              changes = { ...changes, outcome: 'unverified', reason: 'workspace_observation_unavailable' };
+            }
+            // A final candidate still reaches its verifier. Only the trusted
+            // verifier can declare a check independent of workspace state.
+            // A missing capture cannot request a model repair or prove a pass.
+          } else if (snapshot.candidate && ['verifying', 'finalizing'].includes(snapshot.phase)
+            && continuity === 'changed') {
             const repair = snapshot.repairs < configuration.limits.maxRepairs
               && (configuration.limits.maxModelCalls === null
                 || modelRoom(snapshot, configuration) > 0);
@@ -818,9 +887,9 @@ export class NativeKernel {
         default: throw new NativeError('effect_port_not_implemented');
       }
     } catch (error) {
-      const code = error instanceof NativeError ? error.code : 'effect_port_error';
+      const code = isNativeError(error) ? error.code : 'effect_port_error';
       facts.push(observedEffectFailure({ operationKey: intent.operationKey, kind: intent.kind, code,
-        nativeError: error instanceof NativeError, signalAborted: effectSignal.aborted,
+        nativeError: isNativeError(error), signalAborted: effectSignal.aborted,
         elapsedMs: this.monotonicNow() - started, initialTimeoutMs: timeoutMs, observedAtMs: this.now(),
         proofs: [...dispatchProofs.values()] }));
       // Revoke every late callback before reading the live dispatch proofs.
@@ -1004,7 +1073,17 @@ export class NativeKernel {
           if (configuration.sourceReadPolicy === SOURCE_READ_POLICY && (definition.sourceObservationPolicy || call.name === 'ArtifactRead')
             && !sourceReadBudget) return { status: 'error' as const, content: { code: call.name === 'ArtifactRead'
               ? 'artifact_page_budget_unavailable' : 'source_read_budget_unavailable' } };
-          return executeTimedTool({ signal: context.signal, timeoutMs: definition.timeoutMs,
+          const ownerExecution = configuration.toolExecutionPolicy === 'owner-execution/v1';
+          const callContext = { ...context, operationKey: calls.length > 1
+            ? `${context.operationKey}:call:${calls.indexOf(call) + 1}` : context.operationKey };
+          if (ownerExecution && kernelToolPolicy(configuration, call, this.policies)) {
+            context.signal.throwIfAborted();
+            const staged = executeKernelTool(snapshot, configuration, call,
+              (intent.payload.interaction ?? null) as ObjectValue | null, this.digest, this.policies)!;
+            context.signal.throwIfAborted();
+            return governArtifactResult(callContext, definition, staged, configuration, this.ports.artifacts);
+          }
+          const result = await executeTimedTool({ signal: context.signal, timeoutMs: definition.timeoutMs,
             onFailure: observation => onToolFailure?.(call, observation),
             dispatchTimed: definition.executionTimeoutPolicy === 'dispatch/v1' || definition.executionTimeoutPolicy === 'dispatch/v2',
             dispatchProof: dispatchProofs?.get(call.callId),
@@ -1026,12 +1105,9 @@ export class NativeKernel {
               if (request.planMode && (!this.ports.tools.checkPlanMode || await this.ports.tools.checkPlanMode(request) !== true))
                 return this.policies.forRun(configuration).planning.planModeWriteDenial(configuration);
               toolSignal.throwIfAborted();
-              const internal = this.policies.executeTool(snapshot, configuration, call, (intent.payload.interaction ?? null) as ObjectValue | null);
+              const internal = executeKernelTool(snapshot, configuration, call,
+                (intent.payload.interaction ?? null) as ObjectValue | null, this.digest, this.policies);
               return internal ? Promise.resolve(internal)
-              : isCoordinatorResponse(configuration, call)
-              ? Promise.resolve(executeCoordinatorResponse(snapshot, configuration, call, this.digest))
-              : configuration.toolDiscoveryPolicy && [TOOL_SEARCH, DEFERRED_TOOL_CALL].includes(call.name)
-              ? Promise.resolve(executeToolDiscovery(snapshot, configuration, call))
               : configuration.artifactPolicy === RUNTIME_ARTIFACT_POLICY && isArtifactTool(call.name)
               ? executeArtifactTool(request, call, snapshot, configuration, this.ports.artifacts, this.ports.context?.tokens
                 && (!sourceReadBudget || this.ports.context.tokens.tokenizerId === sourceReadBudget.counterId
@@ -1045,8 +1121,12 @@ export class NativeKernel {
             };
             const result = await execute();
             toolSignal.throwIfAborted();
-            return await governArtifactResult(request, definition, result, configuration, this.ports.artifacts);
+            return ownerExecution ? result : await governArtifactResult(request, definition, result, configuration, this.ports.artifacts);
           } });
+          // Projection/archiving is outside the tool's I/O deadline. The
+          // enclosing effect still enforces cancellation, wall budget and
+          // fencing without renewing them or granting an external replay.
+          return ownerExecution ? governArtifactResult(callContext, definition, result, configuration, this.ports.artifacts) : result;
         }));
         if (!artifactCapacity || results.length === 1 && singleReadAdmission && await singleReadAdmission(results[0]!)) return { results };
         const selected = await selectArtifactRequestResults(artifactCapacity, calls, results, this.digest);
@@ -1056,9 +1136,15 @@ export class NativeKernel {
             configuration, this.ports.artifacts))) };
       }
       case 'input':
-        invariant(this.ports.input && Number.isSafeInteger(intent.payload.step) && Number(intent.payload.step) > 1, 'input_port_missing');
+        invariant(this.ports.input && Number.isSafeInteger(intent.payload.step)
+          && (Number(intent.payload.step) > 1 || intent.payload.step === 1
+            && configuration.inputPolicy === 'before-first-model/v1' && snapshot.usage.modelCalls === 0), 'input_port_missing');
         return this.ports.input.prepare({ ...context, step: Number(intent.payload.step) });
-      case 'workspace': invariant(this.ports.workspace, 'workspace_port_missing'); return this.ports.workspace.observe(context);
+      case 'workspace': {
+        invariant(this.ports.workspace, 'workspace_port_missing');
+        const subject = workspaceObservationSubject(snapshot, configuration);
+        return this.ports.workspace.observe({ ...context, ...(subject ? { subject } : {}) });
+      }
       case 'context': {
         invariant(this.ports.context, 'context_port_missing');
         if (configuration.contextPolicy) {

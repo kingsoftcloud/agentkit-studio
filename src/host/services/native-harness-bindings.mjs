@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
 import { freezeNativeDshConfiguration } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
 import { createNativeModelPort } from '@kingsoftcloud/agentkit-harness-node/native/model-port';
-import { modelInput } from '../../model-service.mjs';
+import { frozenNativeModelDescription } from '../../providers/native-model-capabilities.mjs';
+export { profileDescription } from '../../providers/native-model-capabilities.mjs';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeMemoryExtraction } from './native-memory-extraction.mjs';
@@ -11,13 +12,10 @@ export const hash = value => createHash('sha256').update(canonical(value)).diges
 /** Reconstruct the same module contract; absence is a historical v1 binding. */
 export function restoredPolicyConfiguration(original) {
   return original ? { engine: original.configuration.engine,
+    ...(original.configuration.sessionInjectionPolicy ? { sessionInjectionPolicy: original.configuration.sessionInjectionPolicy } : {}),
     ...(Object.hasOwn(original.configuration, 'policyModules') ? { policyModules: copy(original.configuration.policyModules) } : {}) } : {};
 }
 
-export const profileDescription = profile => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
-  baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
-  contextWindow: profile.contextWindow ?? 128000, maxOutputTokens: profile.maxOutputTokens ?? 8192,
-  parameters: profile.parameters ?? {}, requestTimeoutMs: profile.requestTimeoutMs ?? 110000, input: modelInput(profile) });
 export const profileIds = record => {
   const bindings = record.spec?.bindings ?? {};
   return [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds ?? []).map(value => typeof value === 'string' ? value : value?.resourceId)].filter(Boolean))];
@@ -103,9 +101,9 @@ export function createStudioNativeMemoryExtractionBinding({ store, storeDir, wor
         signal.throwIfAborted();
         const current = { ...await models.profile(id), modelName: capsule.source.model };
         signal.throwIfAborted();
-        invariant(hash(profileDescription(current)) === bound.profileVersion,
+        const description = frozenNativeModelDescription(current, capsule.modelBindings);
+        invariant(hash(description) === bound.profileVersion,
           'studio_native_memory_model_binding_changed');
-        const description = profileDescription(current);
         return { protocol: description.protocol, model: current.modelName,
           baseUrl: current.baseUrl, apiKey: current.apiKey, parameters: description.parameters };
       };

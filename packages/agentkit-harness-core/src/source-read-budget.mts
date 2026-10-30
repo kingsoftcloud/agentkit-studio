@@ -8,7 +8,7 @@ const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
 const checked = (value: number) => { invariant(positive(value), 'source_read_counter_invalid'); return value; };
 const signed = (value: number) => { invariant(Number.isSafeInteger(value), 'source_read_counter_invalid'); return value; };
 const declared = (snapshot: RunSnapshot) => [...snapshot.messages].reverse().find(message => message.role === 'assistant' && message.toolCalls?.length);
-function readers(message: Message, config: RunConfiguration): ToolCall[] {
+function readers(message: Message, config: Pick<RunConfiguration, 'tools'>): ToolCall[] {
   return (message.toolCalls ?? []).filter(call => config.tools.some(tool => tool.name === call.name && tool.readOnly
     && (tool.contextRole === 'workspace_read' || tool.name === 'ArtifactRead' && tool.contextRole === 'artifact_read')));
 }
@@ -71,9 +71,18 @@ export async function prepareSourceReadQuote(before: RunSnapshot, after: RunSnap
 export function sourceReadBudgetFor(snapshot: RunSnapshot, config: RunConfiguration, call: ToolCall,
   digest: (value: unknown) => string): SourceReadBudget | undefined {
   if (config.sourceReadPolicy !== SOURCE_READ_POLICY) return undefined;
+  return sourceReadBudgetForState(snapshot, config, declared(snapshot), call, digest);
+}
+
+/** The dispatch guard uses the same quote validator without loading transcript
+ * history. The declaration witness comes from an atomic current-authority read. */
+export function sourceReadBudgetForState(snapshot: Pick<RunSnapshot, 'sourceReadQuote' | 'configDigest' | 'goalRevision'>,
+  config: Pick<RunConfiguration, 'sourceReadPolicy' | 'tools' | 'contextPolicy' | 'limits'>,
+  assistant: Message | null | undefined, call: ToolCall, digest: (value: unknown) => string): SourceReadBudget | undefined {
+  if (config.sourceReadPolicy !== SOURCE_READ_POLICY) return undefined;
   const definition = config.tools.find(tool => tool.name === call.name);
   if (!definition?.sourceObservationPolicy && call.name !== 'ArtifactRead') return undefined;
-  const quote = snapshot.sourceReadQuote, assistant = declared(snapshot), policy = config.contextPolicy;
+  const quote = snapshot.sourceReadQuote, policy = config.contextPolicy;
   if (!quote || quote.status !== 'ready' || quote.policy !== SOURCE_READ_POLICY || !policy || !assistant
     || quote.configDigest !== snapshot.configDigest || quote.goalRevision !== snapshot.goalRevision
     || quote.batchDigest !== digest(assistant) || quote.tokenizerId !== policy.tokenizerId || quote.tokenizerDigest !== policy.tokenizerDigest

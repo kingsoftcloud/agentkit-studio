@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MemoryRunStore, NativeKernel, prepareEffect, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
+import { MemoryRunStore, NativeKernel, prepareEffect, emptyUsage, validateBrowserSessionRef, validateBrowserObservation } from '@kingsoftcloud/agentkit-harness-core';
 import { acceptance, fixture, scope, tool, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTurnExecutor } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
@@ -50,6 +50,50 @@ function setup(t, sqlite, overrides = {}) {
 }
 for (const sqlite of [false, true]) {
   const backend = sqlite ? 'SQLite' : 'memory';
+  test(`${backend}: an isolated private browser failure stays unknown in Session history while the same turn continues`, async t => {
+    const host = setup(t, sqlite);
+    const browser = tool({ name: 'browser', observationRole: 'browser', readOnly: false, concurrentSafe: false,
+      recoveryPolicy: 'ephemeral-browser/v1' });
+    host.binding.configuration = fixture({ tools: [browser], inputMessages: [{ role: 'user', content: 'Complete the task' }],
+      limits: { maxRecoveryRetries: 1 } }).config;
+    let ref, effects = 0;
+    host.binding.ports.model.generate = async () => {
+      if (++host.calls.model > 2) return final();
+      return { ...final(), kind: 'tool_calls', text: '', toolCalls: [{ callId: `browser-${host.calls.model}`,
+        name: 'browser', arguments: { action: host.calls.model === 1 ? 'click' : 'reload' } }] };
+    };
+    host.binding.ports.tools.execute = async request => {
+      effects++;
+      if (effects === 1) {
+        ref = validateBrowserSessionRef({ scope: request.scope, runId: request.runId, sessionId: 'private-page',
+          runtimeId: 'private-browser-owner', workspaceRevision: 'source' });
+        return { status: 'uncertain', content: { code: 'action_timed_out', fresh_observation_required: true }, browserSessionRef: ref,
+          browserIsolation: { contract: 'agentkit.browser-isolation/v1', operationKey: request.operationKey,
+            sessionRef: ref, fenced: true, externalEffects: false, oldActionsReplayed: false } };
+      }
+      const fresh = { ...ref, generation: ref.generation + 1, leaseEpoch: ref.leaseEpoch + 1 };
+      return { status: 'ok', content: 'Fresh page observed', browserSessionRef: fresh,
+        browserObservation: validateBrowserObservation({ sessionRef: fresh, actionId: request.operationKey, actionSeq: 1,
+          status: 'ok', complete: true, retryability: 'safe', viewport: [1280, 720],
+          screenshot: { contentRef: 'host:observed', width: 1, height: 1,
+            contentBlock: { type: 'image_url', image_url: { url: 'data:image/png;base64,cG5n' } } } }) };
+    };
+    assert.deepEqual(await host.execute(host.payload), { reason: { kind: 'completed' } });
+    const record = host.store.load(scope, host.head().runId);
+    assert.equal(record.snapshot.recoveryRetriesUsed, 1); assert.equal(host.calls.model, 3); assert.equal(effects, 2);
+    assert.deepEqual(record.snapshot.browserReobservationRefs, []);
+    const delivered = host.sink.events.filter(event => event.type === 'tool/result');
+    assert.equal(delivered.length, 2);
+    assert.equal(delivered[0].data.message.isError, true);
+    assert.equal(delivered[0].data.meta.nativeOutcome.status, 'uncertain');
+    assert.match(JSON.stringify(delivered[0].data.message.content), /action_timed_out/);
+    assert.equal(delivered[1].data.message.isError, false);
+    assert.equal(host.sink.events.some(event => event.type === 'assistant/message'
+      && event.data.message.content.some(block => block.type === 'text' && block.text === 'Done')), true);
+    const before = structuredClone(host.sink.events);
+    await host.execute(host.payload);
+    assert.deepEqual(host.sink.events, before); assert.equal(effects, 2); assert.equal(host.calls.model, 3);
+  });
   test(`${backend}: adding a recovery locator cannot rewrite an older same-turn Run or authorize configuration drift`, async t => {
     const host = setup(t, sqlite);
     await host.execute(host.payload);

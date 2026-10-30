@@ -14,7 +14,7 @@
 // and taskContract.allowedToolNames must permit the tool.
 
 import { createHash } from 'node:crypto';
-import { NativeError, canonical, copy, terminal, scopeKey } from '@kingsoftcloud/agentkit-harness-core';
+import { NativeError, isNativeError, canonical, copy, terminal, scopeKey, matchesToolExecutionContract } from '@kingsoftcloud/agentkit-harness-core';
 
 import { resolveChildToolIntent as resolveIntent, loadOwnedDirectChild, accountedChildDelivery } from './owned-child.mjs';
 
@@ -84,7 +84,7 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
     check(same(request.scope, parentScope), 'child_reader_scope_mismatch');
     const def = definitionsByName.get(request.call.name);
     check(def, 'child_reader_definition_mismatch');
-    check(same(request.definition, def), 'child_reader_definition_mismatch');
+    check(matchesToolExecutionContract(request.definition, def), 'child_reader_definition_mismatch');
 
     let parentRecord;
     try { parentRecord = store.load(parentScope, request.runId); }
@@ -356,7 +356,7 @@ export function createNativeChildResultTools({ scope, childScopes = [scope], sto
     } catch (error) {
       request.signal?.throwIfAborted();
       if (error.name === 'AbortError') throw error;
-      if (error instanceof NativeError && /^(child_|invalid_child_)/.test(error.code))
+      if (isNativeError(error) && /^(child_|invalid_child_)/.test(error.code))
         return { status: 'error', content: { error_code: error.code } };
       return { status: 'uncertain', content: { error_code: 'child_reader_store_unavailable' } };
     }

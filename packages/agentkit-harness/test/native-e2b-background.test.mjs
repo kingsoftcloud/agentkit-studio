@@ -336,7 +336,7 @@ test('detached fork with recovery: a dead supervisor is detected and the claim a
   const rec = JSON.parse(readFileSync(join(dir, 'record.json'), 'utf8'));
   rec.status = 'running'; rec.exitCode = null; rec.pid = 99997; rec.sandboxId = 'sb-recover'; rec.generation = 1;
   writeFileSync(join(dir, 'record.json'), JSON.stringify(rec));
-  writeFileSync(join(store._sandboxRoot, 'sandbox.json'), JSON.stringify({ sandboxId: 'sb-recover', owner: store.owner }));
+  writeFileSync(join(store._sandboxRoot, 'sandbox.json'), JSON.stringify({ sandboxId: 'sb-recover', owner: store.owner }), { mode: 0o600 });
   // recover should detect the dead supervisor (lock free) and advance the generation.
   await store.recover(handle.commandId);
   const after = JSON.parse(readFileSync(join(dir, 'record.json'), 'utf8'));

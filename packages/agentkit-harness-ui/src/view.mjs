@@ -7,21 +7,20 @@ import { latestSummaryLine } from './summary-playback.mjs';
 //  - a thought block exists only when the reducer created one from a non-empty
 //    provider delta; `thinking.start` alone never produces a visible item.
 //  - no token/character counts are ever rendered for thinking.
-//  - a completed task shows only a host-supplied summary; the UI never
-//    synthesizes a success message.
-//  - errors are redacted and bounded; tool detail blocks are bounded and
+//  - lifecycle/verification status belongs to the host controls, not an extra
+//    transcript footer; no task state synthesizes a closing status message.
+//  - tool errors are redacted and bounded; tool detail blocks are bounded and
 //    redacted and never dump large content verbatim.
 //
 // The tree holds no functions, so it is fully testable with node:test. The
 // React binding in components.mjs maps this tree to React.createElement and
 // attaches delegated event handlers on the root.
 
-import { TaskState } from "./protocol.mjs";
-import { visibleItems, isWaitingForFirstToken, isTerminal, planProgress, taskStatusLabel, DEFAULT_LABELS } from "./project.mjs";
+import { visibleItems, isWaitingForFirstToken, planProgress, DEFAULT_LABELS } from "./project.mjs";
 import { latestNonEmptyLine, truncateText } from "./summary.mjs";
-import { redactError } from "./tool-detail.mjs";
 import { renderTool } from "./renderers.mjs";
-import { toolPreviewBlock } from './tool-preview.mjs';
+import { activityGroups, activityGroupSummary } from './activity-groups.mjs';
+import { conversationWorkSegments, completedWorkLabel } from './work-segments.mjs';
 
 export const ELEMENT = Symbol.for("agentkit.harness-ui.element");
 
@@ -126,6 +125,15 @@ export function wrenchIcon(className) {
   ], className);
 }
 
+export function skillIcon(className) {
+  return icon([h('path', { d: 'm15 4 5 5M4 20l-1-1a1 1 0 0 1 0-1L16 5a2 2 0 0 1 3 3L6 21a1 1 0 0 1-1 0Z' }),
+    h('path', { d: 'M5 3v4M3 5h4M19 14v4M17 16h4' })], className);
+}
+
+export function globeIcon(className) {
+  return icon([h('circle', { cx: 12, cy: 12, r: 10 }), h('path', { d: 'M2 12h20M12 2a17 17 0 0 1 0 20 17 17 0 0 1 0-20' })], className);
+}
+
 export const DEFAULT_VIEW_OPTIONS = Object.freeze({
   thoughtOpen: null, // Map<itemId, boolean> overrides (default: collapsed)
   toolOpen: null, // Map<callId, boolean> overrides (default: open while running)
@@ -152,11 +160,12 @@ export function buildViewModel(state, options = {}) {
   const items = visibleItems(state);
   const plan = planProgress(state);
   const rootChildren = [];
-  if (plan) rootChildren.push(planDock(plan, opts));
+  if (plan && opts.showPlanDock !== false) rootChildren.push(planDock(plan, opts));
   rootChildren.push(timelineList(state, items, opts));
   return h("section", {
     className: "harness-timeline-shell",
     "data-testid": "harness-timeline",
+    "data-has-user-input": String(items.some(item => item.kind === 'text' && item.role === 'user')),
     role: "log",
     "aria-label": opts.ariaLabel,
     "aria-busy": isWaitingForFirstToken(state) ? "true" : "false",
@@ -167,18 +176,52 @@ export function buildViewModel(state, options = {}) {
 function timelineList(state, items, opts) {
   const kids = [];
   if (isWaitingForFirstToken(state)) kids.push(waitingPlaceholder(opts));
-  for (const item of items) {
+  const segments = conversationWorkSegments(state, items);
+  for (const [index, segment] of segments.entries()) {
+    kids.push(...renderTimelineItems(segment.inputs, opts));
+    if (segment.collapsible) {
+      const open = Boolean(opts.historyOpen?.get(segment.id));
+      kids.push(h('details', { open, className: 'harness-work-history', 'data-testid': 'work-history', 'data-item-id': segment.id },
+        h('summary', { className: 'harness-work-history-summary', 'data-testid': 'work-history-toggle' },
+          h('span', {}, completedWorkLabel(state, opts.locale)), chevronIcon('harness-work-history-chevron')),
+        open ? h('div', { className: 'harness-work-items harness-work-history-content', 'data-testid': 'work-history-content' },
+          ...renderTimelineItems(segment.process, opts)) : null));
+    } else if (segment.process.length) kids.push(h('div', { className: 'harness-work-items', 'data-testid': 'work-process' },
+      ...renderTimelineItems(segment.process, opts, state.taskState === 'running'
+        && index === segments.length - 1 && segment.following.length === 0)));
+    kids.push(...renderTimelineItems(segment.following, opts));
+  }
+  if (!kids.length && opts.emptyState) kids.push(opts.emptyState);
+  if (opts.following === false) kids.push(jumpToLatest(opts));
+  return h("div", { className: "harness-timeline", "data-testid": "harness-timeline-list" }, ...kids);
+}
+
+function renderTimelineItems(items, opts, stageTailIsRunning = false, enableBrowserGrouping = true) {
+  const kids = [];
+  for (const item of activityGroups(items, { stageTailIsRunning, enableBrowserGrouping })) {
     if (item.kind === "text") kids.push(textBlock(item, opts));
     else if (item.kind === "thought") kids.push(thoughtBlock(item, opts));
     else if (item.kind === "tool") kids.push(toolBlock(item, opts));
+    else if (item.kind === 'activity-group') kids.push(activityGroupBlock(item, opts));
     else if (item.kind === 'context-marker') kids.push(contextMarker(item, opts));
-    else if (item.kind === 'tool-preview') kids.push(toolPreviewBlock(item, opts));
+    else if (item.kind === 'tool-preview') kids.push(renderTool(item, opts));
   }
-  if (!kids.length && opts.emptyState) kids.push(opts.emptyState);
-  const status = statusLine(state, opts);
-  if (status) kids.push(status);
-  if (opts.following === false) kids.push(jumpToLatest(opts));
-  return h("div", { className: "harness-timeline", "data-testid": "harness-timeline-list" }, ...kids);
+  return kids;
+}
+
+function activityGroupBlock(group, opts) {
+  const { title, detail } = activityGroupSummary(group, opts.locale);
+  const open = Boolean(opts.toolOpen?.get(group.id));
+  const icon = group.family === 'browser' ? globeIcon : group.family === 'terminal' ? terminalIcon : group.family === 'changes' ? pencilIcon : searchIcon;
+  return h('section', { className: 'harness-activity-group', 'data-testid': 'activity-group', 'data-item-id': group.id,
+    'data-family': group.family, 'data-streaming': String(group.active) },
+  h('details', { open, className: 'harness-activity-details', 'data-testid': 'activity-details', 'data-call-id': group.id },
+    h('summary', { className: 'harness-activity-summary', 'data-testid': 'tool-toggle' }, icon('harness-tool-kind-icon'),
+      h('span', { className: group.active ? 'harness-tool-title-streaming' : undefined }, title),
+      h('span', { 'aria-hidden': true }, '·'),
+      h('span', { 'data-testid': 'activity-counts' }, detail), chevronIcon('harness-tool-chevron')),
+    h('div', { className: 'harness-activity-children' }, group.family === 'browser'
+      ? renderTimelineItems(group.events, opts, false, false) : group.children.map(item => toolBlock(item, opts)))));
 }
 
 function contextMarker(item, opts) {
@@ -308,41 +351,6 @@ function planDock(plan, opts) {
     className: "harness-plan-dock",
     "data-testid": "plan-dock",
     "aria-label": "Task plan",
-  }, ...kids);
-}
-
-function statusLine(state, opts) {
-  // A normal response ends at its content. Lifecycle and verification facts
-  // remain available to the host without inserting a redundant transcript row.
-  if (state.taskState === TaskState.Running || state.taskState === TaskState.Completed || state.taskState === TaskState.Unverified && state.verificationRequired !== true)
-    return null;
-  const label = taskStatusLabel(state, opts.labels);
-  if (!label) return null;
-  const terminal = isTerminal(state);
-  const failed = state.taskState === TaskState.Failed;
-  const role = failed ? "alert" : "status";
-  const kids = [h("span", {
-    className: "harness-status-label",
-    "data-testid": "task-state",
-    "data-state": state.taskState,
-  }, label)];
-  if (terminal && state.taskSummary) {
-    kids.push(h("span", {
-      className: "harness-status-summary",
-      "data-testid": "task-summary",
-    }, truncateText(state.taskSummary, { maxLines: 2, maxChars: opts.summaryMaxChars })));
-  } else if (terminal && state.taskError) {
-    kids.push(h("span", {
-      className: "harness-status-error",
-      role: "alert",
-      "data-testid": "task-error",
-    }, redactError(state.taskError)));
-  }
-  return h("div", {
-    className: "harness-status-line",
-    role,
-    "data-testid": "status-line",
-    "data-state": state.taskState,
   }, ...kids);
 }
 

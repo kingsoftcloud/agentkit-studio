@@ -149,7 +149,7 @@ test("search renderer (Grep) shows a Find {query} summary, not a file path, and 
   assert.equal(findByTestId(tree, "read-chip"), null, "no file chip for a content search");
 });
 
-test("list renderer (list_workspace_files) distinguishes a directory listing: List in {cwd}", () => {
+test("list renderer (list_workspace_files) names the directory once after its kind", () => {
   const s = reduceAll(initialState(), [
     ev(EventType.TaskStarted, "t0", { taskId: "T" }),
     ev(EventType.ToolScheduled, "x1", { callId: "c1", name: "list_workspace_files", input: { cwd: "/repo/src" } }),
@@ -158,7 +158,7 @@ test("list renderer (list_workspace_files) distinguishes a directory listing: Li
   const tree = render(s.items[0]);
   assert.equal(attr(tree, "data-renderer"), "read");
   assert.equal(textOf(findByTestId(tree, "tool-title")), "List", "list kind label distinguishes from search");
-  assert.equal(textOf(findByTestId(tree, "search-primary")), "List in /repo/src", "directory listing names the cwd");
+  assert.equal(textOf(findByTestId(tree, "search-primary")), "/repo/src", "directory listing names the cwd without repeating its kind");
 });
 
 test("a failed non-toggleable read preserves its redacted error reason inline (not hidden by a missing toggle)", () => {

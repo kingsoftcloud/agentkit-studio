@@ -15,6 +15,9 @@ const digest = value => createHash('sha256').update(canonical(value)).digest('he
 /** Actual Native model/tool loop inside the shipped SDK profile. */
 export async function apply(ctx, options) {
   const { renderPrompt } = await import(pathToFileURL(options.promptModule).href);
+  const emitAgentEvent = options.publishLive
+    ? (await import(pathToFileURL(options.agentModule).href)).emitAgentEvent : null;
+  const live = [], durableSequences = new Set();
   const store = new SqliteRunStore(join(options.directory, 'native.sqlite'));
   let delegate = false;
   ctx.effect(() => () => store.close(), 'Native verification ledger');
@@ -38,9 +41,20 @@ export async function apply(ctx, options) {
     },
   });
   const executeTurn = createNativeDshTurnExecutor({ store, projections: ctx.sessionProjections,
-    flush: session => ctx.sessions.flush(session), owner: `sdk-${process.pid}`,
+    flush: async session => {
+      const persisted = await ctx.sessions.flush(session);
+      if (persisted === true) for (const seq of Object.values(ctx.sessionProjections.stateOf(session, 'agentkitNativeDelivery').seqs)) durableSequences.add(seq);
+      return persisted;
+    }, owner: `sdk-${process.pid}`,
+    ...(emitAgentEvent ? { publishStreamFrame: ({ agent }, frame) => {
+      live.push({ frame: structuredClone(frame), durablyFlushed: frame.type === 'end' && durableSequences.has(frame.outcome.seq) });
+      emitAgentEvent(ctx, agent, 'agent/assistant-stream', { frame });
+    } } : {}),
     onCheckpoint: async ({ turn }, snapshot) => {
       if (!['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)) return;
+      if (options.publishLive) await writeFile(join(options.directory, `native-turn-${turn}-live.json`),
+        JSON.stringify(live.filter(item => item.frame.turn === turn || item.frame.type !== 'start'
+          && item.frame.attemptId.startsWith(snapshot.runId + ':'))));
       await writeFile(join(options.directory, `native-turn-${turn}-diagnostics.json`), JSON.stringify({
         phase: snapshot.phase, outcome: snapshot.outcome, reason: snapshot.reason,
         modelCalls: snapshot.usage.modelCalls, providerErrors: snapshot.providerErrors,

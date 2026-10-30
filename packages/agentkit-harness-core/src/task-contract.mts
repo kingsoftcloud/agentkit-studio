@@ -1,6 +1,6 @@
 import type { RunCommand, RunConfiguration, RunSnapshot, TaskContract } from './contracts.mjs';
 import { configure } from './configuration.mjs';
-import { invariant, NativeError } from './values.mjs';
+import { invariant, isNativeError } from './values.mjs';
 import type { ChildTaskControlState } from './child-contract.mjs';
 
 export const NATIVE_GOAL_CONTRACT_BINDING = 'agentkit.native-goal-contract/v1';
@@ -43,6 +43,6 @@ export function admitSteering(snapshot: RunSnapshot, command: RunCommand, bindin
     if (contract.revision === (snapshot.taskContract ?? bindings.configuration.contract).revision) return reject('contract_revision_required');
     return { reason: 'applied', contract, contractDigest: bindings.digest(contract) };
   } catch (error) {
-    return reject(error instanceof NativeError && error.code === 'unbound_allowed_tool' ? 'task_tool_scope_unbound' : 'invalid_steering');
+    return reject(isNativeError(error) && error.code === 'unbound_allowed_tool' ? 'task_tool_scope_unbound' : 'invalid_steering');
   }
 }

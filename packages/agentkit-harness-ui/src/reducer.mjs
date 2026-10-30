@@ -31,6 +31,7 @@ export function initialState() {
     taskOutcome: null,
     taskSummary: null, // host-supplied only; never synthesized
     taskError: null,
+    taskStartedAt: null, taskEndedAt: null, finalAnswerId: null,
     verificationRequired: null,
     contextMarkers: [],
     subagents: new Map(),
@@ -97,9 +98,10 @@ function apply(state, e) {
     }
     case EventType.ToolPreview: {
       if (!e.previewId) return;
+      settlePriorReasoning(state, e);
       const previous = state.items.findIndex(item => item.kind === 'tool-preview' && item.id === e.previewId);
       const preview = { kind: 'tool-preview', id: e.previewId, name: e.name, input: e.input,
-        receivedChars: e.receivedChars, streaming: true };
+        receivedChars: e.receivedChars, streaming: true, ...(e.responseId ? { responseId: e.responseId } : {}) };
       if (previous >= 0) state.items[previous] = preview; else state.items.push(preview);
       return;
     }
@@ -135,6 +137,8 @@ function applyTaskStarted(state, e) {
   state.taskError = null;
   state.taskReason = null;
   state.taskMessage = null;
+  if (e.startedAt !== undefined) state.taskStartedAt = e.startedAt;
+  state.taskEndedAt = null; state.finalAnswerId = null;
 }
 
 function applyTaskState(state, e) {
@@ -154,6 +158,9 @@ function applyTaskFinished(state, e) {
   state.taskSummary = e.summary; // host-supplied; may be null — never invented
   state.taskError = e.error || null;
   state.taskReason = e.reason || null;
+  state.taskEndedAt = e.endedAt ?? null;
+  state.finalAnswerId = ['completed', 'unverified'].includes(e.outcome) && !e.error && e.executionState !== 'interrupted'
+    ? e.finalAnswerId ?? null : null;
   if (e.outcome === TaskOutcome.Completed) state.taskState = TaskState.Completed;
   else if (e.outcome === TaskOutcome.Cancelled) state.taskState = TaskState.Cancelled;
   else if (e.outcome === TaskOutcome.Failed) state.taskState = TaskState.Failed;
@@ -173,24 +180,29 @@ function applyTaskFinished(state, e) {
 
 function applyTextDelta(state, e) {
   if (!e.itemId) return;
+  if (e.delta) settlePriorReasoning(state, e);
   const index = findItemIndex(state, e.itemId);
   if (index >= 0) {
     const item = itemAt(state, index);
     item.text = (item.text || "") + e.delta;
     item.streaming = true;
+    if (e.responseId) item.responseId = e.responseId;
     return;
   }
-  state.items.push({ kind: "text", id: e.itemId, text: e.delta, streaming: true });
+  state.items.push({ kind: "text", id: e.itemId, text: e.delta, streaming: true, ...(e.responseId ? { responseId: e.responseId } : {}) });
 }
 
 function applyTextDone(state, e) {
+  if (e.text) settlePriorReasoning(state, e);
   const index = findItemIndex(state, e.itemId);
   if (index >= 0 && state.items[index].kind === "text") {
     const item = itemAt(state, index);
     if (e.text !== undefined) item.text = e.text;
     item.streaming = false;
     if (e.sourceMessageId) item.sourceMessageId = e.sourceMessageId;
-  } else if (e.itemId && e.text) state.items.push({ kind: "text", id: e.itemId, text: e.text, role: e.role ?? "assistant", streaming: false, ...(e.sourceMessageId ? { sourceMessageId: e.sourceMessageId } : {}) });
+    if (e.responseId) item.responseId = e.responseId;
+  } else if (e.itemId && e.text) state.items.push({ kind: "text", id: e.itemId, text: e.text, role: e.role ?? "assistant", streaming: false,
+    ...(e.responseId ? { responseId: e.responseId } : {}), ...(e.sourceMessageId ? { sourceMessageId: e.sourceMessageId } : {}) });
 }
 
 function applyThinkingStart(state, e) {
@@ -210,13 +222,15 @@ function applyThinkingDelta(state, e) {
     const item = itemAt(state, index);
     item.text = (item.text || "") + e.delta;
     item.streaming = true;
+    if (e.responseId) item.responseId = e.responseId;
     return;
   }
   // First non-empty delta creates the placeholder. A provider that emits a delta
   // without a matching start still gets a placeholder (spec fallback).
   if (!e.delta) return;
   state.pendingThinking.delete(e.itemId);
-  state.items.push({ kind: "thought", id: e.itemId, text: e.delta, streaming: true, provider: true });
+  state.items.push({ kind: "thought", id: e.itemId, text: e.delta, streaming: true, provider: true,
+    ...(e.responseId ? { responseId: e.responseId } : {}) });
 }
 
 function applyThinkingDone(state, e) {
@@ -227,28 +241,33 @@ function applyThinkingDone(state, e) {
     if (e.text !== undefined) item.text = e.text;
     item.streaming = false;
     if (e.sourceMessageId) item.sourceMessageId = e.sourceMessageId;
+    if (e.responseId) item.responseId = e.responseId;
     // Host-supplied real duration (seconds); never invented by the reducer.
     if (e.duration != null) item.duration = e.duration;
-  } else if (e.itemId && e.text) state.items.push({ kind: "thought", id: e.itemId, text: e.text, streaming: false, provider: true, ...(e.sourceMessageId ? { sourceMessageId: e.sourceMessageId } : {}), ...(e.duration != null ? { duration: e.duration } : {}) });
+  } else if (e.itemId && e.text) state.items.push({ kind: "thought", id: e.itemId, text: e.text, streaming: false, provider: true,
+    ...(e.responseId ? { responseId: e.responseId } : {}), ...(e.sourceMessageId ? { sourceMessageId: e.sourceMessageId } : {}), ...(e.duration != null ? { duration: e.duration } : {}) });
   // If only a start arrived, no item was ever created — nothing to finalize.
 }
 
 function applyTool(state, e, status, payload) {
   if (!e.callId) return;
+  if (status === ToolStatus.Scheduled) settlePriorReasoning(state, e);
   const index = findToolIndex(state, e.callId);
   if (index >= 0) {
     const item = itemAt(state, index);
     // Late schedule/progress frames can supply missing metadata but cannot
     // reopen a settled call. A conflicting terminal is retained as received.
-    const settled = [ToolStatus.Completed, ToolStatus.Failed].includes(item.status);
-    if (settled && ![ToolStatus.Completed, ToolStatus.Failed].includes(status)) {
-      if (e.type === EventType.ToolScheduled) { item.name = e.name || item.name; item.input = e.input; }
+    const settled = [ToolStatus.Completed, ToolStatus.Failed, ToolStatus.NotDispatched].includes(item.status);
+    if (settled && ![ToolStatus.Completed, ToolStatus.Failed, ToolStatus.NotDispatched].includes(status)) {
+      if (e.type === EventType.ToolScheduled) { item.name = e.name || item.name; item.input = e.input;
+        if (e.responseId) item.responseId = e.responseId; }
       return;
     }
     // Update the existing part in place: stable position, same callId.
     if (e.type === EventType.ToolScheduled) {
       item.name = e.name || item.name;
       item.input = e.input;
+      if (e.responseId) item.responseId = e.responseId;
     }
     if (state.subagents?.has(e.callId)) item.child = state.subagents.get(e.callId);
     if (payload && e.type === EventType.ToolProgress) {
@@ -273,6 +292,7 @@ function applyTool(state, e, status, payload) {
   // Out-of-order terminal event: append a minimal fallback tool part. Missing
   // input details are acceptable; missing transcript rendering is not.
   const fallback = { kind: "tool", callId: e.callId,
+    ...(e.responseId ? { responseId: e.responseId } : {}),
     ...(state.subagents?.has(e.callId) ? { child: state.subagents.get(e.callId) } : {}), name: e.name || "tool", input: e.input || {}, status };
   if (payload && e.type === EventType.ToolResult) { fallback.result = payload.result; fallback.display = payload.display; }
   if (payload && e.type === EventType.ToolError) { fallback.error = payload.error; }
@@ -281,6 +301,19 @@ function applyTool(state, e, status, payload) {
     if (payload.display && payload.display.kind) fallback.display = payload.display;
   }
   state.items.push(fallback);
+}
+
+/** The active channel is scoped to a model response, not the whole task. A
+ * public content/tool delta ends the preceding reasoning presentation; a later
+ * real reasoning delta can reopen it. This supplies no synthetic content or
+ * duration, and cannot settle another response or a child stream. */
+function settlePriorReasoning(state, event) {
+  if (!event.responseId) return;
+  for (let i = 0; i < state.items.length; i++) {
+    const item = state.items[i];
+    if (item.kind === 'thought' && item.streaming && item.responseId === event.responseId)
+      itemAt(state, i).streaming = false;
+  }
 }
 
 function applyPlan(state, e) {

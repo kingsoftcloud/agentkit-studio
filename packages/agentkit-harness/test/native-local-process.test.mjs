@@ -140,7 +140,7 @@ test('already canceled calls and malformed input never spawn a process', async t
 });
 test('a copied package refuses mismatched sources and modified executables before spawn', async t => {
   const directory = workspace(t), origin = new URL('./', import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/local-process'));
-  for (const filename of ['local-process.mjs', 'local-process-launcher.c', 'local-process-manifest.json', 'local-process-bin'])
+  for (const filename of ['local-process.mjs', 'local-output-policy.mjs', 'local-process-launcher.c', 'local-process-manifest.json', 'local-process-bin'])
     cpSync(new URL(filename, origin), join(directory, filename), { recursive: true });
   const standalone = await import(pathToFileURL(join(directory, 'local-process.mjs')).href);
   assert.ok(standalone.resolveLocalProcessLauncher());

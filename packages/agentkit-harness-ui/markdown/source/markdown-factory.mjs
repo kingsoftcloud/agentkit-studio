@@ -561,6 +561,7 @@ export function createMarkdownComponents(React, ReactDOM) {
           Streamdown,
           {
             key: `${effective}:${scopeKey}`,
+            className: "ks-markdown-body",
             mode: streaming ? "streaming" : "static",
             parseIncompleteMarkdown: streaming,
             components,

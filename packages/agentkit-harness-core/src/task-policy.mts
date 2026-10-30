@@ -1,11 +1,20 @@
 import type { BrowserInteractionObservation, Message, RunConfiguration, RunSnapshot, ToolDefinition, ToolResult } from './contracts.mjs';
 import { outstandingChildCalls } from './child-budget.mjs';
+import { workspaceChangeUnobserved } from './workspace-change.mjs';
+import { deliveryScopeEnabled, webDelivery } from './deliverables.mjs';
 
 // This table belongs to the host configuration, never to the Kernel or a model.
-export function invalidatesBrowserObservation(result: ToolResult, config: RunConfiguration): boolean {
+export function invalidatesBrowserObservation(result: ToolResult, config: RunConfiguration, snapshot?: RunSnapshot): boolean {
   const policy = config.workspaceObservationPolicy;
-  return !!policy && (result.workspaceChangedPaths ?? []).some(path =>
-    policy.pathSuffixes.some(suffix => path.toLowerCase().endsWith(suffix)));
+  if (deliveryScopeEnabled(config)) {
+    const artifact = snapshot && webDelivery(snapshot);
+    if (!artifact || !policy) return false;
+    return workspaceChangeUnobserved(result) || (result.workspaceChangedPaths ?? []).some(path =>
+      (artifact.root === '.' || path.startsWith(artifact.root + '/'))
+      && policy.pathSuffixes.some(suffix => path.toLowerCase().endsWith(suffix)));
+  }
+  return !!policy && (workspaceChangeUnobserved(result) || (result.workspaceChangedPaths ?? []).some(path =>
+    policy.pathSuffixes.some(suffix => path.toLowerCase().endsWith(suffix))));
 }
 export function browserObservationAvailable(config: RunConfiguration): boolean {
   return config.tools.some(tool => tool.observationRole === 'browser'
@@ -16,6 +25,7 @@ function remainingCalls(snapshot: RunSnapshot, config: RunConfiguration): number
     : config.limits.maxModelCalls - snapshot.usage.modelCalls - snapshot.descendantUsage.modelCalls - outstandingChildCalls(snapshot, 'model');
 }
 export function webVerificationOnly(snapshot: RunSnapshot, config: RunConfiguration): boolean {
+  if (deliveryScopeEnabled(config) && !webDelivery(snapshot)) return false;
   if (!config.workspaceObservationPolicy || config.limits.maxModelCalls === null) return false;
   const reserve = config.limits.verificationReserveModelCalls ?? 0;
   const finalReserve = config.limits.finalizationReserveModelCalls, remaining = remainingCalls(snapshot, config);
@@ -24,6 +34,7 @@ export function webVerificationOnly(snapshot: RunSnapshot, config: RunConfigurat
     && (reserve < finalReserve + 4 || remaining <= finalReserve + 1) && remaining > finalReserve;
 }
 export function webObservationDue(snapshot: RunSnapshot, config: RunConfiguration): boolean {
+  if (deliveryScopeEnabled(config) && !webDelivery(snapshot)) return false;
   if (!config.workspaceObservationPolicy || snapshot.lastWebMutationToolCall == null
     || !browserObservationAvailable(config)) return false;
   const remaining = remainingCalls(snapshot, config), finalReserve = config.limits.finalizationReserveModelCalls;

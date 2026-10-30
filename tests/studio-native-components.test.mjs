@@ -28,6 +28,7 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
       ? events.get(session.id).reduce(definition.apply, definition.init()) : undefined; },
   } };
   const ctx = { get: key => services[key], effect: install => install(), tools: {
+    resultRetentions: ['caller/v1'],
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(input) {
       invocations.push(input);

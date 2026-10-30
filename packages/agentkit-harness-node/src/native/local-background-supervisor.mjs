@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { commandRequest } from './local-background.mjs';
 import { runBoundedProcess } from './local-process.mjs';
 import { commandFailureEvidence, commandExceptionCause } from './local-command-evidence.mjs';
-import { START_GRACE_MS, TERMINAL, atomicPrivate, check, digest, lockUntil, openPrivate,
+import { shellCommandArgv } from './command-shell.mjs';
+import { START_GRACE_MS, TERMINAL, atomicPrivate, check, digest, fsyncPrivate, lockUntil, openPrivate,
   privateDirectory, privateFile, readRecord, unknownRecord, validId, writeRecord } from './local-command-state.mjs';
 
 async function inputRequest() {
@@ -39,9 +40,20 @@ async function supervise() {
     if (Date.now() - record.createdAt >= START_GRACE_MS) {
       unknownRecord(directory, record, 'supervisor_start_expired'); return;
     }
+    const persistedStream = !!request.outputPolicy;
     const persist = (status, exitCode, stdout, stderr, metadata = {}) => {
       // Complete bytes are fsynced and published BEFORE the terminal receipt.
-      for (const [channel, text] of [['stdout', stdout], ['stderr', stderr]]) atomicPrivate(join(directory, channel), text);
+      if (persistedStream) {
+        // persisted-stream/v1: runBoundedProcess streamed the FULL capped output
+        // to the owned files via onOutput. fsync those files in place before the
+        // terminal receipt; NEVER overwrite them with the bounded preview held in
+        // stdout/stderr (a preview cannot reconstruct the full output).
+        for (const channel of ['stdout', 'stderr']) fsyncPrivate(join(directory, channel));
+      } else {
+        // Legacy: replace the incrementally-appended file with the complete
+        // in-memory captured bytes (capped at maxOutputBytes), exact old contract.
+        for (const [channel, text] of [['stdout', stdout], ['stderr', stderr]]) atomicPrivate(join(directory, channel), text);
+      }
       const next = { ...record, ...metadata, status, exitCode, completedAt: Date.now() };
       writeRecord(directory, next); record = next;
     };
@@ -55,8 +67,9 @@ async function supervise() {
       try { if (privateFile(join(directory, 'cancel'), true)) cancel(); }
       catch { stateError = true; cancel(); }
     }, 20);
-    const result = await runBoundedProcess({ argv: ['/bin/sh', '-c', request.command], cwd: request.cwd,
-      env: request.env, timeoutMs: request.timeoutMs, settings: request.settings, signal: controller.signal,
+    const result = await runBoundedProcess({ argv: shellCommandArgv(request.command, request.shellPolicy ?? null), cwd: request.cwd,
+      env: request.env, timeoutMs: request.timeoutMs, settings: request.settings, outputPolicy: request.outputPolicy,
+      signal: controller.signal,
       onOutput(channel, text) {
         let fd;
         try {
@@ -74,6 +87,9 @@ async function supervise() {
     if (result.controls.status === 'failed' || result.cleanupError || outputError || stateError) {
       status = 'unknown'; exitCode = null; diagnostic = 'command supervision or cleanup failed';
     }
+    // Under persisted-stream, result.stdout/stderr are bounded PREVIEWS; the full
+    // output lives in the streamed files. Append diagnostics to the stderr PREVIEW
+    // for the receipt only; the streamed stderr file is unchanged by this append.
     const stderr = result.stderr + (diagnostic ? (result.stderr && !result.stderr.endsWith('\n') ? '\n' : '') + diagnostic : '');
     stage = 'publish';
     persist(status, exitCode, result.stdout, stderr, { controls: result.controls, outputLimitExceeded: result.outputLimitExceeded,

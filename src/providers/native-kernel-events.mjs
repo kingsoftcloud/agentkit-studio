@@ -96,7 +96,7 @@ export function projectNativeKernelEvent(event, { scopeId, commandId } = {}) {
       : state === 'cancelled' ? { event_type: 'run.canceled', status: 'canceled', reason: 'Execution canceled' }
       : state === 'interrupted' ? { event_type: 'run.interrupted', status: 'interrupted', reason: payload.reason ?? null }
         : { event_type: 'run.failed', status: 'failed', error: {
-          ...nativePublicTerminalError('failed', payload.reason), source: 'agentkit-native', scope_id: scopeId } });
+          ...nativePublicTerminalError('failed', payload.reason, payload.modelFailure), source: 'agentkit-native', scope_id: scopeId } });
     transition(state);
   }
   return facts.map((fact, index) => ({ ...fact, event_id: nativeKernelFactId(event.eventId, index), run_id: runId }));

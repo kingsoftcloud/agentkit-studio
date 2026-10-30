@@ -124,7 +124,7 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
               session: found.agent.session, turn: options.turn, managedOwnership: options.ownership,
               projections: ctx.get('sessionProjections'), flush: session => sessions.flush(session),
               inputMessages: capsule.messages, systemText: capsule.systemPrompt, source: capsule.source,
-              onStreamSettled: (...args) => live?.settled(...args) });
+              isStreamPending: key => Boolean(live?.pending(key)), onStreamSettled: (...args) => live?.settled(...args) });
             live = activeBinding.createLiveStream?.({ turn: options.turn, beginStep: deliver.beginStream });
             onStream = (identity, event, record) => {
               if (effectSignal.aborted) return;
@@ -153,6 +153,15 @@ export function createStudioManagedNativeBinding({ ctx, target, principal, resol
     };
   };
   return Object.freeze(Object.assign(resolveBinding, {
+    async resolveInjectionScope({ command, signal }) {
+      signal.throwIfAborted();
+      invariant(command.tenant_id === boundTarget.tenantId && command.agent_instance_id === boundTarget.agentInstanceId,
+        'NATIVE_MANAGED_STUDIO_TARGET_CHANGED');
+      const host = await resolveHost(); signal.throwIfAborted();
+      const scope = await host.resolveInjectionScope({ agentId: boundTarget.agentInstanceId, sessionId: command.session_id }, signal);
+      signal.throwIfAborted();
+      return { ...scope, tenantId: boundTarget.tenantId, userId: boundPrincipal.userId };
+    },
     enqueueContentFormats: Object.freeze(['text/plain', STUDIO_MANAGED_NATIVE_INPUT]),
   }));
 }

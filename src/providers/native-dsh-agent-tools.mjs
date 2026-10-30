@@ -10,7 +10,7 @@ import { directoryModelReply } from './native-directory-observation.mjs';
 import { workspaceSourceModelReply } from './native-source-observation.mjs';
 import { nativeConversationReadStates } from './native-conversation-reads.mjs';
 import { createNativeDshWebTools } from './native-dsh-web.mjs';
-import { createNativeToolAuthority, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from './native-tool-authority.mjs';
+import { createNativeToolAuthorityReader, createNativeToolReceiptAuthority, createNativeWorkspaceRepairAuthority } from './native-tool-authority.mjs';
 import { createNativeComponentTools, NATIVE_COMPONENT_TOOLS_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/component-tools';
 import { createNativeSkillDisclosurePort } from '@kingsoftcloud/agentkit-harness-node/native/skill-disclosure';
 import { createNativeDshA2aTools } from './native-dsh-a2a.mjs';
@@ -34,18 +34,32 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
     ? createNativeWorkspaceTools({ workspaceRoot: commandAuthority.workspaceRoot,
       stateDir: join(stateDir, 'child-tool-state', commandAuthority.workspaceBinding.isolationId), enablePatches: true, enableRewind: true,
       sessionId, authorize: async () => 'allow' }) : state(agent, sessionId);
-  const ledgerAuthority = commandAuthority ? createNativeToolAuthority({ ...commandAuthority, sessionId,
+  const readAuthority = commandAuthority ? createNativeToolAuthorityReader({ ...commandAuthority, sessionId,
     isClosed: () => isClosed() }) : undefined;
   const childSkills = commandAuthority?.childSkills ? structuredClone(commandAuthority.childSkills) : null;
-  const assertCurrent = ledgerAuthority ? request => {
-    const allowed = ledgerAuthority(request);
-    if (!allowed) return false;
-    const record = commandAuthority.store.load(commandAuthority.scope, request.runId);
-    invariant(!childSkills || request.buildId === childSkills.buildId
-      && canonical(record.configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills), 'studio_native_child_skill_binding_changed');
-    workspaceTools.adoptConversationBranch(record.snapshot.conversationBranch, () => nativeConversationReadStates({
-      store: commandAuthority.store, scope: commandAuthority.scope, seed: record.configuration.conversationSeed }));
-    return allowed;
+  const assertCurrent = readAuthority ? request => {
+    const current = readAuthority(request);
+    if (!current) return false;
+    // Borrowed Skill identity needs its original admission. Ordinary parent
+    // calls do not read that larger header, or any historical tool receipt.
+    if (childSkills) {
+      const original = commandAuthority.store.authority?.(commandAuthority.scope, request.runId)
+        ?? commandAuthority.store.load(commandAuthority.scope, request.runId);
+      invariant(original.snapshot.configDigest === current.snapshot.configDigest && request.buildId === childSkills.buildId
+        && canonical(original.configuration.hostRecoveryBinding?.childSkills ?? null) === canonical(childSkills), 'studio_native_child_skill_binding_changed');
+    }
+    workspaceTools.adoptConversationBranch(current.snapshot.conversationBranch, () => {
+      // Historical receipts are needed only when actually adopting a new
+      // conversation branch. The workspace owner skips this callback when its
+      // current generation is already installed.
+      const original = commandAuthority.store.authority?.(commandAuthority.scope, request.runId)
+        ?? commandAuthority.store.load(commandAuthority.scope, request.runId);
+      invariant(canonical(original.snapshot.conversationBranch) === canonical(current.snapshot.conversationBranch),
+        'studio_native_conversation_branch_changed');
+      return nativeConversationReadStates({ store: commandAuthority.store, scope: commandAuthority.scope,
+        seed: original.configuration.conversationSeed });
+    });
+    return true;
   } : undefined;
   const assertReceiptCurrent = commandAuthority?.store ? createNativeToolReceiptAuthority({ ...commandAuthority, sessionId,
     isClosed: () => isClosed() }) : undefined;
@@ -97,7 +111,7 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
     componentOwners.get(sessionId).add(components);
   }
   let commandsPromise;
-  const commands = () => commandsPromise ||= commandToolsFor(agent, commandAuthority);
+  const commands = () => commandsPromise ||= commandToolsFor(agent, commandAuthority, workspaceTools);
   let codePromise;
   const code = () => codePromise ||= codeToolsFor(agent, commandAuthority);
   let webPromise;
@@ -200,7 +214,8 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
       invariant(assertCurrent(request), 'studio_native_tool_authority_stale');
     if (builtinNames.has(request.call.name) && request.definition.exactContentPolicy && commandAuthority?.store) {
       invariant(assertCurrent?.(request), 'studio_native_tool_authority_stale');
-      const goal = commandAuthority.store.load(request.scope, request.runId).snapshot.goal;
+      const goal = readAuthority?.(request)?.snapshot.goal;
+      invariant(typeof goal === 'string', 'studio_native_tool_authority_stale');
       const required = requestedExactWorkspaceFile(goal), proposed = request.call.arguments;
       if (required && proposed.path === required.relativePath) {
         if (request.call.name === 'edit_workspace_file' && request.definition.exactContentPolicy === 'complete-write-only/v1')
@@ -234,7 +249,10 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
     invariant(!calls.has(callId), 'studio_native_tool_already_executing');
     const checkpointCommitted = commandAuthority?.store && commandAuthority.scope
       ? row => committedWorkspaceCheckpoint(row, { store: commandAuthority.store, scope: commandAuthority.scope, sessionId }) : undefined;
+    const currentAuthority = readAuthority?.(request);
+    if (readAuthority) invariant(currentAuthority, 'studio_native_tool_authority_stale');
     const invocation = { agent, request, workspaceTools, assertCurrent, checkpointCommitted, components, disclosure, a2a: a2aPort, remoteSkills: remoteSkillPort, children: commandAuthority?.children,
+      splitModelObservation: currentAuthority?.splitModelObservation ?? false,
       registryName: codeNames.has(request.call.name) ? sandboxRegistryName(request.call.name) : request.call.name,
       loadRecord: () => commandAuthority.store.load(request.scope, request.runId),
       argumentEncoding: exactNumbers ? argumentEncoding : null, commands, code, web, assertMcpCurrent, executionLifecycle,
@@ -298,7 +316,7 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
         try {
           projected = directoryModelReply(parseNativeJson(context.content), request.call.arguments, {
             policy: request.definition.directoryObservationPolicy,
-            resultBytes: commandAuthority.store.load(request.scope, request.runId).configuration.limits.maxToolResultBytes,
+            resultBytes: currentAuthority.configuration.limits.maxToolResultBytes,
           });
         } catch { /* Unfamiliar post-policy output keeps normal result governance. */ }
         if (projected !== null) { archiveContext = context; context = { ...context, content: projected }; }

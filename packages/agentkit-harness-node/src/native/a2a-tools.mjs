@@ -60,7 +60,7 @@
  * fixed count). Not-found hints are also byte-bounded.
  */
 import { createHash } from 'node:crypto';
-import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant, toolInputRejection, matchesToolExecutionContract } from '@kingsoftcloud/agentkit-harness-core';
 
 export const NATIVE_A2A_TOOLS_CONTRACT = 'agentkit.native-a2a-tools/v1';
 export const DSH_A2A_TOOLS_CONTRACT = 'agentkit.dsh-a2a-tools/v1';
@@ -285,7 +285,7 @@ function validateStrictIdentity(request, definition) {
   if (!Number.isSafeInteger(request.executionFence) || request.executionFence <= 0) errors.push('executionFence must be a positive integer');
   if (!(request.signal instanceof AbortSignal)) errors.push('signal must be an AbortSignal instance');
   if (request.definition == null) errors.push('request.definition is required');
-  else if (canonical(request.definition) !== canonical(definition)) errors.push('request.definition must equal the locked formal definition');
+  else if (!matchesToolExecutionContract(request.definition, definition)) errors.push('request.definition must equal the locked formal execution contract');
   return errors;
 }
 

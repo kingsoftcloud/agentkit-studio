@@ -86,7 +86,7 @@ test('inline reasoning: reference provider selection preserves unrelated and leg
 });
 
 test('inline reasoning: real HTTP stream and buffered responses follow the Python projection', async t => {
-  const profile = makeProfile({ inlineReasoningPolicy: admitInlineReasoningPolicy('zai') });
+  const profile = makeProfile({ inlineReasoningPolicy: admitInlineReasoningPolicy('zai', { contract: 'profiled-content/v1' }) });
   for (const streaming of [false, true]) for (const [chunks, expected] of [
     [['The screenshot shows 6428.</thi', 'nk>64', '28'], '6428'],
     [['Ordinary ', 'answer'], 'Ordinary answer'],

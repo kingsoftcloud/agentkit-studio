@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createBrowserWorkspaceServer } from '../src/native/browser-workspace-server.mjs';
+import { workspaceBrowserCapability } from '../src/native/browser-workspace-policy.mjs';
 
 function workspace(t) {
   const root = mkdtempSync(join(tmpdir(), 'native-browser-files-'));
@@ -51,6 +52,11 @@ test('each page owns a distinct local URL grant; credentials, other pages, and o
     assert.equal(server.allows(url), false, url);
   }
   assert.equal((await fetch(other.origin + new URL(server.url).pathname)).status, 403);
+  const capability = workspaceBrowserCapability();
+  assert.equal(capability.externalNetwork, false);
+  assert.equal(capability.networkPolicy, 'workspace-origin/v1');
+  assert.equal(server.allows('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js'), false);
+  assert.equal(server.allows(new URL('three.module.js', server.url).href), true);
 });
 
 test('raw and encoded traversal, outside symlinks, invalid hosts, malformed URLs and writes cannot expose files', async t => {

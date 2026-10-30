@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { checkLocalCommand, checkGovernedCommand } from '../src/native/local-command-policy.mjs';
 import { decodeRuffAst } from '../src/native/ruff-ast.mjs';
 
-// Deterministic behavior cases transcribed from pinned 355059d local_controls.py
-// and resource_runtime/test_local_process_phase_one_controls.py. No Python runs.
+// Risk cases originate in pinned 355059d local_controls.py. Shell boundaries
+// now follow Bash syntax, rather than the source checker's shlex approximation.
 function fixture(t) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'native-policy-')), cwd = join(root, 'workspace'); mkdirSync(cwd);
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -15,11 +15,11 @@ function fixture(t) {
   return { root, cwd, check: (command, extra = {}) => checkLocalCommand(command, { ...options, ...extra }),
     py: (source, extra = {}) => checkLocalCommand(['python', '-c', source], { ...options, ...extra }) };
 }
-test('governed command policy preserves the separate gateway shlex rules before local risk checks', async t => {
+test('governed command policy applies gateway restrictions to parsed invocations before local risk checks', async t => {
   const f = fixture(t), check = command => checkGovernedCommand(command, { cwd: f.cwd, allowedRoots: [f.cwd] });
   for (const command of ['sudo true', 'printf docker', 'kubectl get pods', 'rm -r scratch', 'git push', 'git checkout main',
     'printf metadata.google.internal', 'curl http://169.254.169.254']) assert.equal((await check(command)).rule, 'command_rejected', command);
-  for (const command of ['echo "unclosed', 'echo trailing\\']) assert.equal((await check(command)).rule, 'invalid_command');
+  for (const command of ['echo "unclosed', 'echo ok &&']) assert.equal((await check(command)).rule, 'invalid_command');
   for (const command of ['printf "%s" "sudo value"', 'printf sudo\u00a0value', 'git status metadata.google.internal', 'printf "# data"'])
     assert.equal(await check(command), null, command);
   assert.equal((await check('sh -c "setsid sleep 5"')).rule, 'shell.blocked_command.setsid');
@@ -32,15 +32,49 @@ test('shell control operators, executable basenames and recursive-force flags ma
   }
   for (const command of ['rm -rf scratch', 'rm --recursive --force scratch', 'true && rm -r -f scratch', 'false || rm -Rf scratch', 'echo x | rm -rf scratch'])
     assert.equal((await f.check(command)).rule, 'shell.recursive_force_remove', command);
-  for (const command of ['sleep 5 &', 'echo x &> output', 'echo x # data &'])
+  for (const command of ['sleep 5 &', 'echo x; sleep 5 &', 'coproc { echo x; }'])
     assert.equal((await f.check(command)).rule, 'shell.background_process', command);
 });
 test('quoted shell data, redirects, ordinary deletes and arguments never become executables', async t => {
   const f = fixture(t);
   for (const command of ["printf '%s' /etc/example", 'echo setsid', 'chmod +x run.sh', 'echo "kill; rm -rf"',
-    "printf '%s' 'a&b'", 'echo a\\&b', 'echo x 2>&1', 'rm -r scratch', 'rm -f file', 'rm -- -rf', '# setsid\necho safe'])
+    "printf '%s' 'a&b'", 'echo a\\&b', 'echo x 2>&1', 'echo x &> output', 'echo x # data &', 'echo trailing\\',
+    'rm -r scratch', 'rm -f file', 'rm -- -rf', '# setsid\necho safe'])
     assert.equal(await f.check(command), null, command);
   assert.equal(await f.check(['printf', 'setsid', '&&', 'data']), null);
+});
+test('Bash comments, continued lines and heredoc payloads never become executable syntax', async t => {
+  const f = fixture(t), check = command => checkGovernedCommand(command, { cwd: f.cwd, allowedRoots: [f.cwd] });
+  const safe = [
+    "# zcode seems empty - let me check if there's another copy\nfind . -type f | head -50",
+    "echo safe # there's a docker & kill in this comment",
+    "cat <<'EOF'\nthere's an unmatched quote \" and & and rm -rf and docker\nEOF\nprintf done",
+    "cat <<EOF\nrm -rf scratch; sudo echo nope\nEOF",
+    'printf "%s" "first\\\nsecond"',
+    `cat <<'EOF'\n${'literal & rm -rf docker\n'.repeat(1000)}EOF`,
+  ];
+  for (const command of safe) assert.equal(await check(command), null, command.slice(0, 120));
+  assert.equal((await check('printf foo#metadata.google.internal')).rule, 'command_rejected', 'hash inside a word is not a comment');
+  assert.equal((await check('echo safe # ignored\ngit push')).rule, 'command_rejected', 'later invocation remains governed');
+});
+test('compound commands and executable substitutions retain local risk checks and source locations', async t => {
+  const f = fixture(t);
+  for (const command of ['echo "$(kill 1)"', 'echo <(kill 1)', 'x=$(kill 1) echo safe',
+    'cat <<EOF\n$(kill 1)\nEOF', "bash <<'EOF'\nkill 1\nEOF", 'bash -s <<< "kill 1"',
+    'if true; then kill 1; fi', 'for f in a b; do kill 1; done'])
+    assert.equal((await f.check(command)).rule, 'shell.blocked_command.kill', command);
+  assert.equal(await f.check('echo "safe; kill 1"'), null);
+  const result = await f.check("# there's no command on this line\nprintf safe\nkill 1");
+  assert.equal(result.line, 3);
+  writeFileSync(join(f.cwd, 'heredoc.sh'), "cat <<'EOF'\nkill 1\nEOF\nprintf safe\n");
+  assert.equal(await f.check('bash heredoc.sh'), null, 'entry script uses the same syntax facts');
+  writeFileSync(join(f.cwd, 'heredoc.sh'), "cat <<'EOF'\nkill 1\nEOF\nkill 1\n");
+  const scriptResult = await f.check('bash heredoc.sh');
+  assert.equal(scriptResult.rule, 'shell.blocked_command.kill');
+  assert.equal(scriptResult.line, 4);
+  assert.equal((await f.check("python3 - <<'PY'\nimport os\nos.kill(1,9)\nPY")).rule, 'python.process_control');
+  assert.equal(await f.check('bash -c "printf safe &> output"'), null);
+  assert.equal((await f.check('sh -c "printf safe &> output"')).rule, 'invalid_command', 'dash may parse &> as a background statement');
 });
 test('nested shell and inline Python are recursively analyzed without executing either language', async t => {
   const f = fixture(t);

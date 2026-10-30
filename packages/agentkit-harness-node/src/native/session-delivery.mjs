@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto';
 import { nativeDurableStream } from './assistant-stream.mjs';
-import { canonical, invariant, terminal } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant, terminal, RESULT_DELIVERY_POLICY, FINAL_SUBMISSION_TOOL } from '@kingsoftcloud/agentkit-harness-core';
 import { NATIVE_DSH_CONTENT_FORMAT } from './dsh-turn-contract.mjs';
 import { readNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
 import { readNativeDshManagedOwnership } from './dsh-managed-ownership.mjs';
-import { nativeDeliveryClosure, nativeDeliveryId, nativeDeliveryTimeline } from './delivery-timeline.mjs';
-import { WORKSPACE_DISPLAY_CONTRACT } from './workspace-display.mjs';
+import { nativeDeliveryId, nativeDeliveryTimeline } from './delivery-timeline.mjs';
+import { projectNativeSessionDelivery } from './session-delivery-journal.mjs';
 import { nativeContextMarkerFacts } from './context-markers.mjs';
 
 export const NATIVE_DELIVERY_PROJECTION = 'agentkitNativeDelivery';
 export const NATIVE_CONTEXT_PRESENTATION_EVENT = 'agentkit-native/context-marker';
 export const NATIVE_CONTEXT_PRESENTATION_CONTRACT = 'agentkit.native-context-presentation/v1';
 export const NATIVE_TOOL_OUTCOME_CONTRACT = 'agentkit.native-tool-outcome/v1';
+export const NATIVE_TOOL_OUTCOME_PRESENTATION_EVENT = 'agentkit-native/tool-outcome';
 
 /** Presentation fact from a scoped committed journal, never model prose. */
 export function nativeToolOutcomeFact(identity, callId, status, presentationTurn = Number(identity.turnId)) {
@@ -21,7 +22,7 @@ export function nativeToolOutcomeFact(identity, callId, status, presentationTurn
   const turn = presentationTurn;
   invariant(Number.isSafeInteger(turn) && turn > 0 && typeof identity.sessionId === 'string' && identity.sessionId
     && typeof identity.runId === 'string' && identity.runId && typeof callId === 'string' && callId
-    && ['ok', 'error', 'uncertain'].includes(status), 'native_tool_outcome_identity_invalid');
+    && ['ok', 'error', 'uncertain', 'not_dispatched'].includes(status), 'native_tool_outcome_identity_invalid');
   return { contract: NATIVE_TOOL_OUTCOME_CONTRACT, sessionId: identity.sessionId, runId: identity.runId, turn,
     callId: nativeDeliveryId(identity.scope, identity.runId, `call:${callId}`), status };
 }
@@ -51,6 +52,14 @@ function sessionUsage(usage) {
 }
 
 function atomKey(event) {
+  if (event.type === NATIVE_TOOL_OUTCOME_PRESENTATION_EVENT) {
+    const fact = event.data;
+    invariant(event.ignorable === true && fact?.contract === NATIVE_TOOL_OUTCOME_CONTRACT
+      && fact.status === 'not_dispatched' && [fact.runId, fact.sessionId].every(value => typeof value === 'string' && value.trim())
+      && Number.isSafeInteger(fact.turn) && fact.turn > 0 && /^ak-native-[a-f0-9]{64}$/.test(fact.callId ?? ''),
+    'native_delivery_tool_outcome_invalid');
+    return `tool-outcome:${fact.runId}:${fact.callId}:${fact.status}`;
+  }
   if (event.type === NATIVE_CONTEXT_PRESENTATION_EVENT) {
     const { contract, runId, sessionId, turn, marker } = event.data ?? {};
     invariant(event.ignorable === true && contract === NATIVE_CONTEXT_PRESENTATION_CONTRACT
@@ -123,7 +132,7 @@ export function nativeDeliveryProjection() {
  * background ownership pins its admission/notice with empty inputMessages.
  */
 export function createNativeSessionDelivery({ store, scope, runId, session, turn, projections,
-  flush, systemText, inputMessages, source, onStreamSettled, flushTimeoutMs = 30_000,
+  flush, systemText, inputMessages, source, onStreamSettled, isStreamPending, flushTimeoutMs = 30_000,
   backgroundOwnership = null, managedOwnership = null } = {}) {
   invariant(typeof flush === 'function' && typeof systemText === 'string' && Array.isArray(inputMessages)
     && Number.isSafeInteger(turn) && turn > 0 && typeof source?.provider === 'string' && source.provider
@@ -168,8 +177,28 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     return state().seqs[key];
   };
 
+  async function flushDurably() {
+    let timer;
+    try {
+      const persisted = await Promise.race([Promise.resolve().then(() => flush(session)), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error('native_delivery_flush_timeout'), { code: 'native_delivery_flush_timeout' })), flushTimeoutMs);
+      })]);
+      invariant(persisted === true, 'native_delivery_not_durable');
+    } finally { clearTimeout(timer); }
+  }
+  async function settleStream(operationKey, eventType, seq) {
+    if (!operationKey || !onStreamSettled || isStreamPending && !isStreamPending(operationKey)) return;
+    // The SDK's committed end frame names a DURABLE Session event. Keep later
+    // tool events behind this barrier so a follower can first release its
+    // staged assistant message. A failed flush leaves the live attempt open
+    // for abandonment; Native execution evidence is already committed.
+    await flushDurably();
+    await onStreamSettled(operationKey, eventType, seq);
+  }
+
   async function deliver(snapshot) {
-    const record = store.load(scope, runId);
+    const record = typeof store.sessionDeliveryState === 'function'
+      ? store.sessionDeliveryState(scope, runId) : projectNativeSessionDelivery(store.load(scope, runId));
     invariant(record.snapshot.revision === snapshot.revision && record.snapshot.eventSeq === snapshot.eventSeq,
       'native_delivery_checkpoint_stale');
     invariant(canonical(snapshot.scope) === canonical(scope) && snapshot.runId === runId
@@ -188,7 +217,8 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       && canonical(record.snapshot.backgroundNotification ?? null) === canonical(background.notification)
       && ['buildId', 'parentRunId', 'taskChainId'].every(key => snapshot[key] === background.identity[key]),
     'native_delivery_background_admission_invalid');
-    invariant(store.sessionHead(scope, snapshot.sessionId)?.runId === runId, 'native_delivery_run_superseded');
+    const head = store.sessionHeadView ? store.sessionHeadView(scope, snapshot.sessionId) : store.sessionHead(scope, snapshot.sessionId);
+    invariant(head?.runId === runId, 'native_delivery_run_superseded');
     invariant(Object.keys(record.projections).filter(key => key.startsWith(projectionPrefix))
       .every(key => key === projectionName), 'native_delivery_admission_changed');
     // Pin the consumer identity before any Session append; a retry must use
@@ -218,8 +248,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     }
 
     const events = record.events.filter(event => event.seq <= snapshot.eventSeq);
-    const inputBoundaries = new Map(record.intents.filter(intent => intent.kind === 'input'
-      && Number.isSafeInteger(intent.payload.messageCursor)).map(intent => [intent.operationKey, intent.payload.messageCursor]));
+    const inputBoundaries = new Map(record.inputBoundaries);
     // Output retirement preserves immutable model events with their ORIGINAL
     // transcript positions. Reconstruct that timeline, then replay each exact
     // retirement at its original point. Never index old events into new text.
@@ -227,34 +256,22 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     // Admission can contain multiple user/context messages and attachments.
     // They have already been published above, with their original host source
     // and content blocks. Never publish a flattened second copy from Native.
-    const admittedUsers = new Set(messages.flatMap((message, index) => message.role === 'user' && !message.history ? [index] : [])
+    const admittedUsers = new Set(messages.flatMap((message, index) => message.role === 'user' && !message.history && message.kind !== 'session_injection' ? [index] : [])
       .slice(0, record.configuration.inputMessages?.length ?? 1));
-    const completed = new Map(events.filter(event => event.kind === 'tool.completed')
-      .map(event => [event.payload.callId, event.payload.status]));
-    // Display metadata is recovered from the same committed receipt as the
-    // observation. It never enters model messages or executes file reads.
-    const displays = new Map();
-    for (const receipt of record.receipts) {
-      if (receipt.status !== 'committed') continue;
-      const intent = record.intents.find(item => item.operationKey === receipt.operationKey);
-      const pairs = intent?.kind === 'tool' ? (intent.payload.calls ?? []).map((call, index) => [call.callId, receipt.result.results?.[index]])
-        : ['tool_receipt', 'workspace_repair'].includes(intent?.kind) ? [[intent.payload.callId, receipt.result.result]] : [];
-      for (const [callId, observation] of pairs) {
-        const meta = observation?.metadata?.nativeTaskDisplay;
-        if (observation?.status === 'ok' && meta?.contract === WORKSPACE_DISPLAY_CONTRACT && meta.display?.kind === 'file_edit')
-          displays.set(callId, meta);
-      }
-    }
+    const completed = new Map(record.toolOutcomes), displays = new Map(record.displays), closures = new Map(record.closures);
+    const privateResultCalls = new Set(record.configuration.deliveryScopePolicy === RESULT_DELIVERY_POLICY
+      ? messages.flatMap(message => (message.toolCalls ?? []).filter(call => call.name === FINAL_SUBMISSION_TOOL).map(call => call.callId)) : []);
     const pending = new Map();
     let cursor = 0, step = 1, modelCount = 0, lastAssistant = null;
-    const settlements = [];
     const visibleReasoning = record.configuration.profile.providerThinkingDisplayPolicy === 'provider-visible/v1';
-    const assistant = (key, text, calls, usage, stream = [], interrupted = false) => {
+    const assistant = async (key, text, calls, usage, stream = [], interrupted = false, operationKey) => {
+      calls = calls.filter(call => !privateResultCalls.has(call.callId));
       const reasoning = visibleReasoning ? displayText(stream, 'reasoning-delta') : '';
       const content = [...(reasoning ? [{ type: 'reasoning', text: reasoning }] : []), ...(text ? [{ type: 'text', text }] : []),
         ...calls.map(call => ({ type: 'tool-call', id: projectedCallId(call.callId), name: call.name, arguments: canonical(call.arguments) }))];
       const seq = append('assistant/message', { turn, step, message: { id: id(key), role: 'assistant', content, source: { kind: 'model', ...source } },
         stream, ...(interrupted ? { interrupted: true } : {}), ...(usage ? { usage } : {}) }, { surfaceOp: 'append' });
+      await settleStream(operationKey, 'assistant/message', seq);
       lastAssistant = interrupted ? null : { text, calls };
       for (const call of calls) {
         pending.set(call.callId, call);
@@ -267,6 +284,11 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     const result = (key, callId, message, isError) => {
       const projected = projectedCallId(callId);
       const outcome = completed.get(callId);
+      // A separate additive fact preserves the exact old tool/result atom on
+      // replay. Publish it first for new results so the Native follower never
+      // paints an undispatched request as a failed execution.
+      if (outcome === 'not_dispatched') append(NATIVE_TOOL_OUTCOME_PRESENTATION_EVENT,
+        nativeToolOutcomeFact(snapshot, callId, outcome, turn), { ignorable: true });
       const nativeOutcome = outcome === 'uncertain' ? nativeToolOutcomeFact(snapshot, callId, outcome, turn) : null;
       const display = !isError && displays.has(callId) ? structuredClone(displays.get(callId)) : null;
       append('tool/result', { turn, step, message: { id: id(key), role: 'tool', source: { kind: 'tool', callId: projected },
@@ -294,6 +316,7 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
             content: [{ type: 'text', text: message.content }] }, { surfaceOp: 'append' });
         }
         else if (message.role === 'tool') {
+          if (privateResultCalls.has(message.callId)) continue;
           let status = completed.get(message.callId);
           if (status === undefined) {
             try { status = JSON.parse(message.content)?.status; } catch { status = undefined; }
@@ -343,11 +366,13 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       if (interrupted) {
         drain(payload.messageCursor);
         if (modelCount++ > 0) { append('step/end', { turn, step }); step++; append('step/start', { turn, step }); }
-        const stream = nativeDurableStream(payload.operationKey, payload.displayStream);
+        const stream = nativeDurableStream(payload.operationKey, payload.displayStream, record.configuration);
         const readable = visibleReasoning && (displayText(stream, 'text-delta') || displayText(stream, 'reasoning-delta'));
-        const seq = readable ? assistant(`interrupted:${event.eventId}`, displayText(stream, 'text-delta'), [], null, stream, true)
-          : append('assistant/attempt', { turn, step, stream });
-        settlements.push([payload.operationKey, readable ? 'assistant/message' : 'assistant/attempt', seq]);
+        if (readable) await assistant(`interrupted:${event.eventId}`, displayText(stream, 'text-delta'), [], null, stream, true, payload.operationKey);
+        else {
+          const seq = append('assistant/attempt', { turn, step, stream });
+          await settleStream(payload.operationKey, 'assistant/attempt', seq);
+        }
         continue;
       }
       invariant(summary || index === null || Number.isSafeInteger(index) && index >= cursor && messages[index]?.role === 'assistant',
@@ -356,23 +381,21 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
       if (modelCount++ > 0) { append('step/end', { turn, step }); step++; append('step/start', { turn, step }); }
       const message = summary || index === null ? null : messages[index];
       const usage = payload.usageReported === false ? null : sessionUsage(payload.usage);
-      const stream = nativeDurableStream(payload.operationKey, payload.displayStream);
+      const stream = nativeDurableStream(payload.operationKey, payload.displayStream, record.configuration);
       // An uncommitted provider prefix is an attempt, never a tool batch or
       // final candidate. New display admissions retain readable public content;
       // legacy admissions keep their attempt and empty usage message unchanged.
       if (!summary && index === null && stream.length) {
         if (visibleReasoning && (displayText(stream, 'text-delta') || displayText(stream, 'reasoning-delta'))) {
-          const seq = assistant(`response:${event.eventId}`, displayText(stream, 'text-delta'), [], usage, stream, true);
-          settlements.push([payload.operationKey, 'assistant/message', seq]);
+          await assistant(`response:${event.eventId}`, displayText(stream, 'text-delta'), [], usage, stream, true, payload.operationKey);
         } else {
           const seq = append('assistant/attempt', { turn, step, stream });
-          settlements.push([payload.operationKey, 'assistant/attempt', seq]);
-          assistant(`response:${event.eventId}`, '', [], usage);
+          await settleStream(payload.operationKey, 'assistant/attempt', seq);
+          await assistant(`response:${event.eventId}`, '', [], usage);
         }
       } else {
-        const seq = assistant(`response:${event.eventId}`, summary || payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
-          message?.toolCalls ?? [], usage, stream);
-        if (payload.operationKey) settlements.push([payload.operationKey, 'assistant/message', seq]);
+        await assistant(`response:${event.eventId}`, summary || payload.candidateStatus === 'rejected' ? '' : message?.content ?? payload.text,
+          message?.toolCalls ?? [], usage, stream, false, payload.operationKey);
       }
       if (!summary && index !== null) cursor = index + 1;
       drain(payload.messageCursor);
@@ -380,24 +403,19 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     drain(messages.length);
     if (terminal(snapshot.phase)) {
       for (const [callId] of pending) {
-        const { context, isError } = nativeDeliveryClosure(record, callId);
+        const closure = closures.get(callId);
+        invariant(closure, 'native_delivery_closure_missing');
+        const { context, isError } = closure;
         result(`closure:${callId}`, callId, context, isError);
       }
       if (snapshot.finalText && (lastAssistant?.text !== snapshot.finalText || lastAssistant.calls.length)) {
-        assistant('final-delivery', snapshot.finalText, [], null);
+        await assistant('final-delivery', snapshot.finalText, [], null);
       }
       append('step/end', { turn, step });
     }
-    let timer;
-    try {
-      const persisted = await Promise.race([Promise.resolve().then(() => flush(session)), new Promise((_, reject) => {
-        timer = setTimeout(() => reject(Object.assign(new Error('native_delivery_flush_timeout'), { code: 'native_delivery_flush_timeout' })), flushTimeoutMs);
-      })]);
-      invariant(persisted === true, 'native_delivery_not_durable');
-    } finally { clearTimeout(timer); }
+    await flushDurably();
     state();
     store.acknowledge(scope, runId, projectionName, snapshot.eventSeq);
-    for (const settlement of settlements) onStreamSettled?.(...settlement);
   }
   const delivery = snapshot => {
     const next = chain.then(() => deliver(snapshot));
@@ -405,8 +423,9 @@ export function createNativeSessionDelivery({ store, scope, runId, session, turn
     return next;
   };
   delivery.beginStream = () => {
-    const record = store.load(scope, runId);
-    const step = 1 + record.events.filter(event => ['model.completed', 'context.summary_completed', 'completion.delivery_review_completed', 'model.stream_interrupted'].includes(event.kind)).length;
+    const events = typeof store.sessionDeliveryState === 'function'
+      ? store.sessionDeliveryState(scope, runId).events : store.events(scope, runId);
+    const step = 1 + events.filter(event => ['model.completed', 'context.summary_completed', 'completion.delivery_review_completed', 'model.stream_interrupted'].includes(event.kind)).length;
     if (step > 1) append('step/end', { turn, step: step - 1 });
     append('step/start', { turn, step });
     return step;

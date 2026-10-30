@@ -182,6 +182,40 @@ function hooks(Component, React) {
 }
 const walk = node => node && typeof node === 'object' ? [node, ...(node.children ?? []).flatMap(walk)] : [];
 
+test('the actual header keeps a Session stop control during approval and waits for the owner to settle', async () => {
+  const dispatcher = {}, React = { Fragment: 'fragment', createElement: (type, props, ...children) =>
+    ({ type, props: props ?? {}, children: children.flat(Infinity).filter(Boolean) }),
+  useState: (...args) => dispatcher.useState(...args), useEffect: (...args) => dispatcher.useEffect(...args) };
+  let poll, accept, running = true;
+  const stopped = new Promise(resolve => { accept = resolve; }), requests = [];
+  let status = { contract: 'agentkit.studio-native-recovery/v1', agentId: 'local-agent', sessionId: 'session',
+    runId: 'original-run', state: 'recovering', phase: 'awaiting_interaction', canResume: false };
+  const Panel = createNativeChildPanel({ ui: { React, ResourceDialog: 'dialog', buttonStyle: () => ({}) },
+    setInterval: callback => { poll = callback; return 1; }, clearInterval() {}, hostRemote: {
+      agents: async () => ({ items: [{ metadata: { id: 'local-agent', local: true }, spec: { runtime: { type: 'harness' } } }] }),
+      nativeRecoveryStatus: async () => status,
+    } });
+  const props = { sessionId: 'session', requestSessionStop: id => { requests.push(id); return stopped; },
+    useSessions: select => select({ byId: { session: { running, projectionValues: {
+      agentPreset: 'agentkit-studio-agent-local-agent-r1-hash' } } } }) };
+  const outer = hooks(Panel, dispatcher);outer.render(props);await tick();
+  let mounted = outer.render(props).children[0];const child = hooks(mounted.type, dispatcher);
+  child.render(mounted.props);child.render(mounted.props);await tick();child.render(mounted.props);
+  let tree = child.render(mounted.props);
+  const button = walk(tree).find(node => node.type === 'button' && node.children.includes('停止当前任务'));
+  assert.ok(button, 'Approval cannot remove the Session control with the composer');assert.equal(button.props.disabled, false);
+  assert.deepEqual(requests, []);button.props.onClick();tree = child.render(mounted.props);
+  assert.deepEqual(requests, ['session']);assert.ok(walk(tree).some(node => node.type === 'button'
+    && node.children.includes('正在停止…') && node.props.disabled));
+  accept({ ok: true, value: { accepted: true } });await tick();tree = child.render(mounted.props);
+  assert.ok(walk(tree).some(node => node.children.includes('正在停止…')), 'Acknowledgement is not observed termination');
+  status = { ...status, phase: 'canceled', state: 'closed' };running = false;
+  mounted = outer.render(props).children[0];child.render(mounted.props);poll();await tick();child.render(mounted.props);
+  tree = child.render(mounted.props);
+  assert.equal(walk(tree).some(node => node.children.includes('停止当前任务') || node.children.includes('正在停止…')), false);
+  child.dispose();outer.dispose();
+});
+
 test('the actual header panel renders saved history, reads results and exposes only current admitted promotion', async () => {
   // Hook calls delegate at invocation time so each mounted component has its own scope.
   const dispatcher = {}, React = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity).filter(Boolean) }),

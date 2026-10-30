@@ -1,15 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { NativeKernel, NativeError, NATIVE_GOAL_CONTRACT_BINDING, NATIVE_JSON_CODEC, canonical, configure, defaultPolicyBindings, invariant, terminal, safeReadRecoveryCalls } from '@kingsoftcloud/agentkit-harness-core';
+import { NativeKernel, NativeError, isNativeError, NATIVE_GOAL_CONTRACT_BINDING, NATIVE_JSON_CODEC, canonical, configure, defaultPolicyBindings, invariant, terminal } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeSessionDelivery } from './session-delivery.mjs';
-import { reviewedBackgroundInterruption } from '@kingsoftcloud/agentkit-harness-core';
+import { reviewedBackgroundInterruption, reviewedResourceInterruption } from '@kingsoftcloud/agentkit-harness-core';
 import { nativeLiveStream } from './assistant-stream.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from './dsh-turn-contract.mjs';
-import { nativeDshOwnership, nativeDshOwnershipHost, readNativeDshOwnership } from './dsh-turn-ownership.mjs';
+import { nativeDshOwnership, nativeDshOwnershipHost, readNativeDshOwnership, NATIVE_DSH_OWNERSHIP_HOST } from './dsh-turn-ownership.mjs';
 import { NATIVE_DSH_BACKGROUND_TURN_CONTRACT, nativeDshBackgroundOwnership, readNativeDshBackgroundOwnership,
   verifyNativeDshBackgroundOwnership } from './dsh-background-ownership.mjs';
 
 export { NATIVE_DSH_TURN_CONTRACT };
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
+export const nativeDshRunId = (scope, sessionId, turn) => `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
 const failure = (code, snapshot) => Object.assign(new Error(code), { code,
   ...(snapshot ? { nativeRunId: snapshot.runId, nativePhase: snapshot.phase, nativeReason: snapshot.reason } : {}),
 });
@@ -18,21 +19,8 @@ const unresolvedEffects = record => record.intents.some(intent => ['tool', 'hook
     || record.receipts.some(receipt => receipt.operationKey === intent.operationKey && receipt.status === 'uncertain'
       && !(receipt.result.recoveryPolicy === 'safe-read/v1' && receipt.result.retryScheduled === true))));
 
-/** Close only the presentation owner of a terminal safe-read failure. Receipts
- * remain unknown, and any later turn must obtain a fresh observation. */
-export function canCloseNativeReadInterruption(record) {
-  if (!record || record.snapshot.phase !== 'interrupted' || record.snapshot.reason !== 'effect_outcome_unknown'
-    || record.snapshot.pendingIntent || record.snapshot.toolReconciliation
-    || record.snapshot.children?.length || record.snapshot.backgroundCommands?.length
-    || record.snapshot.childBudgetReservations?.some(row => row.settledUsageDigest === null)) return false;
-  const unknown = record.receipts.filter(receipt => receipt.status === 'uncertain'
-    || receipt.result.results?.some(result => result.status === 'uncertain'));
-  return unknown.length > 0 && unknown.every(receipt => {
-    const intent = record.intents.find(item => item.operationKey === receipt.operationKey);
-    return intent?.kind === 'tool' && safeReadRecoveryCalls(intent.payload.calls, record.configuration);
-  }) && !record.intents.some(intent => ['tool', 'hook', 'child', 'input'].includes(intent.kind)
-    && intent.status === 'running' && !record.receipts.some(receipt => receipt.operationKey === intent.operationKey));
-}
+import { canCloseNativeReadInterruption } from './read-interruption.mjs';
+export { canCloseNativeReadInterruption };
 
 function cancelReason(cause) {
   return ['user', 'parent', 'disposed'].includes(cause?.kind) ? { kind: cause.kind }
@@ -49,11 +37,17 @@ function canceledEnding(signal, record) {
 
 /** Shared freezing for first admission and explicit adoption of the same Run. */
 export function freezeNativeDshConfiguration(binding, input, contract = binding.configuration.contract, originalConfiguration) {
-  const configuration = configure({ ...binding.configuration, contract, hostBindingDigest: hash({
+  const shared = binding.configuration.backgroundNotificationPolicy === 'completed-before-model/v1'
+    && (!originalConfiguration || Object.hasOwn(originalConfiguration, 'backgroundSessionBindingDigest'))
+    ? { backgroundSessionBindingDigest: hash({ contract: 'agentkit.background-session-binding/v1', scope: binding.scope,
+      buildId: binding.buildId, declared: binding.configuration.hostBindingDigest, instructions: binding.configuration.instructions }) } : {};
+  const configuration = configure({ ...binding.configuration, ...shared, contract, hostBindingDigest: hash({
     contract: NATIVE_DSH_TURN_CONTRACT, declared: binding.configuration.hostBindingDigest,
     goalContractBinding: NATIVE_GOAL_CONTRACT_BINDING, jsonCodec: NATIVE_JSON_CODEC,
     input: input.messages, source: binding.source,
   }) });
+  if (originalConfiguration && !Object.hasOwn(originalConfiguration, 'backgroundSessionBindingDigest'))
+    delete configuration.backgroundSessionBindingDigest;
   if (originalConfiguration && !Object.hasOwn(originalConfiguration, 'policyModules')) {
     // Historical ownership predates explicit manifests. Only the equivalent
     // built-in default may be projected back to absence; custom changes fail.
@@ -196,7 +190,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       && typeof binding.ports.tools?.execute === 'function', 'native_dsh_turn_binding_invalid');
     const sessionId = String(agent.session.id), scope = structuredClone(binding.scope);
     const runId = background ? admission.identity.runId
-      : `native-dsh-${hash({ contract: NATIVE_DSH_TURN_CONTRACT, scope, sessionId, turn })}`;
+      : nativeDshRunId(scope, sessionId, turn);
     invariant(binding.taskContractFactory === undefined || typeof binding.taskContractFactory === 'function', 'native_dsh_contract_factory_invalid');
     invariant(binding.releaseResources === undefined || typeof binding.releaseResources === 'function', 'native_dsh_resource_release_invalid');
     invariant(binding.consumeCompletedTurn === undefined || typeof binding.consumeCompletedTurn === 'function', 'native_dsh_completed_turn_consumer_invalid');
@@ -217,7 +211,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
         // Requiring reconciliation prevents a new turn from racing that work.
         const unknownEffect = unresolvedEffects(previous);
         const unsettledChildren = (previous.snapshot.childBudgetReservations ?? []).some(item => item.settledUsageDigest === null);
-        const readInterrupted = canCloseNativeReadInterruption(previous) || reviewedBackgroundInterruption(previous);
+        const readInterrupted = canCloseNativeReadInterruption(previous) || reviewedBackgroundInterruption(previous)
+          || reviewedResourceInterruption(previous);
         if (!terminal(head.phase) || head.phase === 'interrupted' && !readInterrupted
           || unknownEffect && !readInterrupted || unsettledChildren) {
           throw failure('NATIVE_RUN_RECOVERY_REQUIRED', previous.snapshot);
@@ -225,7 +220,7 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       }
       let existing = null, existingConfiguration = null;
       try { const record = store.load(scope, runId); existing = record.snapshot; existingConfiguration = record.configuration; }
-      catch (error) { if (!(error instanceof NativeError && error.code === 'run_not_found')) throw error; }
+      catch (error) { if (!(isNativeError(error) && error.code === 'run_not_found')) throw error; }
       if (admission) {
         invariant(background ? canonical(scope) === canonical(admission.identity.scope)
           && sessionId === admission.identity.sessionId && binding.buildId === admission.identity.buildId
@@ -267,8 +262,8 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn, projections, flush,
         inputMessages: input.messages, systemText: configuration.instructions, source: binding.source,
         ...(background ? { backgroundOwnership: nativeDshBackgroundOwnership({ record: background.record, turn }) } : {}),
-        onStreamSettled: (...args) => live.settled(...args) });
-      live = nativeLiveStream({ agent, runId, turn, revisions, beginStep: delivery.beginStream,
+        isStreamPending: key => live.pending(key), onStreamSettled: (...args) => live.settled(...args) });
+      live = nativeLiveStream({ agent, runId, turn, revisions, configuration, beginStep: delivery.beginStream,
         publish: publishStreamFrame ? frame => publishStreamFrame(payload, frame) : undefined });
       const kernel = new NativeKernel({ store, ports: binding.ports, digest: hash, owner,
         onStream: (identity, event, record) => {
@@ -403,30 +398,51 @@ export function createNativeDshTurnExecutor({ store, resolveTurn, resolveRecover
       } finally { active.delete(key); }
     }
   };
-  const execute = payload => run(payload);
+  const execute = async payload => {
+    // A delivered-but-unclosed turn already has immutable admission. SDK
+    // redelivery must use the same trusted rebinding as explicit recovery,
+    // rather than silently recompiling newer Host defaults. Pending ownership
+    // supplies facts, never ports or permission; resolveRecoveryTurn rechecks
+    // the actual preset before the worker can run.
+    if (durableOwnership && typeof resolveRecoveryTurn === 'function') {
+      const external = payload?.agent?.externalTurns;
+      const pending = external?.contract === NATIVE_DSH_OWNERSHIP_HOST && typeof external.pending === 'function'
+        ? external.pending() : null;
+      if (pending?.engine === NATIVE_DSH_TURN_CONTRACT && pending.turn === payload.turn) {
+        const admission = readNativeDshOwnership(pending, { sessionId: payload.agent.session.id, turn: payload.turn });
+        invariant(Array.isArray(payload.input?.messages) && canonical(payload.input.messages) === canonical(admission.messages),
+          'native_dsh_recovery_input_changed');
+        return run(payload, admission);
+      }
+    }
+    return run(payload);
+  };
   /** Release only the SDK presentation owner after an explicit durable review.
    * No original port is rebound, and no effect, budget or verdict is changed. */
-  execute.closeReviewedBackgroundInterruption = ({ agent, scope, runId, signal }) => {
+  const closeReviewedInterruption = (reviewed, code, message) => ({ agent, scope, runId, signal }) => {
     invariant(durableOwnership, 'native_dsh_ownership_host_required');
     signal?.throwIfAborted();
     const host = nativeDshOwnershipHost(agent), owner = host.pending();
-    invariant(owner?.engine === NATIVE_DSH_TURN_CONTRACT, 'native_dsh_background_review_owner_mismatch');
+    invariant(owner?.engine === NATIVE_DSH_TURN_CONTRACT, 'native_dsh_interruption_review_owner_mismatch');
     return host.resume(NATIVE_DSH_TURN_CONTRACT, async resumed => {
       signal?.throwIfAborted(); resumed.signal.throwIfAborted();
       const admission = readNativeDshOwnership(resumed.ownership, { sessionId: agent.session.id, turn: resumed.turn });
       const record = store.load(scope, runId);
       invariant(admission.identity.runId === runId && canonical(admission.identity.scope) === canonical(scope)
         && canonical(resumed.ownership) === canonical(owner) && record.snapshot.sessionId === agent.session.id
-        && admission.configDigest === record.snapshot.configDigest && reviewedBackgroundInterruption(record),
-      'native_dsh_background_review_owner_mismatch');
+        && admission.configDigest === record.snapshot.configDigest && reviewed(record),
+      'native_dsh_interruption_review_owner_mismatch');
       const delivery = createNativeSessionDelivery({ store, scope, runId, session: agent.session, turn: resumed.turn,
         projections, flush, inputMessages: admission.messages, systemText: record.configuration.instructions, source: admission.source });
       await delivery(record.snapshot);
       signal?.throwIfAborted(); resumed.signal.throwIfAborted();
-      return { reason: { kind: 'error', error: { code: 'NATIVE_BACKGROUND_RESULT_UNKNOWN',
-        message: 'Waiting ended after operator review. The original result remains unknown; do not replay it.' } } };
+      return { reason: { kind: 'error', error: { code, message } } };
     });
   };
+  execute.closeReviewedBackgroundInterruption = closeReviewedInterruption(reviewedBackgroundInterruption,
+    'NATIVE_BACKGROUND_RESULT_UNKNOWN', 'Waiting ended after operator review. The original result remains unknown; do not replay it.');
+  execute.closeRetiredResources = closeReviewedInterruption(reviewedResourceInterruption,
+    'NATIVE_RESOURCE_RESULT_UNKNOWN', 'Disposable resources fenced after review. Original results remain unknown; do not replay old actions.');
   /** Trusted Host recovery: resolve original ports, then drive the same owned turn and Run. */
   execute.resume = ({ agent, ...request }) => {
     invariant(durableOwnership && typeof resolveRecoveryTurn === 'function', 'native_dsh_recovery_resolver_required');

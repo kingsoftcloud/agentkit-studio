@@ -20,6 +20,13 @@ test('operator preview comes only from the required projector and is scoped to i
   try {
     f.observation.observe({ contract: 'agentkit.local-command-progress/v1', sequence: 1, channel: 'stdout', text: 'private' }); await tick();
     const view = f.owner.read(f.record);
+    const pending = f.record.intents[0];
+    const readModel = { contract: 'agentkit.native-run-observation/v1', snapshot: f.record.snapshot, lease: f.record.lease,
+      facts: { pendingEffect: { operationKey: pending.operationKey, kind: pending.kind, status: pending.status,
+        claimedFence: pending.claimedFence, receiptPresent: false,
+        calls: pending.payload.calls.map(({ callId, name }) => ({ callId, name })) } } };
+    assert.deepEqual(f.owner.read(readModel), view);
+    assert.equal(f.owner.read({ ...readModel, facts: { pendingEffect: { ...readModel.facts.pendingEffect, receiptPresent: true } } }), null);
     assert.equal(view.contract, 'agentkit.native-command-previews/v1'); assert.equal(view.calls[0].display.stdout, '[hidden]');
     for (const mutate of [r => { r.snapshot.runId = 'other'; }, r => { r.snapshot.sessionId = 'other'; },
       r => { r.snapshot.scope.agentId = 'other'; }, r => { r.lease.fence = 3; }, r => { r.lease.expiresAt = 999; },

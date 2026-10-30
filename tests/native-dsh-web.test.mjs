@@ -238,3 +238,31 @@ test('the production URL precheck blocks a private literal before any connection
   assert.equal(requests, 0);
   await tools.close();
 });
+
+test('Web I/O accepts admitted governance metadata while authorizing and sealing the full original definition', async t => {
+  let hits = 0, seen;
+  const tools = createNativeDshWebTools({ config: { sessionId: 'governed', ssrfPolicy: { allowPrivate: true },
+    authorize: async payload => { seen = payload.definition; return 'allow'; } },
+    fetch: async () => { hits++; return new Response('<main>Governed public content</main>', { headers: { 'content-type': 'text/html' } }); } });
+  t.after(() => tools.close());
+  const request = webRequest({ sessionId: 'governed', signal: sig(),
+    call: { callId: 'governed-page', name: 'web_fetch', arguments: { url: 'https://example.com/' } } });
+  request.definition.approvalPolicy = 'durable-preflight/v1';
+  assert.equal((await tools.execute(request)).status, 'ok');
+  assert.deepEqual(seen, request.definition); assert.equal(hits, 1);
+  const forged = structuredClone(request.definition); forged.parameters.properties.url.type = 'number';
+  assert.equal((await tools.execute({ ...request, definition: forged })).content.code, 'web_definition_mismatch');
+  assert.equal(hits, 1);
+});
+
+test('governance metadata mutation during Web authorization still prevents I/O', async t => {
+  let request, hits = 0;
+  const tools = createNativeDshWebTools({ config: { sessionId: 'governed', ssrfPolicy: { allowPrivate: true },
+    authorize: async () => { await Promise.resolve(); delete request.definition.approvalPolicy; return 'allow'; } },
+    fetch: async () => { hits++; return new Response('must not execute'); } });
+  t.after(() => tools.close());
+  request = webRequest({ sessionId: 'governed', signal: sig(),
+    call: { callId: 'drift-page', name: 'web_fetch', arguments: { url: 'https://example.com/' } } });
+  request.definition.approvalPolicy = 'durable-preflight/v1';
+  assert.equal((await tools.execute(request)).content.code, 'web_context_drift'); assert.equal(hits, 0);
+});

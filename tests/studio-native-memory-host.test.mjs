@@ -58,6 +58,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
     sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
     approval: approvalService,
     tools: {
+      resultRetentions: ['caller/v1'],
       register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
       execute: async input => {
         requests.push({ tool: input.name });

@@ -1,4 +1,5 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
 
 export const DEFAULT_KSYUN_BASE_URL = 'http://kspmas.ksyun.com/v1';
@@ -59,8 +60,11 @@ export function createModelBridge({ hostRemote }) {
           // Keep the input contract on each profile so read_image and native
           // image messages are admitted consistently with the upstream model.
           models: (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
-            .map(model => ({ id: model.id, name: model.name || model.id, contextWindow: 262144, maxTokens: 32768,
-              input: model.inputKnown === false && model.id === modelName ? profile.input || ['text'] : model.input || ['text'] })),
+            .map(model => {
+              const capability = admitModelCapabilities({ ...profile, input: model.id === modelName ? profile.input : undefined }, model);
+              return { id: model.id, name: model.name || model.id, contextWindow: capability.contextWindow,
+                maxTokens: capability.maxOutputTokens, input: capability.input };
+            }),
         } } };
       });
       const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [

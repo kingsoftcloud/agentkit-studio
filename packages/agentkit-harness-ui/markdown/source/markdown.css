@@ -80,10 +80,12 @@
   }
 }
 
-.ks-markdown > :first-child {
+.ks-markdown > :first-child,
+.ks-markdown .ks-markdown-body > :first-child {
   margin-top: 0;
 }
-.ks-markdown > :last-child {
+.ks-markdown > :last-child,
+.ks-markdown .ks-markdown-body > :last-child {
   margin-bottom: 0;
 }
 

@@ -12,7 +12,7 @@ export async function apply(ctx, options) {
   const home = options.directory, workspaceRoot = join(home, 'workspace');
   let grantProof;
   const a2aProof = options.managedA2aProofPath ? JSON.parse(await readFile(options.managedA2aProofPath, 'utf8')) : null;
-  if (options.managedProofPath || options.taskControls || options.editMatching || options.structuredPatch || options.conversationRewindProof) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
+  if (options.managedProofPath || options.taskControls || options.editMatching || options.structuredPatch || options.conversationRewindProof || options.commandWorkspace) await appendFile(join(home, 'host-processes.jsonl'), JSON.stringify({ pid: process.pid,
     node: process.version, path: process.env.PATH }) + '\n');
   await mkdir(workspaceRoot, { recursive: true });
   if (!existsSync(join(workspaceRoot, 'proof.txt'))) await writeFile(join(workspaceRoot, 'proof.txt'), 'Evidence from the actual child workspace');
@@ -35,7 +35,7 @@ export async function apply(ctx, options) {
           tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile',
           inheritMcp: Boolean(options.mcpUrl), maxTurns: options.mcpUrl ? 5 : 4, maxToolCalls: options.mcpUrl ? 3 : 2 }
         : { name: 'reader', instructions: 'CHILD_WORKSPACE_READER: read proof.txt and report its evidence.',
-          tools: ['read_workspace_file', ...(options.childPlanMode ? ['write_workspace_file'] : []),
+          tools: ['read_workspace_file', ...(options.commandWorkspace ? ['run_command'] : []), ...(options.childPlanMode ? ['write_workspace_file'] : []),
             ...(options.editMatching ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []),
             ...(options.structuredPatch ? ['apply_workspace_patch'] : []),
             ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls || options.workspaceRewind ? 5 : 3, maxToolCalls: options.taskControls || options.workspaceRewind ? 4 : 2 }],
@@ -43,7 +43,8 @@ export async function apply(ctx, options) {
         tools: a2aProof ? ['call_a2a_agent'] : options.structuredPatch ? ['read_workspace_file', 'apply_workspace_patch',
         ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : [])]
         : options.editMatching ? ['read_workspace_file', 'edit_workspace_file', 'multi_edit_workspace_file']
-        : options.writingRecovery || options.childPlanMode ? ['read_workspace_file', 'write_workspace_file'] : ['read_workspace_file'],
+        : options.writingRecovery || options.childPlanMode ? ['read_workspace_file', 'write_workspace_file']
+          : options.commandWorkspace ? ['read_workspace_file', 'run_command'] : ['read_workspace_file'],
         ...(a2aProof ? { a2a: a2aProof.bindings } : {}),
         ...(options.mcpUrl ? { mcpServers: ['child-proof-mcp'] } : {}),
         modelProfileIds: ['parent-profile', 'child-profile'] },
@@ -198,6 +199,12 @@ export async function apply(ctx, options) {
       if (ctx.sessionProjections.stateOf(agent.session, 'agentPreset') !== presetId) throw Error('Child proof persisted preset changed');
       await ctx.agentPresets.recompose(agent.ctx, presetId);
     } else await ctx.agentPresets.select(agent, presetId);
+    if (options.commandWorkspace) agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+      const assembly = await next();
+      await appendFile(join(home, 'host-instruction-sources.jsonl'), JSON.stringify({ pid: process.pid,
+        sessionId: agent.session.id, sections: assembly.sections.map(section => section.name) }) + '\n');
+      return assembly;
+    });
     // A trusted idle-boundary mode selection using the actual Host controller.
     // Exact model-requested approval is covered separately by the Plan tests.
     if (options.childPlanMode) ctx.get('planMode').set(agent, source !== 'resume');

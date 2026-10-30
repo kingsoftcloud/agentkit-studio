@@ -2,6 +2,16 @@ import { canonical, invariant } from '@kingsoftcloud/agentkit-harness-core';
 import { OWNED_COMMAND_OUTPUT_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/owned-command';
 import { assertNativeRecoveryPreset, readNativeRecoveryBinding } from '../../providers/native-recovery-binding.mjs';
 
+/** Operator presentation stays separate from tool receipts and model context. */
+export function createStudioNativeCommandPreview({ ctx, projectCommandPreview }) {
+  return async (source, execution) => {
+    const policy = ctx.get('studioNativeCommandOutputPolicy');
+    if (policy) return typeof policy.projectPreview === 'function' ? policy.projectPreview(source, execution) : null;
+    if (projectCommandPreview) return projectCommandPreview(source, execution);
+    return { kind: 'command_preview', stdout: source.stdout, stderr: source.stderr };
+  };
+}
+
 async function withinLifetime(operation, signal) {
   signal.throwIfAborted();
   let abort;

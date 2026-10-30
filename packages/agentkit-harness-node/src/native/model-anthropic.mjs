@@ -30,7 +30,7 @@ import {
 
 function strictParseJson(text) {
   try { return parseModelJson(text); }
-  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json'); }
+  catch (error) { throw new ProtocolError(error?.code || 'invalid_model_json', 'json_invalid'); }
 }
 
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -277,12 +277,12 @@ function validateAssistantToolIds(calls) {
 // Parse a buffered 2xx Anthropic Messages body into a sealed result.
 export function parseAnthropicBuffered(bodyText, request, { captureReplay = false, onThinking } = {}) {
   let payload;
-  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json'); }
+  try { payload = strictParseJson(bodyText); } catch { throw new ProtocolError('invalid response json', 'json_invalid'); }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new ProtocolError('invalid response envelope');
+    throw new ProtocolError('invalid response envelope', 'envelope_invalid');
   }
-  if ('type' in payload && payload.type !== 'message') throw new ProtocolError('invalid response envelope');
-  if ('error' in payload) throw new ProtocolError('invalid response envelope');
+  if ('type' in payload && payload.type !== 'message') throw new ProtocolError('invalid response envelope', 'envelope_invalid');
+  if ('error' in payload) throw new ProtocolError('invalid response envelope', 'envelope_invalid');
   if (typeof payload.stop_sequence !== 'undefined' && payload.stop_sequence !== null && typeof payload.stop_sequence !== 'string') {
     throw new ProtocolError('invalid stop_sequence');
   }
@@ -426,9 +426,9 @@ export function createAnthropicStreamState(profile) {
       if (!data.trim()) return;
       if (data.trim() === '[DONE]') return;
       let event;
-      try { event = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json'); }
+      try { event = strictParseJson(data); } catch { throw new ProtocolError('invalid stream json', 'json_invalid'); }
       if (!event || typeof event !== 'object' || Array.isArray(event)) {
-        throw new ProtocolError('invalid stream envelope');
+        throw new ProtocolError('invalid stream envelope', 'envelope_invalid');
       }
       const type = String(event.type || '');
       if (this.contentFinished && (type === 'content_block_start' || type === 'content_block_delta')) {
@@ -670,9 +670,6 @@ export function createAnthropicStreamState(profile) {
         calls = [{}];
       }
       if (this.refused) { finish = 'content_filter'; calls = []; }
-      if (!this.text.trim() && !calls.length && finish !== 'content_filter' && !malformed) {
-        return { kind: 'empty_response', text: '', toolCalls: [], usage, usageReported };
-      }
       const normalized = normalizeResponse({ text: this.text, toolCalls: malformed ? [{}] : calls, finishReason: finish, streamComplete: true });
       return this.seal({ ...normalized, usage, usageReported });
     },

@@ -55,7 +55,7 @@ export function planModeDenial(snapshot: RunSnapshot, config: RunConfiguration, 
   return planModeWriteDenial(config);
 }
 
-export function activePlanMode(snapshot: RunSnapshot, config: RunConfiguration): boolean {
+export function activePlanMode(snapshot: Pick<RunSnapshot, 'planMode'>, config: Pick<RunConfiguration, 'planModePolicy'>): boolean {
   return !!snapshot.planMode?.active && [PLAN_MODE_POLICY, CHILD_PLAN_MODE_POLICY].includes(config.planModePolicy!);
 }
 

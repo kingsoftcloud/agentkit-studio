@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { canonical, invariant, submissionOutputFormat } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant, submissionOutputFormat, deliveryScopeEnabled, currentDeliveryManifest } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { requestedFinalShape, declaredValueSubmissionSchema, finalShapeContractDescription,
   requestedExactWorkspaceFile, encodeExactWorkspaceFile, decodeExactWorkspaceFile,
@@ -101,7 +101,8 @@ function browserFailure(observation, entry) {
 }
 
 /** Trusted Host evidence is sealed outside the writable workspace before a report is returned. */
-export async function createNativeVerification({ scope, sessionId, workspaceRoot, evidenceDirectory, verifyBrowserPage }) {
+export async function createNativeVerification({ scope, sessionId, workspaceRoot, evidenceDirectory, verifyBrowserPage, deliveryScopePolicy }) {
+  invariant(deliveryScopePolicy === undefined || deliveryScopeEnabled({ deliveryScopePolicy }), 'studio_native_delivery_scope_policy_invalid');
   const root = await realpath(workspaceRoot), evidence = resolve(evidenceDirectory);
   invariant(!inside(root, evidence), 'studio_native_verification_evidence_inside_workspace');
   const artifacts = await createNativeArtifactStore({ directory: evidence, scope });
@@ -123,11 +124,13 @@ export async function createNativeVerification({ scope, sessionId, workspaceRoot
         && exactItem.verifierRef === ARTIFACT_VERIFIER_REF && exactItem.verifierVersion === VERSION
         && exactItem.verificationMethod === 'deterministic'), 'studio_native_verification_contract_unsupported');
     const shape = requestedFinalShape(main.description), shapeFailure = candidate.purpose !== 'checkpoint' && shape && finalShapeViolation(shape, candidate.text);
+    const manifest = deliveryScopePolicy ? currentDeliveryManifest(snapshot) : null;
     const facts = { shape, shapeFailure: shapeFailure || null, entryPath: null, browserObservation: null,
+      ...(deliveryScopePolicy ? { deliveryManifest: manifest } : {}),
       modelObservation: snapshot.lastBrowserObservation ?? null, lastWebMutationToolCall: snapshot.lastWebMutationToolCall ?? null,
       unresolvedInteractionObservation: snapshot.unresolvedInteractionObservation ?? null, exactFile: null };
     let browserIssue = null;
-    try { facts.entryPath = writtenNativeWebEntry(snapshot, root); }
+    try { facts.entryPath = writtenNativeWebEntry(snapshot, root, { deliveryScopePolicy }); }
     catch (error) {
       signal.throwIfAborted();
       browserIssue = { blocked: true, summary: 'The Host cannot bind a unique delivery page to the committed workspace changes. Bind and inspect the intended entry before verifying.',
@@ -153,17 +156,40 @@ export async function createNativeVerification({ scope, sessionId, workspaceRoot
           summary: 'The delivered web page has not been observed through the browser tool after the latest web file change. Open and inspect the current page before finalizing.' };
       }
     }
+    let scopeFailure = null;
+    if (deliveryScopePolicy && candidate.purpose !== 'checkpoint') {
+      if (!manifest && !requirement && snapshot.workspaceModifiedPaths.length) scopeFailure =
+        'Declare the workspace artifacts being delivered with declare_deliverables before finalizing. Exclude reference sources and temporary files; use an empty list if the delivery is the text answer. The declaration does not establish acceptance.';
+      for (const artifact of manifest?.artifacts ?? []) {
+        if (artifact.kind !== 'file') continue;
+        const path = resolve(root, artifact.path);
+        try {
+          if (!inside(root, path) || !inside(root, await realpath(path)) || !(await stat(path)).isFile())
+            scopeFailure = 'A declared delivery file is missing or outside the workspace. Correct the declared artifact or its file before finalizing.';
+        } catch { signal.throwIfAborted(); scopeFailure = 'A declared delivery file is missing or unreadable. Correct the declared artifact or its file before finalizing.'; }
+      }
+    }
     if (requirement) facts.exactFile = await observeExactFile(root, requirement, signal);
+    if (deliveryScopePolicy) facts.deliveryScopeFailure = scopeFailure;
+    if (browserIssue) facts.browserFailure = { kind: browserIssue.blocked ? 'unavailable' : 'observed_failure',
+      code: typeof browserIssue.errorCode === 'string' && /^[A-Za-z0-9_:-]{1,128}$/.test(browserIssue.errorCode)
+        ? browserIssue.errorCode : browserIssue.blocked ? 'browser_observation_unavailable' : 'browser_delivery_rejected' };
     const blocked = browserIssue?.blocked || facts.exactFile?.blocked || false;
-    const failure = shapeFailure || browserIssue?.summary || (facts.exactFile && !facts.exactFile.ok ? facts.exactFile.summary : null);
+    const failure = shapeFailure || scopeFailure || browserIssue?.summary || (facts.exactFile && !facts.exactFile.ok ? facts.exactFile.summary : null);
     const mainSummary = blocked ? browserIssue?.blocked ? browserIssue.summary : facts.exactFile.summary : failure
       || (facts.browserObservation ? 'Browser smoke check observed no load or script errors. Interaction and task semantics were not verified.'
         : shape ? 'Final-answer shape passed; task semantics were not independently verified.' : 'Task semantics were not independently verified.');
     const results = [{ item: main, status: blocked ? 'blocked' : failure ? 'failed' : 'not_run', safeSummary: mainSummary }];
     if (exactItem) results.push({ item: exactItem, status: facts.exactFile.blocked ? 'blocked' : facts.exactFile.ok ? 'passed' : 'failed', safeSummary: facts.exactFile.summary });
+    // Historical/undeclared delivery stays workspace-dependent, except for an
+    // explicitly requested answer-shape check. A current text-only manifest
+    // can also establish independence; lack of observed writes cannot.
+    const textOnlyDelivery = candidate.purpose !== 'checkpoint' && !requirement && !facts.entryPath && !browserIssue
+      && (deliveryScopePolicy && manifest && manifest.artifacts.length === 0
+        || shape && !manifest?.artifacts.length);
     const binding = { candidateId: candidate.candidateId, contractRevision: contract.revision,
       binding: structuredClone(candidate.binding), workspaceRevision: candidate.workspaceRevision,
-      workspaceDependency: 'required' };
+      workspaceDependency: textOnlyDelivery ? 'none' : 'required' };
     let sealed;
     try { sealed = await artifacts.write({ ...request, operationKey: `${request.operationKey}:studio-verification-evidence`,
       content: canonical({ version: STUDIO_NATIVE_VERIFICATION_CONTRACT, candidate, contract, facts,

@@ -1,10 +1,13 @@
 import { nativeDeliveryId } from './delivery-timeline.mjs';
+import { copy } from '@kingsoftcloud/agentkit-harness-core';
 
 /** Read-only timeline facts; proposals and summary model calls never mean adoption. */
-export function nativeContextMarkerFacts(record, { driving = false } = {}) {
+export function advanceNativeContextMarkerState(previous, record) {
   const { snapshot, events = [] } = record;
-  let anchor = { kind: 'start' }, active = null, adopted = 0;
-  const markers = [];
+  const state = copy(previous ?? { anchor: { kind: 'start' }, adopted: 0, markers: [] });
+  let { anchor, adopted } = state;
+  const markers = state.markers;
+  let active = markers.findLast(fact => fact.settledSeq === null && fact.marker.status === 'running') ?? null;
   for (const event of events) {
     if (event.kind === 'model.completed' && event.eventId) anchor = {
       kind: 'message', id: nativeDeliveryId(snapshot.scope, snapshot.runId, `response:${event.eventId}`),
@@ -26,11 +29,21 @@ export function nativeContextMarkerFacts(record, { driving = false } = {}) {
       markers.push(active);
     }
   }
+  return { anchor, adopted, markers };
+}
+
+export function nativeContextMarkerFactsFromState(state, snapshot, { driving = false } = {}) {
+  const markers = copy(state.markers);
+  const active = markers.findLast(fact => fact.settledSeq === null && fact.marker.status === 'running');
   if (active && !driving) {
     active.marker.status = snapshot.phase === 'failed' ? 'failed' : 'interrupted';
     if (['completed', 'failed', 'canceled', 'interrupted'].includes(snapshot.phase)) active.settledSeq = snapshot.eventSeq;
   }
   return markers;
+}
+
+export function nativeContextMarkerFacts(record, options) {
+  return nativeContextMarkerFactsFromState(advanceNativeContextMarkerState(null, record), record.snapshot, options);
 }
 
 export function nativeContextMarkers(record, options) {

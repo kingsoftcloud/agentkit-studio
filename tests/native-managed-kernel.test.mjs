@@ -271,7 +271,8 @@ test('pause/resume preserve the same Run and approval requires a trusted interac
 test('queue bound, unsupported controls and target/config changes fail explicitly', async t => {
   const f = fixture(t, { queueLimit: 1 }), cmd = command(); await f.receive(cmd);
   assert.equal((await f.receive(command())).status, 'queue_full');
-  assert.equal((await f.receive(command({ command_type: 'inject', payload: { context: 'content' } }))).status, 'unsupported');
+  await assert.rejects(f.receive(command({ command_type: 'inject', payload: { context: 'content' } })), { code: 'NATIVE_KERNEL_COMMAND_INVALID' });
+  assert.equal((await f.receive(command({ command_type: 'resume', payload: { target: { kind: 'checkpoint', id: 'unavailable' } } }))).status, 'unsupported');
   assert.equal((await f.receive(command({ payload: { content: 'work', execution_grant_id: 'grant' } }))).error.code, 'execution_grant_not_found');
   f.config.resolveBinding = ({ command }) => binding(command, undefined, { hostBindingDigest: 'changed' });
   await f.reopen(); await assert.rejects(f.runtime.drain(cmd.session_id), { code: 'NATIVE_KERNEL_BINDING_CHANGED' });

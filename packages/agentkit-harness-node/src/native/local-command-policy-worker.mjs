@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { Workspace, PositionEncoding } from '@astral-sh/ruff-wasm-nodejs';
 import { NATIVE_PYTHON_SYNTAX } from './python-syntax.mjs';
 import { LOCAL_COMMAND_POLICY } from './local-command-policy.mjs';
+import { analyzeShellSource } from './shell-analysis.mjs';
 import { decodeRuffAst, ruffIdentifier, ruffNodes, ruffString, unwrapRuff } from './ruff-ast.mjs';
 
 if (Workspace.version() !== NATIVE_PYTHON_SYNTAX.parserVersion) throw Error('command_policy_parser_version_mismatch');
@@ -38,39 +39,10 @@ function inside(path) {
   catch { return false; }
 }
 
-// POSIX shlex rules used by the source risk checker, not a shell executor.
-// Adjacent punctuation is grouped; quoted arguments remain data.
-function tokens(text, { punctuation = true, comments = true, strict = false } = {}) {
-  const result = []; let word = '', active = false, quote = '';
-  const flush = () => { if (active) result.push(word); word = ''; active = false; };
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (quote) {
-      if (char === quote) { quote = ''; continue; }
-      if (char === '\\' && quote === '"' && ['"', '\\'].includes(text[i + 1])) word += text[++i];
-      else word += char;
-      continue;
-    }
-    if (char === '"' || char === "'") { active = true; quote = char; continue; }
-    if (char === '\\') { if (++i === text.length) return strict ? null : []; word += text[i]; active = true; continue; }
-    if (char === '#' && comments) { while (i < text.length && text[i] !== '\n') i++; flush(); continue; }
-    if (' \t\r\n'.includes(char)) { flush(); continue; }
-    if (punctuation && '();<>|&'.includes(char)) {
-      flush(); let punctuation = char;
-      while ('();<>|&'.includes(text[i + 1] ?? '\0')) punctuation += text[++i];
-      result.push(punctuation); continue;
-    }
-    active = true; word += char;
-  }
-  if (quote) return strict ? null : []; flush(); return result;
-}
-// The tool gateway's separate, unconditional default policy runs even after
-// approval. Preserve its shlex.split (no punctuation/comment mode) semantics.
-function gatewayPolicy(command) {
-  if (typeof command !== 'string' || !command.trim()) return finding('command_required', 'command is required');
-  const args = tokens(command.trim(), { punctuation: false, comments: false, strict: true });
-  if (args === null) return finding('invalid_command', 'unclosed quote or escape in command');
-  if (!args.length) return finding('command_required', 'command is required');
+// Gateway restrictions and local risks consume the same parsed invocations.
+// This deliberately retains the existing policy choices, without treating
+// comments or heredoc data as command arguments.
+function gatewayPolicy(args) {
   for (let i = 0; i + 1 < args.length; i++) if (args[i] === 'rm'
     && args.slice(i + 1, i + 3).some(flag => flag.startsWith('-') && /[rR]/.test(flag)))
     return finding('command_rejected', 'recursive rm is not allowed without explicit approval');
@@ -85,30 +57,8 @@ function gatewayPolicy(command) {
     return finding('command_rejected', 'metadata/private endpoint access is not allowed by default policy');
   return null;
 }
-function background(line) {
-  let quote = '', escaped = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (escaped) { escaped = false; continue; }
-    if (char === '\\' && quote !== "'") { escaped = true; continue; }
-    if (quote) { if (char === quote) quote = ''; continue; }
-    if (char === '"' || char === "'") { quote = char; continue; }
-    if (char === '&' && !['&', '>'].includes(line[i - 1]) && line[i + 1] !== '&') return true;
-  }
-  return false;
-}
-function positions(args) {
-  const result = []; let expect = true;
-  for (let i = 0; i < args.length; i++) {
-    if ([';', '&&', '||', '|', '(', ')'].includes(args[i])) { expect = true; continue; }
-    if (expect && /^[A-Za-z_][A-Za-z0-9_]*=.*$/.test(args[i])) continue;
-    if (expect) { result.push(i); expect = false; }
-  }
-  return result;
-}
-function end(args, start) {
-  for (let i = start; i < args.length; i++) if ([';', '&&', '||', '|', ')'].includes(args[i])) return i;
-  return args.length;
+function executableIndex(args) {
+  return args.findIndex(arg => !/^[A-Za-z_][A-Za-z0-9_]*=.*$/.test(arg));
 }
 function recursiveForce(args) {
   let options = '';
@@ -118,27 +68,34 @@ function recursiveForce(args) {
   }
   return options.toLowerCase().includes('r') && options.toLowerCase().includes('f');
 }
-function checkTokens(args, path, line, depth) {
+function checkTokens(args, path, line, depth, stdin = null) {
   limited(depth);
-  for (const index of positions(args)) {
-    const command = basename(args[index]).toLowerCase(), rest = args.slice(index + 1, end(args, index + 1));
-    if (blocked.has(command)) return finding(`shell.blocked_command.${command}`, `command '${command}' is not allowed by the local-process policy`, path, line);
-    if (command === 'rm' && recursiveForce(rest)) return finding('shell.recursive_force_remove', 'recursive forced removal is not allowed', path, line);
-    const option = rest.indexOf('-c');
-    if (option < 0 || option + 1 >= rest.length) continue;
-    const result = python(command) ? checkPython(rest[option + 1], path || '<command>', depth + 1)
-      : shell(command) ? checkShell(rest[option + 1], path, depth + 1) : null;
+  const index = executableIndex(args); if (index < 0) return null;
+  const command = basename(args[index]).toLowerCase(), rest = args.slice(index + 1);
+  if (blocked.has(command)) return finding(`shell.blocked_command.${command}`, `command '${command}' is not allowed by the local-process policy`, path, line);
+  if (command === 'rm' && recursiveForce(rest)) return finding('shell.recursive_force_remove', 'recursive forced removal is not allowed', path, line);
+  if (stdin !== null && !rest.includes('-c') && !rest.includes('-m')
+    && (!rest.length || rest[0] === '-' || shell(command) && rest.includes('-s'))) {
+    const result = python(command) ? checkPython(stdin, path || '<stdin>', depth + 1)
+      : shell(command) ? checkShell(stdin, path || '<stdin>', depth + 1, false, false, command === 'bash' ? 'bash' : 'posix') : null;
     if (result) return result;
   }
-  return null;
+  const option = rest.indexOf('-c');
+  if (option < 0 || option + 1 >= rest.length) return null;
+  return python(command) ? checkPython(rest[option + 1], path || '<command>', depth + 1)
+    : shell(command) ? checkShell(rest[option + 1], path, depth + 1, false, false, command === 'bash' ? 'bash' : 'posix') : null;
 }
-function checkShell(text, path, depth) {
+function checkShell(text, path, depth, governed = false, scanEntries = false, dialect = 'bash') {
   limited(depth);
-  const lines = text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim(); if (!line || line.startsWith('#')) continue;
-    if (background(line)) return finding('shell.background_process', 'background process syntax is not allowed', path, i + 1);
-    const result = checkTokens(tokens(line), path, i + 1, depth + 1); if (result) return result;
+  const analysis = analyzeShellSource(text);
+  if (analysis.hasParseErrors) return finding('invalid_command', 'invalid shell syntax', path);
+  if (dialect === 'posix' && analysis.hasBashCombinedRedirects)
+    return finding('invalid_command', 'Bash combined redirection requires an explicit Bash interpreter', path);
+  if (analysis.backgrounds.length) return finding('shell.background_process', 'background process syntax is not allowed', path, analysis.backgrounds[0]);
+  for (const { argv, line, stdin } of analysis.commands) {
+    const result = (governed ? gatewayPolicy(argv) : null) ?? checkTokens(argv, path, line, depth + 1, stdin)
+      ?? (scanEntries ? scanScripts(argv) : null);
+    if (result) return result;
   }
   return null;
 }
@@ -219,25 +176,22 @@ function directScript(command, rest) {
   return null;
 }
 function scanScripts(args) {
-  for (const index of positions(args)) {
-    const script = directScript(args[index], args.slice(index + 1, end(args, index + 1))); if (script === null) continue;
-    let path, source;
-    try {
-      path = realpathSync(isAbsolute(script) ? script : resolve(cwd, script));
-      if (!statSync(path).isFile() || !inside(path)) continue;
-      if (statSync(path).size > 2 * 1024 * 1024) throw Error('command_policy_source_limit');
-      source = new TextDecoder('utf8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path));
-    } catch (error) { if (error.message === 'command_policy_source_limit') throw error; continue; }
-    const result = extname(path).toLowerCase() === '.py' ? checkPython(source, path, 0) : checkShell(source, path, 0);
-    if (result) return result;
-  }
-  return null;
+  const index = executableIndex(args); if (index < 0) return null;
+  const script = directScript(args[index], args.slice(index + 1)); if (script === null) return null;
+  let path, source;
+  try {
+    path = realpathSync(isAbsolute(script) ? script : resolve(cwd, script));
+    if (!statSync(path).isFile() || !inside(path)) return null;
+    if (statSync(path).size > 2 * 1024 * 1024) throw Error('command_policy_source_limit');
+    source = new TextDecoder('utf8', { fatal: true, ignoreBOM: true }).decode(readFileSync(path));
+  } catch (error) { if (error.message === 'command_policy_source_limit') throw error; return null; }
+  return extname(path).toLowerCase() === '.py' ? checkPython(source, path, 0)
+    : checkShell(source, path, 0, false, false, ['sh', 'dash'].includes(basename(args[index])) ? 'posix' : 'bash');
 }
 try {
   const { command } = workerData;
-  const result = workerData.governed ? gatewayPolicy(command) : null;
-  const shellResult = result ?? (typeof command === 'string' ? checkShell(command, '', 0) : null);
-  const args = typeof command === 'string' ? tokens(command) : command;
-  parentPort.postMessage({ contract: LOCAL_COMMAND_POLICY,
-    finding: shellResult ?? checkTokens(args, '', null, 0) ?? scanScripts(args) });
+  const required = workerData.governed && (typeof command !== 'string' || !command.trim())
+    ? finding('command_required', 'command is required') : null;
+  parentPort.postMessage({ contract: LOCAL_COMMAND_POLICY, finding: required ?? (typeof command === 'string'
+    ? checkShell(command, '', 0, workerData.governed, true) : checkTokens(command, '', null, 0) ?? scanScripts(command)) });
 } finally { parser.free(); parentPort.close(); }

@@ -12,6 +12,50 @@ const invalidated = (snapshot: RunSnapshot): Partial<RunSnapshot> => ({
   contextState: snapshot.contextState ? { ...snapshot.contextState, compaction: null } : null,
 });
 const failed = (reason: string): Partial<RunSnapshot> => ({ phase: 'finalizing', outcome: 'failed', reason });
+const REOBSERVATION_RETIREMENT = 'browser_context_invalidated';
+
+/** A request reserves work; a claim authorizes dispatch. Only an unclaimed
+ * boundary may discard requests made against the lost resource context. */
+function replanBoundary(snapshot: RunSnapshot, pending: EffectIntent | null): boolean {
+  if (pending === null) return snapshot.pendingIntent === null
+    && ['preparing_context', 'executing_tools'].includes(snapshot.phase);
+  if (pending.status !== 'prepared' || pending.operationKey !== snapshot.pendingIntent) return false;
+  if (pending.kind === 'tool' && snapshot.phase === 'executing_tools') {
+    const calls = pending.payload.calls;
+    return Array.isArray(calls) && calls.length > 0 && calls.length <= snapshot.pendingTools.length
+      && same(calls, snapshot.pendingTools.slice(0, calls.length));
+  }
+  if (snapshot.pendingTools.length) return false;
+  return pending.kind === 'context' && snapshot.phase === 'preparing_context'
+    || pending.kind === 'model' && snapshot.phase === 'requesting_model'
+      && (pending.payload.purpose === undefined || pending.payload.purpose === 'task');
+}
+
+export interface BrowserIsolation {
+  contract: 'agentkit.browser-isolation/v1'; sessionRef: BrowserSessionRef; operationKey: string;
+  fenced: true; externalEffects: false; oldActionsReplayed: false;
+}
+
+/** Outcome uncertainty and disposable resource continuity are separate facts.
+ * The receipt remains uncertain. No original call is rescheduled, and only a
+ * complete capture on generation+1 can discharge the observation debt. */
+export function isolatedBrowserFailure(snapshot: RunSnapshot, result: ToolResult, definition: ToolDefinition | undefined,
+  operationKey: string): Partial<RunSnapshot> | null {
+  if (definition?.recoveryPolicy !== 'ephemeral-browser/v1' || result.status !== 'uncertain'
+    || result.browserIsolation === undefined) return null;
+  const proof = result.browserIsolation, ref = validateBrowserSessionRef(proof.sessionRef);
+  invariant(definition.observationRole === 'browser' && !definition.concurrentSafe
+    && Object.keys(proof).sort().join(',') === 'contract,externalEffects,fenced,oldActionsReplayed,operationKey,sessionRef'
+    && proof.contract === 'agentkit.browser-isolation/v1' && proof.operationKey === operationKey
+    && proof.fenced === true && proof.externalEffects === false && proof.oldActionsReplayed === false
+    && owns(snapshot, ref) && same(result.browserSessionRef, ref) && !result.browserSessionClosed
+    && snapshot.browserSessionRefs.some(known => same(known, ref)), 'invalid_browser_isolation');
+  const debt = new Map(snapshot.browserReobservationRefs.map(known => [known.runtimeId, known]));
+  debt.set(ref.runtimeId, ref);
+  invariant(debt.size <= 16, 'browser_reference_limit');
+  return { ...invalidated(snapshot), browserReobservationRefs: [...debt.values()],
+    recoveryRetriesUsed: snapshot.recoveryRetriesUsed + 1 };
+}
 
 /** Only host-typed receipts from a locked browser tool may become resource authority. */
 export function reduceBrowserReceipt(snapshot: RunSnapshot, result: ToolResult, definition: ToolDefinition,
@@ -79,22 +123,33 @@ export function browserRecoveryTransition(snapshot: RunSnapshot, values: Browser
   const unknown = ['effect_outcome_unknown', 'recovery_retry_exhausted'].includes(snapshot.reason ?? '');
   let changes: Partial<RunSnapshot> = {};
   let retire = false;
+  let retirementCode = 'browser_session_unavailable';
   if (unavailable || unknown) {
     changes = invalidated(snapshot);
     const safe = unavailable && !unknown && !missing
-      && ['preparing_context', 'executing_tools'].includes(snapshot.phase)
-      && snapshot.pendingIntent === null && snapshot.pendingTools.length === 0
+      && replanBoundary(snapshot, pending)
       && reports.every(report => report.status === 'reconnected' || report.status === 'lost' && report.reobserveAvailable);
     if (safe) {
       const debt = new Map((snapshot.browserReobservationRefs ?? []).map(ref => [ref.runtimeId, ref]));
       for (const report of reports) if (report.status === 'lost') debt.set(report.sessionRef.runtimeId, report.sessionRef);
       invariant(debt.size <= 16, 'browser_reference_limit');
-      Object.assign(changes, { phase: 'preparing_context', hookState: null,
+      retire = pending !== null;
+      retirementCode = REOBSERVATION_RETIREMENT;
+      Object.assign(changes, { phase: 'preparing_context', hookState: null, pendingIntent: null,
+        pendingTools: [], pendingInteraction: null, interaction: null,
+        context: { ...snapshot.context, preparedCursor: null },
         browserReobservationRefs: [...debt.values()],
-        messages: [...snapshot.messages, { role: 'user', kind: 'browser_recovery_observation', content: canonical({
+        messages: [...snapshot.messages, ...snapshot.pendingTools.map(call => ({ role: 'tool' as const,
+          callId: call.callId, name: call.name,
+          content: canonical({ status: 'not_dispatched', reason: REOBSERVATION_RETIREMENT, executed: false }) })),
+        { role: 'user', kind: 'browser_recovery_observation', content: canonical({
           status: 'lost', pageContinuity: false, priorObservationValid: false, freshObservationRequired: true,
         }) }],
       });
+      if (pending) facts.push({ kind: 'effect.not_dispatched', payload: { operationKey: pending.operationKey,
+        kind: pending.kind, reason: REOBSERVATION_RETIREMENT } });
+      for (const call of snapshot.pendingTools) facts.push({ kind: 'tool.not_dispatched', payload: {
+        callId: call.callId, name: call.name, reason: REOBSERVATION_RETIREMENT } });
       facts.push({ kind: 'browser.reobservation_required', payload: { priorObservationValid: false, oldActionsReplayed: false } });
     } else if (!unknown) {
       invariant(!pending || pending.status === 'prepared', 'browser_recovery_claim_not_classified');
@@ -106,5 +161,22 @@ export function browserRecoveryTransition(snapshot: RunSnapshot, values: Browser
   }
   changes.activeElapsedMs = snapshot.activeElapsedMs + elapsedMs;
   return transition(snapshot, changes, facts, { requireNoPendingCommands: true, ...(retire ? { receipts: [{ operationKey: pending!.operationKey,
-    status: 'not_dispatched' as const, result: { code: 'browser_session_unavailable', executed: false } }] } : {}) });
+    status: 'not_dispatched' as const, result: { code: retirementCode, executed: false } }] } : {}) });
+}
+
+/** The store admits this receipt exception only for the complete, original
+ * resource-loss transition. No claimed effect, edited transcript or command
+ * consumption can be hidden behind a fabricated non-dispatch result. */
+export function isBrowserReobservationBatch(snapshot: RunSnapshot, pending: EffectIntent, batch: CommitBatch): boolean {
+  try {
+    if (!batch.events.some(event => event.kind === 'browser.reobservation_required')) return false;
+    const recovered = batch.events.filter(event => event.kind === 'browser.recovered');
+    if (recovered.length !== snapshot.browserSessionRefs.length) return false;
+    const reports = recovered.map((event, index) => ({ sessionRef: snapshot.browserSessionRefs[index]!,
+      status: event.payload.status, lastActionSeq: event.payload.lastActionSeq,
+      reason: event.payload.reason, reobserveAvailable: event.payload.reobserveAvailable })) as BrowserRecovery[];
+    const elapsedMs = batch.snapshot.activeElapsedMs - snapshot.activeElapsedMs;
+    const expected = browserRecoveryTransition(snapshot, reports, pending, elapsedMs);
+    return expected !== null && expected.snapshot.phase === 'preparing_context' && same(expected, batch);
+  } catch { return false; }
 }

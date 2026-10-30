@@ -24,10 +24,15 @@ const outDir = resolve(pkgDir, 'dist');
 const externalizeCore = {
   name: 'externalize-agentkit-harness-core',
   setup(build) {
-    build.onResolve({ filter: /agentkit-harness-core/ }, () => ({
-      path: '@kingsoftcloud/agentkit-harness-core',
-      external: true,
-    }));
+    build.onResolve({ filter: /agentkit-harness-core/ }, ({ path }) => {
+      // Public subpaths are distinct APIs. Collapsing /tool-context (or any
+      // future subpath) into the root can produce an unimportable npm bundle.
+      if (path === '@kingsoftcloud/agentkit-harness-core' || path.startsWith('@kingsoftcloud/agentkit-harness-core/'))
+        return { path, external: true };
+      if (/agentkit-harness-core\/dist\/index\.mjs$/.test(path))
+        return { path: '@kingsoftcloud/agentkit-harness-core', external: true };
+      throw Error('Native Node adapter must use a declared Core package export');
+    });
   },
 };
 

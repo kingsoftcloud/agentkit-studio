@@ -1,3 +1,5 @@
+import { validateNativeInjectionRequest } from '../services/native-session-injection.mjs';
+import { validateNativeResourceRetirementRequest } from '../services/native-resource-retirement.mjs';
 import { validateNativeA2aControlRequest } from '../services/native-a2a-control.mjs';
 import { validateNativeReconciliationRequest, validateNativeBackgroundReviewRequest } from '../services/native-recovery.mjs';
 import { validateDshA2aRequest } from '../services/dsh-a2a-control.mjs';
@@ -6,6 +8,16 @@ import { validateNativeCommandOutputRequest } from '../services/native-command-o
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost, getDshA2aControls }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-resource-retire') {
+            validateNativeResourceRetirementRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.retireResources(payload, signal) };
+        }
+        if (endpoint === 'sessions/native-inject') {
+            validateNativeInjectionRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            return { ok: true, value: await host.injectSession(payload, signal) };
+        }
         if (endpoint === 'sessions/native-background-review') {
             validateNativeBackgroundReviewRequest(payload);
             signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();

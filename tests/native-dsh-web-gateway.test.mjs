@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { MemoryRunStore } from '@kingsoftcloud/agentkit-harness-core';
-import { scope } from './fixtures/native-core.mjs';
+import { scope, fixture } from './fixtures/native-core.mjs';
 
 async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'], contracts = [], fetch } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'native-web-gateway-'));
@@ -32,6 +32,8 @@ async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'],
     workspaceRoot, stateDir, webEnvironment: environment, ...(fetch ? { webFetch: fetch } : {}) });
   t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
   const agent = { session: { id: 'session' } }, authority = { scope, store: new MemoryRunStore() };
+  const seeded = fixture();
+  authority.store.create(seeded.config, seeded.snapshot);
   const port = gateway.forAgent(agent, authority).tools;
   let sequence = 0;
   function request(name, args, overrides = {}) {

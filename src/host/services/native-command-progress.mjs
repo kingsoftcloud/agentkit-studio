@@ -35,15 +35,17 @@ export function createStudioNativeCommandProgress({ workspaceId, project, now = 
     read(record) {
       const s = record?.snapshot;
       if (!s || s.phase !== 'executing_tools' || !record.lease || record.lease.expiresAt <= now()) return null;
-      const intent = record.intents.find(i => i.operationKey === s.pendingIntent);
+      const observed = record.contract === 'agentkit.native-run-observation/v1';
+      const intent = observed ? record.facts.pendingEffect : record.intents.find(i => i.operationKey === s.pendingIntent);
       if (intent?.kind !== 'tool' || intent.status !== 'running' || intent.claimedFence !== record.lease.fence
-        || record.receipts.some(r => r.operationKey === intent.operationKey)) return null;
+        || (observed ? intent.receiptPresent : record.receipts.some(r => r.operationKey === intent.operationKey))) return null;
+      const pendingCalls = observed ? intent.calls : intent.payload.calls;
       const calls = [];
       for (const entry of entries.values()) {
         if (!entry.frame || entry.signal.aborted || entry.runId !== s.runId || entry.sessionId !== s.sessionId
           || canonical(entry.scope) !== canonical(s.scope) || entry.fence !== record.lease.fence) continue;
-        const index = intent.payload.calls.findIndex(call => call.callId === entry.callId && call.name === 'run_command');
-        if (index < 0 || entry.operationKey !== (intent.payload.calls.length === 1
+        const index = pendingCalls.findIndex(call => call.callId === entry.callId && call.name === 'run_command');
+        if (index < 0 || intent.operationKey !== s.pendingIntent || entry.operationKey !== (pendingCalls.length === 1
           ? intent.operationKey : `${intent.operationKey}:call:${index + 1}`)) continue;
         calls.push({ callId: nativeDeliveryId(s.scope, s.runId, `call:${entry.callId}`),
           sequence: entry.frame.sequence, display: entry.frame.display, truncated: entry.frame.truncated });

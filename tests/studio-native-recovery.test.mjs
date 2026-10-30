@@ -13,6 +13,7 @@ import { createNativeRecoveryState } from '../src/client/state/native-recovery.m
 import { createStudioHostRemote } from '../src/host-remote.mjs';
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { readNativeDshOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-ownership';
+import { nativeLocalExecutionMethods } from '../src/providers/native-local-execution.mjs';
 
 const gate = () => Promise.withResolvers();
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -42,7 +43,7 @@ test('recovery client admits scoped auxiliary Memory usage and rejects foreign o
 
 // Product assembly units deliberately use a narrow Agent double. The separate
 // mounted-Host proof uses official SessionController, real Agents and HTTP RPC.
-async function fixture(t, { fetchModel, maxTokens = 500 } = {}) {
+async function fixture(t, { fetchModel, maxTokens = 500, localExecutionMode } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-recovery-unit-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
@@ -66,6 +67,16 @@ async function fixture(t, { fetchModel, maxTokens = 500 } = {}) {
     nativeEngineContract: 'agentkit.native-dsh-turn/v1', nativeTools: {
       definitions: () => [], forAgent: () => ({ tools: { execute: () => assert.fail('No tool was requested') } }),
     } };
+  const localExecutions = [], localMethods = nativeLocalExecutionMethods({ enabled: true, settings: {},
+    sourceEnv: { PATH: '/usr/bin:/bin' }, workspaceRoot, commandBackend: 'local_process' });
+  if (localExecutionMode) {
+    const historical = options => localExecutionMode === 'historical' ? { modern: options.modern } : options;
+    const execute = binding.nativeTools.forAgent;
+    Object.assign(binding.nativeTools, {
+      localExecution: options => localMethods.localExecution(historical(options)),
+      executionEnvironment: options => localMethods.executionEnvironment(historical(options)),
+      forAgent: (agent, authority) => { localExecutions.push(authority.localExecution); return execute(agent, authority); } });
+  }
   const services = { sessions: { flush: async () => !failFlush }, sessionProjections: {
     register(value) { projections.set(value.key, value); return () => projections.delete(value.key); },
     stateOf: (_, id) => projections.has(id) ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
@@ -94,8 +105,28 @@ async function fixture(t, { fetchModel, maxTokens = 500 } = {}) {
   const status = await host.recoveryStatus(request);
   assert.equal(status.state, 'available'); assert.equal(requests.length, 0);
   return { host, ledger, agent, binding, requests, events, services, values, seen, controller, route, assembly, session, workspaceRoot,
-    request: { ...request, runId: status.runId }, rotate: value => { key = value; } };
+    localExecutions, localMethods, request: { ...request, runId: status.runId }, rotate: value => { key = value; } };
 }
+
+for (const historical of [false, true]) test(`production recovery keeps ${historical ? 'historical' : 'new'} local resource admission and actual model facts`, async t => {
+  const f = await fixture(t, { localExecutionMode: historical ? 'historical' : 'new' });
+  assert.equal(f.localExecutions[0].settings.maxFileBytes, historical ? 64 * 1024 ** 2 : 1024 ** 3);
+  // Reconstruct with the current owner, including an old admission which has
+  // no resource-profile field. The public recovery path must not upgrade it.
+  Object.assign(f.binding.nativeTools, f.localMethods);
+  await f.host.resumeTurn(f.request); await f.agent.whenIdle(); await tick();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.localExecutions.length, 2);
+  assert.deepEqual(f.localExecutions[1].settings, f.localExecutions[0].settings);
+  assert.equal((await f.host.recoveryStatus(f.request)).state, 'closed');
+  const serialized = JSON.stringify(f.requests[0].body);
+  assert.equal(serialized.includes('commandResources'), !historical);
+  // The actual HTTP runtime_environment carries the same requested bound.
+  if (!historical) {
+    const row = f.requests[0].body.messages.find(message => typeof message.content === 'string' && message.content.includes('agentkit.execution-environment/v1'));
+    assert.equal(JSON.parse(row.content).commandResources.requestedLimits.maxFileBytes, f.localExecutions[1].settings.maxFileBytes);
+  }
+});
 
 test('production recovery rebinds the original route/budget and refreshed credentials, not current Agent defaults', async t => {
   const f = await fixture(t); f.agent.options = { provider: 'other', model: 'other', maxTokens: 9999 }; f.rotate('secret-after');
@@ -163,8 +194,10 @@ for (const change of ['revision', 'profile', 'permission']) test(`production rec
   if (change === 'revision') f.binding.agentRevision++;
   if (change === 'profile') f.values.modelProfiles[0].baseUrl = 'https://changed.invalid/v1';
   if (change === 'permission') f.binding.nativeTools.permissionContract = 'changed-policy/v1';
-  await assert.rejects(f.host.resumeTurn(f.request), /recovery_(preset_changed|configuration_changed)/);
+  await assert.rejects(f.host.resumeTurn(f.request), change === 'profile'
+    ? {code:'studio_native_model_binding_changed'} : /recovery_(preset_changed|configuration_changed)/);
   await tick(); assert.equal(f.requests.length, 0); assert.equal(f.events.filter(e => e.type === 'turn/end').length, 0);
+  assert.equal(f.ledger.list({tenantId:'local',workspaceId:'unused',userId:'local-user',agentId:f.binding.agentId}).length,0);
   assert.ok(f.agent.externalTurns.pending());
   assert.equal((await f.host.recoveryStatus(f.request)).state, 'failed');
 });

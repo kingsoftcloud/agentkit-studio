@@ -17,7 +17,7 @@
 //   6. All source methods awaited with strict type checks; final guard
 //      before return.
 
-import { canonical, copy, invariant, scopeKey, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant, scopeKey, toolInputRejection, matchesToolExecutionContract } from '@kingsoftcloud/agentkit-harness-core';
 
 export const SKILL_DISCLOSURE_CONTRACT = 'agentkit.native-skill-disclosure/v1';
 export const SKILL_CATALOG_TOOL = 'skill_catalog';
@@ -258,7 +258,7 @@ export function createNativeSkillDisclosurePort({ scope, sessionId, store, sourc
         // Validate the formal definition in configuration matches internal.
         const configTools = record.configuration?.tools ?? [];
         const configDef = configTools.find(t => t.name === call.name);
-        if (!configDef || canonical(configDef) !== canonical(internalDefinitionMap.get(call.name))) continue;
+        if (!configDef || !matchesToolExecutionContract(configDef, internalDefinitionMap.get(call.name))) continue;
         try { runtime.restoreLevel(levels, runId, skillId, level); } catch { /* contradictory → deny */ }
       }
     }
@@ -355,7 +355,7 @@ export function createNativeSkillDisclosurePort({ scope, sessionId, store, sourc
       if (!internalDef) return { status: 'error', content: { code: 'native_skill_tool_unbound', executed: false, message: 'tool not bound' } };
       if (typeof call.callId !== 'string' || !call.callId.trim()) return { status: 'error', content: { code: 'NATIVE_SKILL_CALL_ID_MISSING', executed: false, message: safeMessage('NATIVE_SKILL_CALL_ID_MISSING') } };
       if (request.definition === undefined) return { status: 'error', content: { code: 'NATIVE_SKILL_DEFINITION_MISSING', executed: false, message: safeMessage('NATIVE_SKILL_DEFINITION_MISSING') } };
-      if (canonical(request.definition) !== canonical(internalDef)) return { status: 'error', content: { code: 'NATIVE_SKILL_DEFINITION_FORGED', executed: false, message: safeMessage('NATIVE_SKILL_DEFINITION_FORGED') } };
+      if (!matchesToolExecutionContract(request.definition, internalDef)) return { status: 'error', content: { code: 'NATIVE_SKILL_DEFINITION_FORGED', executed: false, message: safeMessage('NATIVE_SKILL_DEFINITION_FORGED') } };
       const identityError = validateRequestIdentity(request);
       if (identityError) return { status: 'error', content: { ...identityError, executed: false, message: safeMessage(identityError.code) } };
       try { if (scopeKey(request.scope) !== scopeKey(sealedScope)) return { status: 'error', content: { code: 'NATIVE_SKILL_AUTHORITY_SCOPE_MISMATCH', executed: false, message: safeMessage('NATIVE_SKILL_AUTHORITY_SCOPE_MISMATCH') } }; }

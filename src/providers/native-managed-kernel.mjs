@@ -1,3 +1,4 @@
+import { createManagedNativeInjection } from './native-managed-injection.mjs';
 /** Durable Server command receiver over the existing TypeScript NativeKernel.
  * No DSH loop, local permit issuer or Python process is involved. Local SQLite
  * is a single-machine store, not evidence of a shared hosted SQL deployment. */
@@ -22,7 +23,7 @@ const object = value => value && typeof value === 'object' && !Array.isArray(val
 const text = value => typeof value === 'string' && value.trim() && value.length <= 4096 && !value.includes('\0');
 const uuid = value => typeof value === 'string' && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/iu.test(value);
 const sourceKinds = new Set(['studio', 'responses', 'agui', 'a2a', 'parent_agent', 'scheduler', 'workflow', 'channel', 'system']);
-const supported = new Set(['enqueue', 'interrupt', 'pause', 'resume', 'steer', 'submit_interaction']);
+const supported = new Set(['enqueue', 'interrupt', 'pause', 'resume', 'steer', 'inject', 'submit_interaction']);
 const check = condition => invariant(condition, 'NATIVE_KERNEL_COMMAND_INVALID');
 function commandView(value) {
   const command = copy(value);
@@ -34,6 +35,7 @@ function commandView(value) {
   command.command_id = command.command_id.toLowerCase();
   check(['enqueue', 'interrupt', 'pause', 'resume', 'steer', 'inject', 'submit_interaction'].includes(command.command_type));
   if (command.command_type === 'enqueue') check(Object.hasOwn(command.payload, 'content'));
+  if (command.command_type === 'inject') check(Object.keys(command.payload).sort().join(',') === 'content' && typeof command.payload.content === 'string');
   if (command.command_type === 'steer') check(typeof command.payload.content === 'string' && command.payload.content.trim());
   if (command.command_type === 'submit_interaction') check(text(command.payload.run_id) && text(command.payload.interaction_id)
     && text(command.payload.token_ref) && Object.hasOwn(command.payload, 'response'));
@@ -45,7 +47,8 @@ function commandView(value) {
 }
 function businessDigest(command) {
   const value = copy(command); delete value.command_id; delete value.submitted_at; delete value.authorization_ref;
-  delete value.source.ref; delete value.payload.session_context;
+  if (command.command_type !== 'inject') delete value.source.ref;
+  delete value.payload.session_context;
   if (value.command_type === 'submit_interaction') delete value.payload.token_ref;
   return hash(value);
 }
@@ -139,6 +142,9 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     teamsCallbacks = teamsCallbackVerifier ? createNativeTeamsCallbackAuthority({ contexts: teamsContexts.api,
       executionGrants: grants.api, verifier: teamsCallbackVerifier, expectedIncarnation: teamsContexts.api.incarnation() }) : null;
   }
+  catch (error) { runStore.close(); db.close(); throw error; }
+  let injections;
+  try { injections = createManagedNativeInjection({ db, store: runStore, guard, transaction, target: bindingTarget }); }
   catch (error) { runStore.close(); db.close(); throw error; }
   function append(sessionId, facts, command) {
     let seq = db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM managed_events WHERE session_id=?').get(sessionId).seq;
@@ -278,6 +284,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       if (value) consumeNonce(authorization, command); return value;
     });
     if (prior) {
+      if (command.command_type === 'inject') { injections.deliver(command.session_id); return prior; }
       // A delivered control's duplicate is a read-only confirmation. Waking
       // the idle owner here would withdraw a later, unrelated consent wait.
       const queued = db.prepare('SELECT state FROM managed_commands WHERE session_id=? AND idem=?')
@@ -293,8 +300,14 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       || command.command_type === 'resume' && (command.payload.target.kind !== 'run' || command.payload.input != null)
       || command.command_type === 'enqueue' && ['legacy_history', 'execution_policy_ref', 'teams_context_ref']
         .some(key => command.payload[key] != null)) return rejection(command, 'native_control_unsupported', 'unsupported');
-    let binding, interactionDigest, managedInteraction, scopedTarget, admitted = false;
+    let binding, injectionScope, interactionDigest, managedInteraction, scopedTarget, admitted = false;
     try {
+      if (command.command_type === 'inject') {
+        injections.input(command);
+        const supplied = typeof resolveBinding.resolveInjectionScope === 'function'
+          ? await resolveBinding.resolveInjectionScope({ command: copy(command), signal: lifetime.signal }) : undefined;
+        guard(); injectionScope = injections.scope(command, supplied);
+      }
       if (scoped) {
         const selected = command.payload.run_id ?? db.prepare("SELECT r.run_id FROM managed_runs r JOIN managed_commands c ON r.command_id=c.command_id WHERE r.session_id=? AND c.state='accepted' ORDER BY r.rowid LIMIT 1")
           .get(command.session_id)?.run_id;
@@ -321,7 +334,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         binding = await resolveOwnedBinding(bindingRequest(command, null, 'admit')); guard();
         check(object(binding) && object(binding.scope) && binding.scope.tenantId === command.tenant_id
           && binding.scope.agentId === command.agent_instance_id && text(binding.buildId) && object(binding.ports));
-        binding = { ...binding, configuration: configure(binding.configuration) };
+        binding = { ...binding, configuration: configure({ ...binding.configuration, sessionInjectionPolicy: 'next-turn-inbox/v1' }) };
         check(Array.isArray(binding.configuration.inputMessages) && binding.configuration.inputMessages.length > 0);
       }
       // Binding/resource lookup may await network I/O. Expired or revoked Server
@@ -342,6 +355,11 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
           runId = managedNativeRunId(command);
           db.prepare('INSERT INTO managed_runs(run_id,session_id,command_id,scope,config,build_id) VALUES (?,?,?,?,?,?)')
             .run(runId, command.session_id, command.command_id, canonical(binding.scope), canonical(binding.configuration), binding.buildId);
+        } else if (injectionScope) {
+          // An injection is data admission, with no synthetic Run or active-turn lookup.
+          runId = null;
+          if (!injections.hasCapacity(command)) return rejection(command, 'native_injection_queue_full', 'queue_full');
+          injections.scope(command, injectionScope);
         } else {
           runId = scopedTarget?.runId ?? (command.command_type === 'resume' ? command.payload.target.id : command.payload.run_id);
           if (!runId) runId = db.prepare('SELECT run_id FROM managed_runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1').get(command.session_id)?.run_id;
@@ -371,11 +389,13 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
         append(command.session_id, [{ event_id: nativeKernelFactId(command.command_id, 'admission'), family: 'control', family_version: 1,
           event_type: 'control.command_accepted', run_id: runId, payload: { command_id: command.command_id, message_id: result.message_id,
             accepted_seq: seq, status: 'accepted', command_type: command.command_type } }], command);
+        if (injectionScope) injections.admit(command, injectionScope);
         if (managedInteraction) interactions.resolve(command, managedInteraction, authorization);
         if (scopedTarget) scopedControls.admit(command, scopedTarget, authorization);
         return result;
       });
       admitted = accepted.status === 'accepted';
+      if (admitted && injectionScope) { injections.deliver(command.session_id); return accepted; }
       if (admitted) {
         applyControls(command.session_id); scopedControls.drain();
         // A scoped control owns an independent delivery queue. Do not retire
@@ -396,7 +416,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   function applyControls(sessionId) {
     guard();
     for (const row of db.prepare("SELECT * FROM managed_commands WHERE session_id=? AND state='accepted' ORDER BY rowid").all(sessionId)) {
-      const command = parseNativeJson(row.data); if (command.command_type === 'enqueue') continue;
+      const command = parseNativeJson(row.data); if (['enqueue', 'inject'].includes(command.command_type)) continue;
       invariant(command.payload.scope_id == null, 'NATIVE_MANAGED_SCOPE_DELIVERY_INVALID');
       if (command.command_type === 'submit_interaction' && interactions.owns(command)) {
         transaction(() => db.prepare("UPDATE managed_commands SET state='delivered' WHERE command_id=?").run(command.command_id));
@@ -453,7 +473,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
   }
   async function drive(sessionId) {
     for (;;) {
-      guard(); applyControls(sessionId);
+      guard(); injections.deliver(sessionId); applyControls(sessionId);
       const row = db.prepare("SELECT * FROM managed_commands WHERE session_id=? AND state='accepted' ORDER BY rowid").all(sessionId)
         .find(row => parseNativeJson(row.data).command_type === 'enqueue');
       if (!row) return;
@@ -465,7 +485,9 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       const resolved = await resolveOwnedBinding(bindingRequest(command, run, 'execute'));
       try {
         guard();
-        invariant(hash(configure(resolved.configuration)) === hash(parseNativeJson(run.config))
+        const storedConfiguration = parseNativeJson(run.config);
+        invariant(hash(configure({ ...resolved.configuration, ...(storedConfiguration.sessionInjectionPolicy
+          ? { sessionInjectionPolicy: storedConfiguration.sessionInjectionPolicy } : {}) })) === hash(storedConfiguration)
           && canonical(resolved.scope) === run.scope && resolved.buildId === run.build_id, 'NATIVE_KERNEL_BINDING_CHANGED');
         const ports = { ...resolved.ports };
         for (const [port, methods] of Object.entries({ model: ['generate'], tools: ['execute', 'observeReceipt'], workspace: ['observe'],
@@ -708,7 +730,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
       await delay(20, undefined, { signal: signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal });
     }
   } });
-  try { guard(); projectAll(); wake(); }
+  try { guard(); injections.deliver(); projectAll(); wake(); }
   catch (error) { clearInterval(scopedTimer); runStore.close(); db.close(); throw error; }
   return Object.freeze({ contract: MANAGED_NATIVE_KERNEL_CONTRACT, receive, drain, events, inspectSession, retryAcceptedRun, readChildHistory, readChildRecord,
     executionGrants: grants.api,
@@ -718,7 +740,7 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
     startRecovery() { guard(); schedulingEnabled = true; scopedControls.drain(); schedule(); },
     capabilities: Object.freeze({ storage: 'single-machine/sqlite/v1', commands: Object.freeze([...supported]),
       enqueueContentFormats: Object.freeze([...(resolveBinding.enqueueContentFormats ?? [])]),
-      inject: false, scopedInterrupt: scopedControls.supported, resumeTargets: Object.freeze(['run']), structuredInput: typeof authorizeInteraction === 'function',
+      inject: true, injectionPolicy: 'next-turn-inbox/v1', scopedInterrupt: scopedControls.supported, resumeTargets: Object.freeze(['run']), structuredInput: typeof authorizeInteraction === 'function',
       approval: typeof authorizeInteraction === 'function', executionGrants: true,
       teamsContextRegistry: true, teamsCallbackAuthorization: teamsCallbacks !== null, teamsContext: false, executionPolicy: false }),
     async getStatus(query, permit) {
