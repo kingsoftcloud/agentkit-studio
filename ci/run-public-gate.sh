@@ -26,7 +26,7 @@ sudo chmod 700 "$private_root"
 sudo install -m 700 -o "$gate_user" -g "$gate_user" "$scanner" "$private_root/gitleaks"
 sudo install -d -m 700 -o "$gate_user" -g "$gate_user" "$private_root/tmp"
 sudo chown -R "$gate_user:$gate_user" "$workspace"
-# Hosted runners may restrict traversal of /home/runner and its work parent.
+# Hosted runners may restrict traversal of the runner home and work parents.
 # Owning the checkout alone does not make its files reachable by the gate UID.
 # Grant traversal only (no directory listing), then restore each original mode.
 parent="$(dirname "$workspace")"
