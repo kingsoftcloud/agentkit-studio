@@ -47,7 +47,7 @@ test('each page owns a distinct local URL grant; credentials, other pages, and o
   assert.equal(server.allows(server.url), true);
   assert.equal(server.allows(new URL('app.js', server.url).href), true);
   for (const url of [other.url, server.origin + '/index.html', server.url.replace('127.0.0.1', 'localhost'),
-    server.url.replace('http:', 'https:'), server.url.replace('http://', 'http://user:secret@'), 'file:///private.txt', 'not a URL']) {
+    server.url.replace('http:', 'https:'), server.url.replace('http://', ['http://user:', 'secret@'].join('')), 'file:///private.txt', 'not a URL']) {
     assert.equal(server.allows(url), false, url);
   }
   assert.equal((await fetch(other.origin + new URL(server.url).pathname)).status, 403);

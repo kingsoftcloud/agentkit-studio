@@ -94,7 +94,9 @@ function toolShell(item, opts, { icon, summary, body, canToggle = true, defaultO
   const streaming = toolIsLive(item);
   if (provisional) { canToggle = false; summaryAction = undefined; actions = []; }
   const error = status === ToolStatus.Failed && item.error ? redactError(item.error) : null;
-  if (error && !canToggle) { canToggle = true; defaultOpen = false; }
+  // Plain static read failures are already fully visible inline. Structured
+  // failures retain a disclosure for the original bounded diagnostic evidence.
+  if (error && !canToggle && toolErrorSummary(item.error, opts) !== error) { canToggle = true; defaultOpen = false; }
   const open = resolveOpen(item, opts, defaultOpen == null ? streaming : defaultOpen, canToggle);
   const summaryKids = [];
   if (icon && opts.showToolIcon !== false) summaryKids.push(icon);

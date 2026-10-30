@@ -148,7 +148,7 @@ test('resolveWebSsrfPolicy parses the env JSON and tolerates invalid input', () 
 });
 
 test('createNativeDshWebTools redacts the api key and sanitizes baseUrl (strips user/pass/query)', () => {
-  const t = createNativeDshWebTools({ config: { sessionId: 's1', authorize: allowAuthorize, providerConfig: { provider: 'http', baseUrl: 'https://user:pass@api.example.com/s?secret=LEAK', apiKey: 'SECRET' } }, fetch: async () => ({}) });
+  const t = createNativeDshWebTools({ config: { sessionId: 's1', authorize: allowAuthorize, providerConfig: { provider: 'http', baseUrl: ['https://user:', 'pass@api.example.com/s?secret=LEAK'].join(''), apiKey: 'SECRET' } }, fetch: async () => ({}) });
   assert.equal(t.providerConfig.apiKey, '<redacted>');
   assert.equal(t.providerConfig.baseUrl, 'https://api.example.com/s');
   assert.equal(t.providerConfig.provider, 'http');

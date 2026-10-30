@@ -32,8 +32,8 @@ importers:
         specifier: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz
         version: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz
       '@kingsoftcloud/agentkit-harness-ui':
-        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz
-        version: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz
+        version: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@modelcontextprotocol/sdk':
         specifier: 1.32.0
         version: 1.32.0(patch_hash=905b5039a9965104e7ef24338020cfe96b5dd53fc4cf6f53e067a66677b28044)(zod@4.6.5)
@@ -571,8 +571,8 @@ packages:
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz':
-    resolution: {integrity: sha512-WxJnjUEw05fZuVuB9rDZ8ON8NE7KDfr3IPJQ4CchOmzE0UBxptl3efbQyJhdJjHh0guA8Q18vPckvkizNaTXLw==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz}
+  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz':
+    resolution: {integrity: sha512-Xubs7ACKJOqx3QOUjBFjL9Z76XkOAL18rA+1MX76jHS3xxRfp85PCJsReJ0pxc2qFuzKdij7YUtAXN7rGx73CA==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz}
     version: 0.0.1
     engines: {node: '>=22'}
     peerDependencies:
@@ -2389,7 +2389,7 @@ snapshots:
       playwright-core: 1.58.2
       pngjs: 7.0.0
 
-  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-727bef49a22028a6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@kingsoftcloud/agentkit-harness-ui@file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     optionalDependencies:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
