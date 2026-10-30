@@ -47,12 +47,13 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
     let runId, abort, heartbeat, projection, approvalRun, action, input, runStartedAt, logIdentity, terminalLogged = false;
     // Stdout is the existing cloud collector's input. Log only correlation and
     // outcomes: never prompts, model output, tool arguments or upstream errors.
-    const logRun = (event, code) => {
+    const logRun = (event, code, extra = {}) => {
       if (!logIdentity || terminalLogged) return;
       terminalLogged = event !== 'runtime.run.started';
       const entry = { at: new Date().toISOString(), event, ...logIdentity,
         ...(event === 'runtime.run.started' ? {} : { durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)) }),
-        ...(code ? { code: /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED)_[A-Z0-9_]{1,80}$/.test(code) ? code : 'RUNTIME_RUN_FAILED' } : {}) };
+        ...(code ? { code: /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED)_[A-Z0-9_]{1,80}$/.test(code) ? code : 'RUNTIME_RUN_FAILED' } : {}),
+        ...extra };
       try { runLog(entry)?.catch?.(() => {}); } catch { /* Logging cannot change a run's outcome. */ }
     };
     try {
@@ -231,13 +232,17 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       }
     } catch (error) {
       // Managed terminal acknowledgement follows native writer settlement,
-      // including cancellation. A failed durability barrier is not success.
+      // including cancellation. A failed durability barrier is not success,
+      // but it must not replace the failure that actually ended the run:
+      // keep the original code for callers and record settlement separately.
+      let settlementFailure;
       if (abort && platformActions) {
         try { await platformActions.settleRun(input); }
-        catch (settlement) { error = settlement; }
+        catch (settlement) { settlementFailure = settlement; }
       }
       const code = error?.code || 'RUNTIME_RUN_FAILED';
-      logRun(['RUNTIME_CANCELLED', 'RUNTIME_CLIENT_DISCONNECTED'].includes(code) ? 'runtime.run.cancelled' : 'runtime.run.failed', code);
+      logRun(['RUNTIME_CANCELLED', 'RUNTIME_CLIENT_DISCONNECTED'].includes(code) ? 'runtime.run.cancelled' : 'runtime.run.failed', code,
+        settlementFailure ? { settlementCode: settlementFailure?.code || 'RUNTIME_SETTLEMENT_FAILED' } : {});
       if (res.headersSent && !res.destroyed) {
         if (projection) { projection.fail(code); res.end('data: [DONE]\n\n'); }
         else res.end(`event: run.failed\ndata: ${JSON.stringify({ runId, error: { code } })}\n\n`);
