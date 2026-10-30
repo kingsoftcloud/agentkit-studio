@@ -13,6 +13,12 @@ import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachm
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
+const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED)_[A-Z0-9_]{1,80}$/;
+const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
+/** Client-facing codes stay inside the documented families. */
+const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.test(code) ? code : 'RUNTIME_RUN_FAILED');
+/** Diagnostics may carry upstream codes, but only as inert uppercase tokens. */
+const safeDiagnosticCode = code => (typeof code === 'string' && DIAGNOSTIC_CODE.test(code) ? code : 'RUNTIME_SETTLEMENT_FAILED');
 /** A request may only select a mode inside the ceiling declared by this runtime. */
 const PERMISSION_MODE_HEADER = 'x-agentkit-permission-mode';
 
@@ -50,10 +56,12 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
     const logRun = (event, code, extra = {}) => {
       if (!logIdentity || terminalLogged) return;
       terminalLogged = event !== 'runtime.run.started';
+      const { settlementCode: rawSettlementCode, ...extraFields } = extra;
       const entry = { at: new Date().toISOString(), event, ...logIdentity,
         ...(event === 'runtime.run.started' ? {} : { durationMs: Math.max(0, Math.round(performance.now() - runStartedAt)) }),
-        ...(code ? { code: /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED)_[A-Z0-9_]{1,80}$/.test(code) ? code : 'RUNTIME_RUN_FAILED' } : {}),
-        ...extra };
+        ...(code ? { code: safeClientCode(code) } : {}),
+        ...(rawSettlementCode !== undefined ? { settlementCode: safeDiagnosticCode(rawSettlementCode) } : {}),
+        ...extraFields };
       try { runLog(entry)?.catch?.(() => {}); } catch { /* Logging cannot change a run's outcome. */ }
     };
     try {
