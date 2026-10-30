@@ -25,6 +25,8 @@ sudo chown "$gate_user:$gate_user" "$private_root"
 sudo chmod 700 "$private_root"
 sudo install -m 700 -o "$gate_user" -g "$gate_user" "$scanner" "$private_root/gitleaks"
 sudo install -d -m 700 -o "$gate_user" -g "$gate_user" "$private_root/tmp"
+sudo install -d -m 700 -o "$gate_user" -g "$gate_user" "$private_root/config" "$private_root/cache"
+browser="$(node --input-type=module -e 'import { chromium } from "playwright-core"; console.log(chromium.executablePath())')"
 sudo chown -R "$gate_user:$gate_user" "$workspace"
 # Hosted runners may restrict traversal of the runner home and work parents.
 # Owning the checkout alone does not make its files reachable by the gate UID.
@@ -38,5 +40,9 @@ while [[ "$parent" != / ]]; do
   fi
   parent="$(dirname "$parent")"
 done
+sudo -u "$gate_user" test -x "$browser"
 sudo -H -u "$gate_user" env PATH="$PATH" TMPDIR="$private_root/tmp" \
+  XDG_CONFIG_HOME="$private_root/config" XDG_CACHE_HOME="$private_root/cache" \
+  PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:?Installed browser directory is required}" \
+  AGENTKIT_NATIVE_TEST_CHROMIUM="$browser" KSADK_BROWSER_EXECUTABLE_PATH="$browser" \
   GITLEAKS_BIN="$private_root/gitleaks" AGENTKIT_TEST_CONCURRENCY=1 make public-gate

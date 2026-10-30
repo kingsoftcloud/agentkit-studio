@@ -70,7 +70,10 @@ for (const disposition of ['allow', 'deny', 'lost-lease', 'bound-policy']) test(
     nativeEngineContract: 'agentkit.native-dsh-turn/v1',
     ...(disposition === 'bound-policy' ? { boundToolPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} } } : {}) }, workspaceRoot: workspace, stateDir: join(root, 'state'),
     createBrowser: options => {
-      const browser = new NativePlaywrightBrowser({ ...options, launchBrowser: () => chromium.launch({ headless: true, executablePath }) });
+      const browser = new NativePlaywrightBrowser({ ...options, launchBrowser: async () => {
+        try { return await chromium.launch({ headless: true, executablePath }); }
+        catch (error) { t.diagnostic(`Chromium launch failed (${disposition}): ${error.message}`); throw error; }
+      } });
       const act = browser.act.bind(browser);
       browser.act = (...args) => { actions.push({ runId: args[0].runId, kind: args[1].kind }); return act(...args); };
       return browser;
@@ -103,7 +106,10 @@ for (const disposition of ['allow', 'deny', 'lost-lease', 'bound-policy']) test(
         { candidate: { ...request.candidate, text: 'mutated' } }, { contract: { ...request.contract, objective: 'other' } },
         { sessionId: 'other' }, { entryPath: 'other.html' }]) assert.equal(allowed({ ...probe, ...changed }), false);
       await assert.rejects(gateway.verifyBrowserPage(agent, probe), /verification_authority_missing/);
-      return verification.verify(request);
+      const report = await verification.verify(request);
+      if (['allow', 'bound-policy'].includes(disposition) && report.checks.some(check => check.status === 'blocked'))
+        t.diagnostic(`Unexpected verification blocker: ${JSON.stringify(report)}`);
+      return report;
     } } } });
   kernel.start(snapshot, config);
   if (disposition === 'lost-lease') await assert.rejects(kernel.runUntilIdle(scope, 'run'), { code: 'stale_fence' });
@@ -111,7 +117,9 @@ for (const disposition of ['allow', 'deny', 'lost-lease', 'bound-policy']) test(
     const done = await kernel.runUntilIdle(scope, 'run');
     assert.equal(done.phase, 'completed', JSON.stringify({ reason: done.reason, models, verifications, calls, actions,
       receipts: store.load(scope, 'run').receipts.slice(-3).map(receipt => ({ status: receipt.status, code: receipt.result.code })) }));
-    assert.equal(done.outcome, ['allow', 'bound-policy'].includes(disposition) ? 'unverified' : 'blocked');
+    assert.equal(done.outcome, ['allow', 'bound-policy'].includes(disposition) ? 'unverified' : 'blocked',
+      JSON.stringify({ reason: done.reason, calls, actions, receipts: store.load(scope, 'run').receipts.slice(-3)
+        .map(receipt => ({ status: receipt.status, code: receipt.result.code })) }));
     assert.equal(done.reason, ['allow', 'bound-policy'].includes(disposition) ? 'required_verification_incomplete' : 'required_acceptance_blocked');
   }
   assert.equal(models, 2); assert.equal(verifications, 1);
