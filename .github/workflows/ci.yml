@@ -13,8 +13,6 @@ jobs:
   test:
     name: public-gate
     runs-on: ubuntu-24.04
-    env:
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/studio-native-browsers
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +27,11 @@ jobs:
           cache: pnpm
       - run: node scripts/check-node-version.mjs
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
+      - name: Install test Chromium
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          pnpm exec playwright install --with-deps chromium
       - run: pnpm build:native-source
       - run: pnpm check:native-ui
       - run: |
