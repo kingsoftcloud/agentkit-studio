@@ -400,6 +400,19 @@ test('Skill Service uses a signed GET action for cloud Skill Spaces', async () =
   assert.match(request.init.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKTEST\//);
 });
 
+test('Native Skill space and public listings use the Skill GET allowlist and signing boundary', async () => {
+  const calls = [];
+  const client = createAgentEngineClient({ configuration: configuration({ cloudServerUrl: 'https://aicp.api.ksyun.com',
+    cloudAccessKey: 'AKTEST', cloudSecretKey: 'SKTEST' }), fetchImpl: async (url, init) => {
+    calls.push({ url: new URL(url), init }); return Response.json({ Code: 0, Data: { Skills: [] } });
+  } });
+  for (const action of ['ListSkillSpaces', 'ListAvailablePremadeSkills']) await client.skillAction(action);
+  assert.deepEqual(calls.map(call => call.url.searchParams.get('Action')), ['ListSkillSpaces', 'ListAvailablePremadeSkills']);
+  assert.ok(calls.every(call => call.init.method === 'GET' && call.init.redirect === 'error'
+    && /^AWS4-HMAC-SHA256 Credential=AKTEST\//.test(call.init.headers.Authorization)));
+  await assert.rejects(client.skillAction('DeleteSkill'), { code: 'ACTION_NOT_ALLOWED' });
+});
+
 test('QueryMemorySdk accepts the native response shape without a Code field', async () => {
   let body;
   const client = createAgentEngineClient({

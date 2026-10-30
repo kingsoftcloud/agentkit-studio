@@ -6,9 +6,11 @@
  * recorded as `failed` with an honest gap message.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync as Database } from 'node:sqlite';
+import { closeSync, constants } from 'node:fs';
+import { openPrivate, privateFile } from '@kingsoftcloud/agentkit-harness-node/native/local-command-state';
 
 export class StudioSchedulerError extends Error {
   constructor(code, message, details = {}) {
@@ -50,9 +52,9 @@ function cronMatches(date, fields) {
 }
 
 export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000, clock = Date } = {}) {
-  const dbPath = join(storeDir, 'scheduler.sqlite3');
   let db = null;
   let timer = null;
+  let owner = null, initialization = null, closing = false;
   const running = new Map();
   function normalized(spec = {}) {
     const schedule = spec.schedule && typeof spec.schedule === 'object' ? spec.schedule : {};
@@ -62,8 +64,14 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
     const occurrenceId = `occ_${randomUUID().replace(/-/g, '')}`;
     const sessionId = `ses_${randomUUID().replace(/-/g, '')}`;
     const scheduledAt = scheduledFor.toISOString();
-    db.prepare('INSERT INTO occurrences (occurrence_id, task_id, scheduled_for, session_id, state, attempt, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(occurrenceId, row.task_id, scheduledAt, sessionId, 'running', 1, scheduledAt);
-    db.prepare('UPDATE schedules SET last_fired_at = ?, updated_at = ? WHERE task_id = ?').run(scheduledAt, scheduledAt, row.task_id);
+    // Claim and advance together, before asking the Agent to execute. A crash
+    // cannot leave a once task due after its original occurrence was dispatched.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('INSERT INTO occurrences (occurrence_id, task_id, scheduled_for, session_id, state, attempt, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(occurrenceId, row.task_id, scheduledAt, sessionId, 'running', 1, scheduledAt);
+      db.prepare('UPDATE schedules SET last_fired_at = ?, updated_at = ? WHERE task_id = ?').run(scheduledAt, scheduledAt, row.task_id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
     if (typeof runner === 'function') {
       try {
         const result = await runner({ occurrenceId, taskId: row.task_id, agentId: row.agent_id, sessionId, input: row.prompt });
@@ -78,15 +86,17 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
   };
 
   const runOccurrence = (row, scheduledFor) => {
+    if (closing) throw new StudioSchedulerError('SCHEDULER_CLOSED', '调度器已关闭');
     if (running.has(row.task_id)) throw new StudioSchedulerError('SCHEDULE_RUNNING', '该自动化正在运行', { taskId: row.task_id });
     const work = executeOccurrence(row, scheduledFor).finally(() => running.delete(row.task_id));
     running.set(row.task_id, work); return work;
   };
 
   const tick = async () => {
-    if (!db) return;
+    if (!db || closing) return;
     const now = new Date(clock.now());
     const rows = db.prepare('SELECT * FROM schedules WHERE enabled = 1').all();
+    const dispatched = [];
     for (const row of rows) {
       let fire = false;
       if (row.kind === 'once') { if (new Date(row.next_fire_at) <= now) fire = true; }
@@ -95,26 +105,58 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
       if (!fire || running.has(row.task_id)) continue;
       if (row.kind === 'cron' && row.last_fired_at && Math.floor(Date.parse(row.last_fired_at) / 60000) === Math.floor(now.getTime() / 60000)) continue;
       if (row.kind === 'once' && row.last_fired_at) continue;
-      await runOccurrence(row, now);
+      dispatched.push(runOccurrence(row, now));
     }
+    await Promise.all(dispatched);
   };
 
   async function ensureReady() {
+    if (closing) throw new StudioSchedulerError('SCHEDULER_CLOSED', '调度器已关闭');
     if (db) return;
+    if (!initialization) initialization = initialize().finally(() => { initialization = null; });
+    await initialization;
+  }
+
+  async function initialize() {
     await mkdir(storeDir, { recursive: true, mode: 0o700 });
-    db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS schedules (task_id TEXT PRIMARY KEY, agent_id TEXT, display_name TEXT, kind TEXT, at TEXT, every_seconds INTEGER, expression TEXT, cron_fields TEXT, misfire_policy TEXT DEFAULT 'skip', prompt TEXT, enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, last_fired_at TEXT, next_fire_at TEXT);
-      CREATE TABLE IF NOT EXISTS occurrences (occurrence_id TEXT PRIMARY KEY, task_id TEXT, scheduled_for TEXT, session_id TEXT, state TEXT DEFAULT 'claimed', attempt INTEGER DEFAULT 1, run_id TEXT, started_at TEXT, completed_at TEXT);
-      CREATE INDEX IF NOT EXISTS idx_occ_task ON occurrences(task_id);
-    `);
-    const scheduleColumns = db.prepare('PRAGMA table_info(schedules)').all().map(row => row.name);
-    if (!scheduleColumns.includes('timezone')) db.exec("ALTER TABLE schedules ADD COLUMN timezone TEXT DEFAULT 'Asia/Shanghai'");
-    const occurrenceColumns = db.prepare('PRAGMA table_info(occurrences)').all().map(row => row.name);
-    if (!occurrenceColumns.includes('error')) db.exec('ALTER TABLE occurrences ADD COLUMN error TEXT');
-    timer = setInterval(() => { void tick().catch(error => console.warn('[agentkit-studio] scheduler tick failed:', error?.message || error)); }, tickIntervalMs);
-    if (typeof timer.unref === 'function') timer.unref();
-    void tick();
+    const ownedDirectory = await realpath(storeDir);
+    if (closing) throw new StudioSchedulerError('SCHEDULER_CLOSED', '调度器已关闭');
+    // A separate SQLite transaction owns this scheduler until shutdown. Zero
+    // busy timeout also rejects same-process contenders without blocking the
+    // event loop. Process death releases ownership; no PID/mtime inference.
+    const lock = join(ownedDirectory, 'scheduler-owner.sqlite3');
+    const fd = openPrivate(lock, constants.O_RDWR | constants.O_CREAT); closeSync(fd);
+    for (const suffix of ['-journal', '-wal', '-shm']) privateFile(lock + suffix, true);
+    try {
+      owner = new Database(lock);
+      owner.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE;');
+    } catch (error) {
+      owner?.close(); owner = null;
+      if ([5, 6].includes(error.errcode)) throw new StudioSchedulerError('SCHEDULER_OWNED', '另一个宿主正在运行此调度器');
+      throw error;
+    }
+    try {
+      db = new Database(join(ownedDirectory, 'scheduler.sqlite3'));
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS schedules (task_id TEXT PRIMARY KEY, agent_id TEXT, display_name TEXT, kind TEXT, at TEXT, every_seconds INTEGER, expression TEXT, cron_fields TEXT, misfire_policy TEXT DEFAULT 'skip', prompt TEXT, enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, last_fired_at TEXT, next_fire_at TEXT);
+        CREATE TABLE IF NOT EXISTS occurrences (occurrence_id TEXT PRIMARY KEY, task_id TEXT, scheduled_for TEXT, session_id TEXT, state TEXT DEFAULT 'claimed', attempt INTEGER DEFAULT 1, run_id TEXT, started_at TEXT, completed_at TEXT);
+        CREATE INDEX IF NOT EXISTS idx_occ_task ON occurrences(task_id);
+      `);
+      const scheduleColumns = db.prepare('PRAGMA table_info(schedules)').all().map(row => row.name);
+      if (!scheduleColumns.includes('timezone')) db.exec("ALTER TABLE schedules ADD COLUMN timezone TEXT DEFAULT 'Asia/Shanghai'");
+      const occurrenceColumns = db.prepare('PRAGMA table_info(occurrences)').all().map(row => row.name);
+      if (!occurrenceColumns.includes('error')) db.exec('ALTER TABLE occurrences ADD COLUMN error TEXT');
+      db.prepare("UPDATE occurrences SET state = 'failed', completed_at = ?, error = ? WHERE state IN ('claimed', 'running', 'accepted', 'admitting')")
+        .run(new Date(clock.now()).toISOString(), JSON.stringify({ code: 'AUTOMATION_OUTCOME_UNKNOWN',
+          message: '原宿主执行中断，结果尚未确认。请通过原会话核对或恢复；调度器不会重放原调用。' }));
+      timer = setInterval(() => { void tick().catch(error => console.warn('[agentkit-studio] scheduler tick failed:', error?.message || error)); }, tickIntervalMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      void tick().catch(error => console.warn('[agentkit-studio] scheduler startup tick failed:', error?.message || error));
+    } catch (error) {
+      db?.close(); db = null;
+      try { owner.exec('ROLLBACK'); } finally { owner.close(); owner = null; }
+      throw error;
+    }
   }
 
   function validateSpec(spec) {
@@ -195,5 +237,11 @@ export function createStudioScheduler({ storeDir, runner, tickIntervalMs = 30000
     return { ...(row.error ? { error: JSON.parse(row.error), errorCode: JSON.parse(row.error).code, detail: JSON.parse(row.error).message } : {}), occurrenceId: row.occurrence_id, taskId: row.task_id, scheduledFor: row.scheduled_for, sessionId: row.session_id, state: row.state, attempt: row.attempt, runId: row.run_id, startedAt: row.started_at, completedAt: row.completed_at };
   }
 
-  return { createSchedule, listSchedules, getSchedule, updateSchedule, deleteSchedule, listOccurrences, runNow, ensureReady, tick, availability: () => ({ triggerActive: typeof runner === 'function' && Boolean(timer), runnerAvailable: typeof runner === 'function' }), dispose: async () => { clearInterval(timer); timer = null; await Promise.allSettled(running.values()); db?.close(); db = null; } };
+  return { createSchedule, listSchedules, getSchedule, updateSchedule, deleteSchedule, listOccurrences, runNow, ensureReady, tick, availability: () => ({ triggerActive: typeof runner === 'function' && Boolean(timer), runnerAvailable: typeof runner === 'function' }), dispose: async () => {
+    closing = true; clearInterval(timer); timer = null;
+    await initialization?.catch(() => {});
+    clearInterval(timer); timer = null;
+    await Promise.allSettled(running.values()); db?.close(); db = null;
+    if (owner) { try { owner.exec('ROLLBACK'); } finally { owner.close(); owner = null; } }
+  } };
 }

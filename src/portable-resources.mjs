@@ -2,6 +2,8 @@
 import { createHash } from 'node:crypto';
 import { readdir, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
+import { nativeVisionProfileId } from './native-vision-model.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
 export const sha256 = data => createHash('sha256').update(data).digest('hex');
@@ -61,7 +63,14 @@ export async function capturePortableResources({ record, models, adapters, confi
   rejectInlineSecrets(record.metadata);
   const bindings = record.spec.bindings || record.bindings || {}, runtime = record.spec.runtime?.type;
   if (!['dsh-native', 'harness', 'codex'].includes(runtime)) throw portableError('PORTABLE_RUNTIME_UNSUPPORTED', '运行包仅支持 DSH Native、Codex 和自研 Harness');
-  if (bindings.tools?.length) throw portableError('PORTABLE_BUILTIN_UNSUPPORTED', '该 Agent 绑定的内置工具依赖外部 Python 工具运行时，尚不能导出为可迁移运行包');
+  // Concrete Node builtin capabilities travel only with a Frozen Native engine
+  // build. Optional services still require target Host configuration; a tool
+  // binding is never permission to execute or a substitute for credentials.
+  const nativeBuiltins = resolvePortableNativeBuiltins(record);
+  if (nativeBuiltins.kind === 'invalid') throw portableError('PORTABLE_BINDING_INVALID', '该 Agent 绑定的内置工具形状无效，请修正 Tool 绑定后重新导出');
+  if (nativeBuiltins.kind === 'unsupported') throw portableError('PORTABLE_BUILTIN_UNSUPPORTED',
+    nativeBuiltins.unknown ? `该 Agent 绑定的内置工具尚不能导出为可迁移运行包：${nativeBuiltins.unknown.join(', ')}`
+      : '导出内置工具需要固定 Native 执行引擎的 Build，请先重新构建');
   const plugins = bindings.plugins || [];
   if (plugins.some(item => item.enabled === false)) throw portableError('PORTABLE_DISABLED_PLUGIN_UNSUPPORTED', '请先移除已停用的资源插件绑定，当前运行包不迁移其遗留配置');
   const cloudResources = plugins.filter(item => item.enabled !== false).map(item => item.config?.binding?.resource);
@@ -76,6 +85,8 @@ export async function capturePortableResources({ record, models, adapters, confi
   }
   const boundModels = [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds || []).map(idOf)].filter(Boolean))];
   if (!boundModels.length) throw portableError('PORTABLE_MODEL_REQUIRED', '请先为 Agent 显式绑定模型，再导出运行包');
+  const visionId = nativeVisionProfileId(record);
+  if (visionId && !boundModels.includes(visionId)) boundModels.push(visionId);
   const profiles = [];
   for (const id of boundModels) {
     let profile;
@@ -87,9 +98,12 @@ export async function capturePortableResources({ record, models, adapters, confi
       throw error;
     }
     const credentialName = requireEnv(refName(profile.credentialName) || `AGENTKIT_BUNDLE_MODEL_${sha256(id).slice(0, 12).toUpperCase()}`, id, 'model');
+    rejectInlineSecrets(profile.parameters);
     profiles.push({ id, provider: profile.provider, modelName: profile.modelName, baseUrl: endpoint(profile.baseUrl),
       credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}),
-      ...(profile.codexApi ? { codexApi: profile.codexApi } : {}) });
+      ...(profile.codexApi ? { codexApi: profile.codexApi } : {}),
+      ...Object.fromEntries(['protocol', 'contextWindow', 'maxOutputTokens', 'requestTimeoutMs', 'parameters']
+        .filter(key => profile[key] !== undefined).map(key => [key, structuredClone(profile[key])])) });
   }
   const mcps = [];
   for (const binding of bindings.mcpServers || []) {
@@ -143,5 +157,6 @@ export async function capturePortableResources({ record, models, adapters, confi
     const search = await credentials.resolve('DEEPSEEK_API_KEY').catch(() => null);
     if (typeof search?.value === 'string' && search.value.trim()) requireEnv('DEEPSEEK_API_KEY', 'web-search', 'personal assistant web search');
   }
-  return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files };
+  return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files,
+    nativeBuiltin: nativeBuiltins.kind === 'native' ? nativeBuiltins.manifest : undefined };
 }

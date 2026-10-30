@@ -28,6 +28,28 @@ test('native bridge refuses unbound IDs, unknown Agents and ambiguous aliases be
   assert.equal(calls, 0);
 });
 
+test('frozen resource selection preserves the Native result codec and dispatch authority guard', async () => {
+  let dispatched = 0;
+  const signal = new AbortController().signal;
+  const stale = Object.assign(new Error('retired Native request'), { code: 'studio_native_tool_authority_stale' });
+  const assertCurrent = () => { throw stale; };
+  const execute = createBoundResourceToolExecutor({
+    agents: { getRevision: async () => record([binding]) },
+    resources: { callMcpTool: async (ref, name, args, options) => {
+      assert.deepEqual([ref, name, args], [binding, 'probe', { q: 1 }]);
+      assert.equal(options.signal, signal);
+      assert.equal(options.resultFormat, 'mcp-result/v1');
+      assert.equal(options.assertCurrent, assertCurrent);
+      options.assertCurrent();
+      dispatched++;
+    } },
+  });
+  await assert.rejects(execute({ agentId: 'agent', agentRevision: 7, resourceId: 'crm',
+    name: 'probe', arguments: { q: 1 }, signal, resultFormat: 'mcp-result/v1', assertCurrent }),
+  { code: 'studio_native_tool_authority_stale' });
+  assert.equal(dispatched, 0);
+});
+
 for (const mode of ['revision', 'build']) test(`native bridge uses the preset's frozen ${mode} rather than the latest Agent binding`, async () => {
   let actual;
   const frozen = { ...binding, endpointUrl: 'https://frozen.example.test/mcp' };

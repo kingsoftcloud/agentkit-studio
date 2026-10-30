@@ -1,0 +1,19 @@
+The Node local-process adapter uses a small executable built from the adjacent
+local-process-launcher.c (the repository's Apache-2.0 license). It performs only
+POSIX resource-limit, fork/watchdog and exec operations; it is not a language
+interpreter or an execution policy.
+
+Darwin executables dynamically use the operating system's libSystem; no Apple
+runtime library is bundled. Linux executables are built with Alpine GCC 14.2.0
+and statically link musl 1.2.5. The included musl COPYRIGHT is from the upstream
+1.2.5 source release. GCC runtime terms are included for compiler runtime parts:
+COPYING3 plus the GCC Runtime Library Exception (COPYING.RUNTIME).
+
+Upstream license sources:
+https://musl.libc.org/releases/musl-1.2.5.tar.gz (COPYRIGHT)
+https://github.com/gcc-mirror/gcc/blob/releases/gcc-14.2.0/COPYING3
+https://github.com/gcc-mirror/gcc/blob/releases/gcc-14.2.0/COPYING.RUNTIME
+
+Compiler identification, base-image digest and each executable's SHA-256 are
+recorded in local-process-manifest.json. Rebuilds are a maintainer operation;
+installation and execution never invoke a compiler, package manager or Python.

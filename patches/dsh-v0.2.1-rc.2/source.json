@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "8817bdcbc848043000579cf05fb267bfd2e09252",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-12",
-  "tree": "0bf2ad7f595839da9fa8352acf21df3dc56b0784",
-  "sourceSha256": "ca5c0a192fc3903c1b3866ad46a25ca463c828832f30cecdb3035e17a7290386",
+  "headCommit": "b366fda4a6e014449a973b986e6673f197fe5699",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-master",
+  "tree": "8064a20819a8ae10cfcd6e50b831efc1b79bad8b",
+  "sourceSha256": "76280203b97aee62ad0ebb1c8c5e1c96a08925ed741fa99d3fa49b042131401a",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "9e33e710235a844cf09d54576e387ffc6337fd7367a0cc65c4fb9b8b49edda6e"
+    "sha256": "3c70d6b6aead17ce701280545005d372cdcde3774ed66089aa49275becc0b04d"
   },
   "commits": [
     {
@@ -241,38 +241,146 @@
     },
     {
       "id": "046",
-      "file": "046-macos-studio-identity.patch",
-      "commit": "058b3247e21649c31db1b28dc813f8117aa38ecf",
-      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
+      "file": "046-maintained-doc-refresh.patch",
+      "commit": "aa199c96d679641c8a835b8b84497ecb32b79a06",
+      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4"
     },
     {
       "id": "047",
-      "file": "047-native-schedule-manager.patch",
-      "commit": "d203fbc0690885d9c0e89146af7d986c767f06ea",
-      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be"
+      "file": "047-execute-turn-engine.patch",
+      "commit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
+      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
     },
     {
       "id": "048",
-      "file": "048-isolated-native-browser.patch",
-      "commit": "649c4617f0865f6309345814b99bd82a71761dab",
-      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611"
+      "file": "048-sdk-external-turn.patch",
+      "commit": "4d4f6d195cc5bb2871387c810e29482465247f27",
+      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
     },
     {
       "id": "049",
-      "file": "049-flock-libc-report-network.patch",
-      "commit": "df9409cca9c98c10018081db348884723f924dd7",
-      "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05"
+      "file": "049-exact-numeric-arguments.patch",
+      "commit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
+      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
     },
     {
       "id": "050",
-      "file": "050-maintenance-source-validation.patch",
-      "commit": "3596ee104ee64ca2bed0b85f0e8467c7d4000b2a",
-      "sha256": "03f58fa416958357f5b22aa8b32509704028f5f582a31103b0ef13839c9e64f8"
+      "file": "050-external-turn-ownership.patch",
+      "commit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
+      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
     },
     {
       "id": "051",
-      "file": "051-desktop-cli-product-name.patch",
-      "commit": "8817bdcbc848043000579cf05fb267bfd2e09252",
+      "file": "051-external-turn-idle-admission.patch",
+      "commit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
+      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
+    },
+    {
+      "id": "052",
+      "file": "052-node-only-primary-runtime.patch",
+      "commit": "594077b72ae7398531f340564e80e88169a43c94",
+      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
+    },
+    {
+      "id": "053",
+      "file": "053-node-office-authoring.patch",
+      "commit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
+      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
+    },
+    {
+      "id": "054",
+      "file": "054-scoped-external-instructions.patch",
+      "commit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
+      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
+    },
+    {
+      "id": "055",
+      "file": "055-tool-dispatch-guard.patch",
+      "commit": "786f15474b99c012680e76326a55386848c8f45b",
+      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4"
+    },
+    {
+      "id": "056",
+      "file": "056-caller-result-retention.patch",
+      "commit": "600cd0b7e7a72ef8b6774d05aabccaba30b5895b",
+      "sha256": "41f7b0eeb18f3201193b94df2e157c8a6344cbc2fa57d321924f86ab16e93f37"
+    },
+    {
+      "id": "057",
+      "file": "057-runtime-chat-presentation.patch",
+      "commit": "b752e6a4a07d497ec30c820c3caa77f318356602",
+      "sha256": "00475d007b7d10d76b0044f2a653af083e3f76d207184002312557a6cd0d61fb"
+    },
+    {
+      "id": "058",
+      "file": "058-chat-table-layout-boundary.patch",
+      "commit": "d68df244a5b220584bd8534f2c157e5aa239907a",
+      "sha256": "54372264c65e91607ba3b0ab9a6368e9047264dd9e41e81a7939db8ab2fd8216"
+    },
+    {
+      "id": "059",
+      "file": "059-chat-status-presentation-seat.patch",
+      "commit": "2ef4455c10eed95d9786533c52efd953d0c641f4",
+      "sha256": "13f6b4128ab27fddd72ab856fd1605a8d5709ecab0e1ccd061f64ef2c6d23986"
+    },
+    {
+      "id": "060",
+      "file": "060-conversation-status-todo-owner.patch",
+      "commit": "a4403d52e8d4fb602ee4343c32f0d415e9fe3f8d",
+      "sha256": "9f91ca15990e72774be479ba8b01f0a707e6825007ea80d95f94ec4b490a8ddf"
+    },
+    {
+      "id": "061",
+      "file": "061-tool-preflight-defer.patch",
+      "commit": "609f1aed18758966eee9815f245d86a9e227c084",
+      "sha256": "41956a490e4625f7ecf66edfa0a18d9a5aef6124e13fa8044d6f751a7c67a0ee"
+    },
+    {
+      "id": "062",
+      "file": "062-conversation-shell-scroll-owner.patch",
+      "commit": "d918977b892638296d9e36af6721272e7e704ccb",
+      "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9"
+    },
+    {
+      "id": "063",
+      "file": "063-tool-preflight-contract-type.patch",
+      "commit": "54ae75219e468f78e6086bc5a742ea3bd3193ddf",
+      "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613"
+    },
+    {
+      "id": "064",
+      "file": "064-macos-studio-identity.patch",
+      "commit": "2d3f86b1504d75ec7ca02eb96c18b4bf1a02d4cf",
+      "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
+    },
+    {
+      "id": "065",
+      "file": "065-native-schedule-manager.patch",
+      "commit": "38fc5e2d354b078c711851a3d78954d294485436",
+      "sha256": "fa2dac9916d7c56d95f42103a232caa110d6f86a96f01b0687dae4ecee6a99ac"
+    },
+    {
+      "id": "066",
+      "file": "066-isolated-native-browser.patch",
+      "commit": "83f1429e0cc8e888ce7f22fb58b6e24d41d431b4",
+      "sha256": "894d09790d6ecfe345dfdad52e067819e6b303eb90e20fc381053867b6f2f6f5"
+    },
+    {
+      "id": "067",
+      "file": "067-flock-libc-report-network.patch",
+      "commit": "f2946d7bec12451932edcb56de76e8e9a4446c62",
+      "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05"
+    },
+    {
+      "id": "068",
+      "file": "068-maintenance-source-validation.patch",
+      "commit": "d7f6fb3849ea894d1596e76049ee8e84ee6867d2",
+      "sha256": "3326f9d15bc1f6b8e67a0014a1a5cb7974d1efd5ca9a0bb9a98a906cb131bbce"
+    },
+    {
+      "id": "069",
+      "file": "069-desktop-cli-product-name.patch",
+      "commit": "b366fda4a6e014449a973b986e6673f197fe5699",
       "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973"
     }
   ]

@@ -4,7 +4,18 @@ import {mkdtemp,writeFile,rename,rm,mkdir} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {auditPublicHistory} from '../scripts/public-history-audit.mjs';
+import {auditPublicHistory, auditHistoricalBlob} from '../scripts/public-history-audit.mjs';
+import {PUBLIC_HISTORY_BASELINE} from '../scripts/public-history-baseline.mjs';
+import {auditText} from '../scripts/public-surface-audit.mjs';
+
+test('a reviewed historical fixture cannot exempt current, changed or foreign-path content',()=>{
+  const entry=PUBLIC_HISTORY_BASELINE.find(item=>item.file==='packages/agentkit-harness/test/native-browser-workspace-server.test.mjs');
+  const bytes=execFileSync('git',['cat-file','blob',entry.blob]);
+  assert.deepEqual(auditHistoricalBlob(entry.file,bytes),[]);
+  assert.ok(auditText(entry.file,bytes).length>0,'the snapshot gate still rejects this literal');
+  assert.ok(auditHistoricalBlob(entry.file,Buffer.concat([bytes,Buffer.from('\n// changed\n')])).length>0);
+  assert.ok(auditHistoricalBlob('src/unreviewed.mjs',bytes).length>0);
+});
 
 test('public history gate catches a forbidden historical filename after a clean rename',async t=>{
   const root=await mkdtemp(join(tmpdir(),'studio-public-history-'));t.after(()=>rm(root,{recursive:true,force:true}));

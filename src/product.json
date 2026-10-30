@@ -10,12 +10,16 @@
   },
   "copy": {
     "chat": {
-      "zh": {"chat.deepDiving": "正在思考中", "chat.deepDivingFor": "正在思考中，用时 {duration} ···"},
-      "en": {"chat.deepDiving": "Thinking", "chat.deepDivingFor": "Thinking for {duration} ···"}
+      "zh": {"chat.deepDiving": "正在执行", "chat.deepDivingFor": "正在执行，用时 {duration} ···", "message.turnProcess.worked": "本轮已结束", "message.turnProcess.took": "本轮已结束，用时 "},
+      "en": {"chat.deepDiving": "Working", "chat.deepDivingFor": "Working for {duration} ···", "message.turnProcess.worked": "Turn ended", "message.turnProcess.took": "Turn ended in "}
     },
     "conversation": {
       "zh": {"placeholder.hero": "发消息或创建任务, / 调用指令, @ 文件或对话", "hero.headline": "{productName}", "hero.preview": ""},
       "en": {"hero.headline": "{productName}", "hero.preview": ""}
+    },
+    "deliverables": {
+      "zh": {"changes.title": "运行期间 {count} 个文件发生变化（可能含并发修改）", "changes.singleTitle": "运行期间 {name} 发生变化（可能含并发修改）", "changes.openReview": "查看运行期间观测到的文件变化", "review.title": "第 {turn} 轮期间的文件变化"},
+      "en": {"changes.title": "{count} files changed during this turn (may include concurrent edits)", "changes.singleTitle": "{name} changed during this turn (may include concurrent edits)", "changes.openReview": "Review file changes observed during this turn", "review.title": "File changes during turn {turn}"}
     }
   },
   "desktop": {

@@ -14,6 +14,7 @@ import { createAssistantNativeCarrierService } from './assistant-native-carrier.
 import { createFrozenHostedActions } from './frozen-hosted-actions.mjs';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
 import { createAssistantPermissionModel } from './assistant-permission-model.mjs';
+import { createFrozenResponseProjection } from './frozen-response-projection.mjs';
 import { createManagedApprovalRegistry } from './managed-runtime-approval.mjs';
 import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, readExecutionMode } from './execution-policy.mjs';
 
@@ -108,7 +109,7 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   return startBuildRuntimeHttp({ hosted, agentId, buildId, managedIdentity: managedRuntime?.identity, platformActions,
     withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
-    validatePrevious, assistant, approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
+    validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

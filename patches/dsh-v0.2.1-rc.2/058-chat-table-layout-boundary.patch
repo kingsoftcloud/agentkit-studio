@@ -1,0 +1,13 @@
+diff --git a/packages/client/ui-chat/src/client/chat/ChatView.tsx b/packages/client/ui-chat/src/client/chat/ChatView.tsx
+index 5a27de668e991fb40408374dc5b65aded2226e4a..fd61b9179bcdd749228c39adfc17500dce357a58 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatView.tsx
++++ b/packages/client/ui-chat/src/client/chat/ChatView.tsx
+@@ -211,7 +211,7 @@ export function ChatView({
+         />
+       )}
+       <div className={css.root} data-chat-following-tail={scroll.followingTail ? '' : undefined}>
+-        <div ref={scroll.listRef} className={css.scroll}>
++        <div ref={scroll.listRef} className={css.scroll} data-markdown-table-layout-root="true">
+           <div ref={scroll.columnRef} className={css.column} data-chat-flow=""
+             data-chat-motion={deferCompletedTurns && scroll.initialized
+               && (running || motionTail || pendingInputs.length > 0) ? '' : undefined}>

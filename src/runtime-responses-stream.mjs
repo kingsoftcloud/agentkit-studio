@@ -4,9 +4,14 @@ import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
 export function createRuntimeResponsesStream(request, write) {
-  const items = [], blocks = new Map(), calls = new Map();
+  const items = [], blocks = new Map(), calls = new Map(), delivery = [];
   let sequence = 0;
-  const emit = (type, data) => write(type, { ...data, type, sequence_number: sequence++ });
+  const emit = (type, data) => {
+    if (!['response.created', 'response.in_progress', 'response.completed', 'response.failed', 'response.canceled'].includes(type)) {
+      delivery.push({ type, data: structuredClone(data) });
+    }
+    write(type, { ...data, type, sequence_number: sequence++ });
+  };
   const lifecycle = (type, response) => emit(type, { ...response, response });
   const item = (key, kind) => {
     if (blocks.has(key)) return blocks.get(key);
@@ -104,7 +109,7 @@ export function createRuntimeResponsesStream(request, write) {
         emit('response.tool_result', { call_id: record.item.call_id, output: message.content, is_error: message.isError === true });
       }
     },
-    complete(result) {
+    prepare(result) {
       // Replayed idempotent runs have durable output but no new live frames.
       const lastMessage = items.findLast(record => record.item.type === 'message' && record.item.status === 'completed');
       const lastAttempt = lastMessage?.key.slice(0, lastMessage.key.lastIndexOf(':'));
@@ -117,8 +122,16 @@ export function createRuntimeResponsesStream(request, write) {
       }
       for (const record of items) if (!record.closed) close(record, 'incomplete');
       const response = runtimeResponse(request, result, 'completed', items.filter(record => record.item.status === 'completed').map(record => record.item));
-      lifecycle('response.completed', response);
       return response;
+    },
+    publish(response) { lifecycle('response.completed', response); return response; },
+    complete(result) { return projector.publish(projector.prepare(result)); },
+    snapshot() { return structuredClone(delivery); },
+    replay(response, events) {
+      // A new HTTP delivery reuses the original public item IDs and response.
+      // It never routes these presentation facts back into tool execution.
+      for (const event of events) emit(event.type, structuredClone(event.data));
+      return projector.publish(response);
     },
     fail(code) {
       for (const record of items) if (!record.closed) close(record, 'incomplete');

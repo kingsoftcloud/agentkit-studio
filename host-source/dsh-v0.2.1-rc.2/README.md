@@ -1,6 +1,6 @@
 # DSH 维护源码
 
-`maintenance.bundle` 是基于官方 `dsh-v0.2.1-rc.2` 的线性维护分支，当前引用为 `refs/heads/codex/studio-dsh-v0.2.1-rc.2-main-12`，以 [`source.json`](../../patches/dsh-v0.2.1-rc.2/source.json) 为准。许可证见 [LICENSE](LICENSE)。
+`maintenance.bundle` 是基于官方 `dsh-v0.2.1-rc.2` 的线性维护分支，当前分支引用、提交和源码摘要以 [`source.json`](../../patches/dsh-v0.2.1-rc.2/source.json) 为准。许可证见 [LICENSE](LICENSE)。
 
 它只包含固定基线之后的产品维护提交。每项提交以 `Studio-Patch` trailer 对应 [补丁清单](../../patches/dsh-v0.2.1-rc.2/manifest.json) 中的一项，确定性导出摘要由同目录 `source.json` 固定。归档用于开发与校验，不进入桌面运行时包。
 

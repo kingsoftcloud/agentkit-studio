@@ -1,12 +1,197 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DSH_NODE_BUILTIN_NAMES, unavailableNodeBuiltin } from '../src/providers/dsh-node-builtin-catalog.mjs';
 import { Context } from '@deepseek-ai/cordis';
 import { createRuntimeBridge, mountRuntimeBridge, ownAsyncResource, resolveRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { spawnSync } from 'node:child_process';
 
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} every unavailable builtin rejects without consulting a Python executor`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } },
+    on: () => () => {}, effect: install => install() };
+  const config = { agentId: 'node-only', runtime, local: true,
+    toolBindings: [...DSH_NODE_BUILTIN_NAMES, 'unknown_builtin', 'workspace', 'skills', 'core'] };
+  for (const key of ['pythonRoot', 'pythonExecutable', 'spawnImpl', 'workspaceRoot'])
+    Object.defineProperty(config, key, { get: () => assert.fail(`legacy executor configuration accessed: ${key}`) });
+  applyPreset(ctx, config);
+  assert.equal(registered.length, DSH_NODE_BUILTIN_NAMES.length + 4);
+  for (const tool of registered) {
+    const code = unavailableNodeBuiltin(tool.name).code;
+    await assert.rejects(tool.execute({}, {}), { code, details: { name: tool.name, contract: 'agentkit.dsh-node-builtin-catalog/v1' } });
+    assert.match(code, /NODE_PORT_UNAVAILABLE|^BUILTIN_TOOL_UNSUPPORTED$/);
+  }
+  bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unrestricted meta-dispatchers are rejected before Node factory activation`, () => {
+  const bridge = createRuntimeBridge();
+  bridge.setBuiltinToolsFactory(() => assert.fail('meta dispatcher must not activate a port'));
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: () => assert.fail('meta dispatcher cannot be registered') }, on: () => () => {} };
+  for (const name of ['tool_search', 'tool_dispatcher', 'agentengine_tool_dispatcher', ' tool_dispatcher '])
+    for (const binding of [{ toolBindings: [name] }, { toolContracts: [{ name, executor: 'builtin', enabled: true }] }])
+      assert.throws(() => applyPreset(ctx, { agentId: 'node-only', runtime, local: true, ...binding }),
+        { code: 'BUILTIN_META_TOOL_FORBIDDEN' });
+  bridge.close();
+});
+
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
+
+test('Native cancellation waits for its durable ending and returns it so DSH can close the turn', async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
+  const ending = { reason: { kind: 'aborted', reason: { kind: 'user' } } };
+  let settled = false;
+  bridge.setNativeTurnExecutor(async ({ signal }) => {
+    started.resolve(); await drained.promise; assert.equal(signal.aborted, true); return ending;
+  });
+  const pending = bridge.executeNativeTurn({ signal: caller.signal });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  await started.promise; caller.abort({ kind: 'user' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false); assert.equal(bridge.diagnostics().requests, 1);
+  drained.resolve(); assert.deepEqual(await pending, ending);
+  assert.equal(bridge.diagnostics().requests, 0); bridge.close();
+});
+
+for (const retirement of ['host', 'registration']) test(`Native ${retirement} retirement cannot return a late canceled ending`, async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
+  const retire = bridge.setNativeTurnExecutor(async () => {
+    started.resolve(); await drained.promise; return { reason: { kind: 'aborted', reason: { kind: 'user' } } };
+  });
+  const pending = bridge.executeNativeTurn({ signal: caller.signal });
+  await started.promise; caller.abort({ kind: 'user' });
+  if (retirement === 'host') bridge.close(); else retire();
+  // Caller cancellation and owner retirement can supply the rejection cause;
+  // neither is permission to return the late worker's canceled ending.
+  const retiredCode = retirement === 'host' ? 'STUDIO_RUNTIME_BRIDGE_CLOSED' : 'STUDIO_RUNTIME_REGISTRATION_RETIRED';
+  drained.resolve(); await assert.rejects(pending, error => error === caller.signal.reason || error?.code === retiredCode);
+  assert.equal(bridge.diagnostics().requests, 0); bridge.close();
+});
+
+test('Native cancellation rejects a late successful result instead of accepting unacknowledged cancellation', async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred(), caller = new AbortController();
+  bridge.setNativeTurnExecutor(async () => { started.resolve(); await drained.promise; return { reason: { kind: 'completed' } }; });
+  const pending = bridge.executeNativeTurn({ signal: caller.signal });
+  await started.promise; caller.abort(Error('User canceled'));
+  drained.resolve(); await assert.rejects(pending, /User canceled/); bridge.close();
+});
+
+test('Native turn retirement waits for the worker to drain and rejects late completion', async () => {
+  const bridge = createRuntimeBridge(), started = deferred(), drained = deferred();
+  let workerSignal, settled = false;
+  bridge.setNativeTurnExecutor(async ({ signal }) => {
+    workerSignal = signal; started.resolve(); await drained.promise;
+    return { reason: { kind: 'completed' } };
+  });
+  const pending = bridge.executeNativeTurn({ signal: new AbortController().signal });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  await started.promise; bridge.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(workerSignal.aborted, true); assert.equal(settled, false);
+  assert.equal(bridge.diagnostics().requests, 1);
+  drained.resolve(); await assert.rejects(pending, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+  assert.equal(bridge.diagnostics().requests, 0);
+});
+
+test('retiring old Native registrations cannot remove their replacements', async () => {
+  const bridge = createRuntimeBridge();
+  const oldTurn = bridge.setNativeTurnExecutor(async () => 'old');
+  const oldTools = bridge.setNativeToolsFactory(() => 'old-tools');
+  bridge.setNativeTurnExecutor(async () => 'new'); bridge.setNativeToolsFactory(() => 'new-tools');
+  oldTurn(); oldTools();
+  assert.equal(await bridge.executeNativeTurn({}), 'new');
+  assert.equal(bridge.createNativeTools({}), 'new-tools');
+  bridge.close();
+});
+
+test('Node builtin factories retain their own retirement and Host lifetime', () => {
+  const bridge = createRuntimeBridge();
+  assert.equal(bridge.createBuiltinTools({}), null);
+  const retireOld = bridge.setBuiltinToolsFactory(input => ({ ...input, source: 'old' }));
+  const old = bridge.createBuiltinTools({ isClosed: () => false });
+  const retireNext = bridge.setBuiltinToolsFactory(input => ({ ...input, source: 'next' }));
+  const next = bridge.createBuiltinTools({});
+  retireOld();
+  assert.equal(old.isClosed(), true); assert.equal(next.isClosed(), false);
+  assert.equal(bridge.createBuiltinTools({}).source, 'next');
+  retireNext(); assert.equal(next.isClosed(), true); assert.equal(bridge.createBuiltinTools({}), null);
+  bridge.setBuiltinToolsFactory(input => input);
+  const last = bridge.createBuiltinTools({}); bridge.close();
+  assert.equal(last.isClosed(), true);
+  assert.throws(() => bridge.createBuiltinTools({}), { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} builtin registry forwards real execution to the Node Host without Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [], disposers = [], seen = [];
+  const definition = { name: 'write_workspace_file', parameters: { type: 'object',
+    properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'], additionalProperties: false } };
+  let response = { status: 'ok', content: { ok: true, path: 'node.txt' } }, closed = 0;
+  bridge.setBuiltinToolsFactory(({ config, ctx, isClosed }) => {
+    assert.equal(config.agentId, 'node-agent'); assert.equal(typeof ctx.tools.register, 'function');
+    return { definitions: [definition], supports: name => name === definition.name,
+      execute: async (name, args, exec) => { assert.equal(isClosed(), false); seen.push({ name, args, exec }); return response; },
+      close: () => { closed++; } };
+  });
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; }, schemas: () => [] },
+    on: () => () => {}, effect: install => { disposers.push(install()); } };
+  applyPreset(ctx, { agentId: 'node-agent', runtime, local: true, toolBindings: ['write_workspace_file'],
+    spawnImpl: () => assert.fail('Node workspace must not fall back to Python') });
+  assert.equal(registered.length, 1); assert.deepEqual(registered[0].parameters, definition.parameters);
+  const args = { path: 'node.txt', content: 'Actual registry execution context' },
+    exec = { name: definition.name, callId: 'node-call', signal: new AbortController().signal, agent: { session: { id: 'real-session' } } };
+  assert.deepEqual(JSON.parse((await registered[0].execute(args, exec)).result), response.content);
+  assert.equal(seen[0].exec, exec); assert.equal(seen[0].args, args);
+  response = { status: 'error', content: { error_type: 'file_not_read' } };
+  assert.deepEqual(JSON.parse((await registered[0].execute(args, exec)).result), { error_type: 'file_not_read', ok: false });
+  response = { status: 'uncertain', content: { error_type: 'state_persist_failed', executed: true, paths: ['node.txt'] } };
+  const unknown = JSON.parse((await registered[0].execute(args, exec)).result);
+  assert.equal(unknown.status, 'uncertain'); assert.equal(unknown.executed, true); assert.equal(unknown.ok, false);
+  disposers.reverse().forEach(dispose => dispose?.()); assert.equal(closed, 1); bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} maps legacy snippets without shadowing PTC and cannot fall back to Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [], disposers = [], listeners = new Map();
+  const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { assert.notEqual(tool.name, 'run_code'); registered.push(tool); return () => {}; },
+      schemas: () => [...registered, { name: 'run_code', parameters: { type: 'object' } }],
+      execute: exec => { assert.equal(exec.name, 'sandbox_run_code'); return registered[0].execute(exec.arguments, exec); } },
+    on: (name, listener) => { listeners.set(name, listener); return () => {}; }, effect: install => disposers.push(install()) };
+  applyPreset(ctx, { agentId: 'code-agent', runtime, local: true, toolBindings: ['run_code'],
+    spawnImpl: () => assert.fail('missing Node snippet port cannot enter Python') });
+  assert.deepEqual(registered.map(tool => tool.name), ['sandbox_run_code']);
+  const args = { code: 'printf forbidden', language: 'bash' }, exec = { name: 'sandbox_run_code', arguments: args, callId: 'code',
+    agent: { session: { id: 'session' } }, signal: new AbortController().signal };
+  await assert.rejects(registered[0].execute(args, exec), { code: 'SANDBOX_CODE_NODE_PORT_UNAVAILABLE' });
+  exec.agent.id = 'code-session';
+  await listeners.get('agent/request')({ agent: exec.agent }, async () => ({}));
+  const adapter = bridge.getRoute('code-session').toolAdapter;
+  assert.deepEqual(adapter.listTools([], exec.agent).map(tool => tool.name), ['sandbox_run_code']);
+  await assert.rejects(adapter.callTool('run_code', args, { agent: exec.agent, callId: 'legacy-call', signal: exec.signal }),
+    { code: 'SANDBOX_CODE_NODE_PORT_UNAVAILABLE' });
+  disposers.reverse().forEach(dispose => dispose?.()); bridge.close();
+});
+
+test('a Harness preset claims the whole turn and rejects model-step fallback', async () => {
+  const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [];
+  const nativeTools = {};
+  bridge.setNativeToolsFactory(() => nativeTools);
+  bridge.setNativeTurnExecutor(async payload => {
+    assert.equal(payload.binding.nativeTools, nativeTools);
+    assert.equal(payload.binding.agentRevision, 7);
+    return { reason: { kind: 'completed' } };
+  });
+  const ctx = { get: () => bridge, tools: { schemas: () => [] },
+    effect: install => disposers.push(install()), on: (name, listener) => listeners.set(name, listener) };
+  applyPreset(ctx, { agentId: 'native', agentRevision: 7, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
+  assert.deepEqual(await listeners.get('agent/execute-turn')({}), { reason: { kind: 'completed' } });
+  await assert.rejects(listeners.get('agent/request')({}, async () => assert.fail('Cannot delegate the Native loop')),
+    { code: 'STUDIO_NATIVE_WHOLE_TURN_REQUIRED' });
+  disposers.reverse().forEach(dispose => dispose?.()); bridge.close();
+});
 
 test('older registration and route cleanup cannot withdraw their replacements', async () => {
   const bridge = createRuntimeBridge();
@@ -140,4 +325,66 @@ test('preset cleanup is owned by its exact Cordis scope, not the Agent id', asyn
     await fresh.dispose();
     assert.equal(bridge.getRoute('same-session'), undefined);
   } finally { await ctx.fiber.dispose(); }
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable migrated A2A port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'a2a-agent', runtime, local: true, toolBindings: ['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent'],
+    spawnImpl: () => assert.fail('migrated A2A port cannot spawn Python') });
+  for (const tool of registered) await assert.rejects(tool.execute({}, {}), { code: 'A2A_NODE_PORT_UNAVAILABLE' });
+  assert.equal(registered.length, 3); bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable migrated browser port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'browser-agent', runtime, local: true, toolBindings: ['browser_inspect_workspace'],
+    spawnImpl: () => assert.fail('migrated Browser cannot spawn Python') });
+  assert.equal(registered.length, 1);
+  await assert.rejects(registered[0].execute({}, {}), { code: 'BROWSER_NODE_PORT_UNAVAILABLE' }); bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable Skill management port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'skill-manager', runtime, local: true, toolBindings: ['skill_discover_github', 'skill_install', 'skill_bind_agent'],
+    spawnImpl: () => assert.fail('Skill management cannot spawn Python') });
+  assert.equal(registered.length, 3);
+  for (const tool of registered) await assert.rejects(tool.execute({}, {}), { code: 'SKILL_MANAGEMENT_NODE_PORT_UNAVAILABLE' });
+  bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable knowledge port never enters Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'knowledge-agent', runtime, local: true, toolBindings: ['search_knowledge_base'],
+    spawnImpl: () => assert.fail('Knowledge lookup cannot spawn Python') });
+  assert.equal(registered.length, 1);
+  await assert.rejects(registered[0].execute({}, {}), { code: 'KNOWLEDGE_NODE_PORT_UNAVAILABLE' }); bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} unavailable legacy Memory ports never enter Python`, async () => {
+  const bridge = createRuntimeBridge(), registered = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { registered.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  applyPreset(ctx, { agentId: 'memory-agent', runtime, local: true, toolBindings: ['load_memory', 'save_memory'],
+    spawnImpl: () => assert.fail('Memory cannot spawn Python') });
+  assert.equal(registered.length, 2);
+  for (const tool of registered) await assert.rejects(tool.execute({}, {}), { code: 'MEMORY_NODE_PORT_UNAVAILABLE' }); bridge.close();
+});
+
+for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed binding admits three A2A formals and rejects executor collisions`, () => {
+  const bridge = createRuntimeBridge(), tools = [];
+  const ctx = { get: name => name === 'studioRuntimeBridge' ? bridge : undefined,
+    tools: { register: tool => { tools.push(tool); return () => {}; } }, on: () => () => {}, effect: install => install() };
+  const config = { agentId: 'managed-agent', runtime, local: true, a2aBindings: [{ binding_id: 'binding' }] };
+  applyPreset(ctx, config);
+  assert.deepEqual(tools.map(tool => tool.name), ['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent']);
+  assert.throws(() => applyPreset(ctx, { ...config, toolContracts: [{ name: 'call_a2a_agent', executor: 'mcp' }] }), { code: 'A2A_TOOL_NAME_COLLISION' });
+  bridge.close();
 });

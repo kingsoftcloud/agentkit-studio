@@ -1,0 +1,26 @@
+{
+  "reference": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+  "oracle": "a2a.types.Message + protobuf MessageToDict + Python sorted UTF-8 JSON",
+  "cases": [
+    {
+      "sourceJson": "{\"messageId\":\"initial\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"中文😀\"}]}",
+      "json": "{\"messageId\":\"initial\",\"parts\":[{\"text\":\"中文😀\"}],\"role\":\"ROLE_USER\"}",
+      "sha256": "700709c51c1c9214918ed2d0e70bf3e879a58e4729af800204dfcb42a182d60c"
+    },
+    {
+      "sourceJson": "{\"messageId\":\"continued\",\"role\":\"ROLE_USER\",\"taskId\":\"remote\",\"contextId\":\"context\",\"parts\":[{\"data\":{\"x\":1,\"zero\":-0.0,\"small\":1e-07,\"large\":1e+20,\"unsafe\":9007199254740993,\"mixed\":[true,null,1.25],\"\":1,\"😀\":2}}]}",
+      "json": "{\"contextId\":\"context\",\"messageId\":\"continued\",\"parts\":[{\"data\":{\"large\":1e+20,\"mixed\":[true,null,1.25],\"small\":1e-07,\"unsafe\":9007199254740992.0,\"x\":1.0,\"zero\":-0.0,\"\":1.0,\"😀\":2.0}}],\"role\":\"ROLE_USER\",\"taskId\":\"remote\"}",
+      "sha256": "47f8397844ad70aa6bd2930bb27f87ba5842d58cb801cb2440d5c24579899bde"
+    },
+    {
+      "sourceJson": "{\"messageId\":\"raw\",\"role\":\"ROLE_USER\",\"parts\":[{\"raw\":\"AP8B\",\"filename\":\"raw.bin\",\"mediaType\":\"application/octet-stream\",\"metadata\":{\"n\":2}},{\"url\":\"https://example.com/image.png\",\"mediaType\":\"image/png\"}],\"metadata\":{\"nested\":{\"small\":0.0001}},\"extensions\":[]}",
+      "json": "{\"messageId\":\"raw\",\"metadata\":{\"nested\":{\"small\":0.0001}},\"parts\":[{\"filename\":\"raw.bin\",\"mediaType\":\"application/octet-stream\",\"metadata\":{\"n\":2.0},\"raw\":\"AP8B\"},{\"mediaType\":\"image/png\",\"url\":\"https://example.com/image.png\"}],\"role\":\"ROLE_USER\"}",
+      "sha256": "e95399b6cd5afb3fc41061a8b0c4a9708c91d93cd45121f4ff59a9e306f8852d"
+    },
+    {
+      "sourceJson": "{\"messageId\":\"numbers\",\"role\":\"ROLE_USER\",\"parts\":[{\"data\":[1e-05,1e-06,1e-07,1000000000000000.0,1e+16,1e+17,1e+23,9007199254740992,5e-324,1.7976931348623157e+308,0.00010000000000000002]}]}",
+      "json": "{\"messageId\":\"numbers\",\"parts\":[{\"data\":[1e-05,1e-06,1e-07,1000000000000000.0,1e+16,1e+17,1e+23,9007199254740992.0,5e-324,1.7976931348623157e+308,0.00010000000000000002]}],\"role\":\"ROLE_USER\"}",
+      "sha256": "ab4b06b8d4e524e541875a0fc0ab58b19c80b56ff54b88ca691646923921d335"
+    }
+  ]
+}

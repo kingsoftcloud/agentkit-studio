@@ -12,6 +12,7 @@ async function fixture(t, { rejectPermissionOnce = false } = {}) {
     create: async ({ sessionId }) => { mutations.push('create'); history.set(sessionId, []); },
     selectModel: async ({ sessionId, model }) => { mutations.push('select'); selected.set(sessionId, model); },
     resolveAgent: async sessionId => ({ agent: { whenIdle: async () => {}, cancel() {}, session: {
+      id: sessionId, snapshotEvents: () => history.get(sessionId),
       append: (type, data, options) => { mutations.push('append'); history.get(sessionId).push({ type, data, seq: history.get(sessionId).length, ...options }); },
     } } }),
     prompt: async ({ sessionId, requestId, content, requestFingerprint }) => {
@@ -28,7 +29,7 @@ async function fixture(t, { rejectPermissionOnce = false } = {}) {
     },
     page: async ({ address }) => ({ records: history.get(address.sessionId).map(event => ({ type: 'event', event })) }),
   };
-  const services = { sessionController: controller, agents: { withoutInitiator: work => work() },
+  const services = { sessionController: controller, sessions: { flush: async () => true }, agents: { withoutInitiator: work => work() },
     permissionPresets: { set: () => { mutations.push('permission'); if (rejectPermissionOnce) { rejectPermissionOnce = false; throw Object.assign(new Error('permission unavailable'), { code: 'AUTOMATION_PERMISSION_UNAVAILABLE' }); } } },
     approval: { setPolicy() { mutations.push('approval'); } } };
   const frozen = { spec: { bindings: { modelProfileId: 'profile-a', modelProfileIds: ['profile-a', 'profile-b'] } } };
@@ -62,7 +63,7 @@ test('replaying an old request leaves the current session selection and log unto
   await f.restart();
   const before = structuredClone([...f.history]), writes = f.mutations.length;
   const replay = await f.post(request);
-  assert.equal(replay.status, 200); assert.equal((await replay.json()).output_text, first.output_text);
+  assert.equal(replay.status, 200); assert.deepEqual(await replay.json(), first);
   assert.equal([...f.selected.values()][0], 'profile-a');
   assert.equal(f.mutations.length, writes);
   assert.deepEqual([...f.history], before);
@@ -73,7 +74,7 @@ test('missing request model authority cannot approve a model-aware legacy replay
   const f = await fixture(t);
   assert.equal((await f.post(request)).status, 200);
   // Author a legacy controller history without either model authority field.
-  for (const [id, events] of f.history) f.history.set(id, events.filter(event => event.type !== 'studio/runtime-model').map(event => {
+  for (const [id, events] of f.history) f.history.set(id, events.filter(event => !['studio/runtime-model', 'studio/runtime-response-projection'].includes(event.type)).map(event => {
     if (event.type !== 'user/message') return event;
     const { requestFingerprint, ...source } = event.data.source;
     return { ...event, data: { ...event.data, source } };
@@ -100,7 +101,7 @@ test('legacy replay uses the native request header even when optional model card
   const f = await fixture(t);
   assert.equal((await f.post(request)).status, 200);
   for (const [id, events] of f.history) {
-    const legacy = events.map(event => {
+    const legacy = events.filter(event => event.type !== 'studio/runtime-response-projection').map(event => {
       if (event.type !== 'user/message') return event;
       const { requestFingerprint, ...source } = event.data.source;
       return { ...event, data: { ...event.data, source } };
@@ -112,10 +113,13 @@ test('legacy replay uses the native request header even when optional model card
   await f.restart();
   const writes = f.mutations.length;
   assert.equal((await f.post(request)).status, 200);
+  // A legacy request has no delivery snapshot yet. Only its derivative
+  // presentation may be appended; the native request/model remains unchanged.
+  assert.deepEqual(f.mutations.slice(writes), ['append']);
   assert.equal((await f.post({ ...request, model: 'model-a' })).status, 409);
   for (const [id, events] of f.history) f.history.set(id, events.filter(event => event.type !== 'studio/runtime-model'));
   await f.restart();
   assert.equal((await f.post(request)).status, 200);
-  assert.equal(f.mutations.length, writes);
+  assert.equal(f.mutations.length, writes + 1);
   assert.equal(f.turns(), 1);
 });

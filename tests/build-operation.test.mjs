@@ -14,6 +14,7 @@ async function setup(t) {
   const root = await mkdtemp(join(tmpdir(), 'studio-build-revision-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   return {
+    root,
     localStore: createAgentStore({ storeDir: join(root, 'agents') }),
     build: createStudioBuild({ storeDir: root }),
     operations: createOperationManager({ storeDir: join(root, 'operations') }),
@@ -28,6 +29,16 @@ async function terminal(operations, id) {
   }
   assert.fail('operation did not finish');
 }
+test('build-operation idempotency distinguishes a changed Host engine for the same Agent revision', async t => {
+  const services = await setup(t), record = await services.localStore.create({ name: 'Engine pin', runtimeType: 'harness' });
+  const plain = await submitAgentBuild({ ...services, payload: { agentId: record.metadata.id } });
+  const old = await terminal(services.operations, plain.operationId); assert.equal(old.status, 'succeeded');
+  const nativeBuilder = createStudioBuild({ storeDir: services.root, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
+  const modern = await submitAgentBuild({ ...services, build: nativeBuilder, payload: { agentId: record.metadata.id } });
+  const current = await terminal(services.operations, modern.operationId); assert.equal(current.status, 'succeeded');
+  assert.notEqual(modern.operationId, plain.operationId); assert.notEqual(current.result.buildId, old.result.buildId);
+  assert.equal((await services.operations.list()).length, 2);
+});
 
 test('requested historical revision freezes its original prompt, model and bindings after later edits', async t => {
   const services = await setup(t);

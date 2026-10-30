@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createControlPlaneDispatcher } from '../src/host/routes/dispatcher.mjs';
 import { createAgentRoutes } from '../src/host/routes/agents.mjs';
+import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { STUDIO_OPERATION_IDS } from '../src/contracts/operations.mjs';
 
 function harness(callback) {
@@ -9,6 +10,24 @@ function harness(callback) {
   const routes = Object.fromEntries(STUDIO_OPERATION_IDS.map(id => [id.split('/')[0], callback]));
   return { owner, dispatch: createControlPlaneDispatcher({ bridge: { signal: owner.signal }, routes }) };
 }
+
+test('Native child routes reject malformed or canceled requests before loading the Host', async () => {
+  let loaded = 0;
+  const host = harness(createSessionRoutes({ getNativeHost: async () => { loaded++; throw Error('must not load'); } }));
+  for (const payload of [{}, { agentId: 'a', sessionId: 's', childRunId: 'extra' }, { agentId: 'a', sessionId: 's', runId: 42 }])
+    assert.equal((await host.dispatch('sessions/native-child-tasks', payload)).error.code, 'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
+  assert.equal((await host.dispatch('sessions/native-child-promote', { agentId: 'a', sessionId: 's', childRunId: 'c', commandId: 'p' })).error.code,
+    'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
+  const child = { agentId: 'a', sessionId: 's', runId: 'r', childRunId: 'c', commandId: 'control' };
+  for (const payload of [child, { ...child, text: 'guide', expectedGoalRevision: -1 }, { ...child, text: '', expectedGoalRevision: 0 },
+    { ...child, text: 'guide', expectedGoalRevision: 0, scope: {} }])
+    assert.equal((await host.dispatch('sessions/native-child-send', payload)).error.code, 'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
+  assert.equal((await host.dispatch('sessions/native-child-cancel', { ...child, expectedGoalRevision: 0 })).error.code,
+    'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
+  host.owner.abort();
+  assert.equal((await host.dispatch('sessions/native-child-tasks', { agentId: 'a', sessionId: 's' })).error.code, 'gateway/cancelled');
+  assert.equal(loaded, 0);
+});
 
 test('unknown and pre-cancelled operations retain their envelopes without invoking a domain', async () => {
   let calls = 0;

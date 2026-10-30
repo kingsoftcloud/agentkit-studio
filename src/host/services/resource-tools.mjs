@@ -1,6 +1,6 @@
 /** MCP execution remains in the Host-owned adapter. */
 export function createBoundResourceToolExecutor({ agents, builds, resources }) {
-  return async ({ agentId, agentRevision, buildId, resourceId, name, arguments: args = {}, signal } = {}) => {
+  return async ({ agentId, agentRevision, buildId, resourceId, name, arguments: args = {}, signal, resultFormat, assertCurrent } = {}) => {
     const store = await agents;
     let record;
     if (buildId) record = await (await builds)?.build?.resolve(agentId, buildId);
@@ -17,6 +17,6 @@ export function createBoundResourceToolExecutor({ agents, builds, resources }) {
     if (matches.length !== 1) throw Object.assign(new Error('MCP 绑定别名重复'), { code: 'MCP_BINDING_AMBIGUOUS' });
     const adapters = await resources;
     if (typeof adapters?.callMcpTool !== 'function') throw Object.assign(new Error('AgentKit Studio MCP 资源适配器不可用'), { code: 'MCP_RESOURCE_ADAPTER_MISSING' });
-    return adapters.callMcpTool(matches[0], name, args, { signal });
+    return adapters.callMcpTool(matches[0], name, args, { signal, ...(resultFormat ? { resultFormat } : {}), ...(assertCurrent ? { assertCurrent } : {}) });
   };
 }

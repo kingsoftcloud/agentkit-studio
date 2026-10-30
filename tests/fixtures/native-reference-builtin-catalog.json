@@ -1,0 +1,15 @@
+{
+  "referenceCommit": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+  "ordinarySource": "ksadk/toolsets/__init__.py:_TOOLSET_DESCRIPTORS",
+  "bindingRules": ["ksadk/studio/resource_catalog.py:_build_builtin_tools", "ksadk/plugins/providers/harness_tools.py:validate_tool_executor"],
+  "ordinary": [
+    "workspace_status", "list_workspace_files", "read_workspace_file", "write_workspace_file", "write_workspace_files",
+    "edit_workspace_file", "multi_edit_workspace_file", "lint_workspace_file", "search_workspace_files", "delete_workspace_file",
+    "component_status", "sandbox_status", "run_command", "read_command_output", "stop_command", "run_code", "browser_inspect_workspace",
+    "skill_discover_github", "skill_install", "skill_bind_agent", "list_skill_spaces", "list_skills", "search_skills", "load_skill", "preview_skill", "execute_skills",
+    "web_fetch", "web_search", "list_a2a_agents", "get_a2a_agent_card", "call_a2a_agent"
+  ],
+  "resourceTools": ["search_knowledge_base", "load_memory", "save_memory"],
+  "excludedMeta": ["tool_search", "tool_dispatcher", "agentengine_tool_dispatcher"],
+  "scope": "Exact ordinary builtin names and three separately migrated resource tools only. Resource-authority update_memory/delete_memory/memory_status/read_skill_resource, custom executors, behavioral parity, backend availability, online services, full product paths and final migration acceptance are separate requirements."
+}

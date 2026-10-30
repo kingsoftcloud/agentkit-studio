@@ -1,0 +1,109 @@
+diff --git a/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx b/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx
+index 13e1262753c1ce493c20bf538ae2b625166b7053..f0dffc4df6d0769b6f6f7068227b5b5c83ffb5d0 100644
+--- a/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx
++++ b/packages/client/ui-permission-presets/src/client/PermissionSelect.tsx
+@@ -232,7 +232,7 @@ export type PermissionControlProps = PermissionSelectProps
+ 
+ /** Keep local selection and confirmation in the native control. */
+ export function PermissionControl({ renderSlotChain, ...props }: PermissionControlProps) {
+-  const preset = props.useSessions(state => state?.byId[props.sessionId]?.projectionValues?.agentPreset)
++  const preset = props.useSessions(state => state.byId[props.sessionId]?.projectionValues?.agentPreset)
+   return renderSlotChain('conversation.input.permission.presentation', {
+     locked: props.locked,
+     ...(typeof preset === 'string' ? { agentPreset: preset } : {}),
+diff --git a/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx b/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx
+index 62dd7b0945e56f3b0a18b69ef5f693963ab41e09..f73fc06df3ef49c9d120252ceecfb95cb094bcae 100644
+--- a/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx
++++ b/packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx
+@@ -1,5 +1,6 @@
+ // @vitest-environment jsdom
+ import { afterEach, describe, expect, it, vi } from 'vitest'
++import { isValidElement } from 'react'
+ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+ import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+@@ -254,9 +255,10 @@ describe('PermissionControl presentation extension', () => {
+   })
+ 
+   it('gives the selected preset to a public chain and retains the native picker as fallback', () => {
+-    const renderSlotChain = vi.fn((_key, owner, options) => {
++    const renderSlotChain = vi.fn<PermissionControlProps['renderSlotChain']>((_key, owner, options) => {
+       expect(owner).toEqual({ locked: false, agentPreset: 'remote-preset' })
+-      expect(options.fallback.type).toBe(PermissionSelect)
++      const fallback = options?.fallback
++      expect(isValidElement(fallback) ? fallback.type : null).toBe(PermissionSelect)
+       return <span>Remote policy</span>
+     })
+     const props = {
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index 9ac041940a7292185a2f1ff2bf0473026c21323b..d4d0f9c027d088d3899d395ea4ccc01bda8365db 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -1598,7 +1598,10 @@ export class ToolRuntime extends Service {
+     if (created.kind !== 'ready') return next(created)
+     const exec = created.exec
+     const definition = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+-    if (definition) this.dispatchDefinitions.set(exec, { definition, body: definition.execute })
++    if (definition) {
++      // oxlint-disable-next-line typescript/unbound-method -- Capture identity only; dispatch invokes the definition.
++      this.dispatchDefinitions.set(exec, { definition, body: definition.execute })
++    }
+     if (this.callerCancelled(exec)) {
+       return next({ kind: 'final-result', exec, result: toolAbortedBeforeDispatchResult() })
+     }
+diff --git a/scripts/verify-repository-references.spec.ts b/scripts/verify-repository-references.spec.ts
+index cb259bdc0735bc7bca3380ce73e286064644fa91..53bf9d4ea52312f7425b6f8dbdf541974fe1063e 100644
+--- a/scripts/verify-repository-references.spec.ts
++++ b/scripts/verify-repository-references.spec.ts
+@@ -72,6 +72,21 @@ describe('unique object-name prefix search', () => {
+ })
+ 
+ describe('maintained repository reference policy', () => {
++  it('accepts uv artifact byte sizes while still rejecting commit references in the same lockfile', () => {
++    const identifier = String(1_234_567), commits = new Set([identifier])
++    const size = `    { url = "https://example.invalid/archive.whl", size = ${identifier}, upload_time = "today" },`
++    expect(findRepositoryReferences('python/sdk/uv.lock', size, commits)).toEqual([])
++    expect(findRepositoryReferences('uv.lock', `size = ${identifier}`, commits)).toEqual([])
++    for (const source of [
++      `source = { git = "https://example.invalid/repo", rev = "${identifier}" }`,
++      `{ size = ${identifier}, rev = "${identifier}" }`,
++      `size = "${identifier}"`,
++      `{ url = "https://example.invalid/{ size = ${identifier}, }", size = 1 }`,
++      `# size = ${identifier}`,
++    ]) expect(findRepositoryReferences('python/sdk/uv.lock', source, commits)).toHaveLength(1)
++    expect(findRepositoryReferences('guide.md', size, commits)).toHaveLength(1)
++  })
++
+   it('permits only the independent kit repository and its source URLs', () => {
+     for (const suffix of ['', '.git', '/tree/main/packages/entry']) {
+       expect(findRepositoryReferences('package.json', `${organizationUrl}/libreoffice-kit${suffix}`, new Set())).toEqual([])
+diff --git a/scripts/verify-repository-references.ts b/scripts/verify-repository-references.ts
+index 8e7dae883c9c46f5f80173d17e9db8f5384658ad..5ea3068e8b8fef743732802f7438c7086c81f255 100644
+--- a/scripts/verify-repository-references.ts
++++ b/scripts/verify-repository-references.ts
+@@ -36,7 +36,8 @@ function isMaintained(file: string): boolean {
+  * @param file - Repository-relative path used in diagnostics and exclusions.
+  * @param source - File text or a symlink's stored target.
+  * @param commits - Lowercase, unambiguous full or abbreviated commit identifiers.
+- * @returns One finding per line and reference kind; digests and other Git object types are accepted.
++ * @returns One finding per line and reference kind; digests, other Git object types,
++ *   and unquoted integer artifact byte sizes in uv.lock are accepted.
+  */
+ export function findRepositoryReferences(
+   file: string,
+@@ -49,7 +50,14 @@ export function findRepositoryReferences(
+     if (organizationUrl.test(canonicalReferenceText(line).replace(kitRepositoryUrl, ''))) {
+       references.push({ file, line: index + 1, kind: 'organization-url' })
+     }
+-    if ([...line.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase()))) {
++    // uv artifact sizes can coincidentally match an available commit prefix.
++    const uvLock = file === 'uv.lock' || file.endsWith('/uv.lock')
++    const syntax = line.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, text => ' '.repeat(text.length)).replace(/#.*/, '')
++    const byteSizes = new Set(uvLock
++      ? [...syntax.matchAll(/(?:^|[{,])\s*size\s*=\s*(\d+)(?=\s*(?:[,}]|$))/g)]
++        .map(match => match.index + match[0].search(/\d+$/))
++      : [])
++    if ([...line.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase()) && !byteSizes.has(match.index))) {
+       references.push({ file, line: index + 1, kind: 'commit-hash' })
+     }
+   }

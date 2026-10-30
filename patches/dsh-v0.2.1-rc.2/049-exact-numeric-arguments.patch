@@ -1,0 +1,463 @@
+diff --git a/docs/subsystems/tools.md b/docs/subsystems/tools.md
+index 585ce1582af2ac61432055af7897e5d1c72c319c..f19c60fbfcfa4e53886edc900a2e9268f02cc1a4 100644
+--- a/docs/subsystems/tools.md
++++ b/docs/subsystems/tools.md
+@@ -202,8 +202,14 @@ interface ToolExecutionInput {
+   readonly name: string
+   /** Binding-time tool schema for a PTC inner call; frozen by its producer and never logged. */
+   readonly schema?: ToolSchema
+-  /** Losslessly JSON-serializable parsed arguments (tools validate their own schema). */
++  /** Parsed arguments; ordinary lossless JSON unless `argumentEncoding` opts into raw numeric tokens. */
+   readonly arguments: unknown
++  /**
++   * With `dsh.raw-json-number/v1`, preserve intrinsic `JSON.rawJSON()` numbers
++   * through detachment, freezing, and policy. Omission retains ordinary JSON
++   * validation. Callers and tools own exact decoding; Session JSON is unchanged.
++   */
++  readonly argumentEncoding?: 'dsh.raw-json-number/v1'
+   /** The agent on whose behalf the call runs (set by the agent loop). */
+   readonly agent?: Agent
+   /**
+diff --git a/docs/subsystems/tools.zh.md b/docs/subsystems/tools.zh.md
+index 4ee27fcb4dfd976303eb81e12d04f42506543c9c..bbd85ac1813fe6453744fa26f523b175aa9e5972 100644
+--- a/docs/subsystems/tools.zh.md
++++ b/docs/subsystems/tools.zh.md
+@@ -202,8 +202,14 @@ interface ToolExecutionInput {
+   readonly name: string
+   /** Binding-time tool schema for a PTC inner call; frozen by its producer and never logged. */
+   readonly schema?: ToolSchema
+-  /** Losslessly JSON-serializable parsed arguments (tools validate their own schema). */
++  /** Parsed arguments; ordinary lossless JSON unless `argumentEncoding` opts into raw numeric tokens. */
+   readonly arguments: unknown
++  /**
++   * With `dsh.raw-json-number/v1`, preserve intrinsic `JSON.rawJSON()` numbers
++   * through detachment, freezing, and policy. Omission retains ordinary JSON
++   * validation. Callers and tools own exact decoding; Session JSON is unchanged.
++   */
++  readonly argumentEncoding?: 'dsh.raw-json-number/v1'
+   /** The agent on whose behalf the call runs (set by the agent loop). */
+   readonly agent?: Agent
+   /**
+diff --git a/packages/core/tools/README.i18n.yaml b/packages/core/tools/README.i18n.yaml
+index 10b58238291f8146230b5c21d2c2500226078573..e96b00522b939661511a9404014de6daf4035fe5 100644
+--- a/packages/core/tools/README.i18n.yaml
++++ b/packages/core/tools/README.i18n.yaml
+@@ -42,8 +42,8 @@
+   en: c14e20d6a5c4c408
+   zh: ab9dc0fd38006749
+ /deepseek-ai-dsh-tools/understand-the-implementation/execution-and-cancellation:
+-  en: dc44a88997777988
+-  zh: 56454aeace1c8b77
++  en: 5b961c095a7e4d13
++  zh: e3fac26ac06ae0b8
+ /deepseek-ai-dsh-tools/understand-the-implementation/ptc-mode:
+   en: 387700aa396f7ca2
+   zh: d440b283027e4fbd
+diff --git a/packages/core/tools/README.md b/packages/core/tools/README.md
+index e4e71b902dd545ccad09537eb8eef55f4934e42a..7eff3c08673b662545a51bf910418ad2565a27b3 100644
+--- a/packages/core/tools/README.md
++++ b/packages/core/tools/README.md
+@@ -127,6 +127,8 @@ The registry holds typed `ToolDefinition`s in scoped layers and projects them on
+ 
+ Each typed invocation materializes and freezes parsed arguments, assigns an opaque correlation token, and runs policy and dispatch. A pre-execute denial may attach `ToolErrorInfo` beside its model-facing reason; the native and PTC durable projections preserve the structured name, code, and optional user-facing reason without adding that detail to model content. Cancellation is cooperative and quiescent: every tool body receives the caller-owned `exec.signal` and must observe it; cancellation before body invocation is `ABORTED_BEFORE_DISPATCH`, after invocation it replaces only a successful outcome with `ABORTED`. Denials, wrapper failures, tool failures, post-policy failures, and timeout-owned `TOOL_TIMEOUT` remain more specific. Unknown and throwing tools become structured errors (`UNKNOWN_TOOL`), so a call fails without ending the turn.
+ 
++Hosts can opt into `argumentEncoding: "dsh.raw-json-number/v1"` when `ctx.tools.argumentEncodings` advertises it. Numeric `JSON.rawJSON()` tokens then survive detachment and every policy stage; bigint primitives remain invalid. Callers and tools must own exact-number decoding rather than treating these tokens as ordinary records. Omitting the encoding retains strict ordinary JSON validation. This execution-local capability does not change Session decoding or typed tool-output validation.
++
+ ### PTC mode
+ 
+ Under `ptc`, the registry exposes the reserved `run_code` transport plus a deterministic SDK generated in the loaded runtime's language. Each SDK binding captures a frozen ToolSchema and passes it through the scheduler to its execution context. Before policy, a started call records only pairing ids, name, and normalized arguments; its settle event preserves the rendered result, optional presentation metadata, and structured error. Metadata is projected from that call’s canonical value and frozen; it changes neither the program value nor model content. Description and parameters remain transient and never enter Session events or SDK output. Calls are scheduled through a per-run pool that reuses the native concurrency contract. Under `ptc` alone, a model-direct call naming any other visible tool resolves to `UNKNOWN_TOOL` before policy — the announced surface and the callable surface stay the same. Intermediate binding values are execution-local; only the outer `run_code` result has a hard size cap.
+diff --git a/packages/core/tools/README.zh.md b/packages/core/tools/README.zh.md
+index e3e01ab3d2fb99fb8534d6c407e49a17b580d200..7aec2709c4c900e3615ae536eb1b2b6b2682747a 100644
+--- a/packages/core/tools/README.zh.md
++++ b/packages/core/tools/README.zh.md
+@@ -127,6 +127,8 @@ ctx.tools.register(defineTool({
+ 
+ 每次类型化调用都会实体化并冻结解析后的参数、分配不透明关联 token，再运行策略与分发。pre-execute 拒绝可以在模型可见原因旁附带 `ToolErrorInfo`；原生与 PTC 持久投影会保留结构化名称、代码与可选用户可见原因，但不会把该详情加入模型内容。取消采用协作式并等待完全停稳：每个工具主体都收到调用方拥有的 `exec.signal` 且必须观测它；调用主体前的取消为 `ABORTED_BEFORE_DISPATCH`，调用主体后的取消只能把成功结果替换为 `ABORTED`。拒绝、包装层失败、工具失败、后置策略失败与超时产生的 `TOOL_TIMEOUT` 仍保留更具体的结果。未知工具与抛出异常的工具都会变成结构化错误（`UNKNOWN_TOOL`），因此调用会失败而不会结束轮次。
+ 
++当 `ctx.tools.argumentEncodings` 声明支持时，宿主可显式传入 `argumentEncoding: "dsh.raw-json-number/v1"`。数字 `JSON.rawJSON()` token 会在分离副本和各策略阶段保留；bigint 原语仍然非法。调用方和工具负责精确数值解码，不能将这些 token 当成普通记录。省略编码时仍严格校验普通 JSON。该能力只作用于执行期间，不改变 Session 解码或类型化工具输出校验。
++
+ ### PTC mode
+ 
+ 在 `ptc` 下，注册表公开保留的 `run_code` 传输以及按所加载运行时语言生成的确定性 SDK。每个 SDK 绑定捕获冻结的 ToolSchema，经由调度器传入该次执行上下文。已开始的调用在策略之前只记录配对 id、名称和规范化参数；其结算事件保留渲染结果、可选展示元数据与结构化错误；元数据由该次调用的规范值投影并冻结，不改变程序读取的值或模型内容。描述与参数 schema 仅临时存活，不进入 Session 事件或 SDK 输出。调用通过复用原生并发约定的每次运行独有池调度。在纯 `ptc` 下，模型直呼其他任何可见工具都会在策略之前解析为 `UNKNOWN_TOOL`——通告面与可调用面保持一致。中间绑定值只存在于执行局部；只有外层 `run_code` 结果有硬大小上限。
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index 1c5dc6a35ee2df949cf84dbbb7c29033856e1fdc..fd984f26343ac37cfa01623ac5332bf8242313f7 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -13,7 +13,7 @@ import type { ToolCallId, ContentBlock, ToolSchema } from '@deepseek-ai/dsh-llm'
+ import { HarnessError } from '@deepseek-ai/dsh-llm'
+ import type { Agent } from '@deepseek-ai/dsh-agent'
+ import type { UserMessage } from '@deepseek-ai/dsh-session'
+-import { assertNever, deepFreeze, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
++import { assertNever, deepFreeze, snapshotJsonValue, snapshotRawNumberJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
+ import type { PromptSection, ToolProviderResult } from '@deepseek-ai/dsh-system-prompt'
+ import type { PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
+ import type {} from '@deepseek-ai/dsh-sandbox-policy'
+@@ -334,8 +334,14 @@ export interface ToolExecutionInput {
+   readonly name: string
+   /** Binding-time tool schema for a PTC inner call; frozen by its producer and never logged. */
+   readonly schema?: ToolSchema
+-  /** Losslessly JSON-serializable parsed arguments (tools validate their own schema). */
++  /** Parsed arguments; ordinary lossless JSON unless `argumentEncoding` opts into raw numeric tokens. */
+   readonly arguments: unknown
++  /**
++   * With `dsh.raw-json-number/v1`, preserve intrinsic `JSON.rawJSON()` numbers
++   * through detachment, freezing, and policy. Omission retains ordinary JSON
++   * validation. Callers and tools own exact decoding; Session JSON is unchanged.
++   */
++  readonly argumentEncoding?: 'dsh.raw-json-number/v1'
+   /** The agent on whose behalf the call runs (set by the agent loop). */
+   readonly agent?: Agent
+   /**
+@@ -808,6 +814,9 @@ function resolveMaxParallelSubCalls(value: number | undefined): number {
+ export class ToolRuntime extends Service {
+   static inject = ['systemPrompt']
+ 
++  /** Supported opt-in execution-local argument encodings; ordinary JSON needs no declaration. */
++  readonly argumentEncodings: readonly ['dsh.raw-json-number/v1'] = Object.freeze(['dsh.raw-json-number/v1'] as const)
++
+   static Config: z<Config> = z.object({
+     mode: z.union(['native', 'ptc'] as const).default('native'),
+     maxParallelSubCalls: z.natural().min(1).default(10),
+@@ -1407,6 +1416,7 @@ export class ToolRuntime extends Service {
+     const agent = exec.agent
+     const parent = exec.parent
+     const signal = exec.signal
++    const argumentEncoding = exec.argumentEncoding
+     // Distinguish a mode-collapsed call (visible in the scope, denied only by
+     // the `ptc` collapse) from a genuinely unknown tool. A collapsed call is
+     // deterministically denied, so it terminates BEFORE the extensible policy
+@@ -1426,6 +1436,7 @@ export class ToolRuntime extends Service {
+       ...agent !== undefined ? { agent } : {},
+       ...parent !== undefined ? { parent } : {},
+       ...exec.schema !== undefined ? { schema: exec.schema } : {},
++      ...argumentEncoding !== undefined ? { argumentEncoding } : {},
+       deferContext(context: UserMessage): void {
+         deferredContexts.push(context)
+       },
+@@ -1448,7 +1459,11 @@ export class ToolRuntime extends Service {
+     const finalizerFor = (): ToolDefinition['finalizeContent'] | undefined =>
+       collapsed && !signal.aborted ? undefined : capturedFinalizer
+     try {
+-      const detached = snapshotJsonValue(exec.arguments)
++      if (argumentEncoding !== undefined && argumentEncoding !== 'dsh.raw-json-number/v1') {
++        throw new TypeError('unsupported tool argument encoding')
++      }
++      const detached = argumentEncoding === 'dsh.raw-json-number/v1'
++        ? snapshotRawNumberJsonValue(exec.arguments) : snapshotJsonValue(exec.arguments)
+       if (detached === undefined) {
+         throw new TypeError('tool execution arguments must be losslessly JSON-serializable')
+       }
+diff --git a/packages/core/tools/tests/raw-number.spec.ts b/packages/core/tools/tests/raw-number.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b0663543799925053650be85013a50f5b832c5c
+--- /dev/null
++++ b/packages/core/tools/tests/raw-number.spec.ts
+@@ -0,0 +1,68 @@
++import { expect, it } from 'vitest'
++import { Context } from '@deepseek-ai/cordis'
++import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
++import ToolRuntime from '@deepseek-ai/dsh-tools'
++import { ToolCallId } from '@deepseek-ai/dsh-llm'
++
++const numericJson = JSON as typeof JSON & {
++  rawJSON: (token: string) => { readonly rawJSON: string }
++  isRawJSON: (value: unknown) => boolean
++}
++
++it('carries exact numeric tokens through real tool policy, body, and final rendering', async () => {
++  const ctx = new Context()
++  await ctx.plugin(SystemPrompt)
++  await ctx.plugin(ToolRuntime)
++  const seen: string[] = []
++  const expected = '{"id":9007199254740993,"zero":-0.0,"float":1.0000000000000001e+18}'
++  try {
++    ctx.tools.register({ name: 'exact', description: 'Echo exact numeric arguments.',
++      parameters: { type: 'object' },
++      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
++      async execute(args) { seen.push('body'); expect(JSON.stringify(args)).toBe(expected); return JSON.stringify(args) },
++    })
++    ctx.on('tools/pre-execute', async (exec, next) => {
++      seen.push('pre'); expect(JSON.stringify(exec.arguments)).toBe(expected)
++      expect(exec.argumentEncoding).toBe('dsh.raw-json-number/v1')
++      expect(Object.isFrozen(exec.arguments)).toBe(true)
++      return next()
++    })
++    ctx.tools.guard((exec) => {
++      seen.push('guard'); expect(JSON.stringify(exec.arguments)).toBe(expected)
++      return undefined
++    })
++    ctx.on('tools/execute', async (exec, next) => { seen.push('around'); expect(JSON.stringify(exec.arguments)).toBe(expected); return next() })
++    ctx.on('tools/post-execute', async (exec, _result, next) => { seen.push('post'); expect(JSON.stringify(exec.arguments)).toBe(expected); return next() })
++    const result = await ctx.tools.execute({ callId: ToolCallId('raw-number'), name: 'exact', argumentEncoding: 'dsh.raw-json-number/v1',
++      arguments: { id: numericJson.rawJSON('9007199254740993'), zero: numericJson.rawJSON('-0.0'), float: numericJson.rawJSON('1.0000000000000001e+18') },
++      signal: new AbortController().signal })
++    expect(ctx.tools.argumentEncodings).toContain('dsh.raw-json-number/v1')
++    expect(result.isError, JSON.stringify(result)).toBe(false)
++    expect(result.content).toEqual([{ type: 'text', text: expected }])
++    expect(seen).toEqual(['pre', 'guard', 'around', 'body', 'post'])
++  } finally { await ctx.fiber.dispose() }
++})
++
++it('rejects unnegotiated or invalid encodings before policy and preserves a denial', async () => {
++  const ctx = new Context()
++  await ctx.plugin(SystemPrompt)
++  await ctx.plugin(ToolRuntime)
++  let effects = 0, policies = 0
++  try {
++    ctx.tools.register({ name: 'effect', description: '', parameters: { type: 'object' },
++      output: { schema: { type: 'null' }, render: () => [] }, async execute() { effects++; return null },
++    })
++    ctx.tools.guard(() => { policies++; return 'Denied by policy' })
++    const base = { callId: ToolCallId('denied'), name: 'effect', arguments: { n: numericJson.rawJSON('9007199254740993') }, signal: new AbortController().signal }
++    expect((await ctx.tools.execute(base)).isError).toBe(true)
++    expect(policies).toBe(0)
++    const invalid = { ...base, argumentEncoding: 'dsh.raw-json-number/v1' as const }
++    Reflect.set(invalid, 'argumentEncoding', 'unrecognized')
++    expect((await ctx.tools.execute(invalid)).isError).toBe(true)
++    expect(policies).toBe(0)
++    const denied = await ctx.tools.execute({ ...base, argumentEncoding: 'dsh.raw-json-number/v1' })
++    expect(denied.isError).toBe(true)
++    expect(policies).toBe(1)
++    expect(effects).toBe(0)
++  } finally { await ctx.fiber.dispose() }
++})
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index e9b383b92814c2305013b9d8752dae8ccfcc2bbe..ea598990ff976a7ff043ccc42275983c3b90cc3c 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -3428,6 +3428,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+     description: 'Tool registry and execution pipeline. Scoped registrations shadow globals; one visibility resolver feeds presentation, lookup, and dispatch.',
+     methods: [
+       {
++        signature: 'readonly argumentEncodings: readonly [\'dsh.raw-json-number/v1\'] = Object.freeze([\'dsh.raw-json-number/v1\'] as const)',
++        description: 'Supported opt-in execution-local argument encodings; ordinary JSON needs no declaration.',
++        parameters: [],
++      },
++      {
+         signature: 'presentAs(mode: ToolPresentationMode): () => void',
+         description: 'Present the calling scope\'s tools in `mode` instead of the deployment default. Nearest scope on the chain wins, so a preset\'s standing declaration covers every agent joined under it.\n\nScoped only, and one declaration per scope: this is how an agent preset composes PTC mode agents beside native ones in the same process, and a process-global override would be the `mode` config field instead.',
+         parameters: [{ name: 'mode', description: 'the presentation the covered agents\' models see.' }],
+@@ -8270,7 +8275,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'ToolExecutionInput',
+-    declaration: 'export interface ToolExecutionInput {\n    readonly callId: ToolCallId;\n    readonly rootCallId?: ToolCallId;\n    readonly name: string;\n    readonly schema?: ToolSchema;\n    readonly arguments: unknown;\n    readonly agent?: Agent;\n    readonly parent?: ToolExecutionToken;\n    readonly signal: AbortSignal;\n}',
++    declaration: 'export interface ToolExecutionInput {\n    readonly callId: ToolCallId;\n    readonly rootCallId?: ToolCallId;\n    readonly name: string;\n    readonly schema?: ToolSchema;\n    readonly arguments: unknown;\n    readonly argumentEncoding?: \'dsh.raw-json-number/v1\';\n    readonly agent?: Agent;\n    readonly parent?: ToolExecutionToken;\n    readonly signal: AbortSignal;\n}',
+   },
+   {
+     name: 'ToolExecutionMode',
+@@ -8346,7 +8351,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'ToolRuntime',
+-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
++    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    readonly argumentEncodings: readonly [\n        \'dsh.raw-json-number/v1\'\n    ];\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+   },
+   {
+     name: 'ToolRuntimeScheduler',
+diff --git a/packages/guard/repeat-tool-reminder/src/index.ts b/packages/guard/repeat-tool-reminder/src/index.ts
+index a79722aad0362e9f7360f33dd3cfe0f96e2fc804..3f44d038a3f14bdfb38e8dabdfda8ffe6c937531 100644
+--- a/packages/guard/repeat-tool-reminder/src/index.ts
++++ b/packages/guard/repeat-tool-reminder/src/index.ts
+@@ -88,12 +88,12 @@ function detailedReminder(toolName: string, count: number, canonicalArguments: s
+ /**
+  * Deep key-sort of a parsed-JSON value so two argument objects that differ
+  * only in property order canonicalize identically. Arguments reach the guard
+- * as the loop's `JSON.parse` output (or its raw-string fallback for malformed
+- * argument JSON), so JSON's value domain is the whole input domain — no
+- * bigint, cycle, or `undefined` handling exists because no input path can
+- * produce them.
++ * as ordinary JSON or negotiated intrinsic raw numeric tokens. Preserve the
++ * numeric brand when sorting; bigint, cycles, and undefined are rejected by
++ * the tool runtime before this guard runs.
+  */
+ function sortJsonValue(value: unknown): unknown {
++  if ((JSON as typeof JSON & { isRawJSON?: (value: unknown) => boolean }).isRawJSON?.(value)) return value
+   if (Array.isArray(value)) return value.map(sortJsonValue)
+   if (value !== null && typeof value === 'object') {
+     const record = value as Record<string, unknown>
+diff --git a/packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts b/packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts
+index ccaad2300bfeab7818a37ff2db38027a716f288b..68aab9c6775d30370ab40b50ef9857dbe47cbcfa 100644
+--- a/packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts
++++ b/packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts
+@@ -19,6 +19,26 @@ declare module '@deepseek-ai/dsh-llm' {
+ 
+ const testToolSignal = new AbortController().signal
+ 
++it('distinguishes negotiated raw numbers from similarly shaped ordinary records', async () => {
++  const ctx = await harness({ thresholds: [2] })
++  try {
++    ctx.llm.registerAdapter(['mock'], new MockAdapter([]))
++    const agent = await ctx.agentLoop.create(SessionId('raw-number-repeat'), { provider: 'mock', model: 'mock' })
++    ctx.tools.register({ name: 'numeric', description: '', parameters: { type: 'object' },
++      output: { schema: { type: 'null' }, render: () => [] }, async execute() { return null },
++    })
++    const numericJson = JSON as typeof JSON & { rawJSON: (token: string) => { readonly rawJSON: string } }
++    const raw = { id: numericJson.rawJSON('9007199254740993') }, record = { id: { rawJSON: '9007199254740993' } }
++    let index = 0
++    const run = (args: object) => ctx.tools.execute({ callId: ToolCallId(`raw-${++index}`), name: 'numeric', agent,
++      arguments: args, argumentEncoding: 'dsh.raw-json-number/v1', signal: testToolSignal })
++    expect((await run(raw)).additionalContexts).toBeUndefined()
++    expect((await run(record)).additionalContexts).toBeUndefined()
++    expect((await run(raw)).additionalContexts).toBeUndefined()
++    expect((await run(raw)).additionalContexts).toHaveLength(1)
++  } finally { await ctx.fiber.dispose() }
++})
++
+ /**
+  * Behavior suite for the repeat-tool-call guard: chain semantics (identical /
+  * different-tracked / untracked-transparent / per-agent / resets), threshold
+diff --git a/packages/util/values/README.i18n.yaml b/packages/util/values/README.i18n.yaml
+index d840a3b0f3e43535428efa547a8cd75c0058c4ac..2a26658dc6b7e790c8b5342236f58c9357efc8d1 100644
+--- a/packages/util/values/README.i18n.yaml
++++ b/packages/util/values/README.i18n.yaml
+@@ -18,8 +18,8 @@
+   en: bbff250eba0f1b89
+   zh: 0a618f05cc88ee2b
+ /deepseek-ai-dsh-util-values/use-this-package/validate-or-snapshot-json-data:
+-  en: dc6de9f27cc98557
+-  zh: 9c2bac179e536147
++  en: 9872ca7ff2c14d2a
++  zh: 036a0ffffecbeab4
+ /deepseek-ai-dsh-util-values/use-this-package/read-streamed-arguments:
+   en: c53d8e94245c2378
+   zh: de0308a325b17dad
+diff --git a/packages/util/values/README.md b/packages/util/values/README.md
+index 101e1b7332be01a2b088f670fe4e2ac81b4eda54..d55a2cddf30759fa5f3d7e4091ee5531ff298e45 100644
+--- a/packages/util/values/README.md
++++ b/packages/util/values/README.md
+@@ -37,6 +37,8 @@ if (!isJsonValue(input)) throw new TypeError('expected lossless JSON')
+ const snapshot = snapshotJsonValue(input) as JsonValue
+ ```
+ 
++`snapshotRawNumberJsonValue()` is reserved for execution-local host arguments: it retains frozen intrinsic `JSON.rawJSON()` numeric tokens while detaching containers. Nonnumeric raw values and nonfinite decimal/exponent tokens reject; ordinary `rawJSON` fields stay ordinary data. `snapshotJsonValue()` and `isJsonValue()` reject intrinsic raw tokens, so this opt-in does not widen persisted JSON. Hosts and tool consumers own exact-number decoding.
++
+ ### Read streamed arguments
+ 
+ `PartialArguments` reads a JSON object's top-level fields lazily. `append()` retains separate fragments without scanning or concatenating them. Readers index new key/value ranges, skipping unrequested contents; only requested strings are decoded or counted, and only requested complete non-string values are parsed. `complete()` reports a closing delimiter, not validated contents; `invalid` reports errors already discovered by indexing or content reads. It is not a substitute for tool-input validation.
+diff --git a/packages/util/values/README.zh.md b/packages/util/values/README.zh.md
+index 5b5e6ee9b1da8233df1cf1afa287b5d50787f909..0bc1dccecf81d923aa3dfffb58516404546d690d 100644
+--- a/packages/util/values/README.zh.md
++++ b/packages/util/values/README.zh.md
+@@ -37,6 +37,8 @@ if (!isJsonValue(input)) throw new TypeError('expected lossless JSON')
+ const snapshot = snapshotJsonValue(input) as JsonValue
+ ```
+ 
++`snapshotRawNumberJsonValue()` 仅用于执行期间的宿主参数：分离容器副本时保留冻结的内建 `JSON.rawJSON()` 数字 token。非数字 raw 值和非有限的小数或指数 token 会被拒绝；普通 `rawJSON` 字段仍是普通数据。`snapshotJsonValue()` 与 `isJsonValue()` 拒绝内建 raw token，因此该选项不会扩展持久化 JSON 的范围。宿主和工具消费者负责精确数值解码。
++
+ ### 读取流式参数
+ 
+ `PartialArguments` 懒读取 JSON 对象的顶层字段。`append()` 分别保留分片，不扫描也不拼接。读器为新的键值范围建立索引，跳过未请求的内容；仅在请求时解码或计数字符串，仅在请求时解析已完整的非字符串值。`complete()` 表示结束分隔符已到达，不代表内容已校验；`invalid` 报告索引或内容读取已经发现的错误。它不能替代工具入参校验。
+diff --git a/packages/util/values/src/index.ts b/packages/util/values/src/index.ts
+index 8664da7e34bac08627f503e834b666ce434e6da4..f9ba7fb6c751cc47a0a60cb0d398d4003786b5fa 100644
+--- a/packages/util/values/src/index.ts
++++ b/packages/util/values/src/index.ts
+@@ -3,6 +3,12 @@
+ /** A value that round-trips through JSON without loss. */
+ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+ 
++// These ES2025 intrinsics ship in supported Node versions; older browser realms
++// keep the ordinary JSON path without requiring the newer TypeScript library.
++const rawJsonIntrinsics = JSON as typeof JSON & {
++  isRawJSON?: (value: unknown) => value is { readonly rawJSON: string }
++}
++
+ /**
+  * Mark an unreachable closed-union branch.
+  * @param value - impossible value; an unhandled typed variant fails at the call site.
+@@ -69,7 +75,7 @@ type JsonWalkTask =
+   | { kind: 'leave'; source: object }
+ 
+ /** Validate lossless JSON iteratively, optionally materializing a detached snapshot. */
+-function walkJsonValue(value: unknown, detach: boolean): JsonValue | true | undefined {
++function walkJsonValue(value: unknown, detach: boolean, rawNumbers = false): JsonValue | true | undefined {
+   const ancestors = new Set<object>()
+   let root: JsonValue | undefined
+   const assign = (destination: SnapshotDestination | undefined, item: JsonValue): void => {
+@@ -131,6 +137,14 @@ function walkJsonValue(value: unknown, detach: boolean): JsonValue | true | unde
+       continue
+     }
+     if (typeof current !== 'object') return undefined
++    if (rawJsonIntrinsics.isRawJSON?.(current)) {
++      const token = current.rawJSON
++      if (!rawNumbers || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(token)
++        || /[.eE]/.test(token) && !Number.isFinite(Number(token))) return undefined
++      // Intrinsic raw JSON objects are frozen; copying their fields loses the numeric brand.
++      assign(task.destination, current)
++      continue
++    }
+     if (ancestors.has(current)) return undefined
+ 
+     if (Array.isArray(current)) {
+@@ -174,6 +188,18 @@ export function snapshotJsonValue<T>(value: T): T | undefined {
+ }
+ 
+ /**
++ * Detach JSON while retaining frozen intrinsic `JSON.rawJSON()` numeric tokens.
++ * Ordinary records with a `rawJSON` field remain records; nonnumeric raw values
++ * and nonfinite decimal/exponent tokens reject. Other rules match {@link snapshotJsonValue}.
++ * @param value - execution-local arguments from a host owning their exact-number decoding.
++ * @returns a detached snapshot, or `undefined` for unsupported values; no bigint conversion occurs.
++ * @throws Exceptions raised by property getters or proxies propagate to the caller.
++ */
++export function snapshotRawNumberJsonValue<T>(value: T): T | undefined {
++  return walkJsonValue(value, true, true) as T | undefined
++}
++
++/**
+  * Test the same lossless JSON rules as {@link snapshotJsonValue} without detaching the value.
+  * @param value - candidate value to test.
+  * @returns whether the value survives a JSON round trip without loss.
+diff --git a/packages/util/values/tests/raw-number.spec.ts b/packages/util/values/tests/raw-number.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3239ba0423e6fd5ba4f210a972c1632ed4e7b389
+--- /dev/null
++++ b/packages/util/values/tests/raw-number.spec.ts
+@@ -0,0 +1,47 @@
++import { describe, expect, it } from 'vitest'
++import { isJsonValue, snapshotJsonValue, snapshotRawNumberJsonValue } from '../src/index.ts'
++
++const numericJson = JSON as typeof JSON & {
++  rawJSON: (token: string) => { readonly rawJSON: string }
++  isRawJSON: (value: unknown) => boolean
++}
++
++describe('execution-local raw JSON numbers', () => {
++  it('preserves intrinsic numbers while detaching records and refusing ordinary persistence', () => {
++    const input = { id: numericJson.rawJSON('9007199254740993'), values: [numericJson.rawJSON('-0.0'), numericJson.rawJSON('1.0000000000000001e+18')] }
++    const result = snapshotRawNumberJsonValue(input)
++    expect(result).not.toBe(input)
++    expect(result?.values).not.toBe(input.values)
++    expect(numericJson.isRawJSON(result?.id)).toBe(true)
++    expect(JSON.stringify(result)).toBe('{"id":9007199254740993,"values":[-0.0,1.0000000000000001e+18]}')
++    expect(snapshotJsonValue(input)).toBeUndefined()
++    expect(isJsonValue(input)).toBe(false)
++  })
++
++  it('never interprets a record field as intrinsic numeric authority', () => {
++    const input = { id: { rawJSON: '9007199254740993' } }
++    expect(JSON.stringify(snapshotRawNumberJsonValue(input))).toBe('{"id":{"rawJSON":"9007199254740993"}}')
++    expect(numericJson.isRawJSON(snapshotRawNumberJsonValue(input)?.id)).toBe(false)
++    expect(snapshotJsonValue(input)).toEqual(input)
++  })
++
++  it('rejects nonnumeric raw tokens, nonfinite floats, bigint and cycles', () => {
++    for (const token of ['"text"', 'null', 'true', '1e999']) {
++      expect(snapshotRawNumberJsonValue({ value: numericJson.rawJSON(token) })).toBeUndefined()
++    }
++    for (const value of [1n, -0, NaN, Infinity, undefined, () => 1]) {
++      expect(snapshotRawNumberJsonValue({ value })).toBeUndefined()
++    }
++    const cycle: { self?: object } = {}
++    cycle.self = cycle
++    expect(snapshotRawNumberJsonValue(cycle)).toBeUndefined()
++  })
++
++  it('reads getters once and keeps very large integer tokens exact', () => {
++    let reads = 0
++    const token = '9'.repeat(4300)
++    const result = snapshotRawNumberJsonValue({ get n() { reads++; return numericJson.rawJSON(token) } })
++    expect(reads).toBe(1)
++    expect(JSON.stringify(result)).toBe(`{"n":${token}}`)
++  })
++})

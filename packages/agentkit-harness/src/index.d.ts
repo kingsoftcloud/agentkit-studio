@@ -4,6 +4,18 @@ import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import type { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { SessionId, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'agentkit-native-background-notification': {
+      kind: 'agentkit-native-background-notification'
+      form: 'notice'
+      summary: string
+      sourceRunId: string
+      taskId: string
+    }
+  }
+}
+
 export declare const name: 'agentkit-harness'
 export declare const inject: readonly ['agents', 'sessions', 'llm']
 

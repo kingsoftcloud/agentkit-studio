@@ -12,6 +12,7 @@ import { modelFailureDetails } from './model-failure.mjs';
 import { formatSkillContext } from './skill-context.mjs';
 import { chatCompletionUsage } from './chat-usage.mjs';
 import { checkedResource } from './resource-checks.mjs';
+import { boundSkillResources, loadBoundSkills } from './skill-bindings.mjs';
 import { dshModelRoute } from './model-route.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 
@@ -29,22 +30,7 @@ function bindingIds(bindings, key) {
   return values.map(value => typeof value === 'string' ? value : value?.resourceId || value?.id).filter(Boolean).map(String);
 }
 
-/** One ordered resource set for preset admission and all three executors. */
-export function boundSkillResources(bindings = {}) {
-  const resources = bindingIds(bindings, 'skills').map(resourceId => ({ kind: 'skill', resourceId }));
-  for (const plugin of Array.isArray(bindings.plugins) ? bindings.plugins : []) {
-    const resource = plugin?.config?.binding?.resource;
-    if (plugin.enabled === false || resource?.kind !== 'skill-space') continue;
-    const resourceId = resource.id || resource.resourceId;
-    if (resourceId) resources.push({ kind: 'skill-space', resourceId: String(resourceId) });
-  }
-  const seen = new Set();
-  return resources.filter(({ resourceId }) => {
-    if (seen.has(resourceId)) return false;
-    seen.add(resourceId);
-    return true;
-  });
-}
+export { boundSkillResources } from './skill-bindings.mjs';
 
 function extractText(value) {
   if (typeof value === 'string') return value;
@@ -164,6 +150,15 @@ function memoryWriteEnabled(record, binding, input) {
   return mode === 'explicit_only' && explicitMemoryIntent(input);
 }
 
+/** Pure Host policy shared by ordinary and durable Native turn consumers. */
+export function boundMemoryWritePolicy(record, input) {
+  const binding = memoryBinding(record?.spec?.bindings || record?.bindings || {});
+  if (!memoryWriteEnabled(record, binding, input)) return null;
+  const resource = binding.config.binding.resource;
+  return { resourceId: String(resource.id || resource.resourceId || ''),
+    mode: String(record?.spec?.memory?.write?.mode || 'candidate').trim().toLowerCase(), flush: explicitMemoryIntent(input) };
+}
+
 /** Persist one completed turn through the Host-owned memory adapter. */
 export async function writeBoundMemory({ binding, resourceAdapter, input, assistantText, userId, sessionId, agentId, agent, onResource } = {}) {
   if (!binding || typeof resourceAdapter?.writeMemory !== 'function') return { accepted: false, reason: 'adapter_unavailable' };
@@ -229,9 +224,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
   if (!toolsOnly && record?.spec?.memory?.enabled === false && memoryBinding(bindings)) {
     resourceContext += '\n\nMemory binding contract: 当前 Agent 的跨会话长期记忆已关闭。Host 本轮没有查询记忆库，也不会写入记忆库；下面即使有 Knowledge，也只属于知识库检索，不能据此声称长期记忆已启用或已召回。\n';
   }
-  if (!toolsOnly) for (const { kind, resourceId } of skillResources) {
-    const skill = await checkedResource({ kind, resourceId, action: 'load', agent, onResource }, () => resourceAdapter.loadSkill(resourceId));
-    if (skill) resourceContext += `\n\n${kind === 'skill' ? `Skill ${skill.name || ''}:\n` : ''}${formatSkillContext(skill, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`;
+  if (!toolsOnly && skillResources.length) {
+    const loaded = await loadBoundSkills(bindings, resourceAdapter, { agent, onResource });
+    resourceContext += loaded.filter(item => item.value).map(({ kind, value }) => kind === 'skill'
+      ? `Skill ${value.name || ''}:\n${formatSkillContext(value, { indexOnly: record?.spec?.runtime?.type === 'codex' })}`
+      : `\n\n${formatSkillContext(value, { limit: 24000, indexOnly: record?.spec?.runtime?.type === 'codex' })}`).join('\n\n');
   }
   if (!toolsOnly && knowledge) {
     const resourceId = knowledge.config.binding.resource.id || knowledge.config.binding.resource.resourceId;

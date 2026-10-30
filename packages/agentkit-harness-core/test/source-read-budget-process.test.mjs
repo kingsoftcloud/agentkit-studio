@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtempSync, realpathSync, rmSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { canonical } from '../dist/index.mjs';
+import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
+import { scope, digest } from './fixtures.mjs';
+const worker = fileURLToPath(new URL('./fixtures/source-capacity-process.mjs', import.meta.url));
+for (const checkpoint of ['quote-committed', 'two-readers-committed']) test(`actual SIGKILL after ${checkpoint} keeps original source shares without regenerating the batch`, { timeout: 20000 }, async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'source-capacity-process-'))), children = [], messages = []; let errors = '';
+  t.after(() => { for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true }); });
+  const start = mode => {
+    const child = spawn(process.execPath, [worker, mode, root, checkpoint], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    children.push(child); child.stderr.on('data', data => { errors += data; }); child.on('message', message => messages.push(message)); return child;
+  };
+  const original = start('run');
+  const ready = await Promise.race([once(original, 'message'), once(original, 'exit').then(([code]) => { throw Error(`${code}: ${errors}`); })]);
+  assert.equal(ready[0].checkpoint, checkpoint);
+  const exit = once(original, 'exit'); original.kill('SIGKILL'); assert.deepEqual(await exit, [null, 'SIGKILL']);
+  const store = new SqliteRunStore(join(root, 'runs.sqlite')), record = store.load(scope, 'run'); store.close();
+  const quote = record.snapshot.sourceReadQuote;
+  assert.equal(quote.status, 'ready'); assert.equal(quote.readerCallIds.length, 6);
+  assert.equal(record.snapshot.usage.toolCalls, checkpoint === 'quote-committed' ? 0 : 2);
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, (record.lease?.expiresAt ?? 0) - Date.now() + 20)));
+  const replacement = start('recover'), [code] = await once(replacement, 'exit'); assert.equal(code, 0, errors);
+  const done = messages.find(message => message.done); assert.equal(done?.phase, 'completed', errors); assert.notEqual(done.pid, original.pid);
+  const budgets = readFileSync(join(root, 'budgets.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(budgets.length, 6); assert.equal(new Set(budgets.map(item => item.callId)).size, 6);
+  assert.ok(budgets.every(item => canonical(item.budget) === canonical(budgets[0].budget)));
+  assert.equal(budgets[0].budget.sourceGroupSize, 6); assert.equal(budgets[0].budget.quoteDigest, digest(quote));
+  assert.deepEqual(readFileSync(join(root, 'model-calls'), 'utf8').trim().split('\n'), [String(original.pid), String(replacement.pid)]);
+});

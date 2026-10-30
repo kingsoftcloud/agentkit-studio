@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { parse } from 'yaml';
 import { readClientSource } from './helpers/client-source.mjs';
 import { mountStudio } from '../src/client/dsh/mount.mjs';
+import React from 'react';
+import * as ReactDOM from 'react-dom';
 
 test('Studio disables the independent DSH account welcome and recharge flow', async () => {
   const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
@@ -81,7 +83,7 @@ test('parent Studio mounting preserves local composer services and never install
     provide() { assert.fail('parent composer services must not be replaced'); },
   };
   mountStudio(ctx, {
-    ui: { React: { createElement: noop }, BRAND: {}, PANELS: [{ id: 'studio-overview', page: 'overview' }] },
+    ui: { React, ReactDOM, BRAND: {}, PANELS: [{ id: 'studio-overview', page: 'overview' }] },
     authoring: { openAgentAuthoring: noop }, connectionOwner: {}, hostRemote: {},
     actions: { registerBinding: () => noop, registerSessionOpener: () => noop }, documentEffects: {},
     createDshModelBridge: () => ({}), writeConversationAgent: noop,

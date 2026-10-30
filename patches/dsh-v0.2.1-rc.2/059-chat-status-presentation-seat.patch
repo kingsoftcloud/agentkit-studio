@@ -1,0 +1,81 @@
+diff --git a/packages/client/ui-chat/src/client/chat/ChatView.module.css b/packages/client/ui-chat/src/client/chat/ChatView.module.css
+index 6696330f0a39085815da0200ca0887835ddeb29e..5c1e9fb09c3efa529222d123a8b517ed32794727 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatView.module.css
++++ b/packages/client/ui-chat/src/client/chat/ChatView.module.css
+@@ -6,6 +6,23 @@
+   flex: 1 1 auto;
+   /* Floating controls query this frame outside the clipped transcript. */
+   container-type: inline-size;
++  container-name: conversation;
++}
++
++.statusSeat {
++  position: sticky;
++  top: 0;
++  width: 100%;
++  height: 0;
++  flex: none;
++  z-index: 20;
++  pointer-events: none;
++}
++
++@container conversation (min-width: 1280px) {
++  .frame:is([data-chat-status-layout="auto"], [data-chat-status-layout="panel"]) .column {
++    transform: translateX(-168px);
++  }
+ }
+ 
+ .root {
+diff --git a/packages/client/ui-chat/src/client/chat/ChatView.tsx b/packages/client/ui-chat/src/client/chat/ChatView.tsx
+index fd61b9179bcdd749228c39adfc17500dce357a58..9b68d117ba308126d376a060e2e383b22962b221 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatView.tsx
++++ b/packages/client/ui-chat/src/client/chat/ChatView.tsx
+@@ -62,6 +62,9 @@ export function ChatView({
+   sessionId, openFile, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions,
+   usePresentation, useProjection, t,
+ }: ChatViewSlotProps) {
++  const [statusPanelTarget, setStatusPanelTarget] = useState<HTMLDivElement | null>(null)
++  const [statusPanelLayout, setStatusPanelLayout] = useState<'mini' | 'panel' | 'auto' | null>(null)
++  const statusPanel = useMemo(() => ({ target: statusPanelTarget, setLayout: setStatusPanelLayout }), [statusPanelTarget])
+   const order = useChat(s => s.order)
+   const groupedEntries = useConversation(snapshot => snapshot.views.grouped('chat')?.entries)
+   const entries = useMemo<readonly RenderEntry[]>(() => groupedEntries
+@@ -200,7 +203,8 @@ export function ChatView({
+   const residentFlow = renderSlot('conversation.chat.flow', flowOwner, { hookContext: flowContext })
+ 
+   return (
+-    <div className={css.frame}>
++    <div className={css.frame} data-chat-status-layout={statusPanelLayout ?? undefined}>
++      <div ref={setStatusPanelTarget} className={css.statusSeat} data-chat-status-seat="" />
+       {scroll.initialized && (
+         <TurnNavigator
+           items={railItems}
+@@ -229,7 +233,7 @@ export function ChatView({
+               </div>
+             )}
+             <MarkdownDelegateProvider openFile={requestOpenFile} openExternalLink={openExternalLink} fileImages={fileImages}>
+-              {renderSlot('conversation.chat.presentation', { ...flowOwner, fallback: residentFlow }, { fallback: residentFlow })}
++              {renderSlot('conversation.chat.presentation', { ...flowOwner, statusPanel, fallback: residentFlow }, { fallback: residentFlow })}
+             </MarkdownDelegateProvider>
+             {/* No pending placeholders: questions (ui-user-questions) and approvals
+                 (ApprovalPanel) both take over the composer, so a flow card would
+diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
+index f0df689b55ef99674ee7156e1c5b8b9153a51b04..0bd4b1d2a92c4ff5aefd7519edda066e2ef4753a 100644
+--- a/packages/client/ui-chat/src/client/contract/slots.ts
++++ b/packages/client/ui-chat/src/client/contract/slots.ts
+@@ -394,7 +394,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     'conversation.chat.presentation': {
+       kind: 'single'
+       scope: 'session'
+-      owner: ChatFlowOwnerProps & { readonly fallback: ReactNode }
++      owner: ChatFlowOwnerProps & {
++        readonly fallback: ReactNode
++        /** View-only mount seat; no session, tool or execution authority. */
++        readonly statusPanel?: {
++          readonly target: HTMLElement | null
++          readonly setLayout: (mode: 'mini' | 'panel' | 'auto' | null) => void
++        }
++      }
+     }
+     /** Ordered Chat rows and local echoes with viewport-bound visibility hooks. */
+     'conversation.chat.flow': {

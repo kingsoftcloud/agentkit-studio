@@ -1,0 +1,555 @@
+diff --git a/docs/subsystems/tools.md b/docs/subsystems/tools.md
+index f19c60fbfcfa4e53886edc900a2e9268f02cc1a4..7d2928902036c0ede70a6fbb81f2ff8c55ed2ed4 100644
+--- a/docs/subsystems/tools.md
++++ b/docs/subsystems/tools.md
+@@ -556,6 +556,13 @@ restrict(filter: ToolRestriction): () => void
+  */
+ guard(guard: ToolGuard): () => void
+ 
++/** Check again at the last synchronous boundary before a tool body starts.
++ * Around-dispatch listeners may await after the normal policy guard.
++ * @param guard - Synchronous refusal check for the prepared execution.
++ * @returns Disposer that removes this guard from its scope.
++ */
++dispatchGuard(guard: ToolGuard): () => void
++
+ /**
+  * Look up a tool as one scope sees it (scoped
+  * shadows global; a restricted-away global reads as absent). Presenters pass
+@@ -683,15 +690,18 @@ Source: [`packages/core/tools/src/index.ts`](../../packages/core/tools/src/index
+ 
+ #### `tools/pre-execute` — waterfall
+ 
+-Allow, deny, cancel, or ask before dispatch. `next()` delegates to allow; `cancel` selects the canonical pre-dispatch cancellation result, and missing approval support turns `ask` into denial. Async gates must observe `exec.signal`; the registry rechecks cancellation after they settle but never abandons their promise. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
++Allow, deny, cancel, ask, or defer before dispatch. `next()` delegates to allow; `cancel` selects the canonical pre-dispatch cancellation result, and missing approval support turns `ask` into denial. `defer` resolves its `value` through the definition's output schema/render without invoking guards, around-dispatch, or the body, and is allowed only when the caller negotiated ToolExecutionInput.preflightDefer; otherwise it fails closed. Async gates must observe `exec.signal`; the registry rechecks cancellation after they settle but never abandons their promise. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+ 
+ ```ts cordis-catalog
+ /**
+- * Allow, deny, cancel, or ask before dispatch. `next()` delegates to allow;
++ * Allow, deny, cancel, ask, or defer before dispatch. `next()` delegates to allow;
+  * `cancel` selects the canonical pre-dispatch cancellation result, and missing
+- * approval support turns `ask` into denial. Async gates must observe
+- * `exec.signal`; the registry rechecks cancellation after they settle but
+- * never abandons their promise.
++ * approval support turns `ask` into denial. `defer` resolves its `value`
++ * through the definition's output schema/render without invoking guards,
++ * around-dispatch, or the body, and is allowed only when the caller
++ * negotiated {@link ToolExecutionInput.preflightDefer}; otherwise it fails
++ * closed. Async gates must observe `exec.signal`; the registry rechecks
++ * cancellation after they settle but never abandons their promise.
+  * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+  * @param exec - the pending call (name, parsed arguments, caller agent).
+  * @mode waterfall
+diff --git a/docs/subsystems/tools.zh.md b/docs/subsystems/tools.zh.md
+index bbd85ac1813fe6453744fa26f523b175aa9e5972..2caba803a097453954bf94cfc27f5bc57e3d9c3d 100644
+--- a/docs/subsystems/tools.zh.md
++++ b/docs/subsystems/tools.zh.md
+@@ -556,6 +556,13 @@ restrict(filter: ToolRestriction): () => void
+  */
+ guard(guard: ToolGuard): () => void
+ 
++/** Check again at the last synchronous boundary before a tool body starts.
++ * Around-dispatch listeners may await after the normal policy guard.
++ * @param guard - Synchronous refusal check for the prepared execution.
++ * @returns Disposer that removes this guard from its scope.
++ */
++dispatchGuard(guard: ToolGuard): () => void
++
+ /**
+  * Look up a tool as one scope sees it (scoped
+  * shadows global; a restricted-away global reads as absent). Presenters pass
+@@ -683,15 +690,18 @@ Source: [`packages/core/tools/src/index.ts`](../../packages/core/tools/src/index
+ 
+ #### `tools/pre-execute` — waterfall
+ 
+-Allow, deny, cancel, or ask before dispatch. `next()` delegates to allow; `cancel` selects the canonical pre-dispatch cancellation result, and missing approval support turns `ask` into denial. Async gates must observe `exec.signal`; the registry rechecks cancellation after they settle but never abandons their promise. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
++Allow, deny, cancel, ask, or defer before dispatch. `next()` delegates to allow; `cancel` selects the canonical pre-dispatch cancellation result, and missing approval support turns `ask` into denial. `defer` resolves its `value` through the definition's output schema/render without invoking guards, around-dispatch, or the body, and is allowed only when the caller negotiated ToolExecutionInput.preflightDefer; otherwise it fails closed. Async gates must observe `exec.signal`; the registry rechecks cancellation after they settle but never abandons their promise. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+ 
+ ```ts cordis-catalog
+ /**
+- * Allow, deny, cancel, or ask before dispatch. `next()` delegates to allow;
++ * Allow, deny, cancel, ask, or defer before dispatch. `next()` delegates to allow;
+  * `cancel` selects the canonical pre-dispatch cancellation result, and missing
+- * approval support turns `ask` into denial. Async gates must observe
+- * `exec.signal`; the registry rechecks cancellation after they settle but
+- * never abandons their promise.
++ * approval support turns `ask` into denial. `defer` resolves its `value`
++ * through the definition's output schema/render without invoking guards,
++ * around-dispatch, or the body, and is allowed only when the caller
++ * negotiated {@link ToolExecutionInput.preflightDefer}; otherwise it fails
++ * closed. Async gates must observe `exec.signal`; the registry rechecks
++ * cancellation after they settle but never abandons their promise.
+  * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+  * @param exec - the pending call (name, parsed arguments, caller agent).
+  * @mode waterfall
+diff --git a/packages/client/ui-chat/tests/chat-view.client.spec.tsx b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+index 241a0a204863e2d77b24715642fc6f57c8b10d36..52a0f369a7547fc9686645cb9e8c1eb48749acda 100644
+--- a/packages/client/ui-chat/tests/chat-view.client.spec.tsx
++++ b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+@@ -259,9 +259,9 @@ function bindKeyedSnapshotSelector<Value>(
+ }
+ 
+ declare const nodeDispatch: PropsRenderSlots<'conversation.chat.node'>['renderSlot']
+-declare const flowDispatch: ChatViewSlotProps['renderSlot']
+ type NodeRenderer = typeof nodeDispatch<'conversation.chat.node'>
+-type FlowRenderer = typeof flowDispatch<'conversation.chat.flow'>
++type FlowRenderer = PropsRenderSlots<'conversation.chat.flow'>['renderSlot']
++type PresentationRenderer = PropsRenderSlots<'conversation.chat.presentation'>['renderSlot']
+ type ImageRenderer = (owner: MessageImagesOwnerProps) => React.ReactNode
+ type HarnessStandardProps = ChatViewSlotProps & PropsRenderFactories
+ 
+@@ -450,7 +450,10 @@ function makeHarness(
+     if (name !== 'conversation.chat.user.content') throw new Error(`Unexpected Chat Factory: ${name}`)
+     return renderUserContent(owner as UserContentInput, renderImages, props.t)
+   }
+-  const renderSlot: FlowRenderer = (key, owner, opts) => {
++  function renderSlot(...args: Parameters<FlowRenderer>): React.ReactNode
++  function renderSlot(...args: Parameters<PresentationRenderer>): React.ReactNode
++  function renderSlot(...[key, owner, opts]: Parameters<FlowRenderer> | Parameters<PresentationRenderer>): React.ReactNode {
++    if (key === 'conversation.chat.presentation') return owner.fallback
+     if (key !== 'conversation.chat.flow') throw new Error(`Undeclared ChatView child: ${key}`)
+     if ('renderSlot' in owner || 'useStore' in owner || 'actions' in owner) {
+       throw new Error('Flow owner data must not replace its rendering or store authority')
+diff --git a/packages/context/agent-instructions/tests/agent-instructions.spec.ts b/packages/context/agent-instructions/tests/agent-instructions.spec.ts
+index fb556e72875d134fe4e74f7f9df998ee4caa1d8b..0b9fb282d7dd7e457e7a2e653bcf6efa5078efb2 100644
+--- a/packages/context/agent-instructions/tests/agent-instructions.spec.ts
++++ b/packages/context/agent-instructions/tests/agent-instructions.spec.ts
+@@ -1285,7 +1285,9 @@ describe('workspace context request injection', () => {
+       await composeBaselinePrefix(ctx, agent)
+       const notify = (name: string, args: unknown, isError = false, signal = testToolSignal): void => {
+         ctx.emit('tools/result', stubToolExecution({ callId: ToolCallId('configured-touch'), name,
+-          arguments: args, agent, signal }), { content: [{ type: 'text', text: 'result' }], isError, value: null })
++          arguments: args, agent, signal }), isError
++          ? { content: [{ type: 'text', text: 'result' }], isError: true, error: { message: 'result' } }
++          : { content: [{ type: 'text', text: 'result' }], isError: false, value: null })
+       }
+       notify('read_workspace_file', { path: 'pkg/file.ts' }, true)
+       notify('read_workspace_file', { path: 'pkg/file.ts' }, false, AbortSignal.abort())
+diff --git a/packages/core/tools/README.i18n.yaml b/packages/core/tools/README.i18n.yaml
+index e96b00522b939661511a9404014de6daf4035fe5..b6ccba9b2b69f817592286818a2f5bf877129056 100644
+--- a/packages/core/tools/README.i18n.yaml
++++ b/packages/core/tools/README.i18n.yaml
+@@ -27,8 +27,8 @@
+   en: c6f98b2283cc2e47
+   zh: c2cdce5d13473f15
+ /deepseek-ai-dsh-tools/use-this-package/enforce-policy-on-calls:
+-  en: 59aa864c68397896
+-  zh: 33eb20982fe32234
++  en: 9099d3ac1f336230
++  zh: fcb0d3251ddb4741
+ /deepseek-ai-dsh-tools/use-this-package/host-presentation-descriptors:
+   en: 258e16bb367229e5
+   zh: 7c1eb91062b4e4ad
+diff --git a/packages/core/tools/README.md b/packages/core/tools/README.md
+index 7eff3c08673b662545a51bf910418ad2565a27b3..b05692c5f397c3b82055c2c1bbe22db1f7e4309e 100644
+--- a/packages/core/tools/README.md
++++ b/packages/core/tools/README.md
+@@ -92,6 +92,8 @@ Each prepared call binds the visible definition and its execution body before po
+ 
+ A tool’s `projectContent` installs execution-prepared content before post-execute policies. Policies may still replace or block it; `finalizeContent` remains the final content transform after those policies.
+ 
++A `tools/pre-execute` listener may return `{ kind: 'defer', value }` to resolve a caller-owned pending control value through the definition's output schema/render without invoking guards, around-dispatch, or the body. The caller must negotiate `preflightDefer: "dsh.tool-preflight-defer/v1"` (advertised as `ctx.tools.preflightDeferContract`); a caller that does not opt in keeps allow/deny/ask behavior, and a defer decision fails closed. The deferred value still reaches `tools/post-execute` and `tools/result`, and caller cancellation produces the canonical no-dispatch cancellation. The value is a pending control value, not proof of authorization or successful execution — a native consumer recognizes its own pending value, commits `approval_required`, and resubmits through the entire pipeline after a durable user decision.
++
+ ### Host presentation descriptors
+ 
+ A tool can retain pure `presentCall()` and `presentResult()` methods for Host-local consumers. The built-in Web Client does not consume those values. It selects a renderer through `tool.call.toolview` and derives card props from raw call arguments, result content, failure state, and persisted metadata. The [Client-derived presentation decision](../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.md) owns this transport split.
+diff --git a/packages/core/tools/README.zh.md b/packages/core/tools/README.zh.md
+index 7aec2709c4c900e3615ae536eb1b2b6b2682747a..1d907885c75db039cda33198748139f0fbc94b29 100644
+--- a/packages/core/tools/README.zh.md
++++ b/packages/core/tools/README.zh.md
+@@ -92,6 +92,8 @@ ctx.tools.register(defineTool({
+ 
+ 工具的 `projectContent` 在执行后策略之前安装执行期间准备的图文内容。策略仍可替换或阻止这些内容；`finalizeContent` 保留为策略之后的最终内容处理。
+ 
++`tools/pre-execute` 监听器可以返回 `{ kind: 'defer', value }`，按定义的输出 schema/render 生成由调用方管理的待决控制值，不运行守卫、调度包装或工具函数。调用方必须通过 `preflightDefer: "dsh.tool-preflight-defer/v1"` 协商启用（由 `ctx.tools.preflightDeferContract` 声明）；未启用时允许／拒绝／询问行为保持不变，defer 决定会被拒绝。待决值仍经过 `tools/post-execute` 和 `tools/result`，调用方取消则产生标准的未调度取消结果。待决值不代表授权或执行成功；外部运行时识别自己的待决值、持久化审批等待，并在获得持久化的用户决定后重新进入完整流水线。
++
+ ### Host 展示描述
+ 
+ 工具可以为 Host 本地消费方保留纯函数 `presentCall()` 与 `presentResult()` 方法。内置 Web Client 不消费这些值，而是通过 `tool.call.toolview` 选择 renderer，并从原始调用参数、结果内容、失败状态与持久 metadata 派生 card props。[Client 派生展示决策](../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.zh.md)负责该 transport 拆分。
+diff --git a/packages/core/tools/src/index.ts b/packages/core/tools/src/index.ts
+index 411187ad2867340e5b10967103d847791e696004..3d704c2c71dccae004d1aa705bb97130bd4a3c7a 100644
+--- a/packages/core/tools/src/index.ts
++++ b/packages/core/tools/src/index.ts
+@@ -142,11 +142,14 @@ declare module '@deepseek-ai/cordis' {
+ 
+   interface Events {
+     /**
+-     * Allow, deny, cancel, or ask before dispatch. `next()` delegates to allow;
++     * Allow, deny, cancel, ask, or defer before dispatch. `next()` delegates to allow;
+      * `cancel` selects the canonical pre-dispatch cancellation result, and missing
+-     * approval support turns `ask` into denial. Async gates must observe
+-     * `exec.signal`; the registry rechecks cancellation after they settle but
+-     * never abandons their promise.
++     * approval support turns `ask` into denial. `defer` resolves its `value`
++     * through the definition's output schema/render without invoking guards,
++     * around-dispatch, or the body, and is allowed only when the caller
++     * negotiated {@link ToolExecutionInput.preflightDefer}; otherwise it fails
++     * closed. Async gates must observe `exec.signal`; the registry rechecks
++     * cancellation after they settle but never abandons their promise.
+      * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent's calls.
+      * @param exec - the pending call (name, parsed arguments, caller agent).
+      * @mode waterfall
+@@ -344,6 +347,17 @@ export interface ToolExecutionInput {
+   readonly argumentEncoding?: 'dsh.raw-json-number/v1'
+   /** External runtime owns model budgeting and retrievable overflow after all authorization policies. */
+   readonly resultRetention?: 'caller/v1'
++  /**
++   * With `dsh.tool-preflight-defer/v1`, a `tools/pre-execute` listener may
++   * return `{ kind: 'defer', value }` to resolve a pending control value
++   * through the definition's output schema/render without invoking execution
++   * guards, around-dispatch, or the tool body. The registry advertises the
++   * literal through {@link ToolRuntime.preflightDeferContract}; a caller that
++   * does not opt in keeps allow/deny/ask behavior, and a defer decision fails
++   * closed. The value is a caller-owned pending control value, not proof of
++   * authorization or successful execution.
++   */
++  readonly preflightDefer?: 'dsh.tool-preflight-defer/v1'
+   /** The agent on whose behalf the call runs (set by the agent loop). */
+   readonly agent?: Agent
+   /**
+@@ -610,7 +624,13 @@ export type ToolExecutionResult = ToolExecutionSuccess | ToolExecutionFailure
+  * the canonical cancellation result without presenting a policy denial; `ask`
+  * runs only after an approval service returns `allowed-once` and otherwise
+  * denies; its `reason` is the audited approval reason and its optional
+- * `displayReason` is the localized prompt text. Input rewriting is excluded because arguments are already logged and
++ * `displayReason` is the localized prompt text. `defer` resolves its `value`
++ * through the definition's output schema/render without invoking execution
++ * guards, around-dispatch, or the body, then enters post-execute; it is
++ * allowed only when the caller negotiated {@link ToolExecutionInput.preflightDefer}
++ * and the definition exists, and otherwise fails closed. Its `value` is a
++ * caller-owned pending control value, not proof of authorization or successful
++ * execution. Input rewriting is excluded because arguments are already logged and
+  * presented.
+  */
+ export type PreToolDecision =
+@@ -618,6 +638,7 @@ export type PreToolDecision =
+   | { kind: 'deny'; reason: string; info?: ToolErrorInfo }
+   | { kind: 'cancel' }
+   | { kind: 'ask'; reason?: string; displayReason?: { readonly en: string; readonly [locale: string]: string } }
++  | { kind: 'defer'; value: JsonValue }
+ 
+ /**
+  * Post-dispatch decision: accept, replace one projection, attach context for the
+@@ -831,6 +852,9 @@ export class ToolRuntime extends Service {
+   /** Negotiated caller-owned result retention; does not bypass any tool policy. */
+   readonly resultRetentions: readonly ['caller/v1'] = Object.freeze(['caller/v1'] as const)
+ 
++  /** The pre-execute defer contract this runtime recognizes; callers opt in through {@link ToolExecutionInput.preflightDefer}. */
++  readonly preflightDeferContract = 'dsh.tool-preflight-defer/v1' as const
++
+   static Config: z<Config> = z.object({
+     mode: z.union(['native', 'ptc'] as const).default('native'),
+     maxParallelSubCalls: z.natural().min(1).default(10),
+@@ -1175,7 +1199,10 @@ export class ToolRuntime extends Service {
+   }
+ 
+   /** Check again at the last synchronous boundary before a tool body starts.
+-   * Around-dispatch listeners may await after the normal policy guard. */
++   * Around-dispatch listeners may await after the normal policy guard.
++   * @param guard - Synchronous refusal check for the prepared execution.
++   * @returns Disposer that removes this guard from its scope.
++   */
+   dispatchGuard(guard: ToolGuard): () => void {
+     return this.layers.effect(
+       this.ctx,
+@@ -1453,6 +1480,7 @@ export class ToolRuntime extends Service {
+     const signal = exec.signal
+     const argumentEncoding = exec.argumentEncoding
+     const resultRetention = exec.resultRetention
++    const preflightDefer = exec.preflightDefer
+     // Distinguish a mode-collapsed call (visible in the scope, denied only by
+     // the `ptc` collapse) from a genuinely unknown tool. A collapsed call is
+     // deterministically denied, so it terminates BEFORE the extensible policy
+@@ -1474,6 +1502,7 @@ export class ToolRuntime extends Service {
+       ...exec.schema !== undefined ? { schema: exec.schema } : {},
+       ...argumentEncoding !== undefined ? { argumentEncoding } : {},
+       ...resultRetention !== undefined ? { resultRetention } : {},
++      ...preflightDefer !== undefined ? { preflightDefer } : {},
+       deferContext(context: UserMessage): void {
+         deferredContexts.push(context)
+       },
+@@ -1502,6 +1531,9 @@ export class ToolRuntime extends Service {
+       if (argumentEncoding !== undefined && argumentEncoding !== 'dsh.raw-json-number/v1') {
+         throw new TypeError('unsupported tool argument encoding')
+       }
++      if (preflightDefer !== undefined && preflightDefer !== 'dsh.tool-preflight-defer/v1') {
++        throw new TypeError('unsupported tool preflight defer contract')
++      }
+       const detached = argumentEncoding === 'dsh.raw-json-number/v1'
+         ? snapshotRawNumberJsonValue(exec.arguments) : snapshotJsonValue(exec.arguments)
+       if (detached === undefined) {
+@@ -1583,6 +1615,33 @@ export class ToolRuntime extends Service {
+       if (decision.kind === 'cancel') {
+         return await next({ kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() })
+       }
++      if (decision.kind === 'defer') {
++        // Cancellation produces the canonical no-dispatch result: the body is
++        // never invoked for a defer, so a cancelled caller settles as
++        // ABORTED_BEFORE_DISPATCH.
++        if (this.callerCancelled(exec)) {
++          return await next({ kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() })
++        }
++        // A defer is a caller-negotiated pending control value, not
++        // authorization or execution. Fail closed unless the caller opted in to
++        // the exact contract and the definition exists to resolve the value
++        // through its output schema.
++        if (exec.preflightDefer !== this.preflightDeferContract || definition === undefined) {
++          const failure = definition === undefined
++            ? new ToolNotFoundError(exec.name)
++            : new Error(`tool "${exec.name}" deferred without negotiating the preflight defer contract`)
++          return await next({ kind: 'post-result', exec, result: toolErrorResult(failure) })
++        }
++        // Resolve the pending value through the snapshotted output schema/render.
++        // A schema violation is an invalid-output failure that still reaches
++        // post-execute, matching the body's own invalid-output path.
++        try {
++          const result = this.createSuccessResult(exec, definition, decision.value)
++          return await next({ kind: 'post-result', exec, result })
++        } catch (error: unknown) {
++          return await next({ kind: 'post-result', exec, result: toolErrorResult(error) })
++        }
++      }
+       const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason
+       const denialInfo = decision.kind === 'deny' ? decision.info : undefined
+       if (denialReason !== undefined) {
+diff --git a/packages/core/tools/tests/preflight-defer.spec.ts b/packages/core/tools/tests/preflight-defer.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a887bcfd7cf08627a74175353e8edfe8e052ebd2
+--- /dev/null
++++ b/packages/core/tools/tests/preflight-defer.spec.ts
+@@ -0,0 +1,163 @@
++import { describe, expect, it } from 'vitest'
++import { Context } from '@deepseek-ai/cordis'
++import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
++import ToolRuntime, {
++  defineTool,
++  TOOL_ABORTED_BEFORE_DISPATCH,
++  type PreToolDecision,
++} from '@deepseek-ai/dsh-tools'
++import { ToolCallId } from '@deepseek-ai/dsh-llm'
++
++const ownedSignal = new AbortController().signal
++
++async function setup(): Promise<Context> {
++  const ctx = new Context()
++  await ctx.plugin(SystemPrompt)
++  await ctx.plugin(ToolRuntime)
++  return ctx
++}
++
++const probeTool = defineTool({
++  name: 'probe',
++  description: 'A tool that may defer before dispatch.',
++  parameters: {},
++  output: {
++    schema: { type: 'string' },
++    render: (_args, value) => [{ type: 'text', text: value }],
++  },
++  async execute() {
++    return 'ran'
++  },
++})
++
++describe('preflight defer', () => {
++  it('resolves a defer value without invoking guards, around-dispatch, or the body', async () => {
++    const ctx = await setup()
++    const seen: string[] = []
++    ctx.tools.register({ ...probeTool, async execute() { seen.push('body'); return 'ran' } })
++    ctx.tools.guard(() => { seen.push('guard'); return undefined })
++    ctx.on('tools/execute', async (_exec, next) => { seen.push('around'); return next() })
++    ctx.on('tools/pre-execute', async (): Promise<PreToolDecision> => ({ kind: 'defer', value: 'pending' }))
++    try {
++      const result = await ctx.tools.execute({
++        signal: ownedSignal, callId: ToolCallId('defer'), name: 'probe', arguments: {},
++        preflightDefer: 'dsh.tool-preflight-defer/v1',
++      })
++      expect(ctx.tools.preflightDeferContract).toBe('dsh.tool-preflight-defer/v1')
++      expect(result.isError).toBe(false)
++      if (!result.isError) {
++        expect(result.value).toBe('pending')
++        expect(result.content).toEqual([{ type: 'text', text: 'pending' }])
++      }
++      // Guards gate actual dispatch; a defer never reaches dispatch.
++      expect(seen).toEqual([])
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('runs post-execute and tools/result on a deferred value and lets post block it', async () => {
++    const ctx = await setup()
++    let resultObserved = false
++    ctx.tools.register(probeTool)
++    ctx.on('tools/pre-execute', async (): Promise<PreToolDecision> => ({ kind: 'defer', value: 'pending' }))
++    ctx.on('tools/post-execute', async () => ({
++      kind: 'block',
++      feedback: [{ type: 'text', text: 'deferred value blocked by post policy' }],
++    }))
++    ctx.on('tools/result', () => { resultObserved = true })
++    try {
++      const result = await ctx.tools.execute({
++        signal: ownedSignal, callId: ToolCallId('defer-block'), name: 'probe', arguments: {},
++        preflightDefer: 'dsh.tool-preflight-defer/v1',
++      })
++      expect(result.isError).toBe(true)
++      expect(result.content).toEqual([{ type: 'text', text: 'deferred value blocked by post policy' }])
++      expect(resultObserved).toBe(true)
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('rejects a defer decision when the caller did not negotiate the contract', async () => {
++    const ctx = await setup()
++    let bodyRan = false
++    ctx.tools.register({ ...probeTool, async execute() { bodyRan = true; return 'ran' } })
++    ctx.on('tools/pre-execute', async (): Promise<PreToolDecision> => ({ kind: 'defer', value: 'pending' }))
++    try {
++      const result = await ctx.tools.execute({
++        signal: ownedSignal, callId: ToolCallId('defer-opted-out'), name: 'probe', arguments: {},
++      })
++      expect(result.isError).toBe(true)
++      expect(result.content[0]).toMatchObject({ text: expect.stringContaining('deferred without negotiating') })
++      expect(bodyRan).toBe(false)
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('applies guards, around-dispatch, and the body on a normal resubmission after a defer', async () => {
++    const ctx = await setup()
++    const seen: string[] = []
++    ctx.tools.register({ ...probeTool, async execute() { seen.push('body'); return 'ran' } })
++    let deferOnce = true
++    ctx.tools.guard(() => { seen.push('guard'); return undefined })
++    ctx.on('tools/execute', async (_exec, next) => { seen.push('around'); return next() })
++    ctx.on('tools/pre-execute', async (): Promise<PreToolDecision> => {
++      if (deferOnce) { deferOnce = false; return { kind: 'defer', value: 'pending' } }
++      return { kind: 'allow' }
++    })
++    try {
++      const deferred = await ctx.tools.execute({
++        signal: ownedSignal, callId: ToolCallId('resubmit-1'), name: 'probe', arguments: {},
++        preflightDefer: 'dsh.tool-preflight-defer/v1',
++      })
++      expect(deferred.isError).toBe(false)
++      if (!deferred.isError) expect(deferred.value).toBe('pending')
++      expect(seen).toEqual([])
++
++      const resubmitted = await ctx.tools.execute({
++        signal: ownedSignal, callId: ToolCallId('resubmit-2'), name: 'probe', arguments: {},
++        preflightDefer: 'dsh.tool-preflight-defer/v1',
++      })
++      expect(resubmitted.isError).toBe(false)
++      if (!resubmitted.isError) expect(resubmitted.value).toBe('ran')
++      // A resubmission re-enters the entire pipeline: guards, around, then body.
++      expect(seen).toEqual(['guard', 'around', 'body'])
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('never invokes the body when caller cancellation overtakes a defer', async () => {
++    const ctx = await setup()
++    let bodyRan = false
++    ctx.tools.register({ ...probeTool, async execute() { bodyRan = true; return 'ran' } })
++    const controller = new AbortController()
++    ctx.on('tools/pre-execute', async (): Promise<PreToolDecision> => {
++      controller.abort('cancelled before defer resolves')
++      return { kind: 'defer', value: 'pending' }
++    })
++    try {
++      const result = await ctx.tools.execute({
++        callId: ToolCallId('defer-cancel'), name: 'probe', arguments: {}, signal: controller.signal,
++        preflightDefer: 'dsh.tool-preflight-defer/v1',
++      })
++      expect(result.isError).toBe(true)
++      expect(result.error).toMatchObject({ info: { code: TOOL_ABORTED_BEFORE_DISPATCH } })
++      expect(bodyRan).toBe(false)
++    } finally { await ctx.fiber.dispose() }
++  })
++
++  it('rejects a defer value that violates the definition output schema', async () => {
++    const ctx = await setup()
++    let bodyRan = false
++    let postRan = false
++    ctx.tools.register({ ...probeTool, async execute() { bodyRan = true; return 'ran' } })
++    ctx.on('tools/pre-execute', async (): Promise<PreToolDecision> => ({ kind: 'defer', value: 42 }))
++    ctx.on('tools/post-execute', async (_exec, _result, next) => { postRan = true; return next() })
++    try {
++      const result = await ctx.tools.execute({
++        signal: ownedSignal, callId: ToolCallId('defer-wrong-value'), name: 'probe', arguments: {},
++        preflightDefer: 'dsh.tool-preflight-defer/v1',
++      })
++      expect(result.isError).toBe(true)
++      expect(result.error).toMatchObject({ info: { code: 'INVALID_TOOL_OUTPUT' } })
++      expect(bodyRan).toBe(false)
++      // The invalid-output failure still reaches post-execute, like a body's own.
++      expect(postRan).toBe(true)
++    } finally { await ctx.fiber.dispose() }
++  })
++})
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index 38135c42e85c7f4a6d30416279a64d0d77b8609b..8b3e6ae713549ffe0ea568061a1b97f535740f40 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -3433,6 +3433,16 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         parameters: [],
+       },
+       {
++        signature: 'readonly resultRetentions: readonly [\'caller/v1\'] = Object.freeze([\'caller/v1\'] as const)',
++        description: 'Negotiated caller-owned result retention; does not bypass any tool policy.',
++        parameters: [],
++      },
++      {
++        signature: 'readonly preflightDeferContract: \'dsh.tool-preflight-defer/v1\' = \'dsh.tool-preflight-defer/v1\'',
++        description: 'The pre-execute defer contract this runtime recognizes; callers opt in through ToolExecutionInput.preflightDefer.',
++        parameters: [],
++      },
++      {
+         signature: 'presentAs(mode: ToolPresentationMode): () => void',
+         description: 'Present the calling scope\'s tools in `mode` instead of the deployment default. Nearest scope on the chain wins, so a preset\'s standing declaration covers every agent joined under it.\n\nScoped only, and one declaration per scope: this is how an agent preset composes PTC mode agents beside native ones in the same process, and a process-global override would be the `mode` config field instead.',
+         parameters: [{ name: 'mode', description: 'the presentation the covered agents\' models see.' }],
+@@ -3457,6 +3467,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         returns: 'the exact disposer that unregisters the guard.',
+       },
+       {
++        signature: 'dispatchGuard(guard: ToolGuard): () => void',
++        description: 'Check again at the last synchronous boundary before a tool body starts. Around-dispatch listeners may await after the normal policy guard.',
++        parameters: [{ name: 'guard', description: 'Synchronous refusal check for the prepared execution.' }],
++        returns: 'Disposer that removes this guard from its scope.',
++      },
++      {
+         signature: 'get(name: string, scope?: ScopeKey): ToolDefinition | undefined',
+         description: 'Look up a tool as one scope sees it (scoped shadows global; a restricted-away global reads as absent). Presenters pass the calling agent so the rendered card matches the definition that actually executed.',
+         parameters: [{ name: 'name', description: 'the tool name as registered.' }, { name: 'scope', description: 'the viewing scope (the agent); omitted = the global view.' }],
+@@ -4593,8 +4609,8 @@ export const EVENT_API: readonly EventApiEntry[] = [
+     name: 'tools/pre-execute',
+     mode: 'waterfall',
+     signature: '\'tools/pre-execute\'(this: Scoped<ToolRuntime>, exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision>',
+-    summary: 'Allow, deny, cancel, or ask before dispatch.',
+-    description: 'Allow, deny, cancel, or ask before dispatch. `next()` delegates to allow; `cancel` selects the canonical pre-dispatch cancellation result, and missing approval support turns `ask` into denial. Async gates must observe `exec.signal`; the registry rechecks cancellation after they settle but never abandons their promise. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent\'s calls.',
++    summary: 'Allow, deny, cancel, ask, or defer before dispatch.',
++    description: 'Allow, deny, cancel, ask, or defer before dispatch. `next()` delegates to allow; `cancel` selects the canonical pre-dispatch cancellation result, and missing approval support turns `ask` into denial. `defer` resolves its `value` through the definition\'s output schema/render without invoking guards, around-dispatch, or the body, and is allowed only when the caller negotiated ToolExecutionInput.preflightDefer; otherwise it fails closed. Async gates must observe `exec.signal`; the registry rechecks cancellation after they settle but never abandons their promise. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent\'s calls.',
+     parameters: [{ name: 'exec', description: 'the pending call (name, parsed arguments, caller agent).' }],
+   },
+   {
+@@ -6535,7 +6551,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'PreToolDecision',
+-    declaration: 'export type PreToolDecision = {\n    kind: \'allow\';\n} | {\n    kind: \'deny\';\n    reason: string;\n    info?: ToolErrorInfo;\n} | {\n    kind: \'cancel\';\n} | {\n    kind: \'ask\';\n    reason?: string;\n    displayReason?: {\n        readonly en: string;\n        readonly [locale: string]: string;\n    };\n};',
++    declaration: 'export type PreToolDecision = {\n    kind: \'allow\';\n} | {\n    kind: \'deny\';\n    reason: string;\n    info?: ToolErrorInfo;\n} | {\n    kind: \'cancel\';\n} | {\n    kind: \'ask\';\n    reason?: string;\n    displayReason?: {\n        readonly en: string;\n        readonly [locale: string]: string;\n    };\n} | {\n    kind: \'defer\';\n    value: JsonValue;\n};',
+   },
+   {
+     name: 'Principal',
+@@ -8287,7 +8303,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'ToolExecutionInput',
+-    declaration: 'export interface ToolExecutionInput {\n    readonly callId: ToolCallId;\n    readonly rootCallId?: ToolCallId;\n    readonly name: string;\n    readonly schema?: ToolSchema;\n    readonly arguments: unknown;\n    readonly argumentEncoding?: \'dsh.raw-json-number/v1\';\n    readonly agent?: Agent;\n    readonly parent?: ToolExecutionToken;\n    readonly signal: AbortSignal;\n}',
++    declaration: 'export interface ToolExecutionInput {\n    readonly callId: ToolCallId;\n    readonly rootCallId?: ToolCallId;\n    readonly name: string;\n    readonly schema?: ToolSchema;\n    readonly arguments: unknown;\n    readonly argumentEncoding?: \'dsh.raw-json-number/v1\';\n    readonly resultRetention?: \'caller/v1\';\n    readonly preflightDefer?: \'dsh.tool-preflight-defer/v1\';\n    readonly agent?: Agent;\n    readonly parent?: ToolExecutionToken;\n    readonly signal: AbortSignal;\n}',
+   },
+   {
+     name: 'ToolExecutionMode',
+@@ -8363,7 +8379,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'ToolRuntime',
+-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    readonly argumentEncodings: readonly [\n        \'dsh.raw-json-number/v1\'\n    ];\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
++    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    readonly argumentEncodings: readonly [\n        \'dsh.raw-json-number/v1\'\n    ];\n    readonly resultRetentions: readonly [\n        \'caller/v1\'\n    ];\n    readonly preflightDeferContract: \'dsh.tool-preflight-defer/v1\';\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    dispatchGuard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+   },
+   {
+     name: 'ToolRuntimeScheduler',

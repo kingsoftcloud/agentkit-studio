@@ -71,7 +71,7 @@ export function createCompatibilityMethods({ connection, window, directServer, b
         composeAuthoringConversation: payload => request('/api/v1/authoring/conversations:compose', { method: 'POST', body: JSON.stringify(payload) }),
         authoringConversationStatus: requestId => request('/api/v1/authoring/conversations:status/' + encodeURIComponent(requestId)),
         updateAgentBindings: (id, bindings, revision) => directServer() && String(id).startsWith('ar-local-')
-            ? studioBridgeOperation('agents/update-local', { agentId: id, bindings })
+            ? studioBridgeOperation('agents/update-local', { agentId: id, bindings, expectedRevision: revision })
             : request('/api/v1/agents/' + encodeURIComponent(id) + '/bindings', {
                 method: 'PUT',
                 headers: { 'If-Match': String(revision) },

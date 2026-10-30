@@ -173,7 +173,7 @@ profile-install: pack
 		input_dir="$$profile_dir/.studio-input/$$digest"; \
 		mkdir -p "$$input_dir"; \
 		cp "$(PLUGIN_TARBALL)" "$$input_dir/plugin.tgz"; \
-		(cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) plugin --profile "$(DSH_PROFILE)" add --force "file:$$input_dir/plugin.tgz")
+		(cd "$(DSH_ROOT)" && $(DSH_SOURCE_CLI) plugin --profile "$(DSH_PROFILE)" add "file:$$input_dir/plugin.tgz")
 	@profile_dir="$${DSH_HOME:-$$HOME/.dsh}/profiles/$(DSH_PROFILE)"; \
 		node scripts/check-profile.mjs "$$profile_dir" "$(PLUGIN_VERSION)" "$(PLUGIN_TARBALL)"
 

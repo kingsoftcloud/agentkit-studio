@@ -1,0 +1,105 @@
+{
+  "repository": "https://github.com/zai-org/ZCode",
+  "commit": "3c5b227649371507ddc4eb46ac5133afe6db1cab",
+  "sourceRoot": "apps/zcode-cli/packages/core/src/tool/handlers",
+  "files": [
+    {
+      "path": "bash-command-parser.ts",
+      "sha256": "8edfb2ddb48e70a3e191bbc7f7fa23307f8a8e5d1d630e06536a734b8f29df4c"
+    },
+    {
+      "path": "bash-git-runtime-safety.ts",
+      "sha256": "5a1e2fcd26a08d655b8b822ed65b4ed792053637bb19ffa26b3ea8865cd12266"
+    },
+    {
+      "path": "bash-readonly-policy-argv-direct.ts",
+      "sha256": "2c1c54ab00a6b3f40a22e53dda371c3710694a4eaf2ce5a5ebdfc2f28f320c7d"
+    },
+    {
+      "path": "bash-readonly-policy-argv-flags.ts",
+      "sha256": "91a82fdcea4edf94f02d8415711f7f55aa1ea6d08a57bb070fb7229bc8d1f702"
+    },
+    {
+      "path": "bash-readonly-policy-argv-git.ts",
+      "sha256": "0f189a35e51475e5190bc54232b2115f36d95015af4dbad455f11f6d3a0ee239"
+    },
+    {
+      "path": "bash-readonly-policy-argv-io.ts",
+      "sha256": "32500fc3b8a1426ae042d3567234523847d35319cd4d52974d43b89b8162b08d"
+    },
+    {
+      "path": "bash-readonly-policy-argv.ts",
+      "sha256": "8d2117033e350d4aad179f60f85dc4338839102001b9bacc37d0bbff0b4fdbdd"
+    },
+    {
+      "path": "bash-readonly-policy-callbacks.ts",
+      "sha256": "a32b0d8880afb1cb548b6e28888c634f26a9eaa887d72722edb75de3fbd321a4"
+    },
+    {
+      "path": "bash-readonly-policy-commands.ts",
+      "sha256": "b80707f2016d2d789232a1bac1d08c2f6310d85cd93176e8e30858744b28a7c4"
+    },
+    {
+      "path": "bash-readonly-policy-flags-file.ts",
+      "sha256": "a4ba6213443ce40971c4a0298620ebb8d8a91a4486905ff667580265aa9542ae"
+    },
+    {
+      "path": "bash-readonly-policy-flags-git.ts",
+      "sha256": "2af5b0dbb404f2cebb61ff2cacf7234a594d0101a16d7362d147f63360bd075a"
+    },
+    {
+      "path": "bash-readonly-policy-flags-process.ts",
+      "sha256": "75762b811609818d10f20f147d6ac5453f870619575a2e2c4a089d3f54c84e06"
+    },
+    {
+      "path": "bash-readonly-policy-flags-text.ts",
+      "sha256": "2c32b4b182aa3ae75aed6b05174a8ccd79d0c21639c3b7903ea7b2b65bde7556"
+    },
+    {
+      "path": "bash-readonly-policy-flags.ts",
+      "sha256": "115f4e11524fd21ac64a8505609c15e6134c48bf1efe0dee6cd719c2a91f221d"
+    },
+    {
+      "path": "bash-readonly-policy-git-callbacks.ts",
+      "sha256": "7b27f2bc85a3c549679df432d77f95f726630035f9600843c54542eee8db8962"
+    },
+    {
+      "path": "bash-readonly-policy-git-subcommands-core.ts",
+      "sha256": "4fc62adedecfeac584b84123c9ba2e209f522de667df9b5993e89c413b7b9746"
+    },
+    {
+      "path": "bash-readonly-policy-git-subcommands-history.ts",
+      "sha256": "7ea3188ec1ee29b31cd883e20b8e85c50beb99a3331b6a4c745bdb9aaff81aaf"
+    },
+    {
+      "path": "bash-readonly-policy-multiword-core.ts",
+      "sha256": "d149ff2ebeaf6b4f3859b105bf7ccbd1991e3b95647b2ac10ea39ec43a305a4c"
+    },
+    {
+      "path": "bash-readonly-policy-multiword-gh.ts",
+      "sha256": "1aa2a73dee49f143b21d655fa4e927e44d35d0d46cf110cc86584cefa42d9798"
+    },
+    {
+      "path": "bash-readonly-policy-simple-commands.ts",
+      "sha256": "bc04ba9f883a5c83d3b079bf5420abcd4c1264e5ef5251e19325a7ef425425b0"
+    },
+    {
+      "path": "bash-readonly-policy-types.ts",
+      "sha256": "f03005bbe62e125b2969bd1c25ecc08d774d06a08019d8db62d9cb722e48d532"
+    },
+    {
+      "path": "bash-readonly-policy.ts",
+      "sha256": "d7f4b8c485b3873119ffa8b64aaad94222f7e7c4dc02cf777f56c17879372f0e"
+    },
+    {
+      "path": "guarded/word.ts",
+      "sha256": "4d8009c98d7e589d996892fe4df9e560de4da4b21e333c166ec60dbd6c789570"
+    }
+  ],
+  "entry": {
+    "path": "index.ts",
+    "source": "bash-semantics.ts:isRuntimeReadOnlyBashCommand",
+    "sha256": "22f7b381317ab0a54dabdbfe10b2644ae07fc489f7f83296a6ff13487413ea90",
+    "originalSha256": "49dd9cd039e6c6e7241bbb7a6ee03453fcc0348427604aa39eb23c7b6c2c2595"
+  }
+}
