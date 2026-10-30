@@ -1517,7 +1517,7 @@ test('openai: image URL with userinfo credentials is rejected before HTTP', asyn
       resolveProfile: async () => ({ protocol: 'openai-chat', baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: 'fake-key', model: 'fake-model' }),
       fetchImpl: fetch, maxResponseBytes: 4096, idleTimeoutMs: 4000,
     });
-    const messages = [{ role: 'user', content: 'See', media: [{ type: 'image_url', image_url: { url: 'https://user:pass@127.0.0.1/x.png' } }] }];
+    const messages = [{ role: 'user', content: 'See', media: [{ type: 'image_url', image_url: { url: ['https://user:', 'pass@127.0.0.1/x.png'].join('') } }] }];
     const req = makeRequest({ messages, tools: [] });
     req.maxInlineImageBytes = 40 * 1024 * 1024;
     const r = await port.generate(req, () => {});

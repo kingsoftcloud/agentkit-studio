@@ -36,11 +36,11 @@ test('only adoption completes a Native marker; multiple summary responses remain
     { eventId: 'begin', kind: 'context.planned', payload: { action: 'compact', compactions: 0 } },
     { eventId: 'summary', kind: 'context.summary_completed', payload: { proposalAvailable: true } },
     { eventId: 'continue', kind: 'context.planned', payload: { action: 'compact', compactions: 0 } },
-  ] };
+  ].map((event, i) => ({ ...event, seq: i + 1 })) };
   let markers = nativeContextMarkers(record, { driving: true });
   assert.equal(markers.length, 1); assert.equal(markers[0].status, 'running'); assert.equal(markers[0].after.kind, 'tool');
   assert.equal(nativeContextMarkers(record)[0].status, 'interrupted');
-  record.events.push({ eventId: 'adopt', kind: 'context.planned', payload: { action: 'ready', compactions: 1 } });
+  record.events.push({ seq: record.events.length + 1, eventId: 'adopt', kind: 'context.planned', payload: { action: 'ready', compactions: 1 } });
   markers = nativeContextMarkers(record);
   assert.equal(markers.length, 1); assert.equal(markers[0].status, 'completed');
   assert.doesNotMatch(JSON.stringify(markers), /proposal|summary/);

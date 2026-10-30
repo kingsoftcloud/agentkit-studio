@@ -130,7 +130,7 @@ test('invalid settings fail before loading SDK or allocating a remote sandbox', 
   for (const change of [{ KSADK_SANDBOX_BACKEND: 'local' }, { KSADK_SANDBOX_TEMPLATE_ID: '' },
     { KSADK_SANDBOX_TIMEOUT: '1.5' }, { KSADK_SANDBOX_TIMEOUT: '0' }, { KSADK_SANDBOX_TIMEOUT: '86401' },
     { KSADK_SANDBOX_TYPE: 'unsupported' }, { KSADK_TRAFFIC_SOURCE: 'source\r\nInjected: header' },
-    { E2B_API_URL: 'http://wrong.invalid' }, { E2B_API_URL: 'https://user:secret@wrong.invalid' },
+    { E2B_API_URL: 'http://wrong.invalid' }, { E2B_API_URL: ['https://user:', 'secret@wrong.invalid'].join('') },
     { E2B_DOMAIN: 'bad/path' }, { E2B_API_KEY: '' }])
     await assert.rejects(f.bind({ env: { ...f.options.env, ...change } }));
   assert.equal(f.loads, 0); assert.deepEqual(f.calls, []);

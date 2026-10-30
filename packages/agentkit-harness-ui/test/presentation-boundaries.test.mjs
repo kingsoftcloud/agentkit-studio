@@ -14,12 +14,12 @@ test('unchanged scroll masks retain state identity instead of scheduling a rende
   assert.deepEqual(resolveVerticalMaskState({ clientHeight: 500, scrollHeight: 500, scrollTop: 0 }, previous), { showTop: false, showBottom: false });
 });
 
-test('tool argument drafts have no execution row, applied diff or successful result', () => {
+test('tool argument drafts share the tool renderer without execution authority, applied diff or success', () => {
   const value = state([{ type: 'task.started', taskId: 'preview' },
-    { type: 'tool.preview', previewId: 'preview:attempt:0', name: 'write_workspace_file', input: { path: 'draft.mjs', content: 'unfinished code' }, receivedChars: 42 }]);
+    { type: 'tool.preview', previewId: 'preview:attempt:0', name: 'write_workspace_file', input: { path: 'draft.mjs', content: 'unfinished code', apiKey: 'private-preview-key' }, receivedChars: 42 }]);
   const html = renderToStaticMarkup(React.createElement(HarnessTimeline, { state: value, styleSheet: null }));
-  assert.match(html, /data-uncommitted="true"/); assert.match(html, /unfinished code/);
-  assert.doesNotMatch(html, /data-testid="tool-block"|data-testid="edit-diff"|data-status="completed"/);
+  assert.match(html, /data-uncommitted="true"/); assert.match(html, /draft.mjs/);
+  assert.doesNotMatch(html, /data-call-id=|data-testid="edit-diff"|data-status=|private-preview-key|unfinished code/);
 });
 
 test('static file reads expose errors without redundant detail or disclosure buttons', () => {

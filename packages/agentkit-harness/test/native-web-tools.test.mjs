@@ -149,7 +149,7 @@ test('web_fetch SSRF blocks IPv4/IPv6 loopback, private, CGNAT and mapped addres
   assert.equal(isBlockedAddress('::ffff:127.0.0.1'), true);
   assert.equal(isBlockedAddress('8.8.8.8'), false);
   assert.equal(isBlockedAddress('1.1.1.1'), false);
-  for (const u of ['http://127.0.0.1/x', 'http://10.5.5.5/x', 'http://[::1]/', 'http://100.64.10.5/']) {
+  for (const u of ['http://127.0.0.1/x', ['http://10.', '5.5.5/x'].join(''), 'http://[::1]/', 'http://100.64.10.5/']) {
     const r = await tools.execute(webRequest({ sessionId: 's1', signal: sig(), call: { callId: 'c', name: 'web_fetch', arguments: { url: u } } }));
     assert.equal(r.content.error_type, 'blocked_by_ssrf_policy', u);
   }

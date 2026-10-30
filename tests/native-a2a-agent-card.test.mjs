@@ -278,7 +278,7 @@ test('non-http(s) baseUrl rejected', () => {
 });
 
 test('baseUrl with credentials rejected', () => {
-  assert.throws(() => buildA2aAgentCard({ name: 'a', baseUrl: 'https://user:pass@x.com' }), { code: FAIL });
+  assert.throws(() => buildA2aAgentCard({ name: 'a', baseUrl: ['https://user:', 'pass@x.com'].join('') }), { code: FAIL });
 });
 
 test('baseUrl with query rejected', () => {

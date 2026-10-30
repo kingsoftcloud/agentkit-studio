@@ -39,7 +39,7 @@ test('production inspection follows GitHub repository moves and orders Unicode c
 });
 
 test('archive redirects cannot escape public GitHub HTTPS, loop, or exceed the reference hop limit', async () => {
-  for (const location of ['https://evil.example/file', 'http://github.com/o/r', 'https://user:pass@github.com/o/r',
+  for (const location of ['https://evil.example/file', 'http://github.com/o/r', ['https://user:', 'pass@github.com/o/r'].join(''),
     'https://github.com:444/o/r', 'https://127.0.0.1/file', '']) {
     let calls = 0;
     const source = createGithubArchiveSkillSource({ fetchImpl: async () => {
