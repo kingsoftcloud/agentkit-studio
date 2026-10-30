@@ -66,7 +66,8 @@ test('two real local background tasks: only the removed task is canceled, the re
   await f.run();
   const record = f.store.load(scope, 'run');
   const [ref1, ref2] = record.snapshot.backgroundCommands.map(row => row.ref);
-  assert.equal(record.snapshot.backgroundCommands.length, 2);
+  assert.equal(record.snapshot.backgroundCommands.length, 2, JSON.stringify({ reason: record.snapshot.reason,
+    receipts: record.receipts.map(receipt => ({ status: receipt.status, result: receipt.result })) }));
   const result = await f.control.settle({ record, retainedRefs: [ref1], requestDigest: 'd1',
     signal: new AbortController().signal, assertCurrent: () => true });
   assert.equal(result.contract, 'agentkit.native-conversation-command-control/v1');

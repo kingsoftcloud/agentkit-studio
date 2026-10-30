@@ -29,8 +29,8 @@ importers:
         specifier: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
         version: file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
       '@kingsoftcloud/agentkit-harness-node':
-        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz
-        version: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz
+        specifier: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-1cfb3fced255c92c.tgz
+        version: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-1cfb3fced255c92c.tgz
       '@kingsoftcloud/agentkit-harness-ui':
         specifier: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz
         version: file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -565,8 +565,8 @@ packages:
     version: 0.0.1
     engines: {node: '>=22.19.0'}
 
-  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz':
-    resolution: {integrity: sha512-WAC77ucO+QlMQhsCAt0zadO/bfTX4h8xsysO01g22Og8u7jCJDVT/9Bfmk5tiGuoJnjs7Em1ebx/TvG7Hm96Xw==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz}
+  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-1cfb3fced255c92c.tgz':
+    resolution: {integrity: sha512-praiHBD6szNTfXsd4lz0gCZOYNmoOoCoITZlsrOtaU2qXtGYSibsV5zh3cBgj9JGOikI3LBaF66ME635n/QyqA==, tarball: file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-1cfb3fced255c92c.tgz}
     version: 0.0.1
     engines: {node: '>=22.19.0'}
     hasBin: true
@@ -2380,7 +2380,7 @@ snapshots:
       ajv-draft-04: 1.0.0(ajv@8.17.1)
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz':
+  '@kingsoftcloud/agentkit-harness-node@file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-1cfb3fced255c92c.tgz':
     dependencies:
       '@astral-sh/ruff-wasm-nodejs': 0.16.8
       '@kingsoftcloud/agentkit-harness-core': file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz
