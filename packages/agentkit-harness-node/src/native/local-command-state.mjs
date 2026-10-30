@@ -38,21 +38,26 @@ export function privateDirectory(path, create = false) {
 export function privateFile(path, allowMissing = false) {
   try {
     const stat = lstatSync(path);
-    check(stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid() && (stat.mode & 0o077) === 0,
+    check(stat.isFile() && stat.uid === process.getuid() && (stat.mode & 0o077) === 0,
       'background_state_not_private');
+    // Atomic publication can unlink the inode while lstat is observing it.
+    // It is never usable evidence; read-only callers may retry the new inode.
+    check(stat.nlink !== 0, 'background_state_changed');
+    check(stat.nlink === 1, 'background_state_not_private');
     return stat;
   } catch (error) { if (allowMissing && error.code === 'ENOENT') return null; throw error; }
 }
 export function openPrivate(path, flags) {
   for (let attempt = 0; ; attempt++) {
-    privateDirectory(dirname(path)); privateFile(path, true);
-    const fd = openSync(path, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    let fd;
     try {
+      privateDirectory(dirname(path)); privateFile(path, true);
+      fd = openSync(path, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
       const stat = fstatSync(fd), current = privateFile(path);
       check(stat.isFile() && stat.dev === current.dev && stat.ino === current.ino, 'background_state_changed');
       return fd;
     } catch (error) {
-      closeSync(fd);
+      if (fd !== undefined) closeSync(fd);
       // The supervisor atomically replaces outputs and records. A read opened
       // across that publication must retry the newly verified private inode.
       // Never retry writes, unsafe permissions/links, or persistent churn.

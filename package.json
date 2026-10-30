@@ -131,7 +131,7 @@
     "@astral-sh/ruff-wasm-nodejs": "0.16.8",
     "@deepseek-ai/dsh-experimental-agent-team": "0.2.1-rc.2",
     "@kingsoftcloud/agentkit-harness-core": "file:vendor/native/kingsoftcloud-agentkit-harness-core-0.0.1-faa777e5b10213fd.tgz",
-    "@kingsoftcloud/agentkit-harness-node": "file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-a55eee867cd48c58.tgz",
+    "@kingsoftcloud/agentkit-harness-node": "file:vendor/native/kingsoftcloud-agentkit-harness-node-0.0.1-1cfb3fced255c92c.tgz",
     "@kingsoftcloud/agentkit-harness-ui": "file:vendor/native/kingsoftcloud-agentkit-harness-ui-0.0.1-829f18c2ed31cef6.tgz",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@openai/codex": "0.159.2",
