@@ -97,9 +97,28 @@ test('the inherited OS hard limit is clamped rather than raised by the launcher'
   assert.equal(result.controls.applied.maxOpenFiles, 64); assert.equal(result.stdout.trim(), '64');
 });
 if (process.platform === 'linux' && process.getuid() !== 0) test('non-root Linux refuses exec if the required owner watchdog cannot fork under NPROC', async t => {
-  const directory = workspace(t), result = await run(directory, ['/bin/sh', '-c', 'printf forbidden > must-not-exist'], { settings: { maxProcesses: 1 } });
+  const directory = workspace(t), moduleUrl = import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/local-process');
+  // Policy maxProcesses now counts the owned process group, not this UID.
+  // Impose an inherited OS limit at exec instead to exercise real fork failure.
+  const code = `import {runBoundedProcess,buildScriptEnvironment} from ${JSON.stringify(moduleUrl)};
+    console.log(JSON.stringify(await runBoundedProcess({cwd:process.cwd(),argv:['/bin/sh','-c','printf forbidden > must-not-exist'],env:buildScriptEnvironment(process.env)})));`;
+  const child = spawnSync(process.execPath, ['--import', new URL('./fixtures/fail-watchdog-fork.mjs', import.meta.url).href,
+    '--input-type=module', '-e', code], { cwd: directory, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout);
   assert.equal(result.controls.status, 'failed'); assert.ok(result.controls.failed.includes('owner_watchdog'));
   assert.equal(result.exitCode, 125); assert.equal(existsSync(join(directory, 'must-not-exist')), false);
+});
+if (process.platform === 'linux') test('Linux admits a single process and enforces the owned group bound independently of UID usage', async t => {
+  const directory = workspace(t);
+  const admitted = await run(directory, ['/bin/sh', '-c', 'printf allowed'], { settings: { maxProcesses: 1 } });
+  assert.equal(admitted.exitCode, 0); assert.equal(admitted.stdout, 'allowed');
+  const bounded = await run(directory, ['/bin/sh', '-c', '(/bin/sleep 5) & wait; printf forbidden > must-not-exist'],
+    { settings: { maxProcesses: 1 }, timeoutMs: 2000 });
+  assert.equal(bounded.controls.status, 'applied'); assert.equal(bounded.controls.applied.maxProcesses, 1);
+  assert.deepEqual(bounded.controls.failed, []); assert.equal(bounded.timedOut, false);
+  assert.equal(bounded.exitCode, -constants.signals.SIGKILL);
+  assert.equal(existsSync(join(directory, 'must-not-exist')), false);
 });
 test('CPU hard limit is enforced by the OS without waiting for the Node wall deadline', { timeout: 12_000 }, async t => {
   const result = await run(workspace(t), ['/bin/sh', '-c', 'while :; do :; done'], { settings: { cpuSeconds: 1 }, timeoutMs: 8000 });
