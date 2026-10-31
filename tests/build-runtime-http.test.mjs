@@ -80,6 +80,33 @@ test('a channel failure keeps its own code in the run log', async t => {
   assert.equal(logs[1].code, 'CHANNEL_REQUEST_NOT_FOUND');
 });
 
+test('a managed failure message reaches the client redacted but never the run log', async t => {
+  const logs = [];
+  const failure = Object.assign(new Error('Authorization: Bearer private-upstream-token provider rejected the frozen model route'), { code: 'UNKNOWN' });
+  const platformActions = {
+    setRunControl() {},
+    async checkRun() {},
+    async flushRun() {},
+    async settleRun() {},
+    async parseResponses() {
+      return { input: 'hello', sessionId: 'native-session', requestId: 'req-detail',
+        stream: true, runId: 'run_detail_fixture', model: 'model', responseId: 'resp_detail',
+        createdAt: Date.now(), conversationId: 'conv-detail', publicSessionId: 'public-detail',
+        platformSession: { sessionId: 'public-detail', nativeSessionId: 'native-session' }, metadata: {} };
+    },
+  };
+  const { post } = await setup(t, async () => { throw failure; }, { platformActions, runLog: entry => logs.push(entry) });
+  const response = await post({ input: 'hello' });
+  assert.equal(response.status, 200);
+  const events = [];
+  for await (const event of readSse(response.body)) events.push(event);
+  const failed = events.find(event => event.type === 'response.failed');
+  assert.equal(failed.response.error.code, 'UNKNOWN');
+  assert.equal(failed.response.error.message, 'Authorization: Bearer [REDACTED] provider rejected the frozen model route');
+  assert.deepEqual(logs.map(entry => entry.event), ['runtime.run.started', 'runtime.run.failed']);
+  assert(!JSON.stringify(logs).includes('provider rejected'));
+});
+
 test('a failed log sink cannot fail or repeat a successful run', async t => {
   let runs = 0, attempts = 0;
   const { post } = await setup(t, async () => { runs++; return { output: 'ok' }; },

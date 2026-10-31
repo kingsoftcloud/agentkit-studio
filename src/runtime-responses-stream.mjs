@@ -120,10 +120,11 @@ export function createRuntimeResponsesStream(request, write) {
       lifecycle('response.completed', response);
       return response;
     },
-    fail(code) {
+    fail(code, message) {
       for (const record of items) if (!record.closed) close(record, 'incomplete');
       const cancelled = code === 'RUNTIME_CANCELLED' || code === 'RUNTIME_CLIENT_DISCONNECTED';
-      lifecycle(cancelled ? 'response.canceled' : 'response.failed', runtimeResponse(request, { error: { code } }, cancelled ? 'cancelled' : 'failed', []));
+      const error = { code, ...(typeof message === 'string' && message ? { message } : {}) };
+      lifecycle(cancelled ? 'response.canceled' : 'response.failed', runtimeResponse(request, { error }, cancelled ? 'cancelled' : 'failed', []));
     },
   };
   return projector;
