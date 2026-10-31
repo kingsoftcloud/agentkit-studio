@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/native-*']
   pull_request:
     branches: [main]
 
@@ -12,8 +12,8 @@ permissions:
 jobs:
   test:
     name: public-gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,10 +27,17 @@ jobs:
           cache: pnpm
       - run: node scripts/check-node-version.mjs
       - run: pnpm install --frozen-lockfile
+      - name: Install test Chromium
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          pnpm exec playwright install --with-deps chromium
+      - run: pnpm build:native-source
+      - run: pnpm check:native-ui
       - run: |
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"
-      - run: make public-gate
+      - run: bash ci/run-public-gate.sh
   patched-host:
     name: patched-dsh-host
     runs-on: ${{ matrix.os }}

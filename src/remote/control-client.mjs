@@ -308,7 +308,7 @@ export function createProductClient(connection, { window = globalThis.window } =
             ? studioBridgeOperation('agents/create-local', payload)
             : request('/api/v1/authoring/quick', { method: 'POST', body: JSON.stringify(payload) }),
         updateAgent: (id, spec, revision, name) => directServer() && String(id).startsWith('ar-local-')
-            ? studioBridgeOperation('agents/update-local', { agentId: id, spec, name })
+            ? studioBridgeOperation('agents/update-local', { agentId: id, spec, name, expectedRevision: revision })
             : directServer()
                 ? studioBridgeOperation('agents/update-cloud', { agentId: id, spec, revision, name })
                 : request('/api/v1/agents/' + encodeURIComponent(id) + (name ? '?name=' + encodeURIComponent(name) : ''), {
@@ -491,6 +491,26 @@ export function createProductClient(connection, { window = globalThis.window } =
         trace: id => directServer() ? studioBridgeOperation('traces/get', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id)),
         traceOtlp: id => directServer() ? studioBridgeOperation('traces/otlp', { traceId: id }) : request('/api/v1/traces/' + encodeURIComponent(id) + '/otlp'),
         exportSessionLog: (id, query = '') => directServer() ? studioBridgeOperation('sessions/export-log', { sessionId: id }) : request('/api/v1/sessions/' + encodeURIComponent(id) + ':export' + (query ? '?' + query : '')),
+        nativeChildHistory: (payload, signal) => studioBridgeOperation('sessions/native-child-history', payload, signal),
+        injectNativeSession: (payload, signal) => studioBridgeOperation('sessions/native-inject', payload, signal),
+    nativeRecoveryStatus: (payload, signal) => studioBridgeOperation('sessions/native-recovery-status', payload, signal),
+        resumeNativeRun: (payload, signal) => studioBridgeOperation('sessions/native-recovery-resume', payload, signal),
+        reviewNativeBackground: (payload, signal) => studioBridgeOperation('sessions/native-background-review', payload, signal),
+        retireNativeResources: (payload, signal) => studioBridgeOperation('sessions/native-resource-retire', payload, signal),
+        reconcileNativeTool: (payload, signal) => studioBridgeOperation('sessions/native-recovery-reconcile', payload, signal),
+        repairNativeWorkspace: (payload, signal) => studioBridgeOperation('sessions/native-workspace-repair', payload, signal),
+        nativeConversationStatus: (payload, signal) => studioBridgeOperation('sessions/native-conversation-status', payload, signal),
+        rewindNativeConversation: (payload, signal) => studioBridgeOperation('sessions/native-conversation-rewind', payload, signal),
+        previewNativeConversationWorkspace: (payload, signal) => studioBridgeOperation('sessions/native-conversation-workspace-preview', payload, signal),
+        controlNativeA2aTask: (payload, signal) => studioBridgeOperation('sessions/native-a2a-control', payload, signal),
+        dshA2aTaskHistory: (payload, signal) => studioBridgeOperation('sessions/dsh-a2a-history', payload, signal),
+        controlDshA2aTask: (payload, signal) => studioBridgeOperation('sessions/dsh-a2a-control', payload, signal),
+        nativeChildResult: (payload, signal) => studioBridgeOperation('sessions/native-child-result', payload, signal),
+        nativeChildFile: (payload, signal) => studioBridgeOperation('sessions/native-child-file', payload, signal),
+        nativeCommandOutput: (payload, signal) => studioBridgeOperation('sessions/native-command-output', payload, signal),
+        promoteNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-promote', payload, signal),
+        sendNativeChildInput: (payload, signal) => studioBridgeOperation('sessions/native-child-send', payload, signal),
+        cancelNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-cancel', payload, signal),
         channelConnection: () => directServer() ? studioBridgeOperation('channels/connection', {}) : request('/api/v1/channels/connection'),
         updateChannelConnection: payload => directServer() ? studioBridgeOperation('channels/update', payload) : request('/api/v1/channels/connection', { method: 'PUT', body: JSON.stringify(payload) }),
         updateAgentChannelConnection: (id, payload) => directServer() ? studioBridgeOperation('channels/agent-update', { ...payload, agentId: id }) : request('/api/v1/channels/agents/' + encodeURIComponent(id) + '/connection', { method: 'PUT', body: JSON.stringify(payload) }),

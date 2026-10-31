@@ -1,4 +1,5 @@
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
+import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from '../../model-reasoning.mjs';
 export const MODEL_CREDENTIAL_NAMES = ['AGENTKIT_MODEL_API_KEY', 'OPENAI_API_KEY'];
 
@@ -65,11 +66,12 @@ export function createModelBridge({ hostRemote }) {
           // Keep the input contract on each profile so read_image and native
           // image messages are admitted consistently with the upstream model.
           models: (catalogs[index]?.items?.length ? catalogs[index].items : [{ id: modelName, name: modelName, input: profile.input || ['text'] }])
-            .map(model => ({ id: model.id, name: model.name || model.id, contextWindow: 262144, maxTokens: 32768,
-              input: model.inputKnown === false && model.id === modelName ? profile.input || ['text'] : model.input || ['text'],
-              // The profile describes one model; sibling catalog entries keep
-              // their own (absent) capability instead of inheriting this map.
-              ...(reasoning && model.id === modelName ? { reasoningEfforts: reasoning.efforts } : {}) })),
+            .map(model => {
+              const capability = admitModelCapabilities({ ...profile, input: model.id === modelName ? profile.input : undefined }, model);
+              return { id: model.id, name: model.name || model.id, contextWindow: capability.contextWindow,
+                maxTokens: capability.maxOutputTokens, input: capability.input,
+                ...(reasoning && model.id === modelName ? { reasoningEfforts: reasoning.efforts } : {}) };
+            }),
         } } };
       });
       const response = await ctx.remote.settings.mutate(DSH_MODEL_SETTINGS_NS, [

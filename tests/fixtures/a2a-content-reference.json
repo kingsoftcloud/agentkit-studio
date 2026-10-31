@@ -1,0 +1,260 @@
+{
+  "reference": "355059d78e47ed764bbdb3606304cdf34e9838a3",
+  "cases": [
+    {
+      "label": "original file owner identity and Python strip Unicode semantics",
+      "owner": {
+        "artifactId": " report ",
+        "name": "report",
+        "parts": [
+          {
+            "url": "https://example.com/report",
+            "metadata": {
+              "part_id": "﻿id﻿"
+            }
+          },
+          {
+            "text": "next",
+            "metadata": {
+              "part_id": "id"
+            }
+          },
+          {
+            "text": "BOM identity",
+            "metadata": {
+              "part_id": "﻿"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "content_type": "artifact",
+          "part_id": "part_f99c1bb47139edb140b05c2e",
+          "artifact_id": " report ",
+          "name": "report",
+          "mime_type": null,
+          "uri": "https://example.com/report",
+          "data": null
+        },
+        {
+          "content_type": "text",
+          "part_id": "part_fa0523bf5f365bddb652d696",
+          "text": "next"
+        },
+        {
+          "content_type": "text",
+          "part_id": "part_294f8e581fd52ee329769edf",
+          "text": "BOM identity"
+        }
+      ]
+    },
+    {
+      "label": "artifact files and null Value",
+      "owner": {
+        "artifactId": "report",
+        "name": "fallback",
+        "parts": [
+          {
+            "raw": "AAEC/w==",
+            "mediaType": "application/octet-stream"
+          },
+          {
+            "url": "https://example.com/report"
+          },
+          {
+            "data": null
+          }
+        ]
+      },
+      "expected": [
+        {
+          "content_type": "artifact",
+          "part_id": "part_2fe913b041ed0f7d110e1580",
+          "artifact_id": "report",
+          "name": "fallback",
+          "mime_type": "application/octet-stream",
+          "uri": null,
+          "data": {
+            "base64": "AAEC/w=="
+          }
+        },
+        {
+          "content_type": "artifact",
+          "part_id": "part_b4663fec7a386eba95899daf",
+          "artifact_id": "report",
+          "name": "fallback",
+          "mime_type": null,
+          "uri": "https://example.com/report",
+          "data": null
+        },
+        {
+          "content_type": "data",
+          "part_id": "part_55501f4cd5f65df1d147fb34",
+          "data": null
+        }
+      ]
+    },
+    {
+      "label": "numeric boolean empty-container metadata and indices",
+      "startIndex": 4,
+      "owner": {
+        "messageId": "message",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "文本😀",
+            "metadata": {
+              "part_id": 1
+            }
+          },
+          {
+            "text": "bool",
+            "metadata": {
+              "part_id": true
+            }
+          },
+          {
+            "data": [
+              1,
+              true,
+              null
+            ],
+            "metadata": {
+              "kind": "tool_result",
+              "call_id": [],
+              "is_error": []
+            }
+          },
+          {
+            "data": {
+              "x": 1
+            },
+            "metadata": {
+              "kind": "tool_result",
+              "call_id": {},
+              "is_error": {}
+            }
+          },
+          {
+            "data": null,
+            "metadata": {
+              "kind": "tool_call",
+              "call_id": 1e-05,
+              "name": "execute"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "content_type": "text",
+          "part_id": "part_bea6f5ba9cee21a93f56b0e7",
+          "text": "文本😀"
+        },
+        {
+          "content_type": "text",
+          "part_id": "part_b74d3667b91d45cad4cbadaf",
+          "text": "bool"
+        },
+        {
+          "content_type": "tool_result",
+          "part_id": "part_ee79b5328624cc037c8e9a33",
+          "call_id": "[]",
+          "result": [
+            1.0,
+            true,
+            null
+          ],
+          "is_error": false
+        },
+        {
+          "content_type": "tool_result",
+          "part_id": "part_def3d4ec534779636c669ced",
+          "call_id": "{}",
+          "result": {
+            "x": 1.0
+          },
+          "is_error": false
+        },
+        {
+          "content_type": "tool_call",
+          "part_id": "part_f4394953b78c3dd413caac82",
+          "call_id": "1e-05",
+          "name": "execute",
+          "arguments": null
+        }
+      ]
+    },
+    {
+      "label": "prototype names remain ordinary JSON keys",
+      "owner": {
+        "messageId": "m",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "data": {
+              "__proto__": {
+                "x": 1
+              },
+              "constructor": 2,
+              "prototype": 3
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "content_type": "data",
+          "part_id": "part_a27c0e864e76e8b2fba4d0de",
+          "data": {
+            "prototype": 3.0,
+            "constructor": 2.0,
+            "__proto__": {
+              "x": 1.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "label": "Python repr for metadata lists and Unicode escapes",
+      "owner": {
+        "messageId": "m",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "repr",
+            "metadata": {
+              "part_id": [
+                "it's",
+                "\n\u0000 😀",
+                true,
+                null,
+                1.0
+              ]
+            }
+          },
+          {
+            "text": "float",
+            "metadata": {
+              "part_id": 1e+20
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "content_type": "text",
+          "part_id": "part_86007b43deda65a21a1fd756",
+          "text": "repr"
+        },
+        {
+          "content_type": "text",
+          "part_id": "part_ab225fe0720ee57b7e024e61",
+          "text": "float"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,945 @@
+diff --git a/apps/desktop/scripts/prepare-primary-runtime.ts b/apps/desktop/scripts/prepare-primary-runtime.ts
+index 44484baefcbd3947ad230d6708a08e44ab87b42b..7a83613f3ee5dceaab8d570c00d09e1764f6065f 100644
+--- a/apps/desktop/scripts/prepare-primary-runtime.ts
++++ b/apps/desktop/scripts/prepare-primary-runtime.ts
+@@ -9,13 +9,15 @@ import { scrubWindowsSigningEnvironment } from './windows-sign.mjs'
+ 
+ /**
+  * Prepare Desktop resources for its selected packaging target.
+- * @param options - Signed Windows packaging defers execution until its supervised signing stage.
++ * @param options - Signed Windows packaging may defer smoke checks; nodeOnly opts into resources without Python.
++ * Omitting nodeOnly preserves the Python payload.
+  * @returns Resolves after preparation and, unless deferred, native-target execution checks.
+  */
+-export async function preparePrimaryRuntime(options: { deferSmoke?: boolean } = {}): Promise<void> {
++export async function preparePrimaryRuntime(options: { deferSmoke?: boolean; nodeOnly?: boolean } = {}): Promise<void> {
+   const paths = resolveDesktopTargetBuildPaths()
+   const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+-  await preparePayload({ target: resolveDesktopBuildTarget(), output: paths.runtime, cache: paths.downloads, version })
++  await preparePayload({ target: resolveDesktopBuildTarget(), output: paths.runtime,
++    cache: paths.downloads, version, nodeOnly: options.nodeOnly === true })
+   if (!options.deferSmoke) smokePrimaryRuntime(join(paths.runtime, 'primary-runtime'))
+ }
+ 
+@@ -26,7 +28,7 @@ export async function preparePrimaryRuntime(options: { deferSmoke?: boolean } =
+ export function smokePrimaryRuntime(root: string): void {
+   const manifest = parsePrimaryRuntime(JSON.parse(readFileSync(join(root, 'runtime.json'), 'utf8')))
+   if (manifest.platform !== process.platform || manifest.arch !== process.arch) return
+-  if (Object.keys(manifest.pythonPackages).length === 0) throw new Error('primary runtime: missing Python distribution versions; prepare the payload before running its smoke checks.')
++  if (manifest.python !== undefined && Object.keys(manifest.pythonPackages).length === 0) throw new Error('primary runtime: missing Python distribution versions; prepare the payload before running its smoke checks.')
+   const entries = workspaceDependencyPaths(root, manifest)
+   if (entries.node === undefined || entries.pnpm === undefined) throw new Error('primary runtime: the Desktop payload must declare node and pnpm components.')
+   smokePayload(root, scrubWindowsSigningEnvironment(process.env))
+diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
+index 5e8705ae1274e11fb244170fda7093669c09ddd2..3a89bd7fe3cd4df65edfaaadfc71f2fa1e905942 100644
+--- a/apps/desktop/scripts/smoke-runtime.ts
++++ b/apps/desktop/scripts/smoke-runtime.ts
+@@ -73,6 +73,7 @@ export function apply(ctx) {
+     console.log('desktop runtime: CLI offline plugin installation and removal passed')
+     const primary = join(resourcesRuntime, 'primary-runtime')
+     const dependencies = workspaceDependencyPaths(primary, await readPrimaryRuntime(primary))
++    if (dependencies.python === undefined) throw new Error('desktop runtime: Office authoring fixtures require the Python payload; Node-only Desktop authoring verification is pending')
+     await promisify(execFile)(dependencies.python, ['-I', '-B',
+       fileURLToPath(new URL('../tests/fixtures/office-conversion-inputs.py', import.meta.url)), home],
+     { env: environment, timeout: 120_000, windowsHide: true })
+diff --git a/docs/subsystems/skills.i18n.yaml b/docs/subsystems/skills.i18n.yaml
+index c4fbc992b6b061322bebd61355edf02de57192a4..cbafffd5f3dcc2191b18ef55d6833136c250110e 100644
+--- a/docs/subsystems/skills.i18n.yaml
++++ b/docs/subsystems/skills.i18n.yaml
+@@ -3,8 +3,8 @@
+ # After editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write docs/subsystems/skills.md
+ /skills:
+-  en: ad77015352a17ed6
+-  zh: 5c84933161845393
++  en: 91dfdd2ecd1241d2
++  zh: adb9068fc7d30619
+ /skills/provider-registry:
+   en: abe338b6c6d1ebd1
+   zh: c604db2de10a23c4
+diff --git a/docs/subsystems/skills.md b/docs/subsystems/skills.md
+index 3bfdbff4027b6de106b156fde526f35b62033525..ee02566a4b5beaa315a3b8248fb8e13e1431e384 100644
+--- a/docs/subsystems/skills.md
++++ b/docs/subsystems/skills.md
+@@ -6,6 +6,9 @@ The [skill capability family](../../packages/skill) includes the Service Definit
+ 
+ Source: [`packages/skill/skill/src/index.ts`](../../packages/skill/skill/src/index.ts), [`packages/skill/skill-filesystem/src/index.ts`](../../packages/skill/skill-filesystem/src/index.ts), [`packages/experimental/skill-badge/src/index.ts`](../../packages/experimental/skill-badge/src/index.ts), [`packages/skill/skill-office/src/index.ts`](../../packages/skill/skill-office/src/index.ts), [`packages/sandbox/sandbox-windows-acl/src/acl-skill.ts`](../../packages/sandbox/sandbox-windows-acl/src/acl-skill.ts), and [`packages/skill/tool-skill/src/index.ts`](../../packages/skill/tool-skill/src/index.ts).
+ 
++Script-runtime carriers may supply versioned Node-only payloads as well as Python payloads; [workspace dependencies](../../packages/skill/tool-workspace-dependencies/README.md) defines metadata, paths and preparation failures.
++
++
+ ## Provider registry
+ 
+ `ctx.skills` combines local, embedded, remote, or other providers. Registration is synchronous; remote initialization and discovery belong in awaited `list()`. Provider objects, options, and candidates are borrowed readonly, while semantic fields are validated.
+diff --git a/docs/subsystems/skills.zh.md b/docs/subsystems/skills.zh.md
+index d93f8416fb4f4084cf6effc7b7e0ffae8caae5b0..658e668a2b573094b9956162101e107344863ee5 100644
+--- a/docs/subsystems/skills.zh.md
++++ b/docs/subsystems/skills.zh.md
+@@ -6,6 +6,9 @@
+ 
+ 源码：[`packages/skill/skill/src/index.ts`](../../packages/skill/skill/src/index.ts)、[`packages/skill/skill-filesystem/src/index.ts`](../../packages/skill/skill-filesystem/src/index.ts)、[`packages/experimental/skill-badge/src/index.ts`](../../packages/experimental/skill-badge/src/index.ts)、[`packages/skill/skill-office/src/index.ts`](../../packages/skill/skill-office/src/index.ts)、[`packages/sandbox/sandbox-windows-acl/src/acl-skill.ts`](../../packages/sandbox/sandbox-windows-acl/src/acl-skill.ts) 与 [`packages/skill/tool-skill/src/index.ts`](../../packages/skill/tool-skill/src/index.ts)。
+ 
++脚本运行时载体既可提供带版本的纯 Node 资源，也可提供 Python 资源；[工作区依赖](../../packages/skill/tool-workspace-dependencies/README.zh.md)定义元数据、路径和准备失败语义。
++
++
+ ## 提供方注册表
+ 
+ `ctx.skills` 组合本地、内嵌、远程或其他提供方。注册是同步的；远程初始化与发现属于 `list()` 的 await 阶段。提供方对象、选项与候选项以只读方式借用，语义字段会被校验。
+diff --git a/docs/tool-catalog.i18n.yaml b/docs/tool-catalog.i18n.yaml
+index 4710703fe5ac81dc1a29192530c246fa66c5f2a4..a2bf4c7cbdd60fc6f54c87bae36e692c42f1a615 100644
+--- a/docs/tool-catalog.i18n.yaml
++++ b/docs/tool-catalog.i18n.yaml
+@@ -318,8 +318,8 @@
+   en: 96bffc40b80df4b8
+   zh: 96bffc40b80df4b8
+ /tool-schema-catalog/deepseek-ai-dsh-tool-workspace-dependencies/load-workspace-dependencies:
+-  en: 77b88764ff3464e9
+-  zh: a9ca7eeb15ada747
++  en: bc194fe75205025e
++  zh: d8de2d7487c7e9ca
+ /tool-schema-catalog/deepseek-ai-dsh-tool-web:
+   en: 4b9918342d3aa931
+   zh: 4b9918342d3aa931
+diff --git a/docs/tool-catalog.md b/docs/tool-catalog.md
+index cfa519219815f644e2122b4e60f23c791c6d199a..4a10b9591c1587a454461a2a803fd9216ad6df1f 100644
+--- a/docs/tool-catalog.md
++++ b/docs/tool-catalog.md
+@@ -2761,7 +2761,7 @@ Source: [`packages/workflow/tool-workflow/src/index.ts`](../packages/workflow/to
+ 
+ ### `load_workspace_dependencies`
+ 
+-Get absolute paths to bundled Python and library directories, plus bundled Python distribution versions. Node.js and pnpm paths are included when the payload provides them. Python includes numpy, pandas, python-docx, python-pptx, openpyxl, Pillow, lxml, and XlsxWriter. Use these libraries for Office files unless the user or workspace instructions select another environment. When Node.js and pnpm paths are returned, run pnpm with that Node executable and pnpm script path. This does not change PATH or package-manager settings.
++Get absolute paths to the bundled script runtime and library directories. Node.js and pnpm paths are included when supplied. Python paths and distribution versions are included only when the payload supplies Python; a Node-only payload never requires a system Python. Run pnpm with the returned Node executable and pnpm script path. This does not change PATH or package-manager settings.
+ 
+ ```json
+ {
+diff --git a/docs/tool-catalog.zh.md b/docs/tool-catalog.zh.md
+index fd304d6ddc653b1b4bd668f641d6044cf31b9776..86829f674a0dac5745e1665952d47ace89a10482 100644
+--- a/docs/tool-catalog.zh.md
++++ b/docs/tool-catalog.zh.md
+@@ -2769,7 +2769,7 @@ todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为
+ 
+ ### `load_workspace_dependencies`
+ 
+-获取随包附带的 Python 和库目录的绝对路径，以及随包 Python 发行版的版本。payload 提供 Node.js 和 pnpm 时才返回对应路径。Python 含 numpy、pandas、python-docx、python-pptx、openpyxl、Pillow、lxml 与 XlsxWriter。除非用户或工作区指令选择了别的环境，Office 文件请使用这些库。返回 Node.js 和 pnpm 路径时，用该 Node 可执行文件和 pnpm 脚本路径运行 pnpm。本工具不改 PATH，也不改包管理器设置。
++获取随包附带的脚本运行时和库目录的绝对路径。payload 提供 Node.js 和 pnpm 时才返回对应路径。仅在 payload 提供 Python 时返回 Python 路径和发行版版本；纯 Node payload 不需要系统 Python。用返回的 Node 可执行文件和 pnpm 脚本路径运行 pnpm。本工具不改 PATH，也不改包管理器设置。
+ 
+ ```json
+ {
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..c8f51be575db26f951a7571e8bd25d8fa943384f
+--- /dev/null
++++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
+@@ -0,0 +1,16 @@
++# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
++# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
++# After editing either side, bring the other along and re-record with:
++#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
++/:
++  en: 0e95c77e04e7c55f
++  zh: 049f0e4fe5898d09
++/node-only-primary-runtime:
++  en: 7c4c18336e726bbb
++  zh: d4bf0c571652c030
++/node-only-primary-runtime/change:
++  en: 78f4f6adde7846ec
++  zh: 7ad0ca4ddbebd50e
++/node-only-primary-runtime/migration:
++  en: 2fc2a37c4a8bffbc
++  zh: 10f5280970562c08
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e88fb4c5619a53262d1aad83a14c55a37b3a4dd8
+--- /dev/null
++++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
+@@ -0,0 +1,18 @@
++---
++kind: upgrade-guide
++description: Callers of primary-runtime queries must handle absent Python paths for explicitly selected Node-only payloads.
++---
++
++# Node-only primary runtime
++
++English | [中文](guide.zh.md)
++
++## Change
++
++A `schemaVersion: 2` primary-runtime manifest supplies Node without Python. `PrimaryRuntimeManifest` discriminates Python and Node-only metadata. `WorkspaceDependencies.python` and `pythonPackages` may be absent; existing Python payloads still return them. Node-only resources are opt-in and do not replace Python-based Office authoring workflows.
++
++## Migration
++
++1. In callers of `resolvePrimaryRuntime`, `installPrimaryRuntime`, or `load_workspace_dependencies`, require the interpreter needed by the operation. Check Python paths before Python operations; use the returned Node path for Node operations.
++2. To prepare a Node-only carrier, run `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`. Do not combine it with `--python-only`. Keep the existing Python payload for Python Office authoring until a Node workflow is provided.
++3. Verify `runtime.json` has `schemaVersion: 2` and no `python`, the resource tree has no Python directory, and the native-target smoke executes Node and pnpm. See the [payload reference](../../../../packages/skill/tool-workspace-dependencies/README.md).
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..146869a020e43aeb8a8508cc0489d21b05e492e2
+--- /dev/null
++++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
+@@ -0,0 +1,18 @@
++---
++kind: upgrade-guide
++description: 显式选择纯 Node 资源时，primary-runtime 查询调用方必须处理 Python 路径缺省的情况。
++---
++
++# 纯 Node primary runtime
++
++[English](guide.md) | 中文
++
++## 变更
++
++`schemaVersion: 2` 的 primary-runtime 清单提供 Node 而不包含 Python。`PrimaryRuntimeManifest` 区分 Python 与纯 Node 元数据。`WorkspaceDependencies.python` 和 `pythonPackages` 可能缺省；既有 Python 资源仍返回这些字段。纯 Node 资源须显式选择，不替代使用 Python 的 Office 编程工作流。
++
++## 迁移
++
++1. 调用 `resolvePrimaryRuntime`、`installPrimaryRuntime` 或 `load_workspace_dependencies` 时，确认所需解释器已提供。执行 Python 操作前检查 Python 路径；Node 操作使用返回的 Node 路径。
++2. 准备纯 Node 载体时运行 `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`。不能与 `--python-only` 同用。提供 Node 工作流之前，Python Office 编程继续使用现有 Python 资源。
++3. 确认 `runtime.json` 包含 `schemaVersion: 2` 且不含 `python`，资源树没有 Python 目录，并通过本机目标的 Node 与 pnpm 冒烟检查。见[资源格式说明](../../../../packages/skill/tool-workspace-dependencies/README.zh.md)。
+diff --git a/packages/skill/tool-workspace-dependencies/README.i18n.yaml b/packages/skill/tool-workspace-dependencies/README.i18n.yaml
+index adf2113745c614e1c46354df15ce9550377fcab4..737c5354c0cd3960a04bbdcae030f330aa6cea0e 100644
+--- a/packages/skill/tool-workspace-dependencies/README.i18n.yaml
++++ b/packages/skill/tool-workspace-dependencies/README.i18n.yaml
+@@ -21,11 +21,11 @@
+   en: 97b1f99b4e9c2569
+   zh: bf6c6ce74073413f
+ /deepseek-ai-dsh-tool-workspace-dependencies/use-this-package/payload-layout:
+-  en: 709eda9a01bc0a81
+-  zh: bb4693ddd755866a
++  en: f2511ea9d11864d0
++  zh: 4a79d05bcbcffc45
+ /deepseek-ai-dsh-tool-workspace-dependencies/use-this-package/build-a-carrier-payload:
+-  en: 0f3e570525053f09
+-  zh: 1b0cd3b653e1bd5d
++  en: 01bd4eeefccf387d
++  zh: 82919b599b163aa2
+ /deepseek-ai-dsh-tool-workspace-dependencies/understand-the-implementation:
+   en: 0121e57a754cb26f
+   zh: 2933fc0415da013d
+@@ -42,8 +42,8 @@
+   en: 5e004798009885c4
+   zh: e80c616c7ece2b08
+ /deepseek-ai-dsh-tool-workspace-dependencies/model-experience/tool-schema/token-effect:
+-  en: 615cce9c7fcb746d
+-  zh: 6b9f58e263a38d61
++  en: c89b4b1a3305b31d
++  zh: c2de753fcefd8188
+ /deepseek-ai-dsh-tool-workspace-dependencies/model-experience/tool-schema/kv-cache-effect:
+   en: 4ee92571a5f8a71a
+   zh: 6fa2a5b21b9f0150
+@@ -51,8 +51,8 @@
+   en: f8ffc2b983f05ffc
+   zh: 8573891441963be4
+ /deepseek-ai-dsh-tool-workspace-dependencies/model-experience/tool-result/what-the-model-sees:
+-  en: c25c9db51e7d06da
+-  zh: a4cdcd37bd501503
++  en: 3537a37e115a0a0f
++  zh: 122dc2542f6a2be7
+ /deepseek-ai-dsh-tool-workspace-dependencies/model-experience/tool-result/token-effect:
+   en: 0efada793d1e65b1
+   zh: 3eed908f43174b88
+@@ -60,8 +60,8 @@
+   en: 42325f307b6c259d
+   zh: d53a45f1c00ba16f
+ /deepseek-ai-dsh-tool-workspace-dependencies/known-limitations-and-deferred-work:
+-  en: 8aeacc5404854231
+-  zh: 43d970fa23ac2473
++  en: a543528a9daab6d5
++  zh: 1d2e67648a5f8c17
+ /deepseek-ai-dsh-tool-workspace-dependencies/known-limitations-and-deferred-work/dev-note:
+   en: f57d5fcd5b2e8a44
+   zh: b210a0dce56f2e8a
+diff --git a/packages/skill/tool-workspace-dependencies/README.md b/packages/skill/tool-workspace-dependencies/README.md
+index ad1aa24f408af1ccbef870d3d6e7cc4d7295b4c0..249d6cf24b7675a34b4b00b944302ee9048f57de 100644
+--- a/packages/skill/tool-workspace-dependencies/README.md
++++ b/packages/skill/tool-workspace-dependencies/README.md
+@@ -44,13 +44,15 @@ Mount the plugin beside the tool registry with the payload directory. Configurat
+ 
+ `runtime.json` records `desktopVersion`, `platform` (`win32`, `darwin`, or `linux`), `arch`, optional `payloadDigest`, top-level `python`, optional `node`/`pnpm` versions, and the complete `pythonPackages` distribution-version map. A pnpm entry requires Node.js. Python libraries, including numpy and pandas, appear only in `pythonPackages`. Entries live under `dependencies/`: `python/bin/python3` (`python/python.exe` on Windows) with `site-packages` beneath it, and, when declared, `node/bin/node` with `node/node_modules` and `pnpm/bin/pnpm.mjs`. A manifest whose platform or architecture differs from the running process is rejected.
+ 
++Node-only payloads explicitly set `schemaVersion: 2`, require a `node` version, omit `python`, and contain no Python distributions. They return `node`/`nodePackages`, optional `pnpm`, and an empty `pythonDistributions` map, without Python paths or system interpreter discovery. Other format versions and mixed Node-only/Python metadata are rejected. Existing flat and legacy Python payloads retain their behavior.
++
+ On macOS and Linux, the builder retains `python` and `python3` as relative links to the sibling versioned interpreter (for example, `python3.12`). Installation preserves these two aliases and materializes other links. Alias validation requires the exact sibling filename and a regular target file; carriers that cannot preserve links, including Python wheels, retain supported regular command files. Windows keeps its ordinary `python.exe` file.
+ 
+ The packaged `sdk` profile uses its bundled Python and Office skills by default; `DSH_PRIMARY_RUNTIME` overrides the resource location, and an empty value opts out. Source launches without a carrier default remain opt-in. See [runtime configuration](../../../python/sdk-runtime/README.md) for independent skill selection. Missing skill resources produce a startup warning; invalid or incomplete external runtime payloads fail the first tool call. Profile configuration changes require restarting the SDK process.
+ 
+ ### Build a carrier payload
+ 
+-From a repository checkout with dependencies installed, `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office` writes `primary-runtime/` and `office-skills/`. The shared [download lock](../../../scripts/primary-runtime/lock.json) also covers `linux-arm64`, `mac-arm64`, `mac-x64`, and `win-x64`. `--python-only` omits Node.js and pnpm; `--cache` selects the hash-verified archive cache. The entry executes interpreter and Office read/write checks only for a native target. Cross-target builds require those checks on the target host before deployment.
++From a repository checkout with dependencies installed, `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office` writes `primary-runtime/` and `office-skills/`. The shared [download lock](../../../scripts/primary-runtime/lock.json) also covers `linux-arm64`, `mac-arm64`, `mac-x64`, and `win-x64`. `--python-only` omits Node.js and pnpm; `--node-only` omits Python and wheels and cannot be combined with `--python-only`; `--cache` selects the hash-verified archive cache. The entry executes interpreter and Office read/write checks only for a native target. Cross-target builds require those checks on the target host before deployment.
+ 
+ A container can copy both directories into an immutable image layer and set `DSH_PRIMARY_RUNTIME` to the absolute `primary-runtime/` path. The SDK queries that payload in place. Desktop uses the same builder and retains its Harness-home installation and signing checks.
+ 
+@@ -91,7 +93,7 @@ The model sees the generated [`load_workspace_dependencies` schema](../../../doc
+ 
+ #### Token effect
+ 
+-Fixed schema cost per request where the tool is visible; the description names the bundled Office libraries so the model can choose the interpreter without loading a skill first.
++Fixed schema cost per request where the tool is visible; the description explains that interpreter paths depend on the supplied payload.
+ 
+ #### KV Cache effect
+ 
+@@ -101,7 +103,7 @@ Prefix-stable while the tool definition and visibility are unchanged.
+ 
+ #### What the model sees
+ 
+-One JSON object with absolute `python` and `pythonPackages` paths, `pythonDistributions` from `runtime.json`, and `node`, `nodePackages`, and `pnpm` when the payload declares them. Repeated calls return the same object.
++One JSON object with `python` and `pythonPackages` paths only for Python payloads, `pythonDistributions` from `runtime.json`, and `node`, `nodePackages`, and `pnpm` when the payload declares them. Repeated calls return the same object.
+ 
+ #### Token effect
+ 
+@@ -115,6 +117,7 @@ Append-only tool result in the turn history; no prompt section is added.
+ 
+ <a id="known-limitations-and-deferred-work"></a>
+ 
++- Node-only payload preparation does not convert Python-based Office authoring workflows. Desktop defaults and those workflows still require separate migration.
+ - Linux targets require glibc; musl payloads are not locked.
+ - Windows payloads used in place must already be executable from their carrier; the in-place mode performs no permission repair.
+ 
+diff --git a/packages/skill/tool-workspace-dependencies/README.zh.md b/packages/skill/tool-workspace-dependencies/README.zh.md
+index 410d936661ff4c0943d2cad199d81348beb37d5b..d0afa9c174b2d5e03e304e15da1830e32fd63e5b 100644
+--- a/packages/skill/tool-workspace-dependencies/README.zh.md
++++ b/packages/skill/tool-workspace-dependencies/README.zh.md
+@@ -44,13 +44,15 @@ kind: "package-reference"
+ 
+ `runtime.json` 记录 `desktopVersion`、`platform`（`win32`、`darwin` 或 `linux`）、`arch`、可选的 `payloadDigest`、顶层 `python` 与可选的 `node`/`pnpm` 版本，以及完整的 `pythonPackages` 分发包版本表。声明 pnpm 时必须同时声明 Node.js。numpy、pandas 等 Python 库只出现在 `pythonPackages` 中。条目位于 `dependencies/`：`python/bin/python3`（Windows 为 `python/python.exe`）及其下的 `site-packages`；声明了才有的 `node/bin/node`、`node/node_modules` 与 `pnpm/bin/pnpm.mjs`。平台或架构与当前进程不符的清单被拒绝。
+ 
++纯 Node 资源显式设置 `schemaVersion: 2`，必须提供 `node` 版本，省略 `python`，且不含 Python 分发包。工具返回 `node`/`nodePackages`、可选的 `pnpm` 和空的 `pythonDistributions`，不返回 Python 路径，也不查找系统解释器。其他格式版本和混合的纯 Node/Python 元数据会被拒绝。既有扁平与旧版 Python 资源保持原有行为。
++
+ 在 macOS 和 Linux 上，构建器将 `python` 和 `python3` 保留为指向同目录版本化解释器（例如 `python3.12`）的相对链接。安装时保留这两个别名，其他链接展开为实际文件。别名校验要求目标名称与同目录解释器文件名完全一致，且目标为普通文件；Python wheel 等无法保留链接的载体使用普通命令文件，同样受支持。Windows 保留普通的 `python.exe` 文件。
+ 
+ 打包的 `sdk` profile 默认使用随包 Python 和 Office skills；`DSH_PRIMARY_RUNTIME` 覆盖资源位置，空值表示禁用。没有载体默认路径的源码启动仍需显式启用。独立选择 skills 的方式见[运行时配置](../../../python/sdk-runtime/README.zh.md)。缺少 skill 资源会产生启动警告；无效或不完整的外部运行时 payload 在首次工具调用时失败。profile 配置变更需要重启 SDK 进程。
+ 
+ ### 构建载体 payload
+ 
+-在已安装依赖的仓库 checkout 中运行 `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office`，会生成 `primary-runtime/` 和 `office-skills/`。[共享下载锁](../../../scripts/primary-runtime/lock.json)还覆盖 `linux-arm64`、`mac-arm64`、`mac-x64` 和 `win-x64`。`--python-only` 省略 Node.js 和 pnpm；`--cache` 选择经过哈希校验的归档缓存。入口仅对本机目标执行解释器与 Office 读写检查。跨目标构建必须在部署前到目标主机执行这些检查。
++在已安装依赖的仓库 checkout 中运行 `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office`，会生成 `primary-runtime/` 和 `office-skills/`。[共享下载锁](../../../scripts/primary-runtime/lock.json)还覆盖 `linux-arm64`、`mac-arm64`、`mac-x64` 和 `win-x64`。`--python-only` 省略 Node.js 和 pnpm；`--node-only` 省略 Python 和 wheel，且不能与 `--python-only` 同用；`--cache` 选择经过哈希校验的归档缓存。入口仅对本机目标执行解释器与 Office 读写检查。跨目标构建必须在部署前到目标主机执行这些检查。
+ 
+ 容器可将这两个目录复制到不可变镜像层，并将 `DSH_PRIMARY_RUNTIME` 设为 `primary-runtime/` 的绝对路径。SDK 原位查询该 payload。Desktop 使用同一构建器，并保留 Harness-home 安装与签名检查。
+ 
+@@ -91,7 +93,7 @@ kind: "package-reference"
+ 
+ #### Token 影响
+ 
+-工具可见的每个请求固定一份 schema 开销；描述里列出了随包的 Office 库，模型不必先加载 skill 就能选择解释器。
++工具可见的每个请求固定一份 schema 开销；描述说明解释器路径取决于提供的资源。
+ 
+ #### KV 缓存影响
+ 
+@@ -101,7 +103,7 @@ kind: "package-reference"
+ 
+ #### 模型看到什么
+ 
+-一个 JSON 对象：绝对路径 `python` 与 `pythonPackages`、来自 `runtime.json` 的 `pythonDistributions`，以及 payload 声明了才有的 `node`、`nodePackages` 与 `pnpm`。重复调用返回同一对象。
++一个 JSON 对象：仅 Python 资源返回的绝对路径 `python` 与 `pythonPackages`、来自 `runtime.json` 的 `pythonDistributions`，以及 payload 声明了才有的 `node`、`nodePackages` 与 `pnpm`。重复调用返回同一对象。
+ 
+ #### Token 影响
+ 
+@@ -115,6 +117,7 @@ kind: "package-reference"
+ 
+ <a id="known-limitations-and-deferred-work"></a>
+ 
++- 准备纯 Node 资源不会转换使用 Python 的 Office 编程工作流；Desktop 默认资源及这些工作流仍需单独迁移。
+ - Linux 目标需要 glibc；尚未锁定 musl payload。
+ - Windows 上原地使用的 payload 须在载体里已可执行；原地模式不修复权限。
+ 
+diff --git a/packages/skill/tool-workspace-dependencies/src/index.ts b/packages/skill/tool-workspace-dependencies/src/index.ts
+index af22db73cf5ba0fe16999f2cdce0511f402eba6a..b2a84f221cca5bdf11b69820fe64676aa54b9e3b 100644
+--- a/packages/skill/tool-workspace-dependencies/src/index.ts
++++ b/packages/skill/tool-workspace-dependencies/src/index.ts
+@@ -30,14 +30,12 @@ export const Config: z<Config> = z.object({
+ })
+ 
+ /** Canonical build metadata, independent of user-installed packages; legacy files are normalized on read. */
+-export interface PrimaryRuntimeManifest {
++interface RuntimeMetadata {
+   readonly desktopVersion: string
+   readonly platform: string
+   readonly arch: string
+   /** Locked payload identity; absent only in installations made before payload hashing. */
+   readonly payloadDigest?: string
+-  /** Bundled Python interpreter version. */
+-  readonly python: string
+   /** Absent when the payload ships no Node.js. */
+   readonly node?: string
+   /** Bundled pnpm version; requires a bundled Node.js executable. */
+@@ -46,12 +44,30 @@ export interface PrimaryRuntimeManifest {
+   readonly pythonPackages: Readonly<Record<string, string>>
+ }
+ 
++/** Python payload metadata, including normalized legacy components manifests. */
++export interface PythonPrimaryRuntimeManifest extends RuntimeMetadata {
++  readonly schemaVersion?: never
++  readonly python: string
++}
++
++/** Explicit Node-only payload metadata; no Python interpreter or distributions. */
++export interface NodePrimaryRuntimeManifest extends RuntimeMetadata {
++  readonly schemaVersion: 2
++  readonly python?: never
++  readonly node: string
++}
++
++/** Supported payload formats; the version discriminates Node-only resources. */
++export type PrimaryRuntimeManifest = PythonPrimaryRuntimeManifest | NodePrimaryRuntimeManifest
++
+ /** Absolute entry points and bundled versions; pnpm runs through the returned Node executable. */
+ export interface WorkspaceDependencies {
+-  readonly python: string
++  /** Absent when the payload declares no Python. */
++  readonly python?: string
+   readonly node?: string
+   readonly pnpm?: string
+-  readonly pythonPackages: string
++  /** Absent when the payload declares no Python. */
++  readonly pythonPackages?: string
+   readonly nodePackages?: string
+   /** Locked distribution versions; excludes packages users add to the installed environment. */
+   readonly pythonDistributions: Readonly<Record<string, string>>
+@@ -86,17 +102,20 @@ export function parsePrimaryRuntime(value: unknown): PrimaryRuntimeManifest {
+   if (!isRecord(versions) || (legacy && ['python', 'node', 'pnpm'].some(key => value[key] !== undefined))) {
+     throw new Error('primary runtime: invalid metadata')
+   }
+-  const { desktopVersion, platform, arch, payloadDigest } = value
++  const { desktopVersion, platform, arch, payloadDigest, schemaVersion } = value
++  const nodeOnly = schemaVersion === 2
+   const { python, node, pnpm } = versions
+-  const pythonPackages = value.pythonPackages === undefined && legacy ? {} : value.pythonPackages
++  const pythonPackages = value.pythonPackages === undefined && (legacy || nodeOnly) ? {} : value.pythonPackages
+   if (typeof desktopVersion !== 'string' || desktopVersion.length === 0
+     || typeof platform !== 'string' || !PLATFORMS.includes(platform)
+     || typeof arch !== 'string' || !['x64', 'arm64'].includes(arch)
+-    || !isVersion(python)
++    || (schemaVersion !== undefined && schemaVersion !== 2)
++    || (nodeOnly ? legacy || python !== undefined || !isVersion(node) : !isVersion(python))
+     || (node !== undefined && !isVersion(node))
+     || (pnpm !== undefined && (!isVersion(pnpm) || node === undefined))
+     || (payloadDigest !== undefined && (typeof payloadDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payloadDigest)))
+-    || !isDistributionMap(pythonPackages)) {
++    || !isDistributionMap(pythonPackages)
++    || (nodeOnly && Object.keys(pythonPackages).length !== 0)) {
+     throw new Error('primary runtime: invalid metadata')
+   }
+   const entries = Object.entries(pythonPackages)
+@@ -112,14 +131,15 @@ export function parsePrimaryRuntime(value: unknown): PrimaryRuntimeManifest {
+       }
+     }
+   }
+-  return {
++  const metadata = {
+     desktopVersion, platform, arch,
+     ...(payloadDigest === undefined ? {} : { payloadDigest }),
+-    python,
+     ...(node === undefined ? {} : { node }),
+     ...(pnpm === undefined ? {} : { pnpm }),
+     pythonPackages,
+   }
++  if (nodeOnly) return { ...metadata, schemaVersion: 2, node: node as string }
++  return { ...metadata, python: python as string }
+ }
+ 
+ /**
+@@ -141,7 +161,7 @@ export async function readPrimaryRuntime(root: string): Promise<PrimaryRuntimeMa
+  */
+ export async function primaryRuntimePythonAliases(root: string, manifest: PrimaryRuntimeManifest): Promise<ReadonlyMap<string, string>> {
+   const aliases = new Map<string, string>()
+-  if (manifest.platform === 'win32') return aliases
++  if (manifest.platform === 'win32' || manifest.python === undefined) return aliases
+   const interpreter = `python${manifest.python.split('.').slice(0, 2).join('.')}`
+   for (const name of ['python', 'python3']) {
+     const path = `dependencies/python/bin/${name}`
+@@ -180,6 +200,15 @@ export async function copyPrimaryRuntime(source: string, destination: string, ma
+  * @param manifest - Validated runtime metadata.
+  * @returns Absolute paths for explicit script execution and recorded bundled Python versions.
+  */
++export function workspaceDependencyPaths(root: string, manifest: PythonPrimaryRuntimeManifest):
++WorkspaceDependencies & { readonly python: string; readonly pythonPackages: string }
++/**
++ * Resolve the runtimes declared by a validated payload.
++ * @param root - Absolute payload or installation directory.
++ * @param manifest - Python or Node-only metadata.
++ * @returns Absolute paths; Python paths are absent for Node-only resources.
++ */
++export function workspaceDependencyPaths(root: string, manifest: PrimaryRuntimeManifest): WorkspaceDependencies
+ export function workspaceDependencyPaths(root: string, manifest: PrimaryRuntimeManifest): WorkspaceDependencies {
+   const dependencies = join(root, 'dependencies')
+   const windows = manifest.platform === 'win32'
+@@ -189,10 +218,12 @@ export function workspaceDependencyPaths(root: string, manifest: PrimaryRuntimeM
+   }
+   const pnpm = manifest.pnpm === undefined ? {} : { pnpm: join(dependencies, 'pnpm', 'bin', 'pnpm.mjs') }
+   return {
+-    python: join(dependencies, 'python', ...(windows ? ['python.exe'] : ['bin', 'python3'])),
++    ...(manifest.python === undefined ? {} : {
++      python: join(dependencies, 'python', ...(windows ? ['python.exe'] : ['bin', 'python3'])),
++      pythonPackages: join(dependencies, 'python', ...(windows ? ['Lib'] : ['lib', `python${manifest.python.split('.').slice(0, 2).join('.')}`]), 'site-packages'),
++    }),
+     ...node,
+     ...pnpm,
+-    pythonPackages: join(dependencies, 'python', ...(windows ? ['Lib'] : ['lib', `python${manifest.python.split('.').slice(0, 2).join('.')}`]), 'site-packages'),
+     pythonDistributions: manifest.pythonPackages,
+   }
+ }
+@@ -293,16 +324,16 @@ export function apply(ctx: Context, config: Config): void {
+   })
+   ctx.tools.register(defineTool({
+     name: 'load_workspace_dependencies',
+-    description: 'Get absolute paths to bundled Python and library directories, plus bundled Python distribution versions. Node.js and pnpm paths are included when the payload provides them. Python includes numpy, pandas, python-docx, python-pptx, openpyxl, Pillow, lxml, and XlsxWriter. Use these libraries for Office files unless the user or workspace instructions select another environment. When Node.js and pnpm paths are returned, run pnpm with that Node executable and pnpm script path. This does not change PATH or package-manager settings.',
++    description: 'Get absolute paths to the bundled script runtime and library directories. Node.js and pnpm paths are included when supplied. Python paths and distribution versions are included only when the payload supplies Python; a Node-only payload never requires a system Python. Run pnpm with the returned Node executable and pnpm script path. This does not change PATH or package-manager settings.',
+     parameters: {},
+     output: {
+       schema: {
+         type: 'object', additionalProperties: false,
+         properties: {
+-          python: { type: 'string', required: true },
++          python: { type: 'string', description: 'Absent in Node-only payloads.' },
+           node: { type: 'string', description: 'Absent when the payload ships no Node.js.' },
+           pnpm: { type: 'string', description: 'Absent when the payload ships no pnpm.' },
+-          pythonPackages: { type: 'string', required: true },
++          pythonPackages: { type: 'string', description: 'Absent in Node-only payloads.' },
+           nodePackages: { type: 'string', description: 'Absent when the payload ships no Node.js.' },
+           pythonDistributions: { type: 'object', additionalProperties: true, required: true, description: 'Bundled distribution names and versions recorded in runtime.json; excludes user-installed additions.' },
+         },
+diff --git a/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts b/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
+index c9418f1da1565250948f5da7f6cba531e9ff95de..0af2562c23b33fe55d0f1bd3892923315da6e1cc 100644
+--- a/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
++++ b/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
+@@ -37,12 +37,12 @@ async function fixture() {
+     pythonPackages: { 'python-docx': '1.2.0', 'python-pptx': '1.0.2', openpyxl: '3.1.5' },
+   }
+   const paths = workspaceDependencyPaths(source, manifest)
+-  for (const path of [paths.python, paths.node, paths.pnpm]) {
++  for (const path of [paths.python!, paths.node, paths.pnpm]) {
+     if (path === undefined) continue
+     await mkdir(dirname(path), { recursive: true })
+     await writeFile(path, 'interpreter')
+   }
+-  await mkdir(paths.pythonPackages, { recursive: true })
++  await mkdir(paths.pythonPackages!, { recursive: true })
+   if (paths.nodePackages !== undefined) await mkdir(paths.nodePackages, { recursive: true })
+   await writeFile(join(source, 'runtime.json'), JSON.stringify(manifest))
+   return { source, root, manifest, directory }
+@@ -52,18 +52,18 @@ it.each(['win32', 'darwin', 'linux'])('returns %s interpreter and package paths'
+   const manifest: PrimaryRuntimeManifest = { desktopVersion: '1', platform, arch: 'x64', python: '3.12.14', node: '24.21.0', pnpm: '11.7.0', pythonPackages: {} }
+   const paths = workspaceDependencyPaths('/runtime', manifest)
+   expect(paths.pythonDistributions).toEqual({})
+-  expect(paths.python).toBe(join('/runtime', 'dependencies', 'python', ...(platform === 'win32' ? ['python.exe'] : ['bin', 'python3'])))
+-  expect(paths.pythonPackages).toBe(join('/runtime', 'dependencies', 'python', ...(platform === 'win32' ? ['Lib'] : ['lib', 'python3.12']), 'site-packages'))
++  expect(paths.python!).toBe(join('/runtime', 'dependencies', 'python', ...(platform === 'win32' ? ['python.exe'] : ['bin', 'python3'])))
++  expect(paths.pythonPackages!).toBe(join('/runtime', 'dependencies', 'python', ...(platform === 'win32' ? ['Lib'] : ['lib', 'python3.12']), 'site-packages'))
+ })
+ 
+ it('installs offline, reuses the same release, and leaves environment and user packages unchanged', async () => {
+   const { source, root, manifest } = await fixture()
+   const environment = { ...process.env }
+   const installed = await installPrimaryRuntime(source, root)
+-  await writeFile(join(installed.pythonPackages, 'user-package.py'), 'user content')
++  await writeFile(join(installed.pythonPackages!, 'user-package.py'), 'user content')
+   expect(await installPrimaryRuntime(source, root)).toEqual(installed)
+-  expect(installed.pythonDistributions).toEqual(manifest.pythonPackages)
+-  expect(await readFile(join(installed.pythonPackages, 'user-package.py'), 'utf8')).toBe('user content')
++  expect(installed.pythonDistributions).toEqual(manifest.pythonPackages!)
++  expect(await readFile(join(installed.pythonPackages!, 'user-package.py'), 'utf8')).toBe('user content')
+   expect(process.env).toEqual(environment)
+ })
+ 
+@@ -71,18 +71,18 @@ it('installs offline, reuses the same release, and leaves environment and user p
+ it.skipIf(process.platform === 'win32')('upgrades expanded Python commands to relocatable aliases and reuses the installed payload', async () => {
+   const { source, root, manifest, directory } = await fixture()
+   await installPrimaryRuntime(source, root)
+-  const bin = dirname(workspaceDependencyPaths(source, manifest).python)
++  const bin = dirname(workspaceDependencyPaths(source, manifest).python!)
+   await rename(join(bin, 'python3'), join(bin, 'python3.12'))
+   for (const name of ['python', 'python3']) await symlink('python3.12', join(bin, name))
+   await writeFile(join(source, 'runtime.json'), JSON.stringify({ ...manifest, payloadDigest: 'a'.repeat(64) }))
+   const installed = await installPrimaryRuntime(source, root)
+-  await writeFile(join(installed.pythonPackages, 'user.py'), 'user package')
++  await writeFile(join(installed.pythonPackages!, 'user.py'), 'user package')
+   expect(await installPrimaryRuntime(source, root)).toEqual(installed)
+-  expect(await readFile(join(installed.pythonPackages, 'user.py'), 'utf8')).toBe('user package')
++  expect(await readFile(join(installed.pythonPackages!, 'user.py'), 'utf8')).toBe('user package')
+   const moved = join(directory, 'moved runtime with spaces')
+   await rename(root, moved)
+   await rm(source, { recursive: true })
+-  const relocatedBin = dirname((await resolvePrimaryRuntime(moved)).python)
++  const relocatedBin = dirname((await resolvePrimaryRuntime(moved)).python!)
+   expect((await lstat(join(relocatedBin, 'python3.12'))).isFile()).toBe(true)
+   for (const name of ['python', 'python3']) {
+     expect(await readlink(join(relocatedBin, name))).toBe('python3.12')
+@@ -108,8 +108,8 @@ it('copies Windows payloads without creating interpreter aliases', async () => {
+   const python = workspaceDependencyPaths(source, windows).python
+   await writeFile(python, 'Windows interpreter')
+   await copyPrimaryRuntime(source, root, windows)
+-  expect(await readFile(workspaceDependencyPaths(root, windows).python, 'utf8')).toBe('Windows interpreter')
+-  expect((await lstat(workspaceDependencyPaths(root, windows).python)).isFile()).toBe(true)
++  expect(await readFile(workspaceDependencyPaths(root, windows).python!, 'utf8')).toBe('Windows interpreter')
++  expect((await lstat(workspaceDependencyPaths(root, windows).python!)).isFile()).toBe(true)
+ })
+ 
+ it('propagates an unreadable alias without creating a partial payload', async () => {
+@@ -133,14 +133,14 @@ it('replaces dependencies when the locked payload changes without a Desktop vers
+   const first = { ...manifest, payloadDigest: 'a'.repeat(64), pythonPackages: { 'python-docx': '1.1.2' } }
+   await writeFile(join(source, 'runtime.json'), JSON.stringify(first))
+   const installed = await installPrimaryRuntime(source, root)
+-  await writeFile(join(installed.pythonPackages, 'old-package.py'), 'old dependency')
++  await writeFile(join(installed.pythonPackages!, 'old-package.py'), 'old dependency')
+   const next = { ...first, payloadDigest: 'b'.repeat(64), pythonPackages: { 'python-docx': '1.2.0' } }
+   await writeFile(join(source, 'runtime.json'), JSON.stringify(next))
+-  await writeFile(join(workspaceDependencyPaths(source, next).pythonPackages, 'new-package.py'), 'new dependency')
++  await writeFile(join(workspaceDependencyPaths(source, next).pythonPackages!, 'new-package.py'), 'new dependency')
+   await installPrimaryRuntime(source, root)
+   expect(await readPrimaryRuntime(root)).toEqual(next)
+-  expect(await readFile(join(installed.pythonPackages, 'new-package.py'), 'utf8')).toBe('new dependency')
+-  await expect(readFile(join(installed.pythonPackages, 'old-package.py'))).rejects.toMatchObject({ code: 'ENOENT' })
++  expect(await readFile(join(installed.pythonPackages!, 'new-package.py'), 'utf8')).toBe('new dependency')
++  await expect(readFile(join(installed.pythonPackages!, 'old-package.py'))).rejects.toMatchObject({ code: 'ENOENT' })
+ })
+ 
+ it('upgrades a release manifest without a payload digest', async () => {
+@@ -154,22 +154,22 @@ it('upgrades a release manifest without a payload digest', async () => {
+ it('replaces changed payload bytes when only the digest changes', async () => {
+   const { source, root, manifest } = await fixture()
+   const first = { ...manifest, payloadDigest: 'a'.repeat(64), pythonPackages: { 'python-docx': '1.2.0' } }
+-  const sourceFile = join(workspaceDependencyPaths(source, first).pythonPackages, 'library.py')
++  const sourceFile = join(workspaceDependencyPaths(source, first).pythonPackages!, 'library.py')
+   await writeFile(join(source, 'runtime.json'), JSON.stringify(first))
+   await writeFile(sourceFile, 'first wheel bytes')
+   const installed = await installPrimaryRuntime(source, root)
+   await writeFile(join(source, 'runtime.json'), JSON.stringify({ ...first, payloadDigest: 'b'.repeat(64) }))
+   await writeFile(sourceFile, 'repacked wheel bytes')
+   await installPrimaryRuntime(source, root)
+-  expect(await readFile(join(installed.pythonPackages, 'library.py'), 'utf8')).toBe('repacked wheel bytes')
+-  expect((await readPrimaryRuntime(root)).pythonPackages).toEqual(first.pythonPackages)
++  expect(await readFile(join(installed.pythonPackages!, 'library.py'), 'utf8')).toBe('repacked wheel bytes')
++  expect((await readPrimaryRuntime(root)).pythonPackages!).toEqual(first.pythonPackages!)
+ })
+ 
+ it('keeps the installed release when the replacement payload is incomplete', async () => {
+   const { source, root, manifest } = await fixture()
+   await installPrimaryRuntime(source, root)
+   await writeFile(join(source, 'runtime.json'), JSON.stringify({ ...manifest, desktopVersion: '2.0.0' }))
+-  await rm(workspaceDependencyPaths(source, manifest).python)
++  await rm(workspaceDependencyPaths(source, manifest).python!)
+   await expect(installPrimaryRuntime(source, root)).rejects.toThrow()
+   expect((await readPrimaryRuntime(root)).desktopVersion).toBe('1.0.0')
+ })
+@@ -241,8 +241,14 @@ it.each([
+   await expect(readPrimaryRuntime(source)).rejects.toThrow('invalid metadata')
+ })
+ 
+-it('loads the real tool through Cordis, exposes payload paths in place, and unregisters on disposal', async () => {
++it.each([false, true])('loads the real tool through Cordis and unregisters on disposal (Node-only: %s)', async (nodeOnly) => {
+   const { source, manifest, directory } = await fixture()
++  const selected = nodeOnly ? { schemaVersion: 2 as const, desktopVersion: manifest.desktopVersion,
++    platform: manifest.platform, arch: manifest.arch, node: '24.21.0', pnpm: '11.7.0', pythonPackages: {} } : manifest
++  if (nodeOnly) {
++    await rm(join(source, 'dependencies/python'), { recursive: true })
++    await writeFile(join(source, 'runtime.json'), JSON.stringify(selected))
++  }
+   const ctx = new Context()
+   try {
+     ctx.baseUrl = pathToFileURL(directory).href + '/'
+@@ -261,7 +267,21 @@ it('loads the real tool through Cordis, exposes payload paths in place, and unre
+     const results = await Promise.all(['first', 'second'].map(id => ctx.tools.execute({ ...request, callId: ToolCallId(id) })))
+     for (const result of results) {
+       expect(result.isError).toBe(false)
+-      expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(workspaceDependencyPaths(source, manifest), undefined, 2) }])
++      expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(workspaceDependencyPaths(source, selected), undefined, 2) }])
++    }
++    expect(ctx.tools.schemas().find(tool => tool.name === 'load_workspace_dependencies')?.description).toMatchInlineSnapshot('"Get absolute paths to the bundled script runtime and library directories. Node.js and pnpm paths are included when supplied. Python paths and distribution versions are included only when the payload supplies Python; a Node-only payload never requires a system Python. Run pnpm with the returned Node executable and pnpm script path. This does not change PATH or package-manager settings."')
++    if (nodeOnly) {
++      const text = results[0]!.content[0]!
++      expect(text.type).toBe('text')
++      if (text.type !== 'text') throw new Error('workspace dependencies must return a text result')
++      expect(Object.keys(JSON.parse(text.text) as Record<string, unknown>).sort()).toMatchInlineSnapshot(`
++        [
++          "node",
++          "nodePackages",
++          "pnpm",
++          "pythonDistributions",
++        ]
++      `)
+     }
+     expect(process.env).toEqual(environment)
+     const entry = [...ctx.loader.entries()].find(entry => entry.options.name === 'cordis:dependencies')
+@@ -273,6 +293,32 @@ it('loads the real tool through Cordis, exposes payload paths in place, and unre
+   }
+ })
+ 
++it('installs a Node-only payload, reuses it after source removal, and refuses missing declared Node files', async () => {
++  const { source, root, manifest } = await fixture()
++  const selected = { schemaVersion: 2 as const, desktopVersion: manifest.desktopVersion,
++    platform: manifest.platform, arch: manifest.arch, node: '24.21.0', pnpm: '11.7.0', pythonPackages: {} }
++  await rm(join(source, 'dependencies/python'), { recursive: true })
++  await writeFile(join(source, 'runtime.json'), JSON.stringify(selected))
++  const installed = await installPrimaryRuntime(source, root)
++  expect(installed.python!).toBeUndefined()
++  expect(installed.pythonPackages!).toBeUndefined()
++  expect(installed.node).toBeDefined()
++  await rm(source, { recursive: true })
++  expect(await resolvePrimaryRuntime(root)).toEqual(installed)
++  await expect(readFile(join(root, 'dependencies/python/bin/python3'))).rejects.toMatchObject({ code: 'ENOENT' })
++  await rm(installed.node!)
++  await expect(resolvePrimaryRuntime(root)).rejects.toMatchObject({ code: 'ENOENT' })
++})
++
++it.each([
++  { schemaVersion: 2, python: '3.12.14', node: '24.21.0', pythonPackages: {} },
++  { schemaVersion: 2, node: undefined, pythonPackages: {} },
++  { schemaVersion: 2, node: '24.21.0', pythonPackages: { numpy: '2.3.5' } },
++  { schemaVersion: 3, node: '24.21.0', pythonPackages: {} },
++])('rejects invalid Node-only metadata: %j', (fields) => {
++  expect(() => parsePrimaryRuntime({ desktopVersion: '1', platform: process.platform, arch: process.arch, ...fields })).toThrow('invalid metadata')
++})
++
+ it('uses a payload in place without copying and tolerates a payload without Node.js or pnpm', async () => {
+   const { source, directory } = await fixture()
+   const manifest: PrimaryRuntimeManifest = {
+@@ -288,7 +334,7 @@ it('uses a payload in place without copying and tolerates a payload without Node
+     pythonDistributions: { 'python-docx': '1.2.0' },
+   })
+   await expect(readFile(join(directory, 'home', 'dsh-runtimes', 'dsh-primary-runtime', 'runtime.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+-  await rm(paths.python)
++  await rm(paths.python!)
+   await expect(resolvePrimaryRuntime(source)).rejects.toMatchObject({ code: 'ENOENT' })
+ })
+ 
+@@ -447,11 +493,11 @@ it('reuses an equivalent legacy installation without replacing user-added packag
+   const stored = JSON.stringify(legacyManifest(manifest))
+   await writeFile(join(source, 'runtime.json'), stored)
+   const installed = await installPrimaryRuntime(source, root)
+-  await writeFile(join(installed.pythonPackages, 'user-package.py'), 'keep')
++  await writeFile(join(installed.pythonPackages!, 'user-package.py'), 'keep')
+   await writeFile(join(source, 'runtime.json'), JSON.stringify(manifest))
+   expect(await installPrimaryRuntime(source, root)).toEqual(installed)
+   expect(await readFile(join(root, 'runtime.json'), 'utf8')).toBe(stored)
+-  expect(await readFile(join(installed.pythonPackages, 'user-package.py'), 'utf8')).toBe('keep')
++  expect(await readFile(join(installed.pythonPackages!, 'user-package.py'), 'utf8')).toBe('keep')
+ })
+ 
+ it('accepts flat Python libraries without requiring or singling out numpy and pandas', async () => {
+@@ -459,7 +505,7 @@ it('accepts flat Python libraries without requiring or singling out numpy and pa
+   const flat = { ...manifest, pythonPackages: { 'custom-library': '1.0.0' } }
+   await writeFile(join(source, 'runtime.json'), JSON.stringify(flat))
+   expect(await readPrimaryRuntime(source)).toEqual(flat)
+-  expect((await resolvePrimaryRuntime(source)).pythonDistributions).toEqual(flat.pythonPackages)
++  expect((await resolvePrimaryRuntime(source)).pythonDistributions).toEqual(flat.pythonPackages!)
+ })
+ 
+ it.each(['python', 'node', 'pnpm'])('rejects mixed legacy and flat %s fields', async (name) => {
+diff --git a/scripts/build-exe-for-python-sdk-resources.spec.ts b/scripts/build-exe-for-python-sdk-resources.spec.ts
+index 57346dda4c14c03ed760aad686b2192945a4f4c8..66d8c683858d588cca7d644269bf88c7cec729a9 100644
+--- a/scripts/build-exe-for-python-sdk-resources.spec.ts
++++ b/scripts/build-exe-for-python-sdk-resources.spec.ts
+@@ -39,7 +39,7 @@ it.skipIf(process.platform === 'win32')('keeps SDK Python resources usable after
+ 
+   await expect(stat(join(destination, 'stale'))).rejects.toMatchObject({ code: 'ENOENT' })
+   const paths = await resolvePrimaryRuntime(join(destination, 'primary-runtime'))
+-  expect(await readFile(paths.python, 'utf8')).toBe('interpreter')
++  expect(await readFile(paths.python!, 'utf8')).toBe('interpreter')
+   for (const alias of ['python', 'python3']) {
+     expect(await readlink(join(destination, bin, alias))).toBe('python3.12')
+     expect(await readFile(join(destination, bin, alias), 'utf8')).toBe('interpreter')
+diff --git a/scripts/primary-runtime/prepare.spec.ts b/scripts/primary-runtime/prepare.spec.ts
+index 6426989082917d284f21517d7a8a5fe724b4d0a4..eef259ac6acaf43d54277ea578d111ac10c18f26 100644
+--- a/scripts/primary-runtime/prepare.spec.ts
++++ b/scripts/primary-runtime/prepare.spec.ts
+@@ -1,6 +1,6 @@
+ import { readFileSync } from 'node:fs'
+ import { createHash } from 'node:crypto'
+-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
++import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { basename, join } from 'node:path'
+ import { zipSync } from 'fflate'
+@@ -156,6 +156,36 @@ it('gives Python-only payloads a distinct identity', () => {
+   expect(primaryRuntimePayloadDigest('linux-x64', lock, undefined)).not.toBe(primaryRuntimePayloadDigest('linux-x64', lock, '11.7.0'))
+ })
+ 
++it('keeps Node-only payload identity independent of Python archives and wheels', () => {
++  const changed = structuredClone(lock)
++  changed.pythonVersion = '3.13.0'
++  changed.targets['mac-arm64'].pythonSha256 = 'a'.repeat(64)
++  changed.wheels[0]!.sha256 = 'b'.repeat(64)
++  expect(primaryRuntimePayloadDigest('mac-arm64', changed, '11.7.0', true)).toBe(primaryRuntimePayloadDigest('mac-arm64', lock, '11.7.0', true))
++  expect(primaryRuntimePayloadDigest('mac-arm64', lock, '11.7.0', true)).not.toBe(primaryRuntimePayloadDigest('mac-arm64', lock, '11.7.0'))
++  changed.targets['mac-arm64'].nodeSha256 = 'c'.repeat(64)
++  expect(primaryRuntimePayloadDigest('mac-arm64', changed, '11.7.0', true)).not.toBe(primaryRuntimePayloadDigest('mac-arm64', lock, '11.7.0', true))
++})
++
++it('executes a real Node-only smoke with no Python files or interpreter lookup', async () => {
++  const root = await mkdtemp(join(tmpdir(), 'primary-node-only-'))
++  try {
++    const bin = join(root, 'dependencies/node/bin'), pnpm = join(root, 'dependencies/pnpm/bin')
++    await mkdir(bin, { recursive: true }); await mkdir(pnpm, { recursive: true })
++    // Homebrew Node needs sibling dylibs; the fixture executes the real host
++    // binary through a link instead of pretending that a copied binary relocates.
++    if (process.platform === 'win32') await copyFile(process.execPath, join(bin, 'node.exe'))
++    else await symlink(process.execPath, join(bin, 'node'))
++    await writeFile(join(pnpm, 'pnpm.mjs'), `if (process.cwd() !== ${JSON.stringify(await realpath(root))}) process.exit(1); console.log("11.7.0")\n`)
++    await writeFile(join(root, 'runtime.json'), JSON.stringify({ schemaVersion: 2,
++      desktopVersion: '1', platform: process.platform, arch: process.arch, node: process.versions.node, pnpm: '11.7.0', pythonPackages: {} }))
++    smokePrimaryRuntime(root, { PATH: bin, PYTHON: '/unavailable/python' })
++    await writeFile(join(pnpm, 'pnpm.mjs'), 'console.log("10.0.0")\n')
++    expect(() => smokePrimaryRuntime(root, { PATH: bin })).toThrow('expected pnpm 11.7.0, received 10.0.0')
++    await expect(stat(join(root, 'dependencies/python'))).rejects.toMatchObject({ code: 'ENOENT' })
++  } finally { await rm(root, { recursive: true, force: true }) }
++})
++
+ it('keeps carrier pnpm versions aligned with the shared payload build', () => {
+   const root = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+     packageManager: string
+diff --git a/scripts/primary-runtime/prepare.ts b/scripts/primary-runtime/prepare.ts
+index fbe8edf30284f35bc1cd45e2a3c61840706ca7d2..d143c7fe147e58dbdb551b3e4594cd036ceee16a 100644
+--- a/scripts/primary-runtime/prepare.ts
++++ b/scripts/primary-runtime/prepare.ts
+@@ -10,7 +10,7 @@ import { dirname, join, resolve } from 'node:path'
+ import { parseArgs } from 'node:util'
+ import extractZip from 'extract-zip'
+ import { x as extractTar } from 'tar'
+-import { copyPrimaryRuntime, parsePrimaryRuntime, workspaceDependencyPaths, type PrimaryRuntimeManifest } from '@deepseek-ai/dsh-tool-workspace-dependencies'
++import { copyPrimaryRuntime, parsePrimaryRuntime, workspaceDependencyPaths } from '@deepseek-ai/dsh-tool-workspace-dependencies'
+ import lock from './lock.json' with { type: 'json' }
+ import { prunePrimaryRuntimePythonTests } from './prune-python-tests.ts'
+ 
+@@ -116,11 +116,19 @@ async function pythonArchive(target: keyof typeof lock.targets, cache: string):
+  * @param target - Runtime target whose archives are installed.
+  * @param runtimeLock - Locked interpreter and wheel inputs.
+  * @param pnpmVersion - Package-manager version copied into the payload.
++ * @param nodeOnly - Exclude Python inputs when true; absent or false retains Python payload identity.
+  * @returns SHA-256 payload identity for installation reuse.
+  */
+ export function primaryRuntimePayloadDigest(
+-  target: keyof typeof lock.targets, runtimeLock: typeof lock, pnpmVersion: string | undefined,
++  target: keyof typeof lock.targets, runtimeLock: typeof lock, pnpmVersion: string | undefined, nodeOnly = false,
+ ): string {
++  if (nodeOnly) {
++    const { nodeArchive, nodeSha256 } = runtimeLock.targets[target]
++    return createHash('sha256').update(JSON.stringify({
++      format: 'dsh.node-primary-runtime/v1', target, nodeVersion: runtimeLock.nodeVersion,
++      nodeArchive, nodeSha256, pnpm: pnpmVersion,
++    })).digest('hex')
++  }
+   const { pythonVersion, pythonRelease, nodeVersion, wheels, pythonPackages } = runtimeLock
+   // Identity preserves key order within the selected target, wheel records and distribution map, plus wheel-entry order.
+   // Bump format when extraction or assembly changes payload bytes without changing locked inputs.
+@@ -178,6 +186,8 @@ export interface PreparePrimaryRuntimeOptions {
+   readonly skillSource?: string
+   /** Omit Node.js and pnpm for carriers providing only Python. */
+   readonly pythonOnly?: boolean
++  /** Prepare only Node.js and pnpm, with version 2 metadata and no Python archives or wheels. */
++  readonly nodeOnly?: boolean
+ }
+ 
+ /**
+@@ -186,6 +196,7 @@ export interface PreparePrimaryRuntimeOptions {
+  * @returns Resolves after the complete payload and skills have been copied to the output directory.
+  */
+ export async function preparePrimaryRuntime(options: PreparePrimaryRuntimeOptions): Promise<void> {
++  if (options.nodeOnly && options.pythonOnly) throw new Error('primary runtime: nodeOnly and pythonOnly are mutually exclusive')
+   const { target } = options
+   const paths = { runtime: resolve(options.output), downloads: resolve(options.cache) }
+   mkdirSync(paths.runtime, { recursive: true })
+@@ -210,21 +221,24 @@ export async function preparePrimaryRuntime(options: PreparePrimaryRuntimeOption
+         await cp(dirname(pnpmManifest), join(dependencies, 'pnpm'), { recursive: true, dereference: true })
+       }
+     }
+-    await extractTar({ file: await pythonArchive(target, paths.downloads), cwd: dependencies })
+-    const manifest: PrimaryRuntimeManifest = {
++    if (!options.nodeOnly) await extractTar({ file: await pythonArchive(target, paths.downloads), cwd: dependencies })
++    const manifest = parsePrimaryRuntime({
+       desktopVersion: options.version,
+       platform: target === 'win-x64' ? 'win32' : target.startsWith('linux-') ? 'linux' : 'darwin',
+       arch: target.endsWith('-arm64') ? 'arm64' : 'x64',
+-      payloadDigest: primaryRuntimePayloadDigest(target, lock, pnpmVersion),
+-      python: lock.pythonVersion,
++      payloadDigest: primaryRuntimePayloadDigest(target, lock, pnpmVersion, options.nodeOnly),
++      ...(options.nodeOnly ? { schemaVersion: 2 as const } : { python: lock.pythonVersion }),
+       ...(pnpmVersion === undefined ? {} : { node: lock.nodeVersion, pnpm: pnpmVersion }),
+-      pythonPackages: lock.pythonPackages,
+-    }
++      pythonPackages: options.nodeOnly ? {} : lock.pythonPackages,
++    })
+     const entries = workspaceDependencyPaths(output, manifest)
+-    for (const wheel of [...lock.targets[target].wheels, ...lock.wheels]) {
+-      await unpackPrimaryRuntimeWheel(await downloadPrimaryRuntimeAsset(wheel.url, wheel.sha256, paths.downloads), entries.pythonPackages)
++    if (!options.nodeOnly) {
++      if (entries.pythonPackages === undefined) throw new Error('primary runtime: Python package directory is required')
++      for (const wheel of [...lock.targets[target].wheels, ...lock.wheels]) {
++        await unpackPrimaryRuntimeWheel(await downloadPrimaryRuntimeAsset(wheel.url, wheel.sha256, paths.downloads), entries.pythonPackages)
++      }
++      prunePrimaryRuntimePythonTests(entries.pythonPackages)
+     }
+-    prunePrimaryRuntimePythonTests(entries.pythonPackages)
+     writeFileSync(join(output, 'runtime.json'), `${JSON.stringify(manifest, undefined, 2)}\n`)
+     const destination = join(paths.runtime, 'primary-runtime')
+     rmSync(destination, { recursive: true, force: true })
+@@ -245,36 +259,46 @@ export async function preparePrimaryRuntime(options: PreparePrimaryRuntimeOption
+ export function smokePrimaryRuntime(root: string, environment: NodeJS.ProcessEnv = Object.fromEntries(
+   Object.entries(process.env).filter(([name]) => !/(?:KEY|SECRET|TOKEN|PASSWORD)/iu.test(name)),
+ )): void {
++  root = resolve(root)
+   const manifest = parsePrimaryRuntime(JSON.parse(readFileSync(join(root, 'runtime.json'), 'utf8')))
+   if (manifest.platform !== process.platform || manifest.arch !== process.arch) return
+-  if (Object.keys(manifest.pythonPackages).length === 0) throw new Error('primary runtime: missing Python distribution versions; prepare the payload before running its smoke checks.')
++  if (manifest.python !== undefined && Object.keys(manifest.pythonPackages).length === 0) throw new Error('primary runtime: missing Python distribution versions; prepare the payload before running its smoke checks.')
+   const entries = workspaceDependencyPaths(root, manifest)
+-  if (manifest.platform !== 'win32') {
+-    const interpreter = `python${manifest.python.split('.').slice(0, 2).join('.')}`
+-    for (const name of ['python', 'python3']) {
+-      const path = join(dirname(entries.python), name)
+-      if (!lstatSync(path).isSymbolicLink() || readlinkSync(path) !== interpreter) {
+-        throw new Error(`primary runtime: Python commands must be relative aliases of ${interpreter}`)
++  const options = { cwd: root, stdio: 'inherit', timeout: 120_000, env: environment } as const
++  if (manifest.python !== undefined) {
++    if (entries.python === undefined) throw new Error('primary runtime: Python executable is required')
++    if (manifest.platform !== 'win32') {
++      const interpreter = `python${manifest.python.split('.').slice(0, 2).join('.')}`
++      for (const name of ['python', 'python3']) {
++        const path = join(dirname(entries.python), name)
++        if (!lstatSync(path).isSymbolicLink() || readlinkSync(path) !== interpreter) {
++          throw new Error(`primary runtime: Python commands must be relative aliases of ${interpreter}`)
++        }
+       }
++      if (!lstatSync(join(dirname(entries.python), interpreter)).isFile()) throw new Error('primary runtime: versioned Python must be a regular file')
+     }
+-    if (!lstatSync(join(dirname(entries.python), interpreter)).isFile()) throw new Error('primary runtime: versioned Python must be a regular file')
++    execFileSync(entries.python, ['-I', '-B', '-c', 'import decimal, xml.parsers.expat, lzma, uuid, numpy, pandas; assert numpy.arange(4).sum() == 6; assert pandas.DataFrame({"n": [1, 2]}).n.sum() == 3'], options)
++    execFileSync(entries.python, ['-I', '-B', join(import.meta.dirname, 'smoke.py'), JSON.stringify(manifest.pythonPackages),
++      manifest.python], options)
++    execFileSync(entries.python, ['-I', '-B', '-m', 'pip', 'check'], options)
+   }
+-  const options = { stdio: 'inherit', timeout: 120_000, env: environment } as const
+-  execFileSync(entries.python, ['-I', '-B', '-c', 'import decimal, xml.parsers.expat, lzma, uuid, numpy, pandas; assert numpy.arange(4).sum() == 6; assert pandas.DataFrame({"n": [1, 2]}).n.sum() == 3'], options)
+-  execFileSync(entries.python, ['-I', '-B', join(import.meta.dirname, 'smoke.py'), JSON.stringify(manifest.pythonPackages),
+-    manifest.python], options)
+-  execFileSync(entries.python, ['-I', '-B', '-m', 'pip', 'check'], options)
+   if (entries.node !== undefined) execFileSync(entries.node, ['-e', `if (process.versions.node !== ${JSON.stringify(manifest.node)}) process.exit(1)`], options)
+-  if (entries.pnpm !== undefined && entries.node !== undefined) execFileSync(entries.node, [entries.pnpm, '--version'], options)
++  if (entries.pnpm !== undefined && entries.node !== undefined) {
++    const version = execFileSync(entries.node, [entries.pnpm, '--version'], {
++      ...options, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
++    }).trim()
++    if (version !== manifest.pnpm) throw new Error(`primary runtime: expected pnpm ${manifest.pnpm}, received ${version}`)
++  }
+ }
+ 
+ if (import.meta.main) {
+   const { values } = parseArgs({ options: {
+     target: { type: 'string' }, output: { type: 'string' }, cache: { type: 'string' },
+     'python-only': { type: 'boolean', default: false },
++    'node-only': { type: 'boolean', default: false },
+   } })
+   if (!values.target || !Object.hasOwn(lock.targets, values.target) || !values.output) {
+-    throw new Error(`Usage: pnpm run prepare:primary-runtime --target <${Object.keys(lock.targets).join('|')}> --output <directory> [--cache <directory>] [--python-only]`)
++    throw new Error(`Usage: pnpm run prepare:primary-runtime --target <${Object.keys(lock.targets).join('|')}> --output <directory> [--cache <directory>] [--python-only|--node-only]`)
+   }
+   const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
+   const output = resolve(values.output)
+@@ -282,6 +306,7 @@ if (import.meta.main) {
+     target: values.target as PrimaryRuntimeTarget, output,
+     cache: values.cache ?? join(tmpdir(), 'dsh-primary-runtime-downloads'), version,
+     pythonOnly: values['python-only'],
++    nodeOnly: values['node-only'],
+   })
+   smokePrimaryRuntime(join(output, 'primary-runtime'))
+ }

@@ -49,5 +49,9 @@ test('packed browser entry is generated from the ES Module graph', async () => {
   const graph = JSON.parse(await readFile(resolve(root, '.artifacts/client/metafile.json'), 'utf8'));
   assert.ok(Object.keys(graph.inputs).includes('src/client/entry.mjs'));
   assert.ok(Object.keys(graph.inputs).includes('src/client/app.mjs'));
-  assert.ok(Object.keys(graph.inputs).every(name => !/node_modules|src\/(host|providers)\//.test(name)), 'Node, providers or an additional React entered the browser graph');
+  assert.ok(Object.keys(graph.inputs).every(name =>
+    /^node_modules\/@kingsoftcloud\/agentkit-harness-ui\/(?:src\/|markdown\/dist\/markdown\.mjs$)/.test(name)
+      || /^node_modules\/@kingsoftcloud\/agentkit-harness-core\/dist\/(?:child-workspace-tools|capability-profile|model-capabilities|values)\.mjs$/.test(name)
+      || !/node_modules|src\/(host|providers)\//.test(name)),
+  'Only the independent task UI and approved Core data contracts may enter the browser graph; Node, providers and a second React are forbidden');
 });

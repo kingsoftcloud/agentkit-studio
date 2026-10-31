@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioScheduler } from '../src/studio-scheduler.mjs';
+import { spawn } from 'node:child_process';
 
 async function makeStore() { return mkdtemp(join(tmpdir(), 'agentkit-sched-')); }
 
@@ -93,4 +94,59 @@ test('Cron uses the requested time zone and does not fire twice within one match
     assert.equal((await scheduler.listOccurrences('cron-local')).length, 1);
     assert.equal((await scheduler.listOccurrences('cron-utc')).length, 0);
   } finally { await scheduler.dispose(); await rm(store, { recursive: true, force: true }); }
+});
+
+test('independent due tasks start together while repeated ticks cannot duplicate an active occurrence', async () => {
+  const store = await makeStore(); let now = Date.parse('2026-01-01'), release, started, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; }), ready = new Promise(resolve => { started = resolve; });
+  const scheduler = createStudioScheduler({ storeDir: store, clock: { now: () => now }, tickIntervalMs: 600000,
+    runner: async () => { if (++calls === 2) started(); await gate; return { runId: 'native-run' }; } });
+  let pending, deadline;
+  try {
+    await Promise.all(['parallel-one', 'parallel-two'].map(taskId => scheduler.createSchedule('a', {
+      taskId, kind: 'once', at: '2099-01-01T00:00:00Z', prompt: taskId } )));
+    now = Date.parse('2100-01-01'); pending = scheduler.tick();
+    await Promise.race([ready, new Promise((_, reject) => { deadline = setTimeout(() => reject(Error('Due tasks were serialized')), 2000); })]);
+    clearTimeout(deadline);
+    await scheduler.tick(); assert.equal(calls, 2);
+    release(); await pending;
+    assert.equal((await scheduler.listOccurrences()).length, 2);
+    assert.ok((await scheduler.listOccurrences()).every(item => item.state === 'succeeded'));
+  } finally { clearTimeout(deadline); release(); await pending; await scheduler.dispose(); await rm(store, { recursive: true, force: true }); }
+});
+
+test('SIGKILL releases exclusive scheduler ownership and exposes the original unknown occurrence without replay', async () => {
+  const store = await makeStore(), source = new URL('../src/studio-scheduler.mjs', import.meta.url).href;
+  const code = `import {createStudioScheduler} from ${JSON.stringify(source)};
+    // A real Host has ref'ed HTTP/IPC handles. A pending Promise alone would
+    // let this fixture exit and release its lock before the parent checks it.
+    setInterval(()=>{},1000);
+    const scheduler=createStudioScheduler({storeDir:${JSON.stringify(store)},tickIntervalMs:600000,
+      runner:async()=>{process.stdout.write('CLAIMED\\n');await new Promise(()=>{});}});
+    await scheduler.createSchedule('a',{taskId:'original-once',kind:'once',at:'2099-01-01T00:00:00Z',prompt:'original work'});
+    await scheduler.runNow('original-once');`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let errors = '', deadline, calls = 0;
+  child.stderr.on('data', data => { errors += data; });
+  const blocked = createStudioScheduler({ storeDir: store, tickIntervalMs: 600000 });
+  const restored = createStudioScheduler({ storeDir: store, tickIntervalMs: 600000, runner: async () => { calls++; } });
+  try {
+    await new Promise((resolve, reject) => {
+      deadline = setTimeout(() => reject(Error('Child did not claim: ' + errors)), 5000);
+      child.stdout.once('data', () => resolve()); child.once('error', reject);
+      child.once('exit', code => { if (code !== null) reject(Error('Child exited: ' + errors)); });
+    });
+    clearTimeout(deadline);
+    await assert.rejects(blocked.ensureReady(), { code: 'SCHEDULER_OWNED' });
+    const exited = new Promise(resolve => child.once('exit', resolve)); child.kill('SIGKILL'); await exited;
+    await restored.ensureReady(); await restored.tick();
+    const occurrences = await restored.listOccurrences('original-once');
+    assert.equal(occurrences.length, 1); assert.equal(occurrences[0].state, 'failed');
+    assert.equal(occurrences[0].errorCode, 'AUTOMATION_OUTCOME_UNKNOWN');
+    assert.match(occurrences[0].sessionId, /^ses_/); assert.match(occurrences[0].occurrenceId, /^occ_/);
+    assert.equal(calls, 0); assert.ok((await restored.getSchedule('original-once')).lastFiredAt);
+  } finally {
+    clearTimeout(deadline); child.kill('SIGKILL');
+    await blocked.dispose(); await restored.dispose(); await rm(store, { recursive: true, force: true });
+  }
 });

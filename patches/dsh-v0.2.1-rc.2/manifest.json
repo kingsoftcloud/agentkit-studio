@@ -1913,7 +1913,961 @@
     },
     {
       "id": "046",
-      "file": "046-macos-studio-identity.patch",
+      "file": "046-maintained-doc-refresh.patch",
+      "category": "generated-docs",
+      "risk": "low",
+      "dependsOn": [
+        "045"
+      ],
+      "removeWhen": "The pinned upstream contains the maintained approval signature, language links and synchronized translation records.",
+      "contracts": [
+        "Generated approval references reflect the maintained automation actor option.",
+        "Existing paired documentation retains matching language switchers and section records."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-user-approval",
+        "@deepseek-ai/dsh-client-ui-permission-presets",
+        "@deepseek-ai/dsh-experimental-inspector"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally maintained source commits; no upstream submission or merge receipt."
+      },
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source",
+          "frozen",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/approval.md",
+        "docs/subsystems/approval.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md",
+        "packages/client/ui-permission-presets/README.i18n.yaml",
+        "packages/experimental/inspector/README.i18n.yaml",
+        "packages/interaction/user-approval/README.i18n.yaml"
+      ],
+      "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4",
+      "sequence": 39
+    },
+    {
+      "id": "047",
+      "file": "047-execute-turn-engine.patch",
+      "category": "lifecycle",
+      "risk": "high",
+      "dependsOn": [
+        "036",
+        "038",
+        "046"
+      ],
+      "removeWhen": "The pinned upstream offers an equivalent typed whole-turn execution boundary with input admission and host-owned cancellation/teardown.",
+      "contracts": [
+        "A scoped agent/execute-turn handler owns model, tools, retries, stopping and transcript admission for the complete turn.",
+        "Calling next() preserves the default loop; a handled turn never also dispatches the default model/tool loop.",
+        "The host retains durable turn boundaries, cancellation, follow-up scheduling and teardown; prepareInput is scoped to the unsettled turn."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop",
+        "@deepseek-ai/dsh-tool-cordis"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally maintained source commits; no upstream submission or merge receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts",
+          "packages/core/agent-loop/tests/interception.spec.ts",
+          "packages/core/agent-loop/tests/cancel.spec.ts",
+          "packages/core/agent-loop/tests/resume.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen",
+          "web",
+          "electron"
+        ]
+      },
+      "affectedFiles": [
+        "docs/architecture.md",
+        "docs/architecture.zh.md",
+        "docs/subsystems/core.i18n.yaml",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/tests/execute-turn-loader.spec.ts",
+        "packages/core/agent-loop/tests/execute-turn.spec.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/cordis.yml",
+        "packages/core/agent-loop/tests/fixtures/external-turn/driver.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/engine.ts",
+        "packages/core/agent/README.i18n.yaml",
+        "packages/core/agent/README.md",
+        "packages/core/agent/README.zh.md",
+        "packages/core/agent/src/runtime-types.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "scripts/gen-cordis-catalog.ts"
+      ],
+      "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458",
+      "sequence": 40
+    },
+    {
+      "id": "048",
+      "file": "048-sdk-external-turn.patch",
+      "category": "lifecycle",
+      "risk": "medium",
+      "dependsOn": [
+        "047"
+      ],
+      "removeWhen": "The pinned upstream includes first-turn whole-engine SDK coverage for both language clients.",
+      "contracts": [
+        "A fresh SDK session admits its first turn through the external engine without a default model request.",
+        "The engine admits a structured system head, user input, assistant source and usage; a later default turn reuses the head.",
+        "Expected transcripts and requests are captured through shipped SDK profiles and replay without rewriting baselines."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-sdk-client",
+        "@deepseek-ai/dsh-sdk-app",
+        "@deepseek-ai/dsh-agent-loop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally reviewed maintenance commit; no upstream submission or merge receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "frozen"
+        ]
+      },
+      "affectedFiles": [
+        "scripts/fixtures/python-sdk-external-turn.mjs",
+        "scripts/smoke-python-runtime.py",
+        "scripts/snapshots/python-sdk-single-exe/external-turn/model-visible.json",
+        "snapshots/sdk/external-turn/cordis.snapshot.yml",
+        "snapshots/sdk/external-turn/cordis.yml",
+        "snapshots/sdk/external-turn/engine.mjs",
+        "snapshots/sdk/external-turn/mock-model.mjs",
+        "snapshots/sdk/external-turn/session.v4.jsonl",
+        "snapshots/sdk/external-turn/snapshot.yml",
+        "snapshots/sdk/external-turn/system-prompt.expected.md",
+        "snapshots/sdk/external-turn/tool-schemas.expected.json",
+        "snapshots/sdk/sdk.snapshot.ts"
+      ],
+      "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f",
+      "sequence": 41
+    },
+    {
+      "id": "049",
+      "file": "049-exact-numeric-arguments.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "045",
+        "047"
+      ],
+      "removeWhen": "The pinned upstream offers equivalent versioned execution-local raw numeric arguments through tool policy without widening ordinary JSON persistence.",
+      "contracts": [
+        "Hosts explicitly negotiate dsh.raw-json-number/v1; omission retains ordinary lossless JSON argument validation.",
+        "Intrinsic JSON.rawJSON numeric tokens retain their numeric brand through argument detachment, freezing and policy; similarly shaped records remain data.",
+        "Unsupported encodings and nonnumeric raw values fail before policy or body invocation; every policy stage retains the snapshotted encoding.",
+        "Callers and consumers own exact numeric decoding; Session JSON and typed tool-output validation remain unchanged."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools",
+        "@deepseek-ai/dsh-util-values",
+        "@deepseek-ai/dsh-repeat-tool-reminder",
+        "@deepseek-ai/dsh-tool-cordis"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Locally reviewed maintenance source and keyless SDK/MCP profile proof; no upstream submission receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/raw-number.spec.ts",
+          "packages/core/tools/tests/tools.spec.ts",
+          "packages/util/values/tests/raw-number.spec.ts",
+          "packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/tools.md",
+        "docs/subsystems/tools.zh.md",
+        "packages/core/tools/README.i18n.yaml",
+        "packages/core/tools/README.md",
+        "packages/core/tools/README.zh.md",
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/raw-number.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/guard/repeat-tool-reminder/src/index.ts",
+        "packages/guard/repeat-tool-reminder/tests/repeat-tool-reminder.spec.ts",
+        "packages/util/values/README.i18n.yaml",
+        "packages/util/values/README.md",
+        "packages/util/values/README.zh.md",
+        "packages/util/values/src/index.ts",
+        "packages/util/values/tests/raw-number.spec.ts"
+      ],
+      "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e",
+      "sequence": 42
+    },
+    {
+      "id": "050",
+      "file": "050-external-turn-ownership.patch",
+      "category": "lifecycle",
+      "risk": "high",
+      "dependsOn": [
+        "016",
+        "041",
+        "047",
+        "049"
+      ],
+      "removeWhen": "The pinned upstream includes equivalent durable external-turn ownership, same-turn recovery and cancellation boundaries.",
+      "contracts": [
+        "A required dsh.external-turn/v1 event records exact engine ownership before effects; unsupported readers refuse rather than repair away an owned turn.",
+        "Explicit dsh.external-turn-host/v1 recovery reserves the original open turn, preserves scoped pre-step admission and rejects competing or foreign recovery.",
+        "Failure preserves ownership and parks queued input; successful settlement closes once, and cancellation waits for the executor before releasing queued work.",
+        "Unclaimed turns and forks retain ordinary interruption repair; claiming after step execution or delegating back to the default loop is rejected.",
+        "Generated API, event, configuration and format catalogs follow the maintained sources; workflow guest numeric validation and client permission-slot catalogs are refreshed from their existing owners."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop",
+        "@deepseek-ai/dsh-session",
+        "@deepseek-ai/dsh-tool-cordis",
+        "@deepseek-ai/dsh-cordis-client-runner",
+        "@deepseek-ai/dsh-workflow-ptc"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Reviewed maintained source, public Agent/JSONL recovery tests and relevant Node 26/22 regressions; no upstream submission receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/resume.spec.ts",
+          "packages/core/session/tests/repair.spec.ts",
+          "packages/workflow/workflow-ptc/tests/guest.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/architecture.i18n.yaml",
+        "docs/architecture.md",
+        "docs/architecture.zh.md",
+        "docs/config-catalog.md",
+        "docs/config-catalog.zh.md",
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/persistence-catalog.i18n.yaml",
+        "docs/persistence-catalog.md",
+        "docs/persistence-catalog.zh.md",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.i18n.yaml",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.md",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.schema.json",
+        "docs/persistence-changes/2026-10-21-external-turn-ownership.zh.md",
+        "docs/persistence-changes/historical-formats/README.i18n.yaml",
+        "docs/persistence-changes/historical-formats/README.md",
+        "docs/persistence-changes/historical-formats/README.zh.md",
+        "docs/persistence-schema.json",
+        "docs/subsystems/core.i18n.yaml",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "docs/subsystems/session.md",
+        "docs/subsystems/session.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/external-turn-ownership/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/external-turn-ownership/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/external-turn-ownership/guide.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/src/index.ts",
+        "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+        "packages/core/agent/src/runtime-types.ts",
+        "packages/core/agent/src/types.ts",
+        "packages/core/session/src/external-turn.ts",
+        "packages/core/session/src/index.ts",
+        "packages/core/session/src/known-event-types.ts",
+        "packages/core/session/src/repair.ts",
+        "packages/core/session/src/types.ts",
+        "packages/extensions/cordis-client-runner/src/client/slot-catalog.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/workflow/workflow-ptc/src/guest-source.ts",
+        "scripts/type-equiv.manifest.json"
+      ],
+      "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e",
+      "sequence": 43
+    },
+    {
+      "id": "051",
+      "file": "051-external-turn-idle-admission.patch",
+      "category": "lifecycle",
+      "risk": "high",
+      "dependsOn": [
+        "050"
+      ],
+      "removeWhen": "The pinned upstream provides equivalent exclusive idle Host admission, parked failure recovery and cancellation semantics.",
+      "contracts": [
+        "Optional dsh.external-turn-start/v1 capability and start(prepare, execute) exclusively reserve a true idle Agent without synthetic user input or a default model request.",
+        "Preparation and execution share the running phase, cancellation signal and whenIdle settlement. Existing ownership, open turns, maintenance and queued input refuse without mutations.",
+        "Host admission records the exact detached owner before execution; model or tool effects require its durable flush and independent current authority.",
+        "Failures preserve owned turns for explicit recovery. Failed unowned ending writes preserve the open turn, report both errors and park queued input. Disposal does not release queued human work.",
+        "Actual built Loader subprocess SIGKILL before and after ownership verifies persisted JSONL repair and same-turn recovery; no Session event format changes."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Host integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained SDK 570ad603; parent reviewed source and executed 38 related tests plus one disposal test on Node 26/22, real built Loader SIGKILL and TypeScript SDK external-turn snapshot replay. No upstream submission receipt."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/external-turn-idle-start.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/architecture.i18n.yaml",
+        "docs/architecture.md",
+        "docs/architecture.zh.md",
+        "docs/event-producer-consumer.md",
+        "docs/event-producer-consumer.zh.md",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/package.json",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts",
+        "packages/core/agent-loop/tests/external-turn-idle-start.spec.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/idle-driver.ts",
+        "packages/core/agent/README.i18n.yaml",
+        "packages/core/agent/README.md",
+        "packages/core/agent/README.zh.md",
+        "packages/core/agent/src/runtime-types.ts",
+        "pnpm-lock.yaml"
+      ],
+      "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e",
+      "sequence": 44
+    },
+    {
+      "id": "052",
+      "file": "052-node-only-primary-runtime.patch",
+      "category": "packaging",
+      "risk": "medium",
+      "dependsOn": [
+        "031",
+        "051"
+      ],
+      "removeWhen": "The pinned upstream supports explicit Node-only primary resources, optional Python result paths and equivalent native payload verification.",
+      "contracts": [
+        "schemaVersion 2 declares Node-only metadata and rejects Python fields, distributions, legacy components and missing Node. Existing Python payload formats remain supported.",
+        "Explicit --node-only preparation skips Python archives and wheels; incompatible Python-only and Node-only options fail before output mutation. Desktop defaults retain Python pending Office authoring parity.",
+        "Workspace dependency installation and real Cordis tool execution return only declared runtime paths, preserve environment, validate supplied files, reuse offline resources and unregister on disposal.",
+        "Native payload smoke runs in its own directory and checks exact Node/pnpm versions, avoiding unrelated project package-manager selection. Missing Python cannot silently pass the existing Office authoring smoke."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tool-workspace-dependencies",
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Node runtime integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source 594077b7; 113 affected cases passed each Node 26.5/22.19, including actual Cordis execution; latest affected modules and output snapshots passed, native artifacts and aggregate checks passed. Real macOS arm64 Node24/pnpm11 resource preparation, offline install and separate PID execution passed with PATH=/nonexistent. Office authoring and Electron not accepted."
+      },
+      "verification": {
+        "hostTests": [
+          "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+          "packages/skill/tool-workspace-dependencies/tests/primary-runtime-copy.spec.ts",
+          "scripts/primary-runtime/prepare.spec.ts",
+          "scripts/build-exe-for-python-sdk-resources.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "apps/desktop/scripts/prepare-primary-runtime.ts",
+        "apps/desktop/scripts/smoke-runtime.ts",
+        "docs/subsystems/skills.i18n.yaml",
+        "docs/subsystems/skills.md",
+        "docs/subsystems/skills.zh.md",
+        "docs/tool-catalog.i18n.yaml",
+        "docs/tool-catalog.md",
+        "docs/tool-catalog.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md",
+        "packages/skill/tool-workspace-dependencies/README.i18n.yaml",
+        "packages/skill/tool-workspace-dependencies/README.md",
+        "packages/skill/tool-workspace-dependencies/README.zh.md",
+        "packages/skill/tool-workspace-dependencies/src/index.ts",
+        "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+        "scripts/build-exe-for-python-sdk-resources.spec.ts",
+        "scripts/primary-runtime/prepare.spec.ts",
+        "scripts/primary-runtime/prepare.ts"
+      ],
+      "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee",
+      "sequence": 45
+    },
+    {
+      "id": "053",
+      "file": "053-node-office-authoring.patch",
+      "category": "packaging",
+      "risk": "medium",
+      "dependsOn": [
+        "050",
+        "051",
+        "052"
+      ],
+      "removeWhen": "The pinned upstream supplies Node Office authoring resources and equivalent Desktop integration and verification.",
+      "contracts": [
+        "Desktop prepares and requires Node-only Office authoring, without Python resources; other SDK carriers retain explicit Python workflows. All seven skills and four Node authoring bodies remain progressively loaded.",
+        "The relocatable module contains document, spreadsheet, presentation, data-analysis and XML/ZIP libraries with dependency notices. Its SHA-256 binds runtime metadata; resolve, install and reuse reject missing or corrupted modules.",
+        "OOXML editing preserves every untouched file part byte; callers maintain relationships, content types, revisions and formula caches. Input snapshots, bounded decompression and CRC validation reject malformed or oversized archives before publication.",
+        "Actual packaged Node creates, edits and reopens DOCX/XLSX/PPTX with styles, comments, formulas, charts, embedded workbooks and notes. Existing CLI conversion, rendering and recalculation remain available."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-skill-office",
+        "@deepseek-ai/dsh-tool-workspace-dependencies",
+        "@deepseek-ai/dsh-desktop-host",
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Node runtime integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source c7e43983; six affected modules 166 cases passed each Node26/22, expanded skill resource cases passed; real locked Node24 offline resources install/cold resolve and three-format editing passed with PATH=/nonexistent. Seven native LibreOffice operations passed on macOS arm64. Full Electron and other-platform acceptance remain separate."
+      },
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/office.spec.ts",
+          "packages/skill/skill-office/tests/office-package.spec.ts",
+          "packages/skill/skill-office/tests/skill-office.spec.ts",
+          "packages/skill/skill-office/tests/progressive-loading.spec.ts",
+          "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+          "scripts/primary-runtime/prepare.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "THIRD_PARTY_NOTICES.md",
+        "apps/desktop-host/src/office.ts",
+        "apps/desktop-host/tests/office.spec.ts",
+        "apps/desktop/scripts/prepare-primary-runtime.ts",
+        "apps/desktop/scripts/smoke-runtime.ts",
+        "apps/desktop/tests/fixtures/office-conversion-inputs.mjs",
+        "docs/config-catalog.md",
+        "docs/config-catalog.zh.md",
+        "docs/subsystems/skills.i18n.yaml",
+        "docs/subsystems/skills.md",
+        "docs/subsystems/skills.zh.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md",
+        "docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md",
+        "packages/skill/skill-office/README.i18n.yaml",
+        "packages/skill/skill-office/README.md",
+        "packages/skill/skill-office/README.zh.md",
+        "packages/skill/skill-office/assets/office-docx/SKILL.node.md",
+        "packages/skill/skill-office/assets/office-pptx/SKILL.node.md",
+        "packages/skill/skill-office/assets/office-recalculate/SKILL.node.md",
+        "packages/skill/skill-office/assets/office-xlsx/SKILL.node.md",
+        "packages/skill/skill-office/package.json",
+        "packages/skill/skill-office/src/authoring.ts",
+        "packages/skill/skill-office/src/index.ts",
+        "packages/skill/skill-office/src/office-package.ts",
+        "packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap",
+        "packages/skill/skill-office/tests/office-package.spec.ts",
+        "packages/skill/skill-office/tests/progressive-loading.spec.ts",
+        "packages/skill/skill-office/tests/skill-office.spec.ts",
+        "packages/skill/skill-office/tsdown.config.ts",
+        "packages/skill/tool-workspace-dependencies/README.i18n.yaml",
+        "packages/skill/tool-workspace-dependencies/README.md",
+        "packages/skill/tool-workspace-dependencies/README.zh.md",
+        "packages/skill/tool-workspace-dependencies/src/index.ts",
+        "packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts",
+        "pnpm-lock.yaml",
+        "scripts/primary-runtime/prepare.ts"
+      ],
+      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a",
+      "sequence": 46
+    },
+    {
+      "id": "054",
+      "file": "054-scoped-external-instructions.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "051",
+        "053"
+      ],
+      "contracts": [
+        "External filesystem observations use Agent-scoped dispatch and do not broadcast across presets.",
+        "Successful observed paths use existing discovery, limits, digest deduplication and pre-step composition.",
+        "Open steps defer projection until durable step/end; execution owners replay committed observations after restart."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent-instructions",
+        "@deepseek-ai/dsh-tool-cordis"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source a0272d44: 183 instruction tests passed, authored headless external-read Session refreshed and replayed keylessly; scoped Native packed Host proof passed baseline/next-request/cold-process refresh. Controlled model HTTP; no live provider quality claim."
+      },
+      "removeWhen": "Upstream offers equivalent Agent-scoped external filesystem observation with durable step projection and recorded-session coverage.",
+      "verification": {
+        "hostTests": [
+          "packages/context/agent-instructions/tests/agent-instructions.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "packages/context/agent-instructions/README.i18n.yaml",
+        "packages/context/agent-instructions/README.md",
+        "packages/context/agent-instructions/README.zh.md",
+        "packages/context/agent-instructions/package.json",
+        "packages/context/agent-instructions/src/index.ts",
+        "packages/context/agent-instructions/tests/agent-instructions.spec.ts",
+        "packages/context/agent-instructions/tsconfig.json",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "pnpm-lock.yaml",
+        "scripts/gen-cordis-catalog.ts",
+        "snapshots/session/agent-instructions-external/cordis.snapshot.yml",
+        "snapshots/session/agent-instructions-external/cordis.yml",
+        "snapshots/session/agent-instructions-external/observer.ts",
+        "snapshots/session/agent-instructions-external/replay.override.json",
+        "snapshots/session/agent-instructions-external/session.v4.jsonl",
+        "snapshots/session/agent-instructions-external/snapshot.yml",
+        "snapshots/session/agent-instructions-external/system-prompt.expected.md",
+        "snapshots/session/agent-instructions-external/tool-schemas.expected.json",
+        "snapshots/session/agent-instructions-external/workspace/.agents/AGENTS.md",
+        "snapshots/session/agent-instructions-external/workspace/.dsh-project",
+        "snapshots/session/agent-instructions-external/workspace/AGENTS.canonical.md",
+        "snapshots/session/agent-instructions-external/workspace/AGENTS.md",
+        "snapshots/session/agent-instructions-external/workspace/nested/AGENTS.canonical.md",
+        "snapshots/session/agent-instructions-external/workspace/nested/AGENTS.md",
+        "snapshots/session/agent-instructions-external/workspace/nested/task.txt"
+      ],
+      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2",
+      "sequence": 47
+    },
+    {
+      "id": "055",
+      "file": "055-tool-dispatch-guard.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "045",
+        "049"
+      ],
+      "contracts": [
+        "A dispatch guard runs after asynchronous around-dispatch wrappers and immediately before a tool body starts.",
+        "A dispatch denial leaves the body uninvoked and returns an ordinary tool error.",
+        "Native checks its original intent and lease again at that final boundary."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained source 786f1547: 142 ToolRuntime checks passed, including stale authority during an asynchronous around-dispatch wait."
+      },
+      "removeWhen": "Upstream ToolRuntime provides an equivalent final pre-body dispatch authority check.",
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/tools.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/tools.spec.ts"
+      ],
+      "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4",
+      "sequence": 48
+    },
+    {
+      "id": "056",
+      "file": "056-caller-result-retention.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "049",
+        "055"
+      ],
+      "contracts": [
+        "A trusted caller may negotiate caller/v1 ownership of model-result budgeting and overflow retrieval.",
+        "Tool authorization and all post-execution policy transformations still settle before output is returned.",
+        "Host spill retention preserves the complete accepted observation for caller-owned executions; default executions retain existing spill behavior."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools",
+        "@deepseek-ai/dsh-spill-policy"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Targeted tools and spill-policy suites: 171 checks passed, including post-policy redaction, denial and unsupported retention contracts."
+      },
+      "removeWhen": "Upstream provides an execution-local caller-owned retention contract that preserves post-policy output.",
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/tools.spec.ts",
+          "packages/spill/spill-policy/tests/spill-policy.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/core/tools/src/index.ts",
+        "packages/spill/spill-policy/src/index.ts",
+        "packages/spill/spill-policy/tests/spill-policy.spec.ts"
+      ],
+      "sha256": "41f7b0eeb18f3201193b94df2e157c8a6344cbc2fa57d321924f86ab16e93f37",
+      "sequence": 49
+    },
+    {
+      "id": "057",
+      "file": "057-runtime-chat-presentation.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "049"
+      ],
+      "contracts": [
+        "Runtime presentation renders within the resident Chat viewport and receives its resident fallback for unsupported sessions.",
+        "Composer, approvals, history loading and viewport scroll remain owned by the existing Chat frame.",
+        "Presentation receives no tool execution or ledger mutation authority."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-chat"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Chat package TypeScript check and existing 14 apply/injection regression checks pass. New presenter requires real Studio integration acceptance."
+      },
+      "removeWhen": "Upstream exposes a runtime-specific conversation presenter with resident Chat fallback.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-chat/tests/apply-inject.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-chat/src/client/apply.ts",
+        "packages/client/ui-chat/src/client/chat/ChatView.tsx",
+        "packages/client/ui-chat/src/client/contract/slots.ts"
+      ],
+      "sha256": "00475d007b7d10d76b0044f2a653af083e3f76d207184002312557a6cd0d61fb",
+      "sequence": 50
+    },
+    {
+      "id": "058",
+      "file": "058-chat-table-layout-boundary.patch",
+      "category": "general-fix",
+      "risk": "low",
+      "dependsOn": [
+        "057"
+      ],
+      "contracts": [
+        "The resident scroll viewport supplies the Markdown table layout boundary for width expansion and horizontal scrolling.",
+        "Presentation receives no execution authority or changes to composer ownership."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-chat"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "The Chat-owned scroll viewport is the explicit table width boundary; source and packaged UI checks are recorded with the integration evidence."
+      },
+      "removeWhen": "Upstream publishes an equivalent explicit Markdown layout boundary.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-chat/tests/apply-inject.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-chat/src/client/chat/ChatView.tsx"
+      ],
+      "sha256": "54372264c65e91607ba3b0ab9a6368e9047264dd9e41e81a7939db8ab2fd8216",
+      "sequence": 51
+    },
+    {
+      "id": "059",
+      "file": "059-chat-status-presentation-seat.patch",
+      "category": "general-fix",
+      "risk": "medium",
+      "dependsOn": [
+        "058"
+      ],
+      "contracts": [
+        "The resident Chat frame provides an explicit viewport-wide DOM seat and bounded layout mode callback for an optional conversation status presenter.",
+        "The status presenter shares the primary conversation data owner and receives no session, tool or ledger execution authority.",
+        "Narrow auto presentation is a capsule; expanded wide presentation reserves horizontal space at the 1280px conversation boundary."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-chat"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "The Chat package type check passes; targeted Host injection and rendered integration checks are recorded with the status presentation evidence."
+      },
+      "removeWhen": "Upstream provides a viewport status presentation seat with a bounded layout contract.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-chat/tests/apply-inject.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-chat/src/client/chat/ChatView.module.css",
+        "packages/client/ui-chat/src/client/chat/ChatView.tsx",
+        "packages/client/ui-chat/src/client/contract/slots.ts"
+      ],
+      "sha256": "13f6b4128ab27fddd72ab856fd1605a8d5709ecab0e1ccd061f64ef2c6d23986",
+      "sequence": 52
+    },
+    {
+      "id": "060",
+      "file": "060-conversation-status-todo-owner.patch",
+      "category": "general-fix",
+      "risk": "low",
+      "dependsOn": [
+        "059"
+      ],
+      "contracts": [
+        "An active viewport task-status presenter owns the task summary for its conversation, suppressing the duplicate composer todo strip.",
+        "The underlying todo projection and tool execution remain unchanged; conversations without a status presenter keep their resident todo dock."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "The nine existing Todo panel checks pass; a rendered Native conversation verifies the dock is hidden while its viewport status panel is present."
+      },
+      "removeWhen": "Upstream coordinates task-status ownership between the viewport presenter and the resident todo dock.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-conversation/tests/todo-panel.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css",
+        "packages/client/ui-conversation/src/client/skeleton/TodoPanel.tsx"
+      ],
+      "sha256": "9f91ca15990e72774be479ba8b01f0a707e6825007ea80d95f94ec4b490a8ddf",
+      "sequence": 53
+    },
+    {
+      "id": "061",
+      "file": "061-tool-preflight-defer.patch",
+      "category": "general-fix",
+      "risk": "high",
+      "dependsOn": [
+        "049",
+        "054",
+        "056",
+        "057"
+      ],
+      "contracts": [
+        "Only a caller opting into dsh.tool-preflight-defer/v1 may receive a pending preflight control value. It passes the registered output schema, renderer and post-policy without dispatching a tool.",
+        "Deferred controls do not grant permission. A later normal invocation runs current guards and the complete execution pipeline; cancellation and opted-out callers fail closed."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools",
+        "@deepseek-ai/dsh-tool-cordis",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-agent-instructions"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "356 focused maintained-source checks and Host/Client aggregate type checks pass. Actual SDK Loader verifies delayed approval beyond the effect budget, one write, denial, guard rejection and post-policy block."
+      },
+      "removeWhen": "Upstream offers a negotiated preflight suspension contract compatible with durable external runtimes.",
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/preflight-defer.spec.ts",
+          "packages/context/agent-instructions/tests/agent-instructions.spec.ts",
+          "packages/client/ui-chat/tests/chat-view.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "docs/subsystems/tools.md",
+        "docs/subsystems/tools.zh.md",
+        "packages/client/ui-chat/tests/chat-view.client.spec.tsx",
+        "packages/context/agent-instructions/tests/agent-instructions.spec.ts",
+        "packages/core/tools/README.i18n.yaml",
+        "packages/core/tools/README.md",
+        "packages/core/tools/README.zh.md",
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/tests/preflight-defer.spec.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts"
+      ],
+      "sha256": "41956a490e4625f7ecf66edfa0a18d9a5aef6124e13fa8044d6f751a7c67a0ee",
+      "sequence": 54
+    },
+    {
+      "id": "062",
+      "file": "062-conversation-shell-scroll-owner.patch",
+      "category": "general-fix",
+      "risk": "low",
+      "dependsOn": [
+        "044",
+        "059",
+        "060"
+      ],
+      "contracts": [
+        "The active conversation shell clips overflow without becoming a scroll container; transcript and viewer scrollports retain ownership.",
+        "Focusing and closing a narrow sidebar must not horizontally displace the conversation beneath navigation."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "12 focused conversation assembly and layout checks pass. Narrow viewport browser acceptance is recorded separately."
+      },
+      "removeWhen": "Upstream prevents focus-induced horizontal scrolling of the outer conversation shell.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-conversation/tests/assembly-surfaces.client.spec.tsx",
+          "packages/client/ui-conversation/tests/control-row-layout.client.spec.ts",
+          "packages/client/ui-conversation/tests/width-handle-styles.client.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/client/ui-conversation/README.i18n.yaml",
+        "packages/client/ui-conversation/README.md",
+        "packages/client/ui-conversation/README.zh.md",
+        "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css"
+      ],
+      "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9",
+      "sequence": 55
+    },
+    {
+      "id": "063",
+      "file": "063-tool-preflight-contract-type.patch",
+      "category": "general-fix",
+      "risk": "low",
+      "dependsOn": [
+        "061"
+      ],
+      "contracts": [
+        "The negotiated preflight defer contract has an explicit public type, so clean host builds can generate the service type model.",
+        "The type-only change preserves the existing runtime contract and authorization behavior."
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-tools"
+      ],
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "maintainerRole": "Studio Native Harness integration owner",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Fresh GitHub host bundle exposed a missing public type annotation; the exported literal contract type preserves the existing value."
+      },
+      "removeWhen": "Upstream provides the explicit type for the negotiated preflight defer contract.",
+      "verification": {
+        "hostTests": [
+          "packages/core/tools/tests/preflight-defer.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "affectedFiles": [
+        "packages/core/tools/src/index.ts"
+      ],
+      "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613",
+      "sequence": 56
+    },
+    {
+      "id": "064",
+      "file": "064-macos-studio-identity.patch",
       "category": "packaging",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1",
@@ -1956,11 +2910,11 @@
           "macos"
         ]
       },
-      "sequence": 39
+      "sequence": 57
     },
     {
-      "id": "047",
-      "file": "047-native-schedule-manager.patch",
+      "id": "065",
+      "file": "065-native-schedule-manager.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "session-contract",
       "risk": "medium",
@@ -1981,7 +2935,8 @@
         "evidence": "Local native component and tool regressions; no upstream submission or merge receipt."
       },
       "dependsOn": [
-        "038"
+        "038",
+        "061"
       ],
       "verification": {
         "hostTests": [
@@ -2057,12 +3012,12 @@
         "packages/schedule/tool-schedule/src/index.ts",
         "packages/schedule/tool-schedule/tests/tool-schedule.spec.ts"
       ],
-      "sha256": "84334859945a32ba0b6ba5b7bcbb7bcd119c93a3ce3b39f61676c2a35f6b25be",
-      "sequence": 40
+      "sha256": "fa2dac9916d7c56d95f42103a232caa110d6f86a96f01b0687dae4ecee6a99ac",
+      "sequence": 58
     },
     {
-      "id": "048",
-      "file": "048-isolated-native-browser.patch",
+      "id": "066",
+      "file": "066-isolated-native-browser.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "session-contract",
       "risk": "medium",
@@ -2080,7 +3035,9 @@
         "state": "not-submitted",
         "evidence": "Local native component and tool regressions; no upstream submission or merge receipt."
       },
-      "dependsOn": [],
+      "dependsOn": [
+        "054"
+      ],
       "verification": {
         "hostTests": [
           "packages/client/ui-sidebar-browser/tests/apply.client.spec.ts",
@@ -2120,12 +3077,12 @@
         "packages/client/ui-sidebar-browser/tsconfig.client.json",
         "pnpm-lock.yaml"
       ],
-      "sha256": "a819e8bbd8378c5d722930498ac49381fb3efcb1f13c895ad91f933bdd672611",
-      "sequence": 41
+      "sha256": "894d09790d6ecfe345dfdad52e067819e6b303eb90e20fc381053867b6f2f6f5",
+      "sequence": 59
     },
     {
-      "id": "049",
-      "file": "049-flock-libc-report-network.patch",
+      "id": "067",
+      "file": "067-flock-libc-report-network.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "general-fix",
       "risk": "low",
@@ -2163,11 +3120,11 @@
         "native/system/test/flock.test.js"
       ],
       "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05",
-      "sequence": 42
+      "sequence": 60
     },
     {
-      "id": "050",
-      "file": "050-maintenance-source-validation.patch",
+      "id": "068",
+      "file": "068-maintenance-source-validation.patch",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "category": "generated-docs",
       "risk": "low",
@@ -2193,7 +3150,8 @@
         "038",
         "043",
         "045",
-        "047"
+        "063",
+        "065"
       ],
       "verification": {
         "hostTests": [
@@ -2206,28 +3164,18 @@
         ]
       },
       "affectedFiles": [
-        "docs/subsystems/approval.md",
-        "docs/subsystems/approval.zh.md",
-        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml",
-        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md",
-        "docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md",
-        "packages/client/ui-permission-presets/README.i18n.yaml",
         "packages/client/ui-permission-presets/src/client/PermissionSelect.tsx",
         "packages/client/ui-permission-presets/tests/permission-select.client.spec.tsx",
         "packages/core/tools/src/index.ts",
-        "packages/experimental/inspector/README.i18n.yaml",
-        "packages/extensions/cordis-client-runner/src/client/slot-catalog.ts",
-        "packages/extensions/tool-cordis/src/api-catalog.ts",
-        "packages/interaction/user-approval/README.i18n.yaml",
         "scripts/verify-repository-references.spec.ts",
         "scripts/verify-repository-references.ts"
       ],
-      "sha256": "03f58fa416958357f5b22aa8b32509704028f5f582a31103b0ef13839c9e64f8",
-      "sequence": 43
+      "sha256": "3326f9d15bc1f6b8e67a0014a1a5cb7974d1efd5ca9a0bb9a98a906cb131bbce",
+      "sequence": 61
     },
     {
-      "id": "051",
-      "file": "051-desktop-cli-product-name.patch",
+      "id": "069",
+      "file": "069-desktop-cli-product-name.patch",
       "category": "packaging",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
       "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973",
@@ -2264,13 +3212,13 @@
           "windows"
         ]
       },
-      "sequence": 44
+      "sequence": 62
     }
   ],
-  "patchedTree": "0bf2ad7f595839da9fa8352acf21df3dc56b0784",
-  "patchedSourceSha256": "ca5c0a192fc3903c1b3866ad46a25ca463c828832f30cecdb3035e17a7290386",
+  "patchedTree": "8064a20819a8ae10cfcd6e50b831efc1b79bad8b",
+  "patchedSourceSha256": "76280203b97aee62ad0ebb1c8c5e1c96a08925ed741fa99d3fa49b042131401a",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "98f447d58dd0669ed69a86a7077362a9ccde073df795e2d7869a011871669125"
+    "sha256": "a97b431a97405753e93d98967389e27fb5efff2e55374b1932475e53b2a79997"
   }
 }

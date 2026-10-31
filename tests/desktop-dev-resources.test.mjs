@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -19,24 +20,50 @@ test('desktop source links reject nested profiles, including paths through direc
   await assert.rejects(assertDesktopDevHome({ source, studio, home: join(alias, 'new-home') }), /outside/);
 });
 
-test('missing Office payload fails before Electron can display a fatal startup dialog', async t => {
+for (const nodeOnly of [false, true]) test(`Desktop checks actual Office assets and declared interpreters (Node-only: ${nodeOnly})`, async t => {
   const source = await mkdtemp(join(tmpdir(), 'studio-desktop-resources-'));
   t.after(() => rm(source, { recursive: true, force: true }));
   const primaryRuntime = join(source, 'runtime/primary-runtime');
   const assets = join(source, 'runtime/office-skills');
   const cli = join(source, 'apps/desktop-host/node_modules/@deepseek-ai/libreoffice-kit/lib/cli.js');
+  const node = join(primaryRuntime, 'dependencies/node/bin', process.platform === 'win32' ? 'node.exe' : 'node');
+  const python = join(primaryRuntime, 'dependencies/python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin/python3']));
   for (const path of [cli, join(dirname(dirname(cli)), 'package.json'),
-    join(primaryRuntime, 'runtime.json'), join(primaryRuntime, 'dependencies/node/bin/node'),
-    join(primaryRuntime, 'dependencies/python/bin/python3'), join(primaryRuntime, 'dependencies/pnpm/bin/pnpm.mjs'),
-    ...['office-docx', 'office-pptx', 'office-xlsx'].map(name => join(assets, name, 'SKILL.md'))]) {
+    node, ...nodeOnly ? [] : [python], join(primaryRuntime, 'dependencies/pnpm/bin/pnpm.mjs'),
+    ...['office', 'office-docx', 'office-pptx', 'office-xlsx', 'office-recalculate', 'office-export-pdf'].map(name => join(assets, name, 'SKILL.md'))]) {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, path.endsWith('package.json') ? '{"name":"@deepseek-ai/libreoffice-kit"}' : 'fixture');
   }
-  await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /check_office.py/);
-  await mkdir(join(assets, 'scripts'));
-  await writeFile(join(assets, 'scripts/check_office.py'), '# fixture');
+  const manifest = { desktopVersion: '1', platform: process.platform, arch: process.arch, node: '24.21.0', pnpm: '11.28.5',
+    officeLibrarySha256: createHash('sha256').update('fixture').digest('hex'),
+    pythonPackages: {}, ...nodeOnly ? { schemaVersion: 2 } : { python: '3.12.14' } };
+  await writeFile(join(primaryRuntime, 'runtime.json'), JSON.stringify(manifest));
+  if (!nodeOnly) {
+    await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /requires Node-only Office/);
+    return;
+  }
+  for (const path of [join(primaryRuntime, 'dependencies/node/node_modules/office.mjs'),
+    ...['office-docx', 'office-pptx', 'office-xlsx', 'office-recalculate'].map(name => join(assets, name, 'SKILL.node.md'))]) {
+    await mkdir(dirname(path), { recursive: true }); await writeFile(path, 'fixture');
+  }
+  await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /office-render/);
+  await mkdir(join(assets, 'office-render'));
+  await writeFile(join(assets, 'office-render/SKILL.md'), '# fixture');
   await assertDesktopDevResources({ source, primaryRuntime });
-  await rm(join(primaryRuntime, 'dependencies/node/bin/node'));
+  const library = join(primaryRuntime, 'dependencies/node/node_modules/office.mjs');
+  await writeFile(library, 'corrupt');
+  await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /checksum mismatch/);
+  await writeFile(library, 'fixture');
+  if (nodeOnly) {
+    await writeFile(join(primaryRuntime, 'runtime.json'), JSON.stringify({ ...manifest, python: '3.12.14' }));
+    await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /no Python metadata/);
+    await writeFile(join(primaryRuntime, 'runtime.json'), JSON.stringify(manifest));
+  } else {
+    await rm(python);
+    await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /dependencies\/python/);
+    await writeFile(python, 'fixture');
+  }
+  await rm(node);
   await assert.rejects(assertDesktopDevResources({ source, primaryRuntime }), /dependencies\/node\/bin\/node/);
 });
 
