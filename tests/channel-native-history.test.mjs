@@ -62,3 +62,36 @@ test('legacy request lookup finds an inherited native header on an earlier histo
   assert.equal(result.at(-1).data.turn, 2);
   assert.ok(pages.length >= 3);
 });
+
+test('a failed turn that recorded no user message surfaces the recorded failure code', async () => {
+  const events = [];
+  const controller = {
+    projections: async () => ({ asOfSeq: events.length - 1 }),
+    create: async () => {}, selectModel: async () => {},
+    resolveAgent: async () => ({ agent: { whenIdle: async () => {}, cancel() {} } }),
+    prompt: async () => {
+      events.push({ type: 'turn/start', data: { turn: 1 }, seq: events.length });
+      events.push({ type: 'turn/end', data: { turn: 1, reason: { kind: 'failed', error: { code: 'MANAGED_RESOURCE_SERVER_UNAVAILABLE', message: 'resource server unavailable' } } }, seq: events.length });
+    },
+    page: async () => ({ records: events.map(event => ({ type: 'event', event })) }),
+  };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} }, approval: { setPolicy() {} } };
+  const run = createNativeAutomationRunner({ reuseSession: true, getService: name => services[name], admit: async () => ({ presetId: 'frozen-r1' }) });
+  await assert.rejects(run({ agentId: 'agent', sessionId: 'session', occurrenceId: 'failed-turn', input: 'hello' }),
+    { code: 'MANAGED_RESOURCE_SERVER_UNAVAILABLE' });
+});
+
+test('an absent request keeps the missing-request code when the session ended cleanly', async () => {
+  const events = turn(1, 'other-request', 'other answer').map((event, seq) => ({ ...event, seq }));
+  const controller = {
+    projections: async () => ({ asOfSeq: events.length - 1 }),
+    create: async () => {}, selectModel: async () => {},
+    resolveAgent: async () => ({ agent: { whenIdle: async () => {}, cancel() {} } }),
+    prompt: async () => {},
+    page: async () => ({ records: events.map(event => ({ type: 'event', event })) }),
+  };
+  const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} }, approval: { setPolicy() {} } };
+  const run = createNativeAutomationRunner({ reuseSession: true, getService: name => services[name], admit: async () => ({ presetId: 'frozen-r1' }) });
+  await assert.rejects(run({ agentId: 'agent', sessionId: 'session', occurrenceId: 'missing', input: 'hello' }),
+    { code: 'CHANNEL_REQUEST_NOT_FOUND' });
+});

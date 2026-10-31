@@ -66,6 +66,20 @@ test('failed and cancelled runs log a single safe terminal outcome', async t => 
   }
 });
 
+test('a channel failure keeps its own code in the run log', async t => {
+  const logs = [];
+  const { post } = await setup(t, async () => {
+    throw Object.assign(new Error('accepted request absent from native history'), { code: 'CHANNEL_REQUEST_NOT_FOUND' });
+  }, { runLog: entry => logs.push(entry) });
+  const response = await post({ input: 'hello', requestId: 'channel-log', stream: true });
+  const events = readSse(response.body)[Symbol.asyncIterator]();
+  const responded = [];
+  for (let next = await events.next(); !next.done; next = await events.next()) responded.push(next.value);
+  assert.equal(responded.find(event => event.event === 'run.failed').error.code, 'CHANNEL_REQUEST_NOT_FOUND');
+  assert.deepEqual(logs.map(entry => entry.event), ['runtime.run.started', 'runtime.run.failed']);
+  assert.equal(logs[1].code, 'CHANNEL_REQUEST_NOT_FOUND');
+});
+
 test('a failed log sink cannot fail or repeat a successful run', async t => {
   let runs = 0, attempts = 0;
   const { post } = await setup(t, async () => { runs++; return { output: 'ok' }; },

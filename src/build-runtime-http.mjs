@@ -13,7 +13,9 @@ import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachm
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
-const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED)_[A-Z0-9_]{1,80}$/;
+// CHANNEL codes are this host's own uppercase tokens (session and request
+// history); surfacing them keeps run logs identical to the client-facing code.
+const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED|CHANNEL)_[A-Z0-9_]{1,80}$/;
 const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 /** Client-facing codes stay inside the documented families. */
 const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.test(code) ? code : 'RUNTIME_RUN_FAILED');
