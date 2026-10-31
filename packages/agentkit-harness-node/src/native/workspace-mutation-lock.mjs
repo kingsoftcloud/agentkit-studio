@@ -12,6 +12,10 @@ import { openPrivate, privateDirectory, privateFile } from './local-command-stat
 
 export const WORKSPACE_MUTATION_LOCK = 'agentkit.workspace-mutation-lock/v1';
 const failure = code => Object.assign(new Error(code), { code });
+// Keep the native handle strongly reachable even when a caller only uses the
+// returned release function for its side effect. V8 may otherwise collect an
+// unused closure (and its DatabaseSync) while the lock is intentionally held.
+const activeDatabases = new Set();
 
 function canonicalTarget(path) {
   let parent = resolve(path); const missing = [];
@@ -35,7 +39,11 @@ export function acquireWorkspaceMutationLock(path, { timeoutMs = 10000 } = {}) {
   let db;
   try {
     db = new DatabaseSync(filename);
-    db.exec(`PRAGMA busy_timeout=${timeoutMs}; BEGIN IMMEDIATE;`);
+    // BEGIN IMMEDIATE alone does not necessarily acquire a write lock on a
+    // brand-new empty database. Keep a single durable sentinel row so a
+    // second process reliably contends on the same SQLite write transaction.
+    db.exec(`PRAGMA busy_timeout=${timeoutMs}; CREATE TABLE IF NOT EXISTS workspace_lock (id INTEGER PRIMARY KEY CHECK (id = 1)); BEGIN IMMEDIATE; INSERT OR IGNORE INTO workspace_lock (id) VALUES (1);`);
+    activeDatabases.add(db);
   } catch (error) {
     try { db?.close(); } catch {}
     if ([5, 6].includes(error.errcode)) throw failure('workspace_mutation_busy');
@@ -45,7 +53,7 @@ export function acquireWorkspaceMutationLock(path, { timeoutMs = 10000 } = {}) {
   return () => {
     if (released) return;
     released = true;
-    try { db.exec('ROLLBACK'); } finally { db.close(); }
+    try { db.exec('ROLLBACK'); } finally { activeDatabases.delete(db); db.close(); }
   };
 }
 

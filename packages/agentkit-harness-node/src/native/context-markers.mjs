@@ -18,11 +18,11 @@ export function advanceNativeContextMarkerState(previous, record) {
     if (event.kind !== 'context.planned') continue;
     const count = event.payload.compactions;
     if (Number.isSafeInteger(count) && count > adopted) {
-      if (active) { active.marker.status = 'completed'; active.settledSeq = event.seq; active = null; }
+      if (active) { active.marker.status = 'completed'; active.settledSeq = event.seq ?? null; active = null; }
       // Never invent a missing historical start or position.
       adopted = count;
     }
-    if (event.payload.action === 'blocked' && active) { active.marker.status = 'failed'; active.settledSeq = event.seq; active = null; }
+    if (event.payload.action === 'blocked' && active) { active.marker.status = 'failed'; active.settledSeq = event.seq ?? null; active = null; }
     if (event.payload.action === 'compact' && !active && event.eventId) {
       active = { marker: { id: nativeDeliveryId(snapshot.scope, snapshot.runId, `context:${event.eventId}`),
         status: 'running', origin: 'auto', after: { ...anchor } }, settledSeq: null };

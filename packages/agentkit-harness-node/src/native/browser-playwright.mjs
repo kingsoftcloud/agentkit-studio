@@ -930,7 +930,6 @@ export class NativePlaywrightBrowser {
       else signal.addEventListener('abort', onExternal, { once: true });
     }
     const timer = setTimeout(() => controller.abort(), action.timeoutMs);
-    if (typeof timer.unref === 'function') timer.unref();
     const internal = controller.signal;
     const attempt = createBrowserActionAttempt(action);
     let observation, failureCode;

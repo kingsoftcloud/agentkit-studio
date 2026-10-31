@@ -242,9 +242,20 @@ export function createNativeRpcServer({ startup, store, ledger, owner = startup.
       return success(id, { runId, status: 'completed', result: rec.response });
     }
     if (rec.state === 'pending') {
-      let exists = false;
-      try { loadBound(runId); exists = true; } catch (e) { if (e.code !== 'run_not_found') throw e; }
-      if (exists) { drive(runId); return success(id, { runId, status: 'pending' }); }
+      let existing;
+      try { existing = loadBound(runId); } catch (e) { if (e.code !== 'run_not_found') throw e; }
+      if (existing) {
+        // The driver publishes the terminal snapshot and the ledger response
+        // in separate durable writes. A retry can observe that small window;
+        // close it here from the already-terminal run instead of returning a
+        // misleading pending response.
+        if (terminal(existing.snapshot)) {
+          const response = compactResponse(existing.snapshot);
+          try { ledger.complete(ledgerId(requestId), response, key); } catch { /* another driver may have completed it */ }
+          return success(id, { runId, status: 'completed', result: response });
+        }
+        drive(runId); return success(id, { runId, status: 'pending' });
+      }
       // The previous attempt crashed after recording pending but before creating
       // the run (no side effects happened). Fall through to create it now.
     }

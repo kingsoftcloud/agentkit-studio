@@ -5,8 +5,10 @@ interpreter or an execution policy.
 
 Darwin executables dynamically use the operating system's libSystem; no Apple
 runtime library is bundled. Linux executables are built with Alpine GCC 14.2.0
-and statically link musl 1.2.5. The included musl COPYRIGHT is from the upstream
-1.2.5 source release. GCC runtime terms are included for compiler runtime parts:
+and statically link musl 1.2.5. The Linux owner watchdog enforces
+maxProcesses per process group because RLIMIT_NPROC is scoped to the whole real
+user on shared hosts. The included musl COPYRIGHT is from the upstream 1.2.5
+source release. GCC runtime terms are included for compiler runtime parts:
 COPYING3 plus the GCC Runtime Library Exception (COPYING.RUNTIME).
 
 Upstream license sources:

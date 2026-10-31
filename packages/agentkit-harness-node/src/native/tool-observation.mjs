@@ -9,11 +9,13 @@ export function advanceNativeToolObservation(previous, { intents = [], receipts 
     if (intent.kind !== 'tool') continue;
     for (const [index, call] of (intent.payload.calls ?? []).entries()) {
       const old = calls.get(call.callId), same = old?.operationKey === intent.operationKey;
+      const priorUncertain = !same && (old?.priorUncertain === true || old?.receiptStatus === 'uncertain'
+        || old?.resultStatus === 'uncertain' || old?.eventStatus === 'uncertain');
       calls.set(call.callId, same ? { ...old, claimed: intent.status === 'running' ? true : old.claimed }
         : { callId: call.callId, operationKey: intent.operationKey, index,
           claimed: intent.status === 'running' ? true : intent.status === 'prepared' ? false : null,
           preparedSeq: 0, receiptStatus: null, resultStatus: null, eventStatus: null, reconciledStatus: null,
-          notDispatched: old?.notDispatched === true });
+          notDispatched: old?.notDispatched === true, ...(priorUncertain ? { priorUncertain: true } : {}) });
     }
   }
   const byOperation = new Map();
@@ -63,7 +65,7 @@ export function nativeObservedToolStates(observation, snapshot, { driving = fals
       // A durable preflight refusal is not an effect. It can remain waiting
       // only while the Run is open. A later attempt replaces this evidence.
       ?? (result === 'approval_required' ? terminal(snapshot.phase) ? 'not_dispatched' : 'waiting'
-        : call.receiptStatus === 'uncertain' ? 'uncertain'
+          : call.receiptStatus === 'uncertain' || call.priorUncertain ? 'uncertain'
           : terminal(snapshot.phase) && !call.receiptStatus && call.claimed !== null
             ? call.claimed ? 'uncertain' : 'not_dispatched'
             : driving && !call.receiptStatus && snapshot.pendingIntent === call.operationKey

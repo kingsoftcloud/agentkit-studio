@@ -1,7 +1,7 @@
 {
   "name": "@kingsoftcloud/agentkit-harness-core",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.0.3",
+  "private": false,
   "type": "module",
   "description": "Host-independent Native Harness contracts, transitions and durable execution.",
   "exports": {
@@ -79,7 +79,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "dependencies": {
-    "ajv": "8.17.1",
+    "ajv": "8.20.0",
     "ajv-draft-04": "1.0.0",
     "ajv-formats": "3.0.1"
   },
@@ -90,5 +90,17 @@
   "license": "Apache-2.0",
   "engines": {
     "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kingsoftcloud/ksadk-harness.git"
+  },
+  "homepage": "https://github.com/kingsoftcloud/ksadk-harness#readme",
+  "bugs": {
+    "url": "https://github.com/kingsoftcloud/ksadk-harness/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

@@ -1,5 +1,5 @@
 // Node owns the bounded lifetime; a packaged, verified POSIX exec substrate
-// applies exact rlimits and an owner-pipe watchdog. This is a risk control for
+// applies resource controls and an owner-pipe watchdog. This is a risk control for
 // same-container commands, not an OS security sandbox or an execution policy.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
