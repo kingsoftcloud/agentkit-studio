@@ -95,7 +95,19 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
       } finally { signal.removeEventListener('abort', onAbort); }
       await persistCompletedSession(persistence, agent.session, signal);
       let events;
-      if (reuseSession) events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal);
+      if (reuseSession) {
+        try { events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal); }
+        catch (error) {
+          // A turn that fails before DSH persists its user message (admission or
+          // model routing) leaves no request to page back to. Prefer the failure
+          // the turn already recorded over the opaque missing-request code.
+          if (error?.code !== 'CHANNEL_REQUEST_NOT_FOUND') throw error;
+          const tail = await readNativeTailEvents(controller, sessionId, signal);
+          const reason = tail.findLast(item => item.type === 'turn/end')?.data?.reason;
+          if (!reason?.kind || reason.kind === 'completed') throw error;
+          return nativeRunResult(tail, sessionId, startedAt);
+        }
+      }
       else {
         const projection = await controller.projections({ sessionId }, signal);
         const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection?.asOfSeq ?? -1, maxMessages: 200 }, signal);
@@ -129,6 +141,13 @@ function replayNativeRequestFrames(events, onFrame) {
     }
     onFrame({ kind: 'event', value: event });
   }
+}
+
+/** Trailing session events; used when a failed turn recorded no accepted request. */
+async function readNativeTailEvents(controller, sessionId, signal) {
+  const projection = await controller.projections({ sessionId }, signal);
+  const page = await controller.page({ address: { kind: 'session', sessionId }, throughSeq: projection?.asOfSeq ?? -1, maxMessages: 200 }, signal);
+  return (page?.records || []).filter(item => item.type === 'event').map(item => item.event);
 }
 
 function nativeRunResult(events, sessionId, startedAt) {
