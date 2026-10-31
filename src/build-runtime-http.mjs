@@ -13,12 +13,20 @@ import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachm
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const fail = (code, status = 400) => Object.assign(new Error(code), { code, status });
-const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED)_[A-Z0-9_]{1,80}$/;
+// CHANNEL codes are this host's own uppercase tokens (session and request
+// history); surfacing them keeps run logs identical to the client-facing code.
+const CLIENT_ERROR_CODE = /^(?:RUNTIME|RESPONSES|HISTORY|RESOURCE|MODEL|MANAGED|CHANNEL)_[A-Z0-9_]{1,80}$/;
 const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 /** Client-facing codes stay inside the documented families. */
 const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.test(code) ? code : 'RUNTIME_RUN_FAILED');
 /** Diagnostics may carry upstream codes, but only as inert uppercase tokens. */
 const safeDiagnosticCode = code => (typeof code === 'string' && DIAGNOSTIC_CODE.test(code) ? code : 'RUNTIME_SETTLEMENT_FAILED');
+// Managed Responses callers need the failure detail; credentials and control
+// characters never leave the host, and the run log keeps only the code.
+const CREDENTIAL = /(\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]{6,}|\b(?:sk|ak|tok)[-_][A-Za-z0-9_-]{6,}/gi;
+const safeClientMessage = value => (typeof value === 'string'
+  ? value.replace(CREDENTIAL, '$1[REDACTED]').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, 2000)
+  : '');
 /** A request may only select a mode inside the ceiling declared by this runtime. */
 const PERMISSION_MODE_HEADER = 'x-agentkit-permission-mode';
 
@@ -257,10 +265,13 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         catch (settlement) { settlementFailure = settlement; }
       }
       const code = error?.code || 'RUNTIME_RUN_FAILED';
+      // Only the managed Responses stream carries detail; the internal build
+      // endpoints keep the code-only contract (see the credential test).
+      const detail = safeClientMessage(error?.message) === code ? '' : safeClientMessage(error?.message);
       logRun(['RUNTIME_CANCELLED', 'RUNTIME_CLIENT_DISCONNECTED'].includes(code) ? 'runtime.run.cancelled' : 'runtime.run.failed', code,
         settlementFailure ? { settlementCode: settlementFailure?.code || 'RUNTIME_SETTLEMENT_FAILED' } : {});
       if (res.headersSent && !res.destroyed) {
-        if (projection) { projection.fail(code); res.end('data: [DONE]\n\n'); }
+        if (projection) { projection.fail(code, detail); res.end('data: [DONE]\n\n'); }
         else res.end(`event: run.failed\ndata: ${JSON.stringify({ runId, error: { code } })}\n\n`);
       }
       else if (!res.destroyed) json(res, error?.status || 500, action ? { Code: error?.status || 500, ReasonCode: code, Message: code, Action: action,
