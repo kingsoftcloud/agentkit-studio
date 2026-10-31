@@ -16,4 +16,4 @@ if (![NativeKernel, SqliteRunStore, createNativeModelPort, resolveLocalProcessLa
   localOutputPolicy, localEnvironmentPolicy, localResourceSettings, localResourceFacts, workspaceBrowserCapability,
   nativeToolModelGuidance, roleAllocationDefaults, resolveChildCallLimits]
   .every(value => typeof value === 'function')) throw Error('Native package public API is unavailable');
-console.log(`Native package public APIs and ${checked} installed files match their pinned archives.`);
+console.log(`Native package public APIs and ${checked} installed files match their pinned registry releases.`);

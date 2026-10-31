@@ -1,7 +1,7 @@
 {
   "name": "@kingsoftcloud/agentkit-harness-ui",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.0.3",
+  "private": false,
   "type": "module",
   "description": "Reusable React task-process UI for AgentKit Native: an explicitly versioned event protocol, a pure state reducer, and an accessible timeline. No Studio/DSH/Python imports; React is a peer dependency.",
   "exports": {
@@ -82,5 +82,17 @@
     "@shikijs/engine-javascript": "4.0.2",
     "esbuild": "0.27.7",
     "typescript": "6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kingsoftcloud/ksadk-harness.git"
+  },
+  "homepage": "https://github.com/kingsoftcloud/ksadk-harness#readme",
+  "bugs": {
+    "url": "https://github.com/kingsoftcloud/ksadk-harness/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

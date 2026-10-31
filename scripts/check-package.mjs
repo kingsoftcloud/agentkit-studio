@@ -47,6 +47,7 @@ const expected = [
   'node_modules/@kingsoftcloud/agentkit-harness-ui/markdown/dist/THIRD_PARTY_LICENSES.txt',
   'cordis.patch.yml',
   'src/index.mjs', 'src/product.json', 'src/providers/agentkit-harness.mjs', 'dist/client.js',
+  'scripts/native-package-pins.json', 'scripts/native-package-integrity.mjs',
   'src/builtin-skills.mjs', 'src/builtin-skills/platform-resources/SKILL.md', 'src/observability-otel.mjs',
   'dist/native-mcp-client.mjs', 'dist/native-mcp-client.json', 'dist/native-mcp-client.LICENSE.txt',
   'node_modules/@kingsoftcloud/agentkit-harness-node/src/native/python-syntax.mjs',

@@ -1,7 +1,7 @@
 {
   "name": "@kingsoftcloud/agentkit-harness-node",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.0.3",
+  "private": false,
   "type": "module",
   "description": "Standalone Native Harness Node adapters: a durable SQLite run store, a one-request model HTTP port, and a minimal versioned JSON-RPC 2.0 over NDJSON process entry. Reuses the shared Native adapter implementations and externalizes @kingsoftcloud/agentkit-harness-core; depends on no Studio/DSH code at runtime.",
   "exports": {
@@ -135,7 +135,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "dependencies": {
-    "@kingsoftcloud/agentkit-harness-core": "0.0.1",
+    "@kingsoftcloud/agentkit-harness-core": "0.0.3",
     "@astral-sh/ruff-wasm-nodejs": "0.16.8",
     "parse5": "7.3.0",
     "playwright-core": "1.58.2",
@@ -156,6 +156,16 @@
       "src/native/local-process-bin/darwin-x64/launcher",
       "src/native/local-process-bin/linux-arm64/launcher",
       "src/native/local-process-bin/linux-x64/launcher"
-    ]
+    ],
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kingsoftcloud/ksadk-harness.git"
+  },
+  "homepage": "https://github.com/kingsoftcloud/ksadk-harness#readme",
+  "bugs": {
+    "url": "https://github.com/kingsoftcloud/ksadk-harness/issues"
   }
 }

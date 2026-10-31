@@ -12,6 +12,8 @@ import { buildScriptEnvironment } from '@kingsoftcloud/agentkit-harness-node/nat
 import { createNativeConversationCommandControl } from '@kingsoftcloud/agentkit-harness-node/native/conversation-command-control';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const READY_MARKER = 'command-control-target-ready';
+const RUNNING_COMMAND = `printf '${READY_MARKER}\\n'; exec /bin/sleep 60`;
 async function until(predicate, milliseconds = 6000) {
   const end = performance.now() + milliseconds;
   while (performance.now() < end) { const result = predicate(); if (result) return result; await pause(20); }
@@ -22,7 +24,7 @@ async function until(predicate, milliseconds = 6000) {
 // committed launch receipts, so ownedCommandReceipt verifies on settle. The
 // background port returns no observations so the run keeps requesting the model
 // until onCheckpoint pauses after the requested number of launches.
-function harness(t, { backend = 'sandbox/local_process', launches = 2, command = '/bin/sleep 60' } = {}) {
+function harness(t, { backend = 'sandbox/local_process', launches = 2, command = RUNNING_COMMAND } = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'cmd-control-'));
   const workspace = join(root, 'workspace'); mkdirSync(workspace);
   const stateRoot = join(root, 'state');
@@ -58,7 +60,19 @@ function harness(t, { backend = 'sandbox/local_process', launches = 2, command =
     } });
   t.after(async () => { for (const h of handles) { try { await h.kill(); } catch { /* bounded by wallSeconds */ } } store.close?.(); rmSync(root, { recursive: true, force: true }); });
   return { root, workspace, stateRoot, localStore, store, control, kernel, handles, config, snapshot,
-    async run() { kernel.start(snapshot, config); return await kernel.runUntilIdle(scope, 'run'); } };
+    async run() {
+      kernel.start(snapshot, config);
+      const result = await kernel.runUntilIdle(scope, 'run');
+      // The running record precedes launcher initialization. These tests cancel
+      // active commands: wait for output from the real exec target, not a sleep
+      // or an ownership record that cannot prove the target has started yet.
+      if (command === RUNNING_COMMAND) await until(() => handles.every(handle => {
+        const output = handle.readOutput();
+        assert.notEqual(output.status, 'unknown', JSON.stringify(output));
+        return output.status === 'running' && output.stdout.includes(READY_MARKER);
+      }));
+      return result;
+    } };
 }
 
 test('two real local background tasks: only the removed task is canceled, the retained task stays alive', async t => {
