@@ -43,12 +43,8 @@ for (const tool of [false, true]) test(`gateway usage reaches native ${tool ? 't
   }
 });
 
-test('an internal tool loop reports cumulative usage to the native model adapter', async () => {
-  const { frames, traces } = await run({ internalLoop: true });
-  const totals = frames.filter(frame => frame.type === 'usage').map(frame => frame.usage);
-  assert.equal(totals.length, 2);
-  assert.deepEqual(totals[1], { inputTokens: 80, outputTokens: 60, totalTokens: 300, cacheReadTokens: 160, cacheWriteTokens: 0, reasoningTokens: 24 });
-  assert.equal(traces[0].events.filter(event => event.event_type === 'model.usage').length, 2);
+test('a retired internal tool loop cannot fabricate cumulative model usage', async () => {
+  await assert.rejects(run({ internalLoop: true }), { code: 'LOCAL_HARNESS_RETIRED' });
 });
 
 test('missing or malformed upstream usage never creates a synthetic zero reading', async () => {

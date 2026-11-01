@@ -2,8 +2,8 @@
   "schemaVersion": "agentkit.native-registry-pins/v2",
   "packages": {
     "@kingsoftcloud/agentkit-harness-core": {
-      "version": "0.0.5",
-      "integrity": "sha512-dy48Qdhs+KKvtN9p7DlOCUDFTt2C3MU1z0YFMJyuDYsChW6fNkdez6e7ygxD60A5Hp0k9vt822cJcZpelP1kDw==",
+      "version": "0.0.6",
+      "integrity": "sha512-FKrFAm9/WacRgZzxqBUSwKmDzTuw9ZsaoGv8uHGGY/fTSxhYs0sshz2nlGWEiMwZpNa3Ucq/HYhLWM3tl7acJw==",
       "files": {
         "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
         "README.md": "567cb2224f92b015e849a0e160f13413cab4df850860d2cc4c17e49a002e7d96",
@@ -195,7 +195,7 @@
         "dist/workspace-subject.mjs": "52bdbf92fdf365cfbc9d8c6f1aa2cc4d1662135681b062633fb2e2bde9e7a726",
         "dist/workspace-touch.d.mts": "9d640d2c439d97e7154bcbb96fcf1b262d79fe3b9ee2ea678a66e7c2b57e57a9",
         "dist/workspace-touch.mjs": "3b26a6e94ee0431bba94d753dba6393fe780c9493c2d4ffcca7ee3df7585262a",
-        "package.json": "bd7933a7c740013c7f6c080db2daf16f85fd4eb2a78773818323adc45c2f2d44",
+        "package.json": "0471ec7daec1a1980951ba0c57725fb76c2a8ba35c9509cac3faed57e0b23ff1",
         "src/anthropic-context.mts": "2456218a9130df14b0ae791cdca76f04b2a015be717d437140ca54c2b7dfd745",
         "src/artifact-request-capacity.mts": "4bd9f96e817e97bc021a5a83b2b0272cf18f8d623c2a7b69b20869d2ead35f17",
         "src/artifact-runtime.mts": "6a1e07e5e32babd4d38b8bbfe4656b312c9e9c14aa96da62bce62d2b348a8689",
@@ -292,8 +292,8 @@
       }
     },
     "@kingsoftcloud/agentkit-harness-node": {
-      "version": "0.0.5",
-      "integrity": "sha512-83b7Mf7bqVhsWG8jkfsstLUXAQ2V0l+CJHycw8UIjd7tX2TbKjSPPhpdhTpeHtD1rDJH5SYDglZNenFpoueI4w==",
+      "version": "0.0.6",
+      "integrity": "sha512-VWcjZMZIfsJfPfJJahcT/lA4tPTN+eJ2BvbUWW7eHuEST+Do3kSN7Gk3jDdmnYewx6VUBGndTKnY+PKEztqK+w==",
       "files": {
         "LICENSE": "44c198985faea5fecd10afe921c32c354774699b133e16006201c1b8bda6214d",
         "NOTICE": "6e6f41abd590c8acae3df2f55ac74a58e971b5898e567efa9f0437d1d23e2ea5",
@@ -304,8 +304,8 @@
         "dist/native-command-plan.LICENSE.txt": "992ca18528f1fa05e8785984327e89b561cbb90f45089d3a52739212fd4e851b",
         "dist/native-command-plan.json": "b1bf935e85486160113459594ca90d7e0e0d8ded9fd15eac6f95d13e867bed31",
         "dist/native-command-plan.mjs": "4e30dda34d35e7533f2ea0cf1589fa04d65f04f86224b30e460e542c7df7788b",
-        "dist/rpc-entry.mjs": "0e4c136721db724d828ebb21ff9f1941ab766189232c41a4ded2b162ebcd37bd",
-        "package.json": "55bd46c08d7e4dc66cec67e46b7e7169c78c20b362469e987d97e820f0a43ea4",
+        "dist/rpc-entry.mjs": "db03c157a215909071e7d8935b8c3446a3d348a94cfb2182460fa53ee4dd65ee",
+        "package.json": "3ae6402e3dbde70be8ccc029d7f824f57769cb4cf2759bacaa4bb68856244cf0",
         "src/native/a2a-receipt-source.mjs": "ee218b2e73217eae57c4962d8649b6a887f6db728457da6852117e8954a75bb5",
         "src/native/a2a-tools.mjs": "f0e594ea08fe7f30add20eada626c3fc14131fd2afbc5f6276cec188c10f970b",
         "src/native/activity-status.mjs": "5b2ff05c80d9ad54bc91a4cd2d4ac7953eebd2d3eebc33fbb30d99cacb43d4c2",
@@ -369,7 +369,7 @@
         "src/native/local-command-evidence.mjs": "c04429b6496a979a9ccd8df2691b55e7048887929fe3599ab9b764d23ffe86fb",
         "src/native/local-command-policy-worker.mjs": "a28463c45e48822ee4f9e9673f0ea5110b1e0035539fac137023c4a65ab4c0d3",
         "src/native/local-command-policy.mjs": "1399f2cabba002b52c88ce38d916f73ca54880255a09821a9f4361fc619f7566",
-        "src/native/local-command-state.mjs": "42e0ce254b5afb57925e4de5acd8b1eb8fc6b798ead6cc2b615a552174f9b1d9",
+        "src/native/local-command-state.mjs": "fef880f38de67f211e6cdc73603a41d0f87b5fbb3754118bfeb1263167dd71aa",
         "src/native/local-command-tools.mjs": "2bd4350a5bc89079c7f41185e8a02ce2c76e789bfb910e14866a9698558adbbc",
         "src/native/local-execution-profile.mjs": "86d2ba28fadc7609b737f66174e1f2efe36a6afe40a5384611eb6643714d56b1",
         "src/native/local-output-policy.mjs": "3575913a478abf6623d72121fbdfc3ecdaa6faa4a64bddb886fd9dc31de5fdc2",
@@ -450,8 +450,8 @@
       }
     },
     "@kingsoftcloud/agentkit-harness-ui": {
-      "version": "0.0.5",
-      "integrity": "sha512-FN9ZF60Zw0EuLxlLT9wr/KP5I7ZJ5RuQ9e63S/GkG4saqAmSV1Nx3E9HCAq6OKqEj4VTsxnT0pkDP2GP0K38Dg==",
+      "version": "0.0.6",
+      "integrity": "sha512-ZOPsXRIx5DjMLZhG7Qmt/HD1aP377KJF5FTLhByl9PP7VQyxExlzsbEM++B/sycN11luq74jFJZB0UjQt6lGjw==",
       "files": {
         "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
         "NOTICE": "358989ccd1f99d0848f61037b91bcf64b2bfb3688df0cc4579cb323133474b7c",
@@ -464,7 +464,7 @@
         "markdown/source/markdown.css": "f3520d0744ab06513dbda3f6852d5a3f1a24ba583d6b8e471b14358cdb0c9e83",
         "markdown/source/table-factory.mjs": "08a5add66f161524ec9407aa6d2b50969dce25f0cc3e1ee44c1c47b2fa657eb7",
         "markdown/source/table.css": "655a7567e673f3d79e8f5ea3d1a329c1af76d0e0737308e8a0a5c41de45fcfa0",
-        "package.json": "458ad9fbe96d2841027cfeecb7441e4149aaa0705124058c0d063de177541784",
+        "package.json": "ef0ec0060241a4198ad7f919d825339ba16dda00f2e7369594487a07c6ebb941",
         "src/activity-groups.mjs": "b5084a84e2705e91093c8a172f233b396e02c459dd4e7a84b42f624540896ff8",
         "src/browser-response-groups.mjs": "1d96fcea4fc49864cfa0c3cf6a7985de22d4825f86079de133db9ce802992235",
         "src/command-output.mjs": "6557932bc501f123cc3d6985d0762b19a54e7e1e115a911c0b64a566f3802572",

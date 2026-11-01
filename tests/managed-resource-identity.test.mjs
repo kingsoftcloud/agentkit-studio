@@ -32,7 +32,7 @@ function fixture(t, runtime, resolveResourceUser) {
   return { received, read: async options => { for await (const _chunk of adapter.stream(options || prompt)) {} } };
 }
 
-for (const runtime of ['dsh-native', 'harness', 'codex']) {
+for (const runtime of ['dsh-native', 'codex']) {
   test(`${runtime} resource identity comes from the managed session owner, ignoring input user fields`, async t => {
     const lookups = [];
     const f = fixture(t, runtime, async key => { lookups.push(key); return trustedUser; });
@@ -50,7 +50,7 @@ for (const runtime of ['dsh-native', 'harness', 'codex']) {
 }
 
 test('legacy local resources retain the existing explicit user identity when no managed resolver is installed', async t => {
-  const f = fixture(t, 'harness');
+  const f = fixture(t, 'dsh-native');
   await f.read();
   assert.equal(f.received[0].userId, 'forged-body-user');
 });

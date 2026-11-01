@@ -80,7 +80,7 @@ test('platform MCP ID-only binding keeps the existing adapter lookup path', asyn
   assert.equal(ref, 'platform-mcp');
 });
 
-for (const mode of ['revision', 'build']) test(`registered native MCP tool carries its preset ${mode} through the real Host bridge`, async () => {
+for (const mode of ['revision', 'build']) test(`registered DSH MCP tool carries its preset ${mode} through the real Host bridge`, async () => {
   const ctx = new Context(), bridge = mountRuntimeBridge(ctx), registered = [];
   let actual;
   ctx.provide('tools', { register: tool => { registered.push(tool); return () => {}; }, schemas: () => [] });
@@ -93,7 +93,7 @@ for (const mode of ['revision', 'build']) test(`registered native MCP tool carri
   bridge.setResourceToolExecutor(execute);
   try {
     await ctx.plugin({ inject: ['tools', 'skills', 'studioRuntimeBridge'], apply(child) {
-      applyPreset(child, { agentId: 'agent', runtime: 'harness', local: true,
+      applyPreset(child, { agentId: 'agent', runtime: 'dsh-native', local: true,
         ...(mode === 'revision' ? { agentRevision: 7 } : { buildId: 'frozen-build' }),
         toolContracts: [{ executor: 'mcp', mcpResourceId: 'crm', name: 'probe', parameters: { type: 'object', properties: {} } }],
       });

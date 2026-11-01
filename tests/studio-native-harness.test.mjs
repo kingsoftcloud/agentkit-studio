@@ -1074,7 +1074,14 @@ test('production watcher discovers a committed SQLite source and automatically d
   await watcher.close(); await watcher.close();
   const replacement = await h.host.startBackgroundWatcher();
   assert.equal(h.requests.length, 3); assert.equal(h.head().runId, notice.runId);
-  assert.equal(replacement.status().pendingCount, 0, 'terminal delivery is not dispatched again');
+  // A completed Kernel head may precede durable watch-outcome projection.
+  // Let the replacement finish that idempotent projection, with no new model call.
+  const settled = Date.now() + 5000;
+  while (replacement.status().pendingCount !== 0) {
+    assert.ok(Date.now() < settled, 'terminal delivery watch did not settle');
+    assert.equal(h.requests.length, 3, 'recovery must not dispatch the notice again');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
   await replacement.close();
 });
 

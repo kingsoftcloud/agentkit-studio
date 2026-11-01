@@ -29,15 +29,16 @@ async function terminal(operations, id) {
   }
   assert.fail('operation did not finish');
 }
-test('build-operation idempotency distinguishes a changed Host engine for the same Agent revision', async t => {
+test('default and explicit Native build engines share one idempotent operation', async t => {
   const services = await setup(t), record = await services.localStore.create({ name: 'Engine pin', runtimeType: 'harness' });
   const plain = await submitAgentBuild({ ...services, payload: { agentId: record.metadata.id } });
   const old = await terminal(services.operations, plain.operationId); assert.equal(old.status, 'succeeded');
   const nativeBuilder = createStudioBuild({ storeDir: services.root, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
   const modern = await submitAgentBuild({ ...services, build: nativeBuilder, payload: { agentId: record.metadata.id } });
   const current = await terminal(services.operations, modern.operationId); assert.equal(current.status, 'succeeded');
-  assert.notEqual(modern.operationId, plain.operationId); assert.notEqual(current.result.buildId, old.result.buildId);
-  assert.equal((await services.operations.list()).length, 2);
+  assert.equal(modern.operationId, plain.operationId); assert.equal(current.result.buildId, old.result.buildId);
+  assert.throws(() => createStudioBuild({ storeDir: services.root, nativeEngineContract: 'legacy' }), { code: 'STUDIO_BUILD_ENGINE_UNSUPPORTED' });
+  assert.equal((await services.operations.list()).length, 1);
 });
 
 test('requested historical revision freezes its original prompt, model and bindings after later edits', async t => {

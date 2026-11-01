@@ -17,7 +17,7 @@ function fragmentedResponse(value) {
   }));
 }
 
-async function run(fetchImpl, { execution, memory = false } = {}) {
+async function run(fetchImpl, { execution, memory = false, nativeTools = false } = {}) {
   const traces = [];
   const calls = [];
   let writes = 0;
@@ -41,56 +41,28 @@ async function run(fetchImpl, { execution, memory = false } = {}) {
     observability: { syncTrace: async trace => traces.push(trace) },
     fetchImpl,
   });
-  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: '先搜索再回答' })]), response);
+  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: '先搜索再回答', nativeTools })]), response);
   return { output: response.chunks.join(''), traces, calls, writes };
 }
 
-test('CRLF model frames stream reasoning and text while executing fragmented MCP calls', async () => {
+test('CRLF fragmented model frames hand tool calls to DSH without executing a private loop', async () => {
   let requests = 0;
   const result = await run(async () => {
-    requests += 1;
-    return requests === 1
-      ? fragmentedResponse(frame(reply({ reasoning_content: '先核验来源' }, null), '\r\n') + frame(toolCall(1), '\r\n') + 'data: [DONE]\r\n\r\n')
-      : fragmentedResponse(frame(reply({ content: '已检索并确认' }), '\r\n') + 'data: [DONE]\r\n\r\n');
-  });
-  assert.equal(result.calls.length, 1);
-  assert.match(result.output, /先核验来源/);
-  assert.match(result.output, /已检索并确认/);
-  assert.equal(result.traces[0].status, 'completed');
+    requests++;
+    return fragmentedResponse(frame(reply({ content: '我来搜索。', reasoning_content: '先核验来源' }, null), '\r\n') + frame(toolCall(1), '\r\n') + 'data: [DONE]\r\n\r\n');
+  }, { nativeTools: true });
+  assert.equal(requests, 1); assert.equal(result.calls.length, 0);
+  assert.match(result.output, /先核验来源/); assert.match(result.output, /我来搜索/);
+  assert.match(result.output, /tool_call/); assert.match(result.output, /call-1/);
+  assert.equal(result.writes, 0);
 });
 
-test('MCP continuation retains intermediate assistant text and reasoning in model history', async () => {
-  let requests = 0;
-  await run(async (_url, init) => {
-    requests += 1;
-    if (requests === 1) return fragmentedResponse(frame(reply({ content: '我来搜索。', reasoning_content: '需要最新证据' }, null)) + frame(toolCall(1)));
-    const assistant = JSON.parse(init.body).messages.at(-2);
-    assert.equal(assistant.content, '我来搜索。');
-    assert.equal(assistant.reasoning_content, '需要最新证据');
-    return fragmentedResponse(frame(reply({ content: '证据已确认' })));
-  });
-});
-
-test('MCP workflows continue beyond three model rounds to a final answer', async () => {
-  let requests = 0;
-  const result = await run(async () => {
-    requests += 1;
-    return fragmentedResponse(frame(requests <= 3 ? toolCall(requests) : reply({ content: '三次检索后的最终回答' })));
-  });
-  assert.equal(requests, 4);
-  assert.equal(result.calls.length, 3);
-  assert.match(result.output, /三次检索后的最终回答/);
-  assert.equal(result.traces[0].status, 'completed');
-});
-
-test('exhausted Agent execution budget fails instead of completing or writing memory', async () => {
+test('obsolete per-model execution budgets cannot enable a private MCP loop or memory write', async () => {
   let requests = 0;
   const result = await run(async () => fragmentedResponse(frame(toolCall(++requests))), { execution: { maxSteps: 2 }, memory: true });
-  assert.equal(requests, 2);
-  assert.equal(result.traces[0].status, 'failed');
-  assert.match(result.output, /LOCAL_EXECUTION_LIMIT/);
-  assert.doesNotMatch(result.output, /run\.completed/);
-  assert.equal(result.writes, 0);
+  assert.equal(requests, 1); assert.equal(result.calls.length, 0);
+  assert.equal(result.traces[0].status, 'failed'); assert.match(result.output, /LOCAL_HARNESS_RETIRED/);
+  assert.doesNotMatch(result.output, /run\.completed/); assert.equal(result.writes, 0);
 });
 
 for (const [name, stream, code] of [
