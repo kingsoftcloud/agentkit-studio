@@ -171,7 +171,11 @@ fi
 if [[ ! -d node_modules ]]; then
   pnpm install --frozen-lockfile --store-dir "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-pnpm-store"
 fi
-make public-gate
+if [[ -n "${SYS_BUILD_COMMIT:-}" ]]; then
+  bash ci/ezone-native-gate.sh
+else
+  make public-gate
+fi
 
 if [[ "${RUN_REF_PARITY:-0}" == "1" ]]; then
   make ref-parity

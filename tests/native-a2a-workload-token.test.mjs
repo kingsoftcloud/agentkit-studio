@@ -762,8 +762,11 @@ test('token file swapped between read and final return is rejected by verifyPinn
       // On the 3rd guard call (final pre-return authority), swap the file so the
       // subsequent verifyPinned sees a different inode.
       if (pass === 3) {
-        rmSync(p);
-        writeRegular(dir, AUD, b, 0o400);
+        // Allocate the replacement while the original inode still exists.
+        // Unlink+recreate may reuse that inode within one coarse FS clock tick.
+        const replacement = join(dir, 'replacement.jwt');
+        writeFileSync(replacement, b, { mode: 0o400 });
+        renameSync(replacement, p);
       }
       return true;
     },

@@ -1,7 +1,5 @@
-/** Author tests for the A2A question presenter. Not run by the implementer
- *  unless the parent main repo is available (the presenter depends on
- *  packages/agentkit-harness-core which exists in the main repo; this worktree
- *  lacks that dist). Parent runs them in the main repo.
+/** Studio Host integration tests for the A2A question presenter, using the
+ *  installed Native npm contracts.
  *
  *  Covers: input submit (string + object/array/number/bigint/-0 schemas),
  *  empty-string submit, input reject, approval approve/reject, wrong

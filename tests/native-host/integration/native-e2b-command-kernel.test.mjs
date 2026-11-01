@@ -59,7 +59,7 @@ test('real Kernel+SQLite+ToolAuthority: full lifecycle with real ledger authorit
   t.after(() => { rmSync(wsRoot, { recursive: true, force: true }); rmSync(cmdRoot, { recursive: true, force: true }); });
   let e2bStore;
   const owner = {
-    ensure: async () => { e2bStore = new E2BCommandStore({ stateRoot: cmdRoot, workspaceRoot: wsRoot,
+    ensure: async () => { e2bStore = new E2BCommandStore({ stateRoot: join(cmdRoot, 'state'), workspaceRoot: wsRoot,
       sessionId: 'session', transport: fakeTransport('sb-kernel'), sandboxId: 'sb-kernel', authority: () => true });
       return { sandboxId: 'sb-kernel', created: true }; },
     inspect: () => ({ phase: 'ready', sandboxId: 'sb-kernel' }),
@@ -78,7 +78,7 @@ test('real Kernel+SQLite+ToolAuthority: full lifecycle with real ledger authorit
   await worker().runUntilIdle(scope, 'run-1');
 
   const record = store.load(scope, 'run-1');
-  assert.equal(record.snapshot.phase, 'completed', 'run completed: ' + record.snapshot.phase);
+  assert.equal(record.snapshot.phase, 'completed', JSON.stringify({ phase: record.snapshot.phase, interruption: record.snapshot.interruption, receipts: record.receipts }).slice(0, 6000));
   assert.equal(toolCallCount(), 1, 'ToolPort.execute was called exactly once');
   const bgCommands = record.snapshot.backgroundCommands;
   assert.ok(bgCommands.length > 0, 'background command recorded in ledger');
