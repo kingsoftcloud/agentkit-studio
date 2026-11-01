@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { auditFiles, auditPath, auditText } from '../scripts/public-surface-audit.mjs';
 
 const buffer = value => Buffer.from(value, 'utf8');
@@ -77,7 +78,6 @@ test('public examples are checked identically in current and historical package 
     ['https://user:', 'pass@example.com/card'].join(''),
     ['AKIA', 'IOSFODNN7EXAMPLE'].join(''),
     ['metadata.google.', 'internal'].join(''),
-    ['"10.', '5.5.5"'].join(''),
   ].join('\n');
   for (const historical of [false, true]) {
     for (const file of ['tests/example.test.mjs', 'packages/agentkit-harness-node/test/example.test.mjs']) {
@@ -91,6 +91,25 @@ test('public examples are checked identically in current and historical package 
     }
   }
   assert.ok(auditText('src/config.mjs', buffer(examples)).some(hit => hit.kind === 'embedded-url-credential'));
+});
+
+test('network fixture exemptions require the reviewed file and exact value or immutable bytes', () => {
+  const address = ['10', '0', '0', '1'].join('.'), other = ['10', '9', '8', '7'].join('.');
+  const literal = value => buffer(JSON.stringify(value));
+  const privateHit = hits => hits.some(hit => hit.kind === 'private-network-address');
+  for (const historical of [false, true]) {
+    const options = { historical };
+    assert.deepEqual(auditText('tests/native-dsh-web.test.mjs', literal(address), options), []);
+    assert.ok(privateHit(auditText('tests/native-dsh-web.test.mjs', literal(other), options)));
+    assert.ok(privateHit(auditText('tests/other.test.mjs', literal(address), options)));
+    assert.ok(privateHit(auditText('tests/other.test.mjs', buffer(`/${other}/`), options)));
+    assert.ok(privateHit(auditText('tests/native-dsh-web.test.mjs', literal(`https://${address}/`), options)));
+    const path = 'tests/fixtures/a2a-tool-activity-reference.json';
+    const bytes = readFileSync(new URL('../' + path, import.meta.url));
+    assert.deepEqual(auditText(path, bytes, options), []);
+    assert.ok(privateHit(auditText(path, Buffer.concat([bytes, buffer('\n')]), options)));
+    assert.ok(privateHit(auditText('tests/fixtures/other.json', bytes, options)));
+  }
 });
 
 test('public network constants do not conceal private URLs or unknown hosts', () => {

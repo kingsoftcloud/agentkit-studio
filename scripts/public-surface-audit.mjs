@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -55,6 +56,10 @@ export const APPROVED_HISTORICAL_TEST_VALUES = Object.freeze({
   'internal-service-host': new Set([['metadata', 'internal'].join('.')]),
 });
 const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token', 'fixture-secret']);
+// The generated address-classification oracle is immutable, not a blanket
+// exemption for JSON fixtures. Any changed bytes or another path are scanned.
+const NETWORK_ORACLE_PATH = 'tests/fixtures/a2a-tool-activity-reference.json';
+const NETWORK_ORACLE_SHA256 = '67a980c5f98febb3cfb65e8eeb1b66025deae25b1e403452f4fc511829c0ca80';
 
 export function auditPath(file) {
   return FORBIDDEN_PATHS
@@ -66,7 +71,7 @@ function isTestInput(file) {
   return /^(?:tests\/|packages\/[^/]+\/test\/)/.test(file);
 }
 
-function publicExample(name, candidate, text, file) {
+function publicExample(name, candidate, text, file, networkOracle) {
   const value = candidate[0];
   const testInput = isTestInput(file);
   if (name === 'internal-service-host') {
@@ -82,11 +87,10 @@ function publicExample(name, candidate, text, file) {
     // RFC 1918 range bases in SSRF denial tables are public constants.
     if (['10.0.0.0', '172.16.0.0', '192.168.0.0'].includes(address)
       && /^['"]/.test(value) && /['"/]$/.test(value)) return true;
-    // Bare address literals in deterministic network-policy fixtures contain no
-    // endpoint credentials; URLs and private endpoint configurations still fail.
-    if (testInput && /^['"]/.test(value) && /['"]$/.test(value)) return true;
-    if (testInput && value.startsWith('/') && value.endsWith('/')
-      && !/https?:\/$/.test(text.slice(0, candidate.index))) return true;
+    // Only the frozen oracle and this exact DNS-rebinding denial fixture use
+    // reviewed bare address literals. URLs and other test addresses still fail.
+    if (/^['"]/.test(value) && /['"]$/.test(value)
+      && (networkOracle || file === 'tests/native-dsh-web.test.mjs' && address === ['10', '0', '0', '1'].join('.'))) return true;
   }
   if (name === 'embedded-url-credential' && testInput) {
     // Only these short, explicit synthetic user/password pairs are examples.
@@ -109,6 +113,8 @@ export function auditText(file, source, { historical = false } = {}) {
   const text = source[0] === 0xff && source[1] === 0xfe
     ? source.subarray(2).toString('utf16le') : source.toString('utf8');
   const hits = [];
+  const networkOracle = file === NETWORK_ORACLE_PATH
+    && createHash('sha256').update(source).digest('hex') === NETWORK_ORACLE_SHA256;
   for (const { name, pattern } of SENSITIVE_TEXT_PATTERNS) {
     // Deleted documents remain reachable through Git history and receive the
     // same private-material checks as current files.
@@ -116,7 +122,7 @@ export function auditText(file, source, { historical = false } = {}) {
     // later real credential, including in a deleted historical test file.
     const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
     const match = [...text.matchAll(globalPattern)].find(candidate => {
-      if (publicExample(name, candidate, text, file)) return false;
+      if (publicExample(name, candidate, text, file, networkOracle)) return false;
       if (!historical || !/^tests\//.test(file)) return true;
       if (name === 'private-network-address') {
         const address = /\d{1,3}(?:\.\d{1,3}){3}/.exec(candidate[0])?.[0];
