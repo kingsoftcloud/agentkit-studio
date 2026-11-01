@@ -1,5 +1,7 @@
 # AgentKit Studio 生命周期重构实施与验收
 
+本页记录早期生命周期重构的历史证据。当前 Native Harness 已改为消费独立 npm 包，旧 DSH Harness 插件及其验收脚本已删除；当前安装与 Host 恢复以本页末尾的 Native 入口和 CI 的安装后冷启动检查为准，不能把下表旧插件的结果当作当前实现的验收。
+
 阶段 1 已实现并通过适用的本地验收：Host 作用域内的 RuntimeBridge、注册释放、旧 scope 竞争保护、资源适配器关闭、Codex 子进程退出兜底和跨轮工具上下文恢复。完整 Studio 插件在同一个真实 DSH Profile 中连续装卸 20 次；真实配置模型的多轮、工具及取消检查通过，Electron 开发宿主的原生入口和 Host RPC 通过。[阶段 2](refactor-sidebar.md) 的代码移除及本地专项验收已完成，[阶段 3](refactor-client.md) 正在实施，阶段 4、5 尚未实施。桌面安装更新、Windows 原生运行和真实云端尚未验证。
 
 ## 实施基线
@@ -35,7 +37,7 @@ Studio 在独立工作树修改，DSH 在独立 checkout 应用补丁并完成 `
 | App Server 拒绝正常退出 | 通过 | 回归测试验证子进程最终退出，正常退出不留下兜底计时器 |
 | 完整 Studio Web Profile 启动及 Host 操作 | 通过 | 官方 CLI、真实 cookie 认证、打包插件指纹匹配、凭证状态和设置 RPC |
 | DSH retry 及工具续接 | 通过 | 8 个真实 DSH 循环场景，包含取消、失败分类、重试上限及工具不重复执行；provider 受控 |
-| 独立 Harness 包加载、卸载和持久化恢复 | 通过 | 官方 DSH 服务及实际 npm tarball，3 项检查 |
+| 旧 DSH Harness 插件加载、卸载和持久化恢复 | 历史通过 | 当时的官方 DSH 服务及 npm tarball，3 项检查；旧实现现已删除 |
 | Codex 工具展示、JSONL 重开及原生节点组装 | 通过 | 6 组受控工具事件与真实持久化，重开后上下文一致、下一轮不重执行；官方节点组装器通过 |
 | Harness 真实配置模型 | 通过 | 两轮对话、一次工具执行、取消结束和资源释放 |
 | DSH Native 资源桥接真实配置模型 | 通过 | 同上；不扩展为所有 DSH Native 入口的验收 |
@@ -59,7 +61,8 @@ adapter 仍按轮创建 ephemeral thread。这是 DSH 历史重建后的上下�
 make verify-dsh-lifecycle DSH_ROOT="$DSH_ROOT"
 make verify-dsh-live-runtime DSH_ROOT="$DSH_ROOT"
 AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-runtime-retry.mjs
-AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-agentkit-harness-plugin.mjs
+node scripts/verify-native-dependencies.mjs
+node scripts/verify-studio-native-harness.mjs --source "$DSH_ROOT" --mount-host --recovery
 AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-dsh-codex-tool-cards.mjs
 AGENTKIT_DSH_ROOT="$DSH_ROOT" node scripts/verify-studio-plugin-lifecycle.mjs
 make release-check

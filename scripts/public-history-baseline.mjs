@@ -40,6 +40,10 @@ export const PUBLIC_HISTORY_BASELINE = [
       {
         "kind": "private-network-address",
         "line": 152
+      },
+      {
+        "kind": "private-network-address",
+        "line": 144
       }
     ],
     "reason": "Synthetic negative fixtures for rejecting credential-bearing URLs or private network fetches."
@@ -73,6 +77,10 @@ export const PUBLIC_HISTORY_BASELINE = [
       {
         "kind": "private-network-address",
         "line": 152
+      },
+      {
+        "kind": "private-network-address",
+        "line": 144
       }
     ],
     "reason": "Synthetic negative fixtures for rejecting credential-bearing URLs or private network fetches."
@@ -197,5 +205,38 @@ export const PUBLIC_HISTORY_BASELINE = [
       }
     ],
     "reason": "Synthetic negative fixtures for rejecting credential-bearing URLs or private network fetches."
+  },
+  {
+    "blob": "cfbc37009661884522858d8efdbafdabf19bb167",
+    "file": "tests/native-host/integration/native-web-tools.test.mjs",
+    "findings": [
+      {
+        "kind": "private-network-address",
+        "line": 144
+      }
+    ],
+    "reason": "Reviewed synthetic SSRF denial assertion; exact historical blob and path only."
+  },
+  {
+    "blob": "90607adc67c533e0b30ca992b0fa9ceb284b9101",
+    "file": "packages/agentkit-harness-node/test/native-web-tools.test.mjs",
+    "findings": [
+      {
+        "kind": "private-network-address",
+        "line": 144
+      }
+    ],
+    "reason": "Reviewed synthetic SSRF denial assertion; exact historical blob and path only."
+  },
+  {
+    "blob": "43486a433272db376f982ffafdcd10b6d31a70e0",
+    "file": "packages/agentkit-harness/test/native-web-tools.test.mjs",
+    "findings": [
+      {
+        "kind": "private-network-address",
+        "line": 144
+      }
+    ],
+    "reason": "Reviewed synthetic SSRF denial assertion; exact historical blob and path only."
   }
 ];
