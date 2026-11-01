@@ -3213,12 +3213,47 @@
         ]
       },
       "sequence": 62
+    },
+    {
+      "id": "070",
+      "file": "070-shared-zone-test-clock.patch",
+      "category": "general-fix",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "d374594de68f65bc6fdfaa66ff71810eee12000a400d86d2346480f1e814fd9a",
+      "dependsOn": [
+        "065"
+      ],
+      "affectedFiles": [
+        "packages/client/ui-schedule/tests/task-detail.client.spec.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-schedule"
+      ],
+      "contracts": [
+        "Shared-zone selection tests use a fixed instant outside the DST overlap and restore their clock; product scheduling behavior is unchanged."
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Host maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "CI failure reproduced during the North America DST overlap; only the test clock is changed."
+      },
+      "removeWhen": "The maintained baseline pins the shared-zone test clock.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-schedule/tests/task-detail.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 63
     }
   ],
-  "patchedTree": "8064a20819a8ae10cfcd6e50b831efc1b79bad8b",
-  "patchedSourceSha256": "76280203b97aee62ad0ebb1c8c5e1c96a08925ed741fa99d3fa49b042131401a",
+  "patchedTree": "895b6ecdc1e77574b62ad95392b8c19fd58f5ec7",
+  "patchedSourceSha256": "dbbdefbf748898e51f8fad246c6e421540d9553ca3e0fc96123cf0e9498cd044",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "a97b431a97405753e93d98967389e27fb5efff2e55374b1932475e53b2a79997"
+    "sha256": "2ae1186af368dddb82770d18eea3b429a0ceb6dac930175a0ad83fdb19afb88c"
   }
 }
