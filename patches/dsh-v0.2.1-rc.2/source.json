@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "b366fda4a6e014449a973b986e6673f197fe5699",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-master",
-  "tree": "8064a20819a8ae10cfcd6e50b831efc1b79bad8b",
-  "sourceSha256": "76280203b97aee62ad0ebb1c8c5e1c96a08925ed741fa99d3fa49b042131401a",
+  "headCommit": "df1da201ebdc31f578a1734508994b86a0f1caae",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-clock",
+  "tree": "895b6ecdc1e77574b62ad95392b8c19fd58f5ec7",
+  "sourceSha256": "dbbdefbf748898e51f8fad246c6e421540d9553ca3e0fc96123cf0e9498cd044",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "3c70d6b6aead17ce701280545005d372cdcde3774ed66089aa49275becc0b04d"
+    "sha256": "9d49dec0730110a7bc153fc349a18c2e59b7934fb7f05c6db518794da159d06e"
   },
   "commits": [
     {
@@ -382,6 +382,12 @@
       "file": "069-desktop-cli-product-name.patch",
       "commit": "b366fda4a6e014449a973b986e6673f197fe5699",
       "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973"
+    },
+    {
+      "id": "070",
+      "file": "070-shared-zone-test-clock.patch",
+      "commit": "df1da201ebdc31f578a1734508994b86a0f1caae",
+      "sha256": "d374594de68f65bc6fdfaa66ff71810eee12000a400d86d2346480f1e814fd9a"
     }
   ]
 }

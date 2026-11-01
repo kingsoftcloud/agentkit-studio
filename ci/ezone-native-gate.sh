@@ -14,7 +14,7 @@ if [[ -f /etc/alpine-release ]]; then
   release="$(cat /etc/alpine-release)"
   major="${release%%.*}"; minor="${release#*.}"; minor="${minor%%.*}"
   (( major > 3 || major == 3 && minor >= 20 )) || { echo 'Chromium CI requires Alpine 3.20 or newer' >&2; exit 2; }
-  apk add --no-cache chromium procps shadow su-exec
+  apk add --no-cache chromium procps shadow su-exec unzip
 elif [[ -f /etc/debian_version ]]; then
   apt-get update
   apt-get install -y --no-install-recommends procps

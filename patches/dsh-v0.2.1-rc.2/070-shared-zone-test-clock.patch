@@ -1,0 +1,24 @@
+diff --git a/packages/client/ui-schedule/tests/task-detail.client.spec.tsx b/packages/client/ui-schedule/tests/task-detail.client.spec.tsx
+index 76272b62c4ed66b2d40ff9bb10e0a795d4862ad3..d1f7479d19d2b1440388265ffa9370cc2fde275e 100644
+--- a/packages/client/ui-schedule/tests/task-detail.client.spec.tsx
++++ b/packages/client/ui-schedule/tests/task-detail.client.spec.tsx
+@@ -618,8 +618,9 @@ describe('TaskDetail rule menus', () => {
+   })
+ 
+   it('keeps a shared zone row’s own id when a query names several of its ids', () => {
+-    // Three zones hold one label at any instant, so they render as one row, and
+-    // the rule already states one of them, whose id that row preserves.
++    // These zones share one label away from the DST overlap hour. The row
++    // preserves the id already stored by the rule.
++    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-20T12:00:00.000Z'))
+     const restoreSystemZone = pinSystemZone('Asia/Shanghai')
+     const inventory = vi.spyOn(Intl, 'supportedValuesOf')
+       .mockReturnValue(['America/Detroit', 'America/New_York', 'America/Toronto'])
+@@ -642,6 +643,7 @@ describe('TaskDetail rule menus', () => {
+     } finally {
+       inventory.mockRestore()
+       restoreSystemZone()
++      clock.mockRestore()
+     }
+   })
+ 
