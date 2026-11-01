@@ -4,7 +4,7 @@ Studio is installed as a DSH bundle. Its committed `cordis.patch.yml` is the
 reference composition; install the package with the official DSH plugin manager
 rather than copying Host source or creating a separate Session implementation.
 
-The independent Harness package's [README](../packages/agentkit-harness/README.md)
+The independent Harness package's [README](https://github.com/kingsoftcloud/ksadk-harness)
 contains its exports, peer dependencies and real Host verification commands.
 For a complete local Studio environment follow [Getting started](../docs/getting-started.md).
 

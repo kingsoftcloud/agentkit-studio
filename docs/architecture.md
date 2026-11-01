@@ -14,10 +14,6 @@ specific capability policies compose above the general execution mechanisms.
 | `src/` | Studio Host services, API adapters and product plugin |
 | `src/client/` | Browser modules, per-apply composition and DSH UI extensions |
 | `src/providers/` | DSH Native, AgentKit Harness and Codex runtime integration |
-| `packages/agentkit-harness-core/` | Host-independent TypeScript Native contracts, state machine and execution kernel |
-| `packages/agentkit-harness-node/` | Node model, SQLite, workspace and other Native port adapters |
-| `packages/agentkit-harness-ui/` | Task process UI and host integration contracts |
-| `packages/agentkit-harness/` | DSH facade; its standalone package contains only the facade and model adapter |
 | `patches/` | Reviewed changes against the pinned public DSH host |
 | `tests/` | Unit, contracts and packaging regressions |
 | `scripts/` | Development, real Host verification, packaging and release tools |
@@ -40,14 +36,15 @@ projections connect the two stores; recovery retains the original Run identity,
 configuration and effect history. Unknown side effects require reconciliation
 instead of blind replay.
 
-Codex uses its existing child-process and tool adapter. DSH Native and Codex keep
-their execution paths; file delivery continues through DSH Session tools. The
-standalone Harness facade's model adapter remains available for independent DSH
-consumers, but installing that facade alone does not install Studio's Native
-execution engine. See the [package boundary](../packages/agentkit-harness/README.md).
+Core, Node adapters and task UI are consumed from fixed npm releases of
+[ksadk-harness](https://github.com/kingsoftcloud/ksadk-harness). Studio does not
+compile a local copy. Its tests cover installed public contracts and Host/product
+integration; the independent repository owns implementation tests and publishing.
 
-Old Frozen Builds preserve their engine pin. The trusted Host can select `legacy`
-for new admissions without rewriting existing Native Runs.
+Codex and DSH Native keep their own execution paths. The old Harness DSH plugin,
+legacy local tool loop and ambient `legacy` selector have been removed. Old Harness
+Builds without a Native pin are rejected and must be recreated; persisted DSH
+text is never treated as proof of a Native side effect.
 
 Resources and credentials are resolved in the trusted Host. Browser components
 receive capability/status information and typed operations. They do not own model

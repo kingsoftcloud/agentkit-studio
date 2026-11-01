@@ -7,12 +7,11 @@
  * is exposed through the public DSH ToolRegistry: native conversations can
  * inspect catalogs, maintain a reviewed draft and explicitly commit it via
  * the Host API. A selected no-resource dsh-native Studio Agent is admitted
- * through DSH's public agent-preset registry; Harness, Codex and
- * resource-bearing revisions use the Studio provider bridge while DSH keeps
- * ownership of the Session, loop and renderer.
+ * through DSH's public agent-preset registry. Local Harness turns enter the
+ * independent Native kernel; DSH-native and Codex retain their own loops.
+ * DSH owns the Session and renderer for all three.
  */
 import { AGENTKIT_STUDIO_MARK_SVG } from './brand.js';
-import * as AgentKitHarnessPlugin from '../packages/agentkit-harness/src/index.mjs';
 import { installAssistantStartupGuard } from './assistant-permission-model.mjs';
 
 export const name = 'agentkit-studio';
@@ -23,11 +22,6 @@ export async function apply(ctx) {
   // Deny-only gate must precede preset registration and every asynchronous boot step.
   // Receipt verification later replaces this guard without a permission gap.
   installAssistantStartupGuard(ctx, runtimeEnv);
-  // Harness is a separately publishable DSH plugin, even when bundled with
-  // Studio. The DSH host owns its Agent/Session services and its teardown.
-  ctx.inject(['agents', 'sessions', 'llm'], harnessCtx => {
-    harnessCtx.plugin(AgentKitHarnessPlugin);
-  });
   const { mountStudioHost } = await import('./host/bootstrap.mjs');
   await mountStudioHost(ctx, { env: runtimeEnv });
   // Managed runtimes receive a platform observability bundle (Langfuse OTLP

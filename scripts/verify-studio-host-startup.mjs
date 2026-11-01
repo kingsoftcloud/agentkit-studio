@@ -19,7 +19,7 @@ async function fingerprint(directory) {
       else if (/\.(mjs|js)$/.test(name)) names.push(name);
     }
   }
-  await collect('src'); await collect('packages/agentkit-harness/src');
+  await collect('src');
   const hash = createHash('sha256');
   for (const name of names.sort()) hash.update(name).update('\0').update(await readFile(join(directory, name)));
   return hash.digest('hex');

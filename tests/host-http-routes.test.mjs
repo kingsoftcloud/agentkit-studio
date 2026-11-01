@@ -150,7 +150,7 @@ test('cloud SSE retains invalid-input and method responses', async t => {
   assert.equal((await invalid.json()).error.code, 'INVALID_CONVERSATION_INPUT');
 });
 
-for (const path of ['/agentkit/cloud-conversation', '/agentkit/local-conversation']) {
+for (const path of ['/agentkit/cloud-conversation']) {
   test(`${path} cancels upstream work when the HTTP consumer disconnects`, { timeout: 5000 }, async t => {
     let resolveAbort;
     const aborted = new Promise(resolve => { resolveAbort = resolve; });
@@ -179,22 +179,17 @@ for (const path of ['/agentkit/cloud-conversation', '/agentkit/local-conversatio
   });
 }
 
-test('legacy local route constructs its handler per request with the Host signal', async t => {
+test('retired local Harness URLs cannot execute a handler or fall through to a control RPC', async t => {
   let constructions = 0;
-  const signals = [];
-  const host = await harness(t, { getLegacyLocalConversationHandler: async () => {
-    constructions++;
-    return async (_request, response, { signal }) => { signals.push(signal); response.end('fixture'); };
-  } });
-  for (let index = 0; index < 2; index++) {
-    assert.equal(await (await host.request('/agentkit/local-conversation', '{}')).text(), 'fixture');
+  const host = await harness(t, { getLegacyLocalConversationHandler: async () => { constructions++; throw Error('retired'); } });
+  for (const suffix of ['', '/run', '?retry=true']) {
+    const response = await host.request('/agentkit/local-conversation' + suffix, JSON.stringify({ method: 'agents/delete', payload: {} }));
+    assert.equal(response.status, 410); assert.equal((await response.json()).error.code, 'LOCAL_HARNESS_RETIRED');
   }
-  assert.equal(constructions, 2);
-  assert.notEqual(signals[0], signals[1]);
-  assert.ok(signals.every(signal => !signal.aborted));
+  assert.equal(constructions, 0); assert.equal(host.calls.length, 0);
 });
 
-for (const path of ['/agentkit/cloud-conversation', '/agentkit/local-conversation']) {
+for (const path of ['/agentkit/cloud-conversation']) {
   test(`${path} cancels owned upstream work when its registration scope unloads`, async t => {
     let resolveAbort;
     const aborted = new Promise(resolve => { resolveAbort = resolve; });

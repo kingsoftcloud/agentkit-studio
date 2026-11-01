@@ -310,7 +310,7 @@ test('preset cleanup is owned by its exact Cordis scope, not the Agent id', asyn
         if (key === 'on') return (name, callback) => { if (name === 'agent/request') request = callback; return target.on(name, callback); };
         return Reflect.get(target, key);
       } });
-      applyPreset(observed, { agentId: 'same-agent', runtime: 'harness', local: true });
+      applyPreset(observed, { agentId: 'same-agent', runtime: 'dsh-native', local: true });
     } });
     // Deliver to the selected scope. DSH installs its Agent carrier filter;
     // this unit test does not broadcast an Agent event across sibling scopes.

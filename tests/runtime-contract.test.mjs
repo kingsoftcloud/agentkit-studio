@@ -1,15 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DSH_ASSISTANT_STREAM_FRAME_TYPES, DSH_SESSION_EVENT_TYPES, HARNESS_CONTRACT_VERSION } from '../packages/agentkit-harness/src/contract.mjs';
+import { DSH_ASSISTANT_STREAM_FRAME_TYPES, DSH_SESSION_EVENT_TYPES } from '../src/host/dsh-session-contract.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { STUDIO_CANONICAL_IDENTIFIERS, STUDIO_ENTITY_CONTRACT, STUDIO_RUNTIME_CAPABILITY_MATRIX, STUDIO_RUNTIME_TYPES, assertStudioRunBinding, studioRunIdentity, studioRuntimeContract } from '../src/runtime-contract.mjs';
 
 test('P0-0 freezes the three runtime names and shared identity fields', () => {
   assert.deepEqual(STUDIO_RUNTIME_TYPES, ['dsh-native', 'harness', 'codex']);
   assert.deepEqual(STUDIO_CANONICAL_IDENTIFIERS, ['agentId', 'revision', 'buildId', 'sessionId', 'runId']);
   assert.equal(STUDIO_ENTITY_CONTRACT.Run.build, 'buildId');
-  assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.contract, HARNESS_CONTRACT_VERSION);
-  assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.eventOwner, 'dsh-session');
-  assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.streamOwner, 'dsh-agent/assistant-stream');
+  assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.contract, NATIVE_DSH_TURN_CONTRACT);
+  assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.eventOwner, 'native-run-store');
+  assert.equal(STUDIO_RUNTIME_CAPABILITY_MATRIX.harness.streamOwner, 'native-model-port');
 });
 
 test('P0-0 rejects a run that cannot be tied to a frozen Build and Session', () => {

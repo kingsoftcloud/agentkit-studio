@@ -15,11 +15,13 @@ The Studio plugin is designed to run with the pinned DSH host version declared i
 - DSH plugin discovery with curated official bundles and post-install capability checks.
 - Portable build artifacts that keep credentials in the destination Host.
 
-New Studio Agents and Builds with `runtime.type = "harness"` use the TypeScript
-Native Harness by default. Native owns the model/tool execution loop and durable
-Run state; DSH provides Sessions, permissions, tools and presentation. Installation
-and execution use Node.js without Python or uv. Existing Frozen Builds retain
-their pinned engine. See the [architecture](docs/architecture.md) for execution ownership.
+Studio Agents and Builds with `runtime.type = "harness"` use the independent
+[ksadk-harness](https://github.com/kingsoftcloud/ksadk-harness) npm packages.
+Native owns the execution loop and durable Run state; Studio supplies product
+admission, model/resource/permission bindings and event projection. Core, Node
+and UI source and release tests are maintained only in the independent repository.
+Legacy Harness Builds must be recreated with a Native engine pin; they are not
+reinterpreted or resumed through a DSH model interceptor.
 
 Cloud features require a compatible AgentEngine control plane and credentials configured in the Host. A local test or a visible catalog entry does not prove access to a cloud resource.
 
@@ -86,10 +88,6 @@ The verification command does not approve dependency build scripts automatically
 
 - `src/` — Studio Host and browser implementation
 - `src/client/` — browser ES Modules with scoped state and page composition, bundled into `dist/client.js`
-- `packages/agentkit-harness-core/` — host-independent TypeScript Native state machine and execution contracts
-- `packages/agentkit-harness-node/` — Node model, persistence, tools and RPC adapters
-- `packages/agentkit-harness-ui/` — task process UI and host integration contracts
-- `packages/agentkit-harness/` — DSH facade with a separate, smaller standalone package
 - `examples/` — minimal public configuration examples
 - `docs/` — usage, architecture and release guides
 - `patches/` — versioned compatibility patches for the pinned DSH release

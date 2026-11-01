@@ -25,7 +25,7 @@ async function stored(ctx, id, work) {
 
 async function useResource(session, spec) {
   const load = file => import(pathToFileURL(join(spec.studio, file)).href);
-  const { checkedResource } = await load('packages/agentkit-harness/src/resource-checks.mjs');
+  const { checkedResource } = await load('src/resource-checks.mjs');
   const { createLocalResourceAdapters } = await load('src/local-resource-adapters.mjs');
   const adapter = createLocalResourceAdapters({ serverClient: { async skillAction(action, params) {
     const response = await fetch(spec.resourceOrigin, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, params }), signal: AbortSignal.timeout(15000) });

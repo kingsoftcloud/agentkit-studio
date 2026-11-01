@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { boundSkillResources, loadBoundSkillDefinitions } from '../packages/agentkit-harness/src/skill-bindings.mjs';
+import { boundSkillResources, loadBoundSkillDefinitions } from '../src/skill-bindings.mjs';
 import { prepareLocalResourceContext } from '../src/local-runtime.mjs';
 import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';

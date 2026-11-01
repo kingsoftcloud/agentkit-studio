@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { NativeKernel, MemoryRunStore, emptyUsage, admittedToolBudget } from '@kingsoftcloud/agentkit-harness-core';
 import { nativeChildToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/child-tools';
 import { workspaceToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
-import { fixture, scope, digest } from '../packages/agentkit-harness-core/test/fixtures.mjs';
+import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { createStudioNativeChildren, nativeChildRoles } from '../src/providers/native-subagents.mjs';
 
 test('two actual Studio child admissions share the parent ledger, reserve finalization and freeze child-owned model facts', { timeout: 10000 }, async t => {

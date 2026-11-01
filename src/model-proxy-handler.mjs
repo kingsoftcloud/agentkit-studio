@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { responsesToChat, chatToResponses, createResponsesStreamTransformer } from './model-proxy.mjs';
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
-import { createModelIdleDeadline } from '../packages/agentkit-harness/src/model-idle-deadline.mjs';
+import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 
 export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
   if (!['chat-completions', 'responses'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');

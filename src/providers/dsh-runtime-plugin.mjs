@@ -1,5 +1,5 @@
 /**
- * Preset-scoped runtime bindings. Opted-in AgentKit Harness owns the complete
+ * Preset-scoped runtime bindings. Native Harness owns the complete
  * Native turn; DSH supplies its Session and admitted ToolRegistry pipeline.
  * Other runtime bindings retain the existing DSH model-request bridge.
  */
@@ -195,6 +195,8 @@ export function apply(ctx, config = {}) {
     && config.toolContracts?.some(contract => contract.nativeMcpSchema !== undefined)) {
     throw Object.assign(new Error('Native MCP schemas require the Native turn engine'), { code: 'STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED' });
   }
+  if (config.local === true && config.runtime === 'harness' && config.nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT)
+    throw Object.assign(new Error('Legacy Harness presets are retired; create a Native Harness session.'), { code: 'STUDIO_LEGACY_HARNESS_RETIRED' });
   const bridge = resolveRuntimeBridge(typeof ctx.get === 'function' ? ctx : undefined);
   const routeScope = bridge.createRouteScope();
   const routes = new Map();

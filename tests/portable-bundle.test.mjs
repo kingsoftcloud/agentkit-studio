@@ -294,8 +294,6 @@ test('builtin tools that are not Node-wired are rejected with an explicit reason
     [{ nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: ['shell'] } }, /shell/],
     // A Native Frozen engine build mixing a whitelisted tool with an unknown one.
     [{ nativeEngineContract: NATIVE_DSH_TURN, bindings: { tools: ['workspace_status', 'shell'] } }, /shell/],
-    // A legacy Harness build (no Native engine pin) cannot export tools yet.
-    [{ bindings: { tools: ['workspace_status'] } }, /Native/],
     // These runtimes do not pin the Native engine required by this manifest.
     [{ runtime: 'dsh-native', bindings: { tools: ['workspace_status'] } }, /Native/],
     [{ runtime: 'codex', bindings: { tools: ['workspace_status'] } }, /Native/],

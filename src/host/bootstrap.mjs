@@ -23,13 +23,12 @@ import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
 import { registerControlPlaneRoutes } from './routes/http.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
-import { createLegacyLocalConversationFactory } from './services/legacy-conversation.mjs';
 import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
 import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
-import { boundSkillResources, loadBoundSkillDefinitions } from '../../packages/agentkit-harness/src/skill-bindings.mjs';
+import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-bindings.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
@@ -477,8 +476,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getDshA2aControls: dshA2aControls,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
-  const getLegacyLocalConversationHandler = createLegacyLocalConversationFactory(ctx, services);
-  await registerControlPlaneRoutes(ctx, { ...services, models, dispatch, getLegacyLocalConversationHandler });
+  await registerControlPlaneRoutes(ctx, { ...services, models, dispatch });
   // Authoring tools need the in-process remote factory (cloud/resource data);
   // they live here because that factory is scoped to this function.
   registerAuthoringTools(ctx, { remoteFactory: authoringRemoteFactory });

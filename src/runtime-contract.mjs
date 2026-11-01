@@ -1,5 +1,6 @@
 /** Studio's small routing contract; transcript ownership stays with each runtime. */
-import { HARNESS_CONTRACT_VERSION, DSH_ASSISTANT_STREAM_FRAME_TYPES, DSH_SESSION_EVENT_TYPES, HARNESS_RUNTIME_CAPABILITIES } from '../packages/agentkit-harness/src/contract.mjs';
+import { DSH_ASSISTANT_STREAM_FRAME_TYPES, DSH_SESSION_EVENT_TYPES } from './host/dsh-session-contract.mjs';
+import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 
 export const STUDIO_RUNTIME_CONTRACT_VERSION = 'agentkit.studio.runtime/v1';
 export const STUDIO_RUNTIME_TYPES = Object.freeze(['dsh-native', 'harness', 'codex']);
@@ -18,9 +19,9 @@ export const STUDIO_RUNTIME_CAPABILITY_MATRIX = Object.freeze({
     eventOwner: 'dsh-session', streamOwner: 'dsh-agent/assistant-stream',
   }),
   harness: Object.freeze({
-    owner: 'studio', execution: 'dsh-plugin', contract: HARNESS_CONTRACT_VERSION,
-    capabilities: HARNESS_RUNTIME_CAPABILITIES,
-    eventOwner: 'dsh-session', streamOwner: 'dsh-agent/assistant-stream',
+    owner: 'ksadk-harness', execution: 'native-kernel', contract: NATIVE_DSH_TURN_CONTRACT,
+    capabilities: Object.freeze(['native-run', 'durable-receipts', 'tool-approval', 'cancel', 'resume', 'child-tasks']),
+    eventOwner: 'native-run-store', streamOwner: 'native-model-port',
   }),
   codex: Object.freeze({
     owner: 'studio', execution: 'codex-app-server', contract: 'studio.codex.adapter/v1',

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeChildHistory } from '../packages/agentkit-harness-node/src/native/child-history.mjs';
+import { createNativeChildHistory } from '@kingsoftcloud/agentkit-harness-node/native/child-history';
 import { fixture, scope } from './fixtures/native-core.mjs';
 
 function history() {

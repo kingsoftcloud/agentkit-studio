@@ -1,7 +1,7 @@
 /** DSH Connection owns admission; these adapters preserve the HTTP/SSE surface. */
 import { ASSISTANT_UPLOAD_CHANNEL, ASSISTANT_UPLOAD_RPC_PATH, ASSISTANT_UPLOAD_RPC_BODY_BYTES } from '../../contracts/assistant-attachments.mjs';
 const CONTROL_CHANNEL = '/agentkit';
-export async function registerControlPlaneRoutes(ctx, { models, dispatch, getLegacyLocalConversationHandler, serverClientPromise }) {
+export async function registerControlPlaneRoutes(ctx, { models, dispatch, serverClientPromise }) {
   // HostConnectionService's dedicated-RPC helper owns its registration fiber;
   // the plugin uses the same public Connection admission and WebServer route
   // boundary directly so this optional control plane can coexist with DSH's
@@ -17,6 +17,12 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, getLeg
         if ('rejection' in admission) {
           response.writeHead(admission.rejection);
           response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden');
+          return;
+        }
+        // Retired URLs must not fall through this prefix into the control RPC.
+        if (String(request.url || '').startsWith('/agentkit/local-conversation')) {
+          response.writeHead(410, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ error: { code: 'LOCAL_HARNESS_RETIRED', message: '请使用 Native Harness 会话。' } }));
           return;
         }
         if (request.method !== 'POST') {
@@ -74,27 +80,6 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, getLeg
       };
     const registration = webCtx.webServer.register({ kind: 'prefix', path: CONTROL_CHANNEL, handler: controlHandler });
     const uploadRegistration = webCtx.webServer.register({ kind: 'prefix', path: ASSISTANT_UPLOAD_CHANNEL, handler: controlHandler });
-    const localRoute = webCtx.webServer.register({
-      kind: 'prefix',
-      path: '/agentkit/local-conversation',
-      handler: (request, response) => {
-        const admission = webCtx.connection.admit(request);
-        if ('rejection' in admission) { response.writeHead(admission.rejection); response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden'); return; }
-        const controller = new AbortController();
-        const signal = AbortSignal.any([lifetime.signal, controller.signal]);
-        const disconnect = () => { if (!response.writableEnded) controller.abort(); };
-        response.on?.('close', disconnect);
-        void getLegacyLocalConversationHandler().then(handler => {
-          signal.throwIfAborted();
-          return handler(request, response, { signal });
-        }).catch(error => {
-          console.error('[local-runtime] handler failed:', error?.stack || error);
-          if (response.destroyed) return;
-          if (!response.headersSent) response.writeHead(500);
-          response.end(JSON.stringify({ error: { message: String(error?.message || error).slice(0, 200) } }));
-        }).finally(() => response.off?.('close', disconnect));
-      },
-    });
     const cloudConversationRoute = webCtx.webServer.register({
       kind: 'prefix',
       path: '/agentkit/cloud-conversation',
@@ -137,7 +122,6 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, getLeg
         }
       },
     });
-    webCtx.effect(() => localRoute, 'agentkit-studio: local conversation route');
     webCtx.effect(() => cloudConversationRoute, 'agentkit-studio: cloud conversation route');
     webCtx.effect(() => registration, 'agentkit-studio: control-plane route');
     webCtx.effect(() => uploadRegistration, 'agentkit-studio: assistant upload route');

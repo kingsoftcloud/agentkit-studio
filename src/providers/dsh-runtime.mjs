@@ -535,6 +535,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const mode = routed ? (routed.local ? 'local' : 'cloud') : separator > 0 ? model.slice(0, separator) : 'cloud';
       const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
       const runtime = routed?.runtime || options.studioRuntime;
+      if (mode === 'local' && runtime === 'harness') throw Object.assign(new Error('Native Harness requires the whole-turn execution port.'), { code: 'STUDIO_NATIVE_TURN_REQUIRED' });
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
       const nativeTools = options.studioNativeTools === true || routed?.nativeTools === true;
       const buildId = String(options.buildId || routed?.buildId || '').trim();

@@ -1,7 +1,7 @@
 // Pure Native local-memory configuration helper for the Studio Agent form.
 //
 // The browser bundle (scripts/build-client.mjs) forbids imports from
-// src/host, src/providers and packages/agentkit-harness, so this module is
+// src/host and src/providers, so this module is
 // deliberately dependency-free: it only mirrors the policy defaults documented
 // in src/providers/native-memory.mjs (studioNativeMemoryPolicy) and
 // docs/native-memory.md, and shapes the form state <-> Agent spec mapping.
