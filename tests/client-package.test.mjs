@@ -16,8 +16,9 @@ test('packing a source-only tree generates the DSH client and never ships a stal
   const source = join(root, 'source');
   // Exercise the real prepack lifecycle without reinstalling test dependencies.
   // prepack runs scripts/build-client.mjs from the copied tree, so the build
-  // scripts travel with the source even though they are not published files.
-  const names = new Set(['package.json', '.gitignore', 'README.md', 'LICENSE', 'scripts', ...pkg.files.map(name => name.split('/')[0])]);
+  // scripts and their reviewed patch inputs travel with this source fixture
+  // even though development inputs are excluded from the published archive.
+  const names = new Set(['package.json', 'pnpm-workspace.yaml', '.gitignore', 'README.md', 'LICENSE', 'scripts', 'patches', ...pkg.files.map(name => name.split('/')[0])]);
   names.delete('dist');
   for (const name of names) await cp(join(repository, name), join(source, name), {
     recursive: true, filter: path => !['node_modules', '.artifacts'].includes(basename(path)),

@@ -1,0 +1,110 @@
+diff --git a/docs/subsystems/approval.md b/docs/subsystems/approval.md
+index 5a2513775a5841819e1218a5dc0e30425af0d81c..1cc784819b0faa6770586e181282b213dc9bbbfa 100644
+--- a/docs/subsystems/approval.md
++++ b/docs/subsystems/approval.md
+@@ -108,8 +108,9 @@ Approval service that applies session policy before answerers and logs every ask
+  * because there is no previously visible policy to change.
+  * @param agent - the live agent whose policy is changing.
+  * @param policy - the new effective policy.
++ * @param options - attributes a programmatic change without implying a human action.
+  */
+-setPolicy(agent: Agent, policy: ApprovalPolicy): void
++setPolicy(agent: Agent, policy: ApprovalPolicy, options: { actor?: 'user' | 'automation' } = {}): void
+ 
+ /**
+  * Ask the composed answerers to decide one readonly same-process request.
+diff --git a/docs/subsystems/approval.zh.md b/docs/subsystems/approval.zh.md
+index 74aa7fbfc12afa5e063ad3bc34c665850139e76e..fb327d4c608fbea58caf2a92cdf3b722204e8e9e 100644
+--- a/docs/subsystems/approval.zh.md
++++ b/docs/subsystems/approval.zh.md
+@@ -108,8 +108,9 @@ Approval service that applies session policy before answerers and logs every ask
+  * because there is no previously visible policy to change.
+  * @param agent - the live agent whose policy is changing.
+  * @param policy - the new effective policy.
++ * @param options - attributes a programmatic change without implying a human action.
+  */
+-setPolicy(agent: Agent, policy: ApprovalPolicy): void
++setPolicy(agent: Agent, policy: ApprovalPolicy, options: { actor?: 'user' | 'automation' } = {}): void
+ 
+ /**
+  * Ask the composed answerers to decide one readonly same-process request.
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml
+index 91c4067b698d5626520839468cd738021fdd4f48..bed437581df538cb92e61c48cff92ee338275e76 100644
+--- a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml
++++ b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.i18n.yaml
+@@ -6,8 +6,8 @@
+   en: 16121602d5b5b409
+   zh: 8a979209e7ccab51
+ /tool-dispatch-definition-identity:
+-  en: 4fc47785ff40177c
+-  zh: 49ba644ead1c9030
++  en: c738a1c2a9a696be
++  zh: 913dfb8bb5ab4dde
+ /tool-dispatch-definition-identity/change:
+   en: a6b01e8c25259b4a
+   zh: 9e54601ec794dfc5
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md
+index 3580d021784b7bda09198cabae609ebb6c111982..40f45e93c26dd40e29ff1ec745c6eea6e584e6da 100644
+--- a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md
++++ b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.md
+@@ -5,6 +5,8 @@ description: Tool callbacks replaced during a prepared execution now fail before
+ 
+ # Tool dispatch definition identity
+ 
++English | [中文](guide.zh.md)
++
+ ## Change
+ 
+ Tool calls bind the visible definition and its execution callback before policy begins. Replacing that definition or callback during `tools/pre-execute`, approval, or `tools/execute` now produces an error without invoking the replacement. Previously, dispatch could resolve and execute a different definition after the call had passed policy. Unchanged definitions and around-dispatch listeners that return their own result are unaffected.
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md
+index 5df9f5a6978d5c0ebc57713ded003fb3b4862d62..fab01e91ae4690d535efbe985e8225c7f507be90 100644
+--- a/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md
++++ b/docs/upgrade-guide/v0.2.1-rc.2/tool-dispatch-definition/guide.zh.md
+@@ -5,6 +5,8 @@ description: 已准备执行的工具若被替换回调，会在执行函数运
+ 
+ # 工具调度定义身份
+ 
++[English](guide.md) | 中文
++
+ ## 变更
+ 
+ 工具调用在策略开始前绑定可见定义及其执行回调。在 `tools/pre-execute`、审批或 `tools/execute` 阶段替换定义或回调，现在会返回错误而不执行替代实现。此前，调度可能在调用通过策略后解析并执行不同定义。未更改的定义，以及直接返回自有结果的调度包装监听器，不受影响。
+diff --git a/packages/client/ui-permission-presets/README.i18n.yaml b/packages/client/ui-permission-presets/README.i18n.yaml
+index f9ae7348edfdd9e3b4c3448b7492efb7359777e1..12bd2c8b0e888951a382fc7d747ff08703f6a5a8 100644
+--- a/packages/client/ui-permission-presets/README.i18n.yaml
++++ b/packages/client/ui-permission-presets/README.i18n.yaml
+@@ -39,5 +39,5 @@
+   en: 08cdc0ad196d12c1
+   zh: 157bee9d5b29f470
+ /deepseek-ai-dsh-client-ui-permission-presets/known-limitations-and-deferred-work/dev-note:
+-  en: e67f633dc6fe7773
+-  zh: 3bb0c20c93f16f98
++  en: 9cd76930dee7768f
++  zh: 41e2ed35fcb77183
+diff --git a/packages/experimental/inspector/README.i18n.yaml b/packages/experimental/inspector/README.i18n.yaml
+index e5f1706ff4c68cb882ff667f94e2f22d326ae3ec..8aed0b1f3f13e917dc07215d1924cfbf93e5ae27 100644
+--- a/packages/experimental/inspector/README.i18n.yaml
++++ b/packages/experimental/inspector/README.i18n.yaml
+@@ -18,8 +18,8 @@
+   en: 6d290aabc543f878
+   zh: 7ad283b159ae2c29
+ /deepseek-ai-dsh-experimental-inspector/runtime-layout:
+-  en: 13f495af2fec307d
+-  zh: ec4bebf24a87ec54
++  en: 8786e8fe10fe4d50
++  zh: 3d38307886fa914d
+ /deepseek-ai-dsh-experimental-inspector/configuration:
+   en: d094842893700446
+   zh: 7a7f880ba795948f
+diff --git a/packages/interaction/user-approval/README.i18n.yaml b/packages/interaction/user-approval/README.i18n.yaml
+index 152dc862b5abff0c9b0eb4bd0faaf6cdc062ae6a..6514f9ea1b8c99e9480cf6a58f3a0845725af5bd 100644
+--- a/packages/interaction/user-approval/README.i18n.yaml
++++ b/packages/interaction/user-approval/README.i18n.yaml
+@@ -84,5 +84,5 @@
+   en: c6928515ff91ee7e
+   zh: c23bd844b4907f12
+ /deepseek-ai-dsh-user-approval/known-limitations-and-deferred-work/dev-note:
+-  en: e67f633dc6fe7773
+-  zh: 3bb0c20c93f16f98
++  en: 19ebbafd79174021
++  zh: 93b5ebaa5b70ca86

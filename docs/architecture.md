@@ -1,8 +1,11 @@
 # Architecture
 
 AgentKit Studio is a DSH product plugin. The host owns Agent composition, Sessions,
-persistence, stream events, tools, file delivery and desktop/browser surfaces.
+transcript persistence, stream events, tools, file delivery and desktop/browser surfaces.
 Studio adds Agent editing, resource bindings, product settings and release wiring.
+
+Native serves business and coding Agents through the same execution authority;
+specific capability policies compose above the general execution mechanisms.
 
 ## Packages and source
 
@@ -10,8 +13,7 @@ Studio adds Agent editing, resource bindings, product settings and release wirin
 | --- | --- |
 | `src/` | Studio Host services, API adapters and product plugin |
 | `src/client/` | Browser modules, per-apply composition and DSH UI extensions |
-| `src/providers/` | DSH Native, Star Harness and Codex runtime integration |
-| `packages/agentkit-harness/` | Independently packed DSH runtime plugin |
+| `src/providers/` | DSH Native, AgentKit Harness and Codex runtime integration |
 | `patches/` | Reviewed changes against the pinned public DSH host |
 | `tests/` | Unit, contracts and packaging regressions |
 | `scripts/` | Development, real Host verification, packaging and release tools |
@@ -20,10 +22,29 @@ Studio adds Agent editing, resource bindings, product settings and release wirin
 ## Runtime ownership
 
 `src/runtime-contract.mjs` freezes runtime identity, Build, Session and Run bindings.
-DSH Native uses upstream execution directly. Star Harness uses DSH's Agent,
-Session, LLM and streaming protocol; it does not introduce another persistence
-format. Codex requires an adapter for its child process and tool protocol, while
-native file delivery still goes through the DSH Session's tools.
+DSH Native uses upstream execution directly. New AgentKit Harness Revisions and
+Builds default to `agentkit.native-dsh-turn/v1`. The Native kernel owns the full
+model/tool loop, budgets, retries and side-effect scheduling. DSH delegates the
+turn through its maintained external-turn interface; it must not run a second
+tool loop or retry the same Native effects. Missing Host capabilities reject
+admission rather than falling back to a model interceptor.
+
+The TypeScript core does not depend on DSH objects or the UI. Node adapters persist
+Native Run state, commands, intents, receipts and events in SQLite. DSH continues
+to own the product Session and transcript. Versioned ownership and delivery
+projections connect the two stores; recovery retains the original Run identity,
+configuration and effect history. Unknown side effects require reconciliation
+instead of blind replay.
+
+Core, Node adapters and task UI are consumed from fixed npm releases of
+[ksadk-harness](https://github.com/kingsoftcloud/ksadk-harness). Studio does not
+compile a local copy. Its tests cover installed public contracts and Host/product
+integration; the independent repository owns implementation tests and publishing.
+
+Codex and DSH Native keep their own execution paths. The old Harness DSH plugin,
+legacy local tool loop and ambient `legacy` selector have been removed. Old Harness
+Builds without a Native pin are rejected and must be recreated; persisted DSH
+text is never treated as proof of a Native side effect.
 
 Resources and credentials are resolved in the trusted Host. Browser components
 receive capability/status information and typed operations. They do not own model

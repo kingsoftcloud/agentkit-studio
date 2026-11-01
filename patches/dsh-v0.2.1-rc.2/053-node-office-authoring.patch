@@ -1,0 +1,2168 @@
+diff --git a/THIRD_PARTY_NOTICES.md b/THIRD_PARTY_NOTICES.md
+index 67f867a790976e765f7073c595d8b2a604d49b0e..79da6cd50ddfb61baeccc2f232b0a31347a0e349 100644
+--- a/THIRD_PARTY_NOTICES.md
++++ b/THIRD_PARTY_NOTICES.md
+@@ -67,6 +67,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
+ | [`@tanstack/react-virtual`](https://github.com/TanStack/virtual) | MIT |
+ | [`@trycua/cua-driver`](https://github.com/trycua/cua) | MIT |
+ | [`@vscode/ripgrep`](https://github.com/microsoft/vscode-ripgrep) | MIT |
++| [`@xmldom/xmldom`](https://github.com/xmldom/xmldom) | MIT |
+ | [`@xterm/addon-fit`](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit) | MIT |
+ | [`@xterm/addon-serialize`](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-serialize) | MIT |
+ | [`@xterm/headless`](https://github.com/xtermjs/xterm.js) | MIT |
+@@ -75,6 +76,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
+ | [`acorn`](https://github.com/acornjs/acorn) | MIT |
+ | [`ajv`](https://github.com/ajv-validator/ajv) | MIT |
+ | [`anser`](https://github.com/IonicaBizau/anser) | MIT |
++| [`arquero`](https://github.com/uwdata/arquero) | BSD-3-Clause |
+ | [`big.js`](https://github.com/MikeMcl/big.js) | MIT |
+ | [`buffer`](https://github.com/feross/buffer) | MIT |
+ | [`chokidar`](https://github.com/paulmillr/chokidar) | MIT |
+@@ -84,6 +86,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
+ | [`commander`](https://github.com/tj/commander.js) | MIT |
+ | [`compression`](https://github.com/expressjs/compression) | MIT |
+ | [`diff`](https://github.com/kpdecker/jsdiff) | BSD-3-Clause |
++| [`docx`](https://github.com/dolanmiu/docx) | MIT |
+ | [`dompurify`](https://github.com/cure53/DOMPurify) | (MPL-2.0 OR Apache-2.0) |
+ | [`electron-updater`](https://github.com/electron-userland/electron-builder) | MIT |
+ | [`eventsource-parser`](https://github.com/rexxars/eventsource-parser) | MIT |
+@@ -96,6 +99,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
+ | [`immer`](https://github.com/immerjs/immer) | MIT |
+ | [`ipaddr.js`](https://github.com/whitequark/ipaddr.js) | MIT |
+ | [`js-yaml`](https://github.com/nodeca/js-yaml) | MIT |
++| [`jszip`](https://github.com/Stuk/jszip) | (MIT OR GPL-3.0-or-later) |
+ | [`katex`](https://github.com/KaTeX/KaTeX) | MIT |
+ | [`koffi`](https://github.com/Koromix/koffi) | MIT |
+ | [`lexical`](https://github.com/facebook/lexical) | MIT |
+@@ -120,6 +124,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
+ | [`papaparse`](https://github.com/mholt/PapaParse) | MIT |
+ | [`pdfjs-dist`](https://github.com/mozilla/pdf.js) | Apache-2.0 |
+ | [`picomatch`](https://github.com/micromatch/picomatch) | MIT |
++| [`pptxgenjs`](https://github.com/gitbrent/PptxGenJS) | MIT |
+ | [`react`](https://github.com/facebook/react) | MIT |
+ | [`react-dom`](https://github.com/facebook/react) | MIT |
+ | [`readable-stream`](https://github.com/nodejs/readable-stream) | MIT |
+diff --git a/apps/desktop-host/src/office.ts b/apps/desktop-host/src/office.ts
+index 7ed14dd3b37fcc12ad65e1b55da2410dd755fbbe..1d061a176329a9011b280df9e28663fbdf2643fb 100644
+--- a/apps/desktop-host/src/office.ts
++++ b/apps/desktop-host/src/office.ts
+@@ -26,11 +26,16 @@ export interface Config {
+  * @param config - Bundled payload source and Harness-home installation root.
+  */
+ export async function apply(ctx: Context, config: Config): Promise<void> {
++  const dependencies = await workspaceDependencies.resolvePrimaryRuntime(config.source)
++  if (dependencies.python !== undefined || dependencies.node === undefined || dependencies.officeLibraries === undefined) {
++    throw new Error('Desktop Office requires Node-only authoring resources; prepare the primary runtime again')
++  }
+   await ctx.plugin(workspaceDependencies, config)
+   const archive = runtimeArchivePath(config.runtimeDir) === undefined ? undefined : dirname(realpathSync(config.runtimeDir))
+   const manifest = fileURLToPath(import.meta.resolve('@deepseek-ai/libreoffice-kit/package.json'))
+   const packageRoot = dirname(archive === undefined ? manifest : join(`${archive}.unpacked`, relative(archive, manifest)))
+   await ctx.plugin(officeSkills, {
++    authoring: 'node',
+     assetRoot: join(dirname(config.source), 'office-skills'),
+     node: join(config.source, 'dependencies', 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node'),
+     cli: join(packageRoot, 'lib', 'cli.js'),
+diff --git a/apps/desktop-host/tests/office.spec.ts b/apps/desktop-host/tests/office.spec.ts
+index 02e741d4cec34d5e593d6a1a70b3b0e8bee1118e..2194bcab1339418272df41beea47547c1fe6d298 100644
+--- a/apps/desktop-host/tests/office.spec.ts
++++ b/apps/desktop-host/tests/office.spec.ts
+@@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { join, sep } from 'node:path'
+ import { pathToFileURL } from 'node:url'
++import { createHash } from 'node:crypto'
+ import { Context } from '@deepseek-ai/cordis'
+ import Loader from '@deepseek-ai/cordis-plugin-loader'
+ import Include from '@deepseek-ai/cordis-plugin-include'
+@@ -23,6 +24,14 @@ it('loads Desktop Office CLI paths and removes them on disposal', async () => {
+     const nodeDirectory = join(root, 'runtime', 'primary-runtime', 'dependencies', 'node', 'bin')
+     await mkdir(nodeDirectory, { recursive: true })
+     await cp(process.execPath, join(nodeDirectory, process.platform === 'win32' ? 'node.exe' : 'node'))
++    const moduleDirectory = join(nodeDirectory, '..', 'node_modules')
++    await mkdir(moduleDirectory)
++    const library = 'export const fixture = true\n'
++    await writeFile(join(moduleDirectory, 'office.mjs'), library)
++    await writeFile(join(nodeDirectory, '..', '..', '..', 'runtime.json'), JSON.stringify({
++      schemaVersion: 2, desktopVersion: 'test', platform: process.platform, arch: process.arch,
++      node: process.versions.node, pythonPackages: {}, officeLibrarySha256: createHash('sha256').update(library).digest('hex'),
++    }))
+     ctx.baseUrl = pathToFileURL(root).href + '/'
+     await ctx.plugin(Loader)
+     ctx.loader.builtins.include = Include
+@@ -52,6 +61,8 @@ it('loads Desktop Office CLI paths and removes them on disposal', async () => {
+     expect((await ctx.skills.list()).map(skill => skill.name)).toEqual(['office', 'office-docx', 'office-export-pdf', 'office-pptx', 'office-recalculate', 'office-render', 'office-xlsx'])
+     expect((await ctx.skills.get('office-pptx'))?.resourceBase).toEqual({ kind: 'directory', path: join(assets, 'office-pptx').split(sep).join('/') })
+     expect((await ctx.skills.get('office-pptx'))?.content).toContain('office-render')
++    expect((await ctx.skills.get('office-pptx'))?.content).toContain('readOfficePackage')
++    expect((await ctx.skills.get('office-pptx'))?.content).not.toContain('python-pptx')
+     expect((await ctx.skills.get('office-pptx'))?.content).not.toContain(nodeDirectory)
+     expect(ctx.tools.schemas().map(tool => tool.name)).toEqual(['load_workspace_dependencies'])
+     const entry = [...ctx.loader.entries()].find(entry => entry.options.name === 'office')
+diff --git a/apps/desktop/scripts/prepare-primary-runtime.ts b/apps/desktop/scripts/prepare-primary-runtime.ts
+index 7a83613f3ee5dceaab8d570c00d09e1764f6065f..3a94e54727bfebf846e5688d1a5d5c83386e002a 100644
+--- a/apps/desktop/scripts/prepare-primary-runtime.ts
++++ b/apps/desktop/scripts/prepare-primary-runtime.ts
+@@ -9,15 +9,14 @@ import { scrubWindowsSigningEnvironment } from './windows-sign.mjs'
+ 
+ /**
+  * Prepare Desktop resources for its selected packaging target.
+- * @param options - Signed Windows packaging may defer smoke checks; nodeOnly opts into resources without Python.
+- * Omitting nodeOnly preserves the Python payload.
++ * @param options - Signed Windows packaging may defer smoke checks. Desktop resources contain Node Office authoring without Python.
+  * @returns Resolves after preparation and, unless deferred, native-target execution checks.
+  */
+-export async function preparePrimaryRuntime(options: { deferSmoke?: boolean; nodeOnly?: boolean } = {}): Promise<void> {
++export async function preparePrimaryRuntime(options: { deferSmoke?: boolean } = {}): Promise<void> {
+   const paths = resolveDesktopTargetBuildPaths()
+   const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+   await preparePayload({ target: resolveDesktopBuildTarget(), output: paths.runtime,
+-    cache: paths.downloads, version, nodeOnly: options.nodeOnly === true })
++    cache: paths.downloads, version, nodeOnly: true })
+   if (!options.deferSmoke) smokePrimaryRuntime(join(paths.runtime, 'primary-runtime'))
+ }
+ 
+@@ -31,6 +30,9 @@ export function smokePrimaryRuntime(root: string): void {
+   if (manifest.python !== undefined && Object.keys(manifest.pythonPackages).length === 0) throw new Error('primary runtime: missing Python distribution versions; prepare the payload before running its smoke checks.')
+   const entries = workspaceDependencyPaths(root, manifest)
+   if (entries.node === undefined || entries.pnpm === undefined) throw new Error('primary runtime: the Desktop payload must declare node and pnpm components.')
++  if (manifest.python !== undefined || entries.officeLibraries === undefined) {
++    throw new Error('primary runtime: Desktop requires Node-only Office authoring resources; prepare the payload again.')
++  }
+   smokePayload(root, scrubWindowsSigningEnvironment(process.env))
+ }
+ 
+diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
+index 3a89bd7fe3cd4df65edfaaadfc71f2fa1e905942..2cadd3ce4aa15001cb85ca14153e01985213a513 100644
+--- a/apps/desktop/scripts/smoke-runtime.ts
++++ b/apps/desktop/scripts/smoke-runtime.ts
+@@ -73,10 +73,16 @@ export function apply(ctx) {
+     console.log('desktop runtime: CLI offline plugin installation and removal passed')
+     const primary = join(resourcesRuntime, 'primary-runtime')
+     const dependencies = workspaceDependencyPaths(primary, await readPrimaryRuntime(primary))
+-    if (dependencies.python === undefined) throw new Error('desktop runtime: Office authoring fixtures require the Python payload; Node-only Desktop authoring verification is pending')
+-    await promisify(execFile)(dependencies.python, ['-I', '-B',
+-      fileURLToPath(new URL('../tests/fixtures/office-conversion-inputs.py', import.meta.url)), home],
+-    { env: environment, timeout: 120_000, windowsHide: true })
++    if (dependencies.node !== undefined && dependencies.officeLibraries !== undefined) {
++      await promisify(execFile)(dependencies.node, [
++        fileURLToPath(new URL('../tests/fixtures/office-conversion-inputs.mjs', import.meta.url)), home, dependencies.officeLibraries],
++      { env: environment, timeout: 120_000, windowsHide: true })
++    } else {
++      if (dependencies.python === undefined) throw new Error('desktop runtime: Office authoring resources are missing')
++      await promisify(execFile)(dependencies.python, ['-I', '-B',
++        fileURLToPath(new URL('../tests/fixtures/office-conversion-inputs.py', import.meta.url)), home],
++      { env: environment, timeout: 120_000, windowsHide: true })
++    }
+     const inputs = ['docx', 'xlsx', 'pptx'].map(extension => ({ extension,
+       bytes: readFileSync(join(home, `input.${extension}`)).toString('base64') }))
+     const cordis = runtime.sharedPackages.find(entry => entry.name === '@deepseek-ai/cordis')
+diff --git a/apps/desktop/tests/fixtures/office-conversion-inputs.mjs b/apps/desktop/tests/fixtures/office-conversion-inputs.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..01a3c50185eae0e573a7e39e646ebe80494d3308
+--- /dev/null
++++ b/apps/desktop/tests/fixtures/office-conversion-inputs.mjs
+@@ -0,0 +1,84 @@
++/** Create, edit and reopen real Office inputs using only the packaged Node module. */
++import assert from 'node:assert/strict'
++import { createHash } from 'node:crypto'
++import { writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { pathToFileURL } from 'node:url'
++
++const [root, library] = process.argv.slice(2)
++const { docx, ExcelJS, PptxGenJS, readOfficePackage } = await import(pathToFileURL(library).href)
++const wordNS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
++const sheetNS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
++const drawingNS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
++const hash = bytes => createHash('sha256').update(bytes).digest('hex')
++const document = new docx.Document({
++  comments: { children: [{ id: 0, author: 'Office QA', children: [new docx.Paragraph('Keep this comment')] }] },
++  sections: [{ children: [new docx.Paragraph({ children: [
++    new docx.CommentRangeStart(0), new docx.TextRun({ text: 'Desktop Office conversion 42', bold: true }),
++    new docx.CommentRangeEnd(0), new docx.CommentReference(0), new docx.TextRun({ text: ' Keep italic', italics: true }),
++  ] })] }],
++})
++const wordBytes = await docx.Packer.toBuffer(document)
++const workbook = new ExcelJS.Workbook()
++const sheet = workbook.addWorksheet('Sheet1')
++sheet.addRow(['Desktop Office conversion 42', 42])
++sheet.getCell('A1').font = { bold: true, color: { argb: 'FF003366' } }
++sheet.getCell('B2').value = { formula: 'B1*2', result: 84 }
++sheet.getCell('B2').numFmt = '0.00'
++const sheetBytes = new Uint8Array(await workbook.xlsx.writeBuffer({ useSharedStrings: true }))
++const presentation = new PptxGenJS()
++const slide = presentation.addSlide()
++slide.addText('Desktop Office conversion 42', { x: 0.5, y: 0.25, w: 8, h: 0.5, bold: true })
++slide.addChart(presentation.ChartType.bar, [{ name: 'Revenue', labels: ['Q1', 'Q2'], values: [21, 42] }],
++  { x: 0.5, y: 1, w: 8, h: 3 })
++slide.addNotes('Keep these speaker notes')
++const slideBytes = new Uint8Array(await presentation.write({ outputType: 'arraybuffer' }))
++
++const results = []
++for (const [extension, bytes, target, namespace] of [
++  ['docx', wordBytes, 'word/document.xml', wordNS],
++  ['xlsx', sheetBytes, 'xl/sharedStrings.xml', sheetNS],
++  ['pptx', slideBytes, 'ppt/slides/slide1.xml', drawingNS],
++]) {
++  const pkg = await readOfficePackage(bytes)
++  const before = new Map(pkg.names().map(name => [name, pkg.part(name)]))
++  const xml = pkg.xml(target)
++  const texts = Array.from(xml.getElementsByTagNameNS(namespace, 't'))
++  const matches = texts.filter(node => node.textContent === 'Desktop Office conversion 42')
++  assert.equal(matches.length, 1, `${extension}: unique target`)
++  matches[0].textContent = 'Desktop Office conversion 43'
++  pkg.replaceXml(target, xml)
++  const output = await pkg.save()
++  const reopened = await readOfficePackage(output)
++  assert.deepEqual(reopened.names(), pkg.names())
++  assert.equal(Array.from(reopened.xml(target).getElementsByTagNameNS(namespace, 't'))
++    .filter(node => node.textContent === 'Desktop Office conversion 43').length, 1)
++  for (const [name, content] of before) if (name !== target) assert.deepEqual(reopened.part(name), content, name)
++  if (extension === 'docx') {
++    const doc = reopened.xml(target)
++    assert.equal(doc.getElementsByTagNameNS(wordNS, 'b').length, 1)
++    assert.equal(doc.getElementsByTagNameNS(wordNS, 'i').length, 1)
++    assert.match(new TextDecoder().decode(reopened.part('word/comments.xml')), /Keep this comment/)
++  } else if (extension === 'xlsx') {
++    const check = new ExcelJS.Workbook()
++    await check.xlsx.load(output)
++    assert.equal(check.getWorksheet('Sheet1').getCell('A1').value, 'Desktop Office conversion 43')
++    assert.equal(check.getWorksheet('Sheet1').getCell('A1').font.bold, true)
++    assert.deepEqual(check.getWorksheet('Sheet1').getCell('B2').value, { formula: 'B1*2', result: 84 })
++    assert.equal(check.getWorksheet('Sheet1').getCell('B2').numFmt, '0.00')
++  } else {
++    assert.ok(reopened.names().some(name => /^ppt\/charts\/chart\d+\.xml$/.test(name)))
++    const embedded = reopened.names().find(name => /^ppt\/embeddings\/.+\.xlsx$/.test(name))
++    assert.ok(embedded, 'chart has a real embedded workbook')
++    const data = new ExcelJS.Workbook()
++    await data.xlsx.load(reopened.part(embedded))
++    assert.equal(data.worksheets[0].getCell('B3').value, 42)
++    assert.match(new TextDecoder().decode(reopened.part('ppt/notesSlides/notesSlide1.xml')), /Keep these speaker notes/)
++    assert.match(new TextDecoder().decode(reopened.part(target)), /b="1"/)
++  }
++  await writeFile(join(root, `input.${extension}`), output)
++  results.push({ extension, bytes: output.byteLength, sha256: hash(output), preservedParts: before.size - 1, modifiedPart: target })
++}
++await writeFile(join(root, 'office-authoring-proof.json'), JSON.stringify({ node: process.version, librarySha256: hash(
++  await (await import('node:fs/promises')).readFile(library)), results }, null, 2) + '\n')
++console.log(JSON.stringify({ node: process.version, results }))
+diff --git a/docs/config-catalog.md b/docs/config-catalog.md
+index 60b3186823a1d78ffa331bb5ddf7321b33d51fb0..2ffbe7f7fdf27c3d00f815760cbd9d92d4e1a3a1 100644
+--- a/docs/config-catalog.md
++++ b/docs/config-catalog.md
+@@ -3132,6 +3132,8 @@ export interface Config {
+   node?: string
+   /** Absolute LibreOffice Kit CLI entry; false explicitly disables CLI access. */
+   cli?: string | false
++  /** Node uses the bundled authoring module; Python retains the existing library workflows when omitted. */
++  authoring?: 'node' | 'python'
+ }
+ ```
+ <!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-office -->
+@@ -4197,7 +4199,7 @@ export interface Config {
+ ## `@deepseek-ai/dsh-tool-workspace-dependencies`
+ 
+ - `inject`: `tools`
+-- `source`: [`packages/skill/tool-workspace-dependencies/src/index.ts:15`](../packages/skill/tool-workspace-dependencies/src/index.ts)
++- `source`: [`packages/skill/tool-workspace-dependencies/src/index.ts:16`](../packages/skill/tool-workspace-dependencies/src/index.ts)
+ 
+ ```ts config-catalog
+ /** Payload location and optional installation directory. */
+diff --git a/docs/config-catalog.zh.md b/docs/config-catalog.zh.md
+index e3e70af1d0c7adaac5c3d06c908b0e08ee3fe3a8..f216e496a0e67b0db086d0357fd16e5c863b4139 100644
+--- a/docs/config-catalog.zh.md
++++ b/docs/config-catalog.zh.md
+@@ -3134,6 +3134,8 @@ export interface Config {
+   node?: string
+   /** Absolute LibreOffice Kit CLI entry; false explicitly disables CLI access. */
+   cli?: string | false
++  /** Node uses the bundled authoring module; Python retains the existing library workflows when omitted. */
++  authoring?: 'node' | 'python'
+ }
+ ```
+ <!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-office -->
+@@ -4199,7 +4201,7 @@ export interface Config {
+ ## `@deepseek-ai/dsh-tool-workspace-dependencies`
+ 
+ - `inject`: `tools`
+-- `source`: [`packages/skill/tool-workspace-dependencies/src/index.ts:15`](../packages/skill/tool-workspace-dependencies/src/index.ts)
++- `source`: [`packages/skill/tool-workspace-dependencies/src/index.ts:16`](../packages/skill/tool-workspace-dependencies/src/index.ts)
+ 
+ ```ts config-catalog
+ /** Payload location and optional installation directory. */
+diff --git a/docs/subsystems/skills.i18n.yaml b/docs/subsystems/skills.i18n.yaml
+index cbafffd5f3dcc2191b18ef55d6833136c250110e..c51c134a097ae712ba75f721c48ce6fcc815a6a1 100644
+--- a/docs/subsystems/skills.i18n.yaml
++++ b/docs/subsystems/skills.i18n.yaml
+@@ -3,8 +3,8 @@
+ # After editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write docs/subsystems/skills.md
+ /skills:
+-  en: 91dfdd2ecd1241d2
+-  zh: adb9068fc7d30619
++  en: a32d6e5194e81d5c
++  zh: fc5149a1c370b9eb
+ /skills/provider-registry:
+   en: abe338b6c6d1ebd1
+   zh: c604db2de10a23c4
+diff --git a/docs/subsystems/skills.md b/docs/subsystems/skills.md
+index ee02566a4b5beaa315a3b8248fb8e13e1431e384..2480b82729cdce2b707d973677036d251471574f 100644
+--- a/docs/subsystems/skills.md
++++ b/docs/subsystems/skills.md
+@@ -6,7 +6,7 @@ The [skill capability family](../../packages/skill) includes the Service Definit
+ 
+ Source: [`packages/skill/skill/src/index.ts`](../../packages/skill/skill/src/index.ts), [`packages/skill/skill-filesystem/src/index.ts`](../../packages/skill/skill-filesystem/src/index.ts), [`packages/experimental/skill-badge/src/index.ts`](../../packages/experimental/skill-badge/src/index.ts), [`packages/skill/skill-office/src/index.ts`](../../packages/skill/skill-office/src/index.ts), [`packages/sandbox/sandbox-windows-acl/src/acl-skill.ts`](../../packages/sandbox/sandbox-windows-acl/src/acl-skill.ts), and [`packages/skill/tool-skill/src/index.ts`](../../packages/skill/tool-skill/src/index.ts).
+ 
+-Script-runtime carriers may supply versioned Node-only payloads as well as Python payloads; [workspace dependencies](../../packages/skill/tool-workspace-dependencies/README.md) defines metadata, paths and preparation failures.
++Script-runtime carriers may supply versioned Node-only payloads as well as Python payloads; [workspace dependencies](../../packages/skill/tool-workspace-dependencies/README.md) defines metadata, paths and preparation failures. The Office provider selects Python or Node instructions; its [package reference](../../packages/skill/skill-office/README.md) owns the bundled authoring module and part-editing API.
+ 
+ 
+ ## Provider registry
+diff --git a/docs/subsystems/skills.zh.md b/docs/subsystems/skills.zh.md
+index 658e668a2b573094b9956162101e107344863ee5..69441183e810e68d4be85151aa744a0fb0b539d4 100644
+--- a/docs/subsystems/skills.zh.md
++++ b/docs/subsystems/skills.zh.md
+@@ -6,7 +6,7 @@
+ 
+ 源码：[`packages/skill/skill/src/index.ts`](../../packages/skill/skill/src/index.ts)、[`packages/skill/skill-filesystem/src/index.ts`](../../packages/skill/skill-filesystem/src/index.ts)、[`packages/experimental/skill-badge/src/index.ts`](../../packages/experimental/skill-badge/src/index.ts)、[`packages/skill/skill-office/src/index.ts`](../../packages/skill/skill-office/src/index.ts)、[`packages/sandbox/sandbox-windows-acl/src/acl-skill.ts`](../../packages/sandbox/sandbox-windows-acl/src/acl-skill.ts) 与 [`packages/skill/tool-skill/src/index.ts`](../../packages/skill/tool-skill/src/index.ts)。
+ 
+-脚本运行时载体既可提供带版本的纯 Node 资源，也可提供 Python 资源；[工作区依赖](../../packages/skill/tool-workspace-dependencies/README.zh.md)定义元数据、路径和准备失败语义。
++脚本运行时载体既可提供带版本的纯 Node 资源，也可提供 Python 资源；[工作区依赖](../../packages/skill/tool-workspace-dependencies/README.zh.md)定义元数据、路径和准备失败语义。Office 提供者可选择 Python 或 Node 说明；[包说明](../../packages/skill/skill-office/README.zh.md)定义随包创作模块和部件编辑 API。
+ 
+ 
+ ## 提供方注册表
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
+index c8f51be575db26f951a7571e8bd25d8fa943384f..771258a77b6c4e26a5fc7801e51e9fcc28adad0b 100644
+--- a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
++++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
+@@ -9,8 +9,8 @@
+   en: 7c4c18336e726bbb
+   zh: d4bf0c571652c030
+ /node-only-primary-runtime/change:
+-  en: 78f4f6adde7846ec
+-  zh: 7ad0ca4ddbebd50e
++  en: a975554b23c71e3d
++  zh: 2818da44fbdc9e64
+ /node-only-primary-runtime/migration:
+-  en: 2fc2a37c4a8bffbc
+-  zh: 10f5280970562c08
++  en: 979b4aa5d717c56b
++  zh: 5be5beb3d8af690f
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
+index e88fb4c5619a53262d1aad83a14c55a37b3a4dd8..ea529ea138fab735aa17a6092e6f458c80ae7535 100644
+--- a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
++++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
+@@ -9,10 +9,10 @@ English | [中文](guide.zh.md)
+ 
+ ## Change
+ 
+-A `schemaVersion: 2` primary-runtime manifest supplies Node without Python. `PrimaryRuntimeManifest` discriminates Python and Node-only metadata. `WorkspaceDependencies.python` and `pythonPackages` may be absent; existing Python payloads still return them. Node-only resources are opt-in and do not replace Python-based Office authoring workflows.
++A `schemaVersion: 2` primary-runtime manifest supplies Node without Python. `PrimaryRuntimeManifest` discriminates Python and Node-only metadata. `WorkspaceDependencies.python` and `pythonPackages` may be absent; existing Python payloads still return them. Desktop prepares and requires Node-only Office resources by default. Other carriers select Node-only resources explicitly; the SDK Python default is unchanged.
+ 
+ ## Migration
+ 
+ 1. In callers of `resolvePrimaryRuntime`, `installPrimaryRuntime`, or `load_workspace_dependencies`, require the interpreter needed by the operation. Check Python paths before Python operations; use the returned Node path for Node operations.
+-2. To prepare a Node-only carrier, run `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`. Do not combine it with `--python-only`. Keep the existing Python payload for Python Office authoring until a Node workflow is provided.
++2. To prepare a Node-only carrier, run `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`. Do not combine it with `--python-only`. Build artifacts first so the builder can copy the self-contained Office module. Select `authoring: node` in custom Office provider compositions and require the returned `officeLibraries` path. Desktop selects this mode itself; prepare existing Desktop resources again.
+ 3. Verify `runtime.json` has `schemaVersion: 2` and no `python`, the resource tree has no Python directory, and the native-target smoke executes Node and pnpm. See the [payload reference](../../../../packages/skill/tool-workspace-dependencies/README.md).
+diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
+index 146869a020e43aeb8a8508cc0489d21b05e492e2..2db3e7d929cf8ace48866875dea134bceee129d7 100644
+--- a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
++++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
+@@ -9,10 +9,10 @@ description: 显式选择纯 Node 资源时，primary-runtime 查询调用方必
+ 
+ ## 变更
+ 
+-`schemaVersion: 2` 的 primary-runtime 清单提供 Node 而不包含 Python。`PrimaryRuntimeManifest` 区分 Python 与纯 Node 元数据。`WorkspaceDependencies.python` 和 `pythonPackages` 可能缺省；既有 Python 资源仍返回这些字段。纯 Node 资源须显式选择，不替代使用 Python 的 Office 编程工作流。
++`schemaVersion: 2` 的 primary-runtime 清单提供 Node 而不包含 Python。`PrimaryRuntimeManifest` 区分 Python 与纯 Node 元数据。`WorkspaceDependencies.python` 和 `pythonPackages` 可能缺省；既有 Python 资源仍返回这些字段。Desktop 默认准备并要求纯 Node Office 资源。其他载体显式选择纯 Node 资源；SDK 的 Python 默认配置不变。
+ 
+ ## 迁移
+ 
+ 1. 调用 `resolvePrimaryRuntime`、`installPrimaryRuntime` 或 `load_workspace_dependencies` 时，确认所需解释器已提供。执行 Python 操作前检查 Python 路径；Node 操作使用返回的 Node 路径。
+-2. 准备纯 Node 载体时运行 `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`。不能与 `--python-only` 同用。提供 Node 工作流之前，Python Office 编程继续使用现有 Python 资源。
++2. 准备纯 Node 载体时运行 `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`。不能与 `--python-only` 同用。先构建产物，使构建器能复制独立 Office 模块。自定义 Office 提供者组装选择 `authoring: node`，并要求依赖查询返回 `officeLibraries`。Desktop 自行选择此模式；已有 Desktop 资源需要重新准备。
+ 3. 确认 `runtime.json` 包含 `schemaVersion: 2` 且不含 `python`，资源树没有 Python 目录，并通过本机目标的 Node 与 pnpm 冒烟检查。见[资源格式说明](../../../../packages/skill/tool-workspace-dependencies/README.zh.md)。
+diff --git a/packages/skill/skill-office/README.i18n.yaml b/packages/skill/skill-office/README.i18n.yaml
+index 8be35a0ccb5c554623e380f6ba2d78d545e2618c..298652b1c6113d6af2b353bd9510d4d6cfcd55c7 100644
+--- a/packages/skill/skill-office/README.i18n.yaml
++++ b/packages/skill/skill-office/README.i18n.yaml
+@@ -9,14 +9,14 @@
+   en: f855ac5e12b4e604
+   zh: b2e875d31d56cb2e
+ /deepseek-ai-dsh-skill-office/summary:
+-  en: 3f41e39809756048
+-  zh: 5ec8623eeb617755
++  en: 09075588b7d533e5
++  zh: ab5b36dac6084705
+ /deepseek-ai-dsh-skill-office/table-of-contents:
+   en: c361195a73cf5755
+   zh: 745b04e7be0be369
+ /deepseek-ai-dsh-skill-office/use-this-package:
+-  en: bc0460f837676d8a
+-  zh: be1692483d7f5daf
++  en: a20510b1595950d0
++  zh: 309899ab084fb798
+ /deepseek-ai-dsh-skill-office/use-this-package/progressive-loading:
+   en: d251c551dc229a2b
+   zh: 82201ee78d37948a
+@@ -33,8 +33,8 @@
+   en: dc9e9205d989f1d0
+   zh: 01bdbbfba743813a
+ /deepseek-ai-dsh-skill-office/known-limitations-and-deferred-work:
+-  en: 1f718fc3bb4352d9
+-  zh: c1aa108ad2b05fdd
++  en: 20173d31683aa2df
++  zh: 5a383f0e63744013
+ /deepseek-ai-dsh-skill-office/known-limitations-and-deferred-work/dev-note:
+   en: e67f633dc6fe7773
+   zh: 8ec3e73528ddb1a6
+diff --git a/packages/skill/skill-office/README.md b/packages/skill/skill-office/README.md
+index 12216dbe2f3a60466fe16e488eb5ce36f45bd626..6ad3f16edc9180801e483d00320c54193c1a8473 100644
+--- a/packages/skill/skill-office/README.md
++++ b/packages/skill/skill-office/README.md
+@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
+ 
+ ## Summary
+ 
+-The catalog lists the Office router and six authoring or operation skills. Full instructions load on demand. Authoring skills use the selected Python libraries; operation skills supply the configured Node and LibreOffice Kit CLI paths. SDK and Desktop mount the skill provider and dependency query separately.
++The catalog lists the Office router and six authoring or operation skills. Full instructions load on demand. Authoring skills select Python or Node libraries through `authoring`; Desktop selects Node. Operation skills supply the configured Node and LibreOffice Kit CLI paths. SDK and Desktop mount the skill provider and dependency query separately.
+ 
+ ## Table of Contents
+ 
+@@ -36,6 +36,7 @@ Mount the skill provider beside the skill registry and `dsh-tool-skill`. The pro
+ | Field | Default | Meaning |
+ |---|---|---|
+ | `assetRoot` | Carrier resources or packaged `assets/` | Absolute directory containing the seven skill folders. |
++| `authoring` | `python` | `node` selects bundled Node authoring; requires `officeLibraries` from the dependency query. |
+ | `node` | Host Node.js | Standalone Node executable for operation skills; packaged carriers supply it explicitly. |
+ | `cli` | Installed Kit CLI | Absolute CLI entry; `false` disables operation execution. |
+ 
+@@ -121,7 +122,8 @@ Skill results append to history without changing tool declarations, and loaded t
+ 
+ <a id="known-limitations-and-deferred-work"></a>
+ 
+-- The provider does not install authoring libraries.
++- The provider does not install authoring libraries. Node-only carrier preparation copies the self-contained `lib/authoring.js` bundle, including dependency notices, into the runtime. It exports docx, ExcelJS, PptxGenJS, Arquero, ZIP/XML helpers and `readOfficePackage`.
++- Part editing preserves untouched file bytes; callers maintain OOXML relationships, content types, revision structures and formula caches. It does not preserve ZIP metadata or digital signatures, validate Office schemas, or provide a document layout engine. Limits and stable error codes are declared in [`office-package.ts`](src/office-package.ts).
+ - LibreOffice output can differ from native Office applications.
+ - Legacy, encrypted, and macro-enabled files need an appropriate separate workflow.
+ 
+diff --git a/packages/skill/skill-office/README.zh.md b/packages/skill/skill-office/README.zh.md
+index 9d464a800ee6a44e252f85215e3c0cba35164019..bf6e3a5b316516646e84723edae0045b7febfbfe 100644
+--- a/packages/skill/skill-office/README.zh.md
++++ b/packages/skill/skill-office/README.zh.md
+@@ -9,7 +9,7 @@ kind: "package-reference"
+ 
+ ## 概述
+ 
+-目录列出 Office 路由及六个创作或操作技能，完整说明按需加载。创作技能使用选定的 Python 库；操作技能提供配置的 Node 与 LibreOffice Kit CLI 路径。SDK 和 Desktop 分别挂载技能提供者和依赖查询。
++目录列出 Office 路由及六个创作或操作技能，完整说明按需加载。创作技能通过 `authoring` 选择 Python 或 Node 库；Desktop 选择 Node。操作技能提供配置的 Node 与 LibreOffice Kit CLI 路径。SDK 和 Desktop 分别挂载技能提供者和依赖查询。
+ 
+ ## 目录
+ 
+@@ -36,6 +36,7 @@ kind: "package-reference"
+ | 字段 | 默认值 | 含义 |
+ |---|---|---|
+ | `assetRoot` | 载体资源或包内 `assets/` | 包含七个技能目录的绝对路径。 |
++| `authoring` | `python` | `node` 选择随包 Node 创作库，要求依赖查询返回 `officeLibraries`。 |
+ | `node` | 宿主 Node.js | 操作技能使用的独立 Node 可执行程序；打包载体显式提供。 |
+ | `cli` | 已安装 Kit CLI | CLI 入口的绝对路径；`false` 禁用操作执行。 |
+ 
+@@ -121,7 +122,8 @@ flowchart TD
+ 
+ <a id="known-limitations-and-deferred-work"></a>
+ 
+-- 提供者不安装创作库。
++- 提供者不安装创作库。纯 Node 载体准备时，将包含依赖许可说明的独立 `lib/authoring.js` 复制到运行资源中。该模块提供 docx、ExcelJS、PptxGenJS、Arquero、ZIP/XML 辅助接口及 `readOfficePackage`。
++- 部件编辑保留未修改文件的字节；调用方负责维护 OOXML 关系、内容类型、修订结构和公式缓存。它不保留 ZIP 元数据或数字签名，不校验 Office schema，也不提供文档排版引擎。大小限制与稳定错误码见 [`office-package.ts`](src/office-package.ts)。
+ - LibreOffice 输出可能不同于原生 Office 应用。
+ - 旧格式、加密和启用宏的文件需要适用的独立工作流。
+ 
+diff --git a/packages/skill/skill-office/assets/office-docx/SKILL.node.md b/packages/skill/skill-office/assets/office-docx/SKILL.node.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d34575e5c719149c490e48b1cd18398e88de116f
+--- /dev/null
++++ b/packages/skill/skill-office/assets/office-docx/SKILL.node.md
+@@ -0,0 +1,38 @@
++---
++name: office-docx
++description: Create, read, edit, and validate Word documents (.docx).
++---
++
++# Word documents
++
++Follow explicit user or workspace requirements for an environment or library. Otherwise call `load_workspace_dependencies`, run its `node` executable, and import the absolute `officeLibraries` path with `pathToFileURL`. This module provides `docx`, `readOfficePackage`, `DOMParser`, and `XMLSerializer`. Do not install packages or discover a system interpreter. If the module is unavailable, report the missing resource rather than using another environment silently.
++
++Keep task scripts and deliverables in the workspace; the runtime and skill directories are read-only. Match the requested language and preserve an existing document's design. Save a new file unless an in-place edit is requested.
++
++## Create and edit
++
++Use `docx` for new documents, including paragraphs, text runs, styles, tables, images, headers, footers, and sections. For example, in a task `.mjs` script run with the returned Node:
++
++```js
++import { writeFile } from 'node:fs/promises';
++import { pathToFileURL } from 'node:url';
++const { docx } = await import(pathToFileURL(process.argv[2]).href);
++const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
++const document = new Document({ sections: [{ children: [
++  new Paragraph({ text: 'Project report', heading: HeadingLevel.TITLE }),
++  new Paragraph({ children: [new TextRun('The requested findings go here.')] }),
++] }] });
++await writeFile('report.docx', await Packer.toBuffer(document));
++```
++
++The `docx` creation API does not read arbitrary existing documents. For existing files, use `readOfficePackage(await readFile(path))`; inspect only the affected part through `pkg.xml('word/document.xml')`, then change the relevant WordprocessingML text nodes or properties. Find nodes by namespace URI, not an assumed prefix. A title can be an ordinary paragraph. Preserve its runs and formatting; replacing the whole paragraph's text destroys mixed formatting. For a replacement spanning runs, distribute the new text across the intended run nodes and preserve their properties. Require an unambiguous target before changing it.
++
++Call `pkg.replaceXml(partName, document)` only for modified parts, then `await writeFile(output, await pkg.save())`. `pkg.names()` lists package members, `pkg.part(name)` returns copied current bytes, and `pkg.xml(name)` returns a detached XML document. For new images or other parts, `pkg.setPart(name, bytes)` adds or replaces bytes and `pkg.deletePart(name)` removes a part; update content types and relationships together. Untouched parts, including drawings, relationships, comments, and unsupported extensions, retain their original bytes. ZIP metadata and digital signatures are not preserved. XML editing is not tracked-change authoring: do not present ordinary replacements, colored text, or comments as real revisions. For actual revisions, modify and verify the relevant revision structures explicitly.
++
++Use heading/body styles and section-aware table widths, including merged cells and nested tables. Set CJK run fonts through the appropriate East Asian font property; an available font name alone does not establish rendered glyphs.
++
++## Check and deliver
++
++Reopen saved bytes with `readOfficePackage` and verify requested content, formatting, and required unchanged content. This does not paginate or render. Load `office-render` for requested images or visual inspection and for appearance-focused changes to fonts, colors, spacing, sizing, or alignment unless the user explicitly skips rendering. New files and content edits with incidental formatting need no render by themselves. Load `office-export-pdf` for PDF output.
++
++Deliver the final DOCX through `present` when available, keeping the actual file in place. Otherwise use the session's supported file delivery method. Do not deliver temporary QA files unless requested.
+diff --git a/packages/skill/skill-office/assets/office-pptx/SKILL.node.md b/packages/skill/skill-office/assets/office-pptx/SKILL.node.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..27165b879076cebade42a05af40316aead5ca7c8
+--- /dev/null
++++ b/packages/skill/skill-office/assets/office-pptx/SKILL.node.md
+@@ -0,0 +1,39 @@
++---
++name: office-pptx
++description: Create, read, edit, and validate PowerPoint presentations (.pptx).
++---
++
++# PowerPoint presentations
++
++Honor explicit user or workspace requirements. Otherwise call `load_workspace_dependencies`, run its `node` executable and import its absolute `officeLibraries` path with `pathToFileURL`. The module exports `PptxGenJS`, `readOfficePackage`, `DOMParser`, and `XMLSerializer`. Do not install packages or discover another interpreter. Report missing resources when they prevent the operation.
++
++Keep scripts and outputs in the task workspace; shared runtime and skill directories are read-only. Match the requested language and preserve the existing deck's design. Save a new file unless an in-place edit is requested.
++
++## Create and edit
++
++Use `PptxGenJS` for new editable slides, text runs, tables, images, charts, slide masters and notes. Use local images. Positions and sizes use inches; text sizes use points. Set page dimensions and chart data explicitly:
++
++```js
++import { pathToFileURL } from 'node:url';
++const { PptxGenJS } = await import(pathToFileURL(process.argv[2]).href);
++const deck = new PptxGenJS();
++deck.layout = 'LAYOUT_WIDE';
++const slide = deck.addSlide();
++slide.addText('Quarterly report', { x: 0.6, y: 0.4, w: 12, h: 0.8, fontSize: 30 });
++slide.addChart(deck.ChartType.bar,
++  [{ name: 'Revenue', labels: ['Q1', 'Q2'], values: [12, 18] }],
++  { x: 0.8, y: 1.6, w: 11.5, h: 4.8, catAxisLabelFontSize: 16 });
++await deck.writeFile({ fileName: 'report.pptx' });
++```
++
++PptxGenJS creates presentations; it does not import existing ones. For edits, open original bytes with `readOfficePackage(await readFile(path))`. Inspect the presentation's slide relationships and affected slide, layout, shape, text-run, table, chart or notes XML. Use namespace-aware XML traversal with `pkg.xml(partName)`. Preserve text-run properties, shape geometry, relationships, and unknown extensions; do not rebuild the deck to perform a targeted edit. Require an unambiguous target before mutation.
++
++For a title in the first slide, locate its shape and DrawingML text runs in the actual slide part; update only the intended text nodes. For a title centered on a slide, both paragraph alignment and shape geometry must be centered against the slide width. Inspect and change both, then verify them after saving.
++
++Write each modified document back with `pkg.replaceXml(partName, document)` and save once with `await writeFile(output, await pkg.save())`. `pkg.part(name)` supplies original bytes for embedded resources. Untouched parts retain their original bytes, including animations, SmartArt, charts and embedded workbooks. Native chart edits must update and verify both chart caches and the embedded workbook; changing only visible labels or a chart cache is incomplete. Modifying notes requires updating their corresponding notes parts.
++
++## Check and deliver
++
++Reopen the saved package to verify slide count, requested text, formatting, geometry, chart data, notes and required unchanged parts. Check the native chart's embedded workbook. Package inspection does not establish text fit, contrast or rendering fidelity.
++
++Load `office-render` for requested images or visual inspection and appearance-focused styling, spacing, sizing, or alignment changes unless the user skips rendering. New content with incidental formatting does not itself require rendering. Load `office-export-pdf` for PDF output. Deliver the final PPTX with `present` when available, keeping that file in place; otherwise use the session's supported delivery method. Leave intermediate reports out of delivery unless requested.
+diff --git a/packages/skill/skill-office/assets/office-recalculate/SKILL.node.md b/packages/skill/skill-office/assets/office-recalculate/SKILL.node.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..0adbf964af663449e2b1436bf1a017e96ce798be
+--- /dev/null
++++ b/packages/skill/skill-office/assets/office-recalculate/SKILL.node.md
+@@ -0,0 +1,18 @@
++---
++name: office-recalculate
++description: Refresh spreadsheet formula caches and verify calculated values with LibreOffice Kit.
++---
++
++# Recalculate spreadsheet formulas
++
++Use the installed LibreOffice Kit CLI through the shell with the absolute Node and CLI paths supplied below. In Bash, invoke `"<node>" "<cli>"`; in PowerShell, invoke `& "<node>" "<cli>"`. Prefer bundled LibreOffice unless the user requests another installation. If the Office sidecar is missing, follow [sidecar setup](../office/references/sidecar.md): ask whether the user wants to download it and install only after they agree. Do not invoke system soffice, use npx, or install a replacement to work around a failed recalculation with an installed sidecar.
++
++Keep the original workbook and write a new file in the task workspace. Quote each input and output path.
++
++```text
++"<node>" "<cli>" recalculate --input <workbook.xlsx> --output <recalculated.xlsx>
++```
++
++Verify the saved result using the Node executable and `officeLibraries` module returned by `load_workspace_dependencies`, unless a project environment is required. Import the module with `pathToFileURL`; use ExcelJS for read-only workbook inspection and `readOfficePackage` for preserved package parts. A formula cell exposes its formula and cached result separately. Check both, including expected totals, types, unchanged sheets, styles and data. Do not write the recalculated workbook through ExcelJS merely to verify it: that can discard unsupported features. Recalculation does not validate business logic or guarantee Excel-specific feature compatibility.
++
++If no supported recalculation engine is available or the command fails, preserve the workbook and explain that calculated values could not be refreshed. Do not replace requested formulas with constants or present stale/absent caches as fresh results. Deliver the verified output through `present` when available, keeping the file in place.
+diff --git a/packages/skill/skill-office/assets/office-xlsx/SKILL.node.md b/packages/skill/skill-office/assets/office-xlsx/SKILL.node.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..66f780da5cb7ad4f0e2dd2997e5f4a0b2e746056
+--- /dev/null
++++ b/packages/skill/skill-office/assets/office-xlsx/SKILL.node.md
+@@ -0,0 +1,42 @@
++---
++name: office-xlsx
++description: Read, create, edit, and validate Excel workbooks, data, and formulas (.xlsx).
++---
++
++# Excel workbooks
++
++Honor explicit user or workspace requirements. Otherwise call `load_workspace_dependencies`, run its `node` executable, and import the absolute `officeLibraries` path with `pathToFileURL`. The module exports `ExcelJS`, the `aq` Arquero table API, and `readOfficePackage`. Do not install packages or discover another interpreter. Report missing resources when they prevent the operation.
++
++Keep scripts and outputs in the task workspace; shared runtime and skill directories are read-only. Save a new file unless an in-place edit is requested.
++
++## Read and modify
++
++Use ExcelJS to read workbook values, formulas, styles and cell types and to create new workbooks. Arquero provides table transformations and aggregations for analysis. A data table is not a workbook: exporting a table over an existing file loses workbook features. Write only the intended ranges.
++
++For a new workbook:
++
++```js
++import { pathToFileURL } from 'node:url';
++const { ExcelJS } = await import(pathToFileURL(process.argv[2]).href);
++const workbook = new ExcelJS.Workbook();
++const sheet = workbook.addWorksheet('Revenue');
++sheet.addRows([['Quarter', 'Revenue'], ['Q1', 12], ['Q2', 18],
++  ['Total', { formula: 'SUM(B2:B3)' }]]);
++sheet.getRow(1).font = { bold: true };
++sheet.columns.forEach(column => { column.width = 18; });
++await workbook.xlsx.writeFile('report.xlsx');
++```
++
++ExcelJS does not preserve every existing workbook feature when writing, including charts and some extensions. For existing files, use `readOfficePackage(await readFile(path))` and make targeted OOXML edits instead of an ExcelJS read/write round trip. Inspect workbook relationships to resolve sheet names to parts; do not assume the first sheet is `sheet1.xml`. Check affected cell types, formulas, styles, merged ranges and referenced ranges before changing anything.
++
++`pkg.xml(partName)` returns a detached XML document. Locate worksheet cells by their `r` coordinate and namespace URI; preserve row/cell ordering and style references. Cells can refer to shared strings or contain inline text, typed values, or formulas. A shared string can be used by multiple cells: do not modify a shared-string entry when only one cell should change. Use a dedicated or inline string for that cell. Preserve numeric values, booleans, dates and identifiers as intended types; number formatting does not convert types.
++
++For formula edits, preserve the `<f>` expression, remove stale cached `<v>` values and invalidate relevant calculation-chain information so recalculation can rebuild it. Never describe an absent/stale cache as a calculated result. Use `pkg.replaceXml` only for modified parts and `await writeFile(output, await pkg.save())` once. Untouched parts, including charts, macros and relationships, retain their original bytes. Preserve the original and verify any advanced feature explicitly. Do not rename XLS/XLSB/encrypted files to XLSX.
++
++Writing a formula does not calculate it. ExcelJS and Arquero are not Excel formula engines. When fresh results are required, load `office-recalculate`; do not replace requested formulas with constants.
++
++## Check and deliver
++
++Reopen saved bytes and verify sheet names, values, cell types, formulas, styles and totals against source data, including required unchanged content. Load `office-render` for requested visual inspection or appearance-focused changes to fills, alignment, spacing or sizing unless the user skips rendering. New workbooks, data and formula edits do not require rendering solely for incidental bold headers or number formats.
++
++Load `office-recalculate` for refreshed formula results and `office-export-pdf` for PDF output. Deliver the verified workbook with `present` when available, keeping the actual file in place; otherwise use the session's supported delivery method. Omit temporary reports unless requested.
+diff --git a/packages/skill/skill-office/package.json b/packages/skill/skill-office/package.json
+index f768d1f6f26da7dfb5bff0a74e47f70c5673fcae..39d45d585e45095867f1a0cc7eda2441275548b0 100644
+--- a/packages/skill/skill-office/package.json
++++ b/packages/skill/skill-office/package.json
+@@ -22,6 +22,7 @@
+   },
+   "files": [
+     "lib/index.js",
++    "lib/authoring.js",
+     "assets",
+     "lib/types/**/*.d.ts"
+   ],
+@@ -39,6 +40,13 @@
+   "dependencies": {
+     "@deepseek-ai/libreoffice-kit": "^0.1.5",
+     "@deepseek-ai/schemastery": "workspace:~",
+-    "yaml": "^2.4.2"
++    "yaml": "^2.4.2",
++    "docx": "9.13.0",
++    "pptxgenjs": "4.0.1",
++    "exceljs": "4.4.0",
++    "arquero": "8.0.3",
++    "@xmldom/xmldom": "0.9.12",
++    "jszip": "3.10.2",
++    "fflate": "0.8.3"
+   }
+ }
+diff --git a/packages/skill/skill-office/src/authoring.ts b/packages/skill/skill-office/src/authoring.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..120910f9e318ad4b62ecd059de8fb674517352b9
+--- /dev/null
++++ b/packages/skill/skill-office/src/authoring.ts
+@@ -0,0 +1,10 @@
++/** Offline Office libraries carried with the standalone Node runtime; no profile or Python dependency. */
++
++export * as docx from 'docx'
++export { default as ExcelJS } from 'exceljs'
++export { default as PptxGenJS } from 'pptxgenjs'
++export * as aq from 'arquero'
++export { DOMParser, XMLSerializer } from '@xmldom/xmldom'
++export { default as JSZip } from 'jszip'
++export { readOfficePackage, OfficePackageError } from './office-package.ts'
++export type { OfficePackage, OfficePackageLimits, OfficePackageErrorCode } from './office-package.ts'
+diff --git a/packages/skill/skill-office/src/index.ts b/packages/skill/skill-office/src/index.ts
+index b1e5a8717999f970b3eda7ee7570e01ec6755f50..ef7fae66205cacfbbede61cceaf42bc4adf30374 100644
+--- a/packages/skill/skill-office/src/index.ts
++++ b/packages/skill/skill-office/src/index.ts
+@@ -20,6 +20,8 @@ export interface Config {
+   node?: string
+   /** Absolute LibreOffice Kit CLI entry; false explicitly disables CLI access. */
+   cli?: string | false
++  /** Node uses the bundled authoring module; Python retains the existing library workflows when omitted. */
++  authoring?: 'node' | 'python'
+ }
+ 
+ /** Validated resource configuration. */
+@@ -27,6 +29,7 @@ export const Config: z<Config> = z.object({
+   assetRoot: z.string().min(1),
+   node: z.string().min(1),
+   cli: z.union([z.string().min(1), z.const(false)]),
++  authoring: z.union([z.const('node'), z.const('python')]),
+ })
+ 
+ /** Cordis plugin identity. */
+@@ -71,7 +74,8 @@ export function apply(ctx: Context, config: Config = {}): void {
+   if (!isAbsolute(assetRoot)) throw new Error('skill-office: assetRoot must be an absolute directory')
+   const candidates: SkillCandidate[] = SKILL_NAMES.map((skillName) => {
+     const directory = join(assetRoot, skillName)
+-    const path = join(directory, 'SKILL.md')
++    const path = join(directory, config.authoring === 'node'
++      && ['office-docx', 'office-pptx', 'office-xlsx', 'office-recalculate'].includes(skillName) ? 'SKILL.node.md' : 'SKILL.md')
+     const { description } = parseSkill(readFileSync(path, 'utf8'), path)
+     return {
+       name: skillName, description,
+diff --git a/packages/skill/skill-office/src/office-package.ts b/packages/skill/skill-office/src/office-package.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f3246268bd85e8688ca857b34a72fc2d43e8f556
+--- /dev/null
++++ b/packages/skill/skill-office/src/office-package.ts
+@@ -0,0 +1,251 @@
++/** In-memory OOXML part editing; untouched part bytes survive saves, including unsupported Office extensions. */
++
++import JSZip from 'jszip'
++import { unzipSync } from 'fflate'
++import { DOMParser, XMLSerializer, type Document } from '@xmldom/xmldom'
++
++/** Failures leave the input and the last accepted in-memory parts unchanged. */
++export type OfficePackageErrorCode =
++  | 'invalid-archive' | 'invalid-xml' | 'limit' | 'missing-part' | 'invalid-part-name' | 'duplicate-part'
++
++/** Stable failure identity for callers; no filesystem, network or subprocess effects occur. */
++export class OfficePackageError extends Error {
++  constructor(readonly code: OfficePackageErrorCode, message: string, options?: ErrorOptions) {
++    super(message, options)
++    this.name = 'OfficePackageError'
++  }
++}
++
++/** Positive safe-integer bounds on compressed input/output and decompressed contents. */
++export interface OfficePackageLimits {
++  /** Maximum compressed archive size; defaults to 128 MiB. */
++  maxArchiveBytes?: number
++  /** Maximum ZIP entries including directories; defaults to 10,000. */
++  maxEntries?: number
++  /** Maximum decompressed part size; defaults to 64 MiB. */
++  maxPartBytes?: number
++  /** Maximum sum of decompressed part sizes; defaults to 256 MiB. */
++  maxTotalBytes?: number
++}
++
++/** Edits ZIP parts, not Office schemas; callers own relationships, content types, signatures and formula caches. */
++export interface OfficePackage {
++  /** @returns A frozen snapshot of current file names, without directory entries. */
++  names(): readonly string[]
++  /** @param name - Relative ZIP file name. @returns Copied current bytes, or undefined for an absent part. */
++  part(name: string): Uint8Array | undefined
++  /** @param name - Existing XML part. @returns A detached document; invalid XML rejects with invalid-xml. */
++  xml(name: string): Document
++  /** Replaces an existing part with validated UTF-8 XML; failure retains the previous part.
++   * @param name - Existing XML part. @param document - Edited DOM document.
++   */
++  replaceXml(name: string, document: Document): void
++  /** Adds or replaces binary/XML bytes; caller updates related OOXML parts before saving.
++   * @param name - Relative ZIP file name. @param bytes - Bytes copied before publication.
++   */
++  setPart(name: string, bytes: Uint8Array): void
++  /** @param name - Relative ZIP file name. @returns Whether a part was removed; caller updates related OOXML parts. */
++  deletePart(name: string): boolean
++  /** @returns A compressed snapshot of current parts; rejects on size limits, without modifying accepted parts. */
++  save(): Promise<Uint8Array>
++}
++
++function resolveLimits(options: OfficePackageLimits): Required<OfficePackageLimits> {
++  const limits = {
++    maxArchiveBytes: options.maxArchiveBytes ?? 128 * 1024 * 1024,
++    maxEntries: options.maxEntries ?? 10_000,
++    maxPartBytes: options.maxPartBytes ?? 64 * 1024 * 1024,
++    maxTotalBytes: options.maxTotalBytes ?? 256 * 1024 * 1024,
++  }
++  for (const [name, value] of Object.entries(limits)) {
++    if (!Number.isSafeInteger(value) || value <= 0) throw new OfficePackageError('limit', `${name} must be a positive safe integer`)
++  }
++  return limits
++}
++
++function validateName(name: string, directory = false): string {
++  const key = directory ? name.slice(0, -1) : name
++  if (!key || /[\\\x00-\x1f\x7f]/u.test(key) || /^[a-z]:/iu.test(key)
++    || key.split('/').some(segment => !segment || segment === '.' || segment === '..')) {
++    throw new OfficePackageError('invalid-part-name', `Invalid ZIP part name: ${name}`)
++  }
++  return key
++}
++
++function validateHierarchy(entries: Map<string, boolean>): void {
++  for (const key of entries.keys()) {
++    const segments = key.split('/')
++    for (let count = 1; count < segments.length; count++) {
++      if (entries.get(segments.slice(0, count).join('/')) === false) {
++        throw new OfficePackageError('invalid-part-name', 'A ZIP file cannot contain child entries')
++      }
++    }
++  }
++}
++
++function scanArchive(bytes: Uint8Array, limits: Required<OfficePackageLimits>): Map<string, boolean> {
++  const entries = new Map<string, boolean>()
++  let total = 0
++  try {
++    unzipSync(bytes, { filter(file) {
++      const directory = file.name.endsWith('/')
++      const key = validateName(file.name, directory)
++      if (entries.has(key)) throw new OfficePackageError('duplicate-part', `Duplicate ZIP part: ${key}`)
++      entries.set(key, directory)
++      total += file.originalSize
++      if (entries.size > limits.maxEntries || file.originalSize > limits.maxPartBytes || total > limits.maxTotalBytes) {
++        throw new OfficePackageError('limit', 'Declared ZIP contents exceed configured limits')
++      }
++      return false
++    } })
++    validateHierarchy(entries)
++  } catch (cause) {
++    if (cause instanceof OfficePackageError) throw cause
++    throw new OfficePackageError('invalid-archive', 'Cannot read ZIP directory', { cause })
++  }
++  return entries
++}
++
++function decodeXml(bytes: Uint8Array): Document {
++  try {
++    let encoding = 'utf-8'
++    let start = 0
++    if (bytes[0] === 0xff && bytes[1] === 0xfe) { encoding = 'utf-16le'; start = 2 }
++    else if (bytes[0] === 0xfe && bytes[1] === 0xff) { encoding = 'utf-16be'; start = 2 }
++    else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) start = 3
++    else if (bytes[0] === 0 && bytes[1] === 0x3c) encoding = 'utf-16be'
++    else if (bytes[0] === 0x3c && bytes[1] === 0) encoding = 'utf-16le'
++    const text = new TextDecoder(encoding, { fatal: true }).decode(bytes.subarray(start))
++    const declared = /^<\?xml\s[^?]*\bencoding\s*=\s*["']([^"']+)["']/iu.exec(text)?.[1]?.toLowerCase()
++    const compatible = declared === undefined || declared === encoding || (declared === 'utf8' && encoding === 'utf-8')
++      || (declared === 'utf-16' && encoding.startsWith('utf-16'))
++    if (!compatible || /<!DOCTYPE\s|<!ENTITY\s/iu.test(text)) throw new Error('Unsupported XML encoding or declaration')
++    return new DOMParser({ onError(_level, message) {
++      throw new Error(message)
++    } }).parseFromString(text, 'application/xml')
++  } catch (cause) {
++    throw new OfficePackageError('invalid-xml', 'Cannot parse XML part', { cause })
++  }
++}
++
++function encodeXml(document: Document): Uint8Array {
++  try {
++    let text = new XMLSerializer().serializeToString(document)
++    text = text.replace(/^<\?xml\s[^?]*\?>\s*/u, '')
++    const bytes = new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8"?>\n' + text)
++    decodeXml(bytes)
++    return bytes
++  } catch (cause) {
++    if (cause instanceof OfficePackageError) throw cause
++    throw new OfficePackageError('invalid-xml', 'Cannot serialize XML part', { cause })
++  }
++}
++
++function readBounded(entry: JSZip.JSZipObject, maxBytes: number): Promise<Uint8Array> {
++  return new Promise((resolve, reject) => {
++    const stream = entry.nodeStream('nodebuffer')
++    const chunks: Buffer[] = []
++    let size = 0
++    let stopped = false
++    stream.on('data', (chunk: Buffer) => {
++      if (stopped) return
++      size += chunk.byteLength
++      if (size > maxBytes) {
++        stopped = true
++        stream.pause()
++        chunks.length = 0
++        reject(new OfficePackageError('limit', `Decompressed ZIP part exceeds configured limit: ${entry.name}`))
++      } else chunks.push(chunk)
++    })
++    stream.on('error', (cause) => {
++      stopped = true
++      chunks.length = 0
++      reject(new OfficePackageError('invalid-archive', `Cannot decompress ZIP part: ${entry.name}`, { cause }))
++    })
++    stream.on('end', () => { if (!stopped) resolve(Buffer.concat(chunks, size)) })
++  })
++}
++
++class OfficePackageImpl implements OfficePackage {
++  constructor(private readonly parts: Map<string, Uint8Array>, private readonly limits: Required<OfficePackageLimits>) {}
++
++  names(): readonly string[] { return Object.freeze([...this.parts.keys()].sort()) }
++  part(name: string): Uint8Array | undefined {
++    const bytes = this.parts.get(validateName(name))
++    return bytes === undefined ? undefined : Uint8Array.from(bytes)
++  }
++  xml(name: string): Document {
++    const bytes = this.part(name)
++    if (bytes === undefined) throw new OfficePackageError('missing-part', `Missing ZIP part: ${name}`)
++    return decodeXml(bytes)
++  }
++  replaceXml(name: string, document: Document): void {
++    validateName(name)
++    if (!this.parts.has(name)) throw new OfficePackageError('missing-part', `Missing ZIP part: ${name}`)
++    this.setPart(name, encodeXml(document))
++  }
++  setPart(name: string, bytes: Uint8Array): void {
++    validateName(name)
++    const next = new Map(this.parts)
++    next.set(name, bytes)
++    this.checkContents(next)
++    validateHierarchy(new Map([...next.keys()].map(key => [key, false])))
++    this.parts.set(name, Uint8Array.from(bytes))
++  }
++  deletePart(name: string): boolean { return this.parts.delete(validateName(name)) }
++  async save(): Promise<Uint8Array> {
++    const snapshot = new Map(this.parts)
++    this.checkContents(snapshot)
++    const zip = new JSZip()
++    for (const [name, bytes] of snapshot) zip.file(name, bytes, { createFolders: false })
++    try {
++      const result = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } })
++      if (result.byteLength > this.limits.maxArchiveBytes) throw new OfficePackageError('limit', 'Output ZIP exceeds configured limit')
++      return result
++    } catch (cause) {
++      if (cause instanceof OfficePackageError) throw cause
++      throw new OfficePackageError('invalid-archive', 'Cannot save ZIP parts', { cause })
++    }
++  }
++  private checkContents(parts: Map<string, Uint8Array>): void {
++    let total = 0
++    for (const bytes of parts.values()) {
++      total += bytes.byteLength
++      if (bytes.byteLength > this.limits.maxPartBytes) throw new OfficePackageError('limit', 'ZIP part exceeds configured limit')
++    }
++    if (parts.size > this.limits.maxEntries || total > this.limits.maxTotalBytes) {
++      throw new OfficePackageError('limit', 'ZIP contents exceed configured limits')
++    }
++  }
++}
++
++/** Reads a copied ZIP with bounded decompression and CRC checks. Rejects malformed/ambiguous names and unsupported XML on access.
++ * Empty directory entries are omitted on save; compression, ZIP metadata and digital signatures are not preserved.
++ * @param input - OOXML ZIP bytes; copied before the first asynchronous operation.
++ * @param options - Memory and entry limits. Oversized inputs reject before copying.
++ * @returns Editable parts; untouched file bytes survive saving. OOXML schema consistency remains caller-owned.
++ */
++export async function readOfficePackage(input: Uint8Array, options: OfficePackageLimits = {}): Promise<OfficePackage> {
++  const limits = resolveLimits(options)
++  if (input.byteLength > limits.maxArchiveBytes) throw new OfficePackageError('limit', 'ZIP input exceeds configured limit')
++  const bytes = Uint8Array.from(input)
++  const scanned = scanArchive(bytes, limits)
++  let archive: JSZip
++  try { archive = await JSZip.loadAsync(bytes, { checkCRC32: false, createFolders: false }) }
++  catch (cause) { throw new OfficePackageError('invalid-archive', 'Cannot load ZIP parts', { cause }) }
++  const actual = Object.values(archive.files)
++  if (actual.length !== scanned.size || actual.some(entry => scanned.get(validateName(entry.name, entry.dir)) !== entry.dir)) {
++    throw new OfficePackageError('invalid-archive', 'ZIP readers disagree on part names')
++  }
++  const parts = new Map<string, Uint8Array>()
++  let total = 0
++  for (const entry of actual) {
++    const part = await readBounded(entry, Math.min(limits.maxPartBytes, limits.maxTotalBytes - total))
++    total += part.byteLength
++    if (!entry.dir) parts.set(entry.name, part)
++  }
++  // CRC validation uses the same private input after actual decompressed sizes have been bounded.
++  try { await JSZip.loadAsync(bytes, { checkCRC32: true, createFolders: false }) }
++  catch (cause) { throw new OfficePackageError('invalid-archive', 'ZIP CRC validation failed', { cause }) }
++  return new OfficePackageImpl(parts, limits)
++}
+diff --git a/packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap b/packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap
+new file mode 100644
+index 0000000000000000000000000000000000000000..6d562d227cbef11f119565e4b2fb188548b83dbc
+--- /dev/null
++++ b/packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap
+@@ -0,0 +1,37 @@
++// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
++
++exports[`loads the router and authoring body in native/node; resume and fork retain those instructions > Node Word instructions admitted and retained in Session 1`] = `
++"# Word documents
++
++Follow explicit user or workspace requirements for an environment or library. Otherwise call \`load_workspace_dependencies\`, run its \`node\` executable, and import the absolute \`officeLibraries\` path with \`pathToFileURL\`. This module provides \`docx\`, \`readOfficePackage\`, \`DOMParser\`, and \`XMLSerializer\`. Do not install packages or discover a system interpreter. If the module is unavailable, report the missing resource rather than using another environment silently.
++
++Keep task scripts and deliverables in the workspace; the runtime and skill directories are read-only. Match the requested language and preserve an existing document's design. Save a new file unless an in-place edit is requested.
++
++## Create and edit
++
++Use \`docx\` for new documents, including paragraphs, text runs, styles, tables, images, headers, footers, and sections. For example, in a task \`.mjs\` script run with the returned Node:
++
++\`\`\`js
++import { writeFile } from 'node:fs/promises';
++import { pathToFileURL } from 'node:url';
++const { docx } = await import(pathToFileURL(process.argv[2]).href);
++const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
++const document = new Document({ sections: [{ children: [
++  new Paragraph({ text: 'Project report', heading: HeadingLevel.TITLE }),
++  new Paragraph({ children: [new TextRun('The requested findings go here.')] }),
++] }] });
++await writeFile('report.docx', await Packer.toBuffer(document));
++\`\`\`
++
++The \`docx\` creation API does not read arbitrary existing documents. For existing files, use \`readOfficePackage(await readFile(path))\`; inspect only the affected part through \`pkg.xml('word/document.xml')\`, then change the relevant WordprocessingML text nodes or properties. Find nodes by namespace URI, not an assumed prefix. A title can be an ordinary paragraph. Preserve its runs and formatting; replacing the whole paragraph's text destroys mixed formatting. For a replacement spanning runs, distribute the new text across the intended run nodes and preserve their properties. Require an unambiguous target before changing it.
++
++Call \`pkg.replaceXml(partName, document)\` only for modified parts, then \`await writeFile(output, await pkg.save())\`. \`pkg.names()\` lists package members, \`pkg.part(name)\` returns copied current bytes, and \`pkg.xml(name)\` returns a detached XML document. For new images or other parts, \`pkg.setPart(name, bytes)\` adds or replaces bytes and \`pkg.deletePart(name)\` removes a part; update content types and relationships together. Untouched parts, including drawings, relationships, comments, and unsupported extensions, retain their original bytes. ZIP metadata and digital signatures are not preserved. XML editing is not tracked-change authoring: do not present ordinary replacements, colored text, or comments as real revisions. For actual revisions, modify and verify the relevant revision structures explicitly.
++
++Use heading/body styles and section-aware table widths, including merged cells and nested tables. Set CJK run fonts through the appropriate East Asian font property; an available font name alone does not establish rendered glyphs.
++
++## Check and deliver
++
++Reopen saved bytes with \`readOfficePackage\` and verify requested content, formatting, and required unchanged content. This does not paginate or render. Load \`office-render\` for requested images or visual inspection and for appearance-focused changes to fonts, colors, spacing, sizing, or alignment unless the user explicitly skips rendering. New files and content edits with incidental formatting need no render by themselves. Load \`office-export-pdf\` for PDF output.
++
++Deliver the final DOCX through \`present\` when available, keeping the actual file in place. Otherwise use the session's supported file delivery method. Do not deliver temporary QA files unless requested."
++`;
+diff --git a/packages/skill/skill-office/tests/office-package.spec.ts b/packages/skill/skill-office/tests/office-package.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..98a3324d1b2be451640bb44a944adcd156a870d5
+--- /dev/null
++++ b/packages/skill/skill-office/tests/office-package.spec.ts
+@@ -0,0 +1,192 @@
++import { Buffer } from 'node:buffer'
++import { zipSync, strToU8 } from 'fflate'
++import { DOMParser } from '@xmldom/xmldom'
++import { describe, expect, it } from 'vitest'
++import { OfficePackageError, readOfficePackage } from '../src/office-package.ts'
++
++const text = '<root><item style="bold">Original 中文</item><item>Keep</item></root>'
++const binary = new Uint8Array([0, 255, 1, 7, 0, 128])
++const archive = () => zipSync({ 'document.xml': strToU8(text), 'extras/unsupported.bin': binary })
++const parse = (xml: string) => new DOMParser().parseFromString(xml, 'application/xml')
++
++function replaceZipNames(bytes: Uint8Array, before: string, after: string): Uint8Array {
++  const result = Buffer.from(bytes)
++  expect(before.length).toBe(after.length)
++  let offset = 0
++  while ((offset = result.indexOf(before, offset)) >= 0) {
++    result.write(after, offset)
++    offset += after.length
++  }
++  return result
++}
++
++describe('Office ZIP part editing', () => {
++  it('changes text and retains run attributes, other nodes and unsupported binary bytes', async () => {
++    const pkg = await readOfficePackage(archive())
++    const originalBinary = pkg.part('extras/unsupported.bin')
++    const doc = pkg.xml('document.xml')
++    doc.getElementsByTagName('item')[0]!.textContent = 'Modified 中文'
++    expect(pkg.xml('document.xml').getElementsByTagName('item')[0]!.textContent).toBe('Original 中文')
++    pkg.replaceXml('document.xml', doc)
++    const reopened = await readOfficePackage(await pkg.save())
++    expect(reopened.xml('document.xml').getElementsByTagName('item')[0]!.getAttribute('style')).toBe('bold')
++    expect(reopened.xml('document.xml').getElementsByTagName('item')[0]!.textContent).toBe('Modified 中文')
++    expect(reopened.xml('document.xml').getElementsByTagName('item')[1]!.textContent).toBe('Keep')
++    expect(reopened.part('extras/unsupported.bin')).toEqual(originalBinary)
++  })
++
++  it('retains all untouched file bytes while omitting optional directory records', async () => {
++    const pkg = await readOfficePackage(zipSync({ 'extras/': new Uint8Array(), 'document.xml': strToU8(text), 'extras/data': binary }))
++    const reopened = await readOfficePackage(await pkg.save())
++    expect(reopened.names()).toEqual(pkg.names())
++    for (const name of pkg.names()) expect(reopened.part(name)).toEqual(pkg.part(name))
++  })
++
++  it('copies input before async work and isolates returned names, bytes and DOMs', async () => {
++    const input = archive()
++    const pending = readOfficePackage(input)
++    input.fill(0)
++    const pkg = await pending
++    expect(Object.isFrozen(pkg.names())).toBe(true)
++    expect(() => (pkg.names() as string[]).push('injected.xml')).toThrow()
++    const part = pkg.part('extras/unsupported.bin')!
++    part.fill(10)
++    expect(pkg.part('extras/unsupported.bin')).toEqual(binary)
++    pkg.xml('document.xml').documentElement!.textContent = 'Uncommitted'
++    expect(pkg.xml('document.xml').documentElement!.textContent).toBe('Original 中文Keep')
++  })
++
++  it('adds and deletes parts for new images, relationships and embedded content with caller-owned schema updates', async () => {
++    const pkg = await readOfficePackage(archive())
++    const input = new Uint8Array([4, 5, 6])
++    pkg.setPart('media/new.png', input)
++    input.fill(0)
++    expect(pkg.part('media/new.png')).toEqual(new Uint8Array([4, 5, 6]))
++    expect(pkg.deletePart('extras/unsupported.bin')).toBe(true)
++    expect(pkg.deletePart('absent')).toBe(false)
++    const reopened = await readOfficePackage(await pkg.save())
++    expect(reopened.names()).toEqual(['document.xml', 'media/new.png'])
++    expect(reopened.part('media/new.png')).toEqual(new Uint8Array([4, 5, 6]))
++  })
++
++  it('saves a snapshot when later edits occur during compression', async () => {
++    const pkg = await readOfficePackage(archive())
++    const saving = pkg.save()
++    pkg.setPart('document.xml', strToU8('<root>Newer</root>'))
++    const reopened = await readOfficePackage(await saving)
++    expect(reopened.xml('document.xml').documentElement!.textContent).toBe('Original 中文Keep')
++    expect(pkg.xml('document.xml').documentElement!.textContent).toBe('Newer')
++  })
++
++  it.each(['../x', './x', 'a//b', '/absolute', 'C:relative', 'a\\b', 'a/../b', 'a/./b', 'a\0b', 'a\nb'])(
++    'rejects ambiguous ZIP names: %j', async (name) => {
++      await expect(readOfficePackage(zipSync({ [name]: binary }))).rejects.toMatchObject({ code: 'invalid-part-name' })
++      const pkg = await readOfficePackage(archive())
++      expect(() => pkg.setPart(name, binary)).toThrowError(OfficePackageError)
++      expect(pkg.names()).toEqual(['document.xml', 'extras/unsupported.bin'])
++    },
++  )
++
++  it.each([['a', 'a/b'], ['a/b', 'a'], ['a/', 'a'], ['a', 'a/'], ['a/b/', 'a']])(
++    'rejects directory/file aliases and file ancestors in either order: %j %j', async (first, second) => {
++      await expect(readOfficePackage(zipSync({ [first]: new Uint8Array(), [second]: new Uint8Array() })))
++        .rejects.toBeInstanceOf(OfficePackageError)
++    },
++  )
++
++  it('rejects duplicate central-directory file entries and duplicate directories', async () => {
++    for (const [first, second] of [['aa', 'bb'], ['a/', 'b/']]) {
++      const bytes = replaceZipNames(zipSync({ [first!]: binary, [second!]: binary }), second!, first!)
++      await expect(readOfficePackage(bytes)).rejects.toMatchObject({ code: 'duplicate-part' })
++    }
++  })
++
++  it('enforces hierarchy for newly inserted files without changing accepted parts', async () => {
++    const pkg = await readOfficePackage(archive())
++    expect(() => pkg.setPart('extras', binary)).toThrowError(OfficePackageError)
++    expect(() => pkg.setPart('document.xml/child', binary)).toThrowError(OfficePackageError)
++    expect(pkg.names()).toEqual(['document.xml', 'extras/unsupported.bin'])
++  })
++
++  it.each([0, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
++    'rejects invalid resource limits: %j', async (maxEntries) => {
++      await expect(readOfficePackage(archive(), { maxEntries })).rejects.toMatchObject({ code: 'limit' })
++    },
++  )
++
++  it('bounds compressed input, part count, part bytes and total bytes', async () => {
++    const input = archive()
++    for (const limits of [{ maxArchiveBytes: input.length - 1 }, { maxEntries: 1 }, { maxPartBytes: 10 }, { maxTotalBytes: 10 }]) {
++      await expect(readOfficePackage(input, limits)).rejects.toMatchObject({ code: 'limit' })
++    }
++  })
++
++  it('stops actual decompression when declared ZIP sizes lie', async () => {
++    const input = Buffer.from(zipSync({ 'bomb': new Uint8Array(1024 * 1024) }))
++    const central = input.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]))
++    expect(central).toBeGreaterThan(0)
++    input.writeUInt32LE(1, 22)
++    input.writeUInt32LE(1, central + 24)
++    await expect(readOfficePackage(input, { maxPartBytes: 1024, maxTotalBytes: 1024 })).rejects.toMatchObject({ code: 'limit' })
++  })
++
++  it('bounds replacement and addition before publication and leaves the old part available', async () => {
++    const input = zipSync({ 'a.xml': strToU8('<a/>') })
++    const pkg = await readOfficePackage(input, { maxPartBytes: 64, maxTotalBytes: 64, maxEntries: 1 })
++    expect(() => pkg.replaceXml('a.xml', parse('<a>' + 'x'.repeat(100) + '</a>'))).toThrowError(OfficePackageError)
++    expect(() => pkg.setPart('b', binary)).toThrowError(OfficePackageError)
++    expect(pkg.part('a.xml')).toEqual(strToU8('<a/>'))
++    const total = await readOfficePackage(input, { maxTotalBytes: 5 })
++    expect(() => total.setPart('b', binary)).toThrowError(OfficePackageError)
++    expect(total.names()).toEqual(['a.xml'])
++  })
++
++  it('rejects an oversized compressed output while retaining editable state', async () => {
++    const input = zipSync({ a: new Uint8Array(100) })
++    const pkg = await readOfficePackage(input, { maxArchiveBytes: input.length })
++    pkg.setPart('a', Uint8Array.from({ length: 100 }, (_, i) => i))
++    await expect(pkg.save()).rejects.toMatchObject({ code: 'limit' })
++    expect(pkg.part('a')).toHaveLength(100)
++  })
++
++  it.each(['<unclosed>', '<a bad=unquoted/>', '<<<', '<a>&unknown;</a>', '<!DOCTYPE a><a/>', '<!ENTITY x "y"><a/>',
++    '<?xml version="1.0" encoding="EUC-JP"?><a/>', '<?xml version="1.0" encoding="UTF-16"?><a/>'])(
++    'rejects malformed, entity-bearing or contradictory XML: %j', async (xml) => {
++      const pkg = await readOfficePackage(zipSync({ 'a.xml': strToU8(xml) }))
++      expect(() => pkg.xml('a.xml')).toThrowError(OfficePackageError)
++    },
++  )
++
++  it('wraps fatal byte decoding failures and retains their causes', async () => {
++    const pkg = await readOfficePackage(zipSync({ 'a.xml': new Uint8Array([255]) }))
++    try { pkg.xml('a.xml'); throw new Error('Expected failure') }
++    catch (error) {
++      expect(error).toMatchObject({ code: 'invalid-xml', cause: expect.any(Error) })
++    }
++  })
++
++  it.each(['le', 'be'] as const)('reads UTF-16%s BOM and emits a matching UTF-8 declaration after editing', async (endian) => {
++    const encoded = Buffer.from('<?xml version="1.0" encoding="UTF-16"?><root>中文</root>', 'utf16le')
++    if (endian === 'be') encoded.swap16()
++    const bom = endian === 'le' ? [255, 254] : [254, 255]
++    const pkg = await readOfficePackage(zipSync({ 'a.xml': Buffer.concat([Buffer.from(bom), encoded]) }))
++    const doc = pkg.xml('a.xml')
++    expect(doc.documentElement!.textContent).toBe('中文')
++    doc.documentElement!.textContent = '修改'
++    pkg.replaceXml('a.xml', doc)
++    expect(new TextDecoder().decode(pkg.part('a.xml'))).toContain('encoding="UTF-8"')
++    const reopened = await readOfficePackage(await pkg.save())
++    expect(reopened.xml('a.xml').documentElement!.textContent).toBe('修改')
++  })
++
++  it('distinguishes missing parts and rejects damaged ZIP data and CRC failures', async () => {
++    const pkg = await readOfficePackage(archive())
++    expect(pkg.part('missing')).toBeUndefined()
++    expect(() => pkg.xml('missing')).toThrowError(expect.objectContaining({ code: 'missing-part' }))
++    expect(() => pkg.replaceXml('missing', parse('<a/>'))).toThrowError(expect.objectContaining({ code: 'missing-part' }))
++    await expect(readOfficePackage(new Uint8Array([0, 1, 2]))).rejects.toMatchObject({ code: 'invalid-archive' })
++    const corrupt = Buffer.from(zipSync({ a: binary }, { level: 0 }))
++    corrupt[31] = 9
++    await expect(readOfficePackage(corrupt)).rejects.toMatchObject({ code: 'invalid-archive' })
++  })
++})
+diff --git a/packages/skill/skill-office/tests/progressive-loading.spec.ts b/packages/skill/skill-office/tests/progressive-loading.spec.ts
+index b1d9ea958e7719fd44b58a0ded360ce6a23a28da..c61309c5dc3dc815786c6cd69b0f9c8d8a008487 100644
+--- a/packages/skill/skill-office/tests/progressive-loading.spec.ts
++++ b/packages/skill/skill-office/tests/progressive-loading.spec.ts
+@@ -27,7 +27,7 @@ class SkillProgram extends PtcRuntime {
+   }
+ }
+ 
+-async function setup(mode: 'native' | 'ptc', names: string[]) {
++async function setup(mode: 'native' | 'ptc', names: string[], authoring: 'python' | 'node' = 'python') {
+   const ctx = new Context()
+   contexts.push(ctx)
+   provideWorkingDirectoryFixture(ctx)
+@@ -40,7 +40,7 @@ async function setup(mode: 'native' | 'ptc', names: string[]) {
+   await ctx.plugin(AgentLoop, { agents: [] })
+   await ctx.plugin(SkillRegistry)
+   await ctx.plugin(ToolSkill)
+-  await ctx.plugin(SkillOffice)
++  await ctx.plugin(SkillOffice, { authoring })
+   if (mode === 'ptc') await ctx.plugin(SkillProgram)
+   const adapter = new MockAdapter([
+     ...names.map((name, index) => mode === 'native'
+@@ -58,40 +58,45 @@ async function send(agent: Agent, text = 'Continue the task'): Promise<void> {
+   await agent.whenIdle()
+ }
+ 
+-it.each(['native', 'ptc'] as const)('loads the router and authoring body in %s; resume and fork retain those instructions', async (mode) => {
+-  const { ctx, agent, adapter } = await setup(mode, ['office', 'office-docx'])
+-  await send(agent, 'Edit the Word document text.')
+-  expect(adapter.requests).toHaveLength(3)
+-  const requests = adapter.requests.map(request => JSON.stringify(request))
+-  expect(requests[0]).toContain('Create, edit, inspect, or convert Office')
+-  expect(requests[0]).toContain('office-docx')
+-  expect(requests[1]).toContain('Office task routing')
+-  expect(requests[1]).not.toContain('python-docx')
+-  expect(requests[2]).toContain('python-docx')
+-  if (mode === 'ptc') {
+-    expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source.kind === 'skill-invocation')).toEqual([])
+-  }
+-  expect(requests[2]).toContain('office-render')
+-  expect(requests[2]).not.toContain('dsoffice')
+-  expect(requests[0]).not.toContain('dsoffice')
+-  expect(requests[1]).not.toContain('dsoffice')
+-  for (const request of requests) {
+-    expect(request).not.toMatch(/uniformly blank|fragment rectangles/)
+-  }
+-  const seed = agent.session.snapshotEvents()
+-  const { agent: resumed } = await ctx.agents.create({ sessionId: SessionId('resumed-office'), agentOptions: { provider: 'mock', model: 'model' }, seed })
+-  await send(resumed)
+-  const { agent: forked } = await ctx.agents.create({ sessionId: SessionId('forked-office'), agentOptions: { provider: 'mock', model: 'model' }, seed, meta: { parentSession: agent.id } })
+-  await send(forked)
+-  for (const request of adapter.requests.slice(3)) {
+-    const text = JSON.stringify(request)
+-    expect(text).toContain('python-docx')
+-    expect(text).toContain('office-render')
+-    expect(text).not.toContain('dsoffice')
+-    expect(text).not.toMatch(/uniformly blank|fragment rectangles/)
+-  }
+-  expect(agent.session.snapshotEvents()).toEqual(seed)
+-})
++it.each([['native', 'python'], ['ptc', 'python'], ['native', 'node'], ['ptc', 'node']] as const)(
++  'loads the router and authoring body in %s/%s; resume and fork retain those instructions', async (mode, authoring) => {
++    const { ctx, agent, adapter } = await setup(mode, ['office', 'office-docx'], authoring)
++    const library = authoring === 'node' ? 'readOfficePackage' : 'python-docx'
++    await send(agent, 'Edit the Word document text.')
++    expect(adapter.requests).toHaveLength(3)
++    const requests = adapter.requests.map(request => JSON.stringify(request))
++    expect(requests[0]).toContain('Create, edit, inspect, or convert Office')
++    expect(requests[0]).toContain('office-docx')
++    expect(requests[1]).toContain('Office task routing')
++    expect(requests[1]).not.toContain(library)
++    expect(requests[2]).toContain(library)
++    if (mode === 'ptc') {
++      expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source.kind === 'skill-invocation')).toEqual([])
++    }
++    expect(requests[2]).toContain('office-render')
++    expect(requests[2]).not.toContain('dsoffice')
++    expect(requests[0]).not.toContain('dsoffice')
++    expect(requests[1]).not.toContain('dsoffice')
++    for (const request of requests) {
++      expect(request).not.toMatch(/uniformly blank|fragment rectangles/)
++    }
++    const seed = agent.session.snapshotEvents()
++    const { agent: resumed } = await ctx.agents.create({ sessionId: SessionId('resumed-office'), agentOptions: { provider: 'mock', model: 'model' }, seed })
++    await send(resumed)
++    const { agent: forked } = await ctx.agents.create({ sessionId: SessionId('forked-office'), agentOptions: { provider: 'mock', model: 'model' }, seed, meta: { parentSession: agent.id } })
++    await send(forked)
++    for (const request of adapter.requests.slice(3)) {
++      const text = JSON.stringify(request)
++      expect(text).toContain(library)
++      expect(text).toContain('office-render')
++      expect(text).not.toContain('dsoffice')
++      expect(text).not.toMatch(/uniformly blank|fragment rectangles/)
++    }
++    expect(agent.session.snapshotEvents()).toEqual(seed)
++    if (authoring === 'node' && mode === 'native') {
++      expect((await ctx.skills.get('office-docx'))?.content).toMatchSnapshot('Node Word instructions admitted and retained in Session')
++    }
++  })
+ 
+ it.each(['office-render', 'office-recalculate', 'office-export-pdf'])('loads %s directly without unrelated operation or authoring bodies', async (name) => {
+   const { agent, adapter } = await setup('native', [name])
+diff --git a/packages/skill/skill-office/tests/skill-office.spec.ts b/packages/skill/skill-office/tests/skill-office.spec.ts
+index 75adb8f00d5077a9cd3dfa1f4632d9dc2adbd3fb..e2d0c3918b6048a93a92abdcc8a6d1e4688f5fe8 100644
+--- a/packages/skill/skill-office/tests/skill-office.spec.ts
++++ b/packages/skill/skill-office/tests/skill-office.spec.ts
+@@ -17,11 +17,11 @@ const assets = fileURLToPath(new URL('../assets/', import.meta.url))
+ const names = ['office', 'office-docx', 'office-export-pdf', 'office-pptx', 'office-recalculate', 'office-render', 'office-xlsx']
+ 
+ describe('bundled Office skills', () => {
+-  it('keeps routing and authoring within the progressive context budgets', async () => {
++  it.each(['python', 'node'] as const)('keeps %s routing and authoring within the progressive context budgets', async (authoring) => {
+     const ctx = new Context()
+     try {
+       await ctx.plugin(SkillRegistry)
+-      await ctx.plugin(SkillOffice)
++      await ctx.plugin(SkillOffice, { authoring })
+       const catalog = await ctx.skills.list()
+       expect(catalog.map(skill => skill.name)).toEqual(names)
+       const route = (await ctx.skills.get('office'))!
+@@ -37,11 +37,11 @@ describe('bundled Office skills', () => {
+     } finally { await ctx.fiber.dispose() }
+   })
+ 
+-  it('loads each packaged body and removes all candidates on disposal', async () => {
++  it.each(['python', 'node'] as const)('loads each %s packaged body and removes all candidates on disposal', async (authoring) => {
+     const ctx = new Context()
+     try {
+       await ctx.plugin(SkillRegistry)
+-      const fiber = await ctx.plugin(SkillOffice)
++      const fiber = await ctx.plugin(SkillOffice, { authoring })
+       const catalog = await ctx.skills.list()
+       expect(catalog.map(skill => skill.name)).toEqual(names)
+       for (const skill of catalog) {
+@@ -49,7 +49,8 @@ describe('bundled Office skills', () => {
+         expect(skill).toMatchObject({ source: 'bundled', provider: 'dsh-office', invocation: { modelInvocable: true, userInvocable: true } })
+         const loaded = await ctx.skills.get(skill.name)
+         expect(loaded?.resourceBase).toEqual({ kind: 'directory', path: join(assets, skill.name).split(sep).join('/') })
+-        const raw = await readFile(join(assets, skill.name, 'SKILL.md'), 'utf8')
++        const nodeBody = authoring === 'node' && ['office-docx', 'office-pptx', 'office-xlsx', 'office-recalculate'].includes(skill.name)
++        const raw = await readFile(join(assets, skill.name, nodeBody ? 'SKILL.node.md' : 'SKILL.md'), 'utf8')
+         const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '').trim()
+         expect(loaded?.content.startsWith(body)).toBe(true)
+         if (!['office-render', 'office-recalculate', 'office-export-pdf'].includes(skill.name)) expect(loaded?.content).toBe(body)
+@@ -61,7 +62,7 @@ describe('bundled Office skills', () => {
+     }
+   })
+ 
+-  it('loads relocated resources through a real cordis.yml composition', async () => {
++  it.each(['python', 'node'] as const)('loads relocated %s resources through a real cordis.yml composition', async (authoring) => {
+     const root = await mkdtemp(join(tmpdir(), 'dsh-office-skills-'))
+     const ctx = new Context()
+     try {
+@@ -73,6 +74,7 @@ describe('bundled Office skills', () => {
+         "- name: '@deepseek-ai/dsh-skill-office'",
+         '  config:',
+         `    assetRoot: ${JSON.stringify(external)}`,
++        `    authoring: ${authoring}`,
+         '',
+       ].join('\n'))
+       ctx.baseUrl = pathToFileURL(root).href + '/'
+@@ -99,7 +101,7 @@ describe('bundled Office skills', () => {
+       expect((await ctx.skills.list()).map(skill => skill.name)).toEqual(names)
+       const loaded = await ctx.skills.get('office-xlsx')
+       expect(loaded?.resourceBase).toEqual({ kind: 'directory', path: join(external, 'office-xlsx').split(sep).join('/') })
+-      const raw = await readFile(join(external, 'office-xlsx', 'SKILL.md'), 'utf8')
++      const raw = await readFile(join(external, 'office-xlsx', authoring === 'node' ? 'SKILL.node.md' : 'SKILL.md'), 'utf8')
+       const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '').trim()
+       expect(loaded?.content).toBe(body)
+     } finally {
+diff --git a/packages/skill/skill-office/tsdown.config.ts b/packages/skill/skill-office/tsdown.config.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f47904809f84cb5365e812f2e0608399484bec2a
+--- /dev/null
++++ b/packages/skill/skill-office/tsdown.config.ts
+@@ -0,0 +1,42 @@
++import { defineConfig } from 'tsdown'
++import { existsSync, readFileSync, readdirSync } from 'node:fs'
++import { dirname, join } from 'node:path'
++
++/** The ordinary plugin and a relocatable library bundle used by task scripts. */
++export default defineConfig([
++  {
++    entry: ['lib/types/index.js'], outDir: 'lib', format: ['esm'], platform: 'node',
++    target: 'es2024', fixedExtension: false, dts: false, clean: false,
++  },
++  {
++    entry: { authoring: 'lib/types/authoring.js' }, outDir: 'lib', format: ['esm'], platform: 'node',
++    target: 'es2024', fixedExtension: false, dts: false, clean: false,
++    deps: { alwaysBundle: [/./] }, shims: true,
++    plugins: [{
++      name: 'office-library-notices',
++      generateBundle(_options, bundle) {
++        const roots = new Set<string>()
++        for (const entry of Object.values(bundle)) {
++          if (entry.type !== 'chunk') continue
++          for (const id of Object.keys(entry.modules)) {
++            if (!id.includes('/node_modules/')) continue
++            let path = dirname(id)
++            while (path !== dirname(path) && !existsSync(join(path, 'package.json'))) path = dirname(path)
++            if (existsSync(join(path, 'package.json'))) roots.add(path)
++          }
++          const notices = [...roots].sort().map(root => {
++            const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
++            const files = readdirSync(root).filter(file => /^(?:licen[sc]e|copying|notice)(?:[.\-_]|$)/iu.test(file))
++            const texts = files.map(file => `${file}\n${readFileSync(join(root, file), 'utf8')}`)
++            if (texts.length === 0) {
++              const readme = readdirSync(root).find(file => /^readme(?:\.|$)/iu.test(file))
++              if (readme !== undefined) texts.push(readFileSync(join(root, readme), 'utf8'))
++            }
++            return `${manifest.name}@${manifest.version} (${manifest.license ?? 'See accompanying text'})\n${texts.join('\n\n')}`
++          })
++          entry.code += '\n/*! Third-party notices\n' + notices.join('\n\n---\n\n').replaceAll('*/', '* /') + '\n*/\n'
++        }
++      },
++    }],
++  },
++])
+diff --git a/packages/skill/tool-workspace-dependencies/README.i18n.yaml b/packages/skill/tool-workspace-dependencies/README.i18n.yaml
+index 737c5354c0cd3960a04bbdcae030f330aa6cea0e..d87dada4cd687342f7f7dd2d9a2117dc8cf964aa 100644
+--- a/packages/skill/tool-workspace-dependencies/README.i18n.yaml
++++ b/packages/skill/tool-workspace-dependencies/README.i18n.yaml
+@@ -21,11 +21,11 @@
+   en: 97b1f99b4e9c2569
+   zh: bf6c6ce74073413f
+ /deepseek-ai-dsh-tool-workspace-dependencies/use-this-package/payload-layout:
+-  en: f2511ea9d11864d0
+-  zh: 4a79d05bcbcffc45
++  en: cb50d5961c77da14
++  zh: 5228de516575ee7f
+ /deepseek-ai-dsh-tool-workspace-dependencies/use-this-package/build-a-carrier-payload:
+-  en: 01bd4eeefccf387d
+-  zh: 82919b599b163aa2
++  en: 2e73dece302e09f6
++  zh: e9a844f69c85c2ca
+ /deepseek-ai-dsh-tool-workspace-dependencies/understand-the-implementation:
+   en: 0121e57a754cb26f
+   zh: 2933fc0415da013d
+@@ -51,8 +51,8 @@
+   en: f8ffc2b983f05ffc
+   zh: 8573891441963be4
+ /deepseek-ai-dsh-tool-workspace-dependencies/model-experience/tool-result/what-the-model-sees:
+-  en: 3537a37e115a0a0f
+-  zh: 122dc2542f6a2be7
++  en: 6c985bf4a57f5301
++  zh: f173cc7663057c32
+ /deepseek-ai-dsh-tool-workspace-dependencies/model-experience/tool-result/token-effect:
+   en: 0efada793d1e65b1
+   zh: 3eed908f43174b88
+@@ -60,8 +60,8 @@
+   en: 42325f307b6c259d
+   zh: d53a45f1c00ba16f
+ /deepseek-ai-dsh-tool-workspace-dependencies/known-limitations-and-deferred-work:
+-  en: a543528a9daab6d5
+-  zh: 1d2e67648a5f8c17
++  en: 81769c9d35cd4467
++  zh: f9ee7c2208eb6443
+ /deepseek-ai-dsh-tool-workspace-dependencies/known-limitations-and-deferred-work/dev-note:
+   en: f57d5fcd5b2e8a44
+   zh: b210a0dce56f2e8a
+diff --git a/packages/skill/tool-workspace-dependencies/README.md b/packages/skill/tool-workspace-dependencies/README.md
+index 249d6cf24b7675a34b4b00b944302ee9048f57de..ce1bc2ddb958af39b4e1cd7a86f8220e993f47dd 100644
+--- a/packages/skill/tool-workspace-dependencies/README.md
++++ b/packages/skill/tool-workspace-dependencies/README.md
+@@ -44,7 +44,7 @@ Mount the plugin beside the tool registry with the payload directory. Configurat
+ 
+ `runtime.json` records `desktopVersion`, `platform` (`win32`, `darwin`, or `linux`), `arch`, optional `payloadDigest`, top-level `python`, optional `node`/`pnpm` versions, and the complete `pythonPackages` distribution-version map. A pnpm entry requires Node.js. Python libraries, including numpy and pandas, appear only in `pythonPackages`. Entries live under `dependencies/`: `python/bin/python3` (`python/python.exe` on Windows) with `site-packages` beneath it, and, when declared, `node/bin/node` with `node/node_modules` and `pnpm/bin/pnpm.mjs`. A manifest whose platform or architecture differs from the running process is rejected.
+ 
+-Node-only payloads explicitly set `schemaVersion: 2`, require a `node` version, omit `python`, and contain no Python distributions. They return `node`/`nodePackages`, optional `pnpm`, and an empty `pythonDistributions` map, without Python paths or system interpreter discovery. Other format versions and mixed Node-only/Python metadata are rejected. Existing flat and legacy Python payloads retain their behavior.
++Node-only payloads explicitly set `schemaVersion: 2`, require a `node` version, omit `python`, and contain no Python distributions. They return `node`/`nodePackages`, optional `pnpm`, and an empty `pythonDistributions` map, without Python paths or system interpreter discovery. Other format versions and mixed Node-only/Python metadata are rejected. Existing flat and legacy Python payloads retain their behavior. Optional `officeLibrarySha256` declares `dependencies/node/node_modules/office.mjs`; the tool returns its absolute `officeLibraries` path. Resolution, installation and reuse verify its SHA-256; corrupted resources are not published.
+ 
+ On macOS and Linux, the builder retains `python` and `python3` as relative links to the sibling versioned interpreter (for example, `python3.12`). Installation preserves these two aliases and materializes other links. Alias validation requires the exact sibling filename and a regular target file; carriers that cannot preserve links, including Python wheels, retain supported regular command files. Windows keeps its ordinary `python.exe` file.
+ 
+@@ -52,7 +52,7 @@ The packaged `sdk` profile uses its bundled Python and Office skills by default;
+ 
+ ### Build a carrier payload
+ 
+-From a repository checkout with dependencies installed, `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office` writes `primary-runtime/` and `office-skills/`. The shared [download lock](../../../scripts/primary-runtime/lock.json) also covers `linux-arm64`, `mac-arm64`, `mac-x64`, and `win-x64`. `--python-only` omits Node.js and pnpm; `--node-only` omits Python and wheels and cannot be combined with `--python-only`; `--cache` selects the hash-verified archive cache. The entry executes interpreter and Office read/write checks only for a native target. Cross-target builds require those checks on the target host before deployment.
++From a repository checkout with dependencies installed, `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office` writes `primary-runtime/` and `office-skills/`. The shared [download lock](../../../scripts/primary-runtime/lock.json) also covers `linux-arm64`, `mac-arm64`, `mac-x64`, and `win-x64`. `--python-only` omits Node.js and pnpm; `--node-only` omits Python and wheels, copies the built Office Node library, and cannot be combined with `--python-only`; `--cache` selects the hash-verified archive cache. The entry executes interpreter and Office read/write checks only for a native target. Cross-target builds require those checks on the target host before deployment.
+ 
+ A container can copy both directories into an immutable image layer and set `DSH_PRIMARY_RUNTIME` to the absolute `primary-runtime/` path. The SDK queries that payload in place. Desktop uses the same builder and retains its Harness-home installation and signing checks.
+ 
+@@ -103,7 +103,7 @@ Prefix-stable while the tool definition and visibility are unchanged.
+ 
+ #### What the model sees
+ 
+-One JSON object with `python` and `pythonPackages` paths only for Python payloads, `pythonDistributions` from `runtime.json`, and `node`, `nodePackages`, and `pnpm` when the payload declares them. Repeated calls return the same object.
++One JSON object with `python` and `pythonPackages` paths only for Python payloads, `pythonDistributions` from `runtime.json`, and `node`, `nodePackages`, `pnpm`, and `officeLibraries` when the payload declares them. Repeated calls return the same object.
+ 
+ #### Token effect
+ 
+@@ -117,7 +117,7 @@ Append-only tool result in the turn history; no prompt section is added.
+ 
+ <a id="known-limitations-and-deferred-work"></a>
+ 
+-- Node-only payload preparation does not convert Python-based Office authoring workflows. Desktop defaults and those workflows still require separate migration.
++- Node Office authoring requires the built skill-office library; the source builder does not download missing authoring libraries. Desktop uses Node-only resources; the SDK retains its independent Python default.
+ - Linux targets require glibc; musl payloads are not locked.
+ - Windows payloads used in place must already be executable from their carrier; the in-place mode performs no permission repair.
+ 
+diff --git a/packages/skill/tool-workspace-dependencies/README.zh.md b/packages/skill/tool-workspace-dependencies/README.zh.md
+index d0afa9c174b2d5e03e304e15da1830e32fd63e5b..6f7f1c0ed32c9bed07d4b646fbb4d7650f1a8db3 100644
+--- a/packages/skill/tool-workspace-dependencies/README.zh.md
++++ b/packages/skill/tool-workspace-dependencies/README.zh.md
+@@ -44,7 +44,7 @@ kind: "package-reference"
+ 
+ `runtime.json` 记录 `desktopVersion`、`platform`（`win32`、`darwin` 或 `linux`）、`arch`、可选的 `payloadDigest`、顶层 `python` 与可选的 `node`/`pnpm` 版本，以及完整的 `pythonPackages` 分发包版本表。声明 pnpm 时必须同时声明 Node.js。numpy、pandas 等 Python 库只出现在 `pythonPackages` 中。条目位于 `dependencies/`：`python/bin/python3`（Windows 为 `python/python.exe`）及其下的 `site-packages`；声明了才有的 `node/bin/node`、`node/node_modules` 与 `pnpm/bin/pnpm.mjs`。平台或架构与当前进程不符的清单被拒绝。
+ 
+-纯 Node 资源显式设置 `schemaVersion: 2`，必须提供 `node` 版本，省略 `python`，且不含 Python 分发包。工具返回 `node`/`nodePackages`、可选的 `pnpm` 和空的 `pythonDistributions`，不返回 Python 路径，也不查找系统解释器。其他格式版本和混合的纯 Node/Python 元数据会被拒绝。既有扁平与旧版 Python 资源保持原有行为。
++纯 Node 资源显式设置 `schemaVersion: 2`，必须提供 `node` 版本，省略 `python`，且不含 Python 分发包。工具返回 `node`/`nodePackages`、可选的 `pnpm` 和空的 `pythonDistributions`，不返回 Python 路径，也不查找系统解释器。其他格式版本和混合的纯 Node/Python 元数据会被拒绝。既有扁平与旧版 Python 资源保持原有行为。可选的 `officeLibrarySha256` 声明 `dependencies/node/node_modules/office.mjs`；工具返回其绝对路径 `officeLibraries`。解析、安装和复用都校验其 SHA-256，损坏资源不会发布。
+ 
+ 在 macOS 和 Linux 上，构建器将 `python` 和 `python3` 保留为指向同目录版本化解释器（例如 `python3.12`）的相对链接。安装时保留这两个别名，其他链接展开为实际文件。别名校验要求目标名称与同目录解释器文件名完全一致，且目标为普通文件；Python wheel 等无法保留链接的载体使用普通命令文件，同样受支持。Windows 保留普通的 `python.exe` 文件。
+ 
+@@ -52,7 +52,7 @@ kind: "package-reference"
+ 
+ ### 构建载体 payload
+ 
+-在已安装依赖的仓库 checkout 中运行 `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office`，会生成 `primary-runtime/` 和 `office-skills/`。[共享下载锁](../../../scripts/primary-runtime/lock.json)还覆盖 `linux-arm64`、`mac-arm64`、`mac-x64` 和 `win-x64`。`--python-only` 省略 Node.js 和 pnpm；`--node-only` 省略 Python 和 wheel，且不能与 `--python-only` 同用；`--cache` 选择经过哈希校验的归档缓存。入口仅对本机目标执行解释器与 Office 读写检查。跨目标构建必须在部署前到目标主机执行这些检查。
++在已安装依赖的仓库 checkout 中运行 `CI=true pnpm run prepare:primary-runtime --target linux-x64 --output /tmp/dsh-office`，会生成 `primary-runtime/` 和 `office-skills/`。[共享下载锁](../../../scripts/primary-runtime/lock.json)还覆盖 `linux-arm64`、`mac-arm64`、`mac-x64` 和 `win-x64`。`--python-only` 省略 Node.js 和 pnpm；`--node-only` 省略 Python 和 wheel，复制已构建的 Office Node 库，且不能与 `--python-only` 同用；`--cache` 选择经过哈希校验的归档缓存。入口仅对本机目标执行解释器与 Office 读写检查。跨目标构建必须在部署前到目标主机执行这些检查。
+ 
+ 容器可将这两个目录复制到不可变镜像层，并将 `DSH_PRIMARY_RUNTIME` 设为 `primary-runtime/` 的绝对路径。SDK 原位查询该 payload。Desktop 使用同一构建器，并保留 Harness-home 安装与签名检查。
+ 
+@@ -103,7 +103,7 @@ kind: "package-reference"
+ 
+ #### 模型看到什么
+ 
+-一个 JSON 对象：仅 Python 资源返回的绝对路径 `python` 与 `pythonPackages`、来自 `runtime.json` 的 `pythonDistributions`，以及 payload 声明了才有的 `node`、`nodePackages` 与 `pnpm`。重复调用返回同一对象。
++一个 JSON 对象：仅 Python 资源返回的绝对路径 `python` 与 `pythonPackages`、来自 `runtime.json` 的 `pythonDistributions`，以及 payload 声明了才有的 `node`、`nodePackages`、`pnpm` 与 `officeLibraries`。重复调用返回同一对象。
+ 
+ #### Token 影响
+ 
+@@ -117,7 +117,7 @@ kind: "package-reference"
+ 
+ <a id="known-limitations-and-deferred-work"></a>
+ 
+-- 准备纯 Node 资源不会转换使用 Python 的 Office 编程工作流；Desktop 默认资源及这些工作流仍需单独迁移。
++- Node Office 创作要求先构建 skill-office 库；源码构建器不会下载缺失的创作库。Desktop 使用纯 Node 资源；SDK 的 Python 默认配置独立保留。
+ - Linux 目标需要 glibc；尚未锁定 musl payload。
+ - Windows 上原地使用的 payload 须在载体里已可执行；原地模式不修复权限。
+ 
+diff --git a/packages/skill/tool-workspace-dependencies/src/index.ts b/packages/skill/tool-workspace-dependencies/src/index.ts
+index b2a84f221cca5bdf11b69820fe64676aa54b9e3b..6ef742771085ba60fb1e9a32894b4d3b6ec9006a 100644
+--- a/packages/skill/tool-workspace-dependencies/src/index.ts
++++ b/packages/skill/tool-workspace-dependencies/src/index.ts
+@@ -2,6 +2,7 @@
+ 
+ import { cp, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, stat, symlink } from 'node:fs/promises'
+ import { dirname, isAbsolute, join } from 'node:path'
++import { createHash } from 'node:crypto'
+ import type { Context } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+ import { defineTool } from '@deepseek-ai/dsh-tools'
+@@ -36,6 +37,8 @@ interface RuntimeMetadata {
+   readonly arch: string
+   /** Locked payload identity; absent only in installations made before payload hashing. */
+   readonly payloadDigest?: string
++  /** SHA-256 of the optional self-contained Office JavaScript library. Requires Node. */
++  readonly officeLibrarySha256?: string
+   /** Absent when the payload ships no Node.js. */
+   readonly node?: string
+   /** Bundled pnpm version; requires a bundled Node.js executable. */
+@@ -69,6 +72,8 @@ export interface WorkspaceDependencies {
+   /** Absent when the payload declares no Python. */
+   readonly pythonPackages?: string
+   readonly nodePackages?: string
++  /** Absolute standalone Office module; absent when the payload has no authoring library. */
++  readonly officeLibraries?: string
+   /** Locked distribution versions; excludes packages users add to the installed environment. */
+   readonly pythonDistributions: Readonly<Record<string, string>>
+ }
+@@ -102,7 +107,7 @@ export function parsePrimaryRuntime(value: unknown): PrimaryRuntimeManifest {
+   if (!isRecord(versions) || (legacy && ['python', 'node', 'pnpm'].some(key => value[key] !== undefined))) {
+     throw new Error('primary runtime: invalid metadata')
+   }
+-  const { desktopVersion, platform, arch, payloadDigest, schemaVersion } = value
++  const { desktopVersion, platform, arch, payloadDigest, schemaVersion, officeLibrarySha256 } = value
+   const nodeOnly = schemaVersion === 2
+   const { python, node, pnpm } = versions
+   const pythonPackages = value.pythonPackages === undefined && (legacy || nodeOnly) ? {} : value.pythonPackages
+@@ -114,6 +119,8 @@ export function parsePrimaryRuntime(value: unknown): PrimaryRuntimeManifest {
+     || (node !== undefined && !isVersion(node))
+     || (pnpm !== undefined && (!isVersion(pnpm) || node === undefined))
+     || (payloadDigest !== undefined && (typeof payloadDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payloadDigest)))
++    || (officeLibrarySha256 !== undefined && (node === undefined || typeof officeLibrarySha256 !== 'string'
++      || !/^[a-f0-9]{64}$/u.test(officeLibrarySha256)))
+     || !isDistributionMap(pythonPackages)
+     || (nodeOnly && Object.keys(pythonPackages).length !== 0)) {
+     throw new Error('primary runtime: invalid metadata')
+@@ -134,6 +141,7 @@ export function parsePrimaryRuntime(value: unknown): PrimaryRuntimeManifest {
+   const metadata = {
+     desktopVersion, platform, arch,
+     ...(payloadDigest === undefined ? {} : { payloadDigest }),
++    ...(officeLibrarySha256 === undefined ? {} : { officeLibrarySha256 }),
+     ...(node === undefined ? {} : { node }),
+     ...(pnpm === undefined ? {} : { pnpm }),
+     pythonPackages,
+@@ -224,13 +232,16 @@ export function workspaceDependencyPaths(root: string, manifest: PrimaryRuntimeM
+     }),
+     ...node,
+     ...pnpm,
++    ...(manifest.officeLibrarySha256 === undefined ? {} : {
++      officeLibraries: join(dependencies, 'node', 'node_modules', 'office.mjs'),
++    }),
+     pythonDistributions: manifest.pythonPackages,
+   }
+ }
+ 
+-async function validatePayloadEntries(paths: WorkspaceDependencies): Promise<void> {
++async function validatePayloadEntries(paths: WorkspaceDependencies, manifest: PrimaryRuntimeManifest): Promise<void> {
+   for (const [path, kind] of [
+-    [paths.python, 'file'], [paths.node, 'file'], [paths.pnpm, 'file'],
++    [paths.python, 'file'], [paths.node, 'file'], [paths.pnpm, 'file'], [paths.officeLibraries, 'file'],
+     [paths.pythonPackages, 'directory'], [paths.nodePackages, 'directory'],
+   ] as const) {
+     if (path === undefined) continue
+@@ -239,6 +250,10 @@ async function validatePayloadEntries(paths: WorkspaceDependencies): Promise<voi
+       throw new Error(`primary runtime: expected ${kind} at ${path}`)
+     }
+   }
++  if (paths.officeLibraries !== undefined
++    && createHash('sha256').update(await readFile(paths.officeLibraries)).digest('hex') !== manifest.officeLibrarySha256) {
++    throw new Error('primary runtime: Office library checksum mismatch')
++  }
+ }
+ 
+ async function exists(path: string): Promise<boolean> {
+@@ -266,7 +281,7 @@ export async function resolvePrimaryRuntime(source: string): Promise<WorkspaceDe
+   const manifest = await compatibleManifest(source)
+   await primaryRuntimePythonAliases(source, manifest)
+   const paths = workspaceDependencyPaths(source, manifest)
+-  await validatePayloadEntries(paths)
++  await validatePayloadEntries(paths, manifest)
+   return paths
+ }
+ 
+@@ -286,14 +301,14 @@ export async function installPrimaryRuntime(source: string, root: string): Promi
+   if (await exists(join(root, 'runtime.json')) && JSON.stringify(await readPrimaryRuntime(root)) === JSON.stringify(manifest)) {
+     await primaryRuntimePythonAliases(root, manifest)
+     const paths = workspaceDependencyPaths(root, manifest)
+-    await validatePayloadEntries(paths)
++    await validatePayloadEntries(paths, manifest)
+     return paths
+   }
+   const staging = await mkdtemp(join(dirname(root), '.primary-runtime-'))
+   try {
+     await copyPrimaryRuntime(source, staging, manifest)
+     const paths = workspaceDependencyPaths(staging, manifest)
+-    await validatePayloadEntries(paths)
++    await validatePayloadEntries(paths, manifest)
+     await rm(previous, { recursive: true, force: true })
+     const replacing = await exists(root)
+     if (replacing) await rename(root, previous)
+@@ -335,6 +350,7 @@ export function apply(ctx: Context, config: Config): void {
+           pnpm: { type: 'string', description: 'Absent when the payload ships no pnpm.' },
+           pythonPackages: { type: 'string', description: 'Absent in Node-only payloads.' },
+           nodePackages: { type: 'string', description: 'Absent when the payload ships no Node.js.' },
++          officeLibraries: { type: 'string', description: 'Absolute Node Office module; absent when not bundled.' },
+           pythonDistributions: { type: 'object', additionalProperties: true, required: true, description: 'Bundled distribution names and versions recorded in runtime.json; excludes user-installed additions.' },
+         },
+       },
+diff --git a/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts b/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
+index 0af2562c23b33fe55d0f1bd3892923315da6e1cc..cd780ffb8ecbce0f6973766836c8c7df2e1b4261 100644
+--- a/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
++++ b/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
+@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, writeFi
+ import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
+ import { pathToFileURL } from 'node:url'
++import { createHash } from 'node:crypto'
+ import { afterEach, expect, it, vi } from 'vitest'
+ import { Context } from '@deepseek-ai/cordis'
+ import Loader from '@deepseek-ai/cordis-plugin-loader'
+@@ -310,6 +311,31 @@ it('installs a Node-only payload, reuses it after source removal, and refuses mi
+   await expect(resolvePrimaryRuntime(root)).rejects.toMatchObject({ code: 'ENOENT' })
+ })
+ 
++it('validates the declared Office module before publication and on offline reuse', async () => {
++  const { source, root, manifest } = await fixture()
++  const library = Buffer.from('export const office = true;\n')
++  const officeLibrarySha256 = createHash('sha256').update(library).digest('hex')
++  await writeFile(join(source, 'runtime.json'), JSON.stringify({ ...manifest, officeLibrarySha256 }))
++  const modulePath = join(source, 'dependencies/node/node_modules/office.mjs')
++  await writeFile(modulePath, library)
++  expect((await resolvePrimaryRuntime(source)).officeLibraries).toBe(modulePath)
++  const installed = await installPrimaryRuntime(source, root)
++  await writeFile(installed.officeLibraries!, 'changed')
++  await expect(installPrimaryRuntime(source, root)).rejects.toThrow('Office library checksum mismatch')
++  await writeFile(modulePath, 'corrupt source')
++  await expect(resolvePrimaryRuntime(source)).rejects.toThrow('Office library checksum mismatch')
++  const differentRoot = join(root, '..', 'new-install')
++  await expect(installPrimaryRuntime(source, differentRoot)).rejects.toThrow('Office library checksum mismatch')
++  await expect(readFile(join(differentRoot, 'runtime.json'))).rejects.toMatchObject({ code: 'ENOENT' })
++})
++
++it.each([{ officeLibrarySha256: 'invalid' }, { node: undefined, pnpm: undefined, officeLibrarySha256: 'a'.repeat(64) }])(
++  'rejects invalid Office module metadata %j', async (fields) => {
++    const { manifest } = await fixture()
++    expect(() => parsePrimaryRuntime({ ...manifest, ...fields })).toThrow('invalid metadata')
++  },
++)
++
+ it.each([
+   { schemaVersion: 2, python: '3.12.14', node: '24.21.0', pythonPackages: {} },
+   { schemaVersion: 2, node: undefined, pythonPackages: {} },
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5fa327ec4e 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -7180,9 +7180,6 @@ importers:
+       '@deepseek-ai/dsh-app-boot':
+         specifier: workspace:*
+         version: link:../../boot/app-boot
+-      '@deepseek-ai/dsh-loader-smoke':
+-        specifier: workspace:*
+-        version: link:../../test-support/loader-smoke
+       '@deepseek-ai/dsh-llm':
+         specifier: workspace:*
+         version: link:../../llm/llm
+@@ -7192,6 +7189,9 @@ importers:
+       '@deepseek-ai/dsh-llm-pi-ai':
+         specifier: workspace:*
+         version: link:../../llm/llm-pi-ai
++      '@deepseek-ai/dsh-loader-smoke':
++        specifier: workspace:*
++        version: link:../../test-support/loader-smoke
+       '@deepseek-ai/dsh-scope':
+         specifier: workspace:*
+         version: link:../scope
+@@ -13335,6 +13335,27 @@ importers:
+       '@deepseek-ai/schemastery':
+         specifier: link:../../../vendor/schemastery
+         version: link:../../../vendor/schemastery
++      '@xmldom/xmldom':
++        specifier: 0.9.12
++        version: 0.9.12
++      arquero:
++        specifier: 8.0.3
++        version: 8.0.3
++      docx:
++        specifier: 9.13.0
++        version: 9.13.0
++      exceljs:
++        specifier: 4.4.0
++        version: 4.4.0(patch_hash=c1bf8ac8f319dab382f08e3a669b715e691d46c703ac5a4163eb383fbedd1d48)
++      fflate:
++        specifier: 0.8.3
++        version: 0.8.3
++      jszip:
++        specifier: 3.10.2
++        version: 3.10.2
++      pptxgenjs:
++        specifier: 4.0.1
++        version: 4.0.1
+       yaml:
+         specifier: ^2.4.2
+         version: 2.9.0
+@@ -19094,6 +19115,9 @@ packages:
+   '@types/node@26.4.1':
+     resolution: {integrity: sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==}
+ 
++  '@types/node@26.6.5':
++    resolution: {integrity: sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==}
++
+   '@types/papaparse@5.5.2':
+     resolution: {integrity: sha512-gFnFp/JMzLHCwRf7tQHrNnfhN4eYBVYYI897CGX4MY1tzY9l2aLkVyx2IlKZ/SAqDbB3I1AOZW5gTMGGsqWliA==}
+ 
+@@ -19231,6 +19255,12 @@ packages:
+   '@upsetjs/venn.js@2.0.0':
+     resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
+ 
++  '@uwdata/flechette@2.7.0':
++    resolution: {integrity: sha512-+d4JwDnBJsxjH7zMz5QSDOVQQYqFdAQYSaR6lfBazFz28C5eIBiL5s4jqLEWJKcc43fSU1m6yHMcWeRUCTNH+g==}
++
++  '@uwdata/wk-geojson@0.0.1':
++    resolution: {integrity: sha512-4RpnKbdrphwzP+BwgzuGRqA/s03oT1rzHAKdU43Ozn8J1BCTwS+2iAGQ7YQAnrCkCi213WtQ7VYaFjVtvZotPQ==}
++
+   '@vitejs/plugin-react@4.7.0':
+     resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
+     engines: {node: ^14.18.0 || >=16.0.0}
+@@ -19438,6 +19468,10 @@ packages:
+     resolution: {integrity: sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA==}
+     engines: {node: '>=10.0.0'}
+ 
++  '@xmldom/xmldom@0.9.12':
++    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
++    engines: {node: '>=14.6'}
++
+   '@xterm/addon-fit@0.11.0':
+     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
+ 
+@@ -19575,6 +19609,9 @@ packages:
+   aria-query@5.3.0:
+     resolution: {integrity: sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A==}
+ 
++  arquero@8.0.3:
++    resolution: {integrity: sha512-7YQwe/GPVBUiahaPwEwgvu6VHyuhX0Ut61JZlIJYsAobOH5unLBwTmh43BobhX/N4dW1sb8WyKlQ8GjFq2whzQ==}
++
+   asn1@0.2.6:
+     resolution: {integrity: sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ==}
+ 
+@@ -20349,6 +20386,10 @@ packages:
+   dmg-builder@26.17.0:
+     resolution: {integrity: sha512-EAw1f2iGkICmUvAVBOjm7v5mxJdB7/+OZSycHFhKBimiTkCXtvkCC6wBKzHo7ZQYi58C2MmwIleRbgRnROlK2Q==}
+ 
++  docx@9.13.0:
++    resolution: {integrity: sha512-MofrvX7rzwCe1xUFXnwneQHzv2p1lIUIDPD01DueOnKGw+TSKxAAcK5Beo69bTyqKUYsX8d49Co03Bcntc60WQ==}
++    engines: {node: '>=10'}
++
+   dom-accessibility-api@0.5.16:
+     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
+ 
+@@ -20945,6 +20986,9 @@ packages:
+     resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
+     engines: {node: '>= 0.4'}
+ 
++  hash.js@1.1.7:
++    resolution: {integrity: sha512-taOaskGt4z4SOANNseOviYDvjEJinIkRgmp7LbKP2YTTmVxWBl87s/uzK9r+44BclBSp2X7K1hqeNfz9JbBeXA==}
++
+   hasown@2.0.4:
+     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
+     engines: {node: '>= 0.4'}
+@@ -21035,6 +21079,9 @@ packages:
+     resolution: {integrity: sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==}
+     engines: {node: '>= 20'}
+ 
++  https@1.0.0:
++    resolution: {integrity: sha512-4EC57ddXrkaF0x83Oj8sM6SLQHAWXw90Skqu2M4AEWENZ3F02dFJE/GARA8igO79tcgYqGrD7ae4f5L3um2lgg==}
++
+   human-signals@8.0.1:
+     resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
+     engines: {node: '>=18.18.0'}
+@@ -21057,6 +21104,11 @@ packages:
+     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
+     engines: {node: '>= 4'}
+ 
++  image-size@1.2.1:
++    resolution: {integrity: sha512-rH+46sQJ2dlwfjfhCyNx5thzrv+dtmBIhPHk0zgRUukHzZ/kRueTJXoYYsclBaKcSMBWuGbOFXtioLpzTb5euw==}
++    engines: {node: '>=16.x'}
++    hasBin: true
++
+   immediate@3.0.6:
+     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
+ 
+@@ -21350,8 +21402,8 @@ packages:
+     resolution: {integrity: sha512-eQQBjBnsVtGacsG9uJNB8qOr3yA8rga4wAaGG1qRcBzSIvfhERLrWxMAM1hp5fcS6Abo8M4+bUBTekYR0qTPQw==}
+     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+ 
+-  jszip@3.10.1:
+-    resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
++  jszip@3.10.2:
++    resolution: {integrity: sha512-3l+rb15IOWtUhU0H5MFqES/T6Kh7abYwjosBey/vD6hDt8zoEffkSC5Ws5SGtgVw3gBx2NEbhTeSW1+kWkpyTQ==}
+ 
+   jwa@2.0.1:
+     resolution: {integrity: sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==}
+@@ -21831,6 +21883,9 @@ packages:
+     resolution: {integrity: sha512-e5ISH9xMYU0DzrT+jl8q2ze9D6eWBto+I8CNpe+VI+K2J/F/k3PdkdTdz4wvGVH4NTpo+NRYTVIuMQEMMcsLqg==}
+     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+ 
++  minimalistic-assert@1.0.1:
++    resolution: {integrity: sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==}
++
+   minimatch@10.2.5:
+     resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
+     engines: {node: 18 || 20 || >=22}
+@@ -21892,6 +21947,11 @@ packages:
+     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
+     hasBin: true
+ 
++  nanoid@6.0.2:
++    resolution: {integrity: sha512-hIvVOb9Qr1p/9CNNLOe0OlWvgx/ziTsVwKN/GDSsuArN2K0wDiafP3s0SWmsm7o2BdnyS8Z9Z64NFBUbn6ziBg==}
++    engines: {node: ^22 || ^24 || >=26}
++    hasBin: true
++
+   napi-build-utils@2.0.0:
+     resolution: {integrity: sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==}
+ 
+@@ -22333,6 +22393,9 @@ packages:
+     resolution: {integrity: sha512-C+y9x90UElAddDZmV4qOx9W53B61PO7cIqWz2dQsWlwswuq4mr8NEwytdGKboYbQlGZ3awrkTeNvcZiZNHnQ8A==}
+     engines: {node: '>=20'}
+ 
++  pptxgenjs@4.0.1:
++    resolution: {integrity: sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==}
++
+   preact@10.29.7:
+     resolution: {integrity: sha512-DCHYrK/B10yUD3ZjLfhZ3WIE/9Vf9VFUODcRE2dRomTYDpJk6z6L9wecSfhfE6M9ZTHUdyQkoC46arIDhEV84Q==}
+     peerDependencies:
+@@ -22436,6 +22499,9 @@ packages:
+   querystringify@2.2.0:
+     resolution: {integrity: sha512-FIqgj2EUvTa7R50u0rGsyTftzjYmv/a3hO345bZNrqabNqjtgiDMgmo4mkUjd+nzU5oF3dClKqFIPUKybUyqoQ==}
+ 
++  queue@6.0.2:
++    resolution: {integrity: sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==}
++
+   quick-lru@5.1.1:
+     resolution: {integrity: sha512-WuyALRjWPDGtt/wzJiadO5AXY+8hZ80hVpe6MyivgraREW751X3SbhRvG3eLKOYN+8VEvqLcf3wdnt44Z4S4SA==}
+     engines: {node: '>=10'}
+@@ -23173,6 +23239,9 @@ packages:
+   undici-types@8.3.0:
+     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+ 
++  undici-types@8.9.0:
++    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
++
+   undici@6.28.1:
+     resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
+     engines: {node: '>=18.17'}
+@@ -25301,7 +25370,7 @@ snapshots:
+       '@modelcontextprotocol/sdk': 1.31.0(supports-color@9.4.0)(zod@4.4.3)
+       cors: 2.8.6
+       express: 5.2.1(supports-color@9.4.0)
+-      jszip: 3.10.1
++      jszip: 3.10.2
+       zod: 4.4.3
+     transitivePeerDependencies:
+       - '@cfworker/json-schema'
+@@ -26361,6 +26430,10 @@ snapshots:
+     dependencies:
+       undici-types: 8.3.0
+ 
++  '@types/node@26.6.5':
++    dependencies:
++      undici-types: 8.9.0
++
+   '@types/papaparse@5.5.2':
+     dependencies:
+       '@types/node': 22.20.1
+@@ -26478,6 +26551,12 @@ snapshots:
+       d3-selection: 3.0.0
+       d3-transition: 3.0.1(d3-selection@3.0.0)
+ 
++  '@uwdata/flechette@2.7.0':
++    dependencies:
++      '@uwdata/wk-geojson': 0.0.1
++
++  '@uwdata/wk-geojson@0.0.1': {}
++
+   '@vitejs/plugin-react@4.7.0(supports-color@9.4.0)(vite@6.4.3(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.13)(yaml@2.9.0))':
+     dependencies:
+       '@babel/core': 7.29.7(supports-color@9.4.0)
+@@ -26712,6 +26791,8 @@ snapshots:
+ 
+   '@xmldom/xmldom@0.8.15': {}
+ 
++  '@xmldom/xmldom@0.9.12': {}
++
+   '@xterm/addon-fit@0.11.0': {}
+ 
+   '@xterm/addon-serialize@0.14.0': {}
+@@ -26937,6 +27018,11 @@ snapshots:
+     dependencies:
+       dequal: 2.0.3
+ 
++  arquero@8.0.3:
++    dependencies:
++      '@uwdata/flechette': 2.7.0
++      acorn: 8.18.0
++
+   asn1@0.2.6:
+     dependencies:
+       safer-buffer: 2.1.2
+@@ -27718,6 +27804,13 @@ snapshots:
+       - electron-builder-squirrel-windows
+       - supports-color
+ 
++  docx@9.13.0:
++    dependencies:
++      '@types/node': 26.6.5
++      hash.js: 1.1.7
++      jszip: 3.10.2
++      nanoid: 6.0.2
++
+   dom-accessibility-api@0.5.16: {}
+ 
+   dompurify@3.4.16:
+@@ -28122,7 +28215,7 @@ snapshots:
+       archiver: 5.3.2
+       dayjs: 1.11.23
+       fast-csv: 4.3.6
+-      jszip: 3.10.1
++      jszip: 3.10.2
+       readable-stream: 3.6.2
+       saxes: 5.0.1
+       tmp: 0.2.7
+@@ -28575,6 +28668,11 @@ snapshots:
+     dependencies:
+       has-symbols: 1.1.0
+ 
++  hash.js@1.1.7:
++    dependencies:
++      inherits: 2.0.4
++      minimalistic-assert: 1.0.1
++
+   hasown@2.0.4:
+     dependencies:
+       function-bind: 1.1.2
+@@ -28712,6 +28810,8 @@ snapshots:
+       - kerberos
+       - supports-color
+ 
++  https@1.0.0: {}
++
+   human-signals@8.0.1: {}
+ 
+   humanize-ms@1.2.1:
+@@ -28730,6 +28830,10 @@ snapshots:
+ 
+   ignore@5.3.2: {}
+ 
++  image-size@1.2.1:
++    dependencies:
++      queue: 6.0.2
++
+   immediate@3.0.6: {}
+ 
+   immer@10.2.0: {}
+@@ -28961,7 +29065,7 @@ snapshots:
+ 
+   jsx-ast-utils-x@0.1.0: {}
+ 
+-  jszip@3.10.1:
++  jszip@3.10.2:
+     dependencies:
+       lie: 3.3.0
+       pako: 1.0.11
+@@ -29601,6 +29705,8 @@ snapshots:
+ 
+   mimic-response@4.0.0: {}
+ 
++  minimalistic-assert@1.0.1: {}
++
+   minimatch@10.2.5:
+     dependencies:
+       brace-expansion: 5.0.12
+@@ -29650,6 +29756,8 @@ snapshots:
+ 
+   nanoid@3.3.18: {}
+ 
++  nanoid@6.0.2: {}
++
+   napi-build-utils@2.0.0: {}
+ 
+   natural-compare@1.4.0: {}
+@@ -30055,6 +30163,13 @@ snapshots:
+ 
+   powershell-utils@0.2.1: {}
+ 
++  pptxgenjs@4.0.1:
++    dependencies:
++      '@types/node': 22.20.1
++      https: 1.0.0
++      image-size: 1.2.1
++      jszip: 3.10.2
++
+   preact@10.29.7: {}
+ 
+   prebuild-install@7.1.3:
+@@ -30161,6 +30276,10 @@ snapshots:
+ 
+   querystringify@2.2.0: {}
+ 
++  queue@6.0.2:
++    dependencies:
++      inherits: 2.0.4
++
+   quick-lru@5.1.1: {}
+ 
+   range-parser@1.3.0: {}
+@@ -31008,6 +31127,8 @@ snapshots:
+ 
+   undici-types@8.3.0: {}
+ 
++  undici-types@8.9.0: {}
++
+   undici@6.28.1: {}
+ 
+   undici@7.29.1: {}
+diff --git a/scripts/primary-runtime/prepare.ts b/scripts/primary-runtime/prepare.ts
+index d143c7fe147e58dbdb551b3e4594cd036ceee16a..3bdb3f625f74f18f6d0ad36a8c4718c20603716a 100644
+--- a/scripts/primary-runtime/prepare.ts
++++ b/scripts/primary-runtime/prepare.ts
+@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
+ import { tmpdir } from 'node:os'
+ import { dirname, join, resolve } from 'node:path'
+ import { parseArgs } from 'node:util'
++import { pathToFileURL } from 'node:url'
+ import extractZip from 'extract-zip'
+ import { x as extractTar } from 'tar'
+ import { copyPrimaryRuntime, parsePrimaryRuntime, workspaceDependencyPaths } from '@deepseek-ai/dsh-tool-workspace-dependencies'
+@@ -117,16 +118,18 @@ async function pythonArchive(target: keyof typeof lock.targets, cache: string):
+  * @param runtimeLock - Locked interpreter and wheel inputs.
+  * @param pnpmVersion - Package-manager version copied into the payload.
+  * @param nodeOnly - Exclude Python inputs when true; absent or false retains Python payload identity.
++ * @param officeLibrarySha256 - Optional bundled Office module digest; absent when no module is supplied.
+  * @returns SHA-256 payload identity for installation reuse.
+  */
+ export function primaryRuntimePayloadDigest(
+   target: keyof typeof lock.targets, runtimeLock: typeof lock, pnpmVersion: string | undefined, nodeOnly = false,
++  officeLibrarySha256?: string,
+ ): string {
+   if (nodeOnly) {
+     const { nodeArchive, nodeSha256 } = runtimeLock.targets[target]
+     return createHash('sha256').update(JSON.stringify({
+       format: 'dsh.node-primary-runtime/v1', target, nodeVersion: runtimeLock.nodeVersion,
+-      nodeArchive, nodeSha256, pnpm: pnpmVersion,
++      nodeArchive, nodeSha256, pnpm: pnpmVersion, officeLibrarySha256,
+     })).digest('hex')
+   }
+   const { pythonVersion, pythonRelease, nodeVersion, wheels, pythonPackages } = runtimeLock
+@@ -207,6 +210,7 @@ export async function preparePrimaryRuntime(options: PreparePrimaryRuntimeOption
+     const dependencies = join(output, 'dependencies')
+     mkdirSync(dependencies, { recursive: true })
+     let pnpmVersion: string | undefined
++    let officeLibrarySha256: string | undefined
+     if (!options.pythonOnly) {
+       const node = join(dependencies, 'node')
+       await downloadNodeRuntime(target, node, paths.downloads)
+@@ -220,13 +224,21 @@ export async function preparePrimaryRuntime(options: PreparePrimaryRuntimeOption
+         pnpmVersion = (JSON.parse(readFileSync(pnpmManifest, 'utf8')) as { version: string }).version
+         await cp(dirname(pnpmManifest), join(dependencies, 'pnpm'), { recursive: true, dereference: true })
+       }
++      if (options.nodeOnly) {
++        const officePackage = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-skill-office/package.json')
++        const library = join(dirname(officePackage), 'lib', 'authoring.js')
++        const bytes = readFileSync(library)
++        officeLibrarySha256 = createHash('sha256').update(bytes).digest('hex')
++        writeFileSync(join(node, 'node_modules', 'office.mjs'), bytes)
++      }
+     }
+     if (!options.nodeOnly) await extractTar({ file: await pythonArchive(target, paths.downloads), cwd: dependencies })
+     const manifest = parsePrimaryRuntime({
+       desktopVersion: options.version,
+       platform: target === 'win-x64' ? 'win32' : target.startsWith('linux-') ? 'linux' : 'darwin',
+       arch: target.endsWith('-arm64') ? 'arm64' : 'x64',
+-      payloadDigest: primaryRuntimePayloadDigest(target, lock, pnpmVersion, options.nodeOnly),
++      payloadDigest: primaryRuntimePayloadDigest(target, lock, pnpmVersion, options.nodeOnly, officeLibrarySha256),
++      ...(officeLibrarySha256 === undefined ? {} : { officeLibrarySha256 }),
+       ...(options.nodeOnly ? { schemaVersion: 2 as const } : { python: lock.pythonVersion }),
+       ...(pnpmVersion === undefined ? {} : { node: lock.nodeVersion, pnpm: pnpmVersion }),
+       pythonPackages: options.nodeOnly ? {} : lock.pythonPackages,
+@@ -283,6 +295,14 @@ export function smokePrimaryRuntime(root: string, environment: NodeJS.ProcessEnv
+     execFileSync(entries.python, ['-I', '-B', '-m', 'pip', 'check'], options)
+   }
+   if (entries.node !== undefined) execFileSync(entries.node, ['-e', `if (process.versions.node !== ${JSON.stringify(manifest.node)}) process.exit(1)`], options)
++  if (entries.officeLibraries !== undefined && entries.node !== undefined) {
++    if (createHash('sha256').update(readFileSync(entries.officeLibraries)).digest('hex') !== manifest.officeLibrarySha256) {
++      throw new Error('primary runtime: Office library checksum mismatch')
++    }
++    execFileSync(entries.node, ['--input-type=module', '-e',
++      'const m = await import(process.argv[1]); if (!m.docx.Document || !m.ExcelJS.Workbook || !m.PptxGenJS || !m.aq.from) process.exit(1)',
++      pathToFileURL(entries.officeLibraries).href], options)
++  }
+   if (entries.pnpm !== undefined && entries.node !== undefined) {
+     const version = execFileSync(entries.node, [entries.pnpm, '--version'], {
+       ...options, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],

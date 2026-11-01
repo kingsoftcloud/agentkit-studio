@@ -5,6 +5,25 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
 
+test('Native model options survive save/reopen and malformed options fail before writing', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-native-options-'));
+  const options = { protocol: 'openai-responses', contextWindow: 64000, maxOutputTokens: 4000,
+    requestTimeoutMs: 160000, parameters: { temperature: 0.2, reasoning: { effort: 'high' } } };
+  const profile = { id: 'vision', provider: 'custom', modelName: 'observer', input: ['text', 'image'],
+    baseUrl: 'https://model.invalid/v1', ...options };
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home }, inheritLegacy: false });
+  await config.update({ modelProfiles: [profile] });
+  const expected = await readFile(join(home, 'config.yaml'), 'utf8');
+  const reopened = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home }, inheritLegacy: false });
+  const resolved = (await reopened.resolve()).values.modelProfiles[0];
+  for (const [key, value] of Object.entries(options)) assert.deepEqual(resolved[key], value);
+  for (const invalid of [{ protocol: 'unsupported' }, { contextWindow: 0 }, { maxOutputTokens: -1 },
+    { requestTimeoutMs: '10' }, { parameters: [] }]) {
+    await assert.rejects(config.update({ modelProfiles: [{ ...profile, ...invalid }] }), { code: 'CONFIGURATION_INVALID' });
+    assert.equal(await readFile(join(home, 'config.yaml'), 'utf8'), expected);
+  }
+});
+
 test('Host persists completed base URLs consistently for scalar and profile settings', async () => {
   const home = await mkdtemp(join(tmpdir(), 'agentkit-endpoint-'));
   const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });

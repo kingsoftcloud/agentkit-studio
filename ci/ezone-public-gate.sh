@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Validate the checkout before restoring tools, fetching inputs, or installing
+# dependencies: those operations can execute code from this working tree.
+expected="${SYS_BUILD_COMMIT:?Ezone must supply the immutable build commit}"
+[[ "$expected" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid build commit' >&2; exit 2; }
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+actual="$(git -C "$repo_root" rev-parse HEAD)"
+[[ "$actual" == "$expected" ]] || { echo "Wrong checkout: expected $expected, got $actual" >&2; exit 2; }
+printf 'Verified Ezone bootstrap checkout: %s\n' "$actual"
+cd "$repo_root"
+
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -29,7 +39,6 @@ restore_worker_archive() {
   fi
   mv "$temporary" "$archive"
 }
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Fetch a dedicated active CI input when a clean/single-branch clone lacks the
 # blobs. Development branch cleanup must not remove the worker's bootstrap tools.
 for object in e40c700f23af7f7043735845d554d79757e750eb e92c48af3ef39355a546a9de88990d0628a0a46d ee8d9651d24c80aad9a90407b9142c1e695dbbef e75c9202b3e056860860953b0540ec8efaefe99a; do
@@ -171,7 +180,7 @@ fi
 if [[ ! -d node_modules ]]; then
   pnpm install --frozen-lockfile --store-dir "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-pnpm-store"
 fi
-make public-gate
+bash ci/ezone-native-gate.sh
 
 if [[ "${RUN_REF_PARITY:-0}" == "1" ]]; then
   make ref-parity

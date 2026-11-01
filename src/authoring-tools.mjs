@@ -7,6 +7,8 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createStudioHostRemote } from './host-remote.mjs';
+import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
+import { NATIVE_AGENT_POLICY_CONTRACT } from './native-agent-policy.mjs';
 
 const RUNTIMES = ['dsh-native', 'harness', 'codex'];
 const KINDS = ['model', 'mcp', 'skill'];
@@ -38,9 +40,11 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
     try { return JSON.parse(await readFile(path, 'utf8')); }
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      return { revision: 0, status: 'draft', draft: { name: '', description: '', runtimeType: 'dsh-native', systemPrompt: '', taskPrompt: '', modelProfileIds: [], mcpResourceIds: [], skillResourceIds: [] } };
+      return emptyDraft();
     }
   }
+  const emptyDraft = (revision = 0) => ({ revision, status: 'draft', draft: { name: '', description: '', runtimeType: STUDIO_DEFAULT_AUTHORING_RUNTIME,
+    systemPrompt: '', taskPrompt: '', modelProfileIds: [], mcpResourceIds: [], skillResourceIds: [] } });
   async function save(path, state) {
     const temporary = path + '.' + randomUUID() + '.tmp';
     try { await writeFile(temporary, JSON.stringify(state), { mode: 0o600 }); await rename(temporary, path); }
@@ -91,7 +95,7 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
     },
     {
       name: 'studio_agent_draft',
-      description: 'Create or refine an Agent in this native conversation across multiple turns. Call without patch to read the current draft. To edit, supply expectedRevision and only the fields being changed; omitted fields persist. Show the draft summary and ask for missing requirements. Default runtime is dsh-native; DSH/Codex use their own tools. Draft edits never create an Agent. reset=true starts a NEW draft only when the user explicitly asks for another Agent.',
+      description: 'Create or refine an Agent in this native conversation across multiple turns. Call without patch to read the current draft. To edit, supply expectedRevision and only the fields being changed; omitted fields persist. Show the draft summary and ask for missing requirements. Default runtime is harness (Studio Native); DSH/Codex remain explicit alternatives. Draft edits never create an Agent. reset=true starts a NEW draft only when the user explicitly asks for another Agent.',
       parameters: objectSchema({ expectedRevision: revisionSchema, reset: { type: 'boolean' }, patch: objectSchema({
         name: { type: 'string' }, description: { type: 'string' }, runtimeType: { type: 'string', enum: RUNTIMES },
         systemPrompt: { type: 'string' }, taskPrompt: { type: 'string' }, modelProfileIds: idsSchema, mcpResourceIds: idsSchema, skillResourceIds: idsSchema,
@@ -103,7 +107,7 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
           checkRevision(state, args.expectedRevision);
           if (state.status === 'creating' || state.status === 'unknown') fail('CREATE_OUTCOME_UNKNOWN', 'Check the Agents page for the previous creation result before making another draft.');
           if (state.status === 'created' && !args.reset) fail('AGENT_ALREADY_CREATED', 'This draft was already created. Read its Agent ID; do not silently create a duplicate.');
-          const next = args.reset ? { revision: state.revision, status: 'draft', draft: { name: '', description: '', runtimeType: 'dsh-native', systemPrompt: '', taskPrompt: '', modelProfileIds: [], mcpResourceIds: [], skillResourceIds: [] } } : state;
+          const next = args.reset ? emptyDraft(state.revision) : state;
           if (args.patch) next.draft = patchDraft(next.draft, args.patch);
           next.revision++;
           next.updatedAt = new Date().toISOString();
@@ -126,7 +130,7 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
           if (state.status === 'creating' || state.status === 'unknown') fail('CREATE_OUTCOME_UNKNOWN', 'The previous request may have created an Agent. Check the Agents list before retrying; automatic retries are disabled.');
           const draft = state.draft;
           if (!draft.name || !draft.systemPrompt || !draft.modelProfileIds.length) fail('DRAFT_INCOMPLETE', 'Set name, systemPrompt and at least one catalog model ID.');
-          const remote = await remoteFactory(exec.signal);
+          const remote = await resolveRemote(exec.signal);
           for (const [kind, key] of [['model', 'modelProfileIds'], ['mcp', 'mcpResourceIds'], ['skill', 'skillResourceIds']]) {
             if (!draft[key].length) continue;
             const available = new Set((await catalog(remote, kind)).map(item => item.resourceId));
@@ -139,8 +143,12 @@ export function createAuthoringTools({ directory = join(process.env.AGENTKIT_HOM
           try {
             result = await remote.quickAuthorAgent({ name: draft.name, runtimeType: draft.runtimeType, template: 'blank', description: draft.description, spec: {
               description: draft.description,
+              security: { toolPolicy: 'deny-by-default', allowedPermissions: draft.runtimeType === 'harness'
+                ? ['process:host-user', ...(draft.mcpResourceIds.length ? ['network:mcp'] : [])] : [] },
               instructions: { system: draft.systemPrompt, task: draft.taskPrompt },
-              bindings: { modelProfileId: draft.modelProfileIds[0], modelProfileIds: draft.modelProfileIds, tools: [], mcpServers: draft.mcpResourceIds.map(resourceId => ({ resourceId })), skills: draft.skillResourceIds.map(resourceId => ({ resourceId })), policyTemplate: 'strict' },
+              bindings: { modelProfileId: draft.modelProfileIds[0], modelProfileIds: draft.modelProfileIds, tools: [], mcpServers: draft.mcpResourceIds.map(resourceId => ({ resourceId })), skills: draft.skillResourceIds.map(resourceId => ({ resourceId })),
+                ...(draft.runtimeType === 'harness' ? { policyTemplate: 'strict', nativeAgentPolicy: {
+                  contract: NATIVE_AGENT_POLICY_CONTRACT, mode: 'strict', rules: {} } } : {}) },
             } });
           } catch (error) {
             state.status = error.status >= 400 && error.status < 500 ? 'draft' : 'unknown';

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -55,6 +56,10 @@ export const APPROVED_HISTORICAL_TEST_VALUES = Object.freeze({
   'internal-service-host': new Set([['metadata', 'internal'].join('.')]),
 });
 const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token', 'fixture-secret']);
+// The generated address-classification oracle is immutable, not a blanket
+// exemption for JSON fixtures. Any changed bytes or another path are scanned.
+const NETWORK_ORACLE_PATH = 'tests/fixtures/a2a-tool-activity-reference.json';
+const NETWORK_ORACLE_SHA256 = '67a980c5f98febb3cfb65e8eeb1b66025deae25b1e403452f4fc511829c0ca80';
 
 export function auditPath(file) {
   return FORBIDDEN_PATHS
@@ -62,48 +67,70 @@ export function auditPath(file) {
     .map(() => ({ file, kind: 'forbidden public path' }));
 }
 
+function isTestInput(file) {
+  return /^(?:tests\/|packages\/[^/]+\/test\/)/.test(file);
+}
+
+function publicExample(name, candidate, text, file, networkOracle) {
+  const value = candidate[0];
+  const testInput = isTestInput(file);
+  if (name === 'internal-service-host') {
+    if (APPROVED_INTERNAL_SERVICE_HOSTS.has(value.toLowerCase()) || value === 'metadata.google.internal') return true;
+    if (testInput && ['foo', 'search'].some(prefix => value === `${prefix}.${'internal'}`)) return true;
+    // An unquoted JavaScript property access is not a network endpoint.
+    if (/\.[cm]?js$/.test(file) && /^[A-Za-z_$][\w$]*\.internal$/.test(value)
+      && /[\[\s(,]/.test(text[candidate.index - 1] || '')
+      && /[,;\])}]/.test(text[candidate.index + value.length] || '')) return true;
+  }
+  if (name === 'private-network-address') {
+    const address = value.replace(/^[^0-9]+|[^0-9]+$/g, '');
+    // RFC 1918 range bases in SSRF denial tables are public constants.
+    if (['10.0.0.0', '172.16.0.0', '192.168.0.0'].includes(address)
+      && /^['"]/.test(value) && /['"/]$/.test(value)) return true;
+    // Only the frozen oracle and this exact DNS-rebinding denial fixture use
+    // reviewed bare address literals. URLs and other test addresses still fail.
+    if (/^['"]/.test(value) && /['"]$/.test(value)
+      && (networkOracle || file === 'tests/native-dsh-web.test.mjs' && address === ['10', '0', '0', '1'].join('.'))) return true;
+  }
+  if (name === 'embedded-url-credential' && testInput) {
+    // Only these short, explicit synthetic user/password pairs are examples.
+    // Other credentials and all provider-token patterns remain subject to scan.
+    try {
+      const tail = text.slice(candidate.index).match(/^https?:\/\/[^\s"'<>`]+/)?.[0];
+      const url = new URL(tail);
+      return ['example.test', 'example.com', 'fixture.test'].includes(url.hostname)
+        && url.username === 'user' && APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS.has(url.password);
+    } catch { return false; }
+  }
+  if (name === 'aws-access-key' && testInput) {
+    return value === ['AKIA', 'IOSFODNN7EXAMPLE'].join('');
+  }
+  return false;
+}
+
 export function auditText(file, source, { historical = false } = {}) {
   // Scan byte content too: NUL bytes must not provide a scanner bypass.
   const text = source[0] === 0xff && source[1] === 0xfe
     ? source.subarray(2).toString('utf16le') : source.toString('utf8');
   const hits = [];
+  const networkOracle = file === NETWORK_ORACLE_PATH
+    && createHash('sha256').update(source).digest('hex') === NETWORK_ORACLE_SHA256;
   for (const { name, pattern } of SENSITIVE_TEXT_PATTERNS) {
     // Deleted documents remain reachable through Git history and receive the
     // same private-material checks as current files.
-    let match = pattern.exec(text);
-    if (name === 'embedded-url-credential' && /^tests\//.test(file)) {
-      const candidates = [...text.matchAll(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>`]+/gi)];
-      if (candidates.length) match = candidates.find(candidate => {
-        try {
-          const url = new URL(candidate[0]);
-          return !['example.test', 'example.com', 'fixture.test'].includes(url.hostname)
-            || !APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS.has(url.password);
-        } catch { return true; }
-      }) || null;
-    }
-    if (name === 'private-network-address' && historical && /^tests\//.test(file) && match) {
-      // Inspect every address so an approved fixture cannot hide another one.
-      const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-      match = null;
-      for (const candidate of text.matchAll(globalPattern)) {
+    // Inspect every candidate: a public constant or placeholder cannot hide a
+    // later real credential, including in a deleted historical test file.
+    const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    const match = [...text.matchAll(globalPattern)].find(candidate => {
+      if (publicExample(name, candidate, text, file, networkOracle)) return false;
+      if (!historical || !/^tests\//.test(file)) return true;
+      if (name === 'private-network-address') {
         const address = /\d{1,3}(?:\.\d{1,3}){3}/.exec(candidate[0])?.[0];
-        if (!address || !APPROVED_HISTORICAL_TEST_VALUES['private-network-address'].has(address)) { match = candidate; break; }
+        if (APPROVED_HISTORICAL_TEST_VALUES[name].has(address)) return false;
       }
-    }
-    if (name === 'internal-service-host' && match) {
-      // Inspect every internal-host match so an approved endpoint does not
-      // hide an unknown internal endpoint later in the same file.
-      const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-      match = null;
-      const historicalTests = APPROVED_HISTORICAL_TEST_VALUES['internal-service-host'];
-      for (const candidate of text.matchAll(globalPattern)) {
-        const host = candidate[0].toLowerCase();
-        if (!APPROVED_INTERNAL_SERVICE_HOSTS.has(host) && !(historical && /^tests\//.test(file) && historicalTests.has(host))) {
-          match = candidate;
-          break;
-        }
-      }
-    }
+      if (name === 'internal-service-host' && APPROVED_HISTORICAL_TEST_VALUES[name].has(candidate[0].toLowerCase())) return false;
+      return true;
+    });
     if (!match) continue;
     const line = text.slice(0, match.index).split('\n').length;
     hits.push({ file, kind: name, line });

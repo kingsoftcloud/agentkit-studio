@@ -1,7 +1,19 @@
 /** Check every blob and historical path reachable from the public branch. Never print matching content. */
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { auditPath, auditText } from './public-surface-audit.mjs';
+import { PUBLIC_HISTORY_BASELINE } from './public-history-baseline.mjs';
+
+/** Exact historical false positives cannot exempt a changed blob or another path. */
+export function auditHistoricalBlob(file, source) {
+  const hits = auditText(file, source, { historical: true });
+  if (!hits.length) return hits;
+  const blob = createHash('sha1').update(`blob ${source.length}\0`).update(source).digest('hex');
+  const approved = PUBLIC_HISTORY_BASELINE.find(entry => entry.blob === blob && entry.file === file);
+  return approved ? hits.filter(hit => !approved.findings.some(finding =>
+    finding.kind === hit.kind && finding.line === hit.line)) : hits;
+}
 
 export function auditPublicHistory(root=process.cwd(), { allRefs = false } = {}) {
   const git=(args,input)=>execFileSync('git',args,{cwd:root,input,maxBuffer:128*1024*1024});
@@ -15,7 +27,7 @@ export function auditPublicHistory(root=process.cwd(), { allRefs = false } = {})
   for(let i=0;i<rows.length;i++) {
     const [sha,type]=types[i].split(' ');
     if(type!=='blob')continue;
-    hits.push(...auditText(rows[i].slice(41),git(['cat-file','blob',sha]),{historical:true}));blobs++;
+    hits.push(...auditHistoricalBlob(rows[i].slice(41),git(['cat-file','blob',sha])));blobs++;
   }
   return {commit:git(['rev-parse','HEAD']).toString().trim(),allRefs,blobs,historicalPaths:historicalPaths.size,hits};
 }

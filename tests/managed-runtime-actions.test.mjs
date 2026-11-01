@@ -201,7 +201,9 @@ test('managed data APIs require a complete trusted carrier; body user cannot imp
   assert.equal((await api.action('CreateSession', { SessionId: '../unsafe' })).status, 400);
 });
 
-for (const profile of ['dsh-native', 'harness', 'codex']) {
+// Native trusted-principal binding is exercised through its whole-turn port
+// in native-managed-studio-binding and studio-native-harness, not this model bridge.
+for (const profile of ['dsh-native', 'codex']) {
   test(`managed HTTP -> durable owner -> ${profile} resource adapter ignores forged UserId across restart`, async t => {
     let resolveResourceUser;
     const identities = [];
@@ -481,4 +483,15 @@ test('CancelRun validates the subject and invocation, and waits for native durab
   assert.equal(frames.some(event => event.type === 'response.completed'), false);
   const events = (await (await api.action('ListSessionEvents', { SessionId: 'public-session' })).json()).Data.Events;
   assert.equal(events.at(-1).Metadata.status, 'cancelled');
+});
+
+ test('the model-step bridge refuses local Harness before resolving resources or calling a model', async () => {
+  const bridge = createRuntimeBridge();
+  bindDshAgentRoute('retired-harness', { agentId: 'ar-managed', runtime: 'harness', local: true }, bridge);
+  let calls = 0;
+  const adapter = createDshRuntimeAdapter({ bridge, resolveResourceUser: () => { calls++; }, localHandler: async () => { calls++; } });
+  try {
+    await assert.rejects(async () => { for await (const chunk of adapter.stream({ sessionId: 'retired-harness' })) assert.fail('no output'); }, { code: 'STUDIO_NATIVE_TURN_REQUIRED' });
+    assert.equal(calls, 0);
+  } finally { bridge.close(); }
 });

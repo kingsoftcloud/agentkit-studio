@@ -4,10 +4,11 @@ import { createDshRuntimeAdapter, bindDshAgentRoute, unbindDshAgentRoutes } from
 import { createLocalConversationHandler } from '../src/local-runtime.mjs';
 import { gatewayHistory } from '../src/providers/dsh-messages.mjs';
 
+// Native image admission is covered through the actual whole-turn Host in studio-native-harness.
 const image = { type: 'image', attachment: { attachmentId: 'image-receipt', mediaType: 'image/png', bytes: 3, width: 1, height: 1 } };
 const wireImage = { type: 'image_url', image_url: { url: 'data:image/png;base64,AQID' } };
 
-for (const runtime of ['dsh-native', 'harness']) {
+for (const runtime of ['dsh-native']) {
   for (const text of ['', '这张图片是什么？']) {
     test(`bound ${runtime} preserves ${text ? 'text and image' : 'image-only'} input through the actual local transport`, async t => {
       const agentId = `${runtime}-image-agent`, sessionId = `${runtime}-${Boolean(text)}`;
@@ -99,7 +100,7 @@ test('native resource-bearing Agents retain durable Team messages and notices in
  assert.equal((await gatewayHistory(messages)).length,1);
 });
 
-for(const runtime of ['dsh-native','harness'])test(`${runtime} peer-only continuation reaches the model transport with its report`,async t=>{
+for(const runtime of ['dsh-native'])test(`${runtime} peer-only continuation reaches the model transport with its report`,async t=>{
  const id=`team-peer-${runtime}`;t.after(()=>unbindDshAgentRoutes(id));bindDshAgentRoute(id,{agentId:id,runtime,local:true,agentRevision:1,nativeTools:true});
  const requests=[];const handler=createLocalConversationHandler({agentStore:async()=>({getRevision:async()=>({spec:{instructions:{system:'团队主理人'},bindings:{}}})}),modelService:{profile:async()=>({modelName:'test',baseUrl:'https://model.test/v1',apiKey:'test'})},fetchImpl:async(_url,init)=>{requests.push(JSON.parse(init.body));return new Response('data: {"choices":[{"delta":{"content":"已收报告"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');}});
  const adapter=createDshRuntimeAdapter({localHandler:async()=>handler});

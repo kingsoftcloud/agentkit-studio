@@ -436,7 +436,14 @@
             }
           ]
         ]
-      ]
+      ],
+      "payload": {
+        "kind": "tool",
+        "runtimeType": "dsh-native",
+        "query": "fixture",
+        "limit": 10,
+        "source": "fixture-source"
+      }
     },
     {
       "endpoint": "resources/delete",
@@ -818,6 +825,9 @@
                 "bindings": {}
               },
               "bindings": {}
+            },
+            {
+              "assertCurrent": "[function]"
             }
           ]
         ]
@@ -2204,7 +2214,14 @@
             }
           ]
         ]
-      ]
+      ],
+      "payload": {
+        "kind": "tool",
+        "runtimeType": "dsh-native",
+        "query": "fixture",
+        "limit": 10,
+        "source": "fixture-source"
+      }
     },
     {
       "endpoint": "resources/delete",
@@ -2626,6 +2643,9 @@
                 "bindings": {}
               },
               "bindings": {}
+            },
+            {
+              "assertCurrent": "[function]"
             }
           ]
         ]

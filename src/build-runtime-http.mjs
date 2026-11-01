@@ -9,6 +9,7 @@ import { ASSISTANT_SCHEDULE_CAPABILITY } from './contracts/assistant-schedule.mj
 import { ASSISTANT_BROWSER_CAPABILITY, ASSISTANT_CODE_EXECUTION_CAPABILITY, ASSISTANT_MANAGED_PERMISSION_CAPABILITY } from './contracts/assistant-capabilities.mjs';
 import { ASSISTANT_NATIVE_CAPABILITY, isAssistantNativeOperation } from './contracts/assistant-native.mjs';
 import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachments.mjs';
+import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
 
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -23,10 +24,7 @@ const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.te
 const safeDiagnosticCode = code => (typeof code === 'string' && DIAGNOSTIC_CODE.test(code) ? code : 'RUNTIME_SETTLEMENT_FAILED');
 // Managed Responses callers need the failure detail; credentials and control
 // characters never leave the host, and the run log keeps only the code.
-const CREDENTIAL = /(\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]{6,}|\b(?:sk|ak|tok)[-_][A-Za-z0-9_-]{6,}/gi;
-const safeClientMessage = value => (typeof value === 'string'
-  ? value.replace(CREDENTIAL, '$1[REDACTED]').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, 2000)
-  : '');
+const safeClientMessage = value => redactDiagnosticText(value, 2000).trim();
 /** A request may only select a mode inside the ceiling declared by this runtime. */
 const PERMISSION_MODE_HEADER = 'x-agentkit-permission-mode';
 
@@ -38,7 +36,7 @@ function readRequestedExecutionMode(value) {
   return mode;
 }
 
-export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, assistant, hosted, approval, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, assistant, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
   const managed = !buildId && managedIdentity?.agentId === agentId && identity(managedIdentity?.versionId || '') && /^[a-f0-9]{64}$/.test(managedIdentity?.manifestSha256 || '');
   if (!agentId || (managedIdentity ? !managed : !/^build_[0-9a-f]{20}$/.test(buildId || '')) || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
@@ -205,6 +203,10 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         sessionId: input.platformSession?.sessionId || input.sessionLabel || input.sessionId || sessionId,
         invocationId: input.requestId, runId };
       logRun('runtime.run.started');
+      const projectionRequest = isResponses ? { ...input, agentId, buildId } : null;
+      const savedProjection = isResponses && responseProjection ? await responseProjection.load(projectionRequest, abort.signal) : null;
+      const savedResponse = savedProjection?.response;
+      if (savedResponse) input.createdAt = savedResponse.created_at;
       if (isResponses) projection = createRuntimeResponsesStream(input, emit);
       // Approval is a managed Host surface; a frozen Build keeps its existing
       // headless policy even when a caller sends the managed metadata field.
@@ -226,11 +228,11 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         heartbeat = setInterval(() => { if (!res.destroyed && !abort.signal.aborted) res.write(': keepalive\n\n'); }, 15000); heartbeat.unref();
       }
       const invoke = () => runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input,
-        ...(isResponses ? { model: input.model } : {}),
+        ...(savedResponse ? { requireReplay: true } : {}), ...(isResponses ? { model: input.model } : {}),
         ...(approvalRun ? { approvalPolicy: approvalRun.policy } : {}),
         signal: abort.signal,
         ...(requestedMode || declaredPolicy?.permissionMode ? { permissionMode: requestedMode || declaredPolicy.permissionMode } : {}),
-        ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
+        ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted && !savedResponse) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
       const result = withResourceContext ? await withResourceContext({ headers: req.headers, subjectDigest: input.principalDigest, signal: abort.signal }, invoke) : await invoke();
       if (abort.signal.aborted) throw abort.signal.reason;
       await platformActions?.flushRun(input);
@@ -238,10 +240,14 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       const value = { ...result, requestId: input.requestId, runtimeRunId: runId, buildId };
       if (projection) {
         if (input.hosted) await hosted.flushRun(input);
-        const response = projection.complete(result);
+        const prepared = savedResponse || projection.prepare(result);
+        const persisted = responseProjection ? await responseProjection.save(projectionRequest, prepared,
+          savedProjection?.events ?? projection.snapshot(), abort.signal) : null;
+        const response = persisted?.response ?? prepared;
+        abort.signal.throwIfAborted();
+        if (savedResponse) projection.replay(response, persisted.events); else projection.publish(response);
         logRun('runtime.run.completed');
-        if (input.stream) res.end('data: [DONE]\n\n');
-        else json(res, 200, action ? { Code: 0, Message: 'Success', Action: action, RequestId: String(req.headers['x-ksc-request-id'] || ''), Data: response } : response);
+        if (input.stream) res.end('data: [DONE]\n\n'); else json(res, 200, action ? { Code: 0, Message: 'Success', Action: action, RequestId: String(req.headers['x-ksc-request-id'] || ''), Data: response } : response);
       } else {
         logRun('runtime.run.completed');
         if (input.stream) { emit('run.completed', value); res.end(); } else json(res, 200, value);

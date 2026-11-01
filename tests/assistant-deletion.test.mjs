@@ -134,5 +134,3 @@ test('a substituted workspace root blocks cleanup before memory or unrelated fil
   assert.equal(f.calls.includes('memory'),false); assert.equal(await readFile(join(outside,'keep.txt'),'utf8'),'outside');
   await access(join(f.root,'agentkit','data')); await access(join(f.root,'dsh','data'));
 });
-
-

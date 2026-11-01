@@ -20,7 +20,7 @@ function responseSink() {
   return { headersSent: false, writableEnded: false, chunks: [], writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, write(chunk) { this.chunks.push(String(chunk)); }, end(chunk = '') { if (chunk) this.chunks.push(String(chunk)); this.writableEnded = true; } };
 }
 
-test('native Harness retains DSH tool-mode and deliverable guidance in the assembled system prompt', async () => {
+test('single-model Host bridge retains DSH tool-mode and deliverable guidance in the assembled system prompt', async () => {
   let messages;
   const handler = createLocalConversationHandler({
     agentStore: async () => ({ get: async () => ({ spec: { instructions: { system: 'archived persona' } } }) }),
@@ -99,73 +99,24 @@ test('a revision-bound request uses the archived prompt and model instead of the
   assert.equal(response.status,200);
 });
 
-function modelFetch() {
-  let call = 0;
-  return async (_url, init) => {
-    call += 1;
-    const body = JSON.parse(init.body);
-    if (call === 1) {
-      assert.equal(body.tools[0].function.name, 'search');
-      return new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
-    }
-    assert.equal(body.messages.at(-1).role, 'tool');
-    return new Response('data: {"choices":[{"delta":{"content":"工具结果已使用"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
-  };
-}
-
-test('local runtime executes bound MCP tools and records a local trace', async () => {
-  const response = responseSink();
-  const traces = [];
+for (const kind of ['mcp', 'builtin']) test(`single-model Host bridge refuses ${kind} execution without running a private loop`, async () => {
+  const response = responseSink(), traces = [];
+  let requests = 0, effects = 0;
+  const name = kind === 'mcp' ? 'search' : 'component_status';
   const handler = createLocalConversationHandler({
-    agentStore: async () => ({ get: async () => ({ metadata: { name: '搜索助手' }, spec: { instructions: { system: 'test' }, bindings: { mcpServers: [{ resourceId: 'mcp-1' }] } } }) }),
-    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
-    resourceAdapter: {
-      listMcpTools: async () => [{ name: 'search', description: 'Search' }],
-      callMcpTool: async () => [{ type: 'text', text: 'hit' }],
-    },
-    observability: { syncTrace: async record => traces.push(record) },
-    fetchImpl: modelFetch(),
-  });
-  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 's-1', input: '查一下' })]), response);
-  const output = response.chunks.join('');
-  assert.equal(response.status, 200);
-  assert.match(output, /tool_call/);
-  assert.match(output, /工具结果已使用/);
-  assert.match(output, /run.completed/);
-  assert.equal(traces[0].status, 'completed');
-  assert.equal(traces[0].agentName, '搜索助手');
-  assert.deepEqual(traces[0].events.filter(event => event.event_type.startsWith('tool.')).map(event => [event.event_type, event.payload.name]), [
-    ['tool.started', 'search'],
-    ['tool.completed', 'search'],
-  ]);
-  assert.ok(traces[0].events.some(event => event.event_type === 'turn.text'));
-});
-
-test('local Harness cancellation during a bound MCP tool records a cancelled terminal without another model call', async () => {
-  const controller = new AbortController(), traces = [], response = responseSink();
-  let requests = 0;
-  const handler = createLocalConversationHandler({
-    agentStore: async () => ({ get: async () => ({ spec: { bindings: { mcpServers: ['pending-mcp'] } } }) }),
+    agentStore: async () => ({ get: async () => ({ spec: { bindings: kind === 'mcp' ? { mcpServers: ['mcp-1'] } : { tools: [name] } } }) }),
     modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'synthetic', modelName: 'fixture' }) },
-    resourceAdapter: {
-      listMcpTools: async () => [{ name: 'pending_tool', inputSchema: { type: 'object' } }],
-      callMcpTool: async (_binding, _name, _args, options) => {
-        assert.ok(options?.signal instanceof AbortSignal);
-        controller.abort();
-        options.signal.throwIfAborted();
-      },
-    },
-    observability: { syncTrace: async record => traces.push(record) },
-    fetchImpl: async () => {
-      requests++;
-      return new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"pending-call","type":"function","function":{"name":"pending_tool","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
-    },
+    resourceAdapter: { listMcpTools: async () => kind === 'mcp' ? [{ name }] : [], callMcpTool: async () => { effects++; } },
+    observability: { syncTrace: async trace => traces.push(trace) },
+    fetchImpl: async () => { requests++; return new Response('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'one', function: { name, arguments: '{}' } }] }, finish_reason: 'tool_calls' }] }) + '\n\ndata: [DONE]\n\n'); },
   });
-  await handler(Readable.from([JSON.stringify({ agentId: 'agent', sessionId: 'pending-session', input: 'Run the bound tool' })]), response, { signal: controller.signal });
-  assert.equal(traces[0].status, 'canceled');
-  assert.equal(traces[0].events.at(-1).event_type, 'run.canceled');
-  assert.doesNotMatch(response.chunks.join(''), /run\.completed|run\.failed/);
-  assert.equal(requests, 1);
+  await handler(Readable.from([JSON.stringify({ agentId: 'agent', input: 'check' })]), response, {
+    toolAdapter: { listTools: async () => [{ name, parameters: { type: 'object' } }], callTool: async () => { effects++; } },
+  });
+  assert.equal(requests, 1); assert.equal(effects, 0);
+  assert.equal(traces[0].status, 'failed');
+  assert.match(response.chunks.join(''), /LOCAL_HARNESS_RETIRED|Native Harness session/);
+  assert.doesNotMatch(response.chunks.join(''), /run.completed/);
 });
 
 test('local runtime hands native DSH MCP calls back to the loop without executing them', async () => {
@@ -213,36 +164,6 @@ test('native DSH continuation does not duplicate the current user message', asyn
   assert.match(chunks.join(''), /ok/);
 });
 
-test('local runtime executes bound DSH tools through the session adapter', async () => {
-  const response = responseSink();
-  let requestBody;
-  let called;
-  let call = 0;
-  const handler = createLocalConversationHandler({
-    agentStore: async () => ({ get: async () => ({ metadata: { name: '工作区助手' }, spec: { bindings: { tools: ['component_status'] } } }) }),
-    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
-    resourceAdapter: { listMcpTools: async () => [] },
-    observability: { syncTrace: async () => {} },
-    fetchImpl: async (_url, init) => {
-      requestBody = JSON.parse(init.body);
-      call += 1;
-      if (call === 1) return new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-dsh","function":{"name":"component_status","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
-      assert.equal(requestBody.messages.at(-1).role, 'tool');
-      return new Response('data: {"choices":[{"delta":{"content":"工作区状态已读取"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
-    },
-  });
-  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: '检查状态' })]), response, {
-    toolAdapter: {
-      listTools: async ids => { assert.deepEqual(ids, ['component_status']); return [{ name: 'component_status', description: '读取状态', parameters: { type: 'object', properties: {} } }]; },
-      callTool: async (name, args, meta) => { called = [name, args, meta.callId]; return [{ type: 'text', text: 'healthy' }]; },
-    },
-  });
-  assert.equal(response.status, 200);
-  assert.equal(requestBody.tools[0].function.name, 'component_status');
-  assert.deepEqual(called, ['component_status', {}, 'call-dsh']);
-  assert.match(response.chunks.join(''), /工作区状态已读取/);
-});
-
 test('local runtime rejects bound DSH tools without the session adapter', async () => {
   const response = responseSink();
   const handler = createLocalConversationHandler({
@@ -253,28 +174,6 @@ test('local runtime rejects bound DSH tools without the session adapter', async 
   await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', input: 'run' })]), response);
   assert.equal(response.status, 409);
   assert.match(response.chunks.join(''), /TOOL_ADAPTER_MISSING/);
-});
-
-test('local runtime records a failed MCP tool in the local trace', async () => {
-  const response = responseSink();
-  const traces = [];
-  const handler = createLocalConversationHandler({
-    agentStore: async () => ({ get: async () => ({ metadata: { name: '失败搜索助手' }, spec: { bindings: { mcpServers: [{ resourceId: 'mcp-1' }] } } }) }),
-    modelService: { profile: async () => ({ baseUrl: 'http://model.test/v1', apiKey: 'secret', modelName: 'model-1' }) },
-    resourceAdapter: {
-      listMcpTools: async () => [{ name: 'search' }],
-      callMcpTool: async () => { throw Object.assign(new Error('remote search failed'), { code: 'MCP_TOOL_FAILED' }); },
-    },
-    observability: { syncTrace: async record => traces.push(record) },
-    fetchImpl: async () => new Response('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-fail","function":{"name":"search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'),
-  });
-  await handler(Readable.from([JSON.stringify({ agentId: 'ar-local-aaaaaaaaaaaaaaaa', sessionId: 's-fail', input: '搜索' })]), response);
-  assert.equal(response.status, 200);
-  assert.equal(traces[0].status, 'failed');
-  assert.deepEqual(traces[0].events.filter(event => event.event_type.startsWith('tool.')).map(event => [event.event_type, event.payload.name]), [
-    ['tool.started', 'search'],
-    ['tool.failed', 'search'],
-  ]);
 });
 
 test('local runtime rejects resource-bound agents when the adapter is unavailable', async () => {

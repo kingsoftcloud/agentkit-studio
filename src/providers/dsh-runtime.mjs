@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { bindDshInvocationContext } from './dsh-invocation-context.mjs';
 import { nativeCodexUsage } from './codex-usage.mjs';
 /**
  * DSH LLM adapter for Studio-owned Agent revisions.
@@ -534,11 +535,16 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const mode = routed ? (routed.local ? 'local' : 'cloud') : separator > 0 ? model.slice(0, separator) : 'cloud';
       const agentId = routed?.agentId || (separator > 0 ? model.slice(separator + 1) : model);
       const runtime = routed?.runtime || options.studioRuntime;
+      if (mode === 'local' && runtime === 'harness') throw Object.assign(new Error('Native Harness requires the whole-turn execution port.'), { code: 'STUDIO_NATIVE_TURN_REQUIRED' });
       const toolAdapter = options.studioToolAdapter || routed?.toolAdapter;
       const nativeTools = options.studioNativeTools === true || routed?.nativeTools === true;
       const buildId = String(options.buildId || routed?.buildId || '').trim();
       const agentRevision = routed?.agentRevision || options.agentRevision;
       const toolAgent = routed?.agent || options.agent;
+      if (mode === 'local' && typeof toolAgent?.session?.id === 'string' && toolAgent.session.id.trim()) bindDshInvocationContext(toolAgent, {
+        userId: String(options.userId || options.metadata?.userId || options.user?.id || 'studio-anonymous'),
+        runnerType: runtime === 'codex' ? 'codex' : 'dsh-native',
+      });
       const user = lastUser(options.messages, nativeTools);
       const input = textOf(user).trim();
       const hasImage = Array.isArray(user?.content) && user.content.some(block => block?.type === 'image' && block.offloaded !== true);

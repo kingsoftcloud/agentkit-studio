@@ -67,4 +67,3 @@ test('create waits for ensure, checks cancellation again, and never retries an u
   const f = fixture(); f.schedule.create = async () => { creates++; throw new Error('ack lost'); };
   await assert.rejects(f.run('schedule-create', { spec: { title: 'Task', prompt: 'Do it', after_seconds: 1 } }), /ack lost/); assert.equal(creates, 1);
 });
-

@@ -2,21 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNativeAutomationRunner } from '../src/native-automation-runner.mjs';
 function harness(reason = { kind: 'completed' }, extraEvents = []) {
-  const calls = []; let done = false;
+  const calls = []; let done = false, durable = false;
+  const session = { id: 'session-a' };
   const services = {
     agents: { withoutInitiator: work => work() },
+    sessions: { flush: async value => { assert.equal(value, session); assert.equal(done, true); durable = true; return true; } },
     commands: { execute: () => assert.fail('unattended policy must not execute a user command') },
     permissionPresets: { set: (_session, preset) => calls.push(['permission', preset]) },
     approval: { setPolicy: (_agent, policy, options) => calls.push(['approval', policy, options]) },
     sessionController: {
       create: async value => calls.push(['create', value]), selectModel: async value => calls.push(['model', value]),
-      resolveAgent: async () => ({ agent: { whenIdle: async () => { done = true; }, cancel() {} } }),
+      resolveAgent: async () => ({ agent: { session, whenIdle: async () => { done = true; }, cancel() {} } }),
       prompt: async value => calls.push(['prompt', value]),
       projections: async () => ({ asOfSeq: 9 }),
-      page: async request => { assert.equal(done, true); assert.equal(request.throughSeq, 9); return { records: [...extraEvents.map(event => ({ type: 'event', event })), { type: 'event', event: { type: 'turn/end', seq: 9, data: { reason } } }] }; },
+      page: async request => { assert.equal(done, true); assert.equal(durable, true); assert.equal(request.throughSeq, 9); return { records: [...extraEvents.map(event => ({ type: 'event', event })), { type: 'event', event: { type: 'turn/end', seq: 9, data: { reason } } }] }; },
     },
   };
-  return { calls, run: createNativeAutomationRunner({ getService: name => services[name], admit: async () => ({ presetId: 'frozen-preset', modelSelection: { provider: 'bound', model: 'model-a' } }) }) };
+  return { calls, services, run: createNativeAutomationRunner({ getService: name => services[name], admit: async () => ({ presetId: 'frozen-preset', modelSelection: { provider: 'bound', model: 'model-a' } }) }) };
 }
 test('automation preserves its Agent preset, model and native Session without a workspace', async () => {
   const { run, calls } = harness();
@@ -32,6 +34,7 @@ test('headless runs fail before prompting when the approval service is unavailab
   let prompted = false;
   const services = {
     agents: { withoutInitiator: work => work() },
+    sessions: { flush: async () => true },
     permissionPresets: { set() {} },
     sessionController: { create: async () => {}, resolveAgent: async () => ({ agent: {} }), prompt: async () => { prompted = true; } },
   };
@@ -44,9 +47,95 @@ test('a failed native turn is never reported as a successful occurrence', async 
   await assert.rejects(() => run({ agentId: 'a', sessionId: 's', input: 'probe' }), error => error.code === 'NO_ADAPTER');
 });
 
+test('an idle SDK turn cannot complete delivery before its actual Session flush succeeds', async () => {
+  const { run, services } = harness(); let release, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  services.sessions.flush = () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  let settled = false;
+  const pending = run({ agentId: 'a', sessionId: 's', input: 'probe' });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  await waiting; await new Promise(resolve => setImmediate(resolve)); assert.equal(settled, false);
+  release(false);
+  await assert.rejects(pending, { code: 'AUTOMATION_SESSION_NOT_DURABLE' });
+});
+
+for (const result of [false, undefined, 1]) test(`flush ${String(result)} is not durable completion`, async () => {
+  const { run, services } = harness(); let historyReads = 0;
+  services.sessions.flush = async () => result;
+  services.sessionController.page = async () => { historyReads++; assert.fail('No success from unflushed history'); };
+  await assert.rejects(run({ agentId: 'a', sessionId: 's', input: 'probe' }), { code: 'AUTOMATION_SESSION_NOT_DURABLE' });
+  assert.equal(historyReads, 0);
+});
+
+test('canceling an uncooperative Session flush ends delivery and observes a late rejection', async () => {
+  const { run, services } = harness(), abort = new AbortController(); let rejectFlush, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  services.sessions.flush = () => { entered(); return new Promise((_, reject) => { rejectFlush = reject; }); };
+  const pending = run({ agentId: 'a', sessionId: 's', input: 'probe', signal: abort.signal });
+  await waiting;
+  const reason = Error('caller canceled delivery'); abort.abort(reason);
+  await assert.rejects(pending, error => error === reason);
+  rejectFlush(Error('late flush rejection')); await new Promise(resolve => setImmediate(resolve));
+});
+
+test('canceling while prompt acknowledgement is pending cancels the original Agent and observes its late rejection', async () => {
+  const { run, services } = harness(), abort = new AbortController();
+  let entered, rejectPrompt, cancellations = 0, flushes = 0;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  services.sessionController.resolveAgent = async () => ({ agent: { session: { id: 's' },
+    whenIdle: () => assert.fail('Dispatch has not acknowledged'), cancel: () => { cancellations++; } } });
+  services.sessionController.prompt = () => new Promise((_, reject) => { rejectPrompt = reject; entered(); });
+  services.sessions.flush = () => { flushes++; assert.fail('Canceled work is not durable completion'); };
+  const pending = run({ agentId: 'a', sessionId: 's', input: 'probe', signal: abort.signal });
+  await waiting;
+  const reason = Error('cancel pending dispatch'); abort.abort(reason);
+  await assert.rejects(pending, error => error === reason);
+  assert.equal(cancellations, 1); assert.equal(flushes, 0);
+  rejectPrompt(Error('late dispatch failure')); await new Promise(resolve => setImmediate(resolve));
+});
+
+test('Agent cancellation failures reject the runner without escaping the abort listener', async () => {
+  const { run, services } = harness(), abort = new AbortController();
+  let entered, rejectIdle;
+  const waiting = new Promise(resolve => { entered = resolve; }), failure = Error('cancel control unavailable');
+  services.sessionController.resolveAgent = async () => ({ agent: { session: { id: 's' },
+    whenIdle: () => new Promise((_, reject) => { rejectIdle = reject; entered(); }), cancel: () => { throw failure; } } });
+  const pending = run({ agentId: 'a', sessionId: 's', input: 'probe', signal: abort.signal });
+  await waiting; assert.doesNotThrow(() => abort.abort(Error('caller canceled')));
+  await assert.rejects(pending, error => error === failure);
+  rejectIdle(Error('late idle rejection')); await new Promise(resolve => setImmediate(resolve));
+});
+
 test('Codex tool presentation facts are counted once without executing the tool again', async () => {
   const { run, calls } = harness(undefined, ['started', 'completed'].map(phase => ({ type: 'agentkit/codex-tool', data: { name: 'card', callId: 'codex:one', phase } })));
   const result = await run({ agentId: 'a', sessionId: 's', input: 'probe' });
   assert.deepEqual(result.toolCalls, [{ name: 'card', callId: 'codex:one' }]);
   assert.equal(calls.filter(call => call[0] === 'prompt').length, 1);
+});
+
+test('completed request history reconstructs presentation only; a delivery cache cannot authorize execution', async () => {
+  const events = [
+    { seq: 1, type: 'tool/call', data: { callId: 'original', name: 'read_file', arguments: '{}' } },
+    { seq: 2, type: 'tool/result', data: { message: { source: { callId: 'original' }, content: [{ type: 'text', text: 'bytes' }] } } },
+    { seq: 3, type: 'assistant/attempt', data: { message: { content: [{ type: 'text', text: 'discarded' }] } } },
+    { seq: 4, type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'checked' }, { type: 'text', text: 'done' }] } } },
+    { seq: 5, type: 'turn/end', data: { reason: { kind: 'completed' } } },
+  ];
+  let history = events;
+  const services = { agents: { withoutInitiator: work => work() }, sessionController: {
+    projections: async () => ({}), create: () => assert.fail('no new session'), prompt: () => assert.fail('no model or tool execution'),
+    resolveAgent: () => assert.fail('no new permission/model mutation'),
+  } };
+  const run = createNativeAutomationRunner({ getService: name => services[name], reuseSession: true,
+    loadReplay: async () => history, admit: () => assert.fail('no new admission') });
+  const frames = [], request = { agentId: 'a', sessionId: 's', input: 'original', occurrenceId: 'once', onFrame: frame => frames.push(frame) };
+  assert.equal((await run(request)).output, 'done');
+  assert.equal(frames.filter(frame => frame.kind === 'event' && frame.value.type === 'tool/result').length, 1);
+  assert.ok(frames.some(frame => frame.value.chunk?.text === 'checked'));
+  assert.ok(frames.some(frame => frame.value.outcome?.eventType === 'assistant/attempt'));
+  frames.length = 0;
+  assert.equal((await run({ ...request, requireReplay: true })).output, 'done');
+  assert.equal(frames.length, 0);
+  history = null;
+  await assert.rejects(run({ ...request, requireReplay: true }), { code: 'RUNTIME_REQUEST_HISTORY_UNAVAILABLE' });
 });

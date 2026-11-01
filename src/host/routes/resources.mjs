@@ -1,4 +1,5 @@
 /** Resource operations behind the existing authenticated dispatch boundary. */
+import { listStudioTools } from '../../native-tool-catalog.mjs';
 export function createResourceRoutes({
   models, serverClientPromise, localMcpStorePromise, skillDiscoveryPromise, mcpProbePromise,
 }) {
@@ -12,7 +13,7 @@ export function createResourceRoutes({
           localMcpStore: await localMcpStorePromise, skillDiscovery: await skillDiscoveryPromise, mcpProbes: await mcpProbePromise }) };
       }
       if (kind === 'tool') {
-        const value = await serverClient.listCatalogResources({ kind: 'tool', query: payload?.query, limit: payload?.limit, cursor: payload?.cursor, source: payload?.source, status: payload?.status }, { signal });
+        const value = await listStudioTools({ query: payload, serverClient, signal });
         return { ok: true, value };
       }
       const resourceKind = kind;

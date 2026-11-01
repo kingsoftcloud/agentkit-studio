@@ -4,6 +4,24 @@ import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
+async function persistCompletedSession(persistence, session, signal) {
+  signal.throwIfAborted();
+  let abort;
+  const canceled = new Promise((_, reject) => {
+    abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    // whenIdle observes the SDK's in-memory terminal. The public flush must
+    // also persist turn/end before a presentation-only crash can lose it.
+    const flushed = await Promise.race([Promise.resolve().then(() => {
+      signal.throwIfAborted(); return persistence.flush(session);
+    }), canceled]);
+    signal.throwIfAborted();
+    if (flushed !== true) throw Object.assign(new Error('Completed Session is not durable'),
+      { code: 'AUTOMATION_SESSION_NOT_DURABLE', status: 409 });
+  } finally { signal.removeEventListener('abort', abort); }
+}
+
 export function createNativeAutomationRunner({ getService, admit, observe, selectModel, loadReplay, assertHostCompatible, timeoutMs = 300000, reuseSession = false } = {}) {
   const lanes = new Map();
   const service = name => {
@@ -11,7 +29,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     return value;
   };
-  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, buildId = '', timeoutSeconds, signal: callerSignal, onFrame, approvalPolicy = UNATTENDED_EXECUTION_POLICY.approvalPolicy, permissionMode }) => service('agents').withoutInitiator(async () => {
+  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, requireReplay = false, buildId = '', timeoutSeconds, signal: callerSignal, onFrame, approvalPolicy = UNATTENDED_EXECUTION_POLICY.approvalPolicy, permissionMode }) => service('agents').withoutInitiator(async () => {
     const startedAt = Date.now();
     const controller = service('sessionController');
     const expiry = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
@@ -21,8 +39,14 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (existing && loadReplay) {
       const replay = await loadReplay({ controller, sessionId, occurrenceId, input, model, requestFingerprint, signal });
       signal.throwIfAborted();
-      if (replay) return nativeRunResult(replay, sessionId, startedAt);
+      if (replay) {
+        if (!requireReplay && onFrame) replayNativeRequestFrames(replay, onFrame);
+        return nativeRunResult(replay, sessionId, startedAt);
+      }
     }
+    // A committed delivery projection restricts execution; it never grants
+    // permission to replace missing original engine/request history.
+    if (requireReplay) throw Object.assign(new Error('Original request history unavailable'), { code: 'RUNTIME_REQUEST_HISTORY_UNAVAILABLE', status: 409 });
     if (!existing) {
       const admission = await admit(agentId, buildId);
       await controller.create({ sessionId, agentPreset: admission.presetId });
@@ -36,6 +60,9 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (resolved.error) throw resolved.error;
     const agent = resolved.agent;
     signal.throwIfAborted();
+    const persistence = service('sessions');
+    if (typeof persistence.flush !== 'function') throw Object.assign(new Error('Session persistence unavailable'),
+      { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     // The command is a user action and would misattribute its approval notice.
     // Only a validated request mode can narrow the default unattended policy.
     service('permissionPresets').set(agent.session, readExecutionMode(permissionMode) || UNATTENDED_EXECUTION_POLICY.permissionMode);
@@ -46,14 +73,27 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     signal.throwIfAborted();
     const unobserve = onFrame ? observe?.(agent, onFrame) : undefined;
     try {
-      await controller.prompt({ sessionId, requestId: occurrenceId, ...(requestFingerprint === undefined ? {} : { requestFingerprint }),
-        mode: 'queue', content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal);
-      await new Promise((resolve, reject) => {
-        const onAbort = () => { agent.cancel({ kind: 'user' }); reject(signal.reason || Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' })); };
-        if (signal.aborted) { onAbort(); return; }
+      let onAbort, submitted = false;
+      const canceled = new Promise((_, reject) => {
+        onAbort = () => {
+          try { if (submitted) agent.cancel({ kind: 'user' }); }
+          catch (error) { reject(error); return; }
+          reject(signal.reason || Object.assign(new Error('自动化运行超时'), { code: 'AUTOMATION_TIMEOUT' }));
+        };
         signal.addEventListener('abort', onAbort, { once: true });
-        agent.whenIdle().then(() => { signal.removeEventListener('abort', onAbort); resolve(); }, error => { signal.removeEventListener('abort', onAbort); reject(error); });
       });
+      try {
+        // Dispatch can wait for Host preparation after work has started. Own
+        // cancellation before awaiting its acknowledgement, not only when idle.
+        signal.throwIfAborted(); submitted = true;
+        await Promise.race([controller.prompt({ sessionId, requestId: occurrenceId,
+          ...(requestFingerprint === undefined ? {} : { requestFingerprint }), mode: 'queue',
+          content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal), canceled]);
+        signal.throwIfAborted();
+        await Promise.race([agent.whenIdle(), canceled]);
+        signal.throwIfAborted();
+      } finally { signal.removeEventListener('abort', onAbort); }
+      await persistCompletedSession(persistence, agent.session, signal);
       let events;
       if (reuseSession) {
         try { events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal); }
@@ -85,6 +125,22 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
   };
   runner.executionPolicy = UNATTENDED_EXECUTION_POLICY;
   return runner;
+}
+
+function replayNativeRequestFrames(events, onFrame) {
+  for (const event of events) {
+    if (['assistant/message', 'assistant/attempt'].includes(event.type)) {
+      const attemptId = `durable-request-${event.seq}`;
+      const chunks = event.data.stream?.filter(frame => frame.type === 'chunk') ?? [];
+      if (chunks.length) for (const frame of chunks) onFrame({ kind: 'assistant', value: { ...frame, attemptId } });
+      else for (const [index, block] of (event.data.message?.content || []).entries()) {
+        const type = block.type === 'text' ? 'text-delta' : block.type === 'reasoning' ? 'reasoning-delta' : null;
+        if (type) onFrame({ kind: 'assistant', value: { type: 'chunk', attemptId, chunk: { type, index, text: block.text || '' } } });
+      }
+      onFrame({ kind: 'assistant', value: { type: 'end', attemptId, outcome: { kind: 'committed', eventType: event.type } } });
+    }
+    onFrame({ kind: 'event', value: event });
+  }
 }
 
 /** Trailing session events; used when a failed turn recorded no accepted request. */

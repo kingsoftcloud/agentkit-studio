@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { auditFiles, auditPath, auditText } from '../scripts/public-surface-audit.mjs';
 
 const buffer = value => Buffer.from(value, 'utf8');
@@ -70,6 +71,57 @@ test('public surface audit scans every tracked text file for high-confidence pri
 test('public surface audit allows binary product assets while still checking their paths', () => {
   const binary = Buffer.from([0, 1, 2, 3, 4]);
   assert.deepEqual(auditText('assets/icon.png', binary), []);
+});
+
+test('public examples are checked identically in current and historical package tests', () => {
+  const examples = [
+    ['https://user:', 'pass@example.com/card'].join(''),
+    ['AKIA', 'IOSFODNN7EXAMPLE'].join(''),
+    ['metadata.google.', 'internal'].join(''),
+  ].join('\n');
+  for (const historical of [false, true]) {
+    for (const file of ['tests/example.test.mjs', 'packages/agentkit-harness-node/test/example.test.mjs']) {
+      assert.deepEqual(auditText(file, buffer(examples), { historical }), []);
+      const credential = ['https://user:', 'actual-credential@example.com/'].join('');
+      assert.ok(auditText(file, buffer(examples + '\n' + credential), { historical })
+        .some(hit => hit.kind === 'embedded-url-credential'));
+      const token = ['ghp_', '123456789012345678901234567890'].join('');
+      assert.ok(auditText(file, buffer(examples + '\n' + token), { historical })
+        .some(hit => hit.kind === 'github-token'));
+    }
+  }
+  assert.ok(auditText('src/config.mjs', buffer(examples)).some(hit => hit.kind === 'embedded-url-credential'));
+});
+
+test('network fixture exemptions require the reviewed file and exact value or immutable bytes', () => {
+  const address = ['10', '0', '0', '1'].join('.'), other = ['10', '9', '8', '7'].join('.');
+  const literal = value => buffer(JSON.stringify(value));
+  const privateHit = hits => hits.some(hit => hit.kind === 'private-network-address');
+  for (const historical of [false, true]) {
+    const options = { historical };
+    assert.deepEqual(auditText('tests/native-dsh-web.test.mjs', literal(address), options), []);
+    assert.ok(privateHit(auditText('tests/native-dsh-web.test.mjs', literal(other), options)));
+    assert.ok(privateHit(auditText('tests/other.test.mjs', literal(address), options)));
+    assert.ok(privateHit(auditText('tests/other.test.mjs', buffer(`/${other}/`), options)));
+    assert.ok(privateHit(auditText('tests/native-dsh-web.test.mjs', literal(`https://${address}/`), options)));
+    const path = 'tests/fixtures/a2a-tool-activity-reference.json';
+    const bytes = readFileSync(new URL('../' + path, import.meta.url));
+    assert.deepEqual(auditText(path, bytes, options), []);
+    assert.ok(privateHit(auditText(path, Buffer.concat([bytes, buffer('\n')]), options)));
+    assert.ok(privateHit(auditText('tests/fixtures/other.json', bytes, options)));
+  }
+});
+
+test('public network constants do not conceal private URLs or unknown hosts', () => {
+  const constants = ['const byMode = { internal: "public" }; const modes = [byMode.internal, byMode.public];',
+    ['const denied = ["10.', '0.0.0/8"];'].join('')].join('\n');
+  assert.deepEqual(auditText('src/policy.mjs', buffer(constants)), []);
+  const endpoint = ['https://10.', '0.0.0/private'].join('');
+  assert.ok(auditText('src/policy.mjs', buffer(constants + '\n' + endpoint))
+    .some(hit => hit.kind === 'private-network-address'));
+  const host = ['https://production.', 'internal'].join('');
+  assert.ok(auditText('tests/policy.test.mjs', buffer(constants + '\n' + host))
+    .some(hit => hit.kind === 'internal-service-host'));
 });
 
 test('historical synthetic test fixtures stay approved without loosening current files', () => {

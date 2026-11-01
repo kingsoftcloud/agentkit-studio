@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createModelIdleDeadline } from '../packages/agentkit-harness/src/model-idle-deadline.mjs';
+import { createModelIdleDeadline } from '../src/model-idle-deadline.mjs';
 
 test('ongoing model data can outlive the original request budget', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
