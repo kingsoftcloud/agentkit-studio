@@ -9,6 +9,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 actual="$(git -C "$repo_root" rev-parse HEAD)"
 [[ "$actual" == "$expected" ]] || { echo "Wrong checkout: expected $expected, got $actual" >&2; exit 2; }
 printf 'Verified Ezone bootstrap checkout: %s\n' "$actual"
+cd "$repo_root"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then

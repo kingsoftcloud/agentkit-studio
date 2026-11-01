@@ -46,7 +46,7 @@ test('Ezone public wrapper rejects an unverified checkout before tool bootstrap 
     const executable = (name, body) => writeFileSync(join(bin, name), '#!/bin/sh\n' + body + '\n', { mode: 0o755 });
     executable('git', 'case " $* " in *" cat-file -e "*) exit 0;; esac\nexec "$EZONE_GUARD_GIT" "$@"');
     executable('node', 'printf "node\\n" >> "$EZONE_GUARD_PROBE"\nif [ "$1" = --version ]; then printf "v26.12.1\\n"; else exec "$EZONE_GUARD_NODE" "$@"; fi');
-    executable('pnpm', 'printf "pnpm\\n" >> "$EZONE_GUARD_PROBE"\nif [ "$1" = --version ]; then printf "10.33.2\\n"; else "$EZONE_GUARD_NODE" "$EZONE_GUARD_CHECKOUT/preinstall.cjs"; exit 73; fi');
+    executable('pnpm', 'printf "pnpm\\n" >> "$EZONE_GUARD_PROBE"\nif [ "$1" = --version ]; then printf "10.33.2\\n"; else [ "$PWD" = "$EZONE_GUARD_CHECKOUT" ] || exit 74; "$EZONE_GUARD_NODE" "$EZONE_GUARD_CHECKOUT/preinstall.cjs"; exit 73; fi');
     // Make the pre-fix wrapper reach installation without network or real tools.
     for (const archive of ['gitleaks-v8.30.1/gitleaks.tar.gz', 'node-v22.23.4/node.tar.xz',
       'node-v22.23.4/node-libs.tar.gz', 'pnpm-v10.33.2/pnpm.tgz']) {
@@ -64,8 +64,9 @@ test('Ezone public wrapper rejects an unverified checkout before tool bootstrap 
     }
     // A matching checkout must reach the controlled installation and its real
     // Node preinstall marker, proving the negative cases have an active trap.
+    const caller = join(root, 'unverified-caller'); mkdirSync(caller);
     const accepted = spawnSync('/bin/bash', [join(root, 'ci/ezone-public-gate.sh')],
-      { cwd: root, env: { ...env, SYS_BUILD_COMMIT: head }, encoding: 'utf8', timeout: 5000 });
+      { cwd: caller, env: { ...env, SYS_BUILD_COMMIT: head }, encoding: 'utf8', timeout: 5000 });
     assert.ifError(accepted.error); assert.equal(accepted.status, 73, accepted.stderr);
     assert.equal(existsSync(probe), true); assert.equal(existsSync(marker), true);
   });
