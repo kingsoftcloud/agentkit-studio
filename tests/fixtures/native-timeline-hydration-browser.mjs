@@ -1,7 +1,7 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import { installTaskTimeline } from '../../packages/agentkit-harness-ui/src/host/task-timeline.mjs';
+import { installTaskTimeline } from '@kingsoftcloud/agentkit-harness-ui/host/task-timeline';
 
 const gates = new Map(), slots = new Map();let current = 'alpha', failReads = false;
 const gate = () => { let resolve;const promise = new Promise(done => { resolve = done; });return { promise, resolve }; };

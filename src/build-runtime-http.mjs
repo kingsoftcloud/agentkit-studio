@@ -9,6 +9,7 @@ import { ASSISTANT_SCHEDULE_CAPABILITY } from './contracts/assistant-schedule.mj
 import { ASSISTANT_BROWSER_CAPABILITY, ASSISTANT_CODE_EXECUTION_CAPABILITY, ASSISTANT_MANAGED_PERMISSION_CAPABILITY } from './contracts/assistant-capabilities.mjs';
 import { ASSISTANT_NATIVE_CAPABILITY, isAssistantNativeOperation } from './contracts/assistant-native.mjs';
 import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachments.mjs';
+import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
 
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -23,10 +24,7 @@ const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.te
 const safeDiagnosticCode = code => (typeof code === 'string' && DIAGNOSTIC_CODE.test(code) ? code : 'RUNTIME_SETTLEMENT_FAILED');
 // Managed Responses callers need the failure detail; credentials and control
 // characters never leave the host, and the run log keeps only the code.
-const CREDENTIAL = /(\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]{6,}|\b(?:sk|ak|tok)[-_][A-Za-z0-9_-]{6,}/gi;
-const safeClientMessage = value => (typeof value === 'string'
-  ? value.replace(CREDENTIAL, '$1[REDACTED]').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, 2000)
-  : '');
+const safeClientMessage = value => redactDiagnosticText(value, 2000).trim();
 /** A request may only select a mode inside the ceiling declared by this runtime. */
 const PERMISSION_MODE_HEADER = 'x-agentkit-permission-mode';
 

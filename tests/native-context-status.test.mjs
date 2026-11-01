@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeContextStatus } from '../packages/agentkit-harness-node/src/native/context-status.mjs';
+import { nativeContextStatus } from '@kingsoftcloud/agentkit-harness-node/native/context-status';
 const record = () => ({ configuration: { contextPolicy: { enabled: true, triggerRatio: .72, targetRatio: .45 },
   profile: { contextWindow: 10000, maxOutputTokens: 1000 } },
   snapshot: { runId: 'r', revision: 7, phase: 'compacting', contextState: { compactions: 1, compaction: { proposal: 'private summary' } },

@@ -102,7 +102,7 @@ test('a managed failure message reaches the client redacted but never the run lo
   for await (const event of readSse(response.body)) events.push(event);
   const failed = events.find(event => event.type === 'response.failed');
   assert.equal(failed.response.error.code, 'UNKNOWN');
-  assert.equal(failed.response.error.message, 'Authorization: Bearer [REDACTED] provider rejected the frozen model route');
+  assert.equal(failed.response.error.message, 'Authorization: [redacted] provider rejected the frozen model route');
   assert.deepEqual(logs.map(entry => entry.event), ['runtime.run.started', 'runtime.run.failed']);
   assert(!JSON.stringify(logs).includes('provider rejected'));
 });

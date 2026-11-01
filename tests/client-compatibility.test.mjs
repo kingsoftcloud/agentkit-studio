@@ -55,3 +55,11 @@ test('product client exposes the DSH plugin lifecycle the market row calls', asy
   await client.enableDshPlugin('@deepseek-ai/dsh-experimental-agent-team-profile');
   assert.deepEqual(calls, [['/agentkit', 'plugins/dsh-enable', { pluginName: '@deepseek-ai/dsh-experimental-agent-team-profile' }]]);
 });
+
+ test('retired local conversation compatibility calls cannot issue a network request', async () => {
+  const { createCompatibilityMethods } = await import('../src/remote/compatibility-methods.mjs');
+  let calls = 0;
+  const client = createCompatibilityMethods({ directServer: () => true, window: { fetch() { calls++; } } });
+  await assert.rejects(client.streamAgentConversation('ar-local-fixture', 'session', { input: 'hi' }), { code: 'LOCAL_HARNESS_RETIRED' });
+  assert.equal(calls, 0);
+});

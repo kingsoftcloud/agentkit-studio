@@ -5,20 +5,11 @@ import { join } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const directory = join(root, '.artifacts/native-architecture'); mkdirSync(directory, { recursive: true });
+// Core/Node implementation tests belong to the independent release gate.
 const groups = {
-  core: ['packages/agentkit-harness-core/test/model-surface.test.mjs',
-    'packages/agentkit-harness-core/test/tool-discovery.test.mjs',
-    'packages/agentkit-harness-core/test/context-planning.test.mjs',
-    'packages/agentkit-harness-core/test/tool-error-recovery.test.mjs'],
-  workspace: ['packages/agentkit-harness-node/test/native-workspace-media.test.mjs',
-    'packages/agentkit-harness-node/test/native-workspace.test.mjs'],
-  host: ['tests/native-model-surface-host.test.mjs', 'tests/native-model-surface.test.mjs',
-    'tests/native-context-ownership.test.mjs', 'tests/native-mcp-output.test.mjs'],
-  execution: ['packages/agentkit-harness-node/test/native-local-output-policy.test.mjs',
-    'packages/agentkit-harness-node/test/native-local-process.test.mjs', 'tests/native-local-execution.test.mjs'],
-  children: ['tests/native-child-allocation.test.mjs', 'tests/native-child-allocation-integration.test.mjs',
-    'packages/agentkit-harness-core/test/child-budget.test.mjs', 'packages/agentkit-harness-core/test/child-budget-kernel.test.mjs',
-    'tests/agent-native-role-form.test.mjs', 'tests/native-child-declarations.test.mjs'],
+  host: ['tests/native-model-surface-host.test.mjs', 'tests/native-model-surface.test.mjs', 'tests/native-context-ownership.test.mjs', 'tests/native-mcp-output.test.mjs'],
+  execution: ['tests/native-local-execution.test.mjs'],
+  children: ['tests/native-child-allocation.test.mjs', 'tests/native-child-allocation-integration.test.mjs', 'tests/agent-native-role-form.test.mjs', 'tests/native-child-declarations.test.mjs'],
   'child-host': ['tests/studio-native-children.test.mjs'],
   instructions: ['tests/native-dsh-tools.test.mjs', 'tests/studio-native-skills-disclosure.test.mjs'],
 };

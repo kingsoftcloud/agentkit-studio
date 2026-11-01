@@ -55,7 +55,7 @@ test('standalone Harness loops are never promoted to retryable DSH steps', async
 test('a text-only Agent preset uses the native model-step failure contract too', async t => {
   t.after(() => unbindDshAgentRoutes('text-only-proof'));
   const listeners = new Map();
-  applyRuntimePreset({ tools: {}, on: (event, handler) => { listeners.set(event, handler); } }, { agentId: 'text-only-proof', runtime: 'harness', local: true });
+  applyRuntimePreset({ tools: {}, on: (event, handler) => { listeners.set(event, handler); } }, { agentId: 'text-only-proof', runtime: 'dsh-native', local: true });
   await listeners.get('agent/request')({ agent: { id: 'text-only-session' } }, async () => ({}));
   const chunks = await collect(fixture(() => Response.json({}, { status: 503 })), { sessionId: 'text-only-session', studioNativeTools: false });
   assert.equal(chunks.at(-1).reason.failure.code, 'SERVER');

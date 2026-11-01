@@ -7,8 +7,8 @@
  * declarations, so silently putting them in an empty preset would produce a
  * successful looking chat that runs the wrong composition. Those resource
  * bindings are routed through the Studio DSH provider bridge, which keeps the
- * native Session UI while delegating runtime work to Studio. The explicit
- * Native contract replaces the whole turn; legacy bindings retain the loop.
+ * native Session UI while delegating runtime work to Studio. The Native contract replaces each local Harness turn; DSH-native and Codex
+ * retain their own execution owners.
  */
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { selectedNativeBuildContract } from './build-engine.mjs';
@@ -148,7 +148,7 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, nativeEngineContract } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
     if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
     this.nativeEngineContract = nativeEngineContract;
     this.assertHostCompatible = assertHostCompatible;
@@ -237,13 +237,13 @@ export class DshPresetAdmission {
   }
 
   async register(agent, eligibility, buildId, { allowUnavailableResources = false } = {}) {
-    const nativeEngineContract = selectedNativeBuildContract(agent, this.nativeEngineContract);
+    const nativeEngineContract = eligibility.local ? selectedNativeBuildContract(agent, this.nativeEngineContract) : undefined;
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
     const basePlugins = eligibility.local && this.getBasePlugins ? await this.getBasePlugins(agent) : [];
     // A Studio-owned Web binding replaces the standard preset's Web plugin;
-    // duplicate names in the same scope fail admission. An ordinary legacy
+    // duplicate names in the same scope fail admission. An DSH-native or Codex
     // preset without that binding retains its existing DSH Web environment.
     const ownsWeb = eligibility.local && (eligibility.runtime === 'harness' && nativeEngineContract
       || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
@@ -336,7 +336,7 @@ export class DshPresetAdmission {
       name: `${String(agent?.metadata?.name || agent?.name || eligibility.agentId)}${buildId ? ` · Revision ${eligibility.revision} · ${buildId.slice(-8)}` : ''}`,
       description: buildId ? `AgentKit Studio 冻结版本 ${buildId}` : 'AgentKit Studio Agent',
       // The persona row is optional. Runtime listeners own their selected
-      // contract; opted-in Harness replaces the turn, while legacy bindings
+      // contract; local Harness replaces the turn, while DSH-native and Codex
       // change only the provider route. DSH retains Session and rendering.
       plugins,
     });

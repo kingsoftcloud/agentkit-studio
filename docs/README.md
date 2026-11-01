@@ -9,7 +9,7 @@
 - [Lifecycle implementation](refactor-lifecycle.md): scope ownership changes, real DSH evidence and remaining acceptance work.
 - [Sidebar implementation](refactor-sidebar.md): native DSH list reuse, removed filtering and acceptance evidence.
 - [前端模块化实施与验收](refactor-client.md)
-- [Harness plugin](../packages/agentkit-harness/README.md): independent npm package and DSH integration.
+- [Native Harness](https://github.com/kingsoftcloud/ksadk-harness): independently released Core, Node and UI packages consumed by Studio.
 - [Desktop updates](desktop-update.md): signed macOS releases, feeds and full updates.
 - [Windows releases](windows-release.md): NSIS, Certum signing and installed App checks.
 - [Runtime endpoints](runtime-endpoint-injection.md): configurable cloud client routing.

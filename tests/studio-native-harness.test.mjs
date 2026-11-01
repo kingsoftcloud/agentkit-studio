@@ -1784,7 +1784,7 @@ test('Studio Native resolves Frozen Build authority instead of reading a mutable
 test('Studio Native refuses a legacy Frozen Build before creating a run or contacting a model', async t => {
   const fixture = await setup(t); fixture.payload.binding.buildId = 'legacy-build';
   fixture.builds.resolve = async () => structuredClone(fixture.record);
-  await assert.rejects(fixture.host.executeTurn(fixture.payload), /studio_native_build_engine_mismatch/);
+  await assert.rejects(fixture.host.executeTurn(fixture.payload), { code: 'STUDIO_BUILD_ENGINE_UNSUPPORTED' });
   assert.equal(fixture.requests.length, 0); assert.equal(fixture.head(), null);
 });
 test('a changed Frozen revision and a mid-run model binding cannot dispatch an HTTP request', async t => {

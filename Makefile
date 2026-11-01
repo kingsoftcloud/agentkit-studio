@@ -57,7 +57,7 @@ doctor:
 cloud-identity:
 	node scripts/check-cloud-identity.mjs
 
-.PHONY: check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-harness verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
@@ -217,11 +217,6 @@ verify-studio-plugin-lifecycle:
 verify-studio-desktop-dev:
 	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是固定基线" >&2; exit 2)
 	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-studio-desktop-dev
-
-verify-harness:
-	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)
-	@test "$$(git -C "$(DSH_ROOT)" rev-parse HEAD)" = "$(DSH_COMMIT)" || (echo "DSH checkout 不是 $(DSH_VERSION) 基线 $(DSH_COMMIT)" >&2; exit 2)
-	AGENTKIT_DSH_ROOT="$(DSH_ROOT)" pnpm verify-harness
 
 verify-desktop-update:
 	@test -d "$(DSH_ROOT)" || (echo "DSH_ROOT 不存在：$(DSH_ROOT)" >&2; exit 2)

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -17,7 +17,7 @@ function installation(t) {
   writeFileSync(join(installed, 'index.mjs'), 'export const generation = 3;\n');
   const files = Object.fromEntries(['package.json', 'index.mjs'].map(path =>
     [path, createHash('sha256').update(readFileSync(join(installed, path))).digest('hex')]));
-  const pins = { schemaVersion: 'agentkit.native-registry-pins/v1', packages: { [name]: { version,
+  const pins = { schemaVersion: 'agentkit.native-registry-pins/v2', packages: { [name]: { version,
     integrity: 'sha512-' + createHash('sha512').update('registry-archive-fixture').digest('base64'), files } } };
   writeFileSync(pinsPath, JSON.stringify(pins));
   const product = { dependencies: { [name]: version } };
@@ -51,8 +51,27 @@ test('malformed release evidence and file paths are rejected before reading outs
   for (const path of ['../outside.mjs', '/absolute', 'src/../../outside', 'src\\outside']) {
     const changed = structuredClone(pins);
     changed.packages[name].files = { [path]: 'a'.repeat(64) }; rewrite(changed);
-    assert.throws(() => verifyNativePackageTree(root, [name]), /Invalid Native file pin/);
+    assert.throws(() => verifyNativePackageTree(root, [name]), /Invalid package file pin/);
   }
   const changed = structuredClone(pins); changed.packages[name].integrity = 'not-release-integrity'; rewrite(changed);
   assert.throws(() => verifyNativePackageTree(root, [name]), /registry evidence is missing/);
+});
+
+for (const kind of ['extra-file', 'extra-directory', 'file-link', 'parent-link']) test(`registry verification rejects ${kind} even if pinned bytes still match`, t => {
+  const { root, name, installed, pins, pinsPath } = installation(t);
+  if (kind === 'extra-file') writeFileSync(join(installed, 'unreviewed.mjs'), 'export const stale = true;');
+  if (kind === 'extra-directory') mkdirSync(join(installed, 'unreviewed'));
+  if (kind === 'file-link') {
+    const original = readFileSync(join(installed, 'index.mjs'));
+    const target = join(root, 'same-bytes.mjs'); writeFileSync(target, original);
+    rmSync(join(installed, 'index.mjs')); symlinkSync(target, join(installed, 'index.mjs'));
+  }
+  if (kind === 'parent-link') {
+    const parent = join(installed, 'dist'), target = join(root, 'linked-dist');
+    mkdirSync(parent); renameSync(join(installed, 'index.mjs'), join(parent, 'index.mjs'));
+    pins.packages[name].files['dist/index.mjs'] = pins.packages[name].files['index.mjs'];
+    delete pins.packages[name].files['index.mjs']; writeFileSync(pinsPath, JSON.stringify(pins));
+    renameSync(parent, target); symlinkSync(target, parent, 'dir');
+  }
+  assert.throws(() => verifyNativePackageTree(root, [name]));
 });

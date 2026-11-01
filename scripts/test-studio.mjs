@@ -1,7 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
-const directories = ['tests', 'packages/agentkit-harness/test', 'packages/expert-catalog/test'];
+const directories = ['tests', 'tests/native-host/integration', 'packages/expert-catalog/test'];
 const files = directories.flatMap(directory => readdirSync(directory).filter(name => name.endsWith('.test.mjs'))
   .map(name => `${directory}/${name}`));
 const concurrency = process.env.AGENTKIT_TEST_CONCURRENCY;

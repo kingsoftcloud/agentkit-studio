@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeChildObservationCache, nativeChildObservation } from '../packages/agentkit-harness-node/src/native/child-observation.mjs';
+import { createNativeChildObservationCache, nativeChildObservation } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'a' };
 const record = () => ({ fence: 2, lease: { expiresAt: Date.now() + 5000 },
   configuration: { profile: { providerThinkingDisplayPolicy: 'provider-visible/v1' } },

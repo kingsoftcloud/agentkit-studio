@@ -1,7 +1,7 @@
 // TypeScript-vs-Python Native Harness parity test.
 //
 // Drives the REAL TypeScript NativeKernel / MemoryRunStore (from
-// ../packages/agentkit-harness-core/dist/index.mjs) with scripted model/tool/
+// @kingsoftcloud/agentkit-harness-core) with scripted model/tool/
 // verifier ports that match the frozen Python oracle scenarios in
 // tests/fixtures/native-reference.json, and asserts the actual TS phase /
 // outcome / reason / counts and relevant tool/control effects against the

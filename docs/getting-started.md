@@ -17,8 +17,7 @@ native file cards and sidebar preview.
 
 For a Studio Agent using **AgentKit Harness** (`runtime.type = "harness"`), new
 Revisions and Builds default to the Node-based TypeScript Native engine. No Native
-opt-in flag, Python environment or uv installation is required. Existing Frozen
-Builds keep their original engine. This branch requires the repository's maintained
+opt-in flag, Python environment or uv installation is required. Legacy Harness Builds must be recreated with a Native engine pin. This branch requires the repository's maintained
 DSH Host interfaces; a public DSH package with the same version is insufficient.
 An existing desktop release does not automatically contain these changes.
 

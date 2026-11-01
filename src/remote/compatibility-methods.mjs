@@ -82,26 +82,8 @@ export function createCompatibilityMethods({ connection, window, directServer, b
         // The official DSH composer currently has no public sink/input hook,
         // so this helper is not invoked by the native session.prompt path.
         streamAgentConversation: async (agentId, sessionId, input, signal) => {
-            // Locally-stored agents execute through the plugin's same-origin
-            // local runtime route (harness + gateway model) — no cloud Build.
             if (directServer() && String(agentId).startsWith('ar-local-')) {
-                const response = await window.fetch(streamBaseUrl() + '/agentkit/local-conversation', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({ agentId, sessionId, input: input?.parts?.[0]?.text || input?.input || String(input || ''), resourceMode: input?.resourceMode, history: input?.history }),
-                    signal,
-                });
-                if (!response.ok || !response.body) {
-                    const text = await response.text().catch(() => '');
-                    let message = `本地运行失败（${response.status}）`;
-                    try {
-                        message = JSON.parse(text)?.error?.message || message;
-                    }
-                    catch { }
-                    throw Object.assign(new Error(message), { code: 'LOCAL_RUN_FAILED' });
-                }
-                return response;
+                throw Object.assign(new Error('请通过 Native 会话运行本地 Agent。'), { code: 'LOCAL_HARNESS_RETIRED' });
             }
             // Resolve the surface through the authenticated control-plane bridge.
             const surface = directServer()

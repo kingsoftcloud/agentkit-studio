@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeActivityStatus } from '../packages/agentkit-harness-node/src/native/activity-status.mjs';
+import { nativeActivityStatus } from '@kingsoftcloud/agentkit-harness-node/native/activity-status';
 const record = () => ({snapshot:{runId:'run',revision:1,todos:{items:[
   {content:'Read actual evidence',status:'completed'}, {content:'Publish findings',status:'in_progress'},
 ]},backgroundCommands:[{ref:{taskId:'task',operationKey:'op'}}]},intents:[{operationKey:'op',payload:{calls:[{arguments:{command:'node report.mjs'}}]}}],events:[]});
