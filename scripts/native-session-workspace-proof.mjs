@@ -38,6 +38,16 @@ export function createSessionWorkspaceProof() {
         assert.deepEqual(await readFile(join(selected, 'answer.txt')), Buffer.from(contents[turn]));
         await assert.rejects(access(join(root, 'workspace/answer.txt')), { code: 'ENOENT' });
         const identity = parseNativeJson(result.events.find(event => event.type === 'turn/owner').data.binding).identity;
+        const { origin, cookie } = JSON.parse(await readFile(join(root, 'mounted-host-connection.json'), 'utf8'));
+        const response = await fetch(origin + '/agentkit', { method: 'POST', headers: { origin, cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ method: 'sessions/native-recovery-status', payload: { agentId: identity.scope.agentId, sessionId }, rpcId: 'workspace-proof' }),
+          signal: AbortSignal.timeout(10000) });
+        const status = (await response.json()).result;
+        assert.equal(status?.ok, true, JSON.stringify({ code: status?.error?.code, message: status?.error?.message }));
+        assert.equal(status.value.workspace.root, await realpath(selected));
+        // This proof deliberately runs with a Node-only PATH (no Git).
+        assert.equal(status.value.workspaceStatus.state, 'unavailable');
+        assert.equal(status.value.workspaceStatus.git, null);
         const store = new SqliteRunStore(join(root, 'studio/native-harness/runs.sqlite'));
         try {
           const record = store.load(identity.scope, identity.runId);

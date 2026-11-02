@@ -359,7 +359,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...values.automation || values.recovery || workspaceRepairProof || conversationForkProof || conversationRewindProof ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+    ...sessionWorkspaceProof || values.automation || values.recovery || workspaceRepairProof || conversationForkProof || conversationRewindProof ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : [],
   ] : [];
