@@ -12,10 +12,19 @@ const request = { ...contract.parse(payload, {}), agentId, buildId };
 const response = runtimeResponse(request, { output: 'done' }, 'completed');
 const events = [{ type: 'response.tool_result', data: { call_id: 'call', output: [{ type: 'text', text: 'result' }], is_error: false } }];
 const signal = () => new AbortController().signal;
-function fixture() {
+/** The real DSH Session log keeps lossless JSON only: `snapshotJsonValue`
+ *  detaches a value that survives a JSON round trip unchanged, and the append
+ *  site rejects everything else (own `undefined` values, Date/Map/Set/class
+ *  instances, non-finite numbers, sparse arrays, cycles). */
+function losslessJson(value) {
+  try { assert.deepEqual(JSON.parse(JSON.stringify(value)), value); return true; } catch { return false; }
+}
+function fixture(sessionId = request.sessionId) {
   const rows = []; let flush = async () => true;
-  const session = { id: request.sessionId, snapshotEvents: () => rows, append: (type, data, options) => {
-    assert.deepEqual(options, { ignorable: true }); rows.push({ seq: rows.length, type, data, ...options });
+  const session = { id: sessionId, snapshotEvents: () => rows, append: (type, data, options) => {
+    assert.deepEqual(options, { ignorable: true });
+    assert.ok(losslessJson(data), `session event "${type}" carries non-JSON-serializable data`);
+    rows.push({ seq: rows.length, type, data, ...options });
   } };
   const services = { sessionController: { projections: async () => ({}), resolveAgent: async () => ({ agent: { session } }) },
     sessions: { flush: value => { assert.equal(value, session); return flush(); } } };
@@ -119,4 +128,50 @@ test('HTTP flush failure emits a failure with no completed response', async t =>
   const frames = []; for await (const frame of readSse(result.body)) frames.push(frame);
   assert.equal(frames.some(frame => frame.type === 'response.completed'), false);
   assert.equal(frames.at(-1).response.error.code, 'RESPONSES_PROJECTION_NOT_DURABLE');
+});
+
+const versionId = 'cd7fd681-7a7b-4245-a819-c6deae010463', manifestSha256 = 'a'.repeat(64);
+const managedIdentity = { format: 'agentengine.managed-runtime/v1', agentId, versionId, manifestSha256,
+  runtimeName: 'codex', runtimeVersion: '0.0.8-96904e9-dsh0.2.1rc2' };
+
+/** A managed runtime is identified by VersionId + manifest digest and has no
+ *  Build id, so its Responses request carries an explicitly absent buildId. */
+function managedRequest() {
+  const managed = createRuntimeResponsesContract({ agentId, token, definitionId: manifestSha256, versionId, model: 'fixed', models: ['fixed'] });
+  return { ...managed.parse(payload, {}), agentId, buildId: undefined };
+}
+
+test('a managed runtime without a Build id persists a projection the Session log can keep', async () => {
+  const managed = managedRequest(), f = fixture(managed.sessionId);
+  const saved = await f.create().save(managed, runtimeResponse(managed, { output: 'done' }, 'completed'), [], signal());
+  assert.equal(f.rows.length, 1);
+  assert.equal(Object.hasOwn(f.rows[0].data, 'buildId'), false, 'an absent Build id must not become an own undefined property');
+  assert.equal(saved.response.status, 'completed');
+  assert.deepEqual(await f.create().load(managed, signal()), saved);
+});
+
+test('the managed HTTP runtime persists its version-identified projection without a Build id', async t => {
+  const managed = managedRequest(), f = fixture(managed.sessionId), runtime = await startBuildRuntimeHttp({ agentId, managedIdentity, token,
+    responseProjection: f.create(), runner: async () => ({ output: 'done' }), model: 'fixed', models: ['fixed'], port: 0 });
+  t.after(() => runtime.close());
+  const reply = await fetch(`http://127.0.0.1:${runtime.address.port}/v1/responses`, { method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json',
+      'x-agentengine-target-version-id': versionId, 'x-agentengine-manifest-sha256': manifestSha256 },
+    body: JSON.stringify({ ...payload, stream: false }) });
+  assert.equal(reply.status, 200);
+  const completed = await reply.json();
+  assert.equal(completed.metadata.agentkit.versionId, versionId);
+  assert.equal(f.rows.length, 1);
+  assert.equal(Object.hasOwn(f.rows[0].data, 'buildId'), false);
+  assert.ok(losslessJson(f.rows[0].data));
+});
+
+test('presentation data JSON cannot carry fails with its own code instead of a Session append crash', async () => {
+  const f = fixture(), projection = f.create();
+  await assert.rejects(projection.save(request, { ...response, output: [{ ...response.output[0], at: new Date() }] }, [], signal()),
+    { code: 'RESPONSES_PROJECTION_NOT_JSON', status: 409 });
+  await assert.rejects(projection.save(request, response, [{ type: 'response.tool_result',
+    data: { call_id: 'call', output: [undefined], is_error: false } }], signal()),
+    { code: 'RESPONSES_PROJECTION_NOT_JSON', status: 409 });
+  assert.equal(f.rows.length, 0);
 });

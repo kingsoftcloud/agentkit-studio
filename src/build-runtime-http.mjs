@@ -203,7 +203,9 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         sessionId: input.platformSession?.sessionId || input.sessionLabel || input.sessionId || sessionId,
         invocationId: input.requestId, runId };
       logRun('runtime.run.started');
-      const projectionRequest = isResponses ? { ...input, agentId, buildId } : null;
+      // A managed runtime is identified by VersionId + manifest digest and has
+      // no Build id, so never fabricate an absent identity field here.
+      const projectionRequest = isResponses ? { ...input, agentId, ...(buildId === undefined ? {} : { buildId }) } : null;
       const savedProjection = isResponses && responseProjection ? await responseProjection.load(projectionRequest, abort.signal) : null;
       const savedResponse = savedProjection?.response;
       if (savedResponse) input.createdAt = savedResponse.created_at;
