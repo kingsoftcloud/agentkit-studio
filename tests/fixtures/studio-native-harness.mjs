@@ -50,6 +50,7 @@ async function applyProof(ctx, options) {
   });
   const workspaceRoot = join(options.directory, 'workspace');
   await mkdir(workspaceRoot, { recursive: true });
+  if (options.sessionWorkspace) await mkdir(join(options.directory, 'selected-project'), { recursive: true });
   const agents = createAgentStore({ storeDir: options.mountHost ? join(options.directory, 'studio/agents') : join(options.directory, 'studio') });
   const identity = join(options.directory, 'agent-id.json');
   let record, savedIdentity;
@@ -74,7 +75,7 @@ async function applyProof(ctx, options) {
       bindings: { modelProfileIds: ['fixture'], nativeAgentPolicy: {
         contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {},
       }, ...(options.mcpUrl
-        ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
+        ? { mcpServers: ['native-schema-fixture'], ...(options.planMcp ? { tools: ['write_workspace_file'] } : {}) } : { tools: options.sessionWorkspace ? ['read_workspace_file', 'write_workspace_file'] : options.planCommands ? ['write_workspace_file', 'run_command'] : options.memory ? [] : options.web ? ['web_fetch', 'web_search']
           : options.workspaceRepair ? ['apply_workspace_patch'] : options.contextPruning ? ['run_command'] : options.editCreate ? ['read_workspace_file', 'edit_workspace_file'] : options.instructions ? ['read_workspace_file'] : options.artifactPolicy ? ['list_workspace_files']
           : options.conversationCommandRewind ? ['run_command', 'read_command_output', 'stop_command'] : options.deadlinePolicy || options.conversationRewind ? ['write_workspace_file', 'read_workspace_file', 'edit_workspace_file']
             : options.deliveryReview ? ['write_workspace_file', 'read_workspace_file'] : [options.commands ? 'run_command' : 'write_workspace_file'] }) } });
@@ -240,7 +241,7 @@ async function applyProof(ctx, options) {
     return next();
   });
   ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.contextPruning || options.thinkingDisplay || options.editCreate || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
+    if (exec.agent.session.id !== 'native-studio-session' || result.isError || options.sessionWorkspace || options.contextPruning || options.thinkingDisplay || options.editCreate || options.conversationFork || options.workspaceRepair || options.memory || options.web || options.deliveryReview || options.deadlinePolicy || options.artifactPolicy || options.instructions || options.planMode) return next();
     const path = options.commands ? / > ([A-Za-z0-9.-]+)$/.exec(exec.arguments.command)?.[1] : exec.arguments.path;
     // This really enters the Host's next-step inbox. The Native loop must claim
     // it through prepareInput after the complete tool batch, including policy.

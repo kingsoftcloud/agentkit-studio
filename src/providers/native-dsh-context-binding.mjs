@@ -4,7 +4,7 @@ import { nativeWorkspaceContextBinding } from '@kingsoftcloud/agentkit-harness-n
 import { nativeInstructionTouches } from './native-instruction-context.mjs';
 
 /** Project instruction discovery and execution directory binding share one physical root. */
-export function createNativeDshContextBinding({ ctx, workspace, pinnedRoot, instructionRoots, builtinNames, workspaceToolNames, isClosed }) {
+export function createNativeDshContextBinding({ ctx, workspace, pinnedRoot, instructionRoots, builtinNames, workspaceToolNames, assertWorkspace, isClosed }) {
   return {
     instructionTouches(agent, record) {
       // The Host filesystem may canonicalize /var to /private/var when the
@@ -19,11 +19,15 @@ export function createNativeDshContextBinding({ ctx, workspace, pinnedRoot, inst
       return nativeInstructionTouches(record, { sessionId: agent.session.id, builtinNames, workspaceToolNames, workspace: instructionRoot });
     },
     workspaceContext(agent) {
+      assertWorkspace?.(agent);
       const owner = ctx.get?.('workingDirectory');
       if (!owner || !['get', 'set', 'ensure'].every(name => typeof owner[name] === 'function')) return undefined;
       const sessionId = String(agent.session.id);
-      const guard = () => invariant(!isClosed() && String(agent.session?.id) === sessionId
-        && realpathSync(workspace) === pinnedRoot, 'studio_native_workspace_context_unbound');
+      const guard = () => {
+        assertWorkspace?.(agent);
+        invariant(!isClosed() && String(agent.session?.id) === sessionId
+          && realpathSync(workspace) === pinnedRoot, 'studio_native_workspace_context_unbound');
+      };
       return { binding: nativeWorkspaceContextBinding(workspace, { instructionRoots }), directory: {
         get: () => { guard(); return owner.get(agent.session); },
         set: (root, signal) => { guard(); invariant(root === pinnedRoot, 'studio_native_workspace_context_unbound'); return owner.set(agent, root, signal); },
