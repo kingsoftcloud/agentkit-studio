@@ -7,6 +7,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fetchKs3 } from './ks3-endpoints.mjs';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
 
 export class LocalResourceError extends Error {
@@ -279,7 +280,17 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       const download = await serverClient.skillAction(versionId ? 'GetSkillDownloadUrl' : 'GetPremadeSkillDownloadUrl', { SkillId: skillId, ...(versionId ? { VersionId: versionId } : {}) });
       const url = String(download.data?.DownloadUrl || download.data?.download_url || '').trim();
       if (!/^https:\/\//i.test(url)) throw new LocalResourceError('SKILL_DOWNLOAD_URL_INVALID', '云端 Skill 下载地址无效', { resourceId: skillId });
-      const response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(30000) });
+      // A private compute pool cannot reach the public KS3 domain that signed
+      // this URL; the resolver prefers the reachable variant and remembers it.
+      let response;
+      try {
+        response = await fetchKs3(url, { redirect: 'error', signal: AbortSignal.timeout(30000) }, { fetchImpl });
+      } catch (error) {
+        if (error?.code !== 'KS3_ENDPOINT_UNREACHABLE') throw error;
+        throw new LocalResourceError('SKILL_DOWNLOAD_FAILED',
+          `云端 Skill 下载失败：公网与内网 KS3 地址均不可达（${(error.details?.hosts || []).join(' / ')}）`,
+          { resourceId: skillId, hosts: error.details?.hosts || [], attempts: error.details?.attempts || [] });
+      }
       if (!response.ok) throw new LocalResourceError('SKILL_DOWNLOAD_FAILED', `云端 Skill 下载失败（${response.status}）`, { resourceId: skillId });
       const length = Number(response.headers.get('content-length') || 0);
       if (length > 20 * 1024 * 1024) throw new LocalResourceError('SKILL_ARCHIVE_INVALID', '云端 Skill 压缩包超过大小限制', { resourceId: skillId });
