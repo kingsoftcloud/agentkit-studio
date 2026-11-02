@@ -728,15 +728,39 @@ test('a committed Session terminal with a lost receiver ACK replays the original
 });
 
 test('Host retirement releases a whole-Session wait without converting pause to user cancellation', { timeout: 5000 }, async t => {
-  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command), withExecution: ({ execute }) => execute() }) });
+  const pausedCheckpoint = Promise.withResolvers(); let models = 0;
+  const f = fixture(t, { resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { models++; return response(); } },
+  }), withExecution: ({ execute }) => execute({ onCheckpoint(snapshot) {
+    if (snapshot.phase === 'paused') pausedCheckpoint.resolve();
+  } }) }) });
   const cmd = command(), receipt = await f.receive(cmd);
   await f.receive(command({ command_type: 'pause', payload: { run_id: receipt.run_id } }));
-  const driving = f.runtime.drain(cmd.session_id), stopped = assert.rejects(driving, /Native owner closed/), deadline = Date.now() + 2000;
-  while ((await f.status(cmd.session_id)).runs[0].phase !== 'paused') {
-    assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 10));
-  }
+  const driving = f.runtime.drain(cmd.session_id), stopped = assert.rejects(driving, /Native owner closed/);
+  // The durable pause precedes its checkpoint callback. Wait for that callback
+  // and let its microtasks finish so this case closes the Session wait itself.
+  await pausedCheckpoint.promise; await new Promise(resolve => setImmediate(resolve));
   await f.runtime.close(); await stopped; await f.reopen();
   assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'paused');
+  const record = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record;
+  assert.equal(record.commands.some(row => row.command.kind === 'cancel'), false); assert.equal(models, 0);
+});
+
+test('Host retirement during paused checkpoint projection withdraws authority without manufacturing cancellation', { timeout: 5000 }, async t => {
+  const entered = Promise.withResolvers(), released = Promise.withResolvers(); let models = 0;
+  const f = fixture(t, { beforeProjection: async snapshot => {
+    if (snapshot.phase === 'paused') { entered.resolve(); await released.promise; }
+  }, resolveBinding: ({ command }) => ({ ...binding(command, {
+    model: { generate: async () => { models++; return response(); } },
+  }), withExecution: ({ execute }) => execute() }) });
+  const cmd = command(), receipt = await f.receive(cmd);
+  await f.receive(command({ command_type: 'pause', payload: { run_id: receipt.run_id } }));
+  const driving = f.runtime.drain(cmd.session_id), stopped = assert.rejects(driving, { code: 'NATIVE_KERNEL_AUTHORITY_LOST' });
+  await entered.promise;
+  const closing = f.runtime.close(); released.resolve(); await closing; await stopped; await f.reopen();
+  assert.equal((await f.status(cmd.session_id)).runs[0].phase, 'paused');
+  const record = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record;
+  assert.equal(record.commands.some(row => row.command.kind === 'cancel'), false); assert.equal(models, 0);
 });
 
 test('an owner terminal replay cannot execute a pending Run', async t => {
