@@ -34,6 +34,12 @@ test('contributor instructions reject private markers and credentials', () => {
   assert.ok(auditText('tests/example.test.mjs', buffer(production), {historical:true}).length>0);
 });
 
+test('private classification labels are upper-case labels, not lower-case code tokens', () => {
+  const label = ['INTERNAL', '-ONLY'].join('');
+  assert.ok(auditText('AGENTS.md', buffer(`# ${label}\n`)).some(hit => hit.kind === 'private-classification-marker'));
+  assert.deepEqual(auditText('src/ks3-endpoints.mjs', buffer("let mode = 'internal-only';")), []);
+});
+
 test('public surface audit allows a tracked file deleted from the working tree', async () => {
   const hits = await auditFiles(['tests/removed.test.mjs'], async () => null);
   assert.deepEqual(hits, []);
