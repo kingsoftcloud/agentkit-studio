@@ -1,3 +1,4 @@
+import { createNativeOwnedToolGuard } from './native-owned-tool-guard.mjs';
 import { createNativeDshContextBinding } from './native-dsh-context-binding.mjs';
 import { createNativeDshChildBinding } from './native-dsh-child-binding.mjs';
 import { createNativeDshAgentTools } from './native-dsh-agent-tools.mjs';
@@ -412,40 +413,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspa
         return nativeDshBuiltinOutput(repaired.result, { signal: exec.signal, attachments: () => ctx.get?.('attachments') });
       },
     }));
-    // A Skill's DSH-owned shell body is outside our builtin/MCP wrappers. The
-    // registry guard runs after approval waits and immediately before dispatch,
-    // so a retired Native intent cannot enter that body on a stale lease.
-    const ownedGuard = exec => {
-      const invocation = calls.get(String(exec.callId));
-      if (!invocation) return undefined;
-      if (invocation.agent !== exec.agent) return 'Native tool execution authority expired';
-      if (closed || exec.signal.aborted || invocation.request.signal?.aborted)
-        return 'Native tool execution authority expired';
-      // DSH-owned extensions have no Node builtin wrapper. Seal every owned
-      // registry call to the Native intent, including third-party tools whose
-      // pre-execute listeners can otherwise replace arguments before dispatch.
-      const expectedName = invocation.repair ? WORKSPACE_REPAIR_TOOL
-        : codeNames.has(invocation.request.call?.name) ? sandboxRegistryName(invocation.request.call.name)
-        : invocation.request.call?.name;
-      const expectedArguments = invocation.repair
-        ? { original_operation_key: invocation.request.originalOperationKey }
-        : invocation.request.call?.arguments;
-      if (exec.name !== expectedName || canonical(invocation.argumentEncoding
-        ? parseNativeJson(JSON.stringify(exec.arguments)) : exec.arguments) !== canonical(expectedArguments))
-        return 'Native tool execution authority expired';
-      try {
-        assertWorkspace?.(exec.agent);
-        if (typeof invocation.assertCurrent === 'function'
-          && invocation.assertCurrent(invocation.request) !== true)
-          return 'Native tool execution authority expired';
-      } catch { return 'Native tool execution authority expired'; }
-      // `tools/execute` wrappers run after guards. DSH deep-freezes the value
-      // but leaves this property writable until result notification; pin it
-      // now so an around-dispatch wrapper cannot swap arguments after approval.
-      try { Object.defineProperty(exec, 'arguments', { value: exec.arguments, writable: false, configurable: false }); }
-      catch { return 'Native tool execution authority expired'; }
-      return undefined;
-    };
+    const ownedGuard = createNativeOwnedToolGuard({ calls, isClosed: () => closed, assertWorkspace, codeNames, repairToolName: WORKSPACE_REPAIR_TOOL });
     if (typeof ctx.tools.guard === 'function') disposers.push(ctx.tools.guard(ownedGuard));
     if (typeof ctx.tools.dispatchGuard === 'function') disposers.push(ctx.tools.dispatchGuard(ownedGuard));
     return close;
