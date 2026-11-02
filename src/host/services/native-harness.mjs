@@ -2,12 +2,12 @@ import { createStudioNativeModelBinding } from './native-model-binding.mjs';
 import { createStudioNativeSessionInjection } from './native-session-injection.mjs';
 import { createStudioNativeChildViews } from './native-child-views.mjs';
 import { createNativeChildObservationCache } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
-import { createWorkspaceGitStatus } from './workspace-status.mjs';
+import { createStudioNativeWorkspaceViews } from './native-workspace-views.mjs';
 import { createStudioNativeCommandOutput, createStudioNativeCommandPreview } from './native-command-output.mjs';
 import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions, deliveryToolDefinitions, RESULT_DELIVERY_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
@@ -90,7 +90,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let backgroundRegistry, backgroundOwner, backgroundStart = Promise.resolve();
   let waitRecoveryOwner, waitRecoveryStart = Promise.resolve();
   const childObservations = createNativeChildObservationCache();
-  const workspaceId = hash(resolve(workspaceRoot));
+  const defaultWorkspaceRoot = workspaceRoot;
+  const { workspaceId, rootForRecord, workspaceStatus } = createStudioNativeWorkspaceViews({ store, workspaceRoot, lifetimeSignal: lifetime.signal });
   const sessionInjection = createStudioNativeSessionInjection({ ctx, store, agents, builds, workspaceId, lifetime, agentEvents });
   const projectOperatorCommandOutput = createStudioNativeCommandPreview({ ctx, projectCommandPreview });
   const commandProgress = createStudioNativeCommandProgress({ workspaceId, project: projectOperatorCommandOutput });
@@ -125,6 +126,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       invariant(typeof prepareInput === 'function', 'studio_native_whole_turn_host_required');
       invariant(binding.agentId && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0
         && binding.nativeTools, 'studio_native_revision_binding_missing');
+      const workspaceRoot = binding.nativeTools.workspaceContext?.(agent)?.binding.workspaceRoot ?? defaultWorkspaceRoot;
       if (!original) binding.nativeTools.assertConversationWorkspaceSettled?.(agent);
       invariant(!binding.buildId || typeof builds?.resolve === 'function', 'studio_native_build_service_unavailable');
       const releaseBinding = await acquireBinding(String(agent.session.id), signal);
@@ -151,9 +153,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             ? readNativeRecoveryBinding(existing, { agentId: binding.agentId, sessionId, runId }) : {};
         }
       }
-      // Session headers identify their storage/container project; Native tools
-      // own the execution workspace. Context discovery must use that same
-      // workspace inside the durable input effect, including UI Sessions.
+      // The Session-bound tool port owns the execution directory. Freeze the
+      // same physical root for context discovery and recovery; managed runtimes
+      // retain their deployment-owned filesystem boundary.
       // Historical capsules retain the absence of this binding on recovery.
       const workspaceContextPort = binding.nativeTools.workspaceContext?.(agent);
       const workspaceContext = capabilityCapsule ? capabilityCapsule.workspaceContext : workspaceContextPort
@@ -684,10 +686,10 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   });
   const memoryExtraction = createStudioNativeMemoryExtractionBinding({ store, storeDir, workspaceId, lifetime, builds, agents, models, fetchImpl });
   memoryExtraction.recover();
-  const workspaceStatus = createWorkspaceGitStatus({ workspaceRoot, lifetimeSignal: lifetime.signal });
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, workspaceRoot, lifetime, active, controls, controlKey, execute, agentEvents,
+    workspaceRootForRecord: rootForRecord,
     commandProgressStatus: record => commandProgress.read(record),
-    workspaceStatus: signal => workspaceStatus.read(signal),
+    workspaceStatus,
     cloudMemoryStatus: record => readStudioNativeCloudMemoryTurn({ record, store, storeDir }),
     memoryExtractionStatus: record => record.snapshot.scope.tenantId === 'local'
       && record.snapshot.scope.workspaceId === workspaceId && record.snapshot.scope.userId === 'local-user'
@@ -710,7 +712,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         binding.nativeTools?.assertConversationWorkspaceSettled?.(inspected.agent);
         return true;
       };
-      assertCurrent(); return { record, assertCurrent };
+      assertCurrent(); return { record, assertCurrent, workspaceRoot: capsule.workspaceContext?.workspaceRoot ?? defaultWorkspaceRoot };
     } });
   const conversation = createStudioNativeConversation({ ctx, store, workspaceId, lifetime, agentEvents,
     activeControl: request => controls.get(controlKey(request.agentId, request.sessionId)) });

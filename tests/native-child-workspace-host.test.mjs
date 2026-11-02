@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createStudioNativeChildFile } from '../src/host/services/native-child-file-binding.mjs';
 import { createStudioNativeChildWorkspaces } from '../src/providers/native-child-workspace-host.mjs';
 
 const scope = { tenantId: 't', workspaceId: 'w', userId: 'u', agentId: 'parent:child:writer' };
@@ -42,5 +43,22 @@ test('scope, session and role changes cannot reuse another child isolation', t =
   for (const changed of [{ scope: { ...scope, userId: 'other' }, sessionId: 'session', role },
     { scope, sessionId: 'other', role }, { scope, sessionId: 'session', role: { ...role, concurrentSafe: true } }]) {
     assert.throws(() => owner.bind({ ...changed, existing: true, expectedBinding: bound.binding }), /not_prepared/);
+  }
+});
+
+test('child file views follow each admitted parent workspace rather than the Host launch directory', async t => {
+  const { workspaceRoot, stateDir } = fixture(t), peer = join(workspaceRoot, 'peer'); mkdirSync(peer);
+  const admitted = new Map();
+  for (const [index, root] of [[0, workspaceRoot], [1, peer]]) {
+    const owner = createStudioNativeChildWorkspaces({ workspaceRoot: root, stateDir });
+    const bound = owner.bind({ scope, sessionId: `session-${index}`, role });
+    writeFileSync(join(bound.root, 'answer.txt'), `child-${index}`);
+    admitted.set(`child-${index}`, { workspaceRoot: root, assertCurrent: () => true,
+      record: { snapshot: { runId: `child-${index}` }, configuration: { hostRecoveryBinding: { childWorkspace: bound.binding } } } });
+  }
+  const reader = createStudioNativeChildFile({ workspaceRoot, stateDir, resolveOwnedChild: async request => admitted.get(request.childRunId) });
+  for (const index of [0, 1, 0]) {
+    const page = await reader.read({ agentId: 'parent', sessionId: 'parent-session', runId: 'parent-run', childRunId: `child-${index}`, path: 'answer.txt' });
+    assert.equal(page.text, `child-${index}`);
   }
 });

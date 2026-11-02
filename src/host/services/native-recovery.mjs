@@ -40,7 +40,7 @@ export function validateNativeBackgroundReviewRequest(request) {
 }
 
 /** Authenticated product recovery. No queued prompt, replacement Run or defaults. */
-export function createStudioNativeRecovery({ ctx, store, workspaceId, workspaceRoot, lifetime, active, controls, controlKey, execute, agentEvents, cloudMemoryStatus, memoryExtractionStatus, workspaceStatus, commandProgressStatus }) {
+export function createStudioNativeRecovery({ ctx, store, workspaceId, workspaceRoot, workspaceRootForRecord, lifetime, active, controls, controlKey, execute, agentEvents, cloudMemoryStatus, memoryExtractionStatus, workspaceStatus, commandProgressStatus }) {
   const attempts = new Map();
   const inspectManaged = (request, agent, owner, localRecord) => {
     const pending = owner?.engine === NATIVE_DSH_MANAGED_TURN_CONTRACT;
@@ -170,7 +170,8 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, workspaceR
       } : {}),
       activity: observed ? { ...copy(observed.activity), isRunning: Boolean(driving) } : nativeActivityStatus(record, { driving }),
       ...(!managed && snapshot?.scope.workspaceId === workspaceId && workspaceRoot
-        ? { workspace: { contract: 'agentkit.native-execution-workspace/v1', workspaceId, root: workspaceRoot } } : {}),
+        ? { workspace: { contract: 'agentkit.native-execution-workspace/v1', workspaceId,
+          root: workspaceRootForRecord ? workspaceRootForRecord(source) : workspaceRoot } } : {}),
       ...(snapshot ? { outcome: snapshot.outcome, reason: snapshot.reason,
         verificationRequired: nativeVerificationRequired(observed ? { acceptance: observed.acceptance } : record.configuration.contract),
         capabilities: { toolNames: observed ? observed.toolNames : record.configuration.tools.map(tool => tool.name) } } : {}),
@@ -220,7 +221,7 @@ export function createStudioNativeRecovery({ ctx, store, workspaceId, workspaceR
     // A remote managed run must never acquire this Host's local file/Git view.
     const source = inspected.observation ?? inspected.record;
     if (!source || inspected.managed || source.snapshot.scope.workspaceId !== workspaceId) return result;
-    return workspaceStatus ? { ...result, workspaceStatus: await workspaceStatus(signal) } : result;
+    return workspaceStatus ? { ...result, workspaceStatus: await workspaceStatus(signal, source) } : result;
   };
   const reviewBackground = async (request, signal) => {
     validateNativeBackgroundReviewRequest(request);

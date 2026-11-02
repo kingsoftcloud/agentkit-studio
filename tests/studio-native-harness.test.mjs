@@ -35,6 +35,7 @@ import { createNativeRecoveryState } from '../src/client/state/native-recovery.m
 import { nativeLocalExecutionMethods } from '../src/providers/native-local-execution.mjs';
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { nativeWorkspaceContextBinding } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
+import { bindNativeSessionWorkspace } from '../src/providers/native-session-workspace.mjs';
 
 async function setup(t, { spec = {}, profile = {}, respond, renderPrompt, catalog = [], contextSources, sqlite = false, recovery = true, storeAlias = false, trace = false, resources, inspection = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
@@ -100,6 +101,76 @@ async function setup(t, { spec = {}, profile = {}, respond, renderPrompt, catalo
     bridge, retireContext, instructionObservations,
     rotate: key => { apiKey = key; }, unregisters: () => unregisters };
 }
+
+for (const content of ['42\n', ' \t42\r\n\n']) test(`selected Session workspace and exact UTF-8 bytes survive model, registry, ledger and recovery (${JSON.stringify(content)})`, async t => {
+  const f = await setup(t, { sqlite: true, inspection: true,
+    spec: { bindings: { tools: ['write_workspace_file', 'read_workspace_file'] } },
+    respond: count => ({ choices: [{ index: 0, delta: count === 1 ? { tool_calls: [{ index: 0, id: 'write-bytes', type: 'function',
+      function: { name: 'write_workspace_file', arguments: JSON.stringify({ path: 'answer.txt', content }) } }] }
+      : count === 2 ? { tool_calls: [{ index: 0, id: 'read-bytes', type: 'function',
+        function: { name: 'read_workspace_file', arguments: '{"path":"answer.txt"}' } }] } : { content: 'Checked exact bytes.' },
+      finish_reason: count < 3 ? 'tool_calls' : 'stop' }] }) });
+  const selected = join(f.root, 'selected-project'); await mkdir(selected);
+  const session = f.payload.agent.session;
+  session.snapshotEvents = () => f.events; session.isOwnSeq = () => true;
+  let directory = selected;
+  f.services.workingDirectory = { get: () => directory, set: async (_agent, path) => { directory = path; }, ensure: async () => directory };
+  f.services.sandboxPolicy = { resolve: () => ({ mode: 'workspace-write' }) };
+  const registry = new Map(), ctx = { get: key => f.services[key], effect: install => install(), tools: {
+    resultRetentions: ['caller/v1'],
+    register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
+    async execute(exec) { const definition = registry.get(exec.name), value = await definition.execute(exec.arguments, exec);
+      return { isError: false, value, content: definition.output.render(exec.arguments, value) }; },
+  } };
+  const workspace = bindNativeSessionWorkspace({ ctx, agent: f.payload.agent, fallbackRoot: join(f.root, 'workspace') });
+  const gateway = createNativeDshTools({ ctx, config: { agentId: f.record.metadata.id,
+    toolBindings: ['write_workspace_file', 'read_workspace_file'] }, ...workspace, stateDir: join(f.root, 'tools') });
+  t.after(() => gateway.close());
+  f.payload.binding.nativeTools = gateway; f.payload.input.assembly.tools = [...registry.values()];
+  await f.host.executeTurn(f.payload);
+  const head = f.head(), record = f.ledger.load(head.scope, head.runId);
+  assert.equal(record.snapshot.phase, 'completed', JSON.stringify({ reason: record.snapshot.reason,
+    errors: record.events.filter(row => row.kind.includes('failure')).map(row => row.payload),
+    receipts: record.receipts.filter(row => row.result?.results).map(row => row.result.results) }, (_key, value) => typeof value === 'bigint' ? String(value) : value));
+  const outcomes = record.receipts.flatMap(row => row.result?.results ?? []);
+  assert.ok(outcomes.length > 0 && outcomes.every(row => row.status === 'ok'), JSON.stringify(outcomes, (_key, value) => typeof value === 'bigint' ? String(value) : value));
+  assert.deepEqual(await readFile(join(selected, 'answer.txt')), Buffer.from(content));
+  await assert.rejects(access(join(f.root, 'workspace/answer.txt')), { code: 'ENOENT' });
+  assert.equal(record.snapshot.phase, 'completed'); assert.equal(f.requests.length, 3);
+  assert.equal(record.configuration.modelSurface.environment.cwd, selected);
+  assert.equal(record.configuration.hostRecoveryBinding.workspaceContext.workspaceRoot, selected);
+  assert.equal(record.snapshot.messages.find(row => row.role === 'assistant' && row.toolCalls?.length)?.toolCalls[0].arguments.content, content);
+  const status = await f.host.recoveryStatus({ agentId: f.record.metadata.id, sessionId: session.id });
+  assert.equal(status.workspace.root, selected);
+  assert.equal(status.workspaceStatus.state, 'not_repository');
+  directory = join(f.root, 'workspace');
+  assert.throws(() => gateway.workspaceContext(f.payload.agent), { code: 'studio_native_session_workspace_changed' });
+  assert.throws(() => workspace.assertWorkspace({ session: { id: session.id } }), { code: 'studio_native_session_workspace_changed' });
+  directory = selected;
+});
+
+test('changing Session directory while approval waits prevents the pending write in either directory', async t => {
+  const f = await setup(t, { sqlite: true, spec: { bindings: { tools: ['write_workspace_file'] } },
+    respond: count => ({ choices: [{ index: 0, delta: count === 1 ? { tool_calls: [{ index: 0, id: 'pending-write', type: 'function',
+      function: { name: 'write_workspace_file', arguments: JSON.stringify({ path: 'answer.txt', content: '42\n' }) } }] }
+      : { content: 'Write refused.' }, finish_reason: count === 1 ? 'tool_calls' : 'stop' }] }) });
+  const selected = join(f.root, 'selected-project'); await mkdir(selected); let directory = selected;
+  f.payload.agent.session.snapshotEvents = () => f.events; f.payload.agent.session.isOwnSeq = () => true;
+  f.services.workingDirectory = { get: () => directory, set: async (_agent, path) => { directory = path; }, ensure: async () => directory };
+  f.services.sandboxPolicy = { resolve: () => ({ mode: 'read-only' }) };
+  f.services.approval = { request: async () => { directory = join(f.root, 'workspace'); return 'allowed-once'; } };
+  const registry = new Map(), ctx = { get: key => f.services[key], effect: install => install(), tools: {
+    resultRetentions: ['caller/v1'], register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
+    async execute(exec) { const definition = registry.get(exec.name), value = await definition.execute(exec.arguments, exec);
+      return { isError: false, content: definition.output.render(exec.arguments, value) }; },
+  } };
+  const gateway = createNativeDshTools({ ctx, config: { agentId: f.record.metadata.id, toolBindings: ['write_workspace_file'] },
+    ...bindNativeSessionWorkspace({ ctx, agent: f.payload.agent, fallbackRoot: join(f.root, 'workspace') }), stateDir: join(f.root, 'tools') });
+  t.after(() => gateway.close()); f.payload.binding.nativeTools = gateway; f.payload.input.assembly.tools = [...registry.values()];
+  await assert.rejects(f.host.executeTurn(f.payload), { code: 'NATIVE_TURN_FAILED' });
+  await assert.rejects(access(join(selected, 'answer.txt')), { code: 'ENOENT' });
+  await assert.rejects(access(join(f.root, 'workspace/answer.txt')), { code: 'ENOENT' });
+});
 
 test('Native Host uses admitted tool sources for counting/model/recovery and preserves user instructions verbatim', async t => {
   const f = await setup(t, { sqlite: true, renderPrompt: assembly => assembly.sections.map(section => section.text).join('\n\n') });
