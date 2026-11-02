@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { access, mkdir, open, readFile, rename, rm, stat, writeFile, readdir } from 'node:fs/promises';
 import { dirname, join, resolve, relative } from 'node:path';
+import { fetchKs3 } from './ks3-endpoints.mjs';
 import { readZipFiles } from './zip.mjs';
 const MAX = 128 * 1024 * 1024, EXPANDED = 512 * 1024 * 1024;
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
@@ -30,7 +31,9 @@ export function createTemplatePackageCache({ directory, client, fetchImpl = fetc
       if (!(url.protocol === 'https:' && /^[a-z0-9.-]+\.ks3-[a-z0-9-]+\.ksyuncs\.com$/.test(url.hostname)) && !(allowTestLoopback && url.hostname === '127.0.0.1')) fail('TEMPLATE_DOWNLOAD_ORIGIN_INVALID', '模板资源必须来自已授权的 KS3 地址');
       const headers = offset ? { Range: `bytes=${offset}-`, 'If-Range': state.etag } : {};
       let response;
-      try { response = await fetchImpl(url, { headers, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]) }); }
+      // Template archives come from the same public KS3 domain, so a private
+      // pool needs the internal variant; resume offsets and headers carry over.
+      try { response = await fetchKs3(url, { headers, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]) }, { fetchImpl }); }
       catch { if (signal.aborted) throw cancelled(); fail('TEMPLATE_DOWNLOAD_FAILED', '资源下载中断，可重试继续'); }
       if ([401,403].includes(response.status) && attempt === 0) { await response.body?.cancel(); continue; }
       if (offset && (response.status !== 206 || response.headers.get('content-range') !== `bytes ${offset}-${asset.bytes-1}/${asset.bytes}` || response.headers.get('etag') !== state.etag)) {

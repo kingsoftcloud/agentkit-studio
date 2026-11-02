@@ -303,7 +303,10 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
         ({ archive } = await fetchNativeSkillArchive({ url, contentHash: expectedHash,
           signal: AbortSignal.timeout(30000), assertCurrent: () => true, fetchImpl }));
       } catch (error) {
-        throw new LocalResourceError(error.code || 'SKILL_DOWNLOAD_FAILED', '云端 Skill 下载或完整性校验失败', { resourceId: skillId });
+        const details = { resourceId: skillId };
+        if (error?.details?.hosts) details.hosts = error.details.hosts;
+        if (error?.details?.attempts) details.attempts = error.details.attempts;
+        throw new LocalResourceError(error.code || 'SKILL_DOWNLOAD_FAILED', '云端 Skill 下载或完整性校验失败', details);
       }
       try { manifests.push(...await materializeCloudSkill(archive, cacheDir, String(item.Name || item.name || skillId))); }
       catch (error) { throw new LocalResourceError(error.code || 'SKILL_ARCHIVE_INVALID', '云端 Skill 文件无法完整加载：' + error.message, { resourceId: skillId }); }

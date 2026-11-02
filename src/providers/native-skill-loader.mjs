@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { hostFetch } from '../http-fetch.mjs';
+import { fetchKs3 } from '../ks3-endpoints.mjs';
 import { materializeCloudSkill } from '../skill-files.mjs';
 import { parseFrontmatter } from '../skill-discovery.mjs';
 import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
@@ -79,8 +80,16 @@ export async function fetchNativeSkillArchive({ url: rawUrl, contentHash = '', s
   try { url = new URL(rawUrl); } catch { throw fail('SKILL_DOWNLOAD_URL_INVALID'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw fail('SKILL_DOWNLOAD_URL_INVALID');
   let response;
-  try { response = await fetchImpl(url.href, { signal, redirect: 'error', credentials: 'omit' }); }
-  catch { signal.throwIfAborted(); throw fail('SKILL_DOWNLOAD_FAILED'); }
+  try { response = await fetchKs3(url.href, { signal, redirect: 'error', credentials: 'omit' }, { fetchImpl }); }
+  catch (error) {
+    signal.throwIfAborted();
+    // A private compute pool cannot reach the public KS3 domain that signed
+    // the URL; fetchKs3 retries the internal variant and remembers it.
+    if (error?.code === 'KS3_ENDPOINT_UNREACHABLE') {
+      throw Object.assign(fail('SKILL_DOWNLOAD_FAILED'), { details: error.details });
+    }
+    throw fail('SKILL_DOWNLOAD_FAILED');
+  }
   try { check(); }
   catch (error) { await response?.body?.cancel().catch(() => {}); throw error; }
   if (!response?.ok || !response.body) {
