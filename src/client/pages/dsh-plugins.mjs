@@ -153,12 +153,14 @@ export function createDshPluginPages({
       }
     };
 
-    const applyInstalled = pluginId => {
+    const applyInstalled = (pluginId, enabled) => {
       setDiscovery(current => {
         if (!current) return current;
+        // The host decides the post-install state: curated plugins that are not
+        // enabled by default (the personal assistant) stay listed but inactive.
         return {
           ...current,
-          items: current.items.map(entry => idOf(entry) === pluginId ? { ...entry, installed: true, enabled: true } : entry)
+          items: current.items.map(entry => idOf(entry) === pluginId ? { ...entry, installed: true, enabled: enabled === true } : entry)
         };
       });
     };
@@ -172,7 +174,7 @@ export function createDshPluginPages({
       setError('');
       try {
         const result = await hostRemote.installDshPlugin(target, true);
-        applyInstalled(idOf(item));
+        applyInstalled(idOf(item), result?.enabled);
         await loadInstalled();
         const note = String(result?.note || '').trim();
         setMessage(`${labelOf(item)} 已安装。${note}`.trim());

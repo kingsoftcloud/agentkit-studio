@@ -120,6 +120,9 @@ export const DSH_CURATED_PLUGINS = Object.freeze([
     featured: true,
     experimental: true,
     defaultEnabled: false,
+    // Listed in the plugin market from npm, but the user must enable it: the
+    // panel connects a cloud desktop and must never start on its own.
+    enableOnInstall: false,
     capabilities: ['助理对话面板', '云电脑桌面画面', '浏览器 / 终端 / 文件', '剪贴板快捷键'],
     readinessNote: '插件已启用；首次使用需要在「设置 → 个人助理」中连接云端电脑。',
   },
