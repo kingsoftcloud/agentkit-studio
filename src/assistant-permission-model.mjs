@@ -9,6 +9,10 @@ import { createCloudExecutor, registerAssistantCloudExecutionTools, resolveCloud
 import { registerAssistantCloudBrowserTools, resolveCloudBrowser } from './assistant-cloud-browser.mjs';
 
 export const ASSISTANT_PERMISSION_PROFILE = 'workspace-managed/v1';
+// The Host, the Studio picker and this model all speak the same three tiers as
+// the native sandbox; only the middle tier is the managed default.
+export const FULL_ACCESS_PROFILE = 'full-access/v1';
+export const ASSISTANT_PERMISSION_MODES = Object.freeze(['read-only', 'workspace-write', 'danger-full-access']);
 const ROUTINE = Object.freeze(['read', 'read_image', 'write', 'edit', 'glob', 'grep']);
 // Public read-only web access. The native tools already use the Host's
 // address-pinned provider: HTTP(S) only, no credentials in URLs, bounded
@@ -81,9 +85,20 @@ export function installAssistantStartupGuard(ctx, env = {}) {
  * remains the opt-out for deployments that must not create workspaces.
  */
 export function selectAssistantPermissionProfile(value) {
+  return selectAssistantPermissionMode(value) === 'read-only' ? legacy.profile : ASSISTANT_PERMISSION_PROFILE;
+}
+
+/**
+ * Three tiers, matching the native sandbox modes and the Studio picker:
+ * read-only (view), workspace-write (managed default) and danger-full-access.
+ * An explicit read-only stays the opt-out; anything else defaults to the
+ * managed workspace so a hosted harness Agent can actually do work.
+ */
+export function selectAssistantPermissionMode(value) {
   const requested = typeof value === 'string' ? value.trim() : '';
-  if (requested === legacy.profile || requested === legacy.permission) return legacy.profile;
-  return ASSISTANT_PERMISSION_PROFILE;
+  if (requested === legacy.profile || requested === legacy.permission || requested === 'read-only') return 'read-only';
+  if (requested === FULL_ACCESS_PROFILE || requested === 'full-access' || requested === 'danger-full-access') return 'danger-full-access';
+  return 'workspace-write';
 }
 
 function checkedPath(root, input) {
@@ -166,7 +181,8 @@ async function runtimeRoot(env) {
  * from a hostile process with the same OS identity (see the companion guide).
  */
 export async function createAssistantPermissionModel({ ctx, env = {}, profile, agentId, sensitiveTools = [], grants: grantsInput, cloudSandbox, cloudBrowser } = {}) {
-  const optedIn = selectAssistantPermissionProfile(profile) === ASSISTANT_PERMISSION_PROFILE;
+  const managedMode = selectAssistantPermissionMode(profile);
+  const optedIn = managedMode !== 'read-only';
   const grants = normalizeGrants(grantsInput);
   // Image-level gate: a grant is only meaningful when this runtime can confine
   // the child. The runtime identity advertises nothing in that case.
@@ -249,10 +265,14 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     const presets = ctx.get('permissionPresets');
     if (typeof presets?.set !== 'function') throw fail('Native managed permission initialization failed');
     // This is trusted initialization, not a user-issued permission command.
-    try { presets.set(agent.session, 'workspace-write'); }
+    try { presets.set(agent.session, managedMode); }
     catch { throw fail('Native managed permission initialization failed'); }
-    if (ctx.get('sandboxPolicy')?.resolve({ session: agent.session }).mode !== 'workspace-write'
-      || approval.effectivePolicy(agent.session) !== 'ask') throw fail('Native managed permission initialization failed');
+    const applied = ctx.get('sandboxPolicy')?.resolve({ session: agent.session }).mode;
+    const effectiveApproval = approval.effectivePolicy(agent.session);
+    // Full access has nothing left to approve; the two confined tiers keep the
+    // interactive approval policy so sensitive tools still ask first.
+    const approvalOk = managedMode === 'danger-full-access' ? effectiveApproval !== undefined : effectiveApproval === 'ask';
+    if (applied !== managedMode || !approvalOk) throw fail('Native managed permission initialization failed');
   }
   async function ensure(agent, created = false) {
     if (closed) throw fail('Assistant permission model is closed');
@@ -288,7 +308,7 @@ export async function createAssistantPermissionModel({ ctx, env = {}, profile, a
     }
     const tools = agent.ctx?.get('tools'), approval = ctx.get('approval'), fs = ctx.get('fs'), directory = ctx.get('workingDirectory');
     if (typeof tools?.guard !== 'function' || typeof tools.get !== 'function' || typeof approval?.request !== 'function'
-      || typeof approval.effectivePolicy !== 'function' || !['read-only', 'workspace-write'].includes(fs?.sandboxMode)
+      || typeof approval.effectivePolicy !== 'function' || !ASSISTANT_PERMISSION_MODES.includes(fs?.sandboxMode)
       || typeof directory?.get !== 'function') throw fail('Native workspace guard services are unavailable');
     const sensitiveCatalog = new Map(catalog);
     for (const item of registerAssistantWorkspaceTools({ agent, workspaceRoot: cwd })) sensitiveCatalog.set(item.name, item);
