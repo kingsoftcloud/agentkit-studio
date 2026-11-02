@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat, chmod, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createAssistantPermissionModel, selectAssistantPermissionProfile, ASSISTANT_PERMISSION_PROFILE } from '../src/assistant-permission-model.mjs';
+import { createAssistantPermissionModel, selectAssistantPermissionMode, selectAssistantPermissionProfile, ASSISTANT_PERMISSION_PROFILE, FULL_ACCESS_PROFILE } from '../src/assistant-permission-model.mjs';
 
 async function fixture(t, profile = ASSISTANT_PERMISSION_PROFILE) {
   // The runtime deliberately rejects aliased homes; macOS temp roots use /var.
@@ -20,15 +20,28 @@ async function fixture(t, profile = ASSISTANT_PERMISSION_PROFILE) {
   return { root, env, ctx, model: await createAssistantPermissionModel({ ctx, env, profile, agentId: 'agent-one' }) };
 }
 
-test('only the explicit versioned profile opts in; unknown and old specs remain legacy', () => {
-  for (const input of [undefined, null, 'ask', 'workspace-write', 'workspace-managed/v2', { profile: ASSISTANT_PERMISSION_PROFILE }]) assert.equal(selectAssistantPermissionProfile(input), 'legacy-read-only/v1');
+test('three tiers map to the native sandbox modes', () => {
+  assert.equal(selectAssistantPermissionMode('read-only'), 'read-only');
+  assert.equal(selectAssistantPermissionMode('legacy-read-only/v1'), 'read-only');
+  assert.equal(selectAssistantPermissionMode(undefined), 'workspace-write');
+  assert.equal(selectAssistantPermissionMode('workspace-managed/v1'), 'workspace-write');
+  assert.equal(selectAssistantPermissionMode('ask'), 'workspace-write');
+  assert.equal(selectAssistantPermissionMode(FULL_ACCESS_PROFILE), 'danger-full-access');
+  assert.equal(selectAssistantPermissionMode('full-access'), 'danger-full-access');
+  assert.equal(selectAssistantPermissionMode('danger-full-access'), 'danger-full-access');
+});
+
+test('managed workspace authority is the default; only an explicit legacy profile opts out', () => {
+  for (const input of [undefined, null, 'ask', 'workspace-write', 'workspace-managed/v2', { profile: ASSISTANT_PERMISSION_PROFILE }]) assert.equal(selectAssistantPermissionProfile(input), ASSISTANT_PERMISSION_PROFILE);
+  for (const input of ['legacy-read-only/v1', 'read-only']) assert.equal(selectAssistantPermissionProfile(input), 'legacy-read-only/v1');
   assert.equal(selectAssistantPermissionProfile(ASSISTANT_PERMISSION_PROFILE), ASSISTANT_PERMISSION_PROFILE);
+  assert.equal(selectAssistantPermissionProfile(FULL_ACCESS_PROFILE), ASSISTANT_PERMISSION_PROFILE);
 });
 
 test('legacy does not create workspaces or mutate native policies', async t => {
   const f = await fixture(t, undefined);
-  // An omitted argument selects the fixture default, so construct the actual legacy model explicitly.
-  const model = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, agentId: 'agent-one' });
+  // A deployment that must stay read-only opts out explicitly.
+  const model = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: 'legacy-read-only/v1', agentId: 'agent-one' });
   assert.equal(model.enabled, false); assert.equal(await model.newSessionCwd('assistant-one'), undefined);
   assert.deepEqual(await model.ensure({ session: { id: 'assistant-one' } }, false), { profile: 'legacy-read-only/v1', permission: 'read-only', approval: 'never', managed: false });
 });
@@ -229,7 +242,7 @@ test('runtime identity advertises cloud execution only for a real grant and conf
   assert.equal(missing.cloudCapabilities.codeExecution, false, 'an unconfined image must not advertise the capability');
   const ungranted = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: ASSISTANT_PERMISSION_PROFILE, agentId: 'agent-one' });
   assert.equal(ungranted.cloudCapabilities.codeExecution, false);
-  const legacy = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, agentId: 'agent-one', grants: ['code-execution'], cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
+  const legacy = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, profile: 'legacy-read-only/v1', agentId: 'agent-one', grants: ['code-execution'], cloudSandbox: { available: true, kind: 'bwrap', path: '/usr/bin/bwrap' } });
   assert.equal(legacy.cloudCapabilities.codeExecution, false, 'legacy profile never advertises the capability');
   const browsing = await createAssistantPermissionModel({ ctx: f.ctx, env: f.env, ...grant, grants: ['browser'], cloudBrowser: { available: true, chromium: '/usr/bin/chromium' } });
   assert.equal(browsing.cloudCapabilities.browser, true);
