@@ -73,9 +73,17 @@ export function installAssistantStartupGuard(ctx, env = {}) {
   return listener;
 }
 
-/** Only an explicit version in a newly authored spec opts in. Missing/unknown versions never migrate old deployments. */
+/**
+ * Managed workspace authority is the default. A hosted harness Agent that can
+ * only read cannot do any work at all, so an omitted or unknown profile now
+ * resolves to the managed model instead of the legacy read-only one. An
+ * explicit ``legacy-read-only/v1`` (or the bare ``read-only`` permission)
+ * remains the opt-out for deployments that must not create workspaces.
+ */
 export function selectAssistantPermissionProfile(value) {
-  return value === ASSISTANT_PERMISSION_PROFILE ? ASSISTANT_PERMISSION_PROFILE : legacy.profile;
+  const requested = typeof value === 'string' ? value.trim() : '';
+  if (requested === legacy.profile || requested === legacy.permission) return legacy.profile;
+  return ASSISTANT_PERMISSION_PROFILE;
 }
 
 function checkedPath(root, input) {
