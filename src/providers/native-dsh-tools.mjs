@@ -62,7 +62,7 @@ const WORKSPACE_REPAIR_TOOL = 'native_repair_workspace_operation';
 const repairDefinition = { name: WORKSPACE_REPAIR_TOOL, readOnly: false, description: 'Explicitly undo the unconfirmed original workspace operation using its private preimages.',
   permissions: ['workspace:read', 'workspace:write', 'workspace:delete'], parameters: { type: 'object', additionalProperties: false,
     required: ['original_operation_key'], properties: { original_operation_key: { type: 'string' } } } };
-export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
+export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspace, stateDir, createBrowser, browserExecutablePath, executeMcpTool,
   commandSettings = {}, commandEnvironment = process.env, webEnvironment = commandEnvironment, webFetch, e2bLoadSdk, a2aFetch, a2aSessionEvents,
   instructionRoots = [resolve(process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')),
     resolve(process.env.DSH_AGENTS_HOME?.trim() || join(homedir(), '.agents'))],
@@ -86,6 +86,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
   // callback runs only inside an accepted registry invocation bound below.
   const state = (agent, sessionId = String(agent.session.id)) => {
     invariant(agent?.session?.id, 'studio_native_tool_agent_missing');
+    assertWorkspace?.(agent);
     invariant(realpathSync(workspace) === pinnedRoot, 'workspace_root_changed');
     if (!states.has(agent)) states.set(agent, new Map());
     const sessions = states.get(agent);
@@ -286,6 +287,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
             }
           }
           exec.signal.throwIfAborted();
+          assertWorkspace?.(exec.agent);
           // The registry guard ran before this body. A separate builtin
           // approval may have waited long enough for the Native lease to end.
           if (config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT)
@@ -402,6 +404,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         };
         await authorizeNativeBuiltin(ctx, exec, repairDefinition);
         exec.signal.throwIfAborted();
+        assertWorkspace?.(exec.agent);
         invocation.dispatched = true;
         const repaired = await invocation.workspaceTools.repairWorkspace({ ...invocation.request,
           signal: AbortSignal.any([exec.signal, invocation.request.signal]) }, { assertCurrent });
@@ -431,6 +434,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         ? parseNativeJson(JSON.stringify(exec.arguments)) : exec.arguments) !== canonical(expectedArguments))
         return 'Native tool execution authority expired';
       try {
+        assertWorkspace?.(exec.agent);
         if (typeof invocation.assertCurrent === 'function'
           && invocation.assertCurrent(invocation.request) !== true)
           return 'Native tool execution authority expired';
@@ -982,10 +986,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, stateDir, cre
         return modelGuidance.length ? { ...tool, modelGuidance } : tool;
       });
     },
-    ...createNativeDshContextBinding({ ctx, workspace, pinnedRoot, instructionRoots, builtinNames, workspaceToolNames, isClosed: () => closed }),
+    ...createNativeDshContextBinding({ ctx, workspace, pinnedRoot, instructionRoots, builtinNames, workspaceToolNames, assertWorkspace, isClosed: () => closed }),
     forChild: createNativeDshChildBinding({ pinnedRoot, commandNames, commandBackend, a2a, childMcpBinding, childSkillBinding,
       allowed, disclosureNames, mcpContracts, a2aNames, formal, template, memoryNames, hash }),
     forAgent(agent, commandAuthority) {
+      assertWorkspace?.(agent);
       return createNativeDshAgentTools({ isClosed: () => closed,
         WORKSPACE_REPAIR_TOOL, a2a, a2aOwners, allowed, argumentEncoding, browserName,
         browserTools, builtinNames, calls, codeNames, codeToolsFor, commandBackend,

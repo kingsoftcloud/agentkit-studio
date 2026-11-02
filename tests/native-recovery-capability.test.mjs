@@ -76,3 +76,23 @@ test('a retired plugin fiber returns strictly undefined for the recovery binding
     assert.equal(after, undefined, 'a retired scope must return strictly undefined, never another preset binding');
   } finally { await root.fiber.dispose(); }
 });
+
+for (const event of ['agent/created', 'system-prompt/assemble', 'agentkit/native-recovery-binding']) {
+  test(`Native preset initializes its Session tools before ${event}, once per scope`, async () => {
+    const { root, bridge } = setupRoot();
+    const agent = { session: { id: 'owning-session' } }; let calls = 0, plugCtx;
+    const nativeTools = { definitions: () => [] };
+    bridge.setNativeToolsFactory(request => { assert.equal(request.agent, agent); calls++; return nativeTools; });
+    const fiber = await root.plugin({ apply(ctx) { plugCtx = ctx; applyPreset(ctx, harnessConfig()); } });
+    try {
+      assert.equal(calls, 0, 'preset mount has no Session and must not capture the process directory');
+      if (event === 'agent/created') await plugCtx.parallel('agent/created', { agent });
+      if (event === 'system-prompt/assemble') {
+        const assembly = { tools: [] };
+        await plugCtx.waterfall({}, 'system-prompt/assemble', assembly, { agent }, () => Promise.resolve(assembly));
+      }
+      const result = await plugCtx.serial({}, 'agentkit/native-recovery-binding', { agent });
+      assert.equal(result.nativeTools, nativeTools); assert.equal(calls, 1);
+    } finally { await fiber.dispose(); await root.fiber.dispose(); }
+  });
+}

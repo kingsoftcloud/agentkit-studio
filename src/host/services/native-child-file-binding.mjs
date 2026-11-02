@@ -9,10 +9,12 @@ const hash = value => createHash('sha256').update(canonical(value)).digest('hex'
  * cannot select an isolation or turn a child file into a parent workspace file.
  */
 export function createStudioNativeChildFile({ workspaceRoot, stateDir, resolveOwnedChild, isClosed }) {
-  let owner;
+  const owners = new Map();
   return createNativeChildFileReader({ isClosed, resolveChild: async (request, signal) => {
     const admitted = await resolveOwnedChild(request, signal);
-    owner ??= createStudioNativeChildWorkspaces({ workspaceRoot, stateDir });
+    const root = admitted.workspaceRoot ?? workspaceRoot;
+    if (!owners.has(root)) owners.set(root, createStudioNativeChildWorkspaces({ workspaceRoot: root, stateDir }));
+    const owner = owners.get(root);
     const record = admitted.record, binding = record?.configuration.hostRecoveryBinding?.childWorkspace;
     invariant(record?.snapshot.runId === request.childRunId && binding?.contract === STUDIO_NATIVE_CHILD_WORKSPACE_BINDING
       && binding.sourceRootDigest === hash(owner.files.source) && binding.storageRootDigest === hash(owner.files.storage),
