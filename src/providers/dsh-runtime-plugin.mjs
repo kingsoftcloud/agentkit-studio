@@ -217,13 +217,29 @@ export function apply(ctx, config = {}) {
     else install();
   }
   const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
-  const nativeToolBindings = wholeNativeTurn ? bridge.createNativeTools({ ctx, config }) : null;
+  let nativeToolBindings = null;
   const boundToolPolicy = wholeNativeTurn ? normalizeNativeAgentPolicy(config.boundToolPolicy) : null;
-  if (boundToolPolicy) {
-    const install = () => installNativeBoundPolicy(ctx, boundToolPolicy,
-      (agent, toolName) => nativeToolBindings.policyDefinition(agent, toolName), nativeToolBindings.durableApproval);
-    if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound Native policy');
-    else install();
+  const bindNativeTools = agent => {
+    if (nativeToolBindings) return nativeToolBindings;
+    nativeToolBindings = bridge.createNativeTools({ ctx, config, agent });
+    if (boundToolPolicy) {
+      const install = () => installNativeBoundPolicy(ctx, boundToolPolicy,
+        (subject, toolName) => nativeToolBindings.policyDefinition(subject, toolName), nativeToolBindings.durableApproval);
+      if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound Native policy');
+      else install();
+    }
+    return nativeToolBindings;
+  };
+  // Preset mounting precedes Session publication. Register tools once the
+  // Session's committed directory is available, before prompt assembly.
+  if (wholeNativeTurn) {
+    ctx.on('agent/created', ({ agent }) => { bindNativeTools(agent); });
+    // Selecting a preset on an existing Session happens after agent/created.
+    // Initialize before assembly so that the first request already sees tools.
+    ctx.on('system-prompt/assemble', (_assembly, context, next) => {
+      if (context.agent) bindNativeTools(context.agent);
+      return next();
+    }, { prepend: true });
   }
   const builtinToolBindings = !wholeNativeTurn ? registerBuiltinTools(ctx, config.toolContracts, config, bridge) : null;
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
@@ -239,13 +255,14 @@ export function apply(ctx, config = {}) {
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return bridge.executeNativeTurn({ ...payload, binding: { agentId, runtime: config.runtime, local: true,
       buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract,
-      boundToolPolicy, nativeTools: nativeToolBindings } });
+      boundToolPolicy, nativeTools: bindNativeTools(payload.agent) } });
   });
   // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
   // Durable ownership grants no tools or permissions by itself.
-  if (wholeNativeTurn) ctx.on('agentkit/native-recovery-binding', async () => {
+  if (wholeNativeTurn) ctx.on('agentkit/native-recovery-binding', async ({ agent }) => {
     if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    bindNativeTools(agent);
     return { agentId, runtime: config.runtime, local: true,
       agentRevision: config.agentRevision, ...(config.buildId ? { buildId: config.buildId } : {}),
       nativeEngineContract: config.nativeEngineContract, boundToolPolicy, nativeTools: nativeToolBindings };

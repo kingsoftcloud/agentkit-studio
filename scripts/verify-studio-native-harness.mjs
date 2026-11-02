@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -29,6 +29,7 @@ import { createConversationForkProof } from './native-conversation-fork-proof.mj
 import { createConversationRewindProof } from './native-conversation-rewind-proof.mjs';
 import { createConversationCommandRewindProof } from './native-conversation-command-rewind-proof.mjs';
 import { createConversationWorkspaceRewindProof } from './native-conversation-workspace-rewind-proof.mjs';
+import { createSessionWorkspaceProof } from './native-session-workspace-proof.mjs';
 import { createEditCreationProof } from './native-edit-creation-proof.mjs';
 import { createContextPruningProof } from './native-context-pruning-proof.mjs';
 import { createThinkingDisplayProof } from './native-thinking-display-proof.mjs';
@@ -39,6 +40,7 @@ const { values } = parseArgs({ options: { source: { type: 'string' }, installati
   automation: { type: 'boolean', default: false }, recovery: { type: 'boolean', default: false },
   'workspace-repair': { type: 'boolean', default: false },
   'edit-create': { type: 'boolean', default: false },
+  'session-workspace': { type: 'boolean', default: false },
   'context-pruning': { type: 'boolean', default: false },
   'context-pruning-summary': { type: 'boolean', default: false },
   'context-pruning-idle': { type: 'boolean', default: false },
@@ -71,6 +73,8 @@ assert.ok(!values.memory || values['mount-host'] && !values.automation && !value
   '--memory exercises mounted Host original-user Memory without the other proof scenarios; --frozen is supported');
 assert.ok(!values['memory-managed'] || values['mount-host'] && !values.memory && !values.automation && !values.commands
   && !values['mcp-schema'] && !values.hooks && !values.recovery, '--memory-managed is a separate mounted Host proof; --frozen is supported');
+assert.ok(!values['session-workspace'] || values['mount-host'] && !Object.entries(values).some(([key, value]) => value === true && !['session-workspace', 'mount-host', 'keep'].includes(key)), '--session-workspace is a separate mounted Host proof');
+const sessionWorkspaceProof = values['session-workspace'] ? createSessionWorkspaceProof() : null;
 const managedMemory = values['memory-managed'] ? createManagedMemoryProof() : null;
 assert.ok(!values['memory-parallel'] || values['mount-host'] && !values.memory && !managedMemory
   && !values.automation && !values.commands && !values['mcp-schema'] && !values.hooks && !values.recovery,
@@ -193,6 +197,7 @@ const server = createServer(async (request, response) => {
     if (thinkingDisplayProof) { await thinkingDisplayProof.respond({ request, response, raw, requests }); return; }
     if (todosProof) { await todosProof.respond({ request, response, raw, requests }); return; }
     if (planModeProof) { await planModeProof.respond({ request, response, raw, requests }); return; }
+    if (sessionWorkspaceProof) { await sessionWorkspaceProof.respond({ request, response, raw, requests }); return; }
     if (instructionsProof) { await instructionsProof.respond({ request, response, raw, requests }); return; }
     if (webProof) { await webProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
     if (deliveryReviewProof) { await deliveryReviewProof.respond({ request, response, raw, requests, frozen: values.frozen }); return; }
@@ -315,6 +320,9 @@ try {
     : values['studio-dependencies'] ? resolve(values['studio-dependencies']) : join(repository, 'node_modules');
   await mkdir(graph);
   execFileSync('tar', ['-xzf', archive, '-C', graph]);
+  // Verification drivers are deliberately excluded from published packages.
+  // Place them beside the unpacked product so their relative imports test it.
+  await cp(join(repository, 'tests/fixtures'), join(installed, 'tests/fixtures'), { recursive: true });
   const dshDependencies = installation ? join(installation, 'node_modules/@deepseek-ai')
     : values['mount-host'] ? join(source, 'apps/cli/node_modules/@deepseek-ai') : join(repository, 'node_modules/@deepseek-ai');
   if (installation) {
@@ -351,7 +359,7 @@ try {
     "        host: '127.0.0.1'", '        port: 0',
     '    - id: studio-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: studio-proof-model-selection-settings', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...values.automation || values.recovery || workspaceRepairProof || conversationForkProof || conversationRewindProof ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+    ...sessionWorkspaceProof || values.automation || values.recovery || workspaceRepairProof || conversationForkProof || conversationRewindProof ? ['    - id: studio-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: studio-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: studio-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : [],
   ] : [];
@@ -365,6 +373,7 @@ try {
     '    - id: studio-native-host-proof', `      name: ${JSON.stringify(pathToFileURL(join(installed, 'tests/fixtures', fixture)).href)}`,
     '      config:', `        directory: ${JSON.stringify(root)}`, `        repository: ${JSON.stringify(installed)}`,
     `        mountHost: ${values['mount-host']}`,
+    `        sessionWorkspace: ${Boolean(sessionWorkspaceProof)}`,
     `        commands: ${values.commands}`,
     `        frozen: ${values.frozen}`,
     `        automation: ${values.automation}`,
@@ -401,11 +410,14 @@ try {
     : join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch] : [patch];
   const options = { dshBin: installation ? join(installation, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
     : join(source, 'apps/cli/lib/bin.js'), profile: 'sdk', patches, dshHome: join(root, 'home'),
-    cwd: values.instructions ? join(root, values['instructions-mismatched-cwd'] ? 'session-project' : 'workspace') : root, processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
+    cwd: join(root, sessionWorkspaceProof ? 'selected-project' : values['instructions-mismatched-cwd'] ? 'session-project' : 'workspace'), processCwd: root, provider: 'agentkit-studio-fixture', model: 'pinned', initializeTimeoutMs: 30_000, requestTimeoutMs: 30_000,
     env: { ...process.env, PATH: nodeOnlyBin, AGENTKIT_KSADK_PYTHON: '/unavailable/python', AGENTKIT_KSADK_ROOT: '/unavailable/ksadk',
       DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents') } };
   harness = new DeepSeekHarness(options);
-  if (conversationRewindProof) {
+  if (sessionWorkspaceProof) {
+    await sessionWorkspaceProof.run({ harness, DeepSeekHarness, options, root, installed, requests, failures });
+    harness = null;
+  } else if (conversationRewindProof) {
     await conversationRewindProof.run({ harness, DeepSeekHarness, options, root, installed, sessions, requests, failures });
     harness = null;
   } else if (conversationForkProof) {

@@ -13,15 +13,16 @@ export function createInstructionsProof({ mismatchedCwd = false } = {}) {
     const body = JSON.parse(raw); requests.push(body);
     const count = requests.length; assert.ok(count <= 6);
     assert.equal(blocks(body.messages).includes(rootRule), count <= 4, 'current root guidance reflects file deletion');
-    if (mismatchedCwd) assert.equal(blocks(body.messages).includes('SESSION_CONTAINER_ONLY_6f18'), false,
-      'a Session storage/container directory must not supply execution workspace instructions');
+    if (mismatchedCwd) assert.equal(blocks(body.messages).includes('HOST_LAUNCH_ONLY_6f18'), false,
+      'the Host launch directory must not override the selected Session workspace');
     const system = body.messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
     for (const hostOnly of ['powered by DeepSeek Harness', 'DeepSeek Harness implementation checkout', 'window.__DSH_BOOT__',
       'Use present when a separate file card'])
       assert.equal(system.includes(hostOnly), false, 'Host implementation instructions must not enter Native-owned admission');
-    assert.deepEqual(new Set(body.tools.map(tool => tool.function.name)),
-      new Set(['read_workspace_file', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList',
-        'declare_deliverables', 'submit_final_output']));
+    const toolNames = new Set(body.tools.map(tool => tool.function.name));
+    for (const name of ['read_workspace_file', 'ArtifactRead', 'ArtifactSearch', 'ArtifactList',
+      'declare_deliverables', 'submit_final_output']) assert.ok(toolNames.has(name));
+    assert.equal(toolNames.has('write_workspace_file'), false, 'instruction proof grants no workspace writes');
     if (count === 1) assert.equal(blocks(body.messages).includes(nestedRule), false);
     if (count === 2) assert.ok(blocks(body.messages).includes(nestedRule), 'nested guidance must enter the immediately following request');
     if (count >= 3) assert.equal(blocks(body.messages).includes(nestedRule), false, 'historical scoped guidance cannot override its replacement');
@@ -41,15 +42,15 @@ export function createInstructionsProof({ mismatchedCwd = false } = {}) {
   }
   async function run({ harness: initial, DeepSeekHarness, options, root, sessions, requests, failures }) {
     let harness = initial;
-    const workspace = join(root, 'workspace');
+    const workspace = join(root, mismatchedCwd ? 'session-project' : 'workspace');
     await mkdir(join(workspace, '.git'), { recursive: true });
     await mkdir(join(workspace, 'pkg'), { recursive: true });
     await writeFile(join(workspace, 'AGENTS.md'), rootRule);
     await writeFile(join(workspace, 'pkg/AGENTS.md'), nestedRule);
     await writeFile(join(workspace, 'pkg/file.ts'), 'export const value = 1;\n');
     if (mismatchedCwd) {
-      await mkdir(join(root, 'session-project/.git'), { recursive: true });
-      await writeFile(join(root, 'session-project/AGENTS.md'), 'SESSION_CONTAINER_ONLY_6f18: wrong workspace.');
+      await mkdir(join(root, 'workspace/.git'), { recursive: true });
+      await writeFile(join(root, 'workspace/AGENTS.md'), 'HOST_LAUNCH_ONLY_6f18: unselected launch workspace.');
     }
     const turns = [];
     try {

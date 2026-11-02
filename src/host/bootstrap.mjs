@@ -205,7 +205,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     import('../skill-management.mjs'), import('../skill-github-archive-source.mjs'), skillDiscoveryPromise, agentStorePromise,
   ]);
   const githubSkills = createGithubArchiveSkillSource({ fetchImpl: githubSkillSourceFetch });
-  const getSkillManagement = agentId => createStudioSkillManagement({ workspaceRoot,
+  const getSkillManagement = (agentId, root = workspaceRoot) => createStudioSkillManagement({ workspaceRoot: root,
     stateDir: join(studioStoreDir, 'builtin-workspace'), agentId, skillDiscovery, agents: skillAgents, source: githubSkills });
   const { createKnowledgeConnection, createStudioKnowledgeTools } = await import('../knowledge-tools.mjs');
   const knowledgeConnection = await createKnowledgeConnection({ configuration: await configurationPromise, env: runtimeEnv,
@@ -215,8 +215,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const { createLegacyMemoryConnection, createLegacyMemoryTools } = await import('../legacy-memory-tools.mjs');
   const memoryConnection = await createLegacyMemoryConnection({ configuration: await configurationPromise, env: runtimeEnv,
     serverUrl: runtimeEnv.AGENTKIT_STUDIO_HOST_URL || '', sessionToken: runtimeEnv.AGENTKIT_STUDIO_HOST_SESSION_TOKEN || '', ...cloudEndpointOptions });
-  const getLegacyMemoryTools = config => createLegacyMemoryTools({ agentId: config.agentId,
-    root: join(realpathSync(studioStoreDir), 'legacy-memory'), workspaceRoot: realpathSync(workspaceRoot),
+  const getLegacyMemoryTools = (config, root = workspaceRoot) => createLegacyMemoryTools({ agentId: config.agentId,
+    root: join(realpathSync(studioStoreDir), 'legacy-memory'), workspaceRoot: realpathSync(root),
     bindings: config.legacyMemoryBindings, connection: memoryConnection, env: runtimeEnv });
   {
     const { createDshNodeBuiltins } = await import('../providers/dsh-node-builtins.mjs');
@@ -235,15 +235,20 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // disabled. Register the capability; selection remains explicit per preset.
   {
     const { createNativeDshTools } = await import('../providers/native-dsh-tools.mjs');
-    ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config }) => createNativeDshTools({ ctx: toolsCtx, config,
-      workspaceRoot, stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
-      browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
-      commandEnvironment: runtimeEnv,
-      a2aSessionEvents: a2aSessionSink.forPreset(config),
-      skillConnection,
-      getSkillManagement, getKnowledgeTools, getLegacyMemoryTools,
-      executeMcpTool: request => bridge.executeResourceTool(request),
-    })), 'agentkit-studio: Native tool environment');
+    const { bindNativeSessionWorkspace } = await import('../providers/native-session-workspace.mjs');
+    ctx.effect(() => bridge.setNativeToolsFactory(({ ctx: toolsCtx, config, agent }) => {
+      const workspace = bindNativeSessionWorkspace({ ctx: toolsCtx, agent, fallbackRoot: workspaceRoot, managed: Boolean(managedRuntime) });
+      return createNativeDshTools({ ctx: toolsCtx, config, ...workspace,
+        stateDir: join(studioStoreDir, 'native-harness', 'workspace-state', createHash('sha256').update(config.agentId).digest('hex')),
+        browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
+        commandEnvironment: runtimeEnv,
+        a2aSessionEvents: a2aSessionSink.forPreset(config),
+        skillConnection,
+        getSkillManagement: id => getSkillManagement(id, workspace.workspaceRoot), getKnowledgeTools,
+        getLegacyMemoryTools: settings => getLegacyMemoryTools(settings, workspace.workspaceRoot),
+        executeMcpTool: request => bridge.executeResourceTool(request),
+      });
+    }), 'agentkit-studio: Native tool environment');
   }
   let nativeHostPromise;
   let dshA2aPromise;
