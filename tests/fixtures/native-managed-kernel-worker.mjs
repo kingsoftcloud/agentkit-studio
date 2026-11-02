@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { createManagedNativeKernel } from '../../src/providers/native-managed-kernel.mjs';
 import { createNativeKernelPermitVerifier } from '../../src/providers/native-kernel-permit.mjs';
-import { binding, response, target, tool } from './native-managed-kernel.mjs';
+import { binding, response, target, tool, managedProcessLeaseMs } from './native-managed-kernel.mjs';
 
 const send = data => new Promise((resolve, reject) => process.send(data, error => error ? reject(error) : resolve()));
 const hold = async boundary => { await send({ type: 'boundary', boundary, pid: process.pid });
@@ -31,7 +31,9 @@ process.once('message', async message => {
       }, ...(message.structuredInput ? { observeReceipt: async request => ({ contract: request.contract,
         originalOperationKey: request.originalOperationKey, callId: request.call.callId,
         result: { status: 'ok', content: 'Original structured response consumed' } }) } : {}) } }, {
-        tools: [tool(message.structuredInput ? { name: 'call_a2a_agent', recoveryPolicy: 'receipt-observation/v1' } : {})], limits: { leaseMs: 1000 } }),
+        // Cross-process recovery still waits for this real lease to expire.
+        // One second is shorter than a shared worker's filesystem/CPU stall.
+        tools: [tool(message.structuredInput ? { name: 'call_a2a_agent', recoveryPolicy: 'receipt-observation/v1' } : {})], limits: { leaseMs: managedProcessLeaseMs } }),
       ...(message.structuredInput ? { withExecution: ({ identity, execute }) => execute({ onIdle: async (snapshot, context) => {
         const question = { contract: 'agentkit.a2a-question-wait/v1', interactionId: 'remote-original-question', continuationId: 'original-continuation',
           request: { request_type: 'structured_input', schema: { type: 'object', required: ['answer'], properties: { answer: { type: 'integer' } } } },
@@ -53,7 +55,7 @@ process.once('message', async message => {
     for (const control of message.controls ?? []) await runtime.receive(control.command, control.permit);
     if (message.receiveOnly) { await runtime.close(); process.disconnect(); return; }
     if (message.observeAutomatic) {
-      const deadline = Date.now() + 8000;
+      const deadline = Date.now() + managedProcessLeaseMs + 8000;
       for (;;) {
         const status = await runtime.getStatus(message.query, message.readPermit);
         if (status.runs.length && ['completed', 'interrupted', 'canceled', 'failed'].includes(status.runs[0].phase)

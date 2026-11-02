@@ -11,6 +11,7 @@ import { PNG } from 'pngjs';
 import { createDshNodeBrowserTools } from '../src/providers/dsh-node-browser-tools.mjs';
 import { browserImageVariation } from '@kingsoftcloud/agentkit-harness-node/native/browser-canvas-metrics';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
 import { browserExecutable } from './fixtures/browser-executable.mjs';
 
 const executable = browserExecutable();
@@ -34,11 +35,21 @@ function setup(t, extra = {}) {
     const intent = records(stateDir).find(r => r.value.phase === 'executing'); assert.ok(intent, 'original fsynced intent precedes Chromium launch');
     assert.equal(intent.value.request.agentId, options.agentId);
     for (const key of ['scope', 'runId', 'turnId', 'executionFence', 'taskChainId']) assert.equal(Object.hasOwn(intent.value.request, key), false);
-    const browser = await chromium.launch({ executablePath: executable, headless: true }); live.push(browser);
+    let browser;
+    try { browser = await chromium.launch({ executablePath: executable, headless: true }); }
+    catch (error) { t.diagnostic('Chromium launch failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
+    live.push(browser);
     const contexts = new Set(), closeBrowser = browser.close.bind(browser);
     browser.close = async () => { assert.equal(contexts.size, 0, 'Context close must finish before Browser close starts'); await closeBrowser(); };
     const original = browser.newContext.bind(browser);
-    browser.newContext = async settings => { const context = await original(settings);
+    browser.newContext = async settings => { let context;
+      try { context = await original(settings); }
+      catch (error) { t.diagnostic('Chromium Context creation failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
+      const newPage = context.newPage.bind(context);
+      context.newPage = async (...args) => {
+        try { return await newPage(...args); }
+        catch (error) { t.diagnostic('Chromium Page creation failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
+      };
       contexts.add(context); const closeContext = context.close.bind(context);
       context.close = async () => { await closeContext(); contexts.delete(context); };
       context.on('page', page => page.once('domcontentloaded', () => navigated?.())); return context;
@@ -203,9 +214,10 @@ test('identity drift at actual navigation retains original intent and cannot dis
 
 test('fifty legacy actions are supported and a different Session owns a separate inspection', { timeout: 60000 }, async t => {
   const h = setup(t), args = { path: '.', wait_ms: 0, actions: Array.from({ length: 50 }, () => ({ type: 'wait', ms: 0 })) };
-  const a = await h.invoke(args); assert.equal(a.content.actions.length, 50);
+  const a = await h.invoke(args); assert.equal(a.status, 'ok', canonical(a)); assert.equal(a.content.actions?.length, 50, canonical(a));
   const b = await h.invoke(args, h.exec(args, { agent: { session: { id: 'another-session' } } }));
-  assert.equal(b.status, 'ok'); assert.equal(h.launches, 2); assert.equal(h.records().length, 2);
+  assert.equal(b.status, 'ok', canonical(b)); assert.equal(b.content.actions?.length, 50, canonical(b));
+  assert.equal(h.launches, 2); assert.equal(h.records().length, 2);
 });
 
 test('actual SIGKILL after Chromium navigation and a new Node PID never relaunch the original call', { timeout: 30000 }, async t => {
