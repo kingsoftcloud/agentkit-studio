@@ -77,3 +77,12 @@ test('remote entries refresh display copy while built-in verification stays host
   assert.equal(extra.expectedEntries, undefined);
   assert.equal(extra.service, undefined);
 });
+
+test('the personal assistant plugin is curated from npm and is not enabled by default', () => {
+  const entry = dshCuratedEntries().find(item => item.id === '@kingsoftcloud/agentkit-personal-assistant');
+  assert.ok(entry);
+  assert.equal(entry.installSpec, '@kingsoftcloud/agentkit-personal-assistant');
+  assert.equal(entry.defaultEnabled, false);
+  assert.equal(entry.enableOnInstall, false);
+  assert.equal(entry.featured, true);
+});
