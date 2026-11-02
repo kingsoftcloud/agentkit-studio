@@ -184,14 +184,27 @@ test('direct server client normalizes Agent detail and platform resources', asyn
       calls.push({ url: String(url), body: JSON.parse(init.body) });
       const action = new URL(url).pathname.split('/').pop();
       const data = action === 'GetAgent'
-        ? { Basic: { AgentId: 'a1', Name: 'A', Revision: 3, Framework: 'dsh-native' }, ComponentConfig: { KnowledgeBase: { Id: 'kb-1', Region: 'cn-beijing-6' } } }
+        ? { Basic: { AgentId: 'a1', Name: 'A', Revision: 3, Framework: 'dsh-native' }, ComponentConfig: {
+          KnowledgeBase: { Id: 'kb-1', Name: '企业知识库', Region: 'cn-beijing-6' },
+          Memory: { Id: 'mem-1', Name: '长期记忆', Region: 'cn-beijing-6' },
+          SkillWorkspace: { Id: 'space-1', Name: '研发 Skills', Region: 'cn-beijing-6' },
+        } }
         : { Items: [{ Id: 'kb-1', Name: '企业知识库', Region: 'cn-beijing-6' }], Total: 1 };
       return new Response(JSON.stringify({ Code: 0, RequestId: 'req-2', Data: data }), { status: 200 });
     },
   });
   const agent = await client.getAgent('a1');
   assert.equal(agent.metadata.revision, 3);
-  assert.equal(agent.spec.bindings.plugins[0].config.binding.resource.kind, 'knowledge-base');
+  assert.deepEqual(agent.spec.bindings.plugins.map(item => item.config.binding.resource), [
+    { kind: 'knowledge-base', id: 'kb-1', name: '企业知识库', region: 'cn-beijing-6' },
+    { kind: 'memory-instance', id: 'mem-1', name: '长期记忆', region: 'cn-beijing-6' },
+    { kind: 'skill-space', id: 'space-1', name: '研发 Skills', region: 'cn-beijing-6' },
+  ]);
+  assert.deepEqual(buildCloudAgentUpdate('a1', agent).Advanced.ComponentConfig, {
+    KnowledgeBase: { Id: 'kb-1', Name: '企业知识库' },
+    Memory: { Id: 'mem-1', Name: '长期记忆' },
+    SkillWorkspace: { Id: 'space-1', Name: '研发 Skills' },
+  });
   const resources = await client.listResource('knowledge-base');
   assert.equal(resources.items[0].id, 'kb-1');
   assert.deepEqual(calls.map(call => call.body), [{ AgentId: 'a1' }, {}]);
@@ -286,16 +299,16 @@ test('cloud Agent updates translate Studio platform bindings to ComponentConfig'
     description: '云端检索助手',
     spec: { bindings: { plugins: [
       { config: { binding: { resource: { kind: 'knowledge-base', id: 'kb-1', name: '企业知识库' } } } },
-      { config: { binding: { resource: { kind: 'memory-instance', id: 'mem-1' } } } },
-      { config: { binding: { resource: { kind: 'skill-space', id: 'space-1' } } } },
+      { config: { binding: { resource: { kind: 'memory-instance', id: 'mem-1', name: '长期记忆' } } } },
+      { config: { binding: { resource: { kind: 'skill-space', id: 'space-1', name: '研发 Skills' } } } },
     ] } },
   });
   assert.deepEqual(payload, {
     AgentId: 'ar-cloud-1', Name: '知识助手', Description: '云端检索助手',
     Advanced: { ComponentConfig: {
       KnowledgeBase: { Id: 'kb-1', Name: '企业知识库' },
-      Memory: { Id: 'mem-1' },
-      SkillWorkspace: { Id: 'space-1' },
+      Memory: { Id: 'mem-1', Name: '长期记忆' },
+      SkillWorkspace: { Id: 'space-1', Name: '研发 Skills' },
     } },
   });
 });

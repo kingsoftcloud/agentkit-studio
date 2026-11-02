@@ -74,9 +74,9 @@ function normalizeAgent(item = {}) {
   const memory = component.Memory || component.memory;
   const skill = component.SkillWorkspace || component.skill_workspace || component.skillWorkspace;
   const plugins = [];
-  if (knowledge?.Id || knowledge?.id) plugins.push({ config: { binding: { resource: { kind: 'knowledge-base', id: knowledge.Id || knowledge.id, region: knowledge.Region || knowledge.region } } } });
-  if (memory?.Id || memory?.id) plugins.push({ config: { binding: { resource: { kind: 'memory-instance', id: memory.Id || memory.id, region: memory.Region || memory.region } } } });
-  if (skill?.Id || skill?.id) plugins.push({ config: { binding: { resource: { kind: 'skill-space', id: skill.Id || skill.id, region: skill.Region || skill.region } } } });
+  if (knowledge?.Id || knowledge?.id) plugins.push({ config: { binding: { resource: { kind: 'knowledge-base', id: knowledge.Id || knowledge.id, name: knowledge.Name || knowledge.name, region: knowledge.Region || knowledge.region } } } });
+  if (memory?.Id || memory?.id) plugins.push({ config: { binding: { resource: { kind: 'memory-instance', id: memory.Id || memory.id, name: memory.Name || memory.name, region: memory.Region || memory.region } } } });
+  if (skill?.Id || skill?.id) plugins.push({ config: { binding: { resource: { kind: 'skill-space', id: skill.Id || skill.id, name: skill.Name || skill.name, region: skill.Region || skill.region } } } });
   return {
     id, name, description: metadata.description, status: metadata.status, phase: metadata.phase,
     framework: basic.Framework || basic.framework || item.Framework || item.framework,
