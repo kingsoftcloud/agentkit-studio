@@ -1,5 +1,5 @@
 /** One conservative public surface for all three manifest executors. */
-export function managedRuntimeBootstrap(runtime, model) {
+export function managedRuntimeBootstrap(runtime, model, policy = {}) {
   const unavailable = () => ({ supported: false, mode: 'unavailable', reason: 'managed_surface_not_implemented' });
   const matrix = Object.fromEntries(['pause', 'resume', 'submit_interaction', 'attach', 'steer', 'inject',
     'checkpoint', 'durable_restore', 'goal', 'loop', 'plan'].map(key => [key, unavailable()]));
@@ -28,6 +28,11 @@ export function managedRuntimeBootstrap(runtime, model) {
       Persistence: { Configured: true, Ready: true, Status: 'ready', Backend: 'dsh-native-disk',
         SharedAcrossPods: false, EffectiveFor: 'same_agent_version', ActiveRunRestore: false },
     },
+    // Execution sandbox declaration: the same value this Host exposes on
+    // GET /v1/agentkit/runtime, so the Hosted UI and admission layer never
+    // have to mirror the image's policy defaults by hand.
+    ExecutionPolicy: policy.executionPolicy || null,
+    allowedPermissionModes: Array.isArray(policy.allowedPermissionModes) ? [...policy.allowedPermissionModes] : [],
     Model: { id: model, name: model, source: 'managed-manifest' }, SessionBackend: { Type: 'dsh-native-disk' }, HostedChat: hostedChat,
   };
 }
