@@ -7,13 +7,31 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { permitIssuer, command, target, scope } from './fixtures/native-managed-kernel.mjs';
+import { permitIssuer, command, target, scope, managedProcessLeaseMs } from './fixtures/native-managed-kernel.mjs';
 import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
+import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 
 const lines = path => existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+// Include the real lease wait and several fresh Node processes in the whole
+// protocol budget. Expiry and fencing assertions themselves remain strict.
+const processProtocolTimeout = managedProcessLeaseMs + 20000;
 
-test('SIGKILL after signed structured answer commit restores the original answer before delivery without repeating its tool or question', { timeout: 20000 }, async t => {
+async function waitForLeaseExpiry(directory, runId) {
+  const store = new SqliteRunStore(join(directory, 'runs.sqlite')), deadline = Date.now() + managedProcessLeaseMs + 5000;
+  try {
+    for (;;) {
+      let record;
+      try { record = store.load(scope, runId); }
+      catch (error) { if (error.code === 'run_not_found') return; throw error; }
+      if (!record.lease || record.lease.expiresAt <= Date.now()) return;
+      assert.ok(Date.now() < deadline, 'The stopped owner must cease renewing its real lease');
+      await delay(Math.min(100, Math.max(1, record.lease.expiresAt - Date.now())));
+    }
+  } finally { store.close(); }
+}
+
+test('SIGKILL after signed structured answer commit restores the original answer before delivery without repeating its tool or question', { timeout: processProtocolTimeout }, async t => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-input-crash-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const issuer = permitIssuer(), cmd = command();
   const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
@@ -78,7 +96,7 @@ function worker(t, message) {
   child.send(message); return { child, messages, boundary, exited };
 }
 
-test('a paused whole-Run worker observes another process delivering its durable resume', { timeout: 15000 }, async t => {
+test('a paused whole-Run worker observes another process delivering its durable resume', { timeout: processProtocolTimeout }, async t => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-owner-wake-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const issuer = permitIssuer(), cmd = command();
   const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
@@ -105,7 +123,7 @@ test('a paused whole-Run worker observes another process delivering its durable 
     runId, models: 2, fileWrites: 1, receiverEffects: 0, finalState: 'completed' }));
 });
 
-test('expired live worker cannot overwrite a takeover or cause its unknown file tool to be dispatched again', { timeout: 15000 }, async t => {
+test('expired live worker cannot overwrite a takeover or cause its unknown file tool to be dispatched again', { timeout: processProtocolTimeout }, async t => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-kernel-fence-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const issuer = permitIssuer(), cmd = command();
   const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
@@ -114,7 +132,7 @@ test('expired live worker cannot overwrite a takeover or cause its unknown file 
     subscription, subscribePermit: issuer.issue(subscription, 'subscribe_events') };
   const old = worker(t, { ...common, command: cmd, permit: issuer.issue(cmd), boundary: 'after-effect' });
   await Promise.race([old.boundary, old.exited.then(exit => assert.fail(JSON.stringify({ exit, messages: old.messages })))]);
-  old.child.kill('SIGSTOP'); await delay(1100);
+  old.child.kill('SIGSTOP'); await waitForLeaseExpiry(directory, old.messages.find(row => row.type === 'receipt').receipt.run_id);
   const takeover = worker(t, common), takeoverExit = await takeover.exited;
   assert.equal(takeoverExit.code, 0, JSON.stringify({ takeoverExit, messages: takeover.messages }));
   const recovered = takeover.messages.find(message => message.type === 'result'); assert.equal(recovered.status.runs[0].phase, 'interrupted');
@@ -129,7 +147,7 @@ test('expired live worker cannot overwrite a takeover or cause its unknown file 
     oldWorkerFailure: error.code, fileWrites: 1, takeoverFileWrites: 0, finalState: final.status.runs[0].phase, factsUnchanged: true }));
 });
 
-test('cold automatic scheduling waits for an unexpired killed-worker lease without a new command or drain', { timeout: 15000 }, async t => {
+test('cold automatic scheduling waits for an unexpired killed-worker lease without a new command or drain', { timeout: processProtocolTimeout }, async t => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-kernel-auto-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const issuer = permitIssuer(), cmd = command();
   const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
@@ -148,7 +166,7 @@ test('cold automatic scheduling waits for an unexpired killed-worker lease witho
 });
 
 for (const boundary of ['before-start', 'after-effect', 'before-projection']) {
-  test(`SIGKILL ${boundary}: cold worker keeps original receipt/Run and never repeats an unknown write`, { timeout: 15000 }, async t => {
+  test(`SIGKILL ${boundary}: cold worker keeps original receipt/Run and never repeats an unknown write`, { timeout: processProtocolTimeout }, async t => {
     const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-kernel-crash-'))); t.after(() => rmSync(directory, { recursive: true, force: true }));
     const issuer = permitIssuer(), cmd = command();
     const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: cmd.session_id, authorization_ref: randomUUID() };
@@ -163,7 +181,7 @@ for (const boundary of ['before-start', 'after-effect', 'before-projection']) {
     assert.equal(before.effects, boundary === 'before-start' ? 0 : 1);
     initial.child.kill('SIGKILL'); const killed = await initial.exited;
     assert.equal(killed.signal, 'SIGKILL'); assert.throws(() => process.kill(killed.pid, 0), { code: 'ESRCH' });
-    await delay(1100); // Expire the *actual* 1000ms Native execution lease.
+    await waitForLeaseExpiry(directory, receipt.run_id);
     const cold = worker(t, { ...common, command: cmd, permit: issuer.issue(cmd) }), exit = await cold.exited;
     assert.equal(exit.code, 0, JSON.stringify({ exit, messages: cold.messages })); assert.notEqual(exit.pid, killed.pid);
     const duplicate = cold.messages.find(message => message.type === 'receipt').receipt, result = cold.messages.find(message => message.type === 'result');

@@ -4,6 +4,7 @@ import { createNativeKernelPermitVerifier, nativeKernelPermitBytes } from '../..
 
 export const target = { tenantId: 'tenant', agentInstanceId: 'ar-managed' };
 export const scope = { tenantId: target.tenantId, agentId: target.agentInstanceId, workspaceId: 'managed-workspace', userId: 'managed-user' };
+export const managedProcessLeaseMs = 5000;
 export function permitIssuer(options = {}) {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
