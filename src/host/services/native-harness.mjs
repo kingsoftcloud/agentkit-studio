@@ -2,12 +2,12 @@ import { createStudioNativeModelBinding } from './native-model-binding.mjs';
 import { createStudioNativeSessionInjection } from './native-session-injection.mjs';
 import { createStudioNativeChildViews } from './native-child-views.mjs';
 import { createNativeChildObservationCache } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
-import { createWorkspaceGitStatus } from './workspace-status.mjs';
+import { createStudioNativeWorkspaceViews } from './native-workspace-views.mjs';
 import { createStudioNativeCommandOutput, createStudioNativeCommandPreview } from './native-command-output.mjs';
 import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions, deliveryToolDefinitions, RESULT_DELIVERY_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
@@ -19,7 +19,7 @@ import { projectNativeDshInput, projectNativeDshContent } from '../../providers/
 import { NATIVE_EXECUTION_CONTEXT_OWNERSHIP, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../../providers/native-context-ownership.mjs';
 import { bindNativeModelSurface, nativeChildInputMediaSources } from '../../providers/native-model-surface.mjs';
 import { NATIVE_INSTRUCTION_ASSEMBLY, nativeInstructionAssembly } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
-import { admitNativeWorkspaceContext, ensureNativeWorkspaceContext, validateNativeWorkspaceContext } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
+import { admitNativeWorkspaceContext, ensureNativeWorkspaceContext } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
 import { createNativeWorkspaceInstructions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-instructions';
 import { nativeConversationForkSeed } from '../../providers/native-conversation-fork.mjs';
 import { bindNativeContext, nativeContextDefaults } from '../../providers/native-context.mjs';
@@ -91,25 +91,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   let waitRecoveryOwner, waitRecoveryStart = Promise.resolve();
   const childObservations = createNativeChildObservationCache();
   const defaultWorkspaceRoot = workspaceRoot;
-  // Preserve the installation's durable local ledger namespace. The physical
-  // execution directory is independently frozen in each Run's workspace port.
-  const workspaceId = hash(resolve(workspaceRoot));
-  const workspaceRoots = new Map();
-  const rootForRecord = source => {
-    if (!source) return defaultWorkspaceRoot;
-    const { snapshot } = source, cached = workspaceRoots.get(snapshot.runId);
-    if (cached?.configDigest === snapshot.configDigest) return cached.root;
-    const record = source.configuration ? source : typeof store.authority === 'function'
-      ? store.authority(snapshot.scope, snapshot.runId) : store.load(snapshot.scope, snapshot.runId);
-    invariant(record && record.snapshot.configDigest === snapshot.configDigest
-      && record.snapshot.sessionId === snapshot.sessionId && canonical(record.snapshot.scope) === canonical(snapshot.scope),
-      'studio_native_workspace_record_changed');
-    const context = record.configuration.hostRecoveryBinding?.workspaceContext;
-    const root = context ? validateNativeWorkspaceContext(context).workspaceRoot : defaultWorkspaceRoot;
-    if (workspaceRoots.size >= 256) workspaceRoots.delete(workspaceRoots.keys().next().value);
-    workspaceRoots.set(snapshot.runId, { configDigest: snapshot.configDigest, root });
-    return root;
-  };
+  const { workspaceId, rootForRecord, workspaceStatus } = createStudioNativeWorkspaceViews({ store, workspaceRoot, lifetimeSignal: lifetime.signal });
   const sessionInjection = createStudioNativeSessionInjection({ ctx, store, agents, builds, workspaceId, lifetime, agentEvents });
   const projectOperatorCommandOutput = createStudioNativeCommandPreview({ ctx, projectCommandPreview });
   const commandProgress = createStudioNativeCommandProgress({ workspaceId, project: projectOperatorCommandOutput });
@@ -704,15 +686,6 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   });
   const memoryExtraction = createStudioNativeMemoryExtractionBinding({ store, storeDir, workspaceId, lifetime, builds, agents, models, fetchImpl });
   memoryExtraction.recover();
-  const workspaceStatuses = new Map();
-  const workspaceStatus = (signal, source) => {
-    const root = rootForRecord(source);
-    if (!workspaceStatuses.has(root)) {
-      if (workspaceStatuses.size >= 256) workspaceStatuses.delete(workspaceStatuses.keys().next().value);
-      workspaceStatuses.set(root, createWorkspaceGitStatus({ workspaceRoot: root, lifetimeSignal: lifetime.signal }));
-    }
-    return workspaceStatuses.get(root).read(signal);
-  };
   const recovery = createStudioNativeRecovery({ ctx, store, workspaceId, workspaceRoot, lifetime, active, controls, controlKey, execute, agentEvents,
     workspaceRootForRecord: rootForRecord,
     commandProgressStatus: record => commandProgress.read(record),
