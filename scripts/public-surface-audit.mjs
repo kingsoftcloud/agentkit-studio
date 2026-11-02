@@ -14,6 +14,9 @@ export const FORBIDDEN_PATHS = [
 // These patterns intentionally target high-confidence private material.
 // Public service endpoints and short test placeholders are allowed; Gitleaks remains
 // the entropy-aware secret scanner for provider-specific credentials.
+// Classification labels are written in upper case in governed documents and are
+// matched case-sensitively: lower-case code tokens such as an ``internal-only``
+// network mode are ordinary source text, not a private classification.
 const PRIVATE_MARKERS = [
   ['INTERNAL', '-ONLY'].join(''),
   ['真实', '账号'].join(''),
@@ -33,7 +36,7 @@ export const SENSITIVE_TEXT_PATTERNS = [
   { name: 'github-token', pattern: /\b(?:gh[ps]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/ },
   { name: 'aws-access-key', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
   { name: 'provider-api-key', pattern: /\b(?:sk-[A-Za-z0-9]{24,}|AIza[0-9A-Za-z_-]{30,})\b/ },
-  { name: 'private-classification-marker', pattern: new RegExp(PRIVATE_MARKERS.join('|'), 'i') },
+  { name: 'private-classification-marker', pattern: new RegExp(PRIVATE_MARKERS.join('|')) },
 ];
 
 // These are official service endpoints, not private infrastructure names.
