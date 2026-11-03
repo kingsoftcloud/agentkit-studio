@@ -22,8 +22,10 @@ export function managedResourcesNeedServer(resources = {}) {
 export function createManagedResourceClient({ runtime, env, fetchImpl = hostFetch, timeoutMs = 60000, getResourcePermit, getResourceSignal }) {
   const resources = runtime.declaration?.resources || {};
   const spaces = new Set((resources.skill_spaces || (resources.skill_space ? [resources.skill_space] : [])).map(item => item.id));
-  async function call(allowed, action, payload = {}, { signal } = {}) {
+  async function call(allowed, action, payload = {}, { signal, requestId } = {}) {
     if (!allowed.has(action)) fail('MANAGED_RESOURCE_ACTION_NOT_ALLOWED');
+    if (requestId !== undefined && (typeof requestId !== 'string'
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId))) fail('INVALID_REQUEST_ID');
     const base = managedResourceServerRoot(env);
     const { agentId, versionId, manifestSha256 } = runtime.identity;
     const token = env.AGENTKIT_RUNTIME_TOKEN;
@@ -39,6 +41,7 @@ export function createManagedResourceClient({ runtime, env, fetchImpl = hostFetc
         headers: { 'Content-Type': 'application/json', Accept: 'application/json',
           Authorization: `Bearer ${token}`, 'X-AgentEngine-Target-Version-Id': versionId,
           'X-AgentEngine-Manifest-Sha256': manifestSha256,
+          ...(requestId ? { 'X-Ksc-Request-Id': requestId } : {}),
           ...(resourcePermit ? { 'X-AgentEngine-Resource-Permit': resourcePermit } : {}) },
         body: JSON.stringify(payload),
         signal: cancelSignal ? AbortSignal.any([cancelSignal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
@@ -66,7 +69,26 @@ export function createManagedResourceClient({ runtime, env, fetchImpl = hostFetc
     if (envelope?.Code !== 0 || !Object.hasOwn(envelope, 'Data')) fail('MANAGED_RESOURCE_RESPONSE_INVALID');
     return { data: envelope.Data, requestId: String(envelope.RequestId || '') };
   }
-  return { action: (name, payload, options) => call(actions, name, payload, options),
+  async function bindMemoryWriter() {
+    const memoryId = runtime.declaration?.resources?.memory?.id;
+    if (!memoryId) fail('MANAGED_RESOURCE_MEMORY_UNBOUND');
+    // Match the durable writer interface used by Native's post-turn journal.
+    // Freeze the deployment endpoint/identity, never a user's live permit.
+    // Every dispatch still obtains that permit from its active request scope.
+    const fixedRuntime = structuredClone(runtime), fixedEnv = { ...env };
+    const origin = managedResourceServerRoot(fixedEnv).origin;
+    const client = createManagedResourceClient({ runtime: fixedRuntime, env: fixedEnv,
+      fetchImpl, timeoutMs, getResourcePermit, getResourceSignal });
+    return { binding: { contract: 'agentkit.cloud-memory-transport/v1',
+      transport: 'agentengine.managed-resource/v1', origin,
+      agentId: fixedRuntime.identity.agentId, versionId: fixedRuntime.identity.versionId,
+      manifestSha256: fixedRuntime.identity.manifestSha256, memoryId },
+      async write(payload, options) {
+        if (payload?.MemoryCollectionId !== memoryId) fail('MANAGED_RESOURCE_MEMORY_UNBOUND');
+        return client.action('CreateMemorySdk', payload, options);
+      } };
+  }
+  return { action: (name, payload, options) => call(actions, name, payload, options), bindMemoryWriter,
     isBoundSkillSpace: id => spaces.has(id),
     authorizeSkillSpace: id => call(skillActions, 'ListSkillsBySpaceId', { SpaceId: id, PageNumber: 1, PageSize: 1 }),
     skillAction: (name, payload, options) => call(skillActions, name, payload, options) };

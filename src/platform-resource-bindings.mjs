@@ -21,7 +21,9 @@ export function platformBinding(kind, id, catalog) {
   const resource = catalog?.items?.find(item => item.id === id && !item.disabled);
   if (!resource || !catalog.connectionRef) fail('PLATFORM_RESOURCE_UNAVAILABLE', '所选平台资源已不可用，请重新选择');
   const config = { schemaVersion: 1, binding: { id: `platform-${kind}`, connectionRef: catalog.connectionRef,
-    resource: { kind, id: resource.id, name: resource.name, region: resource.region }, required: true } };
+    resource: { kind, id: resource.id,
+      ...(resource.name === undefined ? {} : { name: resource.name }),
+      ...(resource.region === undefined ? {} : { region: resource.region }) }, required: true } };
   if (kind === 'knowledge-base') config.retrieval = { mode: 'tool', topK: 5, maxChars: 16000 };
   if (kind === 'skill-space') Object.assign(config, { selectionMode: 'discovery', selectedSkills: [], includePublic: false, executionMode: 'outer-agent' });
   return { ecosystem: 'dsh', pluginRef: catalog.pluginRef, snapshotDigest: catalog.pluginSnapshotDigest,

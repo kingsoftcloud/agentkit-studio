@@ -6,6 +6,7 @@ import { createManagedResourceClient } from '../src/managed-resource-client.mjs'
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
 import { createPlatformServices } from '../src/host/services/platform.mjs';
 import { createManagedResourceContext } from '../src/managed-resource-context.mjs';
+import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 
 const token = 'synthetic-private-workload-token';
 const runtime = profile => ({ identity: { agentId: 'ar-fixture', versionId: 'platform-version-1',
@@ -62,6 +63,26 @@ for (const profile of ['dsh-native', 'harness', 'codex']) test(`${profile} Host 
   assert.equal(received[0].headers['x-agentengine-resource-permit'], undefined);
   assert.equal(received[1].headers['x-agentengine-resource-permit'], permit);
   assert.equal(JSON.stringify(received[1].payload).includes(permit), false);
+  // Native freezes this writer before inference and submits the completed turn
+  // through its durable effect journal. Ordinary writeMemory coverage alone
+  // does not exercise this required managed Host port.
+  const writer = await adapter.bindMemoryWriter();
+  const frozen = canonical(writer.binding);
+  assert.ok(!frozen.includes(token));
+  assert.ok(!frozen.includes(permit));
+  const prepared = writer.prepare('mem-fixture', `aeu_${subjectDigest}`,
+    [{ role: 'user', content: 'synthetic durable preference' }],
+    { agentId: 'ar-fixture', sessionId: 'trusted-session', flush: true });
+  const writePrepared = () => writer.write(prepared,
+    { signal: new AbortController().signal, assertCurrent: () => true });
+  await assert.rejects(writePrepared(), { code: 'MANAGED_RESOURCE_PERMIT_REQUIRED' });
+  const receipt = await context.run({ headers: { 'x-agentengine-resource-permit': permit }, subjectDigest }, writePrepared);
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.requestId, 'fixture-receipt');
+  assert.equal(received.length, 3);
+  assert.equal(received[2].headers['x-ksc-request-id'], prepared.requestId);
+  assert.equal(received[2].headers['x-agentengine-resource-permit'], permit);
+  await assert.rejects(writePrepared(), { code: 'MANAGED_RESOURCE_PERMIT_REQUIRED' });
 });
 
 test('resource-only client rejects management Actions, malformed roots and response errors without echoing details', async () => {
@@ -76,6 +97,28 @@ test('resource-only client rejects management Actions, malformed roots and respo
   await assert.rejects(client.skillAction('RetrieveKnowledge'), { code: 'MANAGED_RESOURCE_ACTION_NOT_ALLOWED' });
   await assert.rejects(client.action('RetrieveKnowledge'), error => error.code === 'MANAGED_RESOURCE_ACCESS_REVOKED' && !error.message.includes('private-credential'));
   assert.equal(sent, 1);
+});
+
+test('durable managed memory writer freezes its deployment and rejects foreign bindings and request IDs', async () => {
+  const sent = [];
+  const definition = { ...runtime('harness'), declaration: { resources: { memory: { id: 'mem-fixture' } } } };
+  const env = environment('https://fixture.test/');
+  const client = createManagedResourceClient({ runtime: definition, env, getResourcePermit: () => 'fixture-active-permit',
+    fetchImpl: async (url, options) => { sent.push({ url: String(url), ...options });
+      return Response.json({ Code: 0, Data: { Success: true }, RequestId: 'fixture-receipt' }); } });
+  const writer = await client.bindMemoryWriter();
+  env.AGENTENGINE_RESOURCE_SERVER_URL = 'https://foreign.test/'; env.AGENTKIT_RUNTIME_TOKEN = 'changed-token';
+  definition.identity.versionId = 'changed-version';
+  await assert.rejects(writer.write({ MemoryCollectionId: 'other-memory' }), { code: 'MANAGED_RESOURCE_MEMORY_UNBOUND' });
+  await assert.rejects(writer.write({ MemoryCollectionId: 'mem-fixture' }, { requestId: 'invalid\r\nvalue' }), { code: 'INVALID_REQUEST_ID' });
+  assert.equal(sent.length, 0);
+  await writer.write({ MemoryCollectionId: 'mem-fixture' }, { requestId: '11111111-1111-4111-8111-111111111111' });
+  assert.equal(sent.length, 1);
+  assert.equal(new URL(sent[0].url).origin, 'https://fixture.test');
+  assert.equal(sent[0].headers.Authorization, `Bearer ${token}`);
+  assert.equal(sent[0].headers['X-AgentEngine-Target-Version-Id'], 'platform-version-1');
+  const unbound = createManagedResourceClient({ runtime: runtime('harness'), env });
+  await assert.rejects(unbound.bindMemoryWriter(), { code: 'MANAGED_RESOURCE_MEMORY_UNBOUND' });
 });
 
 test('bounded replies reject oversized and invalid envelopes', async () => {

@@ -9,11 +9,27 @@ import { parseManagedRuntimeManifest } from '../src/managed-runtime-manifest.mjs
 import { loadManagedRuntimeDefinition } from '../src/managed-runtime-definition.mjs';
 import { prepareLocalResourceContext, writeBoundMemory } from '../src/local-runtime.mjs';
 import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
+import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { managedResourceBindings } from '../src/managed-resource-contract.mjs';
 
 const corpus = JSON.parse(await readFile(new URL('./fixtures/dsh-resources-v1.json', import.meta.url), 'utf8'));
 const declaration = (profile, resources) => ({ name: 'resource-fixture', framework: profile,
   artifact_type: 'ManagedRuntime', runtime: { name: profile, version: 'fixture-1' }, model: 'fixture-model', prompt: '', resources });
 const toolAdapter = { listTools: async ids => ids.map(nativeLocalToolContract) };
+
+for (const key of ['knowledge_base', 'memory', 'skill_space', 'skill_spaces']) {
+  test(`ID-only managed ${key} survives Native configuration freezing`, () => {
+    const ref = { id: 'resource-fixture' };
+    const bindings = managedResourceBindings({ [key]: key === 'skill_spaces' ? [ref] : ref });
+    // Freeze the in-memory projection directly: JSON.stringify would silently
+    // hide undefined fields and previously concealed this pre-model failure.
+    assert.doesNotThrow(() => canonical({ runtime: { type: 'harness' }, bindings }));
+    const resource = bindings.plugins[0].config.binding.resource;
+    assert.equal(resource.id, ref.id);
+    assert.equal(Object.hasOwn(resource, 'name'), false);
+    assert.equal(Object.hasOwn(resource, 'region'), false);
+  });
+}
 
 for (const profile of ['dsh-native', 'harness', 'codex']) {
   for (const sample of corpus.valid) test(`${profile} resource schema: ${sample.name}`, () => {
@@ -36,6 +52,8 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
       OPENAI_BASE_URL: 'https://model.example.test/v1', AGENTKIT_MODEL_API_KEY: 'fixture-key',
     } });
     const bindings = runtime.agent.spec.bindings;
+    assert.doesNotThrow(() => canonical(runtime.agent.spec));
+    assert.deepEqual(runtime.agent.spec.memory, { enabled: true, recall: { enabled: true }, write: { mode: 'candidate' } });
     assert.equal(bindings.modelProfileId, 'fixture-model');
     assert.deepEqual(bindings.plugins.map(plugin => plugin.config.binding.resource.kind), ['knowledge-base', 'memory-instance', 'skill-space']);
     assert.deepEqual(bindings.plugins.map(plugin => plugin.config.binding.resource.id), [resources.knowledge_base.id, resources.memory.id, resources.skill_space.id]);
@@ -76,6 +94,7 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
       OPENAI_BASE_URL: 'https://model.example.test/v1', AGENTKIT_MODEL_API_KEY: 'fixture-key',
     } });
     const plugins = runtime.agent.spec.bindings.plugins;
+    assert.doesNotThrow(() => canonical(runtime.agent.spec));
     assert.deepEqual(plugins.map(item => item.config.binding.resource.id), ['space-first', 'space-second']);
     assert.equal(new Set(plugins.map(item => item.config.binding.id)).size, 2);
     assert.equal(plugins[1].config.binding.resource.region, 'cn-beijing-6');
