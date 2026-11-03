@@ -31,7 +31,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - name: Install test Chromium
         run: |
@@ -47,11 +46,10 @@ jobs:
       - name: Publish to npm
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if pnpm view "@kingsoftcloud/agentkit-studio@${VERSION}" version >/dev/null 2>&1; then
+          if npm view "@kingsoftcloud/agentkit-studio@${VERSION}" version >/dev/null 2>&1; then
             echo "Version ${VERSION} already published, skipping."
             exit 0
           fi
-          # The npm CLI reproducibly aborts this publish on the Actions runner with
-          # "Exit handler never called!" even with lifecycle scripts disabled;
-          # pnpm publishes through its own implementation with the same registry token.
-          pnpm publish --access public --no-git-checks --ignore-scripts
+          # Trusted Publishing exchanges the GitHub OIDC token; setup-node must not
+          # write an _authToken into .npmrc or npm falls back to token auth (404).
+          npm publish --ignore-scripts --access public --provenance
