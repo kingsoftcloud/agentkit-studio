@@ -57,6 +57,32 @@ export function createRuntimeResponsesStream(request, write) {
      * @param {'approved' | 'rejected' | 'cancelled'} decision - settled outcome.
      * @param {number} [revision] - interaction revision after settlement.
      */
+    /** Present one agent-initiated question as its own Responses item type. */
+    question(value) {
+      if (!value?.id) return;
+      const index = items.length;
+      const record = { index, closed: false, key: `question:${value.id}`,
+        item: { ...value, type: 'mcp_user_question', status: 'in_progress' } };
+      items.push(record); blocks.set(record.key, record);
+      emit('response.output_item.added', { output_index: index, item: record.item, run_id: request.runId });
+    },
+    /**
+     * Close a presented question item and publish the answers the user chose.
+     * @param {string} interactionId - question interaction id issued by the Host.
+     * @param {Record<string, unknown>} answers - answer map keyed by question id.
+     * @param {number} [revision] - interaction revision after settlement.
+     */
+    questionSettled(interactionId, answers, revision = 2) {
+      const record = items.find(entry => entry.item?.type === 'mcp_user_question' && entry.item.id === interactionId);
+      const settledAnswers = answers && typeof answers === 'object' ? answers : {};
+      if (record && !record.closed) {
+        record.closed = true;
+        record.item.status = Object.keys(settledAnswers).length ? 'completed' : 'incomplete';
+        record.item.answers = settledAnswers;
+        emit('response.output_item.done', { output_index: record.index, item: record.item, run_id: request.runId });
+      }
+      emit('response.question_resolved', { question_id: interactionId, answers: settledAnswers, revision, run_id: request.runId });
+    },
     approvalSettled(interactionId, decision, revision = 2) {
       const record = items.find(entry => entry.item?.type === 'mcp_approval_request' && entry.item.id === interactionId);
       if (record && !record.closed) {

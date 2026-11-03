@@ -220,8 +220,13 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       approvalRun = approvalMode === undefined ? null : approval?.begin({ runId,
         sessionId: input.platformSession?.sessionId || sessionId, nativeSessionId: input.sessionId,
         mode: approvalMode, signal: abort.signal,
-        publish: item => projection?.approval(item),
-        publishDone: (interactionId, decision, revision) => projection?.approvalSettled(interactionId, decision, revision) });
+        // Two independent presentation channels: tool approvals and agent
+        // questions. The item type decides which projection renders it.
+        publish: item => (item?.type === 'mcp_user_question'
+          ? projection?.question(item) : projection?.approval(item)),
+        publishDone: (interactionId, decision, revision, meta) => (meta?.kind === 'question'
+          ? projection?.questionSettled(interactionId, meta.answers, revision)
+          : projection?.approvalSettled(interactionId, decision, revision)) });
       if (approvalMode !== undefined && !approvalRun) throw fail('RUNTIME_APPROVAL_UNAVAILABLE', 503);
       if (input.stream) {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });

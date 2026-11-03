@@ -626,6 +626,14 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
                   nativeSessionId: managedApprovalSessionId,
                   sessionId: managedApprovalSessionId,
                 }),
+                // Questions are their own channel: never routed through the
+                // tool-approval answerer (which would mix the two cards).
+                requestUserInput: info => requestManagedApproval({
+                  ...info,
+                  kind: 'question',
+                  nativeSessionId: managedApprovalSessionId,
+                  sessionId: managedApprovalSessionId,
+                }),
               } : {}),
             }, recordChunk, toolRecorder);
             if (typeof resources.writeMemory === 'function') {

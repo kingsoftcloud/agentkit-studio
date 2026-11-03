@@ -16,8 +16,11 @@ import { runtimeError } from './runtime-responses-contract.mjs';
 /** Product approval modes; both are satisfied by the interactive DSH policy. */
 export const MANAGED_APPROVAL_MODES = ['ask', 'risk'];
 const INTERACTION_PREFIX = 'appr_';
-const ACTION_DECISIONS = new Map([['approve', 'approved'], ['reject', 'rejected'], ['cancel', 'cancelled']]);
-const TERMINAL_DECISIONS = new Set(['approved', 'rejected', 'cancelled']);
+const ACTION_DECISIONS = new Map([['approve', 'approved'], ['reject', 'rejected'], ['cancel', 'cancelled'], ['submit', 'submitted']]);
+const TERMINAL_DECISIONS = new Set(['approved', 'rejected', 'cancelled', 'submitted']);
+/** Question asks are a separate channel from tool approvals. */
+export const QUESTION_ITEM_TYPE = 'mcp_user_question';
+export const APPROVAL_ITEM_TYPE = 'mcp_approval_request';
 const DEFAULT_TIMEOUT_MS = 120000;
 const SETTLED_LIMIT = 256;
 const RECEIPT_LIMIT = 256;
@@ -75,9 +78,11 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
     if (map.size > SETTLED_LIMIT) map.delete(map.keys().next().value);
   }
 
-  function settle(entry, decision) {
+  function settle(entry, decision, answers) {
     if (entry.settled || !TERMINAL_DECISIONS.has(decision)) return undefined;
     entry.settled = true;
+    const isQuestion = entry.kind === 'question';
+    const answerPayload = isQuestion ? (answers && typeof answers === 'object' ? answers : {}) : undefined;
     if (entry.timer) clearTimeout(entry.timer);
     pending.delete(entry.interactionId);
     entry.run.pending.delete(entry.interactionId);
@@ -92,12 +97,13 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
       interaction_id: entry.interactionId,
       session_id: entry.run.sessionId,
       decision,
+      ...(isQuestion ? { answers: answerPayload } : {}),
       revision: entry.revision + 1,
       settled_at: new Date(now()).toISOString(),
     };
     remember(settled, entry.interactionId, receipt);
-    try { entry.run.publishDone?.(entry.interactionId, decision, entry.revision + 1); } catch { /* A lost presentation cannot strand the DSH promise. */ }
-    entry.resolve(decision === 'approved' ? 'allowed-once' : decision === 'rejected' ? 'rejected' : 'cancelled');
+    try { entry.run.publishDone?.(entry.interactionId, decision, entry.revision + 1, { kind: entry.kind, ...(isQuestion ? { answers: answerPayload } : {}) }); } catch { /* A lost presentation cannot strand the DSH promise. */ }
+    entry.resolve(isQuestion ? { answers: answerPayload } : (decision === 'approved' ? 'allowed-once' : decision === 'rejected' ? 'rejected' : 'cancelled'));
     return receipt;
   }
 
@@ -127,20 +133,33 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
    * This is the single presentation seam shared by the DSH `approval/request`
    * answerer and providers that ask through `request()`.
    */
-  function presentInteraction(run, { toolName, callId, reason, signal } = {}) {
+  function presentInteraction(run, { kind = 'approval', toolName, callId, reason, questions, signal } = {}) {
     if (disposed || !run || run.closed || typeof run.publish !== 'function') return undefined;
-    if (signal?.aborted) return Promise.resolve('cancelled');
+    const isQuestion = kind === 'question';
+    if (signal?.aborted) return Promise.resolve(isQuestion ? { answers: {} } : 'cancelled');
     const interactionId = `${INTERACTION_PREFIX}${randomUUID().replaceAll('-', '')}`;
-    const entry = { interactionId, revision: 1, run, settled: false, timer: undefined, resolve: undefined };
+    const entry = { interactionId, revision: 1, run, settled: false, timer: undefined, resolve: undefined, kind };
     const outcome = new Promise(resolve => { entry.resolve = resolve; });
+    // Timeout/cancel must always release the waiting Host adapter: a question
+    // resolves with empty answers (declined) and an approval with cancelled.
     entry.timer = setTimeout(() => { settle(entry, 'cancelled'); }, Math.max(1000, timeoutMs));
     entry.timer.unref?.();
     pending.set(interactionId, entry);
     run.pending.add(interactionId);
     try {
-      run.publish({
+      run.publish(isQuestion ? {
+        // Question asks use their own item type and payload so the UI can render
+        // a chooser card; tool approvals keep mcp_approval_request untouched.
         id: interactionId,
-        type: 'mcp_approval_request',
+        type: QUESTION_ITEM_TYPE,
+        status: 'in_progress',
+        questions: Array.isArray(questions) ? questions : [],
+        ...(typeof reason === 'string' && reason ? { reason } : {}),
+        run_id: run.runId,
+        session_id: run.sessionId,
+      } : {
+        id: interactionId,
+        type: APPROVAL_ITEM_TYPE,
         status: 'in_progress',
         name: typeof toolName === 'string' && toolName ? toolName : 'approval',
         ...(callId ? { call_id: String(callId) } : {}),
@@ -245,6 +264,17 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
         throw runtimeError('RUNTIME_INTERACTION_NOT_FOUND', 404);
       }
       if (entry.revision !== expectedRevision) throw runtimeError('RUNTIME_INTERACTION_REVISION_CONFLICT', 409);
+      if (entry.kind === 'question') {
+        // Question answers arrive as InteractionAction=submit; approval actions
+        // never resolve a question and vice versa.
+        if (action !== 'submit') throw runtimeError('RUNTIME_INTERACTION_ACTION_UNSUPPORTED', 400);
+        const raw = response && typeof response === 'object'
+          ? (response.answers ?? response.Answers ?? response) : {};
+        const receipt = settle(entry, 'submitted', raw);
+        if (receiptKey && receipt) remember(receipts, receiptKey, receipt);
+        return receipt;
+      }
+      if (action === 'submit') throw runtimeError('RUNTIME_INTERACTION_ACTION_UNSUPPORTED', 400);
       const decision = ACTION_DECISIONS.get(action);
       const claimed = response?.decision ?? response?.Decision;
       if (claimed !== undefined && String(claimed).toLowerCase() !== action && String(claimed).toLowerCase() !== decision) {
@@ -264,6 +294,7 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
      */
     resolveInput({ sessionId, nativeSessionId, interactionId, approve } = {}) {
       const entry = typeof interactionId === 'string' ? pending.get(interactionId) : undefined;
+      if (entry?.kind === 'question') throw runtimeError('RUNTIME_INTERACTION_CHANNEL_MISMATCH', 409);
       if (!entry || entry.run.closed || entry.run.sessionId !== sessionId || entry.run.nativeSessionId !== nativeSessionId) {
         if (settled.has(interactionId)) throw runtimeError('RUNTIME_INTERACTION_ALREADY_RESOLVED', 409);
         throw runtimeError('RUNTIME_INTERACTION_NOT_FOUND', 404);
