@@ -229,6 +229,15 @@ try {
     const native = await running.ctx.sessionController.resolveAgent(request.sessionId);
     const reason = native.agent?.session.snapshotEvents().findLast(item => item.type === 'turn/end')?.data.reason;
     report.runtimeFailure = { status: firstResponse.status, code: first.error?.code, nativeCode: reason?.error?.code, nativeMessage: reason?.error?.message?.slice(0, 250) };
+    // Keep the native turn failure and the last events around it so a red run
+    // reports the request-phase model failure without another debug cycle.
+    const events = native.agent?.session.snapshotEvents() ?? [];
+    report.nativeReason = reason ?? null;
+    report.recentEvents = events.slice(-40).map(event => ({
+      type: event.type,
+      data: JSON.parse(JSON.stringify(event.data ?? null, (key, value) => (
+        typeof value === 'string' && value.length > 400 ? `${value.slice(0, 400)}...` : value)), (key, value) => (key === 'session' || key === 'agent' ? undefined : value)),
+    }));
   }
   assert.equal(firstResponse.status, 200, first.error?.code);
   assert.equal(first.output_text, 'FIRST_FROZEN_OK'); assert.equal(toolCalls, 1);
