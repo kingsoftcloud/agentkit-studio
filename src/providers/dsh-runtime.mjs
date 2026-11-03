@@ -17,7 +17,8 @@ import { createCodexToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
-import { hasManagedApprovalRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
+import { createUserQuestionTool } from './user-question-tool.mjs';
+import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 
 const ROUTE = 'agentkit-studio';
 
@@ -582,6 +583,18 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               agent: toolAgent,
             })
             : {};
+          // Durable recall evidence: an empty memory library and a skipped
+          // recall must be distinguishable in the Session record.
+          if (resources.memory) {
+            try {
+              toolAgent?.session?.append?.('studio/resource-check', {
+                kind: 'memory-instance',
+                resourceId: String(resources.memory?.config?.binding?.resource?.id || 'memory-binding'),
+                action: 'recall', status: 'succeeded',
+                ...(Number.isSafeInteger(resources.memoryHitCount) ? { hitCount: resources.memoryHitCount } : {}),
+              }, { ignorable: true });
+            } catch { /* evidence only */ }
+          }
           const startedAt = new Date().toISOString();
           const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
           const traceEvents = [{ event_type: 'run.started', at: startedAt, run_id: traceId, session_id: String(options.sessionId || '') }];
@@ -603,6 +616,32 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           // when a managed interactive run owns this DSH session.
           const managedApprovalSessionId = String(options.sessionId || '');
           const managedApproval = hasManagedApprovalRun(managedApprovalSessionId);
+          // Question asks need the interactive seat, which exists even when the
+          // run waives approvals (danger-full-access).
+          const managedInteractive = managedApproval || hasManagedRun(managedApprovalSessionId);
+          // Interactive runs expose an explicit question tool: codex's
+          // app-server requestUserInput is not model-callable on its own.
+          const userQuestionTool = managedInteractive
+            ? createUserQuestionTool({
+              sessionId: managedApprovalSessionId,
+              request: ask => requestManagedApproval({
+                ...ask,
+                nativeSessionId: managedApprovalSessionId,
+                sessionId: managedApprovalSessionId,
+              }),
+            })
+            : undefined;
+          const baseDynamicTools = resources.dynamicTools || [];
+          const baseToolHandler = resources.toolHandler;
+          const dynamicTools = userQuestionTool
+            ? [...baseDynamicTools, userQuestionTool.spec] : baseDynamicTools;
+          const toolHandler = userQuestionTool
+            ? async call => {
+              const outcome = await userQuestionTool.handler(call);
+              if (outcome !== undefined) return outcome;
+              return baseToolHandler(call);
+            }
+            : baseToolHandler;
           try {
             yield* codexFrames(codexRuntime, {
               agentId,
@@ -617,12 +656,20 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               imageInputs: history.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',
-              dynamicTools: resources.dynamicTools || [],
-              toolHandler: resources.toolHandler,
+              dynamicTools,
+              toolHandler,
               ...(managedApproval ? {
                 approvalPolicy: 'on-request',
                 requestApproval: info => requestManagedApproval({
                   ...info,
+                  nativeSessionId: managedApprovalSessionId,
+                  sessionId: managedApprovalSessionId,
+                }),
+                // Questions are their own channel: never routed through the
+                // tool-approval answerer (which would mix the two cards).
+                requestUserInput: info => requestManagedApproval({
+                  ...info,
+                  kind: 'question',
                   nativeSessionId: managedApprovalSessionId,
                   sessionId: managedApprovalSessionId,
                 }),

@@ -5,12 +5,58 @@ import { createHash } from 'node:crypto';
 export const FROZEN_RESPONSE_PROJECTION = 'agentkit.runtime-response-projection/v1';
 export const FROZEN_RESPONSE_PROJECTION_EVENT = 'studio/runtime-response-projection';
 const fail = code => Object.assign(new Error(code), { code, status: 409 });
+const notJson = path => Object.assign(new Error(`RESPONSES_PROJECTION_NOT_JSON: ${path} is not lossless JSON`),
+  { code: 'RESPONSES_PROJECTION_NOT_JSON', status: 409 });
 const fingerprint = request => createHash('sha256').update(JSON.stringify({ version: 1,
   input: request.input, model: request.model ?? null })).digest('hex');
 const presentationTypes = new Set(['response.output_item.added', 'response.output_item.done',
   'response.content_part.added', 'response.content_part.done', 'response.output_text.delta', 'response.output_text.done',
   'response.reasoning_summary_text.delta', 'response.reasoning_summary_text.done',
-  'response.function_call_arguments.done', 'response.resource_check', 'response.tool_result']);
+  'response.function_call_arguments.done', 'response.resource_check', 'response.tool_result',
+  'response.question_resolved']);
+
+/** Normalize one derivative record to the only shape the Session log keeps.
+ *  DSH persists session events as lossless JSON: the append site detaches a
+ *  value that survives a JSON round trip unchanged and rejects everything else,
+ *  so a record this module writes must already live in that data model. An own
+ *  `undefined` value is not JSON; it is also already invisible on the Responses
+ *  wire (JSON.stringify drops it on the way out), so it is omitted here. A
+ *  managed runtime has no Build id, which makes that the field this path
+ *  normally drops. Every other value JSON would coerce (Date, NaN, -0) or
+ *  reject (bigint, symbol, function, cycle, sparse array) fails with its own
+ *  path and code at this boundary instead of at the Session append site.
+ *  @param {unknown} value - candidate presentation record.
+ *  @param {string} [path] - dotted path of the candidate, for the failure.
+ *  @param {Set<object>} [ancestors] - containers on the current path.
+ *  @returns {unknown} the JSON-normalized copy of `value`. */
+function presentable(value, path = 'data', ancestors = new Set()) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Object.is(value, -0)) throw notJson(path);
+    return value;
+  }
+  if (typeof value !== 'object') throw notJson(path);
+  if (ancestors.has(value)) throw notJson(path);
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const copy = [];
+      for (let index = 0; index < value.length; index++) {
+        if (!Object.hasOwn(value, index)) throw notJson(`${path}[${index}]`);
+        copy.push(presentable(value[index], `${path}[${index}]`, ancestors));
+      }
+      return copy;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== null && prototype !== Object.prototype) throw notJson(path);
+    const record = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) continue;
+      record[key] = presentable(item, `${path}.${key}`, ancestors);
+    }
+    return record;
+  } finally { ancestors.delete(value); }
+}
 
 async function live(operation, signal) {
   signal.throwIfAborted();
@@ -74,8 +120,8 @@ export function createFrozenResponseProjection({ getService }) {
       const persistence = getService('sessions');
       if (typeof persistence?.flush !== 'function') throw fail('RESPONSES_PROJECTION_PERSISTENCE_UNAVAILABLE');
       const previous = read(session, request);
-      const data = { format: FROZEN_RESPONSE_PROJECTION, agentId: request.agentId, buildId: request.buildId,
-        requestId: request.runId, responseId: request.responseId, requestFingerprint: fingerprint(request), response, events };
+      const data = presentable({ format: FROZEN_RESPONSE_PROJECTION, agentId: request.agentId, buildId: request.buildId,
+        requestId: request.runId, responseId: request.responseId, requestFingerprint: fingerprint(request), response, events });
       const value = previous ?? validate(data, request);
       signal.throwIfAborted();
       if (!previous) session.append(FROZEN_RESPONSE_PROJECTION_EVENT, { ...data, ...value }, { ignorable: true });

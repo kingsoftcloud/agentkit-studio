@@ -127,7 +127,7 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd, approvalPolicy: requestedApprovalPolicy, requestApproval } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd, approvalPolicy: requestedApprovalPolicy, requestApproval, requestUserInput } = {}) {
       const cwd = String(requestedCwd ?? runtime.cwd);
       if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
@@ -300,6 +300,30 @@ export function createCodexRuntime(options = {}) {
         } catch (error) { finish(asError(error)); return; }
         activity();
       };
+      const handleUserQuestion = async (message) => {
+        let params = {};
+        let result = { answers: {} };
+        try {
+          params = object(message.params || {}, 'user-question 参数');
+          const questions = Array.isArray(params.questions) ? params.questions : [];
+          const outcome = await requestUserInput({
+            toolName: 'codex/user-question',
+            callId: String(params.itemId || ''),
+            questions,
+            method: message.method,
+            params,
+            signal: toolController.signal,
+          });
+          const answers = outcome && typeof outcome === 'object'
+            && outcome.answers && typeof outcome.answers === 'object' && !Array.isArray(outcome.answers)
+            ? outcome.answers : {};
+          result = { answers };
+        } catch {
+          // Declined/timeout: empty answers keep the app-server protocol healthy.
+          result = { answers: {} };
+        }
+        replyApproval(message.id, result);
+      };
       const handleApprovalRequest = async (message, kind) => {
         let params = {};
         let outcome;
@@ -332,6 +356,12 @@ export function createCodexRuntime(options = {}) {
         if (message.method && message.id !== undefined) {
           if (message.method === 'item/tool/call') {
             void handleDynamicToolCall(message);
+            return;
+          }
+          if (message.method === 'item/tool/requestUserInput' && typeof requestUserInput === 'function') {
+            // Agent-initiated question: present it to the user and wait, instead
+            // of the historical unattended auto-decline.
+            void handleUserQuestion(message);
             return;
           }
           if (typeof requestApproval === 'function') {

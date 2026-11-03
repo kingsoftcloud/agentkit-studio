@@ -16,7 +16,7 @@ import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs
 import { createAssistantPermissionModel } from './assistant-permission-model.mjs';
 import { createFrozenResponseProjection } from './frozen-response-projection.mjs';
 import { createManagedApprovalRegistry } from './managed-runtime-approval.mjs';
-import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, readExecutionMode } from './execution-policy.mjs';
+import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, executionModesUpTo, readExecutionMode } from './execution-policy.mjs';
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
 
@@ -82,8 +82,11 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   // One bridge owns the interactive approval answerer and the presented
   // interaction records for this Host process.
   const approval = managedRuntime ? createManagedApprovalRegistry({ ctx }) : undefined;
+  // The Hosted UI renders exactly the modes this image declares; admission
+  // validates a requested mode against the same list.
+  const allowedPermissionModes = executionModesUpTo(executionModeMax);
   const platformActions = managedRuntime ? await createManagedRuntimeActions({ ctx, runtime: managedRuntime, admit, model, models,
-    directory: join(env.AGENTKIT_HOME, 'managed-sessions'), approval }) : undefined;
+    directory: join(env.AGENTKIT_HOME, 'managed-sessions'), approval, executionPolicy: declaredPolicy, allowedPermissionModes }) : undefined;
   let assistant, hosted;
   if (!managedRuntime) {
     const retirement = await (await import('./assistant-retirement.mjs')).createAssistantRetirement({ ctx, env });

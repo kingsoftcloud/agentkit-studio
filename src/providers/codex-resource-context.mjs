@@ -21,7 +21,25 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
       agentId,
       agent,
     });
+    // A managed Agent declares its platform resources in the runtime manifest,
+    // so a declared memory library must always produce either a recall check or
+    // an explicit gap report. Never let the turn silently lose memory.
+    const declaredMemory = Array.isArray(record?.spec?.bindings?.plugins)
+      ? record.spec.bindings.plugins.find(item => item?.config?.binding?.resource?.kind === 'memory-instance')
+      : undefined;
+    const reportMemoryGap = code => {
+      try {
+        agent?.session?.append?.('studio/resource-check', {
+          kind: 'memory-instance',
+          resourceId: String(declaredMemory?.config?.binding?.resource?.id || 'memory-binding'),
+          action: 'recall', status: 'failed', code,
+        }, { ignorable: true });
+      } catch { /* evidence only: a missing Session must not break the turn */ }
+      console.warn('[agentkit-studio] managed memory context gap:', code);
+    };
     const presentation = codexPresentationBindings(toolAdapter, agent);
+    if (declaredMemory && !prepared.memory) reportMemoryGap('MEMORY_BINDING_SKIPPED');
+    else if (prepared.memory && prepared.memoryHitCount === null) reportMemoryGap('MEMORY_RECALL_SKIPPED');
     const toolBindings = codexToolBindings([...prepared.tools.filter(tool => !presentation.length || tool.name !== 'present'), ...presentation]);
     const systemPrompt = [
       record.spec?.instructions?.system || record.spec?.description || '',
@@ -31,6 +49,8 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
     ].filter(Boolean).join('\n\n');
     return {
       agentName: String(record.metadata?.name || record.name || ''),
+      memory: prepared.memory || null,
+      memoryHitCount: prepared.memoryHitCount,
       systemPrompt,
       dynamicTools: toolBindings.map(item => item.spec),
       writeMemory: prepared.memoryWrite

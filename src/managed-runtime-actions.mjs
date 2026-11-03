@@ -18,7 +18,7 @@ function approvalResponseItem(value) {
   return { requestId: item.approval_request_id, approve: item.approve };
 }
 
-export async function createManagedRuntimeActions({ ctx, runtime, admit, model, models, directory, approval }) {
+export async function createManagedRuntimeActions({ ctx, runtime, admit, model, models, directory, approval, executionPolicy, allowedPermissionModes }) {
   const registry = await createManagedSessionRegistry(directory);
   const controller = ctx.get('sessionController'), sessions = ctx.get('sessions'), persistence = ctx.get('sessionPersistence');
   if (!controller || !sessions || !persistence) throw runtimeError('RUNTIME_SESSION_PERSISTENCE_REQUIRED', 503);
@@ -156,7 +156,7 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
       }[action];
       if (!fields) throw runtimeError('RUNTIME_ACTION_UNSUPPORTED', 404);
       if (Object.keys(request).some(key => !['AgentId', 'UserId', ...fields].includes(key))) throw runtimeError('RUNTIME_ACTION_INPUT_UNSUPPORTED');
-      if (action === 'GetAgentUiBootstrap') return managedRuntimeBootstrap(runtime, model);
+      if (action === 'GetAgentUiBootstrap') return managedRuntimeBootstrap(runtime, model, { executionPolicy, allowedPermissionModes });
       if (action === 'ListAgentModels') return { Models: models.map(name => ({ id: name, name, source: 'managed-manifest' })), Current: model, Source: 'managed-manifest' };
       if (action === 'CreateSession') {
         const id = request.SessionId || `sess-${randomUUID()}`;
