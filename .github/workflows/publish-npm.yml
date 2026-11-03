@@ -33,7 +33,9 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
       - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@^11.5.1
+        # npm 11.21 reproducibly aborts the studio publish with
+        # "Exit handler never called!"; npm 12 supports trusted publishing too.
+        run: npm install -g npm@12
       - run: pnpm install --frozen-lockfile
       - name: Install test Chromium
         run: |
