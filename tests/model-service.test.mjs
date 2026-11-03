@@ -81,3 +81,27 @@ test('legacy credential-only configuration resolves the same default model adver
   assert.equal(selected.modelName, 'deepseek-v4.1-flash');
   assert.equal(selected.apiKey, 'legacy-key');
 });
+
+test('an admitted gateway model survives catalog expiry but still refreshes credentials and honors revocation', async () => {
+  let reads = 0, key = 'first', down = false;
+  const gateway = { id: 'gateway', default: true, provider: 'ksyun', modelName: 'base', baseUrl: 'https://gateway.invalid/v1' };
+  const values = { modelProfiles: [gateway] };
+  const service = createModelService({ configuration: { resolve: async () => ({ values }) },
+    credentials: { resolve: async () => ({ value: key }) }, fetchImpl: async () => {
+      reads++; if (down) throw Error('catalog unavailable');
+      return Response.json({ data: [{ id: 'directory-model' }] });
+    } });
+  const selected = await service.profile('directory-model'); assert.equal(reads, 1);
+  const admittedModel = { profileId: selected.id, modelName: selected.modelName };
+  down = true; key = 'rotated';
+  const originalNow = Date.now;
+  try {
+    Date.now = () => originalNow() + 61000;
+    const current = await service.profile('directory-model', { admittedModel });
+    assert.equal(current.apiKey, 'rotated'); assert.equal(reads, 1);
+    await assert.rejects(service.profile('unknown'), /catalog unavailable/);
+    await assert.rejects(service.profile('directory-model', { admittedModel: { ...admittedModel, profileId: 'other' } }), /catalog unavailable/);
+    values.modelProfiles.push({ ...gateway, id: 'disabled-model', modelName: 'directory-model', enabled: false });
+    await assert.rejects(service.profile('directory-model', { admittedModel }), { code: 'MODEL_NOT_FOUND' });
+  } finally { Date.now = originalNow; }
+});

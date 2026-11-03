@@ -388,3 +388,37 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} explicit managed
   assert.throws(() => applyPreset(ctx, { ...config, toolContracts: [{ name: 'call_a2a_agent', executor: 'mcp' }] }), { code: 'A2A_TOOL_NAME_COLLISION' });
   bridge.close();
 });
+
+test('one Native preset binds each live Agent scope separately for prompt, turn and recovery', async () => {
+  const { bindNativeSessionWorkspace } = await import('../src/providers/native-session-workspace.mjs');
+  const { mkdtempSync, mkdirSync, rmSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'native-preset-sessions-'));
+  const bridge = createRuntimeBridge(), listeners = new Map(), disposers = [], calls = [];
+  const oneRoot = join(root, 'one'), twoRoot = join(root, 'two'); mkdirSync(oneRoot); mkdirSync(twoRoot);
+  let secondDirectory = twoRoot;
+  const first = { session: { id: 'one' } }, second = { session: { id: 'two' } }, same = { session: { id: 'same' } };
+  for (const agent of [first, second, same]) agent.ctx = { get: key => key === 'workingDirectory'
+    ? { get: () => agent === second ? secondDirectory : oneRoot } : undefined, effect: install => disposers.push(install()) };
+  bridge.setNativeToolsFactory(({ ctx, agent }) => {
+    calls.push(agent); assert.equal(ctx, agent.ctx);
+    return { ...bindNativeSessionWorkspace({ ctx, agent, fallbackRoot: root }), close() {} };
+  });
+  bridge.setNativeTurnExecutor(async ({ agent, binding }) => {
+    assert.equal(binding.nativeTools.assertWorkspace(agent), true); return binding.nativeTools.workspaceRoot;
+  });
+  const ctx = { get: () => bridge, tools: { schemas: () => [] },
+    effect: install => disposers.push(install()), on: (name, listener) => listeners.set(name, listener) };
+  applyPreset(ctx, { agentId: 'shared', agentRevision: 1, runtime: 'harness', local: true, nativeEngineContract: 'agentkit.native-dsh-turn/v1' });
+  try {
+    for (const agent of [first, second, same]) await listeners.get('agent/created')({ agent });
+    assert.deepEqual(await Promise.all([first, second, same].map(agent => listeners.get('agent/execute-turn')({ agent }))), [oneRoot, twoRoot, oneRoot]);
+    const bindings = await Promise.all([first, second, same].map(agent => listeners.get('agentkit/native-recovery-binding')({ agent })));
+    assert.notEqual(bindings[0].nativeTools, bindings[1].nativeTools); assert.notEqual(bindings[0].nativeTools, bindings[2].nativeTools);
+    await listeners.get('system-prompt/assemble')({}, { agent: second }, async () => {});
+    assert.deepEqual(calls, [first, second, same]);
+    secondDirectory = oneRoot;
+    await assert.rejects(listeners.get('agent/execute-turn')({ agent: second }), { code: 'studio_native_session_workspace_changed' });
+    assert.equal(await listeners.get('agent/execute-turn')({ agent: first }), oneRoot);
+  } finally { for (const dispose of disposers.reverse()) await dispose?.(); bridge.close(); rmSync(root, { recursive: true, force: true }); }
+});
