@@ -8,10 +8,12 @@ import { stringify } from 'yaml';
 import { parseManagedRuntimeManifest } from '../src/managed-runtime-manifest.mjs';
 import { loadManagedRuntimeDefinition } from '../src/managed-runtime-definition.mjs';
 import { prepareLocalResourceContext, writeBoundMemory } from '../src/local-runtime.mjs';
+import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
 
 const corpus = JSON.parse(await readFile(new URL('./fixtures/dsh-resources-v1.json', import.meta.url), 'utf8'));
 const declaration = (profile, resources) => ({ name: 'resource-fixture', framework: profile,
   artifact_type: 'ManagedRuntime', runtime: { name: profile, version: 'fixture-1' }, model: 'fixture-model', prompt: '', resources });
+const toolAdapter = { listTools: async ids => ids.map(nativeLocalToolContract) };
 
 for (const profile of ['dsh-native', 'harness', 'codex']) {
   for (const sample of corpus.valid) test(`${profile} resource schema: ${sample.name}`, () => {
@@ -52,11 +54,12 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
       writeMemory: async (id, subject, messages, scope) => { calls.push(['write', id, subject, messages, scope]); return { accepted: true }; },
       listMcpTools: async ref => { calls.push(['mcp', ref.resourceId]); return [{ name: ref.resourceId, inputSchema: { type: 'object', properties: {} } }]; },
     };
-    const prepared = await prepareLocalResourceContext({ record: runtime.agent, resourceAdapter, input: 'lookup', userId, agentId: 'ar-fixture' });
+    const prepared = await prepareLocalResourceContext({ record: runtime.agent, resourceAdapter, toolAdapter, input: 'lookup', userId, agentId: 'ar-fixture' });
     assert.match(prepared.resourceContext, /CONTROLLED_KNOWLEDGE_FACT/);
     assert.match(prepared.resourceContext, /CONTROLLED_MEMORY_FACT/);
     assert.match(prepared.resourceContext, /CONTROLLED_SKILL_CONTENT/);
-    assert.deepEqual(prepared.tools.map(item => item._resourceId.resourceId), ['mcp-first', 'mcp-second']);
+    assert.deepEqual(prepared.tools.filter(item => item._source !== 'dsh').map(item => item._resourceId.resourceId), ['mcp-first', 'mcp-second']);
+    assert.deepEqual(prepared.tools.filter(item => item._source === 'dsh').map(item => item.name), (bindings.tools ?? []).map(ref => ref.resourceId));
     assert.deepEqual(calls.find(item => item[0] === 'recall'), ['recall', 'mem-fixture', 'lookup', userId, { agentId: 'ar-fixture' }]);
     await writeBoundMemory({ binding: prepared.memory, resourceAdapter, input: 'lookup', assistantText: 'result', userId, sessionId: 'session-fixture', agentId: 'ar-fixture' });
     assert.deepEqual(calls.find(item => item[0] === 'write').slice(0, 3), ['write', 'mem-fixture', userId]);
@@ -77,7 +80,7 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
     assert.equal(new Set(plugins.map(item => item.config.binding.id)).size, 2);
     assert.equal(plugins[1].config.binding.resource.region, 'cn-beijing-6');
     const calls = [];
-    const context = await prepareLocalResourceContext({ record: runtime.agent, resourceMode: 'context-only',
+    const context = await prepareLocalResourceContext({ record: runtime.agent, resourceMode: 'context-only', toolAdapter,
       resourceAdapter: { loadSkill: async id => { calls.push(id); return { content: `EXCLUSIVE_${id}` }; } } });
     assert.deepEqual(calls, ['space-first', 'space-second']);
     assert.match(context.resourceContext, /EXCLUSIVE_space-first/);

@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { loadManagedRuntimeManifest } from './managed-runtime-manifest.mjs';
 import { managedResourceBindings } from './managed-resource-contract.mjs';
+import { defaultNativeToolBindings } from './native-tool-catalog.mjs';
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -27,7 +28,12 @@ export async function loadManagedRuntimeDefinition({ manifest, env = process.env
   const profile = { id: declaration.model, modelName: declaration.model, provider: 'openai-compatible',
     baseUrl: endpoint.href.replace(/\/$/, ''), credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true, default: true, codexApi };
   const identity = { agentId, versionId, manifestSha256: sha256, runtimeName: declaration.runtime.name, runtimeVersion: declaration.runtime.version };
-  const bindings = { modelProfileId: profile.id, modelProfileIds: [profile.id], ...managedResourceBindings(declaration.resources) };
+  // A platform declaration bypasses createAgentStore's authoring defaults.
+  // Use the same available Native builtin profile before preset admission;
+  // ordinary per-session permission checks still own every invocation.
+  const bindings = { modelProfileId: profile.id, modelProfileIds: [profile.id],
+    ...(declaration.framework === 'harness' ? { tools: defaultNativeToolBindings({ env }) } : {}),
+    ...managedResourceBindings(declaration.resources) };
   // The platform declaration is the only authority for a managed Agent, so the
   // local Studio `spec.memory` projection must be materialized here: without it
   // every managed turn skipped recall/write defaults even though the memory
