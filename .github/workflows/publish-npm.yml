@@ -47,8 +47,11 @@ jobs:
       - name: Publish to npm
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "@kingsoftcloud/agentkit-studio@${VERSION}" version >/dev/null 2>&1; then
+          if pnpm view "@kingsoftcloud/agentkit-studio@${VERSION}" version >/dev/null 2>&1; then
             echo "Version ${VERSION} already published, skipping."
             exit 0
           fi
-          npm publish --ignore-scripts --access public --provenance
+          # The npm CLI reproducibly aborts this publish on the Actions runner with
+          # "Exit handler never called!" even with lifecycle scripts disabled;
+          # pnpm publishes through its own implementation with the same registry token.
+          pnpm publish --access public --no-git-checks --ignore-scripts
