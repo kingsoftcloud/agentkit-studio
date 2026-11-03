@@ -28,9 +28,16 @@ export async function loadManagedRuntimeDefinition({ manifest, env = process.env
     baseUrl: endpoint.href.replace(/\/$/, ''), credentialName: 'AGENTKIT_MODEL_API_KEY', enabled: true, default: true, codexApi };
   const identity = { agentId, versionId, manifestSha256: sha256, runtimeName: declaration.runtime.name, runtimeVersion: declaration.runtime.version };
   const bindings = { modelProfileId: profile.id, modelProfileIds: [profile.id], ...managedResourceBindings(declaration.resources) };
+  // The platform declaration is the only authority for a managed Agent, so the
+  // local Studio `spec.memory` projection must be materialized here: without it
+  // every managed turn skipped recall/write defaults even though the memory
+  // library was bound in the manifest.
+  const memory = declaration.resources?.memory
+    ? { enabled: true, recall: { enabled: true }, write: { mode: 'candidate' } }
+    : undefined;
   const agent = { metadata: { id: agentId, name: declaration.name, description: declaration.description || '', revision: 1, local: true, versionId },
     source: 'managed-runtime', managedRuntime: identity,
-    spec: { runtime: { type: declaration.framework }, instructions: { system: declaration.prompt }, bindings }, bindings };
+    spec: { runtime: { type: declaration.framework }, instructions: { system: declaration.prompt }, ...(memory ? { memory } : {}), bindings }, bindings };
   return { ...loaded, identity, agent, modelProfiles: [profile] };
 }
 

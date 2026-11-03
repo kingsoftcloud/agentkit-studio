@@ -583,6 +583,18 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               agent: toolAgent,
             })
             : {};
+          // Durable recall evidence: an empty memory library and a skipped
+          // recall must be distinguishable in the Session record.
+          if (resources.memory) {
+            try {
+              toolAgent?.session?.append?.('studio/resource-check', {
+                kind: 'memory-instance',
+                resourceId: String(resources.memory?.config?.binding?.resource?.id || 'memory-binding'),
+                action: 'recall', status: 'succeeded',
+                ...(Number.isSafeInteger(resources.memoryHitCount) ? { hitCount: resources.memoryHitCount } : {}),
+              }, { ignorable: true });
+            } catch { /* evidence only */ }
+          }
           const startedAt = new Date().toISOString();
           const traceId = String(options.runId || options.turnId || `run_codex_${Date.now().toString(36)}`);
           const traceEvents = [{ event_type: 'run.started', at: startedAt, run_id: traceId, session_id: String(options.sessionId || '') }];

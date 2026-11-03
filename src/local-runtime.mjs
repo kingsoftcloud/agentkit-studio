@@ -214,6 +214,7 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
     throw new LocalRuntimeError('TOOL_ADAPTER_MISSING', '该 Agent 绑定了 DSH Tool，但当前会话没有可用的 Tool 适配器', { resourceIds: toolIds });
   }
   let resourceContext = '';
+  let memoryHitCount = null;
   if (!toolsOnly && record?.spec?.memory?.enabled === false && memoryBinding(bindings)) {
     resourceContext += '\n\nMemory binding contract: 当前 Agent 的跨会话长期记忆已关闭。Host 本轮没有查询记忆库，也不会写入记忆库；下面即使有 Knowledge，也只属于知识库检索，不能据此声称长期记忆已启用或已召回。\n';
   }
@@ -244,12 +245,14 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
       : '当前写入策略下本轮不会写入记忆库，只使用实际召回内容；不能承诺已保存新记忆。';
     resourceContext += '\n实际召回内容来自当前记忆库查询；旧对话文本中的“待写入”等说法不能代替当前的查询结果，也不能据此声称本轮未召回。\n';
     resourceContext += (hits || []).map(hit => `Memory: ${extractText(hit.content || hit.text || hit.memory || hit)}`).join('\n');
+    memoryHitCount = Array.isArray(hits) ? hits.length : 0;
   }
   const collected = contextOnly || toolsOnly || promptOnly
     ? { tools: [], warnings: [] }
     : await collectBoundTools(resourceAdapter, toolAdapter, bindings, agent);
   if (!toolsOnly && collected.warnings.length) resourceContext += `\n\nBound resource warnings:\n${collected.warnings.join('\n')}`;
-  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings, memory, memoryWrite: !toolsOnly && memoryWriteEnabled(record, memory, input) };
+  return { bindings, resourceContext, tools: collected.tools, warnings: collected.warnings, memory, memoryHitCount,
+    memoryWrite: !toolsOnly && memoryWriteEnabled(record, memory, input) };
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
