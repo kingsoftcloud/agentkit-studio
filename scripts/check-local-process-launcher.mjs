@@ -17,7 +17,10 @@ for (const target of targets) {
   const entry = manifest.builds[target], file = `local-process-bin/${target}/launcher`;
   check(entry?.file === file, `Missing ${target}`);
   const stat = lstatSync(join(directory, file)), bytes = readFileSync(join(directory, file));
-  check(stat.isFile() && (stat.mode & 0o111) !== 0 && stat.size === entry.bytes && hash(bytes) === entry.sha256, `Invalid executable ${target}`);
+  // Windows checkouts do not preserve unix execute bits; the packaged installers
+// restore the target-platform mode, so only verify identity objects there.
+check(stat.isFile() && (process.platform === 'win32' || (stat.mode & 0o111) !== 0)
+  && stat.size === entry.bytes && hash(bytes) === entry.sha256, `Invalid executable ${target}`);
   if (target.startsWith('darwin')) {
     check(bytes.readUInt32LE(0) === 0xfeedfacf && bytes.readUInt32LE(4) === (target.endsWith('arm64') ? 0x0100000c : 0x01000007)
       && bytes.readUInt32LE(12) === 2, `Wrong Mach-O architecture ${target}`);

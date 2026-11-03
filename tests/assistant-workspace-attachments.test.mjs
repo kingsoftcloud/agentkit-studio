@@ -45,7 +45,7 @@ async function fixture(t, managed = true) {
     async prompt(request) { prompts.push(request); return { accepted: true }; },
   };
   const model = await createAssistantPermissionModel({ ctx, env: { AGENTKIT_HOME: join(root, 'agentkit'), DSH_HOME: join(root, 'dsh'), AGENTKIT_BUNDLE_SHA256: bundleSha256 },
-    profile: managed ? 'workspace-managed/v1' : undefined, agentId: 'agent' });
+    profile: managed ? 'workspace-managed/v1' : 'legacy-read-only/v1', agentId: 'agent' });
   t.after(() => model.dispose());
   const api = createPersonalAssistantRuntime({ ctx, agentId: 'agent', buildId: 'build', frozen: { spec: { runtime: { type: 'dsh-native' } } },
     admit: async () => ({ presetId: 'assistant' }), permissionModel: model });

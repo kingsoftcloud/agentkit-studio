@@ -130,6 +130,9 @@ jobs:
           git merge-base --is-ancestor "$STUDIO_SHA" HEAD
           git checkout --detach "$STUDIO_SHA"
           pnpm install --frozen-lockfile
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          pnpm exec playwright install --with-deps chromium
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           GITLEAKS_BIN="$RUNNER_TEMP/gitleaks/gitleaks" make public-gate
       - name: Checkout workflow-owned public product resolver
