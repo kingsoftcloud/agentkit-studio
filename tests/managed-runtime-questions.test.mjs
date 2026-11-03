@@ -88,3 +88,22 @@ test('a tool approval still presents mcp_approval_request and cannot be answered
     interactionId: published[0].id, expectedRevision: 1, action: 'approve', response: {}, idempotencyKey: 'w' });
   assert.equal(await pending, 'allowed-once');
 });
+
+test('a question-only interactive run presents questions without enabling approvals', async () => {
+  const published = [];
+  const publishedDone = [];
+  const registry = createManagedApprovalRegistry({ ctx: {}, timeoutMs: 5000, now: () => Date.now() });
+  const run = registry.begin({
+    runId: 'run_qo', sessionId: 'sess-qo', nativeSessionId: 'native-qo', mode: 'question-only',
+    publish: item => published.push(item), publishDone: (...args) => publishedDone.push(args),
+  });
+  assert.ok(run);
+  assert.equal(run.policy, null, 'a waived run must not enable tool approvals');
+  const pending = registry.request({ kind: 'question', nativeSessionId: 'native-qo', sessionId: 'sess-qo',
+    questions: [{ id: 'goal', question: '想做什么？' }] });
+  assert.equal(published[0].type, 'mcp_user_question');
+  registry.resolve({ sessionId: 'sess-qo', nativeSessionId: 'native-qo', runId: 'run_qo',
+    interactionId: published[0].id, expectedRevision: 1, action: 'submit',
+    response: { answers: { answer: 'a' } }, idempotencyKey: 'idem-qo' });
+  assert.deepEqual(await pending, { answers: { answer: 'a' } });
+});

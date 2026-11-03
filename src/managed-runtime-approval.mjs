@@ -32,6 +32,14 @@ const RECEIPT_LIMIT = 256;
  */
 const activeRegistries = new Set();
 
+/** True when any managed run (approval or question-only) owns this session. */
+export function hasManagedRun(sessionId) {
+  for (const registry of activeRegistries) {
+    try { if (registry.hasRun(sessionId)) return true; } catch { /* a racing dispose cannot own a live run */ }
+  }
+  return false;
+}
+
 /** True when an interactive managed run is live for this DSH session id. */
 export function hasManagedApprovalRun(sessionId) {
   for (const registry of activeRegistries) {
@@ -226,14 +234,18 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
      * @returns {{policy: 'ask', close: () => void} | null} run handle.
      */
     begin({ runId, sessionId, nativeSessionId, mode, publish, publishDone, signal } = {}) {
-      if (disposed || !MANAGED_APPROVAL_MODES.includes(mode) || !runId || !nativeSessionId || typeof publish !== 'function') return null;
+      // A run can be interactive for questions only (danger-full-access waives
+      // approvals); it still needs a presentation seat for mcp_user_question.
+      const questionOnly = mode === 'question-only';
+      if (disposed || (!MANAGED_APPROVAL_MODES.includes(mode) && !questionOnly)
+        || !runId || !nativeSessionId || typeof publish !== 'function') return null;
       const existing = sessions.get(nativeSessionId);
       if (existing && !existing.closed) return null;
       const run = { runId, sessionId, nativeSessionId, publish, publishDone, pending: new Set(), closed: false };
       runs.set(runId, run);
       sessions.set(nativeSessionId, run);
       signal?.addEventListener?.('abort', () => closeRun(runId), { once: true });
-      return { policy: 'ask', runId, close: () => closeRun(runId) };
+      return { policy: questionOnly ? null : 'ask', runId, close: () => closeRun(runId) };
     },
 
     /**

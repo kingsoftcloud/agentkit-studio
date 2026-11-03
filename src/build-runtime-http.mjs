@@ -217,9 +217,12 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         throw fail('RUNTIME_APPROVAL_MODE_UNSUPPORTED');
       }
       if (approvalMode !== undefined && !input.stream) throw fail('RUNTIME_APPROVAL_STREAM_REQUIRED');
-      approvalRun = approvalMode === undefined ? null : approval?.begin({ runId,
+      // Questions are a separate channel: an interactive stream needs a
+      // presentation seat even when the run waives tool approvals.
+      const interactiveSeat = input.stream === true;
+      approvalRun = (approvalMode === undefined && !interactiveSeat) ? null : approval?.begin({ runId,
         sessionId: input.platformSession?.sessionId || sessionId, nativeSessionId: input.sessionId,
-        mode: approvalMode, signal: abort.signal,
+        mode: approvalMode ?? 'question-only', signal: abort.signal,
         // Two independent presentation channels: tool approvals and agent
         // questions. The item type decides which projection renders it.
         publish: item => (item?.type === 'mcp_user_question'

@@ -18,7 +18,7 @@ import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
-import { hasManagedApprovalRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
+import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 
 const ROUTE = 'agentkit-studio';
 
@@ -616,9 +616,12 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           // when a managed interactive run owns this DSH session.
           const managedApprovalSessionId = String(options.sessionId || '');
           const managedApproval = hasManagedApprovalRun(managedApprovalSessionId);
+          // Question asks need the interactive seat, which exists even when the
+          // run waives approvals (danger-full-access).
+          const managedInteractive = managedApproval || hasManagedRun(managedApprovalSessionId);
           // Interactive runs expose an explicit question tool: codex's
           // app-server requestUserInput is not model-callable on its own.
-          const userQuestionTool = managedApproval
+          const userQuestionTool = managedInteractive
             ? createUserQuestionTool({
               sessionId: managedApprovalSessionId,
               request: ask => requestManagedApproval({
