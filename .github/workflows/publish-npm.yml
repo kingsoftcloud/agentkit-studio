@@ -50,6 +50,16 @@ jobs:
             echo "Version ${VERSION} already published, skipping."
             exit 0
           fi
+          echo "node $(node --version) npm $(npm --version) event ${GITHUB_EVENT_NAME}"
           # Trusted Publishing exchanges the GitHub OIDC token; setup-node must not
           # write an _authToken into .npmrc or npm falls back to token auth (404).
-          npm publish --ignore-scripts --access public --provenance
+          npm publish --ignore-scripts --access public --provenance || {
+            echo '=== npm debug log ==='
+            tail -n 120 "$HOME"/.npm/_logs/*-debug-0.log || true
+            echo '=== retry without provenance ==='
+            npm publish --ignore-scripts --access public || {
+              echo '=== npm debug log (retry) ==='
+              tail -n 120 "$HOME"/.npm/_logs/*-debug-0.log || true
+              exit 1
+            }
+          }
