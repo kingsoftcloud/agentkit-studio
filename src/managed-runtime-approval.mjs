@@ -44,7 +44,7 @@ export function hasManagedRun(sessionId) {
 export function hasManagedApprovalRun(sessionId) {
   for (const registry of activeRegistries) {
     try {
-      if (registry.hasRun(sessionId)) return true;
+      if (registry.hasApprovalRun(sessionId)) return true;
     } catch { /* A racing dispose cannot own a live run. */ }
   }
   return false;
@@ -181,6 +181,15 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
   }
 
   /** True when a live run owns the DSH session id or the platform session id. */
+  function hasApprovalRun(sessionId) {
+    if (disposed) return false;
+    for (const run of runs.values()) {
+      if (run.closed || run.questionOnly) continue;
+      if (run.sessionId === sessionId || run.nativeSessionId === sessionId) return true;
+    }
+    return false;
+  }
+
   function hasRun(sessionId) {
     if (disposed || typeof sessionId !== 'string' || !sessionId) return false;
     const direct = sessions.get(sessionId);
@@ -241,7 +250,7 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
         || !runId || !nativeSessionId || typeof publish !== 'function') return null;
       const existing = sessions.get(nativeSessionId);
       if (existing && !existing.closed) return null;
-      const run = { runId, sessionId, nativeSessionId, publish, publishDone, pending: new Set(), closed: false };
+      const run = { runId, sessionId, nativeSessionId, publish, publishDone, pending: new Set(), closed: false, questionOnly };
       runs.set(runId, run);
       sessions.set(nativeSessionId, run);
       signal?.addEventListener?.('abort', () => closeRun(runId), { once: true });
@@ -326,6 +335,9 @@ export function createManagedApprovalRegistry({ ctx, timeoutMs = DEFAULT_TIMEOUT
 
     /** True when a live managed run owns this DSH or platform session id. */
     hasRun,
+
+    /** True only when approvals (not just questions) are enabled for the run. */
+    hasApprovalRun,
 
     /** Release the answerer listener and cancel every still-pending ask. */
     dispose() {

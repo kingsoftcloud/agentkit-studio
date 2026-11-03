@@ -107,3 +107,19 @@ test('a question-only interactive run presents questions without enabling approv
     response: { answers: { answer: 'a' } }, idempotencyKey: 'idem-qo' });
   assert.deepEqual(await pending, { answers: { answer: 'a' } });
 });
+
+test('a question-only seat never reports an approval run', async () => {
+  const { registry } = (() => {
+    const published = [];
+    const registry = createManagedApprovalRegistry({ ctx: {}, timeoutMs: 5000, now: () => Date.now() });
+    registry.begin({ runId: 'run_qa', sessionId: 'sess-qa', nativeSessionId: 'native-qa', mode: 'question-only',
+      publish: item => published.push(item) });
+    return { registry };
+  })();
+  assert.equal(registry.hasRun('native-qa'), true);
+  assert.equal(registry.hasApprovalRun('native-qa'), false);
+  const approval = createManagedApprovalRegistry({ ctx: {}, timeoutMs: 5000, now: () => Date.now() });
+  approval.begin({ runId: 'run_ap', sessionId: 'sess-ap', nativeSessionId: 'native-ap', mode: 'risk',
+    publish: () => {} });
+  assert.equal(approval.hasApprovalRun('native-ap'), true);
+});
