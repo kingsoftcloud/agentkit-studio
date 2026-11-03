@@ -458,7 +458,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     void ctx.root.loader.await().then(async () => {
       if (stopped) return;
       const { syncPortableModelProfiles } = await import('../portable-model-bridge.mjs');
-      await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: managedRuntime?.modelProfiles || portableRuntime.manifest.resources.profiles });
+      await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: managedRuntime?.modelProfiles || portableRuntime.manifest.resources.profiles,
+        capabilities: profile => models.capabilitiesOf(profile) });
       if (stopped) return;
       await bindRuntime();
     }).catch(error => console.error('[agentkit-studio] portable runtime startup failed:', error?.code || 'PORTABLE_STARTUP_FAILED'));
