@@ -9,7 +9,10 @@
  * approvals stay on their own channel and can never settle a question.
  */
 
-export const USER_QUESTION_TOOL_NAME = 'request_user_input';
+// Codex's app-server ships its own `request_user_input` tool (gated to Plan
+// mode), which shadows any dynamic tool with the same name. Use a distinct
+// name so the managed channel actually receives the call.
+export const USER_QUESTION_TOOL_NAME = 'ask_user';
 
 export const USER_QUESTION_TOOL_SPEC = {
   type: 'function',
@@ -48,7 +51,7 @@ export function createUserQuestionTool({ request, sessionId } = {}) {
   const handler = async ({ name, arguments: args, signal } = {}) => {
     if (name !== USER_QUESTION_TOOL_NAME) return undefined;
     const question = String(args?.question || '').trim();
-    if (!question) throw Object.assign(new Error('request_user_input 需要一个非空的 question'), { code: 'USER_QUESTION_INVALID' });
+    if (!question) throw Object.assign(new Error(`${USER_QUESTION_TOOL_NAME} 需要一个非空的 question`), { code: 'USER_QUESTION_INVALID' });
     const options = Array.isArray(args?.options)
       ? args.options.map(option => String(option)).filter(Boolean).slice(0, 20)
       : [];
