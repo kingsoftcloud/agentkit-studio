@@ -17,6 +17,7 @@ import { createCodexToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
 import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
+import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
 
 const ROUTE = 'agentkit-studio';
@@ -603,6 +604,29 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           // when a managed interactive run owns this DSH session.
           const managedApprovalSessionId = String(options.sessionId || '');
           const managedApproval = hasManagedApprovalRun(managedApprovalSessionId);
+          // Interactive runs expose an explicit question tool: codex's
+          // app-server requestUserInput is not model-callable on its own.
+          const userQuestionTool = managedApproval
+            ? createUserQuestionTool({
+              sessionId: managedApprovalSessionId,
+              request: ask => requestManagedApproval({
+                ...ask,
+                nativeSessionId: managedApprovalSessionId,
+                sessionId: managedApprovalSessionId,
+              }),
+            })
+            : undefined;
+          const baseDynamicTools = resources.dynamicTools || [];
+          const baseToolHandler = resources.toolHandler;
+          const dynamicTools = userQuestionTool
+            ? [...baseDynamicTools, userQuestionTool.spec] : baseDynamicTools;
+          const toolHandler = userQuestionTool
+            ? async call => {
+              const outcome = await userQuestionTool.handler(call);
+              if (outcome !== undefined) return outcome;
+              return baseToolHandler(call);
+            }
+            : baseToolHandler;
           try {
             yield* codexFrames(codexRuntime, {
               agentId,
@@ -617,8 +641,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               imageInputs: history.flatMap(message => Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',
-              dynamicTools: resources.dynamicTools || [],
-              toolHandler: resources.toolHandler,
+              dynamicTools,
+              toolHandler,
               ...(managedApproval ? {
                 approvalPolicy: 'on-request',
                 requestApproval: info => requestManagedApproval({
