@@ -12,7 +12,8 @@ const fingerprint = request => createHash('sha256').update(JSON.stringify({ vers
 const presentationTypes = new Set(['response.output_item.added', 'response.output_item.done',
   'response.content_part.added', 'response.content_part.done', 'response.output_text.delta', 'response.output_text.done',
   'response.reasoning_summary_text.delta', 'response.reasoning_summary_text.done',
-  'response.function_call_arguments.done', 'response.resource_check', 'response.tool_result']);
+  'response.function_call_arguments.done', 'response.resource_check', 'response.tool_result',
+  'response.question_resolved']);
 
 /** Normalize one derivative record to the only shape the Session log keeps.
  *  DSH persists session events as lossless JSON: the append site detaches a
