@@ -65,11 +65,12 @@ export function createStudioNativeModelBinding({ descriptions, models, fetchImpl
       ...(inlineReasoningPolicy ? { inlineReasoningPolicy } : {}),
       ...(providerCompatibilityPolicy ? { providerCompatibilityPolicy, ...modelOptions } : {}),
       ...modelRuntimeOptions,
+      maxProviderRetries: original ? original.configuration.profile.maxProviderRetries : 10,
       ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
       providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
     context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
       resolveProfile: async () => {
-        const current = { ...await models.profile(id), modelName: profile.modelName };
+        const current = { ...await models.profile(id, { admittedModel: { profileId: profile.id, modelName: profile.modelName } }), modelName: profile.modelName };
         invariant(hash(descriptions.get(current)) === digest, 'studio_native_model_binding_changed');
         return { protocol: desc.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
           model: profile.modelName, parameters: desc.parameters };

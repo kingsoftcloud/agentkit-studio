@@ -276,7 +276,7 @@ test('a real reader child does not acquire its command-enabled parent resource c
   f.gateway.forChild = function(agent, authority) { bound = authority.localExecution; return original.call(this, agent, authority); };
   await f.host.executeTurn(f.payload);
   assert.ok(bound, 'the child tool owner receives the frozen Host policy without granting extra tools');
-  assert.equal(bound.resourceProfile, 'local-development/v1');
+  assert.equal(bound.resourceProfile, 'local-development/v2');
   // The child owner stores a narrower scope; use its parent-owned lineage ref.
   const parent = f.ledger.load(f.scope, f.ledger.sessionHead(f.scope, f.payload.agent.session.id).runId);
   const reservation = parent.snapshot.childBudgetReservations[0]; assert.ok(reservation);

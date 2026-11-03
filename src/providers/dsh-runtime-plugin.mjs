@@ -217,18 +217,25 @@ export function apply(ctx, config = {}) {
     else install();
   }
   const wholeNativeTurn = config.nativeEngineContract === NATIVE_DSH_TURN_CONTRACT;
-  let nativeToolBindings = null;
+  const nativeToolBindings = new WeakMap();
   const boundToolPolicy = wholeNativeTurn ? normalizeNativeAgentPolicy(config.boundToolPolicy) : null;
   const bindNativeTools = agent => {
-    if (nativeToolBindings) return nativeToolBindings;
-    nativeToolBindings = bridge.createNativeTools({ ctx, config, agent });
+    const owner = agent ?? ctx;
+    if (nativeToolBindings.has(owner)) return nativeToolBindings.get(owner);
+    // The preset is shared; tools and approval guards belong to the Agent's
+    // live scope. DSH disposes that scope with the Agent and isolates registry
+    // names between sibling Sessions, even when their workspaces are equal.
+    const toolsCtx = agent?.ctx ?? ctx;
+    const tools = bridge.createNativeTools({ ctx: toolsCtx, config, agent });
+    if (toolsCtx !== ctx && typeof ctx.effect === 'function') ctx.effect(() => () => tools.close?.(), 'agentkit-studio: Native preset tool retirement');
     if (boundToolPolicy) {
-      const install = () => installNativeBoundPolicy(ctx, boundToolPolicy,
-        (subject, toolName) => nativeToolBindings.policyDefinition(subject, toolName), nativeToolBindings.durableApproval);
-      if (typeof ctx.effect === 'function') ctx.effect(install, 'agentkit-studio: bound Native policy');
+      const install = () => installNativeBoundPolicy(toolsCtx, boundToolPolicy,
+        (subject, toolName) => tools.policyDefinition(subject, toolName), tools.durableApproval);
+      if (typeof toolsCtx.effect === 'function') toolsCtx.effect(install, 'agentkit-studio: bound Native policy');
       else install();
     }
-    return nativeToolBindings;
+    nativeToolBindings.set(owner, tools);
+    return tools;
   };
   // Preset mounting precedes Session publication. Register tools once the
   // Session's committed directory is available, before prompt assembly.
@@ -262,10 +269,10 @@ export function apply(ctx, config = {}) {
   if (wholeNativeTurn) ctx.on('agentkit/native-recovery-binding', async ({ agent }) => {
     if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
-    bindNativeTools(agent);
+    const tools = bindNativeTools(agent);
     return { agentId, runtime: config.runtime, local: true,
       agentRevision: config.agentRevision, ...(config.buildId ? { buildId: config.buildId } : {}),
-      nativeEngineContract: config.nativeEngineContract, boundToolPolicy, nativeTools: nativeToolBindings };
+      nativeEngineContract: config.nativeEngineContract, boundToolPolicy, nativeTools: tools };
   });
   if (!wholeNativeTurn && config.local === true && config.a2aBindings?.length) ctx.on('agentkit/dsh-a2a-binding', async () => {
     if (config.resourcesUnavailable) throw Object.assign(new Error('A2A resources unavailable'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });

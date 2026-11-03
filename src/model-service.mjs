@@ -46,7 +46,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     creating = pending.catch(()=>{});
     return pending;
   }
-  async function profile(id) {
+  async function profile(id, { admittedModel } = {}) {
     const { values } = await configuration.resolve();
     const profiles = values.modelProfiles?.length ? values.modelProfiles : [{ id: 'default', provider: values.modelProvider || 'ksyun', modelName: values.modelName || 'deepseek-v4.1-flash', baseUrl: values.modelBaseUrl, credentialName: 'AGENTKIT_MODEL_API_KEY', apiKey: values.modelApiKey }];
     // An empty id selects the default profile (first valid when no marker
@@ -61,8 +61,9 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       const missing = () => Object.assign(new Error('模型配置不存在、已停用或不在网关目录中'), { code: 'MODEL_NOT_FOUND', status: 404 });
       if (!id || profiles.some(item => item.enabled === false && (item.id === effectiveId || item.modelName === effectiveId))) throw missing();
       let gateway;
-      try { gateway = await profile(''); } catch { throw missing(); }
-      if (!(await gatewayModels(gateway)).some(item => item.id === effectiveId)) throw missing();
+      try { gateway = await profile(''); } catch (error) { if (admittedModel) throw error; throw missing(); }
+      const admitted = admittedModel?.profileId === gateway.id && admittedModel?.modelName === effectiveId;
+      if (!admitted && !(await gatewayModels(gateway)).some(item => item.id === effectiveId)) throw missing();
       return { ...gateway, modelName: effectiveId };
     }
     const resolved = await credentials.resolve(selected.credentialName || 'AGENTKIT_MODEL_API_KEY');
