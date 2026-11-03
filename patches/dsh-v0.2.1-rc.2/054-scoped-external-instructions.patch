@@ -258,7 +258,7 @@ index b8e88e7aebb98ff92596f724b2313440e40edc34..38135c42e85c7f4a6d30416279a64d0d
      mode: 'emit',
      signature: '\'agent-loop/config-start-failed\'(payload: { sessionId: SessionId; error: unknown }): void',
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index d79d2d9ebfa1dc44777246e9db16ad5fa327ec4e..4e8ca159c3a8f9a38aa6a02f3f8efe66766a2ddc 100644
+index 4d7b036a4338efac1489d529d02ce1b007256894..091d6359d795b7be47f127f6f5e3c4fab6b52877 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -6837,6 +6837,9 @@ importers:

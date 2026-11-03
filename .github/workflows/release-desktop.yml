@@ -496,7 +496,8 @@ jobs:
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
     needs: [source-gate, macos-arm64]
-    runs-on: ubuntu-latest
+    # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
+    runs-on: ubuntu-24.04
     environment: studio-signing
     timeout-minutes: 60
     concurrency:
@@ -669,7 +670,8 @@ jobs:
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.publish_feed && needs.publish-mac-arm64.result == 'success' }}
     needs: [source-gate, macos-arm64, publish-mac-arm64]
-    runs-on: ubuntu-latest
+    # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
@@ -718,7 +720,8 @@ jobs:
   web-and-host:
     name: Real Web and DSH Host
     needs: [source-gate]
-    runs-on: ubuntu-latest
+    # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     defaults:
       run:
@@ -793,7 +796,8 @@ jobs:
     name: Queue matching Windows release
     needs: [source-gate, macos-arm64]
     if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && needs.macos-arm64.result == 'success' }}
-    runs-on: ubuntu-latest
+    # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

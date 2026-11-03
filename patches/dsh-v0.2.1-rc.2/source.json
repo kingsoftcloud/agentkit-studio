@@ -2,391 +2,391 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "df1da201ebdc31f578a1734508994b86a0f1caae",
-  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2-native-clock",
-  "tree": "895b6ecdc1e77574b62ad95392b8c19fd58f5ec7",
-  "sourceSha256": "dbbdefbf748898e51f8fad246c6e421540d9553ca3e0fc96123cf0e9498cd044",
+  "headCommit": "70560051ed5d5d40d436ac0087420bf6a5c7e055",
+  "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
+  "tree": "ee4e8547ce63f2b15f06e5fcd1f26c5ea49176ea",
+  "sourceSha256": "a1ef4b8af4406f393485199f6bd754470ac86323a4f275510397b281fc0f49a7",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "9d49dec0730110a7bc153fc349a18c2e59b7934fb7f05c6db518794da159d06e"
+    "sha256": "6014ede3f0a814b0ae367ae6c1bdc1e0547498e901d41999b5bc8c14a2903656"
   },
   "commits": [
     {
       "id": "004",
       "file": "004-sidebar-panel-lifecycle.patch",
-      "commit": "a8b84ef7a154fae7e86baa2f3d348bd45cd0a18a",
+      "commit": "744b6f3f1e15878cc57464db10b3dca3cf22710b",
       "sha256": "111e9a416df3721543ad74e7b10846c208c1ed729139b18016d4fe0572aac089"
     },
     {
       "id": "006",
       "file": "006-desktop-plugin-package-set.patch",
-      "commit": "4898fdf1f95f466dd4d78c6ef5392ba938ad39e1",
+      "commit": "fbd7b304659d71254571b75cfd4044e895180dad",
       "sha256": "fe78af7c47a573f169e790d269500493c8c640cfc4f7aa63e76a56eb60586394"
     },
     {
       "id": "008",
       "file": "008-agent-session-without-workspace.patch",
-      "commit": "636ad32adf2b7a5f4a260f59914d2122311a0ca2",
+      "commit": "18ed5e0b3b3c9ce526e8be4e6a4fe9be3c8c2be2",
       "sha256": "55d874f62b72c4cf210cc3f73af806746ec99c333c12ddef667e1292419b5888"
     },
     {
       "id": "009",
       "file": "009-local-macos-package.patch",
-      "commit": "4056c741b01840791eb5e06bcc132199817abcc1",
+      "commit": "e46c3a15a04ad471b28afbab48d64dcb551c85b3",
       "sha256": "51bbaa62456a9c53b354fc86ce9789985e0553614456293ba87756becf5fdd06"
     },
     {
       "id": "010",
       "file": "010-session-model-default.patch",
-      "commit": "3bff7dc5f5c54671a035b280a82503c54065de8b",
+      "commit": "1647d4692fc8608351eb29fdb99fab88c91ce8e1",
       "sha256": "5dc4fb8d8651526804a226061aaf302a8a8a8d2907bfd86ceed92f0b5d0d695e"
     },
     {
       "id": "011",
       "file": "011-cjk-autolinks.patch",
-      "commit": "d84383d7e71f7e30535f1f6aa667b4e921944309",
+      "commit": "d8eb403d6946b83427c616eed2bf51184916ad0f",
       "sha256": "d33408ec6e20d1bf4f877f8f78e402fb57d902f8fca599e62645e896bd75da9a"
     },
     {
       "id": "012",
       "file": "012-preset-roster-invalidation.patch",
-      "commit": "04bd5cd164103d9bd3b49232fbbd17668ec39a8e",
+      "commit": "0b269137556292587182f6f22127fd43df37f2e7",
       "sha256": "b2f3681125b922a1e244aeb236ed2c911818813286e34cde73e8b5110c878933"
     },
     {
       "id": "013",
       "file": "013-existing-product-profile.patch",
-      "commit": "4dcc4266fde095ab94f6780280718fb1ca876108",
+      "commit": "fb3099b02c86a1fe6bae4d5c498a1d14081a4a31",
       "sha256": "ac2724fc749623a1adf5c148776d69f619b531f8a2b12a1b670a6f0533975065"
     },
     {
       "id": "014",
       "file": "014-desktop-product-brand.patch",
-      "commit": "385f7a62d804f79b74fdacd66e1acbf746102777",
+      "commit": "51c9251c5b75dc9faadf6a292f63cd6af74416eb",
       "sha256": "0b49a70318ead15a0fb940775427ce992125c67de73db6dfcdbb7f20ab350fff"
     },
     {
       "id": "015",
       "file": "015-compatibility-docs.patch",
-      "commit": "2d6ab4e9390dc917aee40b02dc9e6072e4790b83",
+      "commit": "06ef64234986826f37d86dfe3fef18c3806322a5",
       "sha256": "9905f19acf7049331b11e28234083e30290ba55e2d1920ef69b67863c92a3cda"
     },
     {
       "id": "016",
       "file": "016-informational-session-events.patch",
-      "commit": "47d4b830bb1429895b42b439a5c3a183ee24af0f",
+      "commit": "3416d2ba13b8ab82756013156c4bc9b31248550a",
       "sha256": "2dafd72427a39ff19282637ce2afd49f0a3996f42284305d1cb2ea9cc053ed43"
     },
     {
       "id": "017",
       "file": "017-ungrouped-new-session.patch",
-      "commit": "8d9b1e9efc62611f945d29f21a59e86313df26f5",
+      "commit": "f6f0f4ef16d61da4268a6d0fc8a845e124ec685a",
       "sha256": "4c43665faac187495f2af3ec1db2d37d725ffeebdc03f878db1764a566aadb38"
     },
     {
       "id": "019",
       "file": "019-studio-product-update-feed.patch",
-      "commit": "7a67cf15ebd8cac3469c86c68b7dfa3f472baf9f",
+      "commit": "3a91b13f074a247a0bd5a0bb4eec94b19c3864f4",
       "sha256": "9bfb39c3853040a91d94f300a8141a57538d900406a4fe850dccf36a8a70db44"
     },
     {
       "id": "020",
       "file": "020-studio-signed-product-name.patch",
-      "commit": "82a90cfd2cd2f8d27711e679a4c8d6eb16ef2d70",
+      "commit": "46849c78613920e7d3769a780db31ad0aa73e2fe",
       "sha256": "162bf6ec35dd52ac6242db9bc7835b160203a2b4395067c452a1a1c88f142e05"
     },
     {
       "id": "022",
       "file": "022-ks3-single-range-updates.patch",
-      "commit": "70515a25a815d6ea7247846596287ec01fccb299",
+      "commit": "74f1f98c7180668baa56b0b8e34fc30eadf09ca4",
       "sha256": "bb1cc8a44c9510ca1807965c2bf7378dca0e0607a667ae468401d56bb2f7f3f9"
     },
     {
       "id": "023",
       "file": "023-codex-code-mode-signing.patch",
-      "commit": "39f9a131a819e65c20378c6af654cd8e21b8c566",
+      "commit": "f534d55264f5e3c63aaccfca3921c549856d89f2",
       "sha256": "20d025dde4897e1fa8471e9caffa754337a8496c59cbf3b61ac7e1d32ae30fbb"
     },
     {
       "id": "024",
       "file": "024-desktop-build-version.patch",
-      "commit": "22b780ba3cb199db58dde9f4a5473322d4f585f9",
+      "commit": "e070dc0d284af7251c54709c886390095965a8c8",
       "sha256": "cf9005dce739109fa571cb7647f41e8b4dc2244336f86b5f470532fe94bdb542"
     },
     {
       "id": "025",
       "file": "025-windows-certificate-store-signing.patch",
-      "commit": "4da73515f9062494540acca2cf08e4e927498417",
+      "commit": "3da7817b027676d4ad2f13fa85183dcfa00d8ec3",
       "sha256": "c364bd72d04efc10589e604eba75a24cb90c665ebaee7fb4af55ec748dd69099"
     },
     {
       "id": "026",
       "file": "026-preset-composition-reuse.patch",
-      "commit": "4c65ed496456fe25422c15c182f338b9b5b5128c",
+      "commit": "7531e3cde3508b13a56dc68b25a2159f3d045cc2",
       "sha256": "8759d71828e21d60b45d1801229353f819211e51f3e9e0c9d3a3313b835cd399"
     },
     {
       "id": "027",
       "file": "027-windows-installed-path-smoke.patch",
-      "commit": "eb1be802ab99d378039b0b33cb1a6cbbd9399f77",
+      "commit": "93b705d26382fc66e06ae77734340bbaaa9f49dd",
       "sha256": "076bde9be0cf3dee74c59c96578fde5ab2100d798c9fc4986015988b0d119684"
     },
     {
       "id": "028",
       "file": "028-smoke-plugin-readiness.patch",
-      "commit": "a84af5a2cd476afdf94e9fe67e0ba079a49b4264",
+      "commit": "72839865419b7f625d769d5f1578e787becb3a49",
       "sha256": "db484e7d2a731515ee5b069db6325723db0446ad9e1dc00127ceebf2dac27a7a"
     },
     {
       "id": "029",
       "file": "029-full-update-blockmap-cache.patch",
-      "commit": "9e314e44bf207bb05fd541fb0f2c61386891c758",
+      "commit": "0e1ac344f10c6185d0ef8e057059d40ff6e67bf5",
       "sha256": "ca0639b6b90eddce50732329e200b78f7bd5ec5344c403f9071cfc077337706b"
     },
     {
       "id": "030",
       "file": "030-plugin-smoke-diagnostics.patch",
-      "commit": "0a90ac0baa2e19c215e4c2a84e3cd45a8c7ea7f3",
+      "commit": "0851760f1f177f472197269d9a7280b7c1cbe484",
       "sha256": "67801ff43685d1fff0c3adee0a47e77b3ee43f05f4e91af679c7f512cd3b5b3a"
     },
     {
       "id": "031",
       "file": "031-canonical-windows-smoke-paths.patch",
-      "commit": "cbae61cddfaedec1f7552886ce364c672fdf6024",
+      "commit": "9363ca7d2718699f02aefc8c6bcac4d42504d6cb",
       "sha256": "aa8835d6db3870f1b14bc036f226fbd10e2d690e7179dab1bc756c37ef141569"
     },
     {
       "id": "032",
       "file": "032-windows-studio-product.patch",
-      "commit": "529e2ab9d86957a9ace5d2fc64723c32d07c0925",
+      "commit": "183603c2319e168839eace504664263ae6d21fe0",
       "sha256": "af2c5228381354cf03293d214d9b5d7d9578e137bdb91a483d7467feb8250d78"
     },
     {
       "id": "033",
       "file": "033-windows-single-range-evidence.patch",
-      "commit": "06aaca884702970771df5f61499bcded23be7863",
+      "commit": "c9fd56598fd3d2f1a766686882c71950f7bc9726",
       "sha256": "776ad97adfc42544cfdcee72dce00be92b3a3bf029611a95ef0762597666fa5e"
     },
     {
       "id": "034",
       "file": "034-product-windows-tray.patch",
-      "commit": "2dfba351fbb2b75e541c00143a268fb084863e3c",
+      "commit": "b4de12ea8170341ce45179464a1bfc0d45ef6b24",
       "sha256": "b1bae223890371b640c3e2e32a0db93163b07a0da7db2a07b71856f162751dfc"
     },
     {
       "id": "035",
       "file": "035-public-product-presentation.patch",
-      "commit": "3cb29a4f402c525cdf488c97eaef2d35f2337685",
+      "commit": "28ec0a1d00daf474359a9be8011c08d6a4e58e3f",
       "sha256": "579395d61fabcecdbcd74ca7848de129e01524dd9bb92e0cf43c5b4c72939597"
     },
     {
       "id": "036",
       "file": "036-preset-composition-generated-api.patch",
-      "commit": "97271f79e2c39e647662d312d4685bcb63ace877",
+      "commit": "0f89cd23e9d53f1ba3d6c2122704cf53ffaad4fc",
       "sha256": "80851a91fd4627f4cd3a602011322ab5be4efe90337d6e9029ab2de9a519ffb2"
     },
     {
       "id": "037",
       "file": "037-web-editor-snapshot-ready-state.patch",
-      "commit": "b4dacc8dfd7ad2689ccd84ce7d7c466c1fe90b28",
+      "commit": "70a640e7c0ed0b602aa798a68294ae9b65643ebe",
       "sha256": "16a36a0bcc1597b658403a7b00fca4ef87dd2cdee02e60fcc8e3595c9afcecb6"
     },
     {
       "id": "038",
       "file": "038-prompt-request-fingerprint.patch",
-      "commit": "7c883941ebad778d576666abb4d595445a4ac345",
+      "commit": "c16b7c1272545c25ff4a064593c766bb654d28b2",
       "sha256": "898d2999778b569704e63f8d25e6dd6a952363092dcdc3f885f3a891daa52a61"
     },
     {
       "id": "039",
       "file": "039-exclude-package-ci-metadata.patch",
-      "commit": "55e6a7e924e88882ba783acb6803f48a0e2feb3e",
+      "commit": "5b2d222f4aba567813896cce546c977a410b4556",
       "sha256": "95e75002a63b5a5ade2acfb29ed47850eedcb891cf2f6fe16da89f03202eda41"
     },
     {
       "id": "040",
       "file": "040-desktop-web-port-configuration.patch",
-      "commit": "5d9d4f46a4e0ea41b3f5d5fb55c086978e7aa9ca",
+      "commit": "12e8680fcbfa18c432d1fa2c933567038ae52aac",
       "sha256": "be989d3805422d9a6d3eccb7e84a4ff20e958cb8a0d597d73d49682cd539468a"
     },
     {
       "id": "041",
       "file": "041-rc2-integration.patch",
-      "commit": "00ebab9280540b4a4ad3cbbb786a513c41117e39",
+      "commit": "d987ac316c2e4c38bff1507b55b6696a55a0c218",
       "sha256": "556f431116d29faf566e63234513d30d52c0d7276196ff3b96377e2b928e222b"
     },
     {
       "id": "042",
       "file": "042-inspector-cordis-frame-budget.patch",
-      "commit": "e4363ce41cf53ba040b18b887d7cdc097f581d54",
+      "commit": "bb5d1b813e7481efd760701a53a6e7d765a52b3b",
       "sha256": "ef2592ef7edb77b28b60e2ff5c6332415656121b05c52de337c8c481fcb2094d"
     },
     {
       "id": "043",
       "file": "043-cloud-permission-presentation.patch",
-      "commit": "94a3e61b0360cd99368c8b2b1c634a8fdf01d779",
+      "commit": "4e1b791c709091063ecf3016e0a1bde30442dea1",
       "sha256": "88554732149613ffd5c0d9113285369d1f966bf17b072f1737b80d9493917615"
     },
     {
       "id": "044",
       "file": "044-conversation-instance-isolation.patch",
-      "commit": "a7c70c4610e31ca0e7330cb3c62975cb9bf5b21f",
+      "commit": "31fa61017b230a62b011db08bc3834c6ef7105f4",
       "sha256": "65acfe10a26e576d5788956489e4e11e5bfe37856f3afb8cfabd121df73366a3"
     },
     {
       "id": "045",
       "file": "045-tool-dispatch-definition.patch",
-      "commit": "588dbf417da381496aaf84b8f56fa50ddbbe7637",
+      "commit": "0b34fd228dd8a28f6878de65c62aef7e1e6113e1",
       "sha256": "ca853c522cfd083cb8cc445a6be16f75ff89c625901d286801310d9ee5610709"
     },
     {
       "id": "046",
       "file": "046-maintained-doc-refresh.patch",
-      "commit": "aa199c96d679641c8a835b8b84497ecb32b79a06",
+      "commit": "6d0162bee42fb7d90615c55dfb18a1e9ddc33620",
       "sha256": "682658045d41930146acb9639e77b026efc76675f957ca530822e751b4d306d4"
     },
     {
       "id": "047",
       "file": "047-execute-turn-engine.patch",
-      "commit": "e764cd215dec2998ff3f58e0613a0d09d8a06f7d",
+      "commit": "681f44fdb9f57a9de084014b86050f077aea523e",
       "sha256": "be16e569d05073d19c0d9ae9b083f076930b89a449e0f65ee8d714b399ed6458"
     },
     {
       "id": "048",
       "file": "048-sdk-external-turn.patch",
-      "commit": "4d4f6d195cc5bb2871387c810e29482465247f27",
+      "commit": "5a1381eaee3693d1287ad4ef127fa1c66a26e9f5",
       "sha256": "ec0c79da110c1d4f69af059db0ddabd2b4936acf10d8b4e5bf10700b8bf4132f"
     },
     {
       "id": "049",
       "file": "049-exact-numeric-arguments.patch",
-      "commit": "ef3e02863a3268d46ac2c4c14d4873343168c2fa",
+      "commit": "f52e232bfa5a729de7bf06638c6100ef51e8bfa5",
       "sha256": "0eb09128a48441d240947ea859a2b7e0890dec7df70fa4101cbe7baaccd48a1e"
     },
     {
       "id": "050",
       "file": "050-external-turn-ownership.patch",
-      "commit": "f4bccbf1c3b6c5dcf15a874424aca00f1895461c",
+      "commit": "d0148b872652019de57c06942d9e782d30cbe513",
       "sha256": "a9ed68eb18bc421c2165b8b453f12dffecf7f32261f56eea09f2ed32f4c1a62e"
     },
     {
       "id": "051",
       "file": "051-external-turn-idle-admission.patch",
-      "commit": "570ad6033c4d0954451ad8822ab47bfb2160ed4c",
+      "commit": "79f6c62acafb104d8ddabd9b250bd2e31609c60d",
       "sha256": "ebc75efa990d3c1dccdd8accbabdf104acb4bd7d60c00bb4ec13530ce91ede0e"
     },
     {
       "id": "052",
       "file": "052-node-only-primary-runtime.patch",
-      "commit": "594077b72ae7398531f340564e80e88169a43c94",
+      "commit": "e6c5d60fe2bd9b2ae7213a79a659affdda7a69f2",
       "sha256": "d820c35a87cd28940b1eb3936edf29123ea4dac6bd4ebab2c92f269945d633ee"
     },
     {
       "id": "053",
       "file": "053-node-office-authoring.patch",
-      "commit": "c7e4398390cdd0cf2604ce48acd40d84bd896068",
-      "sha256": "190e111308eb3d3e7e6253eaa46cef4b01669b08e15523bf775b15a8c959b01a"
+      "commit": "d5386f4d79ce5304b9bb40cdd2ac0104f574a2ca",
+      "sha256": "e4534ec869b39dff9c02da33fdcdd2b54f5c43f87b679b7ef4912fc3f3c94951"
     },
     {
       "id": "054",
       "file": "054-scoped-external-instructions.patch",
-      "commit": "a0272d447be3d951800fcb9062ea571ff1d1fede",
-      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2"
+      "commit": "aab6731a667f6aa30ece3fa8b48e7192cbd4f34a",
+      "sha256": "121d3631fd048e8d829abed760080d59b4f20a8083423551374686c87267b216"
     },
     {
       "id": "055",
       "file": "055-tool-dispatch-guard.patch",
-      "commit": "786f15474b99c012680e76326a55386848c8f45b",
+      "commit": "973f62800621aba089ac03ad5f970368fc37a6f4",
       "sha256": "82fe39c6efdc771a11920cbcc27832183c285fdc110d2dc3091cbf3e711adcc4"
     },
     {
       "id": "056",
       "file": "056-caller-result-retention.patch",
-      "commit": "600cd0b7e7a72ef8b6774d05aabccaba30b5895b",
+      "commit": "3d1ebf50bf62b96e0b9b9414f9a2e1fee27c7eb7",
       "sha256": "41f7b0eeb18f3201193b94df2e157c8a6344cbc2fa57d321924f86ab16e93f37"
     },
     {
       "id": "057",
       "file": "057-runtime-chat-presentation.patch",
-      "commit": "b752e6a4a07d497ec30c820c3caa77f318356602",
+      "commit": "3aca5bb558eda35ee282a823ad84fdc29da0ea68",
       "sha256": "00475d007b7d10d76b0044f2a653af083e3f76d207184002312557a6cd0d61fb"
     },
     {
       "id": "058",
       "file": "058-chat-table-layout-boundary.patch",
-      "commit": "d68df244a5b220584bd8534f2c157e5aa239907a",
+      "commit": "1c6c82826e099497bee183979bf7b2bc5ab318fa",
       "sha256": "54372264c65e91607ba3b0ab9a6368e9047264dd9e41e81a7939db8ab2fd8216"
     },
     {
       "id": "059",
       "file": "059-chat-status-presentation-seat.patch",
-      "commit": "2ef4455c10eed95d9786533c52efd953d0c641f4",
+      "commit": "040b62c7341e535a2d4ad5b0c83aa8f40f12b61c",
       "sha256": "13f6b4128ab27fddd72ab856fd1605a8d5709ecab0e1ccd061f64ef2c6d23986"
     },
     {
       "id": "060",
       "file": "060-conversation-status-todo-owner.patch",
-      "commit": "a4403d52e8d4fb602ee4343c32f0d415e9fe3f8d",
+      "commit": "69e9b49e54686b0731572e087b4badc97db05e7e",
       "sha256": "9f91ca15990e72774be479ba8b01f0a707e6825007ea80d95f94ec4b490a8ddf"
     },
     {
       "id": "061",
       "file": "061-tool-preflight-defer.patch",
-      "commit": "609f1aed18758966eee9815f245d86a9e227c084",
+      "commit": "3d97526c7e2ac006b14be6e5f15545fb864b071b",
       "sha256": "41956a490e4625f7ecf66edfa0a18d9a5aef6124e13fa8044d6f751a7c67a0ee"
     },
     {
       "id": "062",
       "file": "062-conversation-shell-scroll-owner.patch",
-      "commit": "d918977b892638296d9e36af6721272e7e704ccb",
+      "commit": "1257e546c05b608d7cf2af98c12a99815cd418fb",
       "sha256": "f276a5017f762fb8acac9e53e95951bfa0527fb2b5af4033946d07c7400455c9"
     },
     {
       "id": "063",
       "file": "063-tool-preflight-contract-type.patch",
-      "commit": "54ae75219e468f78e6086bc5a742ea3bd3193ddf",
+      "commit": "54b02b4556960234996ae6bf7e2dd4125d73a0d9",
       "sha256": "0709c4c4d84d715a2a7c93ad9991042c83b7660ccaae2ce5764b59b07b091613"
     },
     {
       "id": "064",
       "file": "064-macos-studio-identity.patch",
-      "commit": "2d3f86b1504d75ec7ca02eb96c18b4bf1a02d4cf",
+      "commit": "f64c6cc8c75aa005a1fa0f44ef93bebbed1a1e85",
       "sha256": "10b63f2e4b99fd5efcd03040e0028df4efa230c97636a6f5149b3f3f0e035ff1"
     },
     {
       "id": "065",
       "file": "065-native-schedule-manager.patch",
-      "commit": "38fc5e2d354b078c711851a3d78954d294485436",
+      "commit": "c30a1c30e90ef4e28600bd47b5ca05fddb289ead",
       "sha256": "fa2dac9916d7c56d95f42103a232caa110d6f86a96f01b0687dae4ecee6a99ac"
     },
     {
       "id": "066",
       "file": "066-isolated-native-browser.patch",
-      "commit": "83f1429e0cc8e888ce7f22fb58b6e24d41d431b4",
-      "sha256": "894d09790d6ecfe345dfdad52e067819e6b303eb90e20fc381053867b6f2f6f5"
+      "commit": "c5bed522214e4e30b8b3b2390841961f8f7d502b",
+      "sha256": "09952f2b4055f4f3a70a1a765a391f5ea597efcf82f12231a9da57ab592096f4"
     },
     {
       "id": "067",
       "file": "067-flock-libc-report-network.patch",
-      "commit": "f2946d7bec12451932edcb56de76e8e9a4446c62",
+      "commit": "299078c6e7888e479b0d3d45606d6afa7ad8ba25",
       "sha256": "5308b85d6836a2feecdd05168e990d6273032d9dcd03c9ca19a17cc0afd70d05"
     },
     {
       "id": "068",
       "file": "068-maintenance-source-validation.patch",
-      "commit": "d7f6fb3849ea894d1596e76049ee8e84ee6867d2",
+      "commit": "f1a2cdb8e764f480357df9f3ebf9d0c49a08d2ec",
       "sha256": "3326f9d15bc1f6b8e67a0014a1a5cb7974d1efd5ca9a0bb9a98a906cb131bbce"
     },
     {
       "id": "069",
       "file": "069-desktop-cli-product-name.patch",
-      "commit": "b366fda4a6e014449a973b986e6673f197fe5699",
+      "commit": "01f5c5327919ed3c8ea85e7f9c59268ff056aa65",
       "sha256": "f4dd3c1dedbd17360bcdf769f843c5dfb57ea70651e1442c8ed03239bccfc973"
     },
     {
       "id": "070",
       "file": "070-shared-zone-test-clock.patch",
-      "commit": "df1da201ebdc31f578a1734508994b86a0f1caae",
+      "commit": "70560051ed5d5d40d436ac0087420bf6a5c7e055",
       "sha256": "d374594de68f65bc6fdfaa66ff71810eee12000a400d86d2346480f1e814fd9a"
     }
   ]

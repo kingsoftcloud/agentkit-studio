@@ -2433,7 +2433,7 @@
         "pnpm-lock.yaml",
         "scripts/primary-runtime/prepare.ts"
       ],
-      "sha256": "0897958f5d621962849ffd5e8a9203fa8d978bb63fc678eb76777325e2782b10",
+      "sha256": "e4534ec869b39dff9c02da33fdcdd2b54f5c43f87b679b7ef4912fc3f3c94951",
       "sequence": 46
     },
     {
@@ -2498,7 +2498,7 @@
         "snapshots/session/agent-instructions-external/workspace/nested/AGENTS.md",
         "snapshots/session/agent-instructions-external/workspace/nested/task.txt"
       ],
-      "sha256": "046a6df9fce7092ac2464e7027f160571862007b9206ae53c0461d28b38115e2",
+      "sha256": "121d3631fd048e8d829abed760080d59b4f20a8083423551374686c87267b216",
       "sequence": 47
     },
     {
@@ -3077,7 +3077,7 @@
         "packages/client/ui-sidebar-browser/tsconfig.client.json",
         "pnpm-lock.yaml"
       ],
-      "sha256": "894d09790d6ecfe345dfdad52e067819e6b303eb90e20fc381053867b6f2f6f5",
+      "sha256": "09952f2b4055f4f3a70a1a765a391f5ea597efcf82f12231a9da57ab592096f4",
       "sequence": 59
     },
     {
@@ -3254,6 +3254,6 @@
   "patchedSourceSha256": "a1ef4b8af4406f393485199f6bd754470ac86323a4f275510397b281fc0f49a7",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "2ae1186af368dddb82770d18eea3b429a0ceb6dac930175a0ad83fdb19afb88c"
+    "sha256": "1090a7c53585586445723796dcd7c38ac457e5ea49dda05904047873ed1ee71b"
   }
 }
