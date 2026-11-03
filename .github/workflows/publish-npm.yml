@@ -15,7 +15,8 @@ permissions:
 jobs:
   publish:
     name: publish
-    runs-on: ubuntu-latest
+    # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
