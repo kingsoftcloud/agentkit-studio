@@ -12,6 +12,21 @@
  */
 import { createDshPluginDiscovery } from './dsh-plugin-discovery.mjs';
 import { createDshPluginIndex } from './dsh-plugin-index.mjs';
+import { dshCuratedEntries, dshCuratedPlugin } from './dsh-plugin-catalog.mjs';
+
+/** Curated entry for an install spec such as ``name`` or ``name@1.2.3``. */
+function curatedPluginForSpec(spec) {
+  const requested = String(spec || '').trim();
+  if (!requested) return undefined;
+  const direct = dshCuratedPlugin(requested) || dshCuratedEntries().find(entry => entry.installSpec === requested);
+  if (direct) return direct;
+  const at = requested.lastIndexOf('@');
+  const name = at > 0 ? requested.slice(0, at) : '';
+  return name ? dshCuratedPlugin(name) || dshCuratedEntries().find(entry => entry.installSpec === name) : undefined;
+}
+
+/** The curated catalog decides whether a fresh install starts enabled. */
+const DISABLED_AFTER_INSTALL = Object.freeze({ state: 'disabled', checks: [], note: '插件已安装，保持停用；启用后才会加载。' });
 
 export class StudioPluginsError extends Error {
   constructor(code, message, details = {}) {
@@ -235,19 +250,28 @@ export function createStudioPlugins({
 
   async function installDsh(spec) {
     const manager = service('pluginManager');
+    // The catalog may keep a curated plugin listed but inactive after install
+    // (the personal assistant), so the market never enables cloud capabilities
+    // on the user's behalf. Entries that do not opt out keep the old behavior.
+    const curated = curatedPluginForSpec(spec);
+    const enableOnInstall = curated ? curated.enableOnInstall !== false : true;
     const existing = (await manager.listBundles()).find(bundle => bundle.name === String(spec));
     if (existing) {
+      // Re-installing an already enabled plugin keeps it enabled; a disabled one
+      // stays disabled so the install action never silently enables it.
+      const shouldEnable = enableOnInstall || existing.enabled === true;
       const change = changeResult(existing.availability === 'missing' && existing.installTarget
-        ? await manager.installBundle(existing.installTarget.spec, { enabled: true, saveExact: true })
-        : await manager.setBundleEnabled(existing.name, true));
-      const verification = await verifyUsable(manager, existing.name, change);
-      return { ...change, verification, note: verification.note };
+        ? await manager.installBundle(existing.installTarget.spec, { enabled: shouldEnable, saveExact: true })
+        : await manager.setBundleEnabled(existing.name, shouldEnable));
+      const verification = shouldEnable ? await verifyUsable(manager, existing.name, change) : DISABLED_AFTER_INSTALL;
+      return { ...change, enabled: shouldEnable, verification, note: verification.note };
     }
     const inspection = await manager.inspect(String(spec), {});
     if (inspection?.status !== 'accepted') throw new StudioPluginsError('DSH_PLUGIN_INSPECTION_REFUSED', `插件源检查失败：${inspection?.reason || inspection?.problem || '未返回检查结果'}`, inspection || {});
-    const change = changeResult(await manager.installBundle(String(spec), { enabled: true, ...(inspection.registry !== undefined ? { registry: inspection.registry } : {}) }));
-    const verification = await verifyUsable(manager, String(inspection.name || spec).trim(), change);
-    return { ...change, verification, note: verification.note };
+    const change = changeResult(await manager.installBundle(String(spec), { enabled: enableOnInstall, ...(inspection.registry !== undefined ? { registry: inspection.registry } : {}) }));
+    const name = String(inspection.name || spec).trim();
+    const verification = enableOnInstall ? await verifyUsable(manager, name, change) : DISABLED_AFTER_INSTALL;
+    return { ...change, enabled: enableOnInstall, verification, note: verification.note };
   }
 
   async function uninstallDsh(name) {
