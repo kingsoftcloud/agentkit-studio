@@ -111,5 +111,19 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const item = items.find(item => item.id === selected.modelName);
     return admitModelCapabilities(selected, item, item ? 'available' : 'not-listed');
   }
-  return { settings, save, create, sync, profile, catalog, capabilities };
+  /** Admit capabilities for one declared profile. Managed declarations carry no
+   * contextWindow of their own, so resolve the gateway catalog to use the
+   * advertised window instead of the historical 128000 default. */
+  async function capabilitiesOf(candidate, signal) {
+    signal?.throwIfAborted();
+    const baseUrl = String(candidate?.baseUrl || '').replace(/\/$/, '');
+    let apiKey = candidate?.apiKey;
+    if (!apiKey) {
+      try { apiKey = (await credentials.resolve(candidate?.credentialName || 'AGENTKIT_MODEL_API_KEY'))?.value; }
+      catch { signal?.throwIfAborted(); apiKey = null; }
+    }
+    if (!apiKey || !baseUrl) return admitModelCapabilities(candidate);
+    return capabilities({ ...candidate, baseUrl, apiKey }, signal);
+  }
+  return { settings, save, create, sync, profile, catalog, capabilities, capabilitiesOf };
 }

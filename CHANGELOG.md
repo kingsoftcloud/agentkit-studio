@@ -20,6 +20,7 @@
 
 ## Unreleased
 
+- 托管运行时的模型上下文窗口改为从模型网关 `/v1/models` 的 `context_length` 读取，不再固定为 128000：模型实际声明 1024k 时，长会话不会再在远低于真实上限处触发上下文压缩，减少压缩时的工具结果裁剪及其引发的会话投影读取失败（输出预算仍保留 8192，目录不可达时回退原默认值）。
 - Register the plugin market's `plugins/dsh-discover` bridge endpoint (and the previously missing `plugins/dsh-index-refresh`) in the Studio operation allowlist so the Host accepts them instead of rejecting them as unknown control endpoints.
 - Turn the DSH plugin market into a discovery surface instead of a mirror of the official installed list: aggregate npm (`keywords:dsh-plugin`) and GitHub (`topic:dsh-plugin`) metadata over a curated offline shelf, with category filters, download/star/update sorting, detail cards and one-click install, while installed lifecycle management stays as a second tab. Discovery uses a 10-minute memory+disk cache and keeps serving the last good catalog when the network fails.
 - Add a DSH plugin market as a row inside the official 插件 page (public `plugins.item` slot, no sidebar entry or second plugin center): curated offline catalog, optional HTTPS remote index refreshed without a release, search/category filters, manual spec install, and install/enable/disable/update/uninstall through the official plugin manager with row/service readiness probes and honest failure reporting.
