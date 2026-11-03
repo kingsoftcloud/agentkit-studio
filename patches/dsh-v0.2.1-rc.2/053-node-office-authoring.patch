@@ -1,5 +1,5 @@
 diff --git a/THIRD_PARTY_NOTICES.md b/THIRD_PARTY_NOTICES.md
-index 67f867a790976e765f7073c595d8b2a604d49b0e..79da6cd50ddfb61baeccc2f232b0a31347a0e349 100644
+index 67f867a790..79da6cd50d 100644
 --- a/THIRD_PARTY_NOTICES.md
 +++ b/THIRD_PARTY_NOTICES.md
 @@ -67,6 +67,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
@@ -43,7 +43,7 @@ index 67f867a790976e765f7073c595d8b2a604d49b0e..79da6cd50ddfb61baeccc2f232b0a313
  | [`react-dom`](https://github.com/facebook/react) | MIT |
  | [`readable-stream`](https://github.com/nodejs/readable-stream) | MIT |
 diff --git a/apps/desktop-host/src/office.ts b/apps/desktop-host/src/office.ts
-index 7ed14dd3b37fcc12ad65e1b55da2410dd755fbbe..1d061a176329a9011b280df9e28663fbdf2643fb 100644
+index 7ed14dd3b3..1d061a1763 100644
 --- a/apps/desktop-host/src/office.ts
 +++ b/apps/desktop-host/src/office.ts
 @@ -26,11 +26,16 @@ export interface Config {
@@ -64,7 +64,7 @@ index 7ed14dd3b37fcc12ad65e1b55da2410dd755fbbe..1d061a176329a9011b280df9e28663fb
      node: join(config.source, 'dependencies', 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node'),
      cli: join(packageRoot, 'lib', 'cli.js'),
 diff --git a/apps/desktop-host/tests/office.spec.ts b/apps/desktop-host/tests/office.spec.ts
-index 02e741d4cec34d5e593d6a1a70b3b0e8bee1118e..2194bcab1339418272df41beea47547c1fe6d298 100644
+index 02e741d4ce..2194bcab13 100644
 --- a/apps/desktop-host/tests/office.spec.ts
 +++ b/apps/desktop-host/tests/office.spec.ts
 @@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -100,7 +100,7 @@ index 02e741d4cec34d5e593d6a1a70b3b0e8bee1118e..2194bcab1339418272df41beea47547c
      expect(ctx.tools.schemas().map(tool => tool.name)).toEqual(['load_workspace_dependencies'])
      const entry = [...ctx.loader.entries()].find(entry => entry.options.name === 'office')
 diff --git a/apps/desktop/scripts/prepare-primary-runtime.ts b/apps/desktop/scripts/prepare-primary-runtime.ts
-index 7a83613f3ee5dceaab8d570c00d09e1764f6065f..3a94e54727bfebf846e5688d1a5d5c83386e002a 100644
+index 7a83613f3e..3a94e54727 100644
 --- a/apps/desktop/scripts/prepare-primary-runtime.ts
 +++ b/apps/desktop/scripts/prepare-primary-runtime.ts
 @@ -9,15 +9,14 @@ import { scrubWindowsSigningEnvironment } from './windows-sign.mjs'
@@ -133,7 +133,7 @@ index 7a83613f3ee5dceaab8d570c00d09e1764f6065f..3a94e54727bfebf846e5688d1a5d5c83
  }
  
 diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
-index 3a89bd7fe3cd4df65edfaaadfc71f2fa1e905942..2cadd3ce4aa15001cb85ca14153e01985213a513 100644
+index 3a89bd7fe3..2cadd3ce4a 100644
 --- a/apps/desktop/scripts/smoke-runtime.ts
 +++ b/apps/desktop/scripts/smoke-runtime.ts
 @@ -73,10 +73,16 @@ export function apply(ctx) {
@@ -159,7 +159,7 @@ index 3a89bd7fe3cd4df65edfaaadfc71f2fa1e905942..2cadd3ce4aa15001cb85ca14153e0198
      const cordis = runtime.sharedPackages.find(entry => entry.name === '@deepseek-ai/cordis')
 diff --git a/apps/desktop/tests/fixtures/office-conversion-inputs.mjs b/apps/desktop/tests/fixtures/office-conversion-inputs.mjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..01a3c50185eae0e573a7e39e646ebe80494d3308
+index 0000000000..01a3c50185
 --- /dev/null
 +++ b/apps/desktop/tests/fixtures/office-conversion-inputs.mjs
 @@ -0,0 +1,84 @@
@@ -248,7 +248,7 @@ index 0000000000000000000000000000000000000000..01a3c50185eae0e573a7e39e646ebe80
 +  await (await import('node:fs/promises')).readFile(library)), results }, null, 2) + '\n')
 +console.log(JSON.stringify({ node: process.version, results }))
 diff --git a/docs/config-catalog.md b/docs/config-catalog.md
-index 60b3186823a1d78ffa331bb5ddf7321b33d51fb0..2ffbe7f7fdf27c3d00f815760cbd9d92d4e1a3a1 100644
+index 60b3186823..2ffbe7f7fd 100644
 --- a/docs/config-catalog.md
 +++ b/docs/config-catalog.md
 @@ -3132,6 +3132,8 @@ export interface Config {
@@ -270,7 +270,7 @@ index 60b3186823a1d78ffa331bb5ddf7321b33d51fb0..2ffbe7f7fdf27c3d00f815760cbd9d92
  ```ts config-catalog
  /** Payload location and optional installation directory. */
 diff --git a/docs/config-catalog.zh.md b/docs/config-catalog.zh.md
-index e3e70af1d0c7adaac5c3d06c908b0e08ee3fe3a8..f216e496a0e67b0db086d0357fd16e5c863b4139 100644
+index e3e70af1d0..f216e496a0 100644
 --- a/docs/config-catalog.zh.md
 +++ b/docs/config-catalog.zh.md
 @@ -3134,6 +3134,8 @@ export interface Config {
@@ -292,7 +292,7 @@ index e3e70af1d0c7adaac5c3d06c908b0e08ee3fe3a8..f216e496a0e67b0db086d0357fd16e5c
  ```ts config-catalog
  /** Payload location and optional installation directory. */
 diff --git a/docs/subsystems/skills.i18n.yaml b/docs/subsystems/skills.i18n.yaml
-index cbafffd5f3dcc2191b18ef55d6833136c250110e..c51c134a097ae712ba75f721c48ce6fcc815a6a1 100644
+index cbafffd5f3..c51c134a09 100644
 --- a/docs/subsystems/skills.i18n.yaml
 +++ b/docs/subsystems/skills.i18n.yaml
 @@ -3,8 +3,8 @@
@@ -307,7 +307,7 @@ index cbafffd5f3dcc2191b18ef55d6833136c250110e..c51c134a097ae712ba75f721c48ce6fc
    en: abe338b6c6d1ebd1
    zh: c604db2de10a23c4
 diff --git a/docs/subsystems/skills.md b/docs/subsystems/skills.md
-index ee02566a4b5beaa315a3b8248fb8e13e1431e384..2480b82729cdce2b707d973677036d251471574f 100644
+index ee02566a4b..2480b82729 100644
 --- a/docs/subsystems/skills.md
 +++ b/docs/subsystems/skills.md
 @@ -6,7 +6,7 @@ The [skill capability family](../../packages/skill) includes the Service Definit
@@ -320,7 +320,7 @@ index ee02566a4b5beaa315a3b8248fb8e13e1431e384..2480b82729cdce2b707d973677036d25
  
  ## Provider registry
 diff --git a/docs/subsystems/skills.zh.md b/docs/subsystems/skills.zh.md
-index 658e668a2b573094b9956162101e107344863ee5..69441183e810e68d4be85151aa744a0fb0b539d4 100644
+index 658e668a2b..69441183e8 100644
 --- a/docs/subsystems/skills.zh.md
 +++ b/docs/subsystems/skills.zh.md
 @@ -6,7 +6,7 @@
@@ -333,7 +333,7 @@ index 658e668a2b573094b9956162101e107344863ee5..69441183e810e68d4be85151aa744a0f
  
  ## 提供方注册表
 diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
-index c8f51be575db26f951a7571e8bd25d8fa943384f..771258a77b6c4e26a5fc7801e51e9fcc28adad0b 100644
+index c8f51be575..771258a77b 100644
 --- a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
 +++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.i18n.yaml
 @@ -9,8 +9,8 @@
@@ -350,7 +350,7 @@ index c8f51be575db26f951a7571e8bd25d8fa943384f..771258a77b6c4e26a5fc7801e51e9fcc
 +  en: 979b4aa5d717c56b
 +  zh: 5be5beb3d8af690f
 diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
-index e88fb4c5619a53262d1aad83a14c55a37b3a4dd8..ea529ea138fab735aa17a6092e6f458c80ae7535 100644
+index e88fb4c561..ea529ea138 100644
 --- a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
 +++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.md
 @@ -9,10 +9,10 @@ English | [中文](guide.zh.md)
@@ -367,7 +367,7 @@ index e88fb4c5619a53262d1aad83a14c55a37b3a4dd8..ea529ea138fab735aa17a6092e6f458c
 +2. To prepare a Node-only carrier, run `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`. Do not combine it with `--python-only`. Build artifacts first so the builder can copy the self-contained Office module. Select `authoring: node` in custom Office provider compositions and require the returned `officeLibraries` path. Desktop selects this mode itself; prepare existing Desktop resources again.
  3. Verify `runtime.json` has `schemaVersion: 2` and no `python`, the resource tree has no Python directory, and the native-target smoke executes Node and pnpm. See the [payload reference](../../../../packages/skill/tool-workspace-dependencies/README.md).
 diff --git a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
-index 146869a020e43aeb8a8508cc0489d21b05e492e2..2db3e7d929cf8ace48866875dea134bceee129d7 100644
+index 146869a020..2db3e7d929 100644
 --- a/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
 +++ b/docs/upgrade-guide/v0.2.1-rc.2/node-only-primary-runtime/guide.zh.md
 @@ -9,10 +9,10 @@ description: 显式选择纯 Node 资源时，primary-runtime 查询调用方必
@@ -384,7 +384,7 @@ index 146869a020e43aeb8a8508cc0489d21b05e492e2..2db3e7d929cf8ace48866875dea134bc
 +2. 准备纯 Node 载体时运行 `pnpm run prepare:primary-runtime --target <target> --output <directory> --node-only`。不能与 `--python-only` 同用。先构建产物，使构建器能复制独立 Office 模块。自定义 Office 提供者组装选择 `authoring: node`，并要求依赖查询返回 `officeLibraries`。Desktop 自行选择此模式；已有 Desktop 资源需要重新准备。
  3. 确认 `runtime.json` 包含 `schemaVersion: 2` 且不含 `python`，资源树没有 Python 目录，并通过本机目标的 Node 与 pnpm 冒烟检查。见[资源格式说明](../../../../packages/skill/tool-workspace-dependencies/README.zh.md)。
 diff --git a/packages/skill/skill-office/README.i18n.yaml b/packages/skill/skill-office/README.i18n.yaml
-index 8be35a0ccb5c554623e380f6ba2d78d545e2618c..298652b1c6113d6af2b353bd9510d4d6cfcd55c7 100644
+index 8be35a0ccb..298652b1c6 100644
 --- a/packages/skill/skill-office/README.i18n.yaml
 +++ b/packages/skill/skill-office/README.i18n.yaml
 @@ -9,14 +9,14 @@
@@ -418,7 +418,7 @@ index 8be35a0ccb5c554623e380f6ba2d78d545e2618c..298652b1c6113d6af2b353bd9510d4d6
    en: e67f633dc6fe7773
    zh: 8ec3e73528ddb1a6
 diff --git a/packages/skill/skill-office/README.md b/packages/skill/skill-office/README.md
-index 12216dbe2f3a60466fe16e488eb5ce36f45bd626..6ad3f16edc9180801e483d00320c54193c1a8473 100644
+index 12216dbe2f..6ad3f16edc 100644
 --- a/packages/skill/skill-office/README.md
 +++ b/packages/skill/skill-office/README.md
 @@ -9,7 +9,7 @@ English | [中文](README.zh.md)
@@ -449,7 +449,7 @@ index 12216dbe2f3a60466fe16e488eb5ce36f45bd626..6ad3f16edc9180801e483d00320c5419
  - Legacy, encrypted, and macro-enabled files need an appropriate separate workflow.
  
 diff --git a/packages/skill/skill-office/README.zh.md b/packages/skill/skill-office/README.zh.md
-index 9d464a800ee6a44e252f85215e3c0cba35164019..bf6e3a5b316516646e84723edae0045b7febfbfe 100644
+index 9d464a800e..bf6e3a5b31 100644
 --- a/packages/skill/skill-office/README.zh.md
 +++ b/packages/skill/skill-office/README.zh.md
 @@ -9,7 +9,7 @@ kind: "package-reference"
@@ -481,7 +481,7 @@ index 9d464a800ee6a44e252f85215e3c0cba35164019..bf6e3a5b316516646e84723edae0045b
  
 diff --git a/packages/skill/skill-office/assets/office-docx/SKILL.node.md b/packages/skill/skill-office/assets/office-docx/SKILL.node.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..d34575e5c719149c490e48b1cd18398e88de116f
+index 0000000000..d34575e5c7
 --- /dev/null
 +++ b/packages/skill/skill-office/assets/office-docx/SKILL.node.md
 @@ -0,0 +1,38 @@
@@ -525,7 +525,7 @@ index 0000000000000000000000000000000000000000..d34575e5c719149c490e48b1cd18398e
 +Deliver the final DOCX through `present` when available, keeping the actual file in place. Otherwise use the session's supported file delivery method. Do not deliver temporary QA files unless requested.
 diff --git a/packages/skill/skill-office/assets/office-pptx/SKILL.node.md b/packages/skill/skill-office/assets/office-pptx/SKILL.node.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..27165b879076cebade42a05af40316aead5ca7c8
+index 0000000000..27165b8790
 --- /dev/null
 +++ b/packages/skill/skill-office/assets/office-pptx/SKILL.node.md
 @@ -0,0 +1,39 @@
@@ -570,7 +570,7 @@ index 0000000000000000000000000000000000000000..27165b879076cebade42a05af40316ae
 +Load `office-render` for requested images or visual inspection and appearance-focused styling, spacing, sizing, or alignment changes unless the user skips rendering. New content with incidental formatting does not itself require rendering. Load `office-export-pdf` for PDF output. Deliver the final PPTX with `present` when available, keeping that file in place; otherwise use the session's supported delivery method. Leave intermediate reports out of delivery unless requested.
 diff --git a/packages/skill/skill-office/assets/office-recalculate/SKILL.node.md b/packages/skill/skill-office/assets/office-recalculate/SKILL.node.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..0adbf964af663449e2b1436bf1a017e96ce798be
+index 0000000000..0adbf964af
 --- /dev/null
 +++ b/packages/skill/skill-office/assets/office-recalculate/SKILL.node.md
 @@ -0,0 +1,18 @@
@@ -594,7 +594,7 @@ index 0000000000000000000000000000000000000000..0adbf964af663449e2b1436bf1a017e9
 +If no supported recalculation engine is available or the command fails, preserve the workbook and explain that calculated values could not be refreshed. Do not replace requested formulas with constants or present stale/absent caches as fresh results. Deliver the verified output through `present` when available, keeping the file in place.
 diff --git a/packages/skill/skill-office/assets/office-xlsx/SKILL.node.md b/packages/skill/skill-office/assets/office-xlsx/SKILL.node.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..66f780da5cb7ad4f0e2dd2997e5f4a0b2e746056
+index 0000000000..66f780da5c
 --- /dev/null
 +++ b/packages/skill/skill-office/assets/office-xlsx/SKILL.node.md
 @@ -0,0 +1,42 @@
@@ -641,7 +641,7 @@ index 0000000000000000000000000000000000000000..66f780da5cb7ad4f0e2dd2997e5f4a0b
 +
 +Load `office-recalculate` for refreshed formula results and `office-export-pdf` for PDF output. Deliver the verified workbook with `present` when available, keeping the actual file in place; otherwise use the session's supported delivery method. Omit temporary reports unless requested.
 diff --git a/packages/skill/skill-office/package.json b/packages/skill/skill-office/package.json
-index f768d1f6f26da7dfb5bff0a74e47f70c5673fcae..39d45d585e45095867f1a0cc7eda2441275548b0 100644
+index f768d1f6f2..f30fb4d249 100644
 --- a/packages/skill/skill-office/package.json
 +++ b/packages/skill/skill-office/package.json
 @@ -22,6 +22,7 @@
@@ -652,12 +652,12 @@ index f768d1f6f26da7dfb5bff0a74e47f70c5673fcae..39d45d585e45095867f1a0cc7eda2441
      "assets",
      "lib/types/**/*.d.ts"
    ],
-@@ -39,6 +40,13 @@
-   "dependencies": {
-     "@deepseek-ai/libreoffice-kit": "^0.1.5",
-     "@deepseek-ai/schemastery": "workspace:~",
--    "yaml": "^2.4.2"
-+    "yaml": "^2.4.2",
+@@ -34,7 +35,14 @@
+     "@deepseek-ai/dsh-skill": "workspace:*",
+     "@deepseek-ai/cordis": "workspace:~",
+     "@deepseek-ai/cordis-plugin-loader": "workspace:~",
+-    "@deepseek-ai/cordis-plugin-include": "workspace:~"
++    "@deepseek-ai/cordis-plugin-include": "workspace:~",
 +    "docx": "9.13.0",
 +    "pptxgenjs": "4.0.1",
 +    "exceljs": "4.4.0",
@@ -665,11 +665,12 @@ index f768d1f6f26da7dfb5bff0a74e47f70c5673fcae..39d45d585e45095867f1a0cc7eda2441
 +    "@xmldom/xmldom": "0.9.12",
 +    "jszip": "3.10.2",
 +    "fflate": "0.8.3"
-   }
- }
+   },
+   "dependencies": {
+     "@deepseek-ai/libreoffice-kit": "^0.1.5",
 diff --git a/packages/skill/skill-office/src/authoring.ts b/packages/skill/skill-office/src/authoring.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..120910f9e318ad4b62ecd059de8fb674517352b9
+index 0000000000..120910f9e3
 --- /dev/null
 +++ b/packages/skill/skill-office/src/authoring.ts
 @@ -0,0 +1,10 @@
@@ -684,7 +685,7 @@ index 0000000000000000000000000000000000000000..120910f9e318ad4b62ecd059de8fb674
 +export { readOfficePackage, OfficePackageError } from './office-package.ts'
 +export type { OfficePackage, OfficePackageLimits, OfficePackageErrorCode } from './office-package.ts'
 diff --git a/packages/skill/skill-office/src/index.ts b/packages/skill/skill-office/src/index.ts
-index b1e5a8717999f970b3eda7ee7570e01ec6755f50..ef7fae66205cacfbbede61cceaf42bc4adf30374 100644
+index b1e5a87179..ef7fae6620 100644
 --- a/packages/skill/skill-office/src/index.ts
 +++ b/packages/skill/skill-office/src/index.ts
 @@ -20,6 +20,8 @@ export interface Config {
@@ -716,7 +717,7 @@ index b1e5a8717999f970b3eda7ee7570e01ec6755f50..ef7fae66205cacfbbede61cceaf42bc4
        name: skillName, description,
 diff --git a/packages/skill/skill-office/src/office-package.ts b/packages/skill/skill-office/src/office-package.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..f3246268bd85e8688ca857b34a72fc2d43e8f556
+index 0000000000..f3246268bd
 --- /dev/null
 +++ b/packages/skill/skill-office/src/office-package.ts
 @@ -0,0 +1,251 @@
@@ -973,7 +974,7 @@ index 0000000000000000000000000000000000000000..f3246268bd85e8688ca857b34a72fc2d
 +}
 diff --git a/packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap b/packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d562d227cbef11f119565e4b2fb188548b83dbc
+index 0000000000..6d562d227c
 --- /dev/null
 +++ b/packages/skill/skill-office/tests/__snapshots__/progressive-loading.spec.ts.snap
 @@ -0,0 +1,37 @@
@@ -1016,7 +1017,7 @@ index 0000000000000000000000000000000000000000..6d562d227cbef11f119565e4b2fb1885
 +`;
 diff --git a/packages/skill/skill-office/tests/office-package.spec.ts b/packages/skill/skill-office/tests/office-package.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..98a3324d1b2be451640bb44a944adcd156a870d5
+index 0000000000..98a3324d1b
 --- /dev/null
 +++ b/packages/skill/skill-office/tests/office-package.spec.ts
 @@ -0,0 +1,192 @@
@@ -1213,7 +1214,7 @@ index 0000000000000000000000000000000000000000..98a3324d1b2be451640bb44a944adcd1
 +  })
 +})
 diff --git a/packages/skill/skill-office/tests/progressive-loading.spec.ts b/packages/skill/skill-office/tests/progressive-loading.spec.ts
-index b1d9ea958e7719fd44b58a0ded360ce6a23a28da..c61309c5dc3dc815786c6cd69b0f9c8d8a008487 100644
+index b1d9ea958e..c61309c5dc 100644
 --- a/packages/skill/skill-office/tests/progressive-loading.spec.ts
 +++ b/packages/skill/skill-office/tests/progressive-loading.spec.ts
 @@ -27,7 +27,7 @@ class SkillProgram extends PtcRuntime {
@@ -1315,7 +1316,7 @@ index b1d9ea958e7719fd44b58a0ded360ce6a23a28da..c61309c5dc3dc815786c6cd69b0f9c8d
  it.each(['office-render', 'office-recalculate', 'office-export-pdf'])('loads %s directly without unrelated operation or authoring bodies', async (name) => {
    const { agent, adapter } = await setup('native', [name])
 diff --git a/packages/skill/skill-office/tests/skill-office.spec.ts b/packages/skill/skill-office/tests/skill-office.spec.ts
-index 75adb8f00d5077a9cd3dfa1f4632d9dc2adbd3fb..e2d0c3918b6048a93a92abdcc8a6d1e4688f5fe8 100644
+index 75adb8f00d..e2d0c3918b 100644
 --- a/packages/skill/skill-office/tests/skill-office.spec.ts
 +++ b/packages/skill/skill-office/tests/skill-office.spec.ts
 @@ -17,11 +17,11 @@ const assets = fileURLToPath(new URL('../assets/', import.meta.url))
@@ -1384,7 +1385,7 @@ index 75adb8f00d5077a9cd3dfa1f4632d9dc2adbd3fb..e2d0c3918b6048a93a92abdcc8a6d1e4
      } finally {
 diff --git a/packages/skill/skill-office/tsdown.config.ts b/packages/skill/skill-office/tsdown.config.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..f47904809f84cb5365e812f2e0608399484bec2a
+index 0000000000..f47904809f
 --- /dev/null
 +++ b/packages/skill/skill-office/tsdown.config.ts
 @@ -0,0 +1,42 @@
@@ -1431,7 +1432,7 @@ index 0000000000000000000000000000000000000000..f47904809f84cb5365e812f2e0608399
 +  },
 +])
 diff --git a/packages/skill/tool-workspace-dependencies/README.i18n.yaml b/packages/skill/tool-workspace-dependencies/README.i18n.yaml
-index 737c5354c0cd3960a04bbdcae030f330aa6cea0e..d87dada4cd687342f7f7dd2d9a2117dc8cf964aa 100644
+index 737c5354c0..d87dada4cd 100644
 --- a/packages/skill/tool-workspace-dependencies/README.i18n.yaml
 +++ b/packages/skill/tool-workspace-dependencies/README.i18n.yaml
 @@ -21,11 +21,11 @@
@@ -1473,7 +1474,7 @@ index 737c5354c0cd3960a04bbdcae030f330aa6cea0e..d87dada4cd687342f7f7dd2d9a2117dc
    en: f57d5fcd5b2e8a44
    zh: b210a0dce56f2e8a
 diff --git a/packages/skill/tool-workspace-dependencies/README.md b/packages/skill/tool-workspace-dependencies/README.md
-index 249d6cf24b7675a34b4b00b944302ee9048f57de..ce1bc2ddb958af39b4e1cd7a86f8220e993f47dd 100644
+index 249d6cf24b..ce1bc2ddb9 100644
 --- a/packages/skill/tool-workspace-dependencies/README.md
 +++ b/packages/skill/tool-workspace-dependencies/README.md
 @@ -44,7 +44,7 @@ Mount the plugin beside the tool registry with the payload directory. Configurat
@@ -1513,7 +1514,7 @@ index 249d6cf24b7675a34b4b00b944302ee9048f57de..ce1bc2ddb958af39b4e1cd7a86f8220e
  - Windows payloads used in place must already be executable from their carrier; the in-place mode performs no permission repair.
  
 diff --git a/packages/skill/tool-workspace-dependencies/README.zh.md b/packages/skill/tool-workspace-dependencies/README.zh.md
-index d0afa9c174b2d5e03e304e15da1830e32fd63e5b..6f7f1c0ed32c9bed07d4b646fbb4d7650f1a8db3 100644
+index d0afa9c174..6f7f1c0ed3 100644
 --- a/packages/skill/tool-workspace-dependencies/README.zh.md
 +++ b/packages/skill/tool-workspace-dependencies/README.zh.md
 @@ -44,7 +44,7 @@ kind: "package-reference"
@@ -1553,7 +1554,7 @@ index d0afa9c174b2d5e03e304e15da1830e32fd63e5b..6f7f1c0ed32c9bed07d4b646fbb4d765
  - Windows 上原地使用的 payload 须在载体里已可执行；原地模式不修复权限。
  
 diff --git a/packages/skill/tool-workspace-dependencies/src/index.ts b/packages/skill/tool-workspace-dependencies/src/index.ts
-index b2a84f221cca5bdf11b69820fe64676aa54b9e3b..6ef742771085ba60fb1e9a32894b4d3b6ec9006a 100644
+index b2a84f221c..6ef7427710 100644
 --- a/packages/skill/tool-workspace-dependencies/src/index.ts
 +++ b/packages/skill/tool-workspace-dependencies/src/index.ts
 @@ -2,6 +2,7 @@
@@ -1673,7 +1674,7 @@ index b2a84f221cca5bdf11b69820fe64676aa54b9e3b..6ef742771085ba60fb1e9a32894b4d3b
          },
        },
 diff --git a/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts b/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
-index 0af2562c23b33fe55d0f1bd3892923315da6e1cc..cd780ffb8ecbce0f6973766836c8c7df2e1b4261 100644
+index 0af2562c23..cd780ffb8e 100644
 --- a/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
 +++ b/packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts
 @@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, writeFi
@@ -1717,10 +1718,10 @@ index 0af2562c23b33fe55d0f1bd3892923315da6e1cc..cd780ffb8ecbce0f6973766836c8c7df
    { schemaVersion: 2, python: '3.12.14', node: '24.21.0', pythonPackages: {} },
    { schemaVersion: 2, node: undefined, pythonPackages: {} },
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5fa327ec4e 100644
+index 76b5e692ab..6202df839e 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
-@@ -7180,9 +7180,6 @@ importers:
+@@ -7186,9 +7186,6 @@ importers:
        '@deepseek-ai/dsh-app-boot':
          specifier: workspace:*
          version: link:../../boot/app-boot
@@ -1730,7 +1731,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
        '@deepseek-ai/dsh-llm':
          specifier: workspace:*
          version: link:../../llm/llm
-@@ -7192,6 +7189,9 @@ importers:
+@@ -7198,6 +7195,9 @@ importers:
        '@deepseek-ai/dsh-llm-pi-ai':
          specifier: workspace:*
          version: link:../../llm/llm-pi-ai
@@ -1740,10 +1741,11 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
        '@deepseek-ai/dsh-scope':
          specifier: workspace:*
          version: link:../scope
-@@ -13335,6 +13335,27 @@ importers:
-       '@deepseek-ai/schemastery':
-         specifier: link:../../../vendor/schemastery
-         version: link:../../../vendor/schemastery
+@@ -13357,7 +13357,27 @@ importers:
+       '@deepseek-ai/dsh-skill':
+         specifier: workspace:*
+         version: link:../skill
+-
 +      '@xmldom/xmldom':
 +        specifier: 0.9.12
 +        version: 0.9.12
@@ -1765,10 +1767,10 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
 +      pptxgenjs:
 +        specifier: 4.0.1
 +        version: 4.0.1
-       yaml:
-         specifier: ^2.4.2
-         version: 2.9.0
-@@ -19094,6 +19115,9 @@ packages:
+   packages/skill/tool-skill:
+     dependencies:
+       '@deepseek-ai/schemastery':
+@@ -19100,6 +19120,9 @@ packages:
    '@types/node@26.4.1':
      resolution: {integrity: sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==}
  
@@ -1778,7 +1780,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    '@types/papaparse@5.5.2':
      resolution: {integrity: sha512-gFnFp/JMzLHCwRf7tQHrNnfhN4eYBVYYI897CGX4MY1tzY9l2aLkVyx2IlKZ/SAqDbB3I1AOZW5gTMGGsqWliA==}
  
-@@ -19231,6 +19255,12 @@ packages:
+@@ -19237,6 +19260,12 @@ packages:
    '@upsetjs/venn.js@2.0.0':
      resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
  
@@ -1791,7 +1793,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    '@vitejs/plugin-react@4.7.0':
      resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
      engines: {node: ^14.18.0 || >=16.0.0}
-@@ -19438,6 +19468,10 @@ packages:
+@@ -19444,6 +19473,10 @@ packages:
      resolution: {integrity: sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA==}
      engines: {node: '>=10.0.0'}
  
@@ -1802,7 +1804,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    '@xterm/addon-fit@0.11.0':
      resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
  
-@@ -19575,6 +19609,9 @@ packages:
+@@ -19581,6 +19614,9 @@ packages:
    aria-query@5.3.0:
      resolution: {integrity: sha512-b0P0sZPKtyu8HkeRAfCq0IfURZK+SuwMjY1UXGBU27wpAiTwQAIlq56IbIO+ytk/JjS1fMR14ee5WBBfKi5J6A==}
  
@@ -1812,7 +1814,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    asn1@0.2.6:
      resolution: {integrity: sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ==}
  
-@@ -20349,6 +20386,10 @@ packages:
+@@ -20355,6 +20391,10 @@ packages:
    dmg-builder@26.17.0:
      resolution: {integrity: sha512-EAw1f2iGkICmUvAVBOjm7v5mxJdB7/+OZSycHFhKBimiTkCXtvkCC6wBKzHo7ZQYi58C2MmwIleRbgRnROlK2Q==}
  
@@ -1823,7 +1825,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    dom-accessibility-api@0.5.16:
      resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
  
-@@ -20945,6 +20986,9 @@ packages:
+@@ -20951,6 +20991,9 @@ packages:
      resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
      engines: {node: '>= 0.4'}
  
@@ -1833,7 +1835,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    hasown@2.0.4:
      resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
      engines: {node: '>= 0.4'}
-@@ -21035,6 +21079,9 @@ packages:
+@@ -21041,6 +21084,9 @@ packages:
      resolution: {integrity: sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==}
      engines: {node: '>= 20'}
  
@@ -1843,7 +1845,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    human-signals@8.0.1:
      resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
      engines: {node: '>=18.18.0'}
-@@ -21057,6 +21104,11 @@ packages:
+@@ -21063,6 +21109,11 @@ packages:
      resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
      engines: {node: '>= 4'}
  
@@ -1855,7 +1857,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    immediate@3.0.6:
      resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
  
-@@ -21350,8 +21402,8 @@ packages:
+@@ -21356,8 +21407,8 @@ packages:
      resolution: {integrity: sha512-eQQBjBnsVtGacsG9uJNB8qOr3yA8rga4wAaGG1qRcBzSIvfhERLrWxMAM1hp5fcS6Abo8M4+bUBTekYR0qTPQw==}
      engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
  
@@ -1866,7 +1868,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
  
    jwa@2.0.1:
      resolution: {integrity: sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==}
-@@ -21831,6 +21883,9 @@ packages:
+@@ -21837,6 +21888,9 @@ packages:
      resolution: {integrity: sha512-e5ISH9xMYU0DzrT+jl8q2ze9D6eWBto+I8CNpe+VI+K2J/F/k3PdkdTdz4wvGVH4NTpo+NRYTVIuMQEMMcsLqg==}
      engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
  
@@ -1876,7 +1878,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    minimatch@10.2.5:
      resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
      engines: {node: 18 || 20 || >=22}
-@@ -21892,6 +21947,11 @@ packages:
+@@ -21898,6 +21952,11 @@ packages:
      engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
      hasBin: true
  
@@ -1888,7 +1890,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    napi-build-utils@2.0.0:
      resolution: {integrity: sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==}
  
-@@ -22333,6 +22393,9 @@ packages:
+@@ -22339,6 +22398,9 @@ packages:
      resolution: {integrity: sha512-C+y9x90UElAddDZmV4qOx9W53B61PO7cIqWz2dQsWlwswuq4mr8NEwytdGKboYbQlGZ3awrkTeNvcZiZNHnQ8A==}
      engines: {node: '>=20'}
  
@@ -1898,7 +1900,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    preact@10.29.7:
      resolution: {integrity: sha512-DCHYrK/B10yUD3ZjLfhZ3WIE/9Vf9VFUODcRE2dRomTYDpJk6z6L9wecSfhfE6M9ZTHUdyQkoC46arIDhEV84Q==}
      peerDependencies:
-@@ -22436,6 +22499,9 @@ packages:
+@@ -22442,6 +22504,9 @@ packages:
    querystringify@2.2.0:
      resolution: {integrity: sha512-FIqgj2EUvTa7R50u0rGsyTftzjYmv/a3hO345bZNrqabNqjtgiDMgmo4mkUjd+nzU5oF3dClKqFIPUKybUyqoQ==}
  
@@ -1908,7 +1910,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    quick-lru@5.1.1:
      resolution: {integrity: sha512-WuyALRjWPDGtt/wzJiadO5AXY+8hZ80hVpe6MyivgraREW751X3SbhRvG3eLKOYN+8VEvqLcf3wdnt44Z4S4SA==}
      engines: {node: '>=10'}
-@@ -23173,6 +23239,9 @@ packages:
+@@ -23179,6 +23244,9 @@ packages:
    undici-types@8.3.0:
      resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
  
@@ -1918,7 +1920,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    undici@6.28.1:
      resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
      engines: {node: '>=18.17'}
-@@ -25301,7 +25370,7 @@ snapshots:
+@@ -25307,7 +25375,7 @@ snapshots:
        '@modelcontextprotocol/sdk': 1.31.0(supports-color@9.4.0)(zod@4.4.3)
        cors: 2.8.6
        express: 5.2.1(supports-color@9.4.0)
@@ -1927,7 +1929,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
        zod: 4.4.3
      transitivePeerDependencies:
        - '@cfworker/json-schema'
-@@ -26361,6 +26430,10 @@ snapshots:
+@@ -26367,6 +26435,10 @@ snapshots:
      dependencies:
        undici-types: 8.3.0
  
@@ -1938,7 +1940,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    '@types/papaparse@5.5.2':
      dependencies:
        '@types/node': 22.20.1
-@@ -26478,6 +26551,12 @@ snapshots:
+@@ -26484,6 +26556,12 @@ snapshots:
        d3-selection: 3.0.0
        d3-transition: 3.0.1(d3-selection@3.0.0)
  
@@ -1951,7 +1953,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    '@vitejs/plugin-react@4.7.0(supports-color@9.4.0)(vite@6.4.3(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.13)(yaml@2.9.0))':
      dependencies:
        '@babel/core': 7.29.7(supports-color@9.4.0)
-@@ -26712,6 +26791,8 @@ snapshots:
+@@ -26718,6 +26796,8 @@ snapshots:
  
    '@xmldom/xmldom@0.8.15': {}
  
@@ -1960,7 +1962,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    '@xterm/addon-fit@0.11.0': {}
  
    '@xterm/addon-serialize@0.14.0': {}
-@@ -26937,6 +27018,11 @@ snapshots:
+@@ -26943,6 +27023,11 @@ snapshots:
      dependencies:
        dequal: 2.0.3
  
@@ -1972,7 +1974,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    asn1@0.2.6:
      dependencies:
        safer-buffer: 2.1.2
-@@ -27718,6 +27804,13 @@ snapshots:
+@@ -27724,6 +27809,13 @@ snapshots:
        - electron-builder-squirrel-windows
        - supports-color
  
@@ -1986,7 +1988,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    dom-accessibility-api@0.5.16: {}
  
    dompurify@3.4.16:
-@@ -28122,7 +28215,7 @@ snapshots:
+@@ -28128,7 +28220,7 @@ snapshots:
        archiver: 5.3.2
        dayjs: 1.11.23
        fast-csv: 4.3.6
@@ -1995,7 +1997,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
        readable-stream: 3.6.2
        saxes: 5.0.1
        tmp: 0.2.7
-@@ -28575,6 +28668,11 @@ snapshots:
+@@ -28581,6 +28673,11 @@ snapshots:
      dependencies:
        has-symbols: 1.1.0
  
@@ -2007,7 +2009,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    hasown@2.0.4:
      dependencies:
        function-bind: 1.1.2
-@@ -28712,6 +28810,8 @@ snapshots:
+@@ -28718,6 +28815,8 @@ snapshots:
        - kerberos
        - supports-color
  
@@ -2016,7 +2018,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    human-signals@8.0.1: {}
  
    humanize-ms@1.2.1:
-@@ -28730,6 +28830,10 @@ snapshots:
+@@ -28736,6 +28835,10 @@ snapshots:
  
    ignore@5.3.2: {}
  
@@ -2027,7 +2029,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    immediate@3.0.6: {}
  
    immer@10.2.0: {}
-@@ -28961,7 +29065,7 @@ snapshots:
+@@ -28967,7 +29070,7 @@ snapshots:
  
    jsx-ast-utils-x@0.1.0: {}
  
@@ -2036,7 +2038,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
      dependencies:
        lie: 3.3.0
        pako: 1.0.11
-@@ -29601,6 +29705,8 @@ snapshots:
+@@ -29607,6 +29710,8 @@ snapshots:
  
    mimic-response@4.0.0: {}
  
@@ -2045,7 +2047,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    minimatch@10.2.5:
      dependencies:
        brace-expansion: 5.0.12
-@@ -29650,6 +29756,8 @@ snapshots:
+@@ -29656,6 +29761,8 @@ snapshots:
  
    nanoid@3.3.18: {}
  
@@ -2054,7 +2056,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    napi-build-utils@2.0.0: {}
  
    natural-compare@1.4.0: {}
-@@ -30055,6 +30163,13 @@ snapshots:
+@@ -30061,6 +30168,13 @@ snapshots:
  
    powershell-utils@0.2.1: {}
  
@@ -2068,7 +2070,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    preact@10.29.7: {}
  
    prebuild-install@7.1.3:
-@@ -30161,6 +30276,10 @@ snapshots:
+@@ -30167,6 +30281,10 @@ snapshots:
  
    querystringify@2.2.0: {}
  
@@ -2079,7 +2081,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
    quick-lru@5.1.1: {}
  
    range-parser@1.3.0: {}
-@@ -31008,6 +31127,8 @@ snapshots:
+@@ -31014,6 +31132,8 @@ snapshots:
  
    undici-types@8.3.0: {}
  
@@ -2089,7 +2091,7 @@ index 9aaf253abea3c6bd4495f71ae0db30e17fa65132..d79d2d9ebfa1dc44777246e9db16ad5f
  
    undici@7.29.1: {}
 diff --git a/scripts/primary-runtime/prepare.ts b/scripts/primary-runtime/prepare.ts
-index d143c7fe147e58dbdb551b3e4594cd036ceee16a..3bdb3f625f74f18f6d0ad36a8c4718c20603716a 100644
+index d143c7fe14..3bdb3f625f 100644
 --- a/scripts/primary-runtime/prepare.ts
 +++ b/scripts/primary-runtime/prepare.ts
 @@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
