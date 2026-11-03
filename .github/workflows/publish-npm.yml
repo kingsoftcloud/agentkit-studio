@@ -51,15 +51,15 @@ jobs:
             exit 0
           fi
           echo "node $(node --version) npm $(npm --version) event ${GITHUB_EVENT_NAME}"
-          # Trusted Publishing exchanges the GitHub OIDC token; setup-node must not
-          # write an _authToken into .npmrc or npm falls back to token auth (404).
-          npm publish --ignore-scripts --access public --provenance || {
+          echo '--- npmrc files ---'; ls -la .npmrc "$HOME/.npmrc" 2>/dev/null || true; cat .npmrc 2>/dev/null || true
+          # npm publish aborts in packument cache init on this runner; pack first and
+          # publish the produced tarball so the command skips that code path.
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/publish-pack"
+          TARBALL=$(ls "$RUNNER_TEMP"/publish-pack/*.tgz)
+          echo "tarball: $TARBALL"
+          # Trusted Publishing exchanges the GitHub OIDC token.
+          npm publish "$TARBALL" --ignore-scripts --access public --provenance || {
             echo '=== npm debug log ==='
-            tail -n 120 "$HOME"/.npm/_logs/*-debug-0.log || true
-            echo '=== retry without provenance ==='
-            npm publish --ignore-scripts --access public || {
-              echo '=== npm debug log (retry) ==='
-              tail -n 120 "$HOME"/.npm/_logs/*-debug-0.log || true
-              exit 1
-            }
+            tail -n 160 "$HOME"/.npm/_logs/*-debug-0.log || true
+            exit 1
           }
