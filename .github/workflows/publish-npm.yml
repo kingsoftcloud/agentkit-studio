@@ -41,6 +41,11 @@ jobs:
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
           pnpm exec playwright install --with-deps chromium
       - run: pnpm test
+      # npm 11 crashes with "Exit handler never called!" when publish runs the
+      # prepack lifecycle (the client builds spawn SQLite-backed child work).
+      # Build the tarball contents first, then publish without lifecycle scripts.
+      - name: Build package contents
+        run: npm run prepack
       - name: Publish to npm
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -48,4 +53,4 @@ jobs:
             echo "Version ${VERSION} already published, skipping."
             exit 0
           fi
-          npm publish --access public --provenance
+          npm publish --ignore-scripts --access public --provenance
