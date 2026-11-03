@@ -51,9 +51,15 @@ jobs:
             exit 0
           fi
           echo "node $(node --version) pnpm $(pnpm --version) event ${GITHUB_EVENT_NAME}"
-          # npm pack/publish abort with "Exit handler never called!" on this runner;
-          # pnpm publishes through its own packer and supports OIDC trusted publishing.
-          pnpm publish --access public --no-git-checks --ignore-scripts --provenance || {
-            echo '=== pnpm publish failed ==='
-            exit 1
+          # npm CLI pack/publish abort with "Exit handler never called!" on this
+          # runner and pnpm does not run the trusted-publishing exchange itself,
+          # so exchange the GitHub OIDC token for a short-lived npm publish token.
+          ID_TOKEN=$(curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" | jq -r .value)
+          test -n "$ID_TOKEN" -a "$ID_TOKEN" != null
+          NPM_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer ${ID_TOKEN}"             "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@kingsoftcloud%2fagentkit-studio" | jq -r .token)
+          test -n "$NPM_TOKEN" -a "$NPM_TOKEN" != null
+          echo "::add-mask::$NPM_TOKEN"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
+          pnpm publish --access public --no-git-checks --ignore-scripts || {
+            echo '=== pnpm publish failed ==='; exit 1
           }
