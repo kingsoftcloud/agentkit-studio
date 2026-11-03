@@ -51,7 +51,9 @@ jobs:
   windows-x64:
     runs-on: windows-2025
     environment: studio-signing
-    timeout-minutes: 90
+    # The signed installer is ~450 MB and the artifact service is slow from this
+    # runner, so the retention step needs more headroom than the build itself.
+    timeout-minutes: 150
     steps:
       - name: Preserve canonical source line endings
         shell: pwsh
@@ -240,7 +242,15 @@ jobs:
           }
           ./.qualification-tools/scripts/verify-windows-install.ps1 -Artifacts $artifacts -Version $env:BUILD_VERSION -Evidence .artifacts/windows-proof
           New-Item -ItemType Directory -Force .artifacts/windows-release | Out-Null
-          Copy-Item "$artifacts/*" .artifacts/windows-release -Recurse
+          # Retain only the files a publication consumes. Copying the whole build
+          # directory pulls in win-unpacked/ and installer caches (multi-GB) and
+          # the artifact upload then outlives the job timeout.
+          Get-ChildItem -LiteralPath $artifacts -File -Force |
+            Where-Object { $_.Extension -in @('.exe', '.blockmap', '.yml') } |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination .artifacts/windows-release }
+          $retained = Get-ChildItem .artifacts/windows-release -File
+          if (-not ($retained.Extension -contains '.exe')) { throw 'no signed installer retained' }
+          $retained | Select-Object Name, Length | Format-Table | Out-String | Write-Host
           if (Test-Path .artifacts/windows-candidate/provenance.json) { Copy-Item .artifacts/windows-candidate/provenance.json .artifacts/windows-proof/candidate-provenance.json }
       - name: Verify the actually installed Windows App UI
         if: ${{ ! inputs.diagnostic_only }}
