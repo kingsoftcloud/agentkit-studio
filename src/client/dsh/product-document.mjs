@@ -125,5 +125,5 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
     });
   }
   return { productDocument, adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles,
-    installWindowDragRegion };
+    installWindowDragRegion, installWindowDragStrip };
 }

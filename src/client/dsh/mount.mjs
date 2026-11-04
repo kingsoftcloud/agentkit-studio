@@ -16,7 +16,7 @@ export function mountStudio(ctx, app) {
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
-  const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
+  const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion, installWindowDragStrip } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
   ctx.inject(['locale'], copyCtx => {
