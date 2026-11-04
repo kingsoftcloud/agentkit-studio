@@ -7,6 +7,7 @@ export function createNavigation({
     return h('nav', {
       'aria-label': 'Studio 二级导航',
       'data-studio-tabs': 'true',
+      'data-studio-drag-region': 'true',
       style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '20px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
     }, items.map(item => h('button', {
       key: item.id,
@@ -21,6 +22,7 @@ export function createNavigation({
     return h('nav', {
       'aria-label': ariaLabel || '页面标签',
       'data-studio-tabs': 'true',
+      'data-studio-drag-region': 'true',
       role: 'tablist',
       style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '14px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
     }, items.map(item => h('button', {
