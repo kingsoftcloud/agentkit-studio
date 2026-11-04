@@ -6,7 +6,7 @@ import { planKs3BundleUpload } from './ks3-bundle-store.mjs';
 import { createContainerDeploymentEnvironment } from './container-deployment-env.mjs';
 import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deployment-credentials.mjs';
 import { currentDeployment, deploymentVersions, deploymentVersionId, pendingRollout, publicDeployment,
-  verifyDeploymentRemote, probeDeploymentVersion } from './deployment-versions.mjs';
+  verifyDeploymentRemote, probeDeploymentVersion, cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 
 const managed = ['AGENTKIT_BUNDLE_SHA256', 'AGENTKIT_BUNDLE_SOURCE', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_DEPLOYMENT_VERSION', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL_NAME'];
 export function createDeploymentRollouts({ store, owned, detail, images, assemble, portableBundles, models, adapters,
@@ -32,7 +32,16 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
     // A failed application cannot become READY until its frozen package is repaired.
     // Still require the same owned, running cloud instance and no unresolved rollout.
     if (!['READY', 'STARTING', 'ACTION_REQUIRED'].includes(record.state) || pendingRollout(record)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '请等待云端实例运行且当前更新已确认后再升级或回滚');
-    const remote = await detail(record);
+    // The cloud Agent can be deleted from the console while this receipt stays
+    // pristine. Retire the receipt and keep the product copy readable: an
+    // upgrade is impossible, which is different from a transient platform fault.
+    let remote;
+    try { remote = await detail(record); }
+    catch (error) {
+      if (!cloudAgentGone(error)) throw error;
+      await store.update(record.id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
+      throw portableError('DEPLOYMENT_CLOUD_DELETED', CLOUD_AGENT_GONE_FAILURE.message);
+    }
     if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '云端实例当前不允许更新');
     await identity(record);
     let prepared;
@@ -76,7 +85,15 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
       let record = await owned(id), rollout = record.rollout;
       if (rollout?.id !== attemptId || rollout.status !== 'PREPARED') return;
       try {
-        const values = await identity(record), remote = await detail(record), token = remote.QuickAccess?.ApiKey;
+        const values = await identity(record);
+        let remote;
+        try { remote = await detail(record); }
+        catch (error) {
+          if (!cloudAgentGone(error)) throw error;
+          await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
+          return;
+        }
+        const token = remote.QuickAccess?.ApiKey;
         if (remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0) || typeof token !== 'string' || token.length < 24 || token.includes('*')) {
           throw portableError('DEPLOYMENT_UPDATE_UNAVAILABLE', '实例或访问令牌尚未就绪');
         }
@@ -93,7 +110,12 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
         const names = new Set(environment.map(item => item.Key));
         const deleted = [...new Set([...managed, ...old.manifest.requirements.map(item => item.name)])].filter(name => !names.has(name) && !PLATFORM_CREDENTIAL_NAMES.has(name));
         await identity(record);
-        await detail(record); // Refuse a foreign/manual change made while uploading.
+        try { await detail(record); } // Refuse a foreign/manual change made while uploading.
+        catch (error) {
+          if (!cloudAgentGone(error)) throw error;
+          await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
+          return;
+        }
         if (!await store.claim(id, `${attemptId}-apply`)) return;
         rollout = { ...rollout, status: 'APPLYING' };
         await store.update(id, { rollout });

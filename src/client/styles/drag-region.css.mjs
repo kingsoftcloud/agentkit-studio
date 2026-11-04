@@ -6,7 +6,11 @@ export default String.raw`
    interactive descendant has to opt back in with no-drag.
    Explicit markers (data-studio-drag-region / data-studio-header) are global
    because the marked strip can sit outside the product-application scroller. */
+/* DSH's stylesheet owns the window-drag contract: it maps [data-window-drag] to
+   drag and restores interactive descendants to no-drag. Mirror that hook here
+   as well so the region still resolves if the shell sheet loads after ours. */
 [data-studio-drag-region],
+[data-window-drag],
 [data-studio-header],
 [data-windows-titlebar],
 [class*="_titleRow"] {

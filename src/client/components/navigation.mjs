@@ -8,6 +8,9 @@ export function createNavigation({
       'aria-label': 'Studio 二级导航',
       'data-studio-tabs': 'true',
       'data-studio-drag-region': 'true',
+      // DSH only honours its own `[data-window-drag]` hook; the Studio marker
+      // alone does not survive the shell's no-drag rules.
+      'data-window-drag': 'true',
       style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '20px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
     }, items.map(item => h('button', {
       key: item.id,
@@ -23,6 +26,9 @@ export function createNavigation({
       'aria-label': ariaLabel || '页面标签',
       'data-studio-tabs': 'true',
       'data-studio-drag-region': 'true',
+      // DSH only honours its own `[data-window-drag]` hook; the Studio marker
+      // alone does not survive the shell's no-drag rules.
+      'data-window-drag': 'true',
       role: 'tablist',
       style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '14px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
     }, items.map(item => h('button', {
