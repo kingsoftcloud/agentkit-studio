@@ -96,6 +96,23 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
       return () => style.remove();
     });
   }
+  function installWindowDragStrip() {
+    const ownerDocument = productDocument();
+    if (!ownerDocument?.body) return () => {};
+    return leaseDocumentResource(ownerDocument, 'agentkit-studio:drag-strip', () => {
+      if (ownerDocument.body.querySelector('[data-studio-drag-strip]')) return () => {};
+      const strip = ownerDocument.createElement('div');
+      strip.setAttribute('data-studio-drag-strip', 'true');
+      strip.setAttribute('aria-hidden', 'true');
+      // Product pages paint their own top area, so pin a transparent drag band
+      // over the window chrome instead of guessing each page's header element.
+      // It starts right of the macOS traffic lights so they stay clickable.
+      strip.style.cssText = 'position:fixed;top:0;left:72px;right:0;height:30px;'
+        + 'z-index:2147483000;-webkit-app-region:drag;background:transparent;';
+      ownerDocument.body.append(strip);
+      return () => strip.remove();
+    });
+  }
   return { productDocument, adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles,
-    installWindowDragRegion };
+    installWindowDragRegion, installWindowDragStrip };
 }
