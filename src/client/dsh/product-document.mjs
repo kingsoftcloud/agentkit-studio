@@ -1,5 +1,6 @@
 import responsiveStyles from '../styles/responsive.css.mjs';
 import formsStyles from '../styles/forms.css.mjs';
+import dragRegionStyles from '../styles/drag-region.css.mjs';
 import { leaseDocumentResource } from './document-resource.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_SVG as STUDIO_MARK_SVG } from '../../brand.js';
 
@@ -83,5 +84,18 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
       return () => style.remove();
     });
   }
-  return { productDocument, adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles };
+  function installWindowDragRegion() {
+    const ownerDocument = productDocument();
+    if (!ownerDocument) return () => {};
+    return leaseDocumentResource(ownerDocument, 'agentkit-studio:drag-region', () => {
+      if (ownerDocument.querySelector('style[data-agentkit-studio-drag-region]')) return () => {};
+      const style = ownerDocument.createElement('style');
+      style.setAttribute('data-agentkit-studio-drag-region', 'true');
+      style.textContent = dragRegionStyles;
+      ownerDocument.head.append(style);
+      return () => style.remove();
+    });
+  }
+  return { productDocument, adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles,
+    installWindowDragRegion };
 }
