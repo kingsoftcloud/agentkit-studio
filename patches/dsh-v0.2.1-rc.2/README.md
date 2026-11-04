@@ -2,7 +2,7 @@
 
 当前唯一构建基线为官方 `dsh-v0.2.1-rc.2`：`687f282e8625c6b8d11ff58211a90524be2e4317`。
 
-62 项活动补丁由 [manifest.json](manifest.json) 声明，以 [source.json](source.json) 和 [维护归档](../../host-source/dsh-v0.2.1-rc.2/README.md) 固定来源。Native 外部回合接口与主线桌面、任务管理和浏览器改动共同保留。完整影响与处理见 [升级记录](../../docs/dsh-0.2.1-upgrade.md)。
+64 项活动补丁由 [manifest.json](manifest.json) 声明，以 [source.json](source.json) 和 [维护归档](../../host-source/dsh-v0.2.1-rc.2/README.md) 固定来源。Native 外部回合接口与主线桌面、任务管理和浏览器改动共同保留。完整影响与处理见 [升级记录](../../docs/dsh-0.2.1-upgrade.md)。
 
 修改维护分支源码后，按 `source.json` 中的 `branchRef` 导出。标准引用可用 `make patch-source-export DSH_MAINTENANCE_ROOT=<checkout>`；当前隔离集成分支使用 `scripts/dsh-maintenance-source.mjs` 导出的 `exportMaintenanceSource({ source, branchRef })`，显式传入维护工作树和该引用。`make patch-source-verify DSH_ROOT=<clean-baseline>` 校验 Git 祖先、提交顺序、补丁摘要和最终源码树。桌面构建会再次验证上述身份。
 
@@ -25,3 +25,5 @@
 068 同步维护源码的生成目录、双语记录及类型检查；引用检查只豁免 uv.lock 的未加引号整数制品字节数，仍拒绝真实提交引用，不修改既有工具定义身份或权限选择行为。
 
 069 在打包时按 `DSH_DESKTOP_PRODUCT_NAME` 生成安装后的 `dsh`/`dsh.cmd` 启动器，使其启动本产品实际打包的可执行文件（如 `AgentKit Studio`），而不是固定 `DeepSeek Harness`；上游默认构建的启动行为不变，参数、cwd、环境、标准输入输出和退出码保持原样。`apps/desktop/tests/cli-launcher.spec.ts` 覆盖产品名与默认名两条路径。
+
+071 桌面端启动前的产品插件对齐不再把运行时自带的插件副本搬出 asar：改为在逐一 `require`/目录解析校验 bundled 依赖后，备份并移除 profile 中会遮蔽安装锚点的旧副本与依赖声明，让 Host 直接解析签名运行时内的插件。改写失败立即还原 `package.json` 与旧副本；同一 bundled 版本连续失败两次后停止尝试并降级启动。`apps/desktop/tests/bundled-plugin-alignment.spec.ts` 覆盖成功退役、缺依赖降级与连续失败预算。

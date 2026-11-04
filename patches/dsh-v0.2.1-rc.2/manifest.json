@@ -3254,19 +3254,20 @@
       "file": "071-bundled-plugin-alignment.patch",
       "category": "general-fix",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-      "sha256": "6b4af31b91bfcfb11d90590584030813e5e8add9f21d3a2862c55267eae63e2a",
+      "sha256": "27fb345b3686280a6941da572dbc78676ba80d2355043ccaf3a91017f4578746",
       "dependsOn": [
         "013"
       ],
       "affectedFiles": [
         "apps/desktop/src/bundled-plugin-alignment.ts",
-        "apps/desktop/src/project-manager.ts"
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/bundled-plugin-alignment.spec.ts"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
       ],
       "contracts": [
-        "A profile pinned to an older published product plugin is aligned with the bundled runtime copy before the Host starts: version compare, backup, mirror under the Harness home, `file:` dependency rewrite and bundled pnpm install. Equal versions perform one package.json read; failures never block startup."
+        "A profile that pins an older product plugin no longer shadows the sealed runtime: alignment backs up and retires the profile dependency and its node_modules copy, and the Host resolves the bundled product plugin from the installation anchor inside app.asar. Installation-owned @deepseek-ai/* bundles are never mirrored. Before touching the profile the bundled copy must resolve every declared dependency from the runtime; a failed rewrite restores the previous package.json and copy, and two consecutive failures for one bundled version stop further attempts so the old plugin still starts."
       ],
       "risk": "medium",
       "maintainerRole": "Studio Host maintainers",
@@ -3276,7 +3277,9 @@
       },
       "removeWhen": "The maintained baseline resolves product bundles from the installation instead of the plugin profile.",
       "verification": {
-        "hostTests": [],
+        "hostTests": [
+          "apps/desktop/tests/bundled-plugin-alignment.spec.ts"
+        ],
         "integrations": [
           "source"
         ]
@@ -3284,10 +3287,10 @@
       "sequence": 64
     }
   ],
-  "patchedTree": "20edc505ae1504b403f9d2c954b80dec937bfa46",
-  "patchedSourceSha256": "dc6426dd86569e7691ffb4b730623aea9cd381c081d06bffc4f78ada265061c5",
+  "patchedTree": "adb9fa85df43515c80ae3e44e7c047151ee502bc",
+  "patchedSourceSha256": "4a598a7966fec4b291ecc5d8ce67014c6c7e15c30f0cf989c1b309a26643c7b9",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "21ba593af67243f899cf6c53d9268d3be2430a8e041bab08ed867b241d89a502"
+    "sha256": "be29f3021693d0c335e43de99bdeba2361e618c6b6ffdfbca12fea9ce6b3093d"
   }
 }
