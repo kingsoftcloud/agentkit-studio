@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "aa187309883deea4fbb013ba8e30294576290def",
+  "headCommit": "9e9d2488296792916ec3646e525a36d9f5227581",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "20edc505ae1504b403f9d2c954b80dec937bfa46",
-  "sourceSha256": "dc6426dd86569e7691ffb4b730623aea9cd381c081d06bffc4f78ada265061c5",
+  "tree": "adb9fa85df43515c80ae3e44e7c047151ee502bc",
+  "sourceSha256": "4a598a7966fec4b291ecc5d8ce67014c6c7e15c30f0cf989c1b309a26643c7b9",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "6b6330d18c474ae05437cc9cc207feb13cca2eedcc2944e02ac631ed5c338989"
+    "sha256": "ca85d9271bf34ad2f22c2480e11ae5bcfe04cc72d22ba6c10b37f9a404b469ae"
   },
   "commits": [
     {
@@ -392,8 +392,8 @@
     {
       "id": "071",
       "file": "071-bundled-plugin-alignment.patch",
-      "commit": "aa187309883deea4fbb013ba8e30294576290def",
-      "sha256": "6b4af31b91bfcfb11d90590584030813e5e8add9f21d3a2862c55267eae63e2a"
+      "commit": "9e9d2488296792916ec3646e525a36d9f5227581",
+      "sha256": "27fb345b3686280a6941da572dbc78676ba80d2355043ccaf3a91017f4578746"
     }
   ]
 }
