@@ -3248,12 +3248,46 @@
         ]
       },
       "sequence": 63
+    },
+    {
+      "id": "071",
+      "file": "071-bundled-plugin-alignment.patch",
+      "category": "general-fix",
+      "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "de0871859f86896a1bbb3c6613fc4e4c78abba33cb58acd48e3b0ff3efe1bf79",
+      "dependsOn": [
+        "013"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/bundled-plugin-alignment.ts",
+        "apps/desktop/src/project-manager.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "A profile pinned to an older published product plugin is aligned with the bundled runtime copy before the Host starts: version compare, backup, mirror under the Harness home, `file:` dependency rewrite and bundled pnpm install. Equal versions perform one package.json read; failures never block startup."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Host maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Product-specific profile alignment for the AgentKit Studio desktop shell; upstream DSH has no equivalent product bundle contract."
+      },
+      "removeWhen": "The maintained baseline resolves product bundles from the installation instead of the plugin profile.",
+      "verification": {
+        "hostTests": [],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 64
     }
   ],
-  "patchedTree": "ee4e8547ce63f2b15f06e5fcd1f26c5ea49176ea",
-  "patchedSourceSha256": "a1ef4b8af4406f393485199f6bd754470ac86323a4f275510397b281fc0f49a7",
+  "patchedTree": "52108bcd232f9635258ccdf6fe6e040f678fe51b",
+  "patchedSourceSha256": "08b46db9163db4d1578dead0c173afd8bda8edbf969a08e854327eb94f2b60ba",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "1090a7c53585586445723796dcd7c38ac457e5ea49dda05904047873ed1ee71b"
+    "sha256": "d5a88dda5e4adc821dc0059471a105004ef279a853ffc061fe438d8f1cc6a6fe"
   }
 }
