@@ -231,6 +231,17 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       return publicRecord(await store.update(id, next));
     } catch (error) {
       if (error.status === 404 && ['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, { state: 'DELETED', failure: null }));
+      // A DeleteAgent performed outside Studio (e.g. the cloud console) leaves this
+      // binding stale: GetAgent keeps answering 404 forever. Surface that as DELETED
+      // with an actionable failure so the UI can prompt a re-bind instead of showing
+      // an unexplained 404. Records still being created are left alone: a 404 right
+      // after creation is a provisioning race, not a deletion.
+      const bindingStates = new Set(['READY', 'AVAILABLE', 'AVAILABLE_UPDATING', 'STARTING', 'TOKEN_PENDING',
+        'CONFIGURING', 'ACTION_REQUIRED', 'UPDATING']);
+      if (error.status === 404 && record.cloudAgentId && bindingStates.has(record.state) && !transientRefreshError(error)) {
+        return publicRecord(await store.update(id, { state: 'DELETED', lastCheckedAt: new Date().toISOString(),
+          failure: failure(Object.assign(new Error('云端 Agent 已被删除，本地绑定已失效，请重新绑定'), { code: 'CLOUD_AGENT_DELETED', status: 404 })) }));
+      }
       const lastCheckedAt = new Date().toISOString();
       // Polling failures are retried by the next health check; reporting them
       // as a deployment failure makes a successful create look broken.
