@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { callStudioOperation, bridgeNotReady, bridgeStartupTelemetry, resetBridgeStartupTelemetry,
   BRIDGE_STARTUP_RETRY_DELAYS_MS } from '../src/contracts/transport.mjs';
-import { alignProfileProductPlugin, comparePluginVersions } from '../src/host/profile-plugin-alignment.mjs';
+import { alignProfileProductPlugin, comparePluginVersions, verifyBundledPlugin } from '../src/host/profile-plugin-alignment.mjs';
 
 const PLUGIN = '@kingsoftcloud/agentkit-studio';
 const notReady = () => Object.assign(new Error('transport failure for agentkit/agents/list: HTTP 405'));
@@ -45,33 +45,63 @@ test('an exhausted bridge reports a readable startup message and telemetry', asy
   assert.equal(bridgeStartupTelemetry().at(-1).outcome, 'exhausted');
 });
 
-test('alignment mirrors a bundled plugin over an older profile copy', async t => {
+test('alignment retires an older profile copy so the sealed runtime supplies the plugin', async t => {
   const root = await mkdtemp(join(tmpdir(), 'align-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const pkg = async (dir, value, extra = {}) => { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), JSON.stringify({ ...value, ...extra }, null, 2)); };
   const dsh = join(root, 'dsh');
   await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' });
-  await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' });
+  await pkg(join(dsh, 'node_modules', '@deepseek-ai', 'dsh-base'), { name: '@deepseek-ai/dsh-base', version: '0.2.1-rc.2' });
+  await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' }, { dependencies: { '@deepseek-ai/dsh-base': '0.2.1-rc.2' } });
   const profile = join(root, 'home', 'profiles', 'desktop-agentkit-studio');
   await pkg(profile, { name: 'profiles', dependencies: { [PLUGIN]: '0.0.7' } });
   await pkg(join(profile, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.7' });
-  const pnpm = join(root, 'fake-pnpm.mjs');
-  await writeFile(pnpm, 'process.exit(0)\n');
-  const argv = [process.execPath, '/host/index.js', dsh, profile, join(root, 'runtime'), pnpm, join(root, 'bin')];
+  const argv = [process.execPath, '/host/index.js', dsh, profile, join(root, 'runtime'), join(root, 'pnpm.mjs'), join(root, 'bin')];
   const log = { info: () => {}, warn: () => {} };
 
-  const result = alignProfileProductPlugin({ argv, env: { DSH_HOME: join(root, 'home') }, node: process.execPath, log });
-  assert.equal(result.action, 'aligned');
+  assert.equal(verifyBundledPlugin(dsh, join(dsh, 'node_modules', PLUGIN)), undefined);
+  const result = alignProfileProductPlugin({ argv, env: { DSH_HOME: join(root, 'home') }, log });
+  assert.equal(result.action, 'retired');
   assert.equal(result.applied, 'next-launch');
   assert.equal(result.previousVersion, '0.0.7');
   assert.equal(result.bundledVersion, '0.0.10');
   const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
-  assert.match(manifest.dependencies[PLUGIN], /^file:.*bundled-plugins/);
-  assert.equal(JSON.parse(await readFile(join(profile, 'node_modules', PLUGIN, 'package.json'), 'utf8')).version, '0.0.10');
+  assert.equal(manifest.dependencies[PLUGIN], undefined);
+  await assert.rejects(() => readFile(join(profile, 'node_modules', PLUGIN, 'package.json'), 'utf8'));
+  assert.equal(JSON.parse(await readFile(join(result.backupPath, 'package.json'), 'utf8')).version, '0.0.7');
 
-  assert.equal(alignProfileProductPlugin({ argv, env: { DSH_HOME: join(root, 'home') }, node: process.execPath, log }).action, 'skipped-equal');
+  assert.equal(alignProfileProductPlugin({ argv, env: { DSH_HOME: join(root, 'home') }, log }).action, 'skipped-absent');
   assert.equal(comparePluginVersions('0.0.10', '0.0.7'), 1);
   assert.equal(comparePluginVersions('0.0.7', '0.0.10'), -1);
+});
+
+test('alignment keeps the old copy and stops after two failures when the bundled copy is incomplete', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'align-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pkg = async (dir, value, extra = {}) => { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), JSON.stringify({ ...value, ...extra }, null, 2)); };
+  const dsh = join(root, 'dsh');
+  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' });
+  // The mirror this plugin would need is missing the in-box DSH package.
+  await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' }, { dependencies: { '@deepseek-ai/dsh-base': '0.2.1-rc.2' } });
+  const profile = join(root, 'home', 'profiles', 'desktop-agentkit-studio');
+  await pkg(profile, { name: 'profiles', dependencies: { [PLUGIN]: '0.0.7' } });
+  await pkg(join(profile, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.7' });
+  const argv = [process.execPath, '/host/index.js', dsh, profile, join(root, 'runtime'), join(root, 'pnpm.mjs'), join(root, 'bin')];
+  const log = { info: () => {}, warn: () => {} };
+  const env = { DSH_HOME: join(root, 'home') };
+
+  assert.match(verifyBundledPlugin(dsh, join(dsh, 'node_modules', PLUGIN)), /@deepseek-ai\/dsh-base/);
+  const first = alignProfileProductPlugin({ argv, env, log });
+  assert.equal(first.action, 'restored');
+  assert.match(first.reason, /@deepseek-ai\/dsh-base/);
+  const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
+  assert.equal(manifest.dependencies[PLUGIN], '0.0.7');
+  assert.equal(JSON.parse(await readFile(join(profile, 'node_modules', PLUGIN, 'package.json'), 'utf8')).version, '0.0.7');
+  assert.equal(JSON.parse(await readFile(join(profile, '.alignment-attempt-0.0.10'), 'utf8')).failures, 1);
+
+  assert.equal(alignProfileProductPlugin({ argv, env, log }).action, 'restored');
+  assert.equal(alignProfileProductPlugin({ argv, env, log }).action, 'skipped-attempt-budget');
+  assert.equal(JSON.parse(await readFile(join(profile, 'node_modules', PLUGIN, 'package.json'), 'utf8')).version, '0.0.7');
 });
 
 test('alignment leaves a newer profile copy and non-desktop hosts untouched', async t => {
@@ -82,7 +112,7 @@ test('alignment leaves a newer profile copy and non-desktop hosts untouched', as
   await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' });
   await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' });
   const profile = join(root, 'home', 'profiles', 'p');
-  await pkg(profile, { name: 'p' });
+  await pkg(profile, { name: 'p', dependencies: { [PLUGIN]: '9.9.9' } });
   await pkg(join(profile, 'node_modules', PLUGIN), { name: PLUGIN, version: '9.9.9' });
   const argv = [process.execPath, '/host/index.js', dsh, profile, join(root, 'runtime'), join(root, 'pnpm.mjs'), join(root, 'bin')];
   const log = { info: () => {}, warn: () => {} };
