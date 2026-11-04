@@ -48,7 +48,7 @@ test('desktop feed verifier rejects example origins before network access', asyn
 // The App embeds this path. An intact compatibility feed must not hide a missing
 // canonical feed, including when both buckets contain the same ZIP bytes.
 test('Studio verifier requests the packaged canonical feed and rejects a legacy-only publication', async t => {
-  const version = '0.2.1-rc.2.20261018.3';
+  const version = '0.2.2-rc.1.20261018.3';
   const bytes = Buffer.from('canonical Studio ZIP');
   const sha512 = createHash('sha512').update(bytes).digest('base64');
   const requests = []; let canonical = true; let origin;

@@ -1,0 +1,50 @@
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+index f03ecc32aae8728aa544307ced0e44cb49b3c999..45902e98da310e607ce445f029d24fa25d4fb758 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+@@ -73,6 +73,7 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, trackEntryClick,
+         type="button"
+         className={clsx(css.panelRow, active && css.panelActive)}
+         aria-label={label}
++        data-panel-id={id}
+         aria-current={active ? 'page' : undefined}
+         onClick={() => {
+           const entry = officialEntry(id)
+@@ -150,6 +151,28 @@ export function SidebarRoot({
+   const unpinned = useEntryPins(ids => ids)
+   const activePanelId = usePanelInfo(info => info.activePanelId)
+   const hasEntryActions = useEntryActions(registered => registered)
++  const panelList = useRef<HTMLElement | null>(null)
++  // Panel catalog entries can arrive while the shell is booting (for
++  // example, a plugin registers a global panel after the workspace UI). The
++  // host may reconcile row props before React replaces the delegated click
++  // closure. Route from the actual DOM data attribute in capture phase so the
++  // visible row always selects its own panel; the row handler remains as the
++  // normal fallback for non-catalog callers.
++  useEffect(() => {
++    const root = panelList.current
++    if (root === null) return
++    const onClick = (event: MouseEvent): void => {
++      const target = event.target as { closest?: (selector: string) => HTMLElement | null } | null
++      const button = target?.closest?.('[data-panel-id]') ?? null
++      if (button === null || !root.contains(button)) return
++      const id = button.dataset.panelId as SidebarPanelMetadata['id'] | undefined
++      if (id === undefined || id.length === 0) return
++      event.stopPropagation()
++      selectPanel(id)
++    }
++    root.addEventListener('click', onClick, true)
++    return () => { root.removeEventListener('click', onClick, true) }
++  }, [panels.length, selectPanel])
+   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
+   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
+   // A page whose access snapshot excludes starting a Session offers no New Session affordance.
+@@ -377,7 +400,7 @@ export function SidebarRoot({
+       )}
+ 
+       {panels.length > 0 && (
+-        <nav className={css.panelList} aria-label={t('panels.label')}>
++        <nav ref={panelList} className={css.panelList} aria-label={t('panels.label')}>
+           {panels.filter(({ id }) => id === FIXED_PANEL_ID || !unpinned.includes(id)).map(({ id, label }) => (
+             <PanelRow
+               key={id}

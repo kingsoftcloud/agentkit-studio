@@ -1,0 +1,160 @@
+diff --git a/apps/desktop/electron-builder.config.d.mts b/apps/desktop/electron-builder.config.d.mts
+index c4b6c177b55ffbc7184e9a1477a19b1a6c574b75..f67b0ba45727d5826cb7e2f21fa3c169a496c6fd 100644
+--- a/apps/desktop/electron-builder.config.d.mts
++++ b/apps/desktop/electron-builder.config.d.mts
+@@ -15,7 +15,7 @@ export interface DesktopElectronBuilderConfig {
+     { readonly from: string, readonly to: 'dsh', readonly filter: readonly ['**/*'] },
+     { readonly from: string, readonly to: 'dsh/node_modules', readonly filter: readonly ['**/*'] },
+   ]
+-  readonly extraMetadata: { readonly dshDesktopAppId: string }
++  readonly extraMetadata: { readonly name?: string; readonly dshDesktopAppId: string }
+   readonly asarUnpack: readonly string[]
+   readonly extraResources: readonly [
+     { readonly from: string, readonly to: 'runtime' },
+diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
+index 09bd482d9cb83c00b54a6cb671f3dcb3bb666211..2567663f837f295c813576bb2bdf0f8632b253e3 100644
+--- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
++++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
+@@ -185,7 +185,8 @@ export function resolveDesktopAutoUpdateConfig(env, platform, arch) {
+     if (originEnvName === undefined) throw new Error('desktop auto-update: selected deployment has no origin')
+     origin = httpsOrigin(requiredEnvironmentValue(env, originEnvName), originEnvName)
+   }
+-  let releasePrefix = 'dsh-desk'
++  let releasePrefix = environment === 'production' && platform === 'win32'
++    && env.DSH_DESKTOP_APP_ID === 'com.kingsoftcloud.agentkit-studio' ? 'studio' : 'dsh-desk'
+   if (environment === 'test') {
+     const releaseId = requiredEnvironmentValue(env, 'DOWNLOAD_TEST_RELEASE_ID')
+     if (!/^[a-f0-9]{32}$/u.test(releaseId)) {
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index d89cd736e860fe45bb49e625176834b04ebd6e7a..b0e78c29afff132508890a61ebf4b39fd5439a7f 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -111,6 +111,7 @@ export function createElectronBuilderConfig(
+     appId,
+     protocols: [{ name: 'DeepSeek Harness', schemes: ['dsh'] }],
+     extraMetadata: {
++      ...(packagesWindows && productName === 'AgentKit Studio' ? { name: 'agentkit-studio-desktop' } : {}),
+       dshDesktopAppId: appId,
+       dshDesktopUpdateChannel: update?.channel ?? 'nightly',
+       ...(policy === undefined ? {} : { dshMandatoryUpdatePolicy: policy }),
+@@ -130,7 +131,8 @@ export function createElectronBuilderConfig(
+       if (resolvedPlatform !== 'win32') return true
+       await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+         fileURLToPath(new URL('./prepare-windows-installer.ps1', import.meta.url)),
+-        '-OutputDirectory', join(buildPaths.root, 'installer-ui')], {
++        '-OutputDirectory', join(buildPaths.root, 'installer-ui'), '-ProductName', productName,
++        ...(productIcon ? ['-ProductIcon', productIcon] : [])], {
+         env: scrubWindowsSigningEnvironment(env), windowsHide: true,
+       })
+       await writeFile(join(buildPaths.root, 'installer-ui', 'strings.nsh'), renderInstallerStrings(readInstallerLocales()), 'utf8')
+diff --git a/apps/desktop/scripts/prepare-windows-installer.ps1 b/apps/desktop/scripts/prepare-windows-installer.ps1
+index 5195891033d935a7c4e6b5b2811c469d8eeb8b14..b1aa9c6ca9d2116e1bfc9e2b5c5114da5ad09bed 100644
+--- a/apps/desktop/scripts/prepare-windows-installer.ps1
++++ b/apps/desktop/scripts/prepare-windows-installer.ps1
+@@ -1,6 +1,6 @@
+ <# Compile the x86 DWM helper and raster assets embedded in the NSIS installer. #>
+ [CmdletBinding()]
+-param([string]$OutputDirectory, [switch]$TestProgress, [switch]$CompileProgressOnly)
++param([string]$OutputDirectory, [switch]$TestProgress, [switch]$CompileProgressOnly, [string]$ProductName = 'DeepSeek Harness', [string]$ProductIcon)
+ $ErrorActionPreference = 'Stop'
+ $installerRoot = Join-Path $PSScriptRoot '../installer'
+ if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '../.desktop-build/targets/win-x64/installer-ui' }
+@@ -77,7 +77,29 @@ foreach ($asset in @('brand', 'brand-2x', 'brand-dark', 'brand-dark-2x', 'uninst
+             try {
+                 $background = if ($asset -like '*dark*') { [Drawing.Color]::FromArgb(21, 21, 23) } else { [Drawing.Color]::White }
+                 $graphics.Clear($background)
+-                $graphics.DrawImage($image, 0, 0, $image.Width, $image.Height)
++                if ($ProductName -eq 'AgentKit Studio') {
++                    if (-not $ProductIcon -or -not (Test-Path -LiteralPath $ProductIcon)) { throw 'Studio installer requires the product icon' }
++                    $icon = [Drawing.Image]::FromFile($ProductIcon)
++                    try {
++                        $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
++                        $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
++                        if ($asset -eq 'uninstaller-sidebar') {
++                            $size = [Math]::Min(96, $image.Width - 32)
++                            $graphics.DrawImage($icon, [int](($image.Width - $size) / 2), 48, $size, $size)
++                        } else {
++                            $scale = $image.Width / 600.0
++                            $graphics.DrawImage($icon, [int](244 * $scale), [int](4 * $scale), [int](112 * $scale), [int](112 * $scale))
++                            $font = [Drawing.Font]::new('Segoe UI', [single](30 * $scale), [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
++                            $brush = [Drawing.SolidBrush]::new($(if ($asset -like '*dark*') { [Drawing.Color]::White } else { [Drawing.Color]::FromArgb(11, 18, 32) }))
++                            $format = [Drawing.StringFormat]::new()
++                            try {
++                                $format.Alignment = [Drawing.StringAlignment]::Center
++                                $format.LineAlignment = [Drawing.StringAlignment]::Center
++                                $graphics.DrawString($ProductName, $font, $brush, [Drawing.RectangleF]::new(0, [single](130 * $scale), $image.Width, [single](55 * $scale)), $format)
++                            } finally { $format.Dispose(); $brush.Dispose(); $font.Dispose() }
++                        }
++                    } finally { $icon.Dispose() }
++                } else { $graphics.DrawImage($image, 0, 0, $image.Width, $image.Height) }
+             } finally { $graphics.Dispose() }
+             $bitmap.Save((Join-Path $output "$asset.bmp"), [Drawing.Imaging.ImageFormat]::Bmp)
+         } finally { $bitmap.Dispose() }
+diff --git a/apps/desktop/src/paths.ts b/apps/desktop/src/paths.ts
+index cf03e38c3653773c307f128aca3aaced15caaa93..dd8339f38182972c368c0164e33698b2d8985907 100644
+--- a/apps/desktop/src/paths.ts
++++ b/apps/desktop/src/paths.ts
+@@ -14,9 +14,12 @@ export interface DesktopPaths {
+  * @param dshHome - Harness home shared with npm-installed dsh.
+  * @returns immutable desktop path set.
+  */
+-export function resolveDesktopPaths(dshHome: string = resolveDshHome()): DesktopPaths {
++export function resolveDesktopPaths(dshHome: string = resolveDshHome(), platform = process.platform,
++  productName = process.env.DSH_DESKTOP_PRODUCT_NAME?.trim()): DesktopPaths {
++  // Only the plugin profile is product-owned. Sessions and credentials retain the shared DSH home.
++  const profileName = platform === 'win32' && productName === 'AgentKit Studio' ? 'desktop-agentkit-studio' : 'desktop'
+   return {
+-    profile: join(dshHome, 'profiles', 'desktop'),
+-    lock: join(dshHome, 'profiles', 'desktop', 'lock'),
++    profile: join(dshHome, 'profiles', profileName),
++    lock: join(dshHome, 'profiles', profileName, 'lock'),
+   }
+ }
+diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
+index c1cb0354e81fb38fd6262aff4f34c3659d2fcdee..20e714e4493b163d8f3fcf0de5f44f0aee935c3b 100644
+--- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
++++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
+@@ -142,3 +142,10 @@ describe('desktop auto-update environment', () => {
+     expect(() => desktopUpdateMetadataFilename('1.2.3', 'linux')).toThrow(/unsupported metadata platform/u)
+   })
+ })
++
++it('sealed Windows Studio uses the Studio public feed directory', () => {
++  expect(resolveDesktopAutoUpdateConfig({ DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio',
++    DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_UPDATE_ORIGIN: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
++    DSH_DESKTOP_UPDATE_CHANNEL: 'preview' }, 'win32', 'x64').publicUrl)
++    .toBe('https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/win-x64/')
++})
+diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/product-branding.spec.ts
+index 6b2c2c9e91cc64895da58370752eb05f63e02a1d..8caaffb9fed1b31c524f8bd394600ba10de02feb 100644
+--- a/apps/desktop/tests/product-branding.spec.ts
++++ b/apps/desktop/tests/product-branding.spec.ts
+@@ -16,3 +16,9 @@ it('ordinary DSH builds keep the official icon and name', () => {
+   expect(config.productName).toBe('DeepSeek Harness')
+   expect(config.mac.icon).toBe(fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)))
+ })
++
++it('Windows Studio owns its Electron identity without migrating macOS state', () => {
++  const windows = { ...env, DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio', DSH_DESKTOP_TARGET_PLATFORM: 'win32', DSH_DESKTOP_TARGET_ARCH: 'x64', DSH_CLIENT_TITLE: 'AgentKit Studio', DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN: 'https://updates.example.com' }
++  expect(createElectronBuilderConfig(windows, 'win32', 'x64').extraMetadata.name).toBe('agentkit-studio-desktop')
++  expect(createElectronBuilderConfig({ ...env, DSH_CLIENT_TITLE: 'AgentKit Studio' }, 'darwin', 'arm64').extraMetadata.name).toBeUndefined()
++})
+diff --git a/apps/desktop/tests/studio-paths.spec.ts b/apps/desktop/tests/studio-paths.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..89a9a8e873e90f4b6d2ab51ab6c7171b44ab5ed0
+--- /dev/null
++++ b/apps/desktop/tests/studio-paths.spec.ts
+@@ -0,0 +1,13 @@
++import { expect, it } from 'vitest'
++import { join } from 'node:path'
++import { tmpdir } from 'node:os'
++const sharedHome = join(tmpdir(), 'studio-paths-shared-dsh')
++import { resolveDesktopPaths } from '../src/paths.ts'
++it('Windows Studio isolates plugin state while retaining the DSH home', () => {
++  expect(resolveDesktopPaths(sharedHome, 'win32', 'AgentKit Studio')).toEqual({
++    profile: join(sharedHome, 'profiles', 'desktop-agentkit-studio'),
++    lock: join(sharedHome, 'profiles', 'desktop-agentkit-studio', 'lock'),
++  })
++  expect(resolveDesktopPaths(sharedHome, 'darwin', 'AgentKit Studio').profile).toBe(join(sharedHome, 'profiles', 'desktop'))
++  expect(resolveDesktopPaths(sharedHome, 'win32', 'DeepSeek Harness').profile).toBe(join(sharedHome, 'profiles', 'desktop'))
++})

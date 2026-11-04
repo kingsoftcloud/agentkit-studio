@@ -17,7 +17,7 @@ try {
   const read = path => readFileSync(join(root, path), 'utf8');
   const metadata = JSON.parse(read('package.json')), manifest = JSON.parse(read('studio.plugin.json'));
   if (metadata.name !== '@kingsoftcloud/agentkit-studio' || metadata.private === true || metadata.publishConfig?.access !== 'public') throw Error('Studio package identity/publication mismatch');
-  if (manifest.id !== 'agentkit-studio' || manifest.version !== metadata.version || manifest.requiredDsh !== '0.2.1-rc.2') throw Error('Studio manifest identity/Host mismatch');
+  if (manifest.id !== 'agentkit-studio' || manifest.version !== metadata.version || manifest.requiredDsh !== '0.2.2-rc.1') throw Error('Studio manifest identity/Host mismatch');
   if (metadata.exports?.['./agentkit-harness'] || metadata.scripts?.['build:native-source'] || metadata.scripts?.['pack:harness']) throw Error('Legacy Harness entry is still exposed');
   for (const file of files) {
     if (/^(?:docs|tests|examples|host-source|patches)\//.test(file)

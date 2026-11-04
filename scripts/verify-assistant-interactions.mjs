@@ -11,7 +11,7 @@ import { createAssistantLocalHandoff, createSimulatedLocalExecutor } from '../sr
 if (!process.env.AGENTKIT_DSH_ROOT) throw new Error('Set AGENTKIT_DSH_ROOT to the isolated, built pinned DSH checkout');
 const root = resolve(process.env.AGENTKIT_DSH_ROOT);
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-assert.equal(commit, '687f282e8625c6b8d11ff58211a90524be2e4317', 'Verify the declared DSH revision');
+assert.equal(commit, '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db', 'Verify the declared DSH revision');
 const require = createRequire(join(root, 'packages/llm/llm-retry/package.json'));
 const load = name => import(pathToFileURL(require.resolve(`@deepseek-ai/${name}`)).href);
 const { Context } = await load('cordis');

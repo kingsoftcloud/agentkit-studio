@@ -113,7 +113,7 @@ try {
   await symlink(installed, join(modules, '@kingsoftcloud/agentkit-studio'));
   await writeFile(join(profileRoot, 'package.json'), JSON.stringify({ name: 'local-management-proof', private: true, type: 'module',
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'] } },
-    dependencies: { '@deepseek-ai/dsh-base': '0.2.1-rc.2', '@deepseek-ai/dsh-web-app': '0.2.1-rc.2', '@kingsoftcloud/agentkit-studio': '0.0.2' } }));
+    dependencies: { '@deepseek-ai/dsh-base': '0.2.2-rc.1', '@deepseek-ai/dsh-web-app': '0.2.2-rc.1', '@kingsoftcloud/agentkit-studio': '0.0.2' } }));
   await writeFile(join(root, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'fixture', provider: 'openai-compatible',
     modelName: 'pinned', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, default: true, credentialName: 'LOCAL_PROOF' },
   { id: 'fixture-hidden', provider: 'openai-compatible', modelName: 'pinned', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,

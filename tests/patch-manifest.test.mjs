@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { checkPatchManifest, validatePatchManifest } from '../scripts/check-patch-manifest.mjs';
 import { packageDesktop } from '../scripts/package-desktop.mjs';
 
-const directory = new URL('../patches/dsh-v0.2.1-rc.2/', import.meta.url);
+const directory = new URL('../patches/dsh-v0.2.2-rc.1/', import.meta.url);
 async function inputs() {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', directory), 'utf8'));
   const files = new Map(await Promise.all((await readdir(directory)).filter(name => name.endsWith('.patch')).map(async name => [name, await readFile(new URL(name, directory))])));
@@ -17,16 +17,10 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 64); assert.equal(report.paths, 404); assert.ok(report.hostTests.length > 0);
-  assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/execute-turn-loader.spec.ts'));
-  assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/external-turn-recovery.spec.ts'));
-  assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/external-turn-idle-start.spec.ts'));
-  assert.ok(report.hostTests.includes('packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts'));
-  assert.ok(report.hostTests.includes('packages/skill/tool-workspace-dependencies/tests/tool-workspace-dependencies.spec.ts'));
-  assert.ok(report.hostTests.includes('scripts/primary-runtime/prepare.spec.ts'));
-  assert.ok(report.hostTests.includes('packages/skill/skill-office/tests/office-package.spec.ts'));
-  assert.ok(report.hostTests.includes('packages/skill/skill-office/tests/progressive-loading.spec.ts'));
-  assert.ok(report.hostTests.includes('apps/desktop-host/tests/office.spec.ts'));
+  assert.equal(report.patches, 40); assert.equal(report.paths, 188); assert.ok(report.hostTests.length > 0);
+  assert.ok(report.hostTests.includes('apps/desktop/tests/local-macos-package.spec.ts'));
+  assert.ok(report.hostTests.includes('apps/desktop/tests/product-branding.spec.ts'));
+  assert.ok(report.hostTests.includes('packages/context/agent-instructions/tests/agent-instructions.spec.ts'));
   assert.deepEqual(report.nativeTests, ['native/system/test/flock.test.js']);
 });
 

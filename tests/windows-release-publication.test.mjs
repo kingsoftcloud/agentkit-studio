@@ -10,7 +10,7 @@ import { publishWindowsCandidate } from '../scripts/publish-windows-candidate.mj
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'windows-publication-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const version = '0.2.1-rc.2.20261019.5', name = `deepseek-harness-${version}-win-x64.exe`;
+  const version = '0.2.2-rc.1.20261019.5', name = `deepseek-harness-${version}-win-x64.exe`;
   const bytes = Buffer.from('original signed installer bytes'), sha512 = createHash('sha512').update(bytes).digest('base64');
   const receipt = { version, installer: name, installerSha256: createHash('sha256').update(bytes).digest('hex'),
     installerSigned: true, timestamped: true, installed: true, appSigned: true, uiVerified: true };

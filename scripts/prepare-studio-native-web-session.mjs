@@ -25,7 +25,7 @@ for (const key of ['--source', '--dependencies', '--output']) assert(options[key
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = realpathSync(options['--source']), dependencies = realpathSync(options['--dependencies']);
 const output = resolve(options['--output']), contract = 'agentkit.native-web-session-proof/v1';
-const expected = JSON.parse(readFileSync(join(repository, 'patches/dsh-v0.2.1-rc.2/source.json'), 'utf8'));
+const expected = JSON.parse(readFileSync(join(repository, 'patches/dsh-v0.2.2-rc.1/source.json'), 'utf8'));
 const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim();
 assert.equal(sourceHead, expected.headCommit, 'Use the pinned maintained Host');
 assert(existsSync(join(source, 'apps/cli/lib/bin.js')), 'Build the maintained Host first');

@@ -19,14 +19,14 @@ test('version gate failures surface the required runtime instead of a bare code'
     inspect: async () => ({ status: 'accepted', name: '@kingsoftcloud/agentkit-studio' }),
     installBundle: async () => ({ application: 'failed', changed: false, stage: 'install', error: {
       code: 'incompatible-version',
-      incompatible: [{ name: '@kingsoftcloud/agentkit-studio', version: '0.0.5', runtimeVersion: '0.2.0-rc.2', requirements: { 'engines.dsh': '0.2.1-rc.2' } }],
+      incompatible: [{ name: '@kingsoftcloud/agentkit-studio', version: '0.0.5', runtimeVersion: '0.2.0-rc.2', requirements: { 'engines.dsh': '0.2.2-rc.1' } }],
     } }),
   });
   await assert.rejects(() => plugins.installDsh('@kingsoftcloud/agentkit-studio@0.0.5'), error =>
     error.code === 'DSH_PLUGIN_OPERATION_FAILED'
     && error.message.includes('不兼容')
     && error.message.includes('0.0.5')
-    && error.message.includes('engines.dsh=0.2.1-rc.2')
+    && error.message.includes('engines.dsh=0.2.2-rc.1')
     && error.message.includes('0.2.0-rc.2')
     && error.message.includes('更新'));
 });
@@ -126,7 +126,7 @@ test('official on-demand entries are missing until the exact host install target
   const calls = []; let installed = false;
   const manager = {
     listBundles: async () => [{ name, official: true, installed, availability: installed ? 'profile' : 'missing', enabled: installed,
-      installTarget: { spec: name + '@0.2.1-rc.2', version: '0.2.1-rc.2' }, rows: installed ? ['agent-team', 'tool-agent-team', 'ui-agent-team'].map(rowId => ({ rowId, fiberPhase: 'active' })) : [] }],
+      installTarget: { spec: name + '@0.2.2-rc.1', version: '0.2.2-rc.1' }, rows: installed ? ['agent-team', 'tool-agent-team', 'ui-agent-team'].map(rowId => ({ rowId, fiberPhase: 'active' })) : [] }],
     listPlugins: async () => [],
     installBundle: async (...args) => { calls.push(args); installed = true; return { application: 'applied', changed: true }; },
     setBundleEnabled: async () => assert.fail('an absent on-demand package must be installed before enabling'),
@@ -136,7 +136,7 @@ test('official on-demand entries are missing until the exact host install target
   assert.equal(entry.installed, false); assert.equal(entry.source, 'catalog'); assert.equal(entry.status, 'available');
   assert.equal(entry.readOnlyReason, '');
   assert.equal((await plugins.installDsh(name)).verification.state, 'ready');
-  assert.deepEqual(calls, [[name + '@0.2.1-rc.2', { enabled: true, saveExact: true }]]);
+  assert.deepEqual(calls, [[name + '@0.2.2-rc.1', { enabled: true, saveExact: true }]]);
 });
 
 test('DSH discovery decorates ecosystem rows with local install state and never reinstalls', async () => {

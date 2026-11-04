@@ -17,7 +17,7 @@ function fixture(t) {
   git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   writeFileSync(join(source, 'package.json'), JSON.stringify({ private: true, packageManager: 'pnpm@10.33.2' }));
   writeFileSync(join(source, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
-  const paths = new Map(), version = '0.2.1-rc.2';
+  const paths = new Map(), version = '0.2.2-rc.1';
   function pkg(name, extra = {}) {
     const path = join(source, 'packages', name.split('/').at(-1)); paths.set(name, path);
     mkdirSync(join(path, 'lib'), { recursive: true });
@@ -73,7 +73,7 @@ test('changed Node Office and workspace services remain in the installed Host de
   for (const name of names) {
     const dir = join(f.source, 'packages', name.split('/').at(-1));
     mkdirSync(join(dir, 'lib'), { recursive: true });
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '0.2.1-rc.2',
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '0.2.2-rc.1',
       type: 'module', exports: './lib/index.js', files: ['lib'] }));
     writeFileSync(join(dir, 'lib/index.js'), 'export const runtime = "node";\n');
     root.dependencies[name] = 'workspace:*';
@@ -103,11 +103,11 @@ test('fresh Host acceptance refuses archive or lock drift and development-direct
   const names = ['@kingsoftcloud/agentkit-studio', ...NODE_HOST_ROOTS];
   for (const name of names) mkdirSync(join(installation, 'node_modules', name), { recursive: true });
   const packages = Object.fromEntries([...names, ...Array.from({ length: 8 }, (_, n) => `dep-${n}`)]
-    .map(name => [`node_modules/${name}`, { version: '0.2.1-rc.2' }]));
+    .map(name => [`node_modules/${name}`, { version: '0.2.2-rc.1' }]));
   const lock = JSON.stringify({ packages }), lockPath = join(installation, 'package-lock.json');
   writeFileSync(lockPath, lock);
   const proof = { format: 'agentkit.native-node-install-proof/v1', passed: true, host: true, installScripts: true,
-    archiveSha256: digest('original archive'), lockSha256: digest(lock), maintainedHost: { source: { ...f.pins, dshVersion: '0.2.1-rc.2' } } };
+    archiveSha256: digest('original archive'), lockSha256: digest(lock), maintainedHost: { source: { ...f.pins, dshVersion: '0.2.2-rc.1' } } };
   writeFileSync(join(installation, 'proof.json'), JSON.stringify(proof));
   const options = { archive, studio: f.studio };
   assert.equal((await readNodeHostInstallation(installation, options)).evidence.kind, 'fresh-installation');
