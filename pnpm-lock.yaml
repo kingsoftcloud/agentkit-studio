@@ -29,11 +29,11 @@ importers:
         specifier: 0.0.9
         version: 0.0.9
       '@kingsoftcloud/agentkit-harness-node':
-        specifier: 0.0.9
-        version: 0.0.9
+        specifier: 0.0.11
+        version: 0.0.11
       '@kingsoftcloud/agentkit-harness-ui':
-        specifier: 0.0.9
-        version: 0.0.9(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: 0.0.11
+        version: 0.0.11(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@modelcontextprotocol/sdk':
         specifier: 1.32.0
         version: 1.32.0(patch_hash=905b5039a9965104e7ef24338020cfe96b5dd53fc4cf6f53e067a66677b28044)(zod@4.6.5)
@@ -528,13 +528,13 @@ packages:
     resolution: {integrity: sha512-wTs5Oecev+GVQPpXb9f3DUn2BAH3vfkzeB0BqnXeeWBNyJpQei8MZeC07IDFOsJtgE9YYEBCne5fp65f0gx06Q==}
     engines: {node: '>=22.19.0'}
 
-  '@kingsoftcloud/agentkit-harness-node@0.0.9':
-    resolution: {integrity: sha512-jBOu4ZF+l5TOPKULtWzRCRhhEQ83qkYkpJTWf7CRzqiYLDupACz2QTaA3+/fxGvZzXoU41i3wFJietOwzDlQVA==}
+  '@kingsoftcloud/agentkit-harness-node@0.0.11':
+    resolution: {integrity: sha512-3eOvW8tCuaDXlOh3jYYu8yjMmZDB+ejW380olOY7A16qEkZ38EgGNlk8LoYvJaOFGxuPOnROrH2CcgkTnO5sfw==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@kingsoftcloud/agentkit-harness-ui@0.0.9':
-    resolution: {integrity: sha512-nyOF/34H0A9ie71+ZQqQol4MACMXEM5FnbTsFbJC3/pTOyxeBCUVK9nWaQ5MWtCD+xsGfgT0VMbRRrnYVgVuCw==}
+  '@kingsoftcloud/agentkit-harness-ui@0.0.11':
+    resolution: {integrity: sha512-u3qziEEnhe4z3xBfaqWUmNQUrnlTiByzyKOERRtRtfmY6rE8jqGgiRKIzprUB//cSRRBHHkcekE5UiVGOK+2qg==}
     engines: {node: '>=22'}
     peerDependencies:
       react: '>=18'
@@ -1481,7 +1481,7 @@ snapshots:
       ajv-draft-04: 1.0.0(ajv@8.20.0)
       ajv-formats: 3.0.1(ajv@8.20.0)
 
-  '@kingsoftcloud/agentkit-harness-node@0.0.9':
+  '@kingsoftcloud/agentkit-harness-node@0.0.11':
     dependencies:
       '@astral-sh/ruff-wasm-nodejs': 0.16.8
       '@kingsoftcloud/agentkit-harness-core': 0.0.9
@@ -1490,7 +1490,7 @@ snapshots:
       playwright-core: 1.58.2
       pngjs: 7.0.0
 
-  '@kingsoftcloud/agentkit-harness-ui@0.0.9(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@kingsoftcloud/agentkit-harness-ui@0.0.11(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@kingsoftcloud/agentkit-harness-core': 0.0.9
     optionalDependencies:
