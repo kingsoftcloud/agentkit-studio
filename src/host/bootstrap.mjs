@@ -18,6 +18,7 @@ import { createStartupReconciler } from '../preset-recovery.mjs';
 import { bindPresetRegistry } from '../preset-registry-binding.mjs';
 import { mountRuntimeBridge, ownAsyncResource } from './runtime-bridge.mjs';
 import { createStudioServices } from './services/index.mjs';
+import { alignProfileProductPlugin } from './profile-plugin-alignment.mjs';
 import { createStudioRoutes } from './routes/index.mjs';
 import { createControlPlaneDispatcher } from './routes/dispatcher.mjs';
 import { registerControlPlaneRoutes } from './routes/http.mjs';
@@ -33,6 +34,13 @@ import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-binding
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
+  // The Desktop shell resolves this plugin through the profile, so an upgraded
+  // application can still load an older profile copy. Align it before any Studio
+  // surface loads; module resolution already happened, so it applies NEXT launch.
+  try { alignProfileProductPlugin({ env: runtimeEnv }); }
+  catch (error) {
+    console.warn('[studio] profile alignment skipped', { message: error instanceof Error ? error.message : String(error) });
+  }
   const nativeEngineContract = nativeHarnessHostContract(runtimeEnv);
   const configuredLocalSkillDirectory = runtimeEnv.KSADK_LOCAL_SKILLS_DIR?.trim();
   const localSkillDirectory = configuredLocalSkillDirectory ? resolve(configuredLocalSkillDirectory) : undefined;
