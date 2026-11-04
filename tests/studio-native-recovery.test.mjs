@@ -43,17 +43,17 @@ test('recovery client admits scoped auxiliary Memory usage and rejects foreign o
 
 // Product assembly units deliberately use a narrow Agent double. The separate
 // mounted-Host proof uses official SessionController, real Agents and HTTP RPC.
-async function fixture(t, { fetchModel, maxTokens = 500, localExecutionMode } = {}) {
+async function fixture(t, { fetchModel, maxTokens = 500, localExecutionMode, selectedModel = 'original' } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-recovery-unit-')), workspaceRoot = join(root, 'workspace');
   await mkdir(workspaceRoot);
   const agents = createAgentStore({ storeDir: root }), ledger = new MemoryRunStore();
   const record = await agents.create({ name: 'Recovery', runtimeType: 'harness', bindings: { modelProfileIds: ['fixture'] } });
   const events = [], projections = new Map(), requests = [], seen = [], controller = new AbortController();
-  let failFlush = true, key = 'secret-before', running = Promise.resolve();
+  let failFlush = true, key = 'secret-before', running = Promise.resolve(), catalogOffline = false, catalogCalls = 0;
   const session = { id: 'original-session', append(type, data, options) { events.push({ type, data: structuredClone(data), ...options, seq: events.length + 1 }); } };
   session.append('turn/start', { turn: 1 });
-  const assembly = { prompt: 'Original system prompt', tools: [], variables: { provider: 'agentkit-studio-fixture', model: 'original' } };
-  const agent = { session, options: { maxTokens, provider: 'agentkit-studio-fixture', model: 'original' },
+  const assembly = { prompt: 'Original system prompt', tools: [], variables: { provider: 'agentkit-studio-fixture', model: selectedModel } };
+  const agent = { session, options: { maxTokens, provider: 'agentkit-studio-fixture', model: selectedModel },
     externalTurns: nativeOwnershipHost(session, events), whenIdle: () => running };
   agent.externalTurns.resume = async (_engine, execute) => {
     const owner = agent.externalTurns.pending();
@@ -83,7 +83,11 @@ async function fixture(t, { fetchModel, maxTokens = 500, localExecutionMode } = 
   }, sessionController: { resolveAgent: async id => { assert.equal(id, session.id); seen.push('resolve'); return { agent }; } },
   systemPrompt: { assemble: async context => { assert.equal(context.agent, agent); seen.push('assemble'); return assembly; } } };
   const values = { modelProfiles: [{ id: 'fixture', provider: 'openai-compatible', modelName: 'original', baseUrl: 'https://fixture.invalid/v1' }] };
-  const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: key }) } });
+  const models = createModelService({ configuration: { resolve: async () => ({ values }) }, credentials: { resolve: async () => ({ value: key }) },
+    ...(selectedModel === 'original' ? {} : { fetchImpl: async () => {
+      catalogCalls++; assert.equal(catalogOffline, false, 'recovery must not rediscover an admitted catalog model');
+      return Response.json({ data: ['original', selectedModel].map(id => ({ id, contextWindow: 128000, maxOutputTokens: 8192 })) });
+    } }) });
   const host = await createStudioNativeHarness({ ctx: { get: id => services[id] }, storeDir: root, workspaceRoot, agents, models, ledger,
     renderPrompt: assembly => `${assembly.prompt} for ${assembly.variables.model}`,
     agentEvents: (_ctx, actual) => { assert.equal(actual, agent); return { serial: async event => {
@@ -105,7 +109,7 @@ async function fixture(t, { fetchModel, maxTokens = 500, localExecutionMode } = 
   const status = await host.recoveryStatus(request);
   assert.equal(status.state, 'available'); assert.equal(requests.length, 0);
   return { host, ledger, agent, binding, requests, events, services, values, seen, controller, route, assembly, session, workspaceRoot,
-    localExecutions, localMethods, request: { ...request, runId: status.runId }, rotate: value => { key = value; } };
+    localExecutions, localMethods, request: { ...request, runId: status.runId }, rotate: value => { key = value; }, catalogs: () => catalogCalls, disconnectCatalog: () => { catalogOffline = true; } };
 }
 
 for (const historical of [false, true]) test(`production recovery keeps ${historical ? 'historical' : 'new'} local resource admission and actual model facts`, async t => {
@@ -147,6 +151,19 @@ test('production recovery rebinds the original route/budget and refreshed creden
   assert.equal((await f.host.resumeTurn(f.request)).state, 'closed', 'a reply lost after completion confirms the original Run');
   await tick(); assert.equal(f.requests.length, 1); assert.equal(f.events.filter(e => e.type === 'turn/end').length, 1);
   await assert.rejects(f.host.resumeTurn({ ...f.request, runId: 'foreign-completed-run' }), /studio_native_recovery_turn_not_open/);
+});
+
+test('production recovery retains an alternate picker model when its catalog is offline and credentials rotate', async t => {
+  const f = await fixture(t, { selectedModel: 'catalog-alternate' });
+  const admittedCalls = f.catalogs(); assert.ok(admittedCalls > 0);
+  f.disconnectCatalog(); f.rotate('secret-rotated');
+  f.agent.options = { provider: 'other', model: 'other', maxTokens: 9999 };
+  await f.host.resumeTurn(f.request); await f.agent.whenIdle(); await tick();
+  assert.equal(f.catalogs(), admittedCalls);
+  assert.equal(f.requests.length, 1); assert.equal(f.requests[0].body.model, 'catalog-alternate');
+  assert.equal(f.requests[0].body.max_tokens, 500);
+  assert.equal(f.requests[0].headers.get('authorization'), 'Bearer secret-rotated');
+  assert.equal((await f.host.recoveryStatus(f.request)).state, 'closed');
 });
 
 test('a terminal provider failure remains visible through read-only recovery status without exposing its raw response', async t => {

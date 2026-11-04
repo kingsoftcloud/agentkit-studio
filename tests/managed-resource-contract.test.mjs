@@ -8,10 +8,28 @@ import { stringify } from 'yaml';
 import { parseManagedRuntimeManifest } from '../src/managed-runtime-manifest.mjs';
 import { loadManagedRuntimeDefinition } from '../src/managed-runtime-definition.mjs';
 import { prepareLocalResourceContext, writeBoundMemory } from '../src/local-runtime.mjs';
+import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
+import { canonical } from '@kingsoftcloud/agentkit-harness-core';
+import { managedResourceBindings } from '../src/managed-resource-contract.mjs';
 
 const corpus = JSON.parse(await readFile(new URL('./fixtures/dsh-resources-v1.json', import.meta.url), 'utf8'));
 const declaration = (profile, resources) => ({ name: 'resource-fixture', framework: profile,
   artifact_type: 'ManagedRuntime', runtime: { name: profile, version: 'fixture-1' }, model: 'fixture-model', prompt: '', resources });
+const toolAdapter = { listTools: async ids => ids.map(nativeLocalToolContract) };
+
+for (const key of ['knowledge_base', 'memory', 'skill_space', 'skill_spaces']) {
+  test(`ID-only managed ${key} survives Native configuration freezing`, () => {
+    const ref = { id: 'resource-fixture' };
+    const bindings = managedResourceBindings({ [key]: key === 'skill_spaces' ? [ref] : ref });
+    // Freeze the in-memory projection directly: JSON.stringify would silently
+    // hide undefined fields and previously concealed this pre-model failure.
+    assert.doesNotThrow(() => canonical({ runtime: { type: 'harness' }, bindings }));
+    const resource = bindings.plugins[0].config.binding.resource;
+    assert.equal(resource.id, ref.id);
+    assert.equal(Object.hasOwn(resource, 'name'), false);
+    assert.equal(Object.hasOwn(resource, 'region'), false);
+  });
+}
 
 for (const profile of ['dsh-native', 'harness', 'codex']) {
   for (const sample of corpus.valid) test(`${profile} resource schema: ${sample.name}`, () => {
@@ -34,6 +52,8 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
       OPENAI_BASE_URL: 'https://model.example.test/v1', AGENTKIT_MODEL_API_KEY: 'fixture-key',
     } });
     const bindings = runtime.agent.spec.bindings;
+    assert.doesNotThrow(() => canonical(runtime.agent.spec));
+    assert.deepEqual(runtime.agent.spec.memory, { enabled: true, recall: { enabled: true }, write: { mode: 'candidate' } });
     assert.equal(bindings.modelProfileId, 'fixture-model');
     assert.deepEqual(bindings.plugins.map(plugin => plugin.config.binding.resource.kind), ['knowledge-base', 'memory-instance', 'skill-space']);
     assert.deepEqual(bindings.plugins.map(plugin => plugin.config.binding.resource.id), [resources.knowledge_base.id, resources.memory.id, resources.skill_space.id]);
@@ -52,11 +72,12 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
       writeMemory: async (id, subject, messages, scope) => { calls.push(['write', id, subject, messages, scope]); return { accepted: true }; },
       listMcpTools: async ref => { calls.push(['mcp', ref.resourceId]); return [{ name: ref.resourceId, inputSchema: { type: 'object', properties: {} } }]; },
     };
-    const prepared = await prepareLocalResourceContext({ record: runtime.agent, resourceAdapter, input: 'lookup', userId, agentId: 'ar-fixture' });
+    const prepared = await prepareLocalResourceContext({ record: runtime.agent, resourceAdapter, toolAdapter, input: 'lookup', userId, agentId: 'ar-fixture' });
     assert.match(prepared.resourceContext, /CONTROLLED_KNOWLEDGE_FACT/);
     assert.match(prepared.resourceContext, /CONTROLLED_MEMORY_FACT/);
     assert.match(prepared.resourceContext, /CONTROLLED_SKILL_CONTENT/);
-    assert.deepEqual(prepared.tools.map(item => item._resourceId.resourceId), ['mcp-first', 'mcp-second']);
+    assert.deepEqual(prepared.tools.filter(item => item._source !== 'dsh').map(item => item._resourceId.resourceId), ['mcp-first', 'mcp-second']);
+    assert.deepEqual(prepared.tools.filter(item => item._source === 'dsh').map(item => item.name), (bindings.tools ?? []).map(ref => ref.resourceId));
     assert.deepEqual(calls.find(item => item[0] === 'recall'), ['recall', 'mem-fixture', 'lookup', userId, { agentId: 'ar-fixture' }]);
     await writeBoundMemory({ binding: prepared.memory, resourceAdapter, input: 'lookup', assistantText: 'result', userId, sessionId: 'session-fixture', agentId: 'ar-fixture' });
     assert.deepEqual(calls.find(item => item[0] === 'write').slice(0, 3), ['write', 'mem-fixture', userId]);
@@ -73,11 +94,12 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
       OPENAI_BASE_URL: 'https://model.example.test/v1', AGENTKIT_MODEL_API_KEY: 'fixture-key',
     } });
     const plugins = runtime.agent.spec.bindings.plugins;
+    assert.doesNotThrow(() => canonical(runtime.agent.spec));
     assert.deepEqual(plugins.map(item => item.config.binding.resource.id), ['space-first', 'space-second']);
     assert.equal(new Set(plugins.map(item => item.config.binding.id)).size, 2);
     assert.equal(plugins[1].config.binding.resource.region, 'cn-beijing-6');
     const calls = [];
-    const context = await prepareLocalResourceContext({ record: runtime.agent, resourceMode: 'context-only',
+    const context = await prepareLocalResourceContext({ record: runtime.agent, resourceMode: 'context-only', toolAdapter,
       resourceAdapter: { loadSkill: async id => { calls.push(id); return { content: `EXCLUSIVE_${id}` }; } } });
     assert.deepEqual(calls, ['space-first', 'space-second']);
     assert.match(context.resourceContext, /EXCLUSIVE_space-first/);

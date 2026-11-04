@@ -6,6 +6,7 @@ import { admitChatUsagePolicy } from '@kingsoftcloud/agentkit-harness-node/nativ
 import { invariant } from '@kingsoftcloud/agentkit-harness-core';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { hash } from './native-harness-bindings.mjs';
+import { dshModelRoute } from '../../agent-preset-admission.mjs';
 
 /** One owner for model admission, compatibility fingerprints and frozen recovery. */
 export function createStudioNativeModelBinding({ descriptions, models, fetchImpl, original, capabilityCapsule,
@@ -65,14 +66,31 @@ export function createStudioNativeModelBinding({ descriptions, models, fetchImpl
       ...(inlineReasoningPolicy ? { inlineReasoningPolicy } : {}),
       ...(providerCompatibilityPolicy ? { providerCompatibilityPolicy, ...modelOptions } : {}),
       ...modelRuntimeOptions,
+      maxProviderRetries: original ? original.configuration.profile.maxProviderRetries : 10,
       ...planned.profile, requestTimeoutMs: desc.requestTimeoutMs,
       providerReplayMode: desc.protocol === 'anthropic-messages' ? 'anthropic_content' : 'reasoning_content' },
     context: planned.port, contextPolicy: planned.policy, model: createNativeModelPort({ fetchImpl,
       resolveProfile: async () => {
-        const current = { ...await models.profile(id), modelName: profile.modelName };
+        const current = { ...await models.profile(id, { admittedModel: { profileId: profile.id, modelName: profile.modelName } }), modelName: profile.modelName };
         invariant(hash(descriptions.get(current)) === digest, 'studio_native_model_binding_changed');
         return { protocol: desc.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
           model: profile.modelName, parameters: desc.parameters };
       } }) };
   };
+}
+
+/** Select a declared or durably admitted model before considering live discovery. */
+export async function selectStudioNativeModel({ profiles, ids, selection, models, buildId, modelBindings }) {
+  for (let index = 0; index < profiles.length; index++) {
+    const profile = profiles[index], id = ids[index] || '';
+    if (selection.provider && dshModelRoute(profile) !== selection.provider) continue;
+    if (!selection.model || profile.modelName === selection.model) return { profile, id };
+    if (modelBindings?.items?.some(item => item.profileId === profile.id && item.modelName === selection.model))
+      return { profile: { ...profile, modelName: selection.model }, id };
+    if (!buildId && typeof models.catalog === 'function') {
+      const catalog = await models.catalog(id);
+      if (catalog.items?.some(item => item.id === selection.model)) return { profile: { ...profile, modelName: selection.model }, id };
+    }
+  }
+  invariant(false, 'studio_native_bound_model_unavailable');
 }

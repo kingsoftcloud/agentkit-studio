@@ -75,6 +75,13 @@ test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or pers
   assert.equal(marker.identity.bundleSha256, undefined);
 });
 
+test('managed launch preserves an explicit command backend across the child Host boundary', async t => {
+  const f = await fixture(t);
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, KSADK_SANDBOX_BACKEND: 'e2b' } });
+  assert.equal(plan.env.KSADK_SANDBOX_BACKEND, 'e2b');
+  assert.equal(plan.env.KSYUN_SECRET_KEY, undefined);
+});
+
 for (const runtime of ['dsh-native', 'harness', 'codex']) test(`${runtime} migrates its retained profile and refreshes image code without replacing native state`, async t => {
   const f = await fixture(t), declaration = parse(f.raw);
   declaration.framework = declaration.runtime.name = runtime;

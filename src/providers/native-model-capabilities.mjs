@@ -6,15 +6,16 @@ const hash = value => createHash('sha256').update(canonical(value)).digest('hex'
 const key = profile => canonical([profile.id ?? '', profile.modelName]);
 
 /** Without capability facts this reconstructs the exact historical binding. */
-export const profileDescription = (profile, capabilities) => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
+export const profileDescription = (profile, capabilities, legacyCapacityBudget = false) => ({ id: profile.id, provider: profile.provider, modelName: profile.modelName,
   baseUrl: profile.baseUrl, protocol: profile.protocol || (profile.provider === 'anthropic' ? 'anthropic-messages' : 'openai-chat'),
   contextWindow: capabilities?.contextWindow ?? profile.contextWindow ?? 128000,
   maxOutputTokens: capabilities?.maxOutputTokens ?? profile.maxOutputTokens ?? 8192,
+  ...(capabilities && !legacyCapacityBudget ? { requestOutputTokens: Math.min(profile.maxOutputTokens ?? 8192, capabilities.maxOutputTokens) } : {}),
   parameters: profile.parameters ?? {}, requestTimeoutMs: profile.requestTimeoutMs ?? 110000,
   input: capabilities?.input ?? modelInput(profile), ...(capabilities ? { capabilities } : {}) });
 
 export function validateNativeModelBindings(manifest) {
-  invariant(manifest?.contract === 'agentkit.model-bindings/v1' && Object.keys(manifest).sort().join(',') === 'contract,items'
+  invariant(['agentkit.model-bindings/v1', 'agentkit.model-bindings/v2'].includes(manifest?.contract) && Object.keys(manifest).sort().join(',') === 'contract,items'
     && Array.isArray(manifest.items) && manifest.items.length > 0 && manifest.items.length <= 256,
   'studio_native_model_bindings_invalid');
   const keys = new Set();
@@ -36,7 +37,7 @@ export function frozenNativeModelDescription(profile, manifest) {
   validateNativeModelBindings(manifest);
   const item = manifest.items.find(item => canonical([item.profileId, item.modelName]) === key(profile));
   invariant(item && item.configuredDigest === hash(profileDescription(profile)), 'studio_native_model_binding_changed');
-  return profileDescription(profile, structuredClone(item.capabilities));
+  return profileDescription(profile, structuredClone(item.capabilities), manifest.contract === 'agentkit.model-bindings/v1');
 }
 
 export function createNativeModelDescriptions({ models, originalCapsule, signal }) {
@@ -61,8 +62,15 @@ export function createNativeModelDescriptions({ models, originalCapsule, signal 
   const get = profile => {
     const item = entries.get(key(profile));
     invariant(item && item.configuredDigest === hash(profileDescription(profile)), 'studio_native_model_binding_changed');
-    return profileDescription(profile, item.capabilities && structuredClone(item.capabilities));
+    return profileDescription(profile, item.capabilities && structuredClone(item.capabilities), frozen?.contract === 'agentkit.model-bindings/v1');
   };
-  return { describe, get, manifest: () => legacy ? undefined : validateNativeModelBindings({ contract: 'agentkit.model-bindings/v1',
+  return { describe, get, manifest: () => legacy ? undefined : validateNativeModelBindings({ contract: frozen?.contract ?? 'agentkit.model-bindings/v2',
     items: [...entries].sort(([a],[b]) => a.localeCompare(b)).map(([,item]) => structuredClone(item)) }) };
+}
+
+/** Only durable, already-admitted model identities may bypass catalog IO.
+ * Credentials and current gateway configuration are still resolved each time. */
+export function resolveNativeProfile(models, id, capsule) {
+  const item = capsule?.modelBindings?.items?.find(item => item.profileId === id || item.modelName === id);
+  return models.profile(id, item ? { admittedModel: { profileId: item.profileId, modelName: item.modelName } } : undefined);
 }

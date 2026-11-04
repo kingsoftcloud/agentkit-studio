@@ -62,6 +62,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
     modelName: runtime.declaration.model, modelProvider: 'openai-compatible', modelBaseUrl: runtime.modelProfiles[0].baseUrl } });
   await prepareRuntimeProfile({ dshHome, modules, identity: runtime.identity, dshVersion, prefix: 'MANAGED_HOST' });
   const names = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+    'KSADK_SANDBOX_BACKEND',
     'AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT',
     'AGENTENGINE_MANAGED_RUNTIME_NAME', 'AGENTENGINE_MANAGED_RUNTIME_VERSION', 'AGENTENGINE_MANIFEST_PROTOCOL', 'AGENTENGINE_MANIFEST_SHA256',
     'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
