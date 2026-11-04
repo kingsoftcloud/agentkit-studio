@@ -96,6 +96,34 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
       return () => style.remove();
     });
   }
+  function installWindowDragStrip() {
+    const ownerDocument = productDocument();
+    if (!ownerDocument?.body) return () => {};
+    return leaseDocumentResource(ownerDocument, 'agentkit-studio:drag-strip', () => {
+      if (ownerDocument.querySelector('[data-studio-drag-strip]')) return () => {};
+      const strip = ownerDocument.createElement('div');
+      strip.setAttribute('data-studio-drag-strip', 'true');
+      // DSH publishes exactly one draggable hook: its stylesheet maps
+      // `[data-window-drag]` to -webkit-app-region:drag and restores every
+      // interactive descendant to no-drag. Custom -webkit-app-region rules are
+      // not part of that contract, so the strip carries the shell's attribute.
+      strip.setAttribute('data-window-drag', 'true');
+      strip.setAttribute('aria-hidden', 'true');
+      // Product pages paint their own top area, so pin a transparent drag band
+      // over the window chrome instead of guessing each page's header element.
+      // It starts right of the macOS traffic lights so they stay clickable.
+      strip.style.cssText = 'position:fixed;top:0;left:72px;right:0;height:30px;'
+        + 'z-index:2147483000;-webkit-app-region:drag;background:transparent;';
+      // Mount inside the shell's application root when React already painted
+      // there. The shell marks `body > :not(#root)` as no-drag, so a body-level
+      // overlay fights its own window chrome; the working conversation header
+      // lives under #root too. Only a painted root qualifies: createRoot clears
+      // an untouched container on first render and would delete the strip.
+      const root = ownerDocument.getElementById('root');
+      (root && root.firstElementChild ? root : ownerDocument.body).append(strip);
+      return () => strip.remove();
+    });
+  }
   return { productDocument, adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles,
     installWindowDragRegion };
 }
