@@ -1,0 +1,233 @@
+diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c9b7dff5572082d4537742821cdfd76943302bbf
+--- /dev/null
++++ b/apps/desktop/src/bundled-plugin-alignment.ts
+@@ -0,0 +1,182 @@
++/** Keep profile-installed product plugins aligned with the runtime bundle that ships beside dsh. */
++
++import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { homedir } from 'node:os'
++import { delimiter, dirname, join, relative } from 'node:path'
++import { spawnSync } from 'node:child_process'
++
++/** Why one bundled product plugin was or was not rewritten in the profile. */
++export type PluginAlignmentAction = 'aligned' | 'skipped-equal' | 'kept-newer' | 'missing-runtime-copy'
++
++/** One product plugin inspected during profile preparation. */
++export interface PluginAlignmentOutcome {
++  readonly packageName: string
++  readonly action: PluginAlignmentAction
++  readonly previousVersion?: string
++  readonly bundledVersion?: string
++  readonly backupPath?: string
++  readonly mirrorPath?: string
++  /** Whether the profile package manager completed the dependency rewrite. */
++  readonly installed: boolean
++}
++
++/** Inputs the Desktop shell owns while preparing the external plugin profile. */
++export interface PluginAlignmentOptions {
++  readonly profile: string
++  readonly runtimeDsh: string
++  readonly home?: string
++  readonly pnpm: string
++  readonly node: string
++  readonly nodeBin: string
++  readonly log?: (message: string, details: PluginAlignmentOutcome) => void
++  readonly now?: () => number
++}
++
++interface Manifest {
++  readonly name?: string
++  readonly version?: string
++  readonly dependencies?: Readonly<Record<string, string>>
++  readonly dsh?: { readonly profile?: { readonly bundles?: readonly string[] } }
++}
++
++/** One rewrite waiting for the single package-manager run. */
++interface PendingAlignment {
++  readonly packageName: string
++  readonly previousVersion?: string
++  readonly bundledVersion: string
++  readonly backupPath?: string
++  readonly mirrorPath: string
++}
++
++/** Directory name safe for a scoped package and its version. */
++function artifactName(packageName: string, version: string): string {
++  return `${packageName.replace(/^@/, '').replace(/[/\\]/g, '-')}-${version}`
++}
++
++/** Read a package manifest without throwing: an unreadable profile copy is an absent copy. */
++function readManifest(directory: string): Manifest | undefined {
++  try {
++    const parsed: unknown = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
++    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
++    return parsed as Manifest
++  } catch {
++    return undefined
++  }
++}
++
++/** Numeric dotted comparison with prerelease ordering; profile versions are plain semver. */
++function compareVersions(left: string, right: string): number {
++  const [leftCore = '', leftPre = ''] = left.split('-', 2)
++  const [rightCore = '', rightPre = ''] = right.split('-', 2)
++  const leftParts = leftCore.split('.').map(part => Number.parseInt(part, 10) || 0)
++  const rightParts = rightCore.split('.').map(part => Number.parseInt(part, 10) || 0)
++  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
++    const leftValue = leftParts[index] ?? 0
++    const rightValue = rightParts[index] ?? 0
++    if (leftValue !== rightValue) return leftValue < rightValue ? -1 : 1
++  }
++  if (leftPre === rightPre) return 0
++  if (leftPre === '') return 1
++  if (rightPre === '') return -1
++  return leftPre < rightPre ? -1 : 1
++}
++
++/** Rewrite the profile's dependency spec so any later install keeps the bundled copy. */
++function writeDependency(profile: string, packageName: string, mirrorPath: string): void {
++  const manifest = readManifest(profile)
++  if (manifest === undefined) return
++  const dependencies = { ...(manifest.dependencies ?? {}), [packageName]: `file:${relative(profile, mirrorPath)}` }
++  writeFileSync(join(profile, 'package.json'), `${JSON.stringify({ ...manifest, dependencies }, undefined, 2)}\n`, { mode: 0o600 })
++}
++
++/** Run the bundled package manager so the lockfile and node_modules agree with the new spec. */
++function installProfile(options: PluginAlignmentOptions): boolean {
++  const result = spawnSync(options.node, ['--expose-internals', options.pnpm, 'install', '--prefer-offline'], {
++    cwd: options.profile,
++    env: {
++      ...process.env,
++      ELECTRON_RUN_AS_NODE: '1',
++      DSH_DESKTOP_NODE_EXECUTABLE: options.node,
++      PATH: `${options.nodeBin}${delimiter}${process.env.PATH ?? ''}`,
++    },
++    stdio: 'ignore',
++    timeout: 180_000,
++  })
++  return result.status === 0
++}
++
++/**
++ * Align every product plugin the runtime carries with the copy installed in the profile.
++ *
++ * A profile can pin an older published plugin while the application keeps shipping a newer
++ * bundled copy; the profile copy wins module resolution, so the application's own fixes never
++ * run. Preparation therefore compares versions, keeps a backup, mirrors the bundled copy into
++ * `<home>/bundled-plugins`, rewrites the profile dependency to that mirror, and runs the bundled
++ * package manager so a later plugin-center install cannot restore the stale spec.
++ *
++ * @param options - profile, runtime, package-manager and home locations owned by the shell.
++ * @returns one outcome per runtime-carried product plugin; nothing is written for equal versions.
++ */
++export function alignBundledProductPlugins(options: PluginAlignmentOptions): readonly PluginAlignmentOutcome[] {
++  const home = options.home ?? String(process.env.DSH_HOME || join(homedir(), '.dsh')).replace(/^~(?=\/|$)/, homedir())
++  const runtimeManifest = readManifest(options.runtimeDsh)
++  const bundles = runtimeManifest?.dsh?.profile?.bundles ?? []
++  const outcomes: PluginAlignmentOutcome[] = []
++  const pending: PendingAlignment[] = []
++
++  for (const packageName of bundles) {
++    const bundledDir = join(options.runtimeDsh, 'node_modules', packageName)
++    const bundledVersion = readManifest(bundledDir)?.version
++    if (bundledVersion === undefined) {
++      outcomes.push({ packageName, action: 'missing-runtime-copy', installed: false })
++      continue
++    }
++    const installedDir = join(options.profile, 'node_modules', packageName)
++    const previousVersion = readManifest(installedDir)?.version
++    const comparison = previousVersion === undefined ? -1 : compareVersions(previousVersion, bundledVersion)
++    if (comparison === 0) {
++      outcomes.push({ packageName, action: 'skipped-equal', previousVersion, bundledVersion, installed: false })
++      continue
++    }
++    if (comparison > 0) {
++      outcomes.push({ packageName, action: 'kept-newer', previousVersion, bundledVersion, installed: false })
++      continue
++    }
++
++    const stamp = new Date(options.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, '-')
++    const backupPath = previousVersion === undefined
++      ? undefined
++      : join(home, 'backups', 'agentkit-studio', `${artifactName(packageName, previousVersion)}-${stamp}`)
++    if (backupPath !== undefined && existsSync(installedDir)) {
++      mkdirSync(dirname(backupPath), { recursive: true, mode: 0o700 })
++      cpSync(installedDir, backupPath, { recursive: true })
++    }
++    const mirrorPath = join(home, 'bundled-plugins', artifactName(packageName, bundledVersion))
++    if (!existsSync(mirrorPath)) {
++      mkdirSync(dirname(mirrorPath), { recursive: true, mode: 0o700 })
++      cpSync(bundledDir, mirrorPath, { recursive: true })
++    }
++    // The dependency is rewritten before the copy so a later `pnpm install` keeps the mirror,
++    // and the copy itself keeps this boot correct when the package manager cannot run.
++    writeDependency(options.profile, packageName, mirrorPath)
++    rmSync(installedDir, { recursive: true, force: true })
++    cpSync(mirrorPath, installedDir, { recursive: true })
++    pending.push({ packageName, previousVersion, bundledVersion, backupPath, mirrorPath })
++  }
++
++  const installed = pending.length === 0 ? false : installProfile(options)
++  for (const entry of pending) {
++    const outcome: PluginAlignmentOutcome = {
++      packageName: entry.packageName,
++      action: 'aligned',
++      previousVersion: entry.previousVersion,
++      bundledVersion: entry.bundledVersion,
++      backupPath: entry.backupPath,
++      mirrorPath: entry.mirrorPath,
++      installed,
++    }
++    outcomes.push(outcome)
++    options.log?.('desktop profile plugin aligned with the bundled runtime', outcome)
++  }
++  return outcomes
++}
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 4f6f0f201ab218754a4542e9da898acad8b55fa4..f8f37ac53ee85db53e1506f4116034c970f99756 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -22,6 +22,7 @@ import {
+ import type { DesktopPaths } from './paths.ts'
+ import type { DesktopRelease } from './release.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
++import { alignBundledProductPlugins } from './bundled-plugin-alignment.ts'
+ import {
+   initProfile, PROFILE_TEMPLATES, readProfileManifest, removeLinkProjections, sanitizeProfile, writeProfileManifest, type ProfileTemplate,
+ } from '@deepseek-ai/dsh-app-boot'
+@@ -71,7 +72,12 @@ export class DesktopProjectManager {
+    */
+   constructor(
+     readonly paths: DesktopPaths,
+-    readonly runtime: { readonly dsh: string },
++    readonly runtime: {
++      readonly dsh: string
++      readonly pnpm: string
++      readonly node: string
++      readonly nodeBin: string
++    },
+   ) {}
+ 
+   /**
+@@ -93,6 +99,18 @@ export class DesktopProjectManager {
+       migrateProfileSettings(this.paths.profile)
+       createPluginProfile(this.paths.profile, readRuntimeProfileBundles(this.runtime.dsh))
+       removeLinkProjections(this.paths.profile)
++      // The profile wins module resolution, so an upgraded application can still load an
++      // older profile copy of a product plugin. Align it before the Host starts; equal
++      // versions cost one package.json read, and failures must never block startup.
++      for (const outcome of alignBundledProductPlugins({
++        profile: this.paths.profile,
++        runtimeDsh: this.runtime.dsh,
++        pnpm: this.runtime.pnpm,
++        node: this.runtime.node,
++        nodeBin: this.runtime.nodeBin,
++      })) {
++        if (outcome.action !== 'skipped-equal') console.info('Desktop profile plugin alignment:', outcome)
++      }
+     })
+   }
+ 

@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-  "headCommit": "70560051ed5d5d40d436ac0087420bf6a5c7e055",
+  "headCommit": "d217a8d5c2393a8a9af383d5c5f879379a402cd6",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.1-rc.2",
-  "tree": "ee4e8547ce63f2b15f06e5fcd1f26c5ea49176ea",
-  "sourceSha256": "a1ef4b8af4406f393485199f6bd754470ac86323a4f275510397b281fc0f49a7",
+  "tree": "52108bcd232f9635258ccdf6fe6e040f678fe51b",
+  "sourceSha256": "08b46db9163db4d1578dead0c173afd8bda8edbf969a08e854327eb94f2b60ba",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.1-rc.2/maintenance.bundle",
-    "sha256": "6014ede3f0a814b0ae367ae6c1bdc1e0547498e901d41999b5bc8c14a2903656"
+    "sha256": "f9810d1820e6c585b06fd7ed70730113fe2e766c35a3ca6cabf1e128cf33febf"
   },
   "commits": [
     {
@@ -388,6 +388,12 @@
       "file": "070-shared-zone-test-clock.patch",
       "commit": "70560051ed5d5d40d436ac0087420bf6a5c7e055",
       "sha256": "d374594de68f65bc6fdfaa66ff71810eee12000a400d86d2346480f1e814fd9a"
+    },
+    {
+      "id": "071",
+      "file": "071-bundled-plugin-alignment.patch",
+      "commit": "d217a8d5c2393a8a9af383d5c5f879379a402cd6",
+      "sha256": "de0871859f86896a1bbb3c6613fc4e4c78abba33cb58acd48e3b0ff3efe1bf79"
     }
   ]
 }
