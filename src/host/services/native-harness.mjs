@@ -1,4 +1,4 @@
-import { createStudioNativeModelBinding } from './native-model-binding.mjs';
+import { createStudioNativeModelBinding, selectStudioNativeModel } from './native-model-binding.mjs';
 import { createStudioNativeSessionInjection } from './native-session-injection.mjs';
 import { createStudioNativeChildViews } from './native-child-views.mjs';
 import { createNativeChildObservationCache } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
@@ -171,20 +171,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const selection = original ? { ...original.capsule.source,
         ...(original.capsule.maxTokens === null ? {} : { maxTokens: original.capsule.maxTokens }) }
         : admittedModelSelection(agent, input.assembly);
-      let selected, selectedId;
-      for (let index = 0; index < profiles.length; index++) {
-        const profile = profiles[index], id = ids[index] || '';
-        if (selection.provider && dshModelRoute(profile) !== selection.provider) continue;
-        if (!selection.model || profile.modelName === selection.model) { selected = profile; selectedId = id; break; }
-        const admittedSelection = capabilityCapsule?.modelBindings?.items?.some(item =>
-          item.profileId === profile.id && item.modelName === selection.model);
-        if (admittedSelection) { selected = { ...profile, modelName: selection.model }; selectedId = id; break; }
-        if (!binding.buildId && typeof models.catalog === 'function') {
-          const catalog = await models.catalog(id);
-          if (catalog.items?.some(item => item.id === selection.model)) { selected = { ...profile, modelName: selection.model }; selectedId = id; break; }
-        }
-      }
-      invariant(selected, 'studio_native_bound_model_unavailable');
+      const { profile: selected, id: selectedId } = await selectStudioNativeModel({ profiles, ids, selection, models,
+        buildId: binding.buildId, modelBindings: capabilityCapsule?.modelBindings });
       const descriptions = createNativeModelDescriptions({ models, originalCapsule: capabilityCapsule, signal });
       await Promise.all(profiles.map(profile => descriptions.describe(profile)));
       const description = await descriptions.describe(selected);
