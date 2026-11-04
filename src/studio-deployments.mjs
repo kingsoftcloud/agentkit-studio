@@ -280,12 +280,12 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       // A record deleted outside Studio (console, another machine) no longer has a
       // cloud agent: GetAgent answers 404. Treat that as already deleted instead of
       // blocking the local cleanup forever.
-      try { await detail(record); }
+      let remote;
+      try { remote = await detail(record); }
       catch (error) {
         if (error.status !== 404) throw error;
         return publicRecord(await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() }));
       }
-      const remote = await detail(record);
       if (remote.Basic?.Status === 'UPDATING') throw portableError('DEPLOYMENT_DELETE_BUSY', '云端仍在更新，请待平台状态恢复后删除');
       if (!await store.claim(id, 'delete')) return refreshState(id);
       await store.update(id, { state: 'DELETING' });
