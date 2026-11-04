@@ -1,6 +1,6 @@
 diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..c9b7dff5572082d4537742821cdfd76943302bbf
+index 0000000000000000000000000000000000000000..e6f770eb980d973f5ae5d63f5db298028b16f3c9
 --- /dev/null
 +++ b/apps/desktop/src/bundled-plugin-alignment.ts
 @@ -0,0 +1,182 @@
@@ -18,10 +18,10 @@ index 0000000000000000000000000000000000000000..c9b7dff5572082d4537742821cdfd769
 +export interface PluginAlignmentOutcome {
 +  readonly packageName: string
 +  readonly action: PluginAlignmentAction
-+  readonly previousVersion?: string
-+  readonly bundledVersion?: string
-+  readonly backupPath?: string
-+  readonly mirrorPath?: string
++  readonly previousVersion?: string | undefined
++  readonly bundledVersion?: string | undefined
++  readonly backupPath?: string | undefined
++  readonly mirrorPath?: string | undefined
 +  /** Whether the profile package manager completed the dependency rewrite. */
 +  readonly installed: boolean
 +}
@@ -48,9 +48,9 @@ index 0000000000000000000000000000000000000000..c9b7dff5572082d4537742821cdfd769
 +/** One rewrite waiting for the single package-manager run. */
 +interface PendingAlignment {
 +  readonly packageName: string
-+  readonly previousVersion?: string
++  readonly previousVersion?: string | undefined
 +  readonly bundledVersion: string
-+  readonly backupPath?: string
++  readonly backupPath?: string | undefined
 +  readonly mirrorPath: string
 +}
 +
