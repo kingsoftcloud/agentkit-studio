@@ -187,7 +187,7 @@ index 0000000000000000000000000000000000000000..c9b7dff5572082d4537742821cdfd769
 +  return outcomes
 +}
 diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
-index 4f6f0f201ab218754a4542e9da898acad8b55fa4..f8f37ac53ee85db53e1506f4116034c970f99756 100644
+index 4f6f0f201ab218754a4542e9da898acad8b55fa4..2aba3a5ae19bee8698954b67af157c542df4cb97 100644
 --- a/apps/desktop/src/project-manager.ts
 +++ b/apps/desktop/src/project-manager.ts
 @@ -22,6 +22,7 @@ import {
@@ -198,35 +198,36 @@ index 4f6f0f201ab218754a4542e9da898acad8b55fa4..f8f37ac53ee85db53e1506f4116034c9
  import {
    initProfile, PROFILE_TEMPLATES, readProfileManifest, removeLinkProjections, sanitizeProfile, writeProfileManifest, type ProfileTemplate,
  } from '@deepseek-ai/dsh-app-boot'
-@@ -71,7 +72,12 @@ export class DesktopProjectManager {
+@@ -71,7 +72,14 @@ export class DesktopProjectManager {
     */
    constructor(
      readonly paths: DesktopPaths,
 -    readonly runtime: { readonly dsh: string },
 +    readonly runtime: {
 +      readonly dsh: string
-+      readonly pnpm: string
-+      readonly node: string
-+      readonly nodeBin: string
++      // Package-manager locations are optional so a recovery-only manager (and the
++      // existing project-manager spec) can be built without a launch triple.
++      readonly pnpm?: string
++      readonly node?: string
++      readonly nodeBin?: string
 +    },
    ) {}
  
    /**
-@@ -93,6 +99,18 @@ export class DesktopProjectManager {
+@@ -93,6 +101,17 @@ export class DesktopProjectManager {
        migrateProfileSettings(this.paths.profile)
        createPluginProfile(this.paths.profile, readRuntimeProfileBundles(this.runtime.dsh))
        removeLinkProjections(this.paths.profile)
 +      // The profile wins module resolution, so an upgraded application can still load an
 +      // older profile copy of a product plugin. Align it before the Host starts; equal
 +      // versions cost one package.json read, and failures must never block startup.
-+      for (const outcome of alignBundledProductPlugins({
-+        profile: this.paths.profile,
-+        runtimeDsh: this.runtime.dsh,
-+        pnpm: this.runtime.pnpm,
-+        node: this.runtime.node,
-+        nodeBin: this.runtime.nodeBin,
-+      })) {
-+        if (outcome.action !== 'skipped-equal') console.info('Desktop profile plugin alignment:', outcome)
++      const { pnpm, node, nodeBin } = this.runtime
++      if (pnpm !== undefined && node !== undefined && nodeBin !== undefined) {
++        for (const outcome of alignBundledProductPlugins({
++          profile: this.paths.profile, runtimeDsh: this.runtime.dsh, pnpm, node, nodeBin,
++        })) {
++          if (outcome.action !== 'skipped-equal') console.info('Desktop profile plugin alignment:', outcome)
++        }
 +      }
      })
    }
