@@ -4,6 +4,7 @@ import { mountA2aObservation } from './a2a-observation.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
 import { createNativeSessionBinding } from './session-entry.mjs';
 import { registerPanelNavigation } from './panel-navigation.mjs';
+import { installBridgeStartupNotice } from './startup-notice.mjs';
 import { installProductCopy } from '../../product-copy.mjs';
 import { installNativeToolViews } from './native-tool-view.mjs';
 import { installTaskTimeline } from './task-timeline.mjs';
@@ -100,6 +101,7 @@ export function mountStudio(ctx, app) {
   ctx.effect(() => adoptProductDocumentBrand(), 'agentkit-studio: document favicon');
   ctx.effect(() => installResponsiveStyles(), 'agentkit-studio: responsive layout');
   ctx.effect(() => installStudioFormStyles(), 'agentkit-studio: native forms');
+  ctx.effect(() => installBridgeStartupNotice({ window }), 'agentkit-studio: bridge startup notice');
   ctx.effect(() => installWindowDragRegion(), 'agentkit-studio: window drag region')
   ctx.effect(() => installWindowDragStrip(), 'agentkit-studio: window drag strip');
   // The public launcher owns only the entry button. DSH retains settings
