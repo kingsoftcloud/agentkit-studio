@@ -619,3 +619,39 @@ test('old images cannot advertise an unverifiable update; interrupted pre-submit
   assert.equal((await f.service.refresh(initial.id)).state, 'READY');
   assert.equal(f.calls.filter(([action]) => action === 'update').length, 2);
 });
+
+/** A cloud Agent deleted from the console answers GetAgent with 404 forever. */
+function cloudAgentGone() {
+  return Object.assign(new Error('GetAgent 请求失败（404）'), { code: 'SERVER_ACTION_FAILED', status: 404, action: 'GetAgent' });
+}
+
+test('deleting a receipt whose cloud Agent was deleted elsewhere retires it locally', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  f.control.failNextDetail = cloudAgentGone();
+  assert.equal((await f.service.remove(record.id)).state, 'DELETED');
+  assert.equal(f.calls.some(([action]) => action === 'delete'), false);
+  assert.equal((await f.service.get(record.id)).state, 'DELETED');
+});
+
+test('an update preview retires the receipt and explains the deletion instead of leaking the 404', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  assert.equal((await f.service.refresh(record.id)).state, 'READY');
+  f.control.failNextDetail = cloudAgentGone();
+  await assert.rejects(() => f.service.prepareUpdate({ deploymentId: record.id }), { code: 'DEPLOYMENT_CLOUD_DELETED' });
+  assert.equal((await f.service.get(record.id)).state, 'DELETED');
+});
+
+test('logs and access repair retire the receipt when the cloud Agent is gone', async t => {
+  const f = await fixture(t);
+  const record = await f.service.create(f.request); await f.settled();
+  f.control.failNextDetail = cloudAgentGone();
+  await assert.rejects(() => f.service.logs(record.id), { code: 'DEPLOYMENT_CLOUD_DELETED' });
+  assert.equal((await f.service.get(record.id)).state, 'DELETED');
+  const other = await fixture(t);
+  const second = await other.service.create(other.request); await other.settled();
+  other.control.failNextDetail = cloudAgentGone();
+  await assert.rejects(() => other.service.repairAccess(second.id), { code: 'DEPLOYMENT_CLOUD_DELETED' });
+  assert.equal((await other.service.get(second.id)).state, 'DELETED');
+});

@@ -8,7 +8,8 @@ import { resolveDeploymentCredentials, PLATFORM_CREDENTIAL_NAMES } from './deplo
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { createDeploymentAgents } from './deployment-agents.mjs';
-import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId } from './deployment-versions.mjs';
+import { currentDeployment, pendingRollout, publicDeployment as publicRecord, verifyDeploymentRemote, probeDeploymentVersion, deploymentVersionId,
+  cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { createDeploymentRollouts } from './deployment-rollouts.mjs';
 import { storageSize, deploymentStorage, admitDeploymentStorage, verifyDeploymentStorage } from './deployment-storage.mjs';
 
@@ -109,6 +110,19 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       verifyDeploymentRemote(result, { ...record, plan: record.rollout.plan });
     }
     return result;
+  }
+  /**
+   * Read the cloud record and retire the local receipt when the Agent is gone.
+   * Read-only surfaces (logs, access repair, update preview) must not answer a
+   * raw `GetAgent 请求失败（404）`: the operator needs the recoverable meaning.
+   */
+  async function remoteOrRetire(record) {
+    try { return await detail(record); }
+    catch (error) {
+      if (!cloudAgentGone(error)) throw error;
+      await store.update(record.id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
+      throw portableError('DEPLOYMENT_CLOUD_DELETED', CLOUD_AGENT_GONE_FAILURE.message);
+    }
   }
   async function advance(record, prepared) {
     try {
@@ -230,7 +244,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       }
       return publicRecord(await store.update(id, next));
     } catch (error) {
-      if (error.status === 404 && ['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, { state: 'DELETED', failure: null }));
+      if (cloudAgentGone(error) && ['DELETING', 'DELETE_UNKNOWN'].includes(record.state)) return publicRecord(await store.update(id, { state: 'DELETED', failure: null }));
       // A DeleteAgent performed outside Studio (e.g. the cloud console) leaves this
       // binding stale: GetAgent keeps answering 404 forever. Surface that as DELETED
       // with an actionable failure so the UI can prompt a re-bind instead of showing
@@ -238,9 +252,9 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       // after creation is a provisioning race, not a deletion.
       const bindingStates = new Set(['READY', 'AVAILABLE', 'AVAILABLE_UPDATING', 'STARTING', 'TOKEN_PENDING',
         'CONFIGURING', 'ACTION_REQUIRED', 'UPDATING']);
-      if (error.status === 404 && record.cloudAgentId && bindingStates.has(record.state) && !transientRefreshError(error)) {
+      if (cloudAgentGone(error) && record.cloudAgentId && bindingStates.has(record.state) && !transientRefreshError(error)) {
         return publicRecord(await store.update(id, { state: 'DELETED', lastCheckedAt: new Date().toISOString(),
-          failure: failure(Object.assign(new Error('云端 Agent 已被删除，本地绑定已失效，请重新绑定'), { code: 'CLOUD_AGENT_DELETED', status: 404 })) }));
+          failure: CLOUD_AGENT_GONE_FAILURE }));
       }
       const lastCheckedAt = new Date().toISOString();
       // Polling failures are retried by the next health check; reporting them
@@ -251,7 +265,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
   }
   async function repairAccess(id) {
     return exclusive(id, async () => {
-      const record = await owned(id), remote = await detail(record), key = remote.QuickAccess?.ApiKey;
+      const record = await owned(id), remote = await remoteOrRetire(record), key = remote.QuickAccess?.ApiKey;
       if (record.state !== 'TOKEN_PENDING' || remote.Basic.Status !== 'RUNNING' || !(remote.Basic.ReadyReplicas > 0)
         || typeof key !== 'string' || key.length < 24 || key.includes('*')) {
         throw portableError('DEPLOYMENT_ACCESS_REPAIR_UNAVAILABLE', '请等待实例运行并确认访问配置状态后重试');
@@ -283,7 +297,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       let remote;
       try { remote = await detail(record); }
       catch (error) {
-        if (error.status !== 404) throw error;
+        if (!cloudAgentGone(error)) throw error;
         return publicRecord(await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() }));
       }
       if (remote.Basic?.Status === 'UPDATING') throw portableError('DEPLOYMENT_DELETE_BUSY', '云端仍在更新，请待平台状态恢复后删除');
@@ -292,7 +306,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       try { await client.forAgent(record.cloudAgentId).remove(); }
       catch (error) {
         // 404 here means the cloud agent is already gone; the local record is safe to drop.
-        if (error.status === 404) return publicRecord(await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() }));
+        if (cloudAgentGone(error)) return publicRecord(await store.update(id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() }));
         await store.update(id, { state: 'DELETE_UNKNOWN', failure: failure(error) });
       }
       return refreshState(id);
@@ -315,7 +329,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     return refresh(id);
   }
   async function logs(id) {
-    const record = await owned(id), remote = await detail(record);
+    const record = await owned(id), remote = await remoteOrRetire(record);
     const secrets = [remote.QuickAccess?.ApiKey, ...(remote.Advanced?.EnvironmentVariables || []).filter(row => row.IsSensitive).map(row => row.Value)]
       .filter(value => typeof value === 'string' && value.length >= 4).sort((a, b) => b.length - a.length);
     const response = await client.forAgent(record.cloudAgentId).logs({ LogType: 'Stdout', PageSize: 200 });

@@ -2,6 +2,29 @@
 import { portableError } from './portable-resources.mjs';
 
 export const pendingRollout = record => ['PREPARED', 'UPLOADING', 'APPLYING', 'UNKNOWN'].includes(record.rollout?.status);
+
+/**
+ * Whether a cloud call failed because the Agent no longer exists.
+ *
+ * A DeleteAgent performed outside Studio (cloud console, another machine) makes
+ * GetAgent/DeleteAgent answer 404 forever, while the local receipt keeps a
+ * pristine state. Every read and write path must agree on that meaning, so the
+ * predicate lives with the deployment record contract instead of each caller.
+ */
+export const cloudAgentGone = error => {
+  const status = Number(error?.status ?? error?.cause?.status ?? 0);
+  if (status === 404) return true;
+  // Transport layers that only format the status into the message (older Host
+  // builds) must not leak a raw `GetAgent 请求失败（404）` to the product surface.
+  const message = String(error?.message || '');
+  return /（404）\s*$/.test(message) && /GetAgent|DeleteAgent/.test(message);
+};
+
+/** Failure stamped on a receipt whose cloud Agent was deleted elsewhere. */
+export const CLOUD_AGENT_GONE_FAILURE = Object.freeze({
+  code: 'CLOUD_AGENT_DELETED', message: '云端实例已不存在，本地记录已标记为已删除，可勾选「显示已删除」查看',
+});
+
 export function currentDeployment(record) {
   return record.activeVersion ? { ...record, plan: record.activeVersion.plan, source: record.activeVersion.source } : record;
 }

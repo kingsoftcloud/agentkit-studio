@@ -1,6 +1,7 @@
 /** Only local deployment receipts establish Studio cloud Agent lineage. */
 import { CLOUD_EXECUTION_POLICY_CAPABILITY, readExecutionMode, readExecutionPolicy } from './execution-policy.mjs';
-import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion } from './deployment-versions.mjs';
+import { currentDeployment, deploymentVersions, deploymentVersionId, inspectDeploymentVersion,
+  cloudAgentGone, CLOUD_AGENT_GONE_FAILURE } from './deployment-versions.mjs';
 import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
@@ -42,7 +43,16 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
   async function connect(agentId) {
     const agent = await get(agentId), record = await owned(agent.deployment.id);
     if (!available.has(record.state)) throw portableError('DEPLOYMENT_NOT_READY', '云端部署尚未就绪，请在运行中心刷新状态');
-    const remote = await detail(record), token = remote.QuickAccess?.ApiKey;
+    // A console-side delete leaves this binding stale; take the operator to the
+    // recoverable meaning instead of a raw GetAgent 404.
+    let remote;
+    try { remote = await detail(record); }
+    catch (error) {
+      if (!cloudAgentGone(error)) throw error;
+      await store.update(record.id, { state: 'DELETED', failure: null, lastCheckedAt: new Date().toISOString() });
+      throw portableError('DEPLOYMENT_CLOUD_DELETED', CLOUD_AGENT_GONE_FAILURE.message);
+    }
+    const token = remote.QuickAccess?.ApiKey;
     verifyDeploymentStorage(remote, currentDeployment(record));
     if (!['RUNNING', 'UPDATING'].includes(remote.Basic?.Status) || !(remote.Basic?.ReadyReplicas > 0)) throw portableError('DEPLOYMENT_NOT_READY', '云端实例当前不可用，请在运行中心查看状态');
     const endpoint = endpointFor(remote, record);
