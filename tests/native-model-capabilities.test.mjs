@@ -33,3 +33,16 @@ test('old recovery capsules retain their old bindings and never enable capabilit
   assert.equal(description.contextWindow,128000);assert.equal(description.maxOutputTokens,8192);assert.equal(description.capabilities,undefined);
   assert.equal(recovery.manifest(),undefined);
 });
+
+test('request budget is separate from catalog capacity and historical v1 bindings retain their old budget', async () => {
+  const profile = { ...profiles[0] };
+  const descriptions = createNativeModelDescriptions({ signal: new AbortController().signal,
+    models: { capabilities: async () => admitModelCapabilities(profile, { contextWindow: 1048576, maxOutputTokens: 134144 }) } });
+  const fresh = await descriptions.describe(profile);
+  assert.equal(fresh.maxOutputTokens, 134144); assert.equal(fresh.requestOutputTokens, 8192);
+  const manifest = descriptions.manifest(); assert.equal(manifest.contract, 'agentkit.model-bindings/v2');
+  assert.deepEqual(frozenNativeModelDescription(profile, manifest), fresh);
+  const old = { ...manifest, contract: 'agentkit.model-bindings/v1' };
+  const legacy = frozenNativeModelDescription(profile, old);
+  assert.equal(legacy.maxOutputTokens, 134144); assert.equal(legacy.requestOutputTokens, undefined);
+});

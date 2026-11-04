@@ -234,7 +234,7 @@ for (const historical of [false, true]) test(`same-turn redelivery restores ${hi
   h.services.sessions.flush = async () => h.requests.length === 0;
   await assert.rejects(h.host.executeTurn(h.payload), /native_delivery_not_durable/);
   const head = h.head(), original = h.ledger.load(head.scope, head.runId);
-  assert.equal(original.configuration.hostRecoveryBinding.localExecutionProfile, historical ? undefined : 'local-development/v1');
+  assert.equal(original.configuration.hostRecoveryBinding.localExecutionProfile, historical ? undefined : 'local-development/v2');
   Object.assign(h.payload.binding.nativeTools, methods);
   h.services.sessions.flush = async () => true;
   const changedInput = { ...h.payload, input: { ...h.payload.input,
@@ -520,7 +520,9 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (
   const scope = bound.scope;
   assert.equal(bound.configuration.outputRecoveryPolicy, 'response-boundary/v2');
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v2', rule: 'auto' });
-  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v2', rule: 'auto' });
+  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v3', rule: 'auto' });
+  assert.equal(bound.configuration.profile.maxProviderRetries, 10);
+  assert.equal(bound.configuration.providerRecoveryPolicy, 'provider-recovery/v2');
   assert.equal(bound.configuration.profile.streamTimeoutPolicy, 'idle/v1');
   assert.equal(bound.configuration.profile.chatUsagePolicy, 'cumulative-snapshots/v1');
   assert.equal(bound.configuration.profile.providerThinkingDisplay, display ?? true);
@@ -588,12 +590,16 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'output-recovery-build'));
 });
 
-test('Studio capability admission uses actual catalog dimensions and same-turn replay never rediscovers them', async t => {
+for (const requested of [undefined, 12288]) test(`Studio capability admission separates catalog capacity from ${requested ?? 'default'} request budget and preserves replay`, async t => {
   const f = await setup(t, { sqlite:true,catalog:[{id:'pinned',context_length:'1024k',max_output_tokens:16384,input_modalities:['text']}] });
+  if (requested !== undefined) f.payload.agent.options.maxTokens = requested;
   await f.host.executeTurn(f.payload);
   const head=f.head(), original=f.ledger.load(head.scope,head.runId);
-  assert.equal(original.configuration.profile.contextWindow,1048576); assert.equal(original.configuration.profile.maxOutputTokens,16384);
-  assert.equal(JSON.parse(f.requests[0].options.body).max_tokens,16384);
+  assert.equal(original.configuration.profile.contextWindow,1048576);
+  assert.equal(original.configuration.profile.maxOutputTokens,requested ?? 8192);
+  assert.equal(JSON.parse(f.requests[0].options.body).max_tokens,requested ?? 8192);
+  assert.equal(original.configuration.hostRecoveryBinding.modelBindings.contract,'agentkit.model-bindings/v2');
+  assert.equal(original.configuration.hostRecoveryBinding.modelBindings.items[0].capabilities.maxOutputTokens,16384);
   assert.equal(original.configuration.hostRecoveryBinding.modelBindings.items[0].capabilities.contextSource,'catalog');
   f.models.capabilities=async()=>assert.fail('Redelivery must retain capability facts');
   await f.host.executeTurn(f.payload); assert.equal(f.requests.length,1);

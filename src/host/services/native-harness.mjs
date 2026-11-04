@@ -1,4 +1,4 @@
-import { createStudioNativeModelBinding } from './native-model-binding.mjs';
+import { createStudioNativeModelBinding, selectStudioNativeModel } from './native-model-binding.mjs';
 import { createStudioNativeSessionInjection } from './native-session-injection.mjs';
 import { createStudioNativeChildViews } from './native-child-views.mjs';
 import { createNativeChildObservationCache } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
@@ -35,7 +35,7 @@ import { childCommandResource } from '@kingsoftcloud/agentkit-harness-node/nativ
 import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
 import { createStudioNativeRecovery } from './native-recovery.mjs';
 import { hash, restoredPolicyConfiguration, profileIds, admittedModelSelection, recoveredPromptAssembly, nativePlanAssembly, createStudioNativeBackgroundBinding, createStudioNativeMemoryExtractionBinding } from './native-harness-bindings.mjs';
-import { createNativeModelDescriptions } from '../../providers/native-model-capabilities.mjs';
+import { createNativeModelDescriptions, resolveNativeProfile } from '../../providers/native-model-capabilities.mjs';
 import { createStudioNativeConversation } from './native-conversation.mjs';
 import { nativeConversationRewindAdmission } from '../../providers/native-conversation-rewind.mjs';
 import { createStudioNativeA2aControl } from './native-a2a-control.mjs';
@@ -166,27 +166,18 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           'studio_native_workspace_context_binding_changed');
       }
       const ids = profileIds(record), profiles = await Promise.all((ids.length ? ids : [''])
-        .map(async id => structuredClone(await models.profile(id))));
+        .map(async id => structuredClone(await resolveNativeProfile(models, id, capabilityCapsule))));
       signal.throwIfAborted();
       const selection = original ? { ...original.capsule.source,
         ...(original.capsule.maxTokens === null ? {} : { maxTokens: original.capsule.maxTokens }) }
         : admittedModelSelection(agent, input.assembly);
-      let selected, selectedId;
-      for (let index = 0; index < profiles.length; index++) {
-        const profile = profiles[index], id = ids[index] || '';
-        if (selection.provider && dshModelRoute(profile) !== selection.provider) continue;
-        if (!selection.model || profile.modelName === selection.model) { selected = profile; selectedId = id; break; }
-        if (!binding.buildId && typeof models.catalog === 'function') {
-          const catalog = await models.catalog(id);
-          if (catalog.items?.some(item => item.id === selection.model)) { selected = { ...profile, modelName: selection.model }; selectedId = id; break; }
-        }
-      }
-      invariant(selected, 'studio_native_bound_model_unavailable');
+      const { profile: selected, id: selectedId } = await selectStudioNativeModel({ profiles, ids, selection, models,
+        buildId: binding.buildId, modelBindings: capabilityCapsule?.modelBindings });
       const descriptions = createNativeModelDescriptions({ models, originalCapsule: capabilityCapsule, signal });
       await Promise.all(profiles.map(profile => descriptions.describe(profile)));
       const description = await descriptions.describe(selected);
       const visionId = nativeVisionProfileId(record);
-      const visionProfile = visionId ? structuredClone(await models.profile(visionId)) : null;
+      const visionProfile = visionId ? structuredClone(await resolveNativeProfile(models, visionId, capabilityCapsule)) : null;
       signal.throwIfAborted();
       const visionDescription = visionProfile ? await descriptions.describe(visionProfile) : null;
       invariant(!visionDescription || visionDescription.input.includes('image'), 'studio_native_vision_model_image_input_required');
@@ -201,7 +192,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // Absence on historical capsules means their exact original controls,
       // even when that Run already has the modern output/environment policy.
       const executionOptions = { modern: surfaceEpoch,
-        resourceProfile: original ? original.capsule.localExecutionProfile : 'local-development/v1' };
+        resourceProfile: original ? original.capsule.localExecutionProfile : 'local-development/v2' };
       const localExecution = binding.nativeTools.localExecution?.(executionOptions);
       const commandBinding = localExecution?.binding ?? binding.nativeTools.commandBinding;
       const modelSurface = surfaceEpoch ? bindNativeModelSurface({
@@ -275,9 +266,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(promptAssembly(input.assembly));
       // New Native runs use the original Studio recovery policies. A cold
       // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['workspaceCapturePolicy', 'deliveryScopePolicy', 'outputRecoveryPolicy', 'toolExecutionPolicy', 'childCapabilityPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'inputPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy', 'childPlanPolicy']
+      const recoveryPolicies = original ? Object.fromEntries(['workspaceCapturePolicy', 'deliveryScopePolicy', 'outputRecoveryPolicy', 'toolExecutionPolicy', 'childCapabilityPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'inputPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy', 'childPlanPolicy', 'providerRecoveryPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
-        : { workspaceCapturePolicy: 'declared-subjects/v1', deliveryScopePolicy: RESULT_DELIVERY_POLICY, outputRecoveryPolicy: 'response-boundary/v2', toolExecutionPolicy: 'owner-execution/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
+        : { providerRecoveryPolicy: 'provider-recovery/v2', workspaceCapturePolicy: 'declared-subjects/v1', deliveryScopePolicy: RESULT_DELIVERY_POLICY, outputRecoveryPolicy: 'response-boundary/v2', toolExecutionPolicy: 'owner-execution/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
           ...(workspaceContext && (!capabilityCapsule || [NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP].includes(capabilityCapsule.inputContextPolicy))
             ? { inputPolicy: 'before-first-model/v1' } : {}),
           ...(nativeChildRoles(record.spec).length ? { childTaskPolicy: 'session-controls/v1', childCapabilityPolicy: 'required-tools/v1' } : {}),
@@ -405,6 +396,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ...(recoveryPolicies.childCapabilityPolicy ? { childCapabilityPolicy: recoveryPolicies.childCapabilityPolicy,
           outputRecoveryPolicy: recoveryPolicies.outputRecoveryPolicy } : {}),
         ...(recoveryPolicies.childTaskPolicy ? { childTaskPolicy: recoveryPolicies.childTaskPolicy } : {}),
+        ...(recoveryPolicies.providerRecoveryPolicy ? { providerRecoveryPolicy: recoveryPolicies.providerRecoveryPolicy } : {}),
         ...(recoveryPolicies.toolExecutionPolicy ? { toolExecutionPolicy: recoveryPolicies.toolExecutionPolicy } : {}),
         ...(childAllocationPolicy ? { childAllocationPolicy } : {}),
         ...(modelSurface ? { modelSurface } : {}),
