@@ -96,7 +96,21 @@ test('standing policy denies before state, one-shot approval does not grant anot
     approvals++; return held ? answer.promise : approvals === 2 ? 'allowed-once' : 'rejected';
   } } } });
   assert.equal((await h.run()).content.error_type, 'STUDIO_NATIVE_PERMISSION_DENIED'); assert.deepEqual(h.records(), []);
-  assert.equal((await h.run()).status, 'ok');
+  const permitted = await h.run();
+  if (permitted.status !== 'ok') {
+    // Keep the original authority/outcome assertion strict. Report only receipt
+    // metadata, never script environment, command output or provider credentials.
+    const receipts = h.records().flatMap(({ file, record }) => {
+      const store = new LocalCommandStore({ stateRoot: join(file, '../..', 'processes'),
+        workspaceRoot: h.workspaceRoot, sessionId: record.request.sessionId });
+      return record.commands.map(command => {
+        const { status, exitCode, evidenceIncomplete, outcomeReason } = store.connect(command.taskId).readOutput();
+        return { phase: record.phase, status, exitCode, evidenceIncomplete, outcomeReason };
+      });
+    });
+    assert.equal(permitted.status, 'ok', canonical({ status: permitted.status,
+      error_type: permitted.content.error_type ?? null, receipts }));
+  }
   assert.equal((await h.run(h.args, h.execution(h.args, 'second'))).content.error_type, 'STUDIO_NATIVE_PERMISSION_DENIED');
   assert.equal(readFileSync(join(h.workspaceRoot, 'effect'), 'utf8'), 'x');
   held = true; const controller = new AbortController(), exec = h.execution(h.args, 'late'); exec.signal = controller.signal;
