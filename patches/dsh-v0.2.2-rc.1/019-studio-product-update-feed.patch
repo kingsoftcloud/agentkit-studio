@@ -49,7 +49,7 @@ index 4d42b3dd1e5ee08363becf32d329c3b348b5c311..5f78eec2d85f5150208b12ddc27e79ab
 +
 +export function resolveDesktopUpdateChannel(env: NodeJS.ProcessEnv): DesktopAutoUpdateChannel
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index 835beadd6d5c4fed1162e3e751eab74935f8811c..09bd482d9cb83c00b54a6cb671f3dcb3bb666211 100644
+index 835beadd6d5c4fed1162e3e751eab74935f8811c..c6c09dd37f1b96419d92e1efd482c403099e2ede 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
 @@ -4,15 +4,21 @@ import { valid } from 'semver'
@@ -94,8 +94,8 @@ index 835beadd6d5c4fed1162e3e751eab74935f8811c..09bd482d9cb83c00b54a6cb671f3dcb3
 +export function resolveDesktopAutoUpdateChannel(env) {
 +  if (resolveDesktopAutoUpdateEnvironment(env) === 'production') {
 +    const channel = env[DESKTOP_UPDATE_CHANNEL_ENV]?.trim()
-+    if (!['stable', 'preview', 'latest'].includes(channel)) {
-+      throw new Error(`desktop auto-update: production ${DESKTOP_UPDATE_CHANNEL_ENV} must explicitly be stable, preview, or latest`)
++    if (!['stable', 'preview', 'nightly', 'latest'].includes(channel)) {
++      throw new Error(`desktop auto-update: production ${DESKTOP_UPDATE_CHANNEL_ENV} must explicitly be stable, preview, nightly, or latest`)
 +    }
 +    return channel
 +  }
@@ -311,7 +311,7 @@ index 3b83cea08fcd1cedff3d6acf6d43be5621f24324..c09abaf9292034803ca6dd1bdd3c9354
      this.updater.allowDowngrade = false
      this.updater.on('download-progress', this.onProgress)
 diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index 9fbe629c8950cc3ef4abfe5d43d7ecc12fd943ff..c1cb0354e81fb38fd6262aff4f34c3659d2fcdee 100644
+index 9fbe629c8950cc3ef4abfe5d43d7ecc12fd943ff..f03a612475d1f93a9d50d659fac7d0a17ad88bec 100644
 --- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 @@ -28,6 +28,7 @@ describe('desktop auto-update environment', () => {
@@ -364,28 +364,33 @@ index 9fbe629c8950cc3ef4abfe5d43d7ecc12fd943ff..c1cb0354e81fb38fd6262aff4f34c365
    })
  
    it('rejects a test download URL that is not an HTTPS origin', () => {
-@@ -111,10 +114,30 @@ describe('desktop auto-update environment', () => {
+@@ -111,10 +114,35 @@ describe('desktop auto-update environment', () => {
      expect(() => desktopBuildRecordFilename('linux-x64' as 'mac-arm64')).toThrow(/unsupported target/u)
    })
  
-+  it('requires an explicit Studio production origin and accepts Stable/Preview lanes', () => {
++  it('requires an explicit Studio production origin and accepts Stable/Preview/Nightly lanes', () => {
 +    expect(resolveDesktopAutoUpdateConfig({
 +      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
 +      DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
 +      DSH_DESKTOP_UPDATE_CHANNEL: 'stable',
 +    }, 'darwin', 'arm64')).toMatchObject({ channel: 'stable' })
++    expect(resolveDesktopAutoUpdateConfig({
++      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
++      DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
++      DSH_DESKTOP_UPDATE_CHANNEL: 'nightly',
++    }, 'darwin', 'arm64')).toMatchObject({ channel: 'nightly' })
 +    expect(() => resolveDesktopAutoUpdateConfig({
 +      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
 +      DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
 +      DSH_DESKTOP_UPDATE_CHANNEL: 'canary',
-+    }, 'darwin', 'arm64')).toThrow(/stable or preview/u)
++    }, 'darwin', 'arm64')).toThrow(/stable, preview, nightly, or latest/u)
 +  })
 +
-+  it.each([undefined, '', ' ', 'nightly', 'canary'])('rejects production channel %j before packaging', (channel) => {
++  it.each([undefined, '', ' ', 'canary'])('rejects production channel %j before packaging', (channel) => {
 +    expect(() => resolveDesktopAutoUpdateConfig({
 +      DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
 +      DSH_DESKTOP_UPDATE_CHANNEL: channel,
-+    }, 'darwin', 'arm64')).toThrow(/must explicitly be stable or preview/u)
++    }, 'darwin', 'arm64')).toThrow(/must explicitly be stable, preview, nightly, or latest/u)
 +  })
 +
    it('uses Nightly metadata for stable and prerelease Desktop versions', () => {
