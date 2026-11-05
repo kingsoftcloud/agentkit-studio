@@ -26,26 +26,9 @@ test('overlapping title owners restore the latest native title only after the la
   assert.equal(observers.size, 0);
 });
 
-test('exports and mounts the native window drag strip used by the DSH shell', () => {
-  const children = [];
-  const document = {
-    body: { append(node) { children.push(node); node.parent = this; }, querySelector: () => null },
-    head: { append() {} },
-    getElementById: () => null,
-    querySelector: () => null,
-    createElement() {
-      return {
-        style: {},
-        setAttribute(name, value) { this[name] = value; },
-        remove() { const index = children.indexOf(this); if (index >= 0) children.splice(index, 1); },
-      };
-    },
-  };
+test('does not expose the removed full-width drag overlay effect', () => {
+  const document = { body: { append() {} }, head: { append() {} }, querySelector: () => null };
   const window = {}; window.parent = window;
   const effects = createProductDocumentEffects({ window, document });
-  const release = effects.installWindowDragStrip();
-  assert.equal(children.length, 1);
-  assert.equal(children[0]['data-window-drag'], 'true');
-  release();
-  assert.equal(children.length, 0);
+  assert.equal('installWindowDragStrip' in effects, false);
 });

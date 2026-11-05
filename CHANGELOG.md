@@ -1,5 +1,7 @@
 # Changelog
 
+- 去掉覆盖在窗口顶部 30px 的全宽透明拖动条：它会吞掉页面顶部按钮点击；窗口拖动改由标题行/页头的 `data-studio-drag-region` 承担，交互元素保持 `no-drag`。
+
 ## 0.0.11
 
 - 桌面端启动时的插件对齐不再把运行时自带的插件复制到 profile：改为备份并移除旧的 profile 副本，让 DSH 的安装锚点直接解析 `app.asar` 内的插件，避免搬出 asar 后缺失 `@deepseek-ai/*` 依赖；改写前逐一校验 bundled 依赖，失败立即还原 `package.json` 与旧副本，同一版本连续失败两次后停止尝试并降级启动。
