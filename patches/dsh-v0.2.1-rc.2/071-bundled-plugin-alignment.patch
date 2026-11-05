@@ -1,6 +1,6 @@
 diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..659a6082f52ef67893faf43ba239a5865758c708
+index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4e76c602d
 --- /dev/null
 +++ b/apps/desktop/src/bundled-plugin-alignment.ts
 @@ -0,0 +1,503 @@
@@ -326,7 +326,7 @@ index 0000000000000000000000000000000000000000..659a6082f52ef67893faf43ba239a586
 + * profile's hoisted `node_modules` so the profile copy resolves it on its own.
 + * @returns the hoisted directories created, in copy order.
 + */
-+function copyClosure(runtimeDsh: string, stage: string, profile: string): string[] {
++function copyClosure(runtimeDsh: string, bundledDir: string, stage: string, profile: string): string[] {
 +  const created: string[] = []
 +  const queue = [stage]
 +  let visited = 0
@@ -343,7 +343,7 @@ index 0000000000000000000000000000000000000000..659a6082f52ef67893faf43ba239a586
 +      } catch {
 +        // The copy does not answer this dependency yet.
 +      }
-+      const source = resolveRuntimePackage(runtimeDsh, join(directory, 'package.json'), name)
++      const source = resolveRuntimePackage(runtimeDsh, join(bundledDir, 'package.json'), name)
 +      if (source === undefined) throw new Error(`bundled copy cannot resolve ${name}`)
 +      const target = join(profile, 'node_modules', name)
 +      if (!existsSync(join(target, 'package.json'))) {
@@ -392,7 +392,7 @@ index 0000000000000000000000000000000000000000..659a6082f52ef67893faf43ba239a586
 +  let replaced = false
 +  try {
 +    copyPackageTree(bundledDir, stage)
-+    created = copyClosure(options.runtimeDsh, stage, options.profile)
++    created = copyClosure(options.runtimeDsh, bundledDir, stage, options.profile)
 +    const staged = verifyPluginCopy(stage)
 +    if (staged !== undefined) throw new Error(staged)
 +    if (existsSync(join(installedDir, 'package.json'))) {
