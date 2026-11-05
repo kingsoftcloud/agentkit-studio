@@ -36,7 +36,8 @@ async function fixture(t) {
   const raw = stringify({ name: 'employee', framework: 'dsh-native', artifact_type: 'ManagedRuntime',
     runtime: { name: 'dsh-native', version: 'studio-test.1' }, model: 'fixture-model', prompt: '原生声明提示词。' });
   await writeFile(manifest, raw);
-  const env = { PATH: process.env.PATH, OPENAI_BASE_URL: 'http://127.0.0.1:1234/v1', AGENTKIT_MODEL_API_KEY: 'fixture-key',
+  const home = join(root, 'home'); await mkdir(home, { recursive: true });
+  const env = { PATH: process.env.PATH, AGENTKIT_USER_HOME: home, OPENAI_BASE_URL: 'http://127.0.0.1:1234/v1', AGENTKIT_MODEL_API_KEY: 'fixture-key',
     AGENTKIT_RUNTIME_TOKEN: 'fixture-runtime-token-at-least-24-characters', AGENTENGINE_AGENT_ID: 'ar-managed-fixture', AGENTENGINE_AGENT_VERSION_ID: 'v1',
     AGENTENGINE_MANAGED_RUNTIME_NAME: 'dsh-native', AGENTENGINE_MANAGED_RUNTIME_VERSION: 'studio-test.1',
     AGENTENGINE_MANIFEST_PROTOCOL: 'runtime-manifest/v1', AGENTENGINE_MANIFEST_SHA256: hash(raw),

@@ -159,7 +159,7 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
     const payload = f.calls.find(([action]) => action === 'create')[1];
     assert.equal(payload.ContainerConfig.ImageAddr, f.release.image);
     assert.equal(payload.Framework, runtime === 'codex' ? 'codex' : 'harness');
-    assert.deepEqual(payload.Storage, { MountPath: '/var/lib/agentkit', SizeGi: 20 });
+    assert.deepEqual(payload.Storage, { MountPath: '/home/node', SizeGi: 20 });
     assert.equal(payload.Advanced.EnvironmentVariables.find(row => row.Key === 'OPENAI_MODEL_NAME').Value, 'bound-model');
     const serialized = JSON.stringify(await f.service.list());
     const disk = await readFile(join(f.root, 'deployments', `${first.id}.json`), 'utf8');

@@ -8,6 +8,7 @@
  * conversation history.
  */
 import { resolveCodexCommand } from './codex-command.mjs';
+import { readExecutionMode } from '../execution-policy.mjs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute } from 'node:path';
@@ -127,10 +128,14 @@ export function createCodexRuntime(options = {}) {
   const runtime = {
     executable,
     cwd,
-    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd, approvalPolicy: requestedApprovalPolicy, requestApproval, requestUserInput } = {}) {
+    async *stream({ input, messages = [], imageInputs = [], signal, systemPrompt = '', dynamicTools = [], toolHandler, model: requestedModel, modelProvider, reasoningEffort, cwd: requestedCwd, sandbox: requestedSandbox, approvalPolicy: requestedApprovalPolicy, requestApproval, requestUserInput } = {}) {
       const cwd = String(requestedCwd ?? runtime.cwd);
       if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
+      // Each turn starts its own App Server thread, so a permission change may
+      // apply to this turn alone; an invalid or absent value falls back to the
+      // runtime default instead of reaching Codex.
+      const turnSandbox = readExecutionMode(requestedSandbox) || sandbox;
       // A managed approval run may lift the process-wide unattended default for
       // this turn only. Portable turns without a bridge keep `never`.
       const turnApprovalPolicy = typeof requestedApprovalPolicy === 'string' && requestedApprovalPolicy.trim()
@@ -442,7 +447,7 @@ export function createCodexRuntime(options = {}) {
           ephemeral: true,
           experimentalRawEvents: true,
           approvalPolicy: turnApprovalPolicy,
-          ...(sandbox ? { sandbox } : {}),
+          ...(turnSandbox ? { sandbox: turnSandbox } : {}),
           ...(selectedModel ? { model: selectedModel } : {}),
           ...(providerId ? { modelProvider: providerId } : {}),
           ...(developerInstructions ? { developerInstructions } : {}),

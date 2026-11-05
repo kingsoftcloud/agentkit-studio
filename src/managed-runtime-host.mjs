@@ -56,8 +56,13 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   if (!await exists(versionReceipt) && (await readdir(versionRoot)).length) fail('STATE_CONFLICT', '版本目录包含未识别状态');
   await immutableJson(versionReceipt, { format: 'agentengine.managed-version/v1', ...runtime.identity });
   const home = await directory(join(versionRoot, 'agentkit'));
-  const userHome = await directory(join(versionRoot, 'home')), dshHome = await directory(join(versionRoot, 'dsh'));
-  const cwd = await directory(join(versionRoot, 'workspace'));
+  // HOME is the mounted home directory when the platform attaches a disk
+  // (default /home/node), so .codex and the workspace survive pod restarts.
+  // Studio's own state stays version-scoped to keep immutable receipts.
+  const userHome = await directory(resolve(env.AGENTKIT_USER_HOME || '/home/node'));
+  const dshHome = await directory(join(versionRoot, 'dsh'));
+  const codexHome = await directory(join(userHome, '.codex'));
+  const cwd = await directory(resolve(env.AGENTKIT_WORKSPACE_ROOT || join(userHome, 'workspace')));
   await immutableJson(join(home, 'config.yaml'), { settings: { modelProfiles: runtime.modelProfiles,
     modelName: runtime.declaration.model, modelProvider: 'openai-compatible', modelBaseUrl: runtime.modelProfiles[0].baseUrl } });
   await prepareRuntimeProfile({ dshHome, modules, identity: runtime.identity, dshVersion, prefix: 'MANAGED_HOST' });
@@ -68,7 +73,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
     'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
     ...MANAGED_OBSERVABILITY_ENV_NAMES];
   const childEnv = Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
-  Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: join(userHome, '.codex'),
+  Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: codexHome,
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
     AGENTKIT_HOME: home, OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible',
     AGENTENGINE_MANIFEST_PATH: resolve(manifest) });
