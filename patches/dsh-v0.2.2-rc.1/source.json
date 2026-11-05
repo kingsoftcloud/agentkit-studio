@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "d5926a12fd8ddb8e797354315c4ee30857990a5b",
+  "headCommit": "ec4f84a5a7a627fe1d03bb86a7dcca346ca8ef75",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "ee0097fdd45c7c8886e97d4eed83b9bcc276192f",
-  "sourceSha256": "83251565a0060b03aae00a6c774554eb6c357cf6ec47b8f35fcb52c9acdaa62f",
+  "tree": "ecc943386a62d1c22a87aa87f9e186a11ae600f1",
+  "sourceSha256": "0e55020e69beac7fe9f80331a46ea47025a4faec3f210cff85d273b7b4da3dd2",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "33567325d5e4884762a250a8ff163763ea948ab273a7169664ff87751e93b754"
+    "sha256": "9a4fc7dd96e228b7ee3d0dfeb283670849d533c3d319670508a4628791521a7e"
   },
   "commits": [
     {
@@ -266,8 +266,14 @@
     {
       "id": "074",
       "file": "074-reselect-product-bundle.patch",
-      "commit": "d5926a12fd8ddb8e797354315c4ee30857990a5b",
-      "sha256": "db0ef988cd43e63fbd98389d221b001bc3c4ba07cd9b724255a8f79c41d78c72"
+      "commit": "2cc8036fc53ff6dc29456f0b4120da5216cff438",
+      "sha256": "ac8130caa9cd2a8aef51d41b91f56b3a7cf58a28a98af5fa47144a5d8499a71b"
+    },
+    {
+      "id": "075",
+      "file": "075-rc1-host-test-contracts.patch",
+      "commit": "ec4f84a5a7a627fe1d03bb86a7dcca346ca8ef75",
+      "sha256": "a981c13f9005820aea596dd88542436e52cc2bf40d747f274f945a77b6ac81d9"
     }
   ]
 }

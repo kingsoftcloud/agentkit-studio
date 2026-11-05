@@ -1998,20 +1998,30 @@
       "category": "packaging",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
       "dependsOn": [
+        "064",
         "071",
         "072",
         "073"
       ],
       "affectedFiles": [
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
         "apps/desktop/src/bundled-plugin-alignment.ts",
-        "apps/desktop/tests/bundled-plugin-alignment.spec.ts"
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/tests/bundled-plugin-alignment.spec.ts",
+        "apps/desktop/tests/project-manager.spec.ts",
+        "docs/upgrade-guide/v0.2.2-rc.1/desktop-product-bundle-alignment/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.2-rc.1/desktop-product-bundle-alignment/guide.md",
+        "docs/upgrade-guide/v0.2.2-rc.1/desktop-product-bundle-alignment/guide.zh.md"
       ],
       "affectedPackages": [
         "@deepseek-ai/dsh-desktop"
       ],
       "contracts": [
         "Native recovery and prior profile alignment cannot leave an installed or previously activated product bundle unselected; the Studio bundle is reselected before copy alignment runs.",
-        "Selection repair preserves the existing dependency when present, survives later alignment failure, and leaves the sealed runtime copy loadable on the next Host launch."
+        "Selection repair preserves the existing dependency when present, survives later alignment failure, and leaves the sealed runtime copy loadable on the next Host launch.",
+        "A profile that still declares a direct dependency whose profile copy a failed install removed drops that stale edge after the sealed copy passes the same dependency probe used for retirement, so the next plugin install no longer queries an unpublished registry version.",
+        "The upgrade guide records the profile manifest result and the plugin retry for both languages."
       ],
       "risk": "medium",
       "maintainerRole": "Studio Desktop maintainers",
@@ -2030,13 +2040,81 @@
         ]
       },
       "sequence": 43,
-      "sha256": "db0ef988cd43e63fbd98389d221b001bc3c4ba07cd9b724255a8f79c41d78c72"
+      "sha256": "ac8130caa9cd2a8aef51d41b91f56b3a7cf58a28a98af5fa47144a5d8499a71b"
+    },
+    {
+      "id": "075",
+      "file": "075-rc1-host-test-contracts.patch",
+      "category": "general-fix",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "a981c13f9005820aea596dd88542436e52cc2bf40d747f274f945a77b6ac81d9",
+      "dependsOn": [
+        "009",
+        "010",
+        "014",
+        "019",
+        "032",
+        "033",
+        "035",
+        "064",
+        "072"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/desktop-upload-plan.ts",
+        "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+        "apps/desktop/tests/desktop-upload-plan.spec.ts",
+        "apps/desktop/tests/expected/application-menu-en-US.json",
+        "apps/desktop/tests/expected/application-menu-zh-CN.json",
+        "apps/desktop/tests/local-macos-package.spec.ts",
+        "apps/desktop/tests/package-target-stages.spec.ts",
+        "apps/desktop/tests/product-branding.spec.ts",
+        "apps/desktop/tests/update-coordinator.spec.ts",
+        "packages/api/session-controller/tests/session-models.host.spec.ts",
+        "packages/client/ui-conversation/tests/product-brand.client.spec.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "contracts": [
+        "Production packaging accepts the rc1 stable, preview and latest lanes and rejects empty, nightly and unknown channels before packaging.",
+        "Only the stable channel publishes the shared latest metadata alias; the nightly lane keeps its own feed object.",
+        "The macOS product menu expectation includes the rc1 reload page and restart app entries, and the product bundle declares the rc1 localization set.",
+        "Unsigned macOS builds assert the ad-hoc identity, the disabled notarization and the local profile build stage they actually run.",
+        "Agent-bound model selection installs the requested selection while an adapter-owned reasoning default still applies at call time.",
+        "The hero product mark keeps the rc1 pointer-event hover animation and reduced-motion preference."
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio host integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local rc1 reconciliation: the 53 registered host test files and 1448 cases pass on the maintained rc1 source; no upstream submission or remote CI receipt."
+      },
+      "removeWhen": "The pinned upstream rc1 or a later DSH release carries equivalent update-channel, metadata, menu, localization, signing, model-selection and hover contracts, so the reconciliation patch no longer changes the maintained Host tree.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
+          "apps/desktop/tests/desktop-upload-plan.spec.ts",
+          "apps/desktop/tests/local-macos-package.spec.ts",
+          "apps/desktop/tests/main-startup.spec.ts",
+          "apps/desktop/tests/package-target-stages.spec.ts",
+          "apps/desktop/tests/product-branding.spec.ts",
+          "apps/desktop/tests/update-coordinator.spec.ts",
+          "packages/api/session-controller/tests/session-models.host.spec.ts",
+          "packages/client/ui-conversation/tests/product-brand.client.spec.tsx"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 44
     }
   ],
-  "patchedTree": "ee0097fdd45c7c8886e97d4eed83b9bcc276192f",
-  "patchedSourceSha256": "83251565a0060b03aae00a6c774554eb6c357cf6ec47b8f35fcb52c9acdaa62f",
+  "patchedTree": "ecc943386a62d1c22a87aa87f9e186a11ae600f1",
+  "patchedSourceSha256": "0e55020e69beac7fe9f80331a46ea47025a4faec3f210cff85d273b7b4da3dd2",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "60834b6ab8685b12888deb11f4197ca26e7b0c4981e2807c1637253f191c0090"
+    "sha256": "6a86616ce1fde7a4e294bdcd326130e5835b207e87afd18216806804d777e083"
   }
 }
