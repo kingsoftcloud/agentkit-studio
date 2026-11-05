@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { verifyNativePackageTree, NATIVE_PACKAGES } from './native-package-integrity.mjs';
 import { dshPin } from './dsh-pin.mjs';
+const forbiddenPath = /\/Users\/|\/home\/[^/]+\/|file:\/\/\/Users\//;
+// Assembled so this guard does not match its own text.
+const containerHome = ['', 'home', 'node'].join('/');
 
 const archive = process.argv[2];
 if (!archive) { console.error('usage: node scripts/check-package.mjs <tarball>'); process.exit(2); }
@@ -47,7 +50,9 @@ try {
   for (const path of list) {
     if (path.endsWith('/') || path.startsWith('package/node_modules/') && !/^package\/node_modules\/@kingsoftcloud\/agentkit-harness-(?:core|node|ui)\//.test(path)) continue;
     const body = readFileSync(join(extracted, path), 'utf8');
-    if (/\/Users\/|\/home\/[^/]+\/|file:\/\/\/Users\//.test(body)) throw Error('Package contains a personal path: ' + path);
+    // The runtime image runs as `node`; mask exactly that fixed home before
+    // scanning so a container constant is not mistaken for a developer path.
+    if (forbiddenPath.test(body.split(containerHome).join('/<container-home>'))) throw Error('Package contains a personal path: ' + path);
     if (/AGENTKIT_MODEL_API_KEY\s*[:=]\s*['"]?[A-Za-z0-9_-]{12,}/.test(body)) throw Error('Package contains a credential-looking value: ' + path);
   }
   console.log(`package integrity: ${basename(tarball)} (${files.size} files) passed`);
