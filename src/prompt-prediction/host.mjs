@@ -133,6 +133,13 @@ export function createPromptPredictionHost(ctx, {
     state.rev += 1
     running += 1
     const startedAt = Date.now()
+    // A gateway that never answers must not pin `running`: with MAX_CONCURRENT === 2 two
+    // stuck sessions would silently starve every other session's prediction forever.
+    const timer = setTimeout(() => {
+      if (state.inflight !== controller) return
+      publish(state, { status: 'failed', text: null, reason: 'timeout', latencyMs: Date.now() - startedAt, candidateTurnSeq: null })
+      controller.abort()
+    }, config.timeoutMs)
     void predict(session, eligibility.messages, controller.signal, config, models, fetchImpl)
       .then((result) => {
         if (controller.signal.aborted || state.inflight !== controller || state.turnOpen || state.candidateTurnSeq !== turnSeq) return
@@ -149,6 +156,7 @@ export function createPromptPredictionHost(ctx, {
         publish(state, { status: 'failed', text: null, reason: error?.code || 'exception', latencyMs: Date.now() - startedAt, candidateTurnSeq: null })
       })
       .finally(() => {
+        clearTimeout(timer)
         running -= 1
         if (state.inflight === controller) state.inflight = null
       })
@@ -185,9 +193,12 @@ export function createPromptPredictionHost(ctx, {
     if (!sessionId || sessionId.length > 256) return json({ error: { code: 'SESSION_ID_INVALID' } }, 400)
     const state = stateOf(sessionId)
     if (state.session === undefined) return json({ ...stateSnapshot(state), status: 'unknown-session', reason: 'unknown-session' })
+    // A poll is also the only driver that starts a prediction, so schedule before the
+    // revision comparison: an unchanged client revision must still be able to kick the
+    // model call, otherwise the client and host wait for each other forever.
+    if (state.candidateTurnSeq !== null && !state.turnOpen) schedule(state.session, state, state.candidateTurnSeq)
     const revision = Number(url.searchParams.get('rev'))
     if (Number.isSafeInteger(revision) && revision >= state.rev) return json({ rev: state.rev, unchanged: true })
-    if (state.candidateTurnSeq !== null && !state.turnOpen) schedule(state.session, state, state.candidateTurnSeq)
     return json(stateSnapshot(state))
   }
 

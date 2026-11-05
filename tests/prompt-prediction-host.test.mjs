@@ -82,3 +82,101 @@ test('feedback rejects oversized or unknown payloads without echoing text', asyn
   assert.equal(oversized.status, 413)
   await h.dispose()
 })
+
+function multiSessionHarness(fetchImpl) {
+  const routes = new Map()
+  const listeners = new Map()
+  const sessions = new Map()
+  const ctx = {
+    connection: { fetch: { register(route) { routes.set(route.path, route); return async () => routes.delete(route.path) } } },
+    on(name, handler) {
+      const list = listeners.get(name) ?? []
+      list.push(handler)
+      listeners.set(name, list)
+      return () => list.splice(list.indexOf(handler), 1)
+    },
+    emit(name, ...args) { for (const handler of listeners.get(name) ?? []) handler(...args) },
+  }
+  const models = { profile: async () => ({ baseUrl: 'https://model.invalid/v1', apiKey: 'secret', modelName: 'flash' }) }
+  const dispose = createPromptPredictionHost(ctx, { models, fetchImpl, env: { AGENTKIT_PROMPT_PREDICTION_AUDIT: '0' } })
+  const session = (id) => {
+    if (!sessions.has(id)) {
+      sessions.set(id, {
+        id,
+        header: {},
+        requestHeader: () => ({ config: { provider: 'ksyun', model: 'flash' } }),
+        deriveMessages: () => [message('user', '请分析代码'), message('assistant', '我已经列出修改步骤。')],
+      })
+    }
+    return sessions.get(id)
+  }
+  const read = async (id, rev = -1) => (await routes.get(PROMPT_PREDICTION_STATE_PATH).fetch(
+    new Request(`http://localhost${PROMPT_PREDICTION_STATE_PATH}?sessionId=${id}&rev=${rev}`),
+  )).json()
+  return { ctx, session, read, dispose }
+}
+
+const settle = async () => { for (let i = 0; i < 8; i += 1) await new Promise(resolve => setImmediate(resolve)) }
+
+test('a poll holding the current revision still starts a prediction blocked by MAX_CONCURRENT', async () => {
+  const gates = []
+  const calls = []
+  const fetchImpl = async (_url, options) => {
+    calls.push(JSON.parse(options.body))
+    if (calls.length <= 2) await new Promise(resolve => gates.push(resolve))
+    return Response.json({ choices: [{ message: { content: '{"suggestion":"继续跑测试"}' } }] })
+  }
+  const h = multiSessionHarness(fetchImpl)
+  for (const id of ['session-a', 'session-b']) {
+    h.ctx.emit('session/event', h.session(id), { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+    assert.equal((await h.read(id)).status, 'pending')
+  }
+  await settle()
+  assert.equal(calls.length, 2)
+
+  // Both slots are saturated, so the third session receives an idle snapshot and stores
+  // that revision — the state a polling client is in right before this bug froze it.
+  const sessionC = h.session('session-c')
+  h.ctx.emit('session/event', sessionC, { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+  const blocked = await h.read('session-c')
+  assert.equal(blocked.status, 'idle')
+  assert.equal(calls.length, 2)
+
+  for (const gate of gates) gate()
+  await settle()
+
+  const retried = await h.read('session-c', blocked.rev)
+  assert.ok(['pending', 'ready'].includes(retried.status), `expected the poll to schedule, got ${retried.status}`)
+  assert.equal(calls.length, 3)
+  await settle()
+  const settled = await h.read('session-c', retried.rev)
+  assert.equal(settled.status, 'ready')
+  assert.equal(settled.text, '继续跑测试')
+  await h.dispose()
+})
+
+test('a gateway that never answers releases its slot instead of pinning the host', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const calls = []
+  const fetchImpl = (_url, options) => {
+    calls.push(1)
+    if (calls.length > 1) return Promise.resolve(Response.json({ choices: [{ message: { content: '{"suggestion":"继续跑测试"}' } }] }))
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { code: 'ABORT_ERR' })))
+    })
+  }
+  const h = multiSessionHarness(fetchImpl)
+  h.ctx.emit('session/event', h.session('session-a'), { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+  assert.equal((await h.read('session-a')).status, 'pending')
+  t.mock.timers.tick(12000)
+  await settle()
+  const timedOut = await h.read('session-a')
+  assert.equal(timedOut.status, 'failed')
+  assert.equal(timedOut.reason, 'timeout')
+
+  // The slot is free again: a different session still gets its prediction.
+  h.ctx.emit('session/event', h.session('session-b'), { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+  const next = await h.read('session-b')
+  assert.ok(['pending', 'ready'].includes(next.status), `expected the freed slot to predict, got ${next.status}`)
+  await h.dispose()
+})
