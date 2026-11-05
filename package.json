@@ -45,6 +45,7 @@
   ],
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
+    "inspect:image-catalog": "node scripts/inspect-image-catalog.mjs",
     "check": "node scripts/check-node-version.mjs && tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node scripts/test-studio.mjs",
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
