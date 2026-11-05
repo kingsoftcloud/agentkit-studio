@@ -12,7 +12,7 @@ index c4b6c177b55ffbc7184e9a1477a19b1a6c574b75..f67b0ba45727d5826cb7e2f21fa3c169
    readonly extraResources: readonly [
      { readonly from: string, readonly to: 'runtime' },
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index 09bd482d9cb83c00b54a6cb671f3dcb3bb666211..2567663f837f295c813576bb2bdf0f8632b253e3 100644
+index c6c09dd37f1b96419d92e1efd482c403099e2ede..c0771b2548aef69fd5b8e042256b4ccfc49c8acd 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
 @@ -185,7 +185,8 @@ export function resolveDesktopAutoUpdateConfig(env, platform, arch) {
@@ -111,10 +111,10 @@ index cf03e38c3653773c307f128aca3aaced15caaa93..dd8339f38182972c368c0164e33698b2
    }
  }
 diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index c1cb0354e81fb38fd6262aff4f34c3659d2fcdee..20e714e4493b163d8f3fcf0de5f44f0aee935c3b 100644
+index f03a612475d1f93a9d50d659fac7d0a17ad88bec..e53d855cb1650194363bfb67edd111fd5383563e 100644
 --- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-@@ -142,3 +142,10 @@ describe('desktop auto-update environment', () => {
+@@ -147,3 +147,10 @@ describe('desktop auto-update environment', () => {
      expect(() => desktopUpdateMetadataFilename('1.2.3', 'linux')).toThrow(/unsupported metadata platform/u)
    })
  })

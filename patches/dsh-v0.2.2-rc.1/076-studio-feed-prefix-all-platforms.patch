@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index 2567663f837f295c813576bb2bdf0f8632b253e3..8806b6e087294b2dcf0fee8d90b39596413e3adf 100644
+index c0771b2548aef69fd5b8e042256b4ccfc49c8acd..77bb3cd14ea8e687aa4d9757c91d0dea55854477 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
 @@ -185,7 +185,7 @@ export function resolveDesktopAutoUpdateConfig(env, platform, arch) {
@@ -12,10 +12,10 @@ index 2567663f837f295c813576bb2bdf0f8632b253e3..8806b6e087294b2dcf0fee8d90b39596
    if (environment === 'test') {
      const releaseId = requiredEnvironmentValue(env, 'DOWNLOAD_TEST_RELEASE_ID')
 diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index c6e66b7c79728c81a0f0381965e1c3ccd6bc2e20..3a837ee9335e34acaed3de3385cd67beb323384d 100644
+index e53d855cb1650194363bfb67edd111fd5383563e..37239c24362333f8fd32f31ae8f5ac91633a9bda 100644
 --- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-@@ -143,9 +143,10 @@ describe('desktop auto-update environment', () => {
+@@ -148,9 +148,10 @@ describe('desktop auto-update environment', () => {
    })
  })
  

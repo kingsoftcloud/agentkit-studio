@@ -638,7 +638,7 @@
       "file": "019-studio-product-update-feed.patch",
       "category": "updater",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "5cf6c3e899b38c9b6cc55f67f3c682c660206f9a1761dada153e2fb7c8678bf0",
+      "sha256": "087e4df1724683311f93728355ebf7039b54087653916fead8a49fee3c4576d6",
       "dependsOn": [
         "009",
         "014"
@@ -1113,7 +1113,7 @@
       "file": "032-windows-studio-product.patch",
       "category": "packaging",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "7f815d3f3aa234a710d37e73c2107d0ddd30f9301f30c0db5e8f69d692a4c847",
+      "sha256": "988176c2421c995903ef4e7b6718d7a9a709186d3750c50faf3404ca626e760e",
       "dependsOn": [
         "009",
         "019",
@@ -2047,7 +2047,7 @@
       "file": "075-rc1-host-test-contracts.patch",
       "category": "general-fix",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "a981c13f9005820aea596dd88542436e52cc2bf40d747f274f945a77b6ac81d9",
+      "sha256": "9d29608a7903fa533825932ed7a0cd7f3294571ee60501669baca85399bf8bf4",
       "dependsOn": [
         "009",
         "010",
@@ -2061,7 +2061,6 @@
       ],
       "affectedFiles": [
         "apps/desktop/scripts/desktop-upload-plan.ts",
-        "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
         "apps/desktop/tests/desktop-upload-plan.spec.ts",
         "apps/desktop/tests/expected/application-menu-en-US.json",
         "apps/desktop/tests/expected/application-menu-zh-CN.json",
@@ -2115,7 +2114,7 @@
       "file": "076-studio-feed-prefix-all-platforms.patch",
       "category": "updater",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "688305edba7f6504d2beff987bb6251282213d03ba03bda8096c493bcd94eb9f",
+      "sha256": "370cc4609d0c5dc735cb61c51e0ad55e68a92e94b48cfec341fe90cfee4fb678",
       "dependsOn": [
         "032",
         "075"
@@ -2152,10 +2151,10 @@
       "sequence": 45
     }
   ],
-  "patchedTree": "16850850c816c86e6c2a991d0b3b9c5e85c38114",
-  "patchedSourceSha256": "1bfe69f2578ffa30007e9dcd969efd5f6625d067f81e9b95b98fbc6a8bd6a1bf",
+  "patchedTree": "23c3668e78340a8082daebff75c2481b9d61b6e6",
+  "patchedSourceSha256": "7ba8e26eb021748279d5af3b64fb6030d5f5923ec18ef62b25ad94e8521e3299",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "6d593a90f39c501c50e263c1bd1315284669057e38412988df99ee5e3cc57cbd"
+    "sha256": "476505fb358f5a637835c76ffbf2f6f3443c0bc63298a2559f7a1030373389d2"
   }
 }
