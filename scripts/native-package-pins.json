@@ -2,8 +2,8 @@
   "schemaVersion": "agentkit.native-registry-pins/v2",
   "packages": {
     "@kingsoftcloud/agentkit-harness-core": {
-      "version": "0.0.12",
-      "integrity": "sha512-3qYKdxxSBvALMkN7OOWvhsjeYxUkm9tUqfFighSEmng8iOuvZnnEs750Z4GMUAOohDg9kDknVB0d307MsFcEtw==",
+      "version": "0.0.13",
+      "integrity": "sha512-/p0zaAPZ+xFU8N1LawiH52P7nYiU3gXDWXCJSlbC3gp1zVtLOYRTYlrJQfgXdw3u7HVr9EdqKhqt1D2I7F/iIQ==",
       "files": {
         "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
         "README.md": "567cb2224f92b015e849a0e160f13413cab4df850860d2cc4c17e49a002e7d96",
@@ -195,7 +195,7 @@
         "dist/workspace-subject.mjs": "52bdbf92fdf365cfbc9d8c6f1aa2cc4d1662135681b062633fb2e2bde9e7a726",
         "dist/workspace-touch.d.mts": "9d640d2c439d97e7154bcbb96fcf1b262d79fe3b9ee2ea678a66e7c2b57e57a9",
         "dist/workspace-touch.mjs": "3b26a6e94ee0431bba94d753dba6393fe780c9493c2d4ffcca7ee3df7585262a",
-        "package.json": "c5484c4d322b85159ab2d0c29262a4dcce1f7afca348f070c4a296fafbb7ee4e",
+        "package.json": "1464bb87c5ea7e5f6a13d3df5dbbb45de997e0c5f3ab84cfbad2b86b9385a187",
         "src/anthropic-context.mts": "2456218a9130df14b0ae791cdca76f04b2a015be717d437140ca54c2b7dfd745",
         "src/artifact-request-capacity.mts": "4bd9f96e817e97bc021a5a83b2b0272cf18f8d623c2a7b69b20869d2ead35f17",
         "src/artifact-runtime.mts": "6a1e07e5e32babd4d38b8bbfe4656b312c9e9c14aa96da62bce62d2b348a8689",
@@ -292,8 +292,8 @@
       }
     },
     "@kingsoftcloud/agentkit-harness-node": {
-      "version": "0.0.12",
-      "integrity": "sha512-v8C77xyUoTai9eodvXjmuPPuhaKgidHkvUHiJDq9sryGJd1VQOstICc+/PibbX8pQ0typRM2d2lyMSNl/gQjxg==",
+      "version": "0.0.13",
+      "integrity": "sha512-laZLvDiBDymHpdUZR8McHeHJn4YuTQNtivmo6aEyx/JH2ghgNpsVZvMnA0U5CH0NAk841bwNJzxGhiYNChBCoQ==",
       "files": {
         "LICENSE": "44c198985faea5fecd10afe921c32c354774699b133e16006201c1b8bda6214d",
         "NOTICE": "6e6f41abd590c8acae3df2f55ac74a58e971b5898e567efa9f0437d1d23e2ea5",
@@ -305,7 +305,7 @@
         "dist/native-command-plan.json": "b1bf935e85486160113459594ca90d7e0e0d8ded9fd15eac6f95d13e867bed31",
         "dist/native-command-plan.mjs": "4e30dda34d35e7533f2ea0cf1589fa04d65f04f86224b30e460e542c7df7788b",
         "dist/rpc-entry.mjs": "fc646a2bfda138945c28be086987eb5b731876a1d01196a7c90764f66ff53bcd",
-        "package.json": "66ee9c4cf355d770df7483e7cd6e990c89d763768115a5c7b17be251761997a7",
+        "package.json": "f86323f38cd5eb8a01beb7b578f16f5ae2d93399841ff7db52ca19da3ad64b7e",
         "src/native/a2a-receipt-source.mjs": "ee218b2e73217eae57c4962d8649b6a887f6db728457da6852117e8954a75bb5",
         "src/native/a2a-tools.mjs": "69510d798b1375dce10da6e20033bbb69ad46034c40fc35df8ad894925cd5bef",
         "src/native/activity-status.mjs": "5b2ff05c80d9ad54bc91a4cd2d4ac7953eebd2d3eebc33fbb30d99cacb43d4c2",
@@ -451,8 +451,8 @@
       }
     },
     "@kingsoftcloud/agentkit-harness-ui": {
-      "version": "0.0.12",
-      "integrity": "sha512-10bd2/mFbdXFGP470SjnYZG87NwCrY7yuE6d4lT+9GP4U7rSvDv48APRsGUl1R6bcjpjCKqOO0BZp5Z0VhSZKQ==",
+      "version": "0.0.13",
+      "integrity": "sha512-9/Y2UEtdKdhCeOF/yawiYXETSlxSFcQl+QZCIeweMP2HcCBlzUBTfRgWfrEcPaBPYThm4dSsGhxHnr6SkCQLgQ==",
       "files": {
         "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
         "NOTICE": "358989ccd1f99d0848f61037b91bcf64b2bfb3688df0cc4579cb323133474b7c",
@@ -465,7 +465,7 @@
         "markdown/source/markdown.css": "f3520d0744ab06513dbda3f6852d5a3f1a24ba583d6b8e471b14358cdb0c9e83",
         "markdown/source/table-factory.mjs": "08a5add66f161524ec9407aa6d2b50969dce25f0cc3e1ee44c1c47b2fa657eb7",
         "markdown/source/table.css": "655a7567e673f3d79e8f5ea3d1a329c1af76d0e0737308e8a0a5c41de45fcfa0",
-        "package.json": "2e34bb0716571716686d0173ebf08614d2bc053bef3dba9243b309af6a77a6d5",
+        "package.json": "710cc87ac8826a5bfa41b8d2b6304e552264e6723bd77a14d692c447bdf6ded8",
         "src/activity-groups.mjs": "b5084a84e2705e91093c8a172f233b396e02c459dd4e7a84b42f624540896ff8",
         "src/browser-response-groups.mjs": "1d96fcea4fc49864cfa0c3cf6a7985de22d4825f86079de133db9ce802992235",
         "src/command-output.mjs": "6557932bc501f123cc3d6985d0762b19a54e7e1e115a911c0b64a566f3802572",
