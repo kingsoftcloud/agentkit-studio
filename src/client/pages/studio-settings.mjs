@@ -5,6 +5,9 @@ export function createStudioSettingsSection({
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
   function StudioSettingsSection() {
     const [host, setHost] = useState({ status: 'loading', error: '' });
+    const [promptPrediction, setPromptPrediction] = useState(() => {
+      try { return window.localStorage.getItem('agentkit-studio.prompt-prediction.enabled') !== '0'; } catch { return true; }
+    });
     const [desktopUpdate, setDesktopUpdate] = useState({ phase: 'idle' });
     const updateLifetime = useRef({ active: false, revision: 0, opening: false });
     const desktopUpdates = typeof window === 'undefined' ? undefined : window.dshDesktop?.updates;
@@ -49,6 +52,12 @@ export function createStudioSettingsSection({
       : desktopUpdate.phase === 'available' ? `发现 ${desktopUpdate.version || '新版本'}`
         : desktopUpdate.phase === 'ready' ? `安装 ${desktopUpdate.version || '新版本'}`
           : desktopUpdate.phase === 'error' ? '重试检查更新' : '检查更新';
+    const togglePromptPrediction = () => {
+      const enabled = !promptPrediction;
+      setPromptPrediction(enabled);
+      try { window.localStorage.setItem('agentkit-studio.prompt-prediction.enabled', enabled ? '1' : '0'); } catch { /* private mode */ }
+      window.dispatchEvent(new CustomEvent('agentkit-studio:prompt-prediction-setting', { detail: { enabled } }));
+    };
     return h('div', {
       'data-studio-settings': true, style: { color: BRAND.ink, fontFamily: 'inherit' },
     },
@@ -57,6 +66,11 @@ export function createStudioSettingsSection({
       h(SettingsRow, { label: '会话绑定策略', value: '可选 Agent', detail: '不选择 Agent 时直接使用 DSH 原生会话；选择后在新会话创建时固定主 Agent', tone: 'accent' }),
       h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
       h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
+      h('div', { 'data-studio-settings-row': true },
+        h('div', null,
+          h('div', { className: 'agentkit-check-label' }, '下一句提示'),
+          h('div', { role: 'note', className: 'agentkit-form-note' }, '仅在输入框为空且上一轮完成后请求短文本预测；预测不会写入会话历史。')),
+        h('button', { type: 'button', onClick: togglePromptPrediction, style: buttonStyle() }, promptPrediction ? '已开启' : '已关闭')),
     ),
     h('section', { 'data-studio-settings-group': true }, h('h3', null, '版本与更新'),
       h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '当前安装的桌面应用版本' }),

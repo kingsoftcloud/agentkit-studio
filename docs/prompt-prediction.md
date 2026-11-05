@@ -11,6 +11,6 @@ Host 监听 `session/event`，只保留最近的 user/assistant 文本，追加�
 - `POST /api/agentkit/prompt-prediction/feedback`
 - `GET /api/agentkit/prompt-prediction/config`
 
-默认只记录状态与耗时，不写入原始草稿、模型请求或预测文本。可通过 `AGENTKIT_PROMPT_PREDICTION_ENABLED=0` 关闭，`AGENTKIT_PROMPT_PREDICTION_AUDIT=1` 开启 Host 审计开关；审计仍不应记录密钥或完整会话文本。模型请求复用 Studio 当前默认模型配置，API Key 只在 Host 侧读取。
+设置页的“下一句提示”开关默认开启，可在本机关闭；状态保存在浏览器本地设置中。默认只记录状态与耗时，不写入原始草稿、模型请求或预测文本。也可通过 `AGENTKIT_PROMPT_PREDICTION_ENABLED=0` 在 Host 侧关闭，`AGENTKIT_PROMPT_PREDICTION_AUDIT=1` 开启 Host 审计开关；审计仍不应记录密钥或完整会话文本。模型请求复用 Studio 当前默认模型配置，API Key 只在 Host 侧读取。
 
 这个实现没有新增 DSH patch，也不复制 DSH 私有 UI；升级到 `dsh-v0.2.2-rc.1` 后由 Studio 自己的 Host/Client 代码注册原生 slot 和 Connection route。

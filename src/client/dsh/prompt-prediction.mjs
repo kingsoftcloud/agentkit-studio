@@ -2,6 +2,11 @@ const POLL_MS = 700
 const POLL_TIMEOUT_MS = 5000
 const PROMPT_PREDICTION_STATE_PATH = '/api/agentkit/prompt-prediction/state'
 const PROMPT_PREDICTION_FEEDBACK_PATH = '/api/agentkit/prompt-prediction/feedback'
+const PROMPT_PREDICTION_SETTING_EVENT = 'agentkit-studio:prompt-prediction-setting'
+
+function readEnabled(window) {
+  try { return window.localStorage.getItem('agentkit-studio.prompt-prediction.enabled') !== '0' } catch { return true }
+}
 
 /** Install the native composer ghost-text overlay. */
 export function installPromptPrediction(ctx, { React, h, window }) {
@@ -21,12 +26,19 @@ function PromptPredictionOverlay(props) {
     : false
   const [snapshot, setSnapshot] = React.useState(null)
   const [dismissed, setDismissed] = React.useState(null)
+  const [enabled, setEnabled] = React.useState(() => readEnabled(window))
   const cardRef = React.useRef(null)
+
+  React.useEffect(() => {
+    const onSetting = event => setEnabled(event.detail?.enabled !== false)
+    window.addEventListener(PROMPT_PREDICTION_SETTING_EVENT, onSetting)
+    return () => window.removeEventListener(PROMPT_PREDICTION_SETTING_EVENT, onSetting)
+  }, [window])
 
   const draft = typeof input?.draft === 'string' ? input.draft : ''
   const empty = draft.length === 0 && (input?.attachmentIds?.length ?? 0) === 0 && (input?.occurrences?.length ?? 0) === 0
   const busy = session !== undefined && (session.running || session.removed || session.openState !== 'open')
-  const active = empty && input?.phase === 'plain' && (input?.queue?.length ?? 0) === 0 && !busy && !plan
+  const active = enabled && empty && input?.phase === 'plain' && (input?.queue?.length ?? 0) === 0 && !busy && !plan
   const visible = active && snapshot?.sessionId === sessionId && snapshot.status === 'ready'
     && typeof snapshot.text === 'string' && snapshot.text.length > 0
     && !(dismissed?.sessionId === sessionId && dismissed.turnSeq === snapshot.turnSeq && dismissed.text === snapshot.text)
