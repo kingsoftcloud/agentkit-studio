@@ -1,4 +1,6 @@
 /** Resolve generated desktop metadata against the separately published binary directory. */
+import { assertReleaseChannel, DEFAULT_RELEASE_CHANNEL } from './desktop-release-channels.mjs';
+
 export function publishedDesktopMetadata(metadata, version, target = 'mac-arm64') {
   const name = `deepseek-harness-${version}-${target}.zip`;
   if (metadata.version !== version || metadata.files?.length !== 1
@@ -11,10 +13,11 @@ export function publishedDesktopMetadata(metadata, version, target = 'mac-arm64'
 }
 
 /** Versioned KS3 storage; a stable basename keeps the updater's old-version URL valid. */
-export function studioDesktopPublication(metadata, { origin, channel = 'preview', target = 'mac-arm64', mode = 'incremental' } = {}) {
+export function studioDesktopPublication(metadata, { origin, channel = DEFAULT_RELEASE_CHANNEL, target = 'mac-arm64', mode = 'incremental' } = {}) {
   const base = new URL(origin);
   if (base.protocol !== 'https:' || base.pathname !== '/' || base.username || base.password || base.search || base.hash) throw new Error('Studio storage must be an HTTPS origin');
-  if (!['stable', 'preview'].includes(channel) || target !== 'mac-arm64' || !['incremental', 'full'].includes(mode)) throw new Error('Invalid Studio publication mode');
+  assertReleaseChannel(channel);
+  if (target !== 'mac-arm64' || !['incremental', 'full'].includes(mode)) throw new Error('Invalid Studio publication mode');
   const version = metadata.version;
   if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Invalid Studio publication version');
   publishedDesktopMetadata(metadata, version, target);
@@ -26,10 +29,10 @@ export function studioDesktopPublication(metadata, { origin, channel = 'preview'
 }
 
 /** Windows NSIS keeps its signed EXE and blockmap bytes while publishing an absolute URL. */
-export function studioWindowsPublication(metadata, { origin, channel = 'preview' } = {}) {
+export function studioWindowsPublication(metadata, { origin, channel = DEFAULT_RELEASE_CHANNEL } = {}) {
   const base = new URL(origin);
-  if (base.protocol !== 'https:' || base.pathname !== '/' || base.username || base.password || base.search || base.hash
-    || !['stable', 'preview'].includes(channel)) throw new Error('Invalid Windows Studio publication');
+  if (base.protocol !== 'https:' || base.pathname !== '/' || base.username || base.password || base.search || base.hash) throw new Error('Invalid Windows Studio publication');
+  assertReleaseChannel(channel);
   const version = metadata.version;
   if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?$/.test(version)
     || metadata.files?.length !== 1 || metadata.files[0].url !== `deepseek-harness-${version}-win-x64.exe`

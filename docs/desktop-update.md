@@ -6,13 +6,49 @@ build, Studio plugin version and pinned DSH version are separate values.
 
 ## Update origin and channel
 
-Production builds require an HTTPS update origin and an explicit `stable` or
-`preview` channel. The default Studio storage origin is
-`https://agentkit.ks3-cn-beijing.ksyuncs.com`:
+Production builds require an HTTPS update origin and an explicit update lane.
+The packaged DSH 0.2.2-rc.1 Host accepts only the native lanes `latest` and
+`nightly` in the application manifest; any other sealed value aborts startup with
+`desktop update: invalid packaged channel`. The coordinator also keeps
+`allowPrerelease = channel === 'nightly'` and rejects a prerelease version on
+`latest` with `desktop update: latest feed contains a prerelease`
+(`apps/desktop/src/update-coordinator.ts:72,192`). Studio builds carry an
+`-rc.N.<stamp>` suffix, so **`nightly` is the default lane**; `latest` stays
+selectable for a future stable-semver GA build. The default Studio storage origin
+is `https://agentkit.ks3-cn-beijing.ksyuncs.com`:
 
 - Immutable DMG, ZIP and blockmap: `studio/<version>/`.
-- Channel feed: `studio/feeds/mac-arm64/`.
-- Compatibility feed for older installed Studio builds: `dsh-desk/feeds/mac-arm64/`.
+- Channel feed: `studio/feeds/<target>/<channel>-mac.yml` (Windows: `<channel>.yml`).
+- Compatibility feed for older installed Studio builds: `dsh-desk/feeds/<target>/`.
+
+The release tools still accept `stable` and `preview` because feeds, candidates
+and release records written before the rc1 upgrade remain parseable, and an
+emergency rebuild may need to target the lane existing clients already read.
+New production builds are sealed with `nightly`; reserve `latest` for a stable
+`x.y.z` version, because an `-rc` version on that lane fails every check.
+`src/desktop-release-channels.mjs` is the single vocabulary shared by
+`--channel`, `src/product.json` and the workflow input.
+
+### Move preview installs to nightly
+
+An installed preview client keeps requesting `preview-mac.yml` until it installs
+a build whose manifest names another lane; the downloaded build, not the feed
+server, decides every later check. After a `nightly` build is published, mirror
+its verified feed onto the legacy channel object once:
+
+```sh
+node scripts/desktop-release.mjs mirror-feed \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com \
+  --layout studio --channel preview --from-channel nightly --version <version>
+```
+
+The mirror copies the exact feed bytes (same version, digest and absolute ZIP
+URL) onto `preview-mac.yml`, so preview clients download the `nightly` build and
+their next check reads `nightly-mac.yml`. The same command restores a saved feed
+with `--from-file` during a rollback. Keep the preview object frozen afterwards;
+do not publish new preview builds once the migration window closes. Moving
+installed clients from `nightly` to a future GA uses the same one-hop trick with
+`--channel nightly --from-channel latest`.
 
 Each release uses a strictly increasing semantic App version. Older installers
 that embed another origin need one manual installation of the new signed DMG;
@@ -60,7 +96,7 @@ feed version. Both feeds refresh `studio/latest` through
 
 A macOS-only batch is incomplete: the download page and Windows automatic updates
 would stay on the previous version, so do not report a release as shipped until
-`studio/feeds/mac-arm64/preview-mac.yml` and `studio/feeds/win-x64/preview.yml`
+`studio/feeds/<target>/nightly-mac.yml` and `studio/feeds/win-x64/nightly.yml`
 report the same version and `studio/latest/latest.json` carries both platforms.
 
 ## Publish incremental or full updates
@@ -75,7 +111,7 @@ node scripts/desktop-release.mjs publish \
   --candidate /path/to/signed-artifacts \
   --origin https://agentkit.ks3-cn-beijing.ksyuncs.com \
   --storage-origin https://agentkit.ks3-cn-beijing.ksyuncs.com \
-  --layout studio --channel preview \
+  --layout studio --channel nightly \
   --update-mode incremental --expected-previous-version <current-version>
 ```
 
@@ -101,7 +137,7 @@ actual signed App, online feed and installation before publication:
 ```sh
 node scripts/desktop-release.mjs verify-feed \
   --origin https://agentkit.ks3-cn-beijing.ksyuncs.com \
-  --layout studio --channel preview --version <candidate-version>
+  --layout studio --channel nightly --version <candidate-version>
 ```
 
 `verify-desktop-installed-update.mjs` verifies signature and Gatekeeper, launches
@@ -147,7 +183,7 @@ node scripts/publish-locally.mjs win \
   --version <build-version> --expected-previous-version <current-feed-version>
 
 # Repair only the download alias.
-node scripts/publish-locally.mjs alias --channel preview
+node scripts/publish-locally.mjs alias --channel nightly
 ```
 
 `--dry-run` prints the resolved artifact and origins without touching KS3, and
@@ -164,7 +200,7 @@ The public site links to fixed `studio/latest/` URLs instead of a versioned fold
 
 ```sh
 node scripts/publish-download-alias.mjs \
-  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel preview
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --channel nightly
 ```
 
 The command reads the published update feeds, copies the current ZIP/EXE/DMG/blockmap

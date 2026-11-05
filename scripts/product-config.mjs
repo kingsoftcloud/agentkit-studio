@@ -3,6 +3,7 @@ import product from '../src/product.json' with { type: 'json' };
 import legacyWorkflowProduct from '../src/legacy-workflow-product.json' with { type: 'json' };
 import { resolveProductCopy } from '../src/product-copy.mjs';
 import { AGENTKIT_STUDIO_MARK_SVG } from '../src/brand.js';
+import { isReleaseChannel } from '../src/desktop-release-channels.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -38,7 +39,7 @@ export function resolveProductInputs({ target, dshVersion, buildVersion, pluginV
   const origin = publicOrigin(updateOrigin ?? desktop.updates?.origin);
   const channel = updateChannel ?? desktop.updates?.channel;
   const environment = updateEnvironment ?? desktop.updates?.environment;
-  if (!['stable', 'preview'].includes(channel) || !['production', 'test'].includes(environment)) invalid();
+  if (!isReleaseChannel(channel) || !['production', 'test'].includes(environment)) invalid();
   const platforms = {};
   for (const platform of ['mac-arm64', 'mac-x64', 'win-x64']) {
     const inputs = desktop.platforms?.[platform];
@@ -97,7 +98,7 @@ export function resolveWorkflowSourceOutputs(directory, values = {}) {
   if (!legacyWorkflowProduct.supportedPluginVersions.includes(metadata.version) || !values.buildVersion || !values.channel || !values.updateOrigin) {
     throw new Error('Legacy App sources require a supported plugin version and explicit build version, channel and update origin');
   }
-  if (!semver.test(values.buildVersion) || !['stable', 'preview'].includes(values.channel)) invalid();
+  if (!semver.test(values.buildVersion) || !isReleaseChannel(values.channel)) invalid();
   const origin = publicOrigin(values.updateOrigin);
   return {
     name: legacyWorkflowProduct.name, app_id: legacyWorkflowProduct.appId, plugin_version: metadata.version,

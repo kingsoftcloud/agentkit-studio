@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withDesktopCheckout } from './desktop-checkout.mjs';
 import { dshPin, dshPatchRoot } from './dsh-pin.mjs';
+import { RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs';
 
 const studioRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dshRoot = resolve(process.env.AGENTKIT_DSH_ROOT || join(studioRoot, '../../deepseek-harness'));
@@ -30,12 +31,12 @@ async function verify(checkout) {
   if (!/differentialPackage\s*:\s*true/.test(builderConfig)) throw new Error('electron-builder differentialPackage is not enabled');
   if (!/DSH_DESKTOP_UPDATE_ORIGIN/.test(autoUpdateEnvironment + builderConfig + coordinator + packageTarget + makefile)) throw new Error('Studio update origin input is missing');
   if (/download\.deepseek\.com/u.test(autoUpdateEnvironment + builderConfig + coordinator + packageTarget + makefile)) throw new Error('Studio updater still falls back to the DSH download origin');
-  if (!/DSH_DESKTOP_UPDATE_CHANNEL/.test(coordinator + tsdownConfig + makefile)) throw new Error('Studio Stable/Preview channel input is missing');
-  if (!/production[\s\S]*must explicitly be stable or preview/.test(autoUpdateEnvironment)) throw new Error('production channel is not fail-closed');
+  if (!/DSH_DESKTOP_UPDATE_CHANNEL/.test(coordinator + tsdownConfig + makefile)) throw new Error('Studio update channel input is missing');
+  if (!/production[\s\S]*must explicitly be[\s\S]{0,80}(?:stable|preview|nightly|latest)/.test(autoUpdateEnvironment)) throw new Error('production channel is not fail-closed');
   if (!/setTimeout|intervalMs|check\(/.test(updateSchedule)) throw new Error('automatic update checking is missing');
   if (!/production[\s\S]*(?:DESKTOP_APP_ID_ENV|DSH_DESKTOP_APP_ID)[\s\S]*com\.kingsoftcloud\.agentkit-studio/.test(releaseEnvironment)) throw new Error('Studio desktop App ID input is missing');
   if (!/channel\s*:\s*update\.channel/.test(builderConfig)) throw new Error('electron-builder does not publish the selected Studio channel');
-  if (!/stable.*preview|preview.*stable/s.test(macUpdateConfig)) throw new Error('macOS updater does not expose Stable/Preview channels');
+  if (!/stable.*preview|preview.*stable|nightly.*latest|latest.*nightly/s.test(macUpdateConfig)) throw new Error('macOS updater does not expose the DSH update channel vocabulary');
   if (!/useMultipleRangeRequest\s*:\s*false/.test(macUpdateConfig)) throw new Error('KS3 single byte ranges are not sealed in the macOS updater config');
   for (const [label, source, patterns] of [
     ['coordinator', coordinator, ['checkForUpdates', 'downloadUpdate', 'quitAndInstall', 'autoDownload = false']],
@@ -53,9 +54,9 @@ async function verify(checkout) {
     updater: 'electron-updater',
     differentialPackage: true,
     useMultipleRangeRequest: false,
-    artifacts: ['DMG', 'ZIP', 'ZIP.blockmap', 'stable-mac.yml|preview-mac.yml'],
+    artifacts: ['DMG', 'ZIP', 'ZIP.blockmap', 'latest-mac.yml|nightly-mac.yml|preview-mac.yml'],
     productIdentity: 'com.kingsoftcloud.agentkit-studio (release input; local unsigned default is isolated)',
-    channels: ['stable', 'preview'],
+    channels: [...RELEASE_CHANNELS],
     studioPluginInput: 'verified npm tarball',
     status: 'source-inputs-passed',
   }, null, 2));

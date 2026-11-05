@@ -2,13 +2,14 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { isReleaseChannel } from '../src/desktop-release-channels.mjs';
 
 export function assertPackagedUpdateSource(contents, { target, origin, channel, environment = 'production', releaseId } = {}) {
   let config;
   try { config = parse(contents); } catch { throw new Error('desktop delivery: invalid app-update.yml'); }
   const prefix = environment === 'test' ? `dsh-desk/${releaseId}` : 'studio';
   const expected = `${origin}/${prefix}/feeds/${target}/`;
-  if (!['stable', 'preview'].includes(channel) || !/^https:\/\//.test(origin || '')
+  if (!isReleaseChannel(channel) || !/^https:\/\//.test(origin || '')
     || (environment === 'test' && !/^[a-f0-9]{32}$/.test(releaseId || ''))
     || config?.provider !== 'generic' || config.url !== expected || config.channel !== channel
     || typeof config.updaterCacheDirName !== 'string' || !config.updaterCacheDirName.trim()) {

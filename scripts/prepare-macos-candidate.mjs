@@ -8,9 +8,12 @@ import {createWriteStream} from 'node:fs';
 import {pipeline} from 'node:stream/promises';
 import {Readable,Transform} from 'node:stream';
 import {join,resolve} from 'node:path';
+import {assertReleaseChannel} from '../src/desktop-release-channels.mjs';
 const execute=promisify(execFile);
-const {values}=parseArgs({options:Object.fromEntries(['repository','run','source','version','output'].map(key=>[key,{type:'string'}]))});
+const {values}=parseArgs({options:Object.fromEntries(['repository','run','source','version','output','channel'].map(key=>[key,{type:'string'}]))});
 const {repository,run,source,version}=values;
+// The signed artifact name carries the lane; validate before selecting it.
+const channel=assertReleaseChannel(values.channel ?? 'nightly','--channel');
 if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository||'')||!/^\d+$/.test(run||'')||!/^[0-9a-f]{40}$/.test(source||'')) throw Error('Invalid candidate identity');
 const api=async path=>JSON.parse((await execute('gh',['api',`repos/${repository}/${path}`],{maxBuffer:32*1024*1024})).stdout);
 const original=await api(`actions/runs/${run}`);
@@ -23,7 +26,7 @@ const logs=await readGitHubJobLogs(execute,`repos/${repository}/actions/jobs/${j
 const sources=[...new Set([...logs.matchAll(/\bSTUDIO_REF_VALUE:\s*([0-9a-f]{40})\b/g)].map(match=>match[1]))];
 const versions=[...new Set([...logs.matchAll(/\bBUILD_VERSION(?:_VALUE)?:\s*([0-9A-Za-z.-]+)/g)].map(match=>match[1]))];
 if(sources.length!==1||sources[0]!==source||versions.length!==1||versions[0]!==version) throw Error('Original signed source or version differs');
-const artifact=(await api(`actions/runs/${run}/artifacts`)).artifacts.find(item=>item.name===`agentkit-studio-${source}-preview-mac-arm64`&&!item.expired);
+const artifact=(await api(`actions/runs/${run}/artifacts`)).artifacts.find(item=>item.name===`agentkit-studio-${source}-${channel}-mac-arm64`&&!item.expired);
 if(!artifact||!/^sha256:[0-9a-f]{64}$/.test(artifact.digest||'')) throw Error('Signed artifact transport digest unavailable');
 const root=resolve(values.output);await mkdir(root,{recursive:true});
 const response=await fetch(artifact.archive_download_url,{headers:{Authorization:`Bearer ${process.env.GH_TOKEN}`},signal:AbortSignal.timeout(900000)});

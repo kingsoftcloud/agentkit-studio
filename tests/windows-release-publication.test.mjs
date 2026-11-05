@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import YAML from 'yaml';
 import { publishWindowsCandidate } from '../scripts/publish-windows-candidate.mjs';
 
-async function fixture(t) {
+async function fixture(t, channel = 'preview') {
   const root = await mkdtemp(join(tmpdir(), 'windows-publication-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const version = '0.2.2-rc.1.20261019.5', name = `deepseek-harness-${version}-win-x64.exe`;
@@ -16,7 +16,7 @@ async function fixture(t) {
     installerSigned: true, timestamped: true, installed: true, appSigned: true, uiVerified: true };
   const proof = join(root, 'windows-install.json');
   await writeFile(join(root, name), bytes); await writeFile(join(root, name + '.blockmap'), 'signed blockmap');
-  await writeFile(join(root, 'preview.yml'), YAML.stringify({ version, path: name, sha512, files: [{ url: name, size: bytes.length, sha512 }] }));
+  await writeFile(join(root, `${channel}.yml`), YAML.stringify({ version, path: name, sha512, files: [{ url: name, size: bytes.length, sha512 }] }));
   await writeFile(proof, JSON.stringify(receipt));
   const objects = new Map(), uploads = [], reads = [];
   const fetchImpl = async (url, init) => {
@@ -31,7 +31,7 @@ async function fixture(t) {
     assert.equal(bucket, 'agentkit', 'the publication origin owns the signed KS3 bucket');
     uploads.push(objectKey); objects.set(objectKey, await readFile(path));
   };
-  const options = { candidate: root, proof, version, source: 'a'.repeat(40), previous: 'absent', origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
+  const options = { candidate: root, proof, version, channel, source: 'a'.repeat(40), previous: 'absent', origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
     environment: { STUDIO_DOWNLOAD_PROD_KS3_BUCKET: 'different-bucket', STUDIO_DOWNLOAD_PROD_KS3_ACCESS_KEY: 'synthetic-access-key', STUDIO_DOWNLOAD_PROD_KS3_SECRET_KEY: 'synthetic-secret' }, fetchImpl, upload };
   return { root, proof, receipt, objects, uploads, reads, options, upload, name };
 }
@@ -75,4 +75,14 @@ test('public binary corruption cannot advance the canonical or compatibility fee
     if (input.objectKey.endsWith('.exe')) { const body = Buffer.from(f.objects.get(input.objectKey)); body[0] ^= 1; f.objects.set(input.objectKey, body); }
   } }), /Public release bytes differ/);
   assert.equal(f.uploads.some(key => key.endsWith('.yml')), false);
+});
+
+test('the default Windows publication lane is nightly and rejects unknown lanes early', async t => {
+  const f = await fixture(t, 'nightly');
+  const { channel, ...defaults } = f.options;
+  await publishWindowsCandidate(defaults);
+  assert.deepEqual(f.uploads.slice(-2), ['studio/feeds/win-x64/nightly.yml', 'dsh-desk/feeds/win-x64/nightly.yml']);
+  const g = await fixture(t, 'nightly');
+  await assert.rejects(publishWindowsCandidate({ ...g.options, channel: 'beta' }), /channel must be one of nightly, latest, preview, stable/);
+  assert.equal(g.uploads.length, 0);
 });

@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$DshRoot,
   [Parameter(Mandatory=$true)][string]$UpdateOrigin,
-  [ValidateSet('stable','preview')][string]$Channel = 'preview',
+  [ValidateSet('latest','nightly','preview','stable')][string]$Channel = 'nightly',
   [string]$AppId = '',
   [string]$UpdateEnvironment = ''
 )
