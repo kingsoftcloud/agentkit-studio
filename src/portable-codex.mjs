@@ -2,16 +2,18 @@
 import { mkdir, lstat, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { portableError } from './portable-resources.mjs';
+import { DEFAULT_CLOUD_EXECUTION_MAX, readExecutionMode } from './execution-policy.mjs';
 
 export async function portableCodexOptions({ home, manifest, env = process.env }) {
   if (!home || !/^bundle_[a-f0-9]{64}$/.test(manifest?.bundleId || '')) {
     throw portableError('PORTABLE_CODEX_SCOPE_INVALID', 'Codex 运行目录需要已校验的运行包身份');
   }
-  return isolatedRuntimeCodexOptions({ home, scopeId: manifest.bundleId, env });
+  // An exported bundle runs on a foreign machine: keep the read-only default.
+  return isolatedRuntimeCodexOptions({ home, scopeId: manifest.bundleId, env, sandbox: 'read-only' });
 }
 
 /** Both input forms use the same confined app-server process boundary. */
-export async function isolatedRuntimeCodexOptions({ home, scopeId, env = process.env }) {
+export async function isolatedRuntimeCodexOptions({ home, scopeId, env = process.env, sandbox, approvalPolicy }) {
   if (!home || !/^(?:bundle|manifest)_[a-f0-9]{64}$/.test(scopeId || '')) {
     throw portableError('PORTABLE_CODEX_SCOPE_INVALID', 'Codex 运行目录需要已校验的固定声明身份');
   }
@@ -41,5 +43,13 @@ export async function isolatedRuntimeCodexOptions({ home, scopeId, env = process
     XDG_DATA_HOME: await directory(isolatedHome, '.local'),
     TMPDIR: await directory(scope, 'tmp'),
   });
-  return { env: childEnv, inheritEnv: false, cwd, sandbox: 'read-only', approvalPolicy: 'never' };
+  // The managed runtime container is already the confinement boundary (read-only
+  // rootfs, dropped capabilities, one Agent per pod) and Codex's bubblewrap
+  // sandbox cannot run inside it at all. Default to full access and let a
+  // deployment narrow it with AGENTKIT_CODEX_SANDBOX.
+  const resolvedSandbox = readExecutionMode(sandbox)
+    || readExecutionMode(env.AGENTKIT_CODEX_SANDBOX) || DEFAULT_CLOUD_EXECUTION_MAX;
+  const requestedApproval = String(approvalPolicy || env.AGENTKIT_CODEX_APPROVAL_POLICY || '').trim();
+  const resolvedApproval = ['untrusted', 'on-failure', 'on-request', 'never'].includes(requestedApproval) ? requestedApproval : 'never';
+  return { env: childEnv, inheritEnv: false, cwd, sandbox: resolvedSandbox, approvalPolicy: resolvedApproval };
 }

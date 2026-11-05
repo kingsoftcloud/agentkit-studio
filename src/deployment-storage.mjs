@@ -1,6 +1,9 @@
 /** The Server must preserve explicit storage before Studio creates a stateful container. */
 import { portableError } from './portable-resources.mjs';
 
+/** The mounted home is the Agent's persistence root: state, ~/.codex and workspace. */
+export const RUNTIME_HOME = '/home/node';
+
 export function containerStorageCapability(data) {
   const value = data?.Capabilities?.ContainerStorage;
   if (value?.Contract !== 'agentengine.container-storage/v1') return null;
@@ -19,7 +22,7 @@ export function storageSize(value = 20) {
 }
 
 export function deploymentStorage(resources) {
-  return resources?.storageGiB ? { MountPath: '/var/lib/agentkit', SizeGi: resources.storageGiB } : null;
+  return resources?.storageGiB ? { MountPath: RUNTIME_HOME, SizeGi: resources.storageGiB } : null;
 }
 
 export function admitDeploymentStorage(resources, catalog, runtime) {

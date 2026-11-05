@@ -59,6 +59,11 @@ export const APPROVED_HISTORICAL_TEST_VALUES = Object.freeze({
   'internal-service-host': new Set([['metadata', 'internal'].join('.')]),
 });
 const APPROVED_HISTORICAL_TEST_CREDENTIAL_PASSWORDS = new Set(['pass', 'password', 'secret', 'token', 'unsafe-token', 'fixture-secret']);
+// Container images run as the `node` user, so its fixed home is a runtime
+// constant rather than a personal workstation path. Assembled to keep this
+// allow-list from matching its own text.
+const CONTAINER_HOME = ['', 'home', 'node'].join('/');
+const APPROVED_CONTAINER_HOMES = Object.freeze([CONTAINER_HOME]);
 // The generated address-classification oracle is immutable, not a blanket
 // exemption for JSON fixtures. Any changed bytes or another path are scanned.
 const NETWORK_ORACLE_PATH = 'tests/fixtures/a2a-tool-activity-reference.json';
@@ -77,6 +82,12 @@ function isTestInput(file) {
 function publicExample(name, candidate, text, file, networkOracle) {
   const value = candidate[0];
   const testInput = isTestInput(file);
+  if (name === 'personal-absolute-path') {
+    // Match the fixed container home regardless of surrounding quotes; every
+    // other personal user path stays rejected.
+    const path = String(value).toLowerCase().match(new RegExp(`${CONTAINER_HOME}(?![a-z0-9_.-])`))?.[0];
+    if (path && APPROVED_CONTAINER_HOMES.includes(path)) return true;
+  }
   if (name === 'internal-service-host') {
     if (APPROVED_INTERNAL_SERVICE_HOSTS.has(value.toLowerCase()) || value === 'metadata.google.internal') return true;
     if (testInput && ['foo', 'search'].some(prefix => value === `${prefix}.${'internal'}`)) return true;

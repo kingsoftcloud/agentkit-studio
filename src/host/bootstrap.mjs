@@ -188,6 +188,15 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
     localHandler: localRuntimeHandler,
     codexRuntime,
+    // The permission picker (local, Studio cloud and Hosted UI) converges on the
+    // Session preset; read it here so Codex's own sandbox follows the picker.
+    permissionModeForSession: session => {
+      try {
+        const current = ctx.get?.('permissionPresets')?.current?.(session);
+        if (typeof current === 'string' && current) return current;
+        return ctx.get?.('sessionProjections')?.stateOf?.(session, 'sandboxMode') ?? undefined;
+      } catch { return undefined; }
+    },
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     codexResourceContext,
     resolveResourceUser,
