@@ -30,6 +30,7 @@ import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecy
 import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
 import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-bindings.mjs';
+import { createPromptPredictionHost } from '../prompt-prediction/host.mjs';
 
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
@@ -495,6 +496,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   await registerControlPlaneRoutes(ctx, { ...services, models, dispatch });
+  // Prompt prediction is a Studio-owned auxiliary text request. It observes
+  // native Session events but never enters the Session loop or mutates history.
+  ctx.inject(['connection'], predictionCtx => {
+    const dispose = createPromptPredictionHost(predictionCtx, { models, env: runtimeEnv });
+    predictionCtx.effect(() => dispose, 'agentkit-studio: prompt prediction');
+  });
   // Authoring tools need the in-process remote factory (cloud/resource data);
   // they live here because that factory is scoped to this function.
   registerAuthoringTools(ctx, { remoteFactory: authoringRemoteFactory });

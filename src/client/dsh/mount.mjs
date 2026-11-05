@@ -8,6 +8,7 @@ import { installBridgeStartupNotice } from './startup-notice.mjs';
 import { installProductCopy } from '../../product-copy.mjs';
 import { installNativeToolViews } from './native-tool-view.mjs';
 import { installTaskTimeline } from './task-timeline.mjs';
+import { installPromptPrediction } from './prompt-prediction.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
@@ -16,6 +17,7 @@ export function mountStudio(ctx, app) {
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
+  installPromptPrediction(ctx, { React, h, window });
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
