@@ -1,0 +1,31 @@
+diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
+index 2567663f837f295c813576bb2bdf0f8632b253e3..8806b6e087294b2dcf0fee8d90b39596413e3adf 100644
+--- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
++++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
+@@ -185,7 +185,7 @@ export function resolveDesktopAutoUpdateConfig(env, platform, arch) {
+     if (originEnvName === undefined) throw new Error('desktop auto-update: selected deployment has no origin')
+     origin = httpsOrigin(requiredEnvironmentValue(env, originEnvName), originEnvName)
+   }
+-  let releasePrefix = environment === 'production' && platform === 'win32'
++  let releasePrefix = environment === 'production'
+     && env.DSH_DESKTOP_APP_ID === 'com.kingsoftcloud.agentkit-studio' ? 'studio' : 'dsh-desk'
+   if (environment === 'test') {
+     const releaseId = requiredEnvironmentValue(env, 'DOWNLOAD_TEST_RELEASE_ID')
+diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
+index c6e66b7c79728c81a0f0381965e1c3ccd6bc2e20..3a837ee9335e34acaed3de3385cd67beb323384d 100644
+--- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
++++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
+@@ -143,9 +143,10 @@ describe('desktop auto-update environment', () => {
+   })
+ })
+ 
+-it('sealed Windows Studio uses the Studio public feed directory', () => {
++it.each([['darwin', 'arm64', 'mac-arm64'], ['darwin', 'x64', 'mac-x64'], ['win32', 'x64', 'win-x64']] as const)
++('sealed Studio on %s/%s uses the Studio public feed directory', (platform, arch, target) => {
+   expect(resolveDesktopAutoUpdateConfig({ DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio',
+     DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_UPDATE_ORIGIN: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
+-    DSH_DESKTOP_UPDATE_CHANNEL: 'preview' }, 'win32', 'x64').publicUrl)
+-    .toBe('https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/win-x64/')
++    DSH_DESKTOP_UPDATE_CHANNEL: 'preview' }, platform, arch).publicUrl)
++    .toBe(`https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/${target}/`)
+ })
