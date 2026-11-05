@@ -1991,12 +1991,52 @@
         ]
       },
       "sequence": 42
+    },
+    {
+      "id": "074",
+      "file": "074-reselect-product-bundle.patch",
+      "category": "packaging",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "dependsOn": [
+        "071",
+        "072",
+        "073"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/bundled-plugin-alignment.ts",
+        "apps/desktop/tests/bundled-plugin-alignment.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Native recovery and prior profile alignment cannot leave an installed or previously activated product bundle unselected; the Studio bundle is reselected before copy alignment runs.",
+        "Selection repair preserves the existing dependency when present, survives later alignment failure, and leaves the sealed runtime copy loadable on the next Host launch."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "merged-unreleased",
+        "evidence": "Backported the product-bundle selection repair from GitHub main PR #80/#81 to the DSH 0.2.2-rc.1 maintenance source; the rc1 target has no direct upstream merge."
+      },
+      "removeWhen": "Pinned upstream DSH carries equivalent product-bundle selection repair before Desktop alignment.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/bundled-plugin-alignment.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos"
+        ]
+      },
+      "sequence": 43,
+      "sha256": "db0ef988cd43e63fbd98389d221b001bc3c4ba07cd9b724255a8f79c41d78c72"
     }
   ],
-  "patchedTree": "b019f2637d50d72d20b04e2c3a069066128f2746",
-  "patchedSourceSha256": "750e6639e5769023dffc2edbed380a19c3b28da95071fa085b4436df7d37d381",
+  "patchedTree": "ee0097fdd45c7c8886e97d4eed83b9bcc276192f",
+  "patchedSourceSha256": "83251565a0060b03aae00a6c774554eb6c357cf6ec47b8f35fcb52c9acdaa62f",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "276ee9ed59ec025aa00a32ba7b13ab3b57d985bae63abd75e0da91c83218ccdf"
+    "sha256": "60834b6ab8685b12888deb11f4197ca26e7b0c4981e2807c1637253f191c0090"
   }
 }

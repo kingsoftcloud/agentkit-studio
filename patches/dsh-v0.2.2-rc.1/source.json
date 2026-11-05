@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "a4e699373696ebb92cd110c1bf2ef8973e740e1b",
+  "headCommit": "d5926a12fd8ddb8e797354315c4ee30857990a5b",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "b019f2637d50d72d20b04e2c3a069066128f2746",
-  "sourceSha256": "750e6639e5769023dffc2edbed380a19c3b28da95071fa085b4436df7d37d381",
+  "tree": "ee0097fdd45c7c8886e97d4eed83b9bcc276192f",
+  "sourceSha256": "83251565a0060b03aae00a6c774554eb6c357cf6ec47b8f35fcb52c9acdaa62f",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "d2aa0763759c33d3adc179ee0684dc6277e27369ef374510208df9e71db9cdc5"
+    "sha256": "33567325d5e4884762a250a8ff163763ea948ab273a7169664ff87751e93b754"
   },
   "commits": [
     {
@@ -262,6 +262,12 @@
       "file": "073-retire-shadowed-product-plugin.patch",
       "commit": "a4e699373696ebb92cd110c1bf2ef8973e740e1b",
       "sha256": "6239a4e7038de876796ab337c1b25ccf8cc410e2fda76b6294679c1bf15f9c0a"
+    },
+    {
+      "id": "074",
+      "file": "074-reselect-product-bundle.patch",
+      "commit": "d5926a12fd8ddb8e797354315c4ee30857990a5b",
+      "sha256": "db0ef988cd43e63fbd98389d221b001bc3c4ba07cd9b724255a8f79c41d78c72"
     }
   ]
 }

@@ -1,0 +1,188 @@
+diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
+index badec5bd59190e3899c31682ef6735f837bad5c1..342039235ba05973a467a413a8fec378b607623b 100644
+--- a/apps/desktop/src/bundled-plugin-alignment.ts
++++ b/apps/desktop/src/bundled-plugin-alignment.ts
+@@ -7,6 +7,8 @@ import { dirname, join, sep } from 'node:path'
+ 
+ /** Scope of the in-box DSH packages, which always resolve from the sealed runtime installation. */
+ const INSTALLATION_SCOPE = '@deepseek-ai/'
++/** Activation history owned by the Desktop profile manager. */
++const ACTIVATION_HISTORY = 'desktop-product-bundles.json'
+ /** Profile file recording consecutive failed alignment attempts for one bundled version. */
+ const ATTEMPT_MARKER_PREFIX = '.alignment-attempt-'
+ /** Consecutive failures after which alignment stops trying and the profile copy keeps running. */
+@@ -195,6 +197,17 @@ function clearMarker(path: string): void {
+   }
+ }
+ 
++/** Product bundles this profile has already seen, including ones native recovery removed. */
++function activationHistory(profile: string): readonly string[] {
++  try {
++    const parsed: unknown = JSON.parse(readFileSync(join(profile, ACTIVATION_HISTORY), 'utf8'))
++    if (!Array.isArray(parsed)) return []
++    return parsed.filter((value): value is string => typeof value === 'string')
++  } catch {
++    return []
++  }
++}
++
+ /** Move a real directory aside, falling back to a copy across filesystems. */
+ function moveAside(source: string, target: string): void {
+   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+@@ -240,6 +253,51 @@ function restoreManifest(profile: string, original: string): void {
+   writeFileSync(join(profile, 'package.json'), original, { mode: 0o600 })
+ }
+ 
++/** Re-select a product bundle before any copy alignment can return early. */
++function ensureSelection(profile: string, packageName: string, installedVersion: string | undefined): boolean {
++  const path = join(profile, 'package.json')
++  let manifest: Record<string, unknown>
++  try {
++    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
++    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
++    manifest = parsed as Record<string, unknown>
++  } catch {
++    return false
++  }
++  const dsh = { ...(typeof manifest.dsh === 'object' && manifest.dsh !== null && !Array.isArray(manifest.dsh)
++    ? manifest.dsh as Record<string, unknown>
++    : {}) }
++  const section = { ...(typeof dsh.profile === 'object' && dsh.profile !== null && !Array.isArray(dsh.profile)
++    ? dsh.profile as Record<string, unknown>
++    : {}) }
++  if (Array.isArray(section.bundles) && section.bundles.some(value => typeof value !== 'string')) return false
++  const bundles = Array.isArray(section.bundles) ? [...section.bundles as string[]] : []
++  const dependencies = { ...(typeof manifest.dependencies === 'object' && manifest.dependencies !== null && !Array.isArray(manifest.dependencies)
++    ? manifest.dependencies as Record<string, string>
++    : {}) }
++  let changed = false
++  if (!bundles.includes(packageName)) {
++    const index = bundles.indexOf('@deepseek-ai/dsh-web-app')
++    bundles.splice(index < 0 ? bundles.length : index + 1, 0, packageName)
++    changed = true
++  }
++  if (typeof dependencies[packageName] !== 'string' && installedVersion !== undefined) {
++    dependencies[packageName] = installedVersion
++    changed = true
++  }
++  if (!changed) return false
++  section.bundles = bundles
++  dsh.profile = section
++  manifest.dsh = dsh
++  manifest.dependencies = dependencies
++  try {
++    writeFileSync(path, `${JSON.stringify(manifest, undefined, 2)}\n`, { mode: 0o600 })
++    return true
++  } catch {
++    return false
++  }
++}
++
+ /**
+  * Align every product plugin the runtime carries with the profile that shadows it.
+  *
+@@ -269,30 +327,40 @@ export function alignBundledProductPlugins(options: PluginAlignmentOptions): rea
+     if (profileManifest === undefined) return outcomes
+     const bundles = readManifest(options.runtimeDsh)?.dsh?.profile?.bundles ?? []
+     const dependencies = profileManifest.dependencies ?? {}
++    const activated = activationHistory(options.profile)
++    const selectedBundles = profileManifest.dsh?.profile?.bundles ?? []
+     const candidates: Candidate[] = []
+ 
+     for (const packageName of bundles) {
+       // Installation-owned bundles (`@deepseek-ai/*`) resolve from the sealed
+       // runtime by contract and are never managed as profile product plugins.
+       if (packageName.startsWith(INSTALLATION_SCOPE)) continue
++      const installedDir = join(options.profile, 'node_modules', packageName)
++      const installedVersion = readManifest(installedDir)?.version
+       const spec = dependencies[packageName]
+-      if (spec === undefined) continue
++      const owned = spec !== undefined || selectedBundles.includes(packageName) || activated.includes(packageName)
++      if (!owned) continue
++      // Native recovery can leave a valid profile copy unselected. Repair this
++      // before the newer-copy and failure paths below; do not roll it back later.
++      const selectionChanged = ensureSelection(options.profile, packageName, installedVersion)
+       const bundledDir = join(options.runtimeDsh, 'node_modules', packageName)
+       const bundledVersion = readManifest(bundledDir)?.version
+       if (bundledVersion === undefined) {
+         outcomes.push({ packageName, action: 'missing-runtime-copy', installationBacked: false })
+         continue
+       }
+-      const installedDir = join(options.profile, 'node_modules', packageName)
+-      const installedVersion = readManifest(installedDir)?.version
+       if (installedVersion === undefined) {
++        // A successful retirement leaves the product selected while its old
++        // profile copy is gone. The sealed runtime already owns that copy, so
++        // the next launch has no alignment work left to report.
++        if (spec === undefined && (selectedBundles.includes(packageName) || selectionChanged)) continue
+         outcomes.push({ packageName, action: 'skipped-absent', bundledVersion, installationBacked: true })
+         continue
+       }
+       // A profile that already runs a newer plugin keeps it. A `file:` spec is
+       // the mirror dependency 0.2.1-rc.2.20261104.6 rewrote into the profile, and
+       // its copy cannot be trusted even when the version looks current.
+-      if (!spec.startsWith('file:') && compareVersions(installedVersion, bundledVersion) > 0) {
++      if (spec !== undefined && !spec.startsWith('file:') && compareVersions(installedVersion, bundledVersion) > 0) {
+         outcomes.push({ packageName, action: 'kept-newer', previousVersion: installedVersion, bundledVersion, installationBacked: false })
+         continue
+       }
+diff --git a/apps/desktop/tests/bundled-plugin-alignment.spec.ts b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
+index cd4a3962c176ad85bd5b059698945aafd01288b1..02f8abefbdefdb957fa0f2e6c52e9ea524054cf2 100644
+--- a/apps/desktop/tests/bundled-plugin-alignment.spec.ts
++++ b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
+@@ -37,6 +37,7 @@ function fixture(options: {
+   readonly profileVersion?: string
+   readonly bundledDependencies?: Record<string, string>
+   readonly keepDshBase?: boolean
++  readonly bundleListed?: boolean
+ } = {}): Fixture {
+   const root = temporaryRoot()
+   const home = join(root, '.dsh')
+@@ -53,9 +54,10 @@ function fixture(options: {
+   writePackage(profile, 'dsh-profile-desktop-agentkit-studio', '0.0.0', {
+     private: true,
+     dependencies: { [PRODUCT]: options.profileVersion ?? '0.0.7' },
+-    dsh: { profile: { bundles: [DSH_BASE, '@deepseek-ai/dsh-web-app', PRODUCT] } },
++    dsh: { profile: { bundles: [DSH_BASE, '@deepseek-ai/dsh-web-app', ...(options.bundleListed === false ? [] : [PRODUCT])] } },
+   })
+   writePackage(join(profile, 'node_modules', PRODUCT), PRODUCT, options.profileVersion ?? '0.0.7')
++  writeFileSync(join(profile, 'desktop-product-bundles.json'), `${JSON.stringify([PRODUCT])}\n`)
+   return { root, home, dsh, profile }
+ }
+ 
+@@ -92,6 +94,35 @@ describe('bundled product plugin alignment', () => {
+     expect(outcomes(input)).toEqual([])
+   })
+ 
++  it('reselects an installed product bundle cleared by native recovery', () => {
++    const input = fixture({ bundleListed: false })
++    const result = outcomes(input)
++
++    expect(result[0]).toMatchObject({ action: 'retired', previousVersion: '0.0.7', bundledVersion: '0.0.10' })
++    const manifest = JSON.parse(readFileSync(join(input.profile, 'package.json'), 'utf8')) as {
++      dsh: { profile: { bundles: string[] } }
++    }
++    expect(manifest.dsh.profile.bundles).toContain(PRODUCT)
++  })
++
++  it('reselects a bundled product after recovery removed its profile copy', () => {
++    const input = fixture({ bundleListed: false })
++    const manifestPath = join(input.profile, 'package.json')
++    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
++      dependencies: Record<string, string>
++      dsh: { profile: { bundles: string[] } }
++    }
++    manifest.dependencies = Object.fromEntries(
++      Object.entries(manifest.dependencies).filter(([name]) => name !== PRODUCT),
++    )
++    writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
++    rmSync(join(input.profile, 'node_modules', PRODUCT), { recursive: true, force: true })
++
++    expect(outcomes(input)).toEqual([])
++    const repaired = JSON.parse(readFileSync(manifestPath, 'utf8')) as typeof manifest
++    expect(repaired.dsh.profile.bundles).toContain(PRODUCT)
++  })
++
+   it('never throws and keeps the old copy when the bundled copy cannot resolve an in-box package', () => {
+     const input = fixture({ keepDshBase: false })
+     expect(verifyBundledCopy(input.dsh, join(input.dsh, 'node_modules', PRODUCT))).toContain(DSH_BASE)
