@@ -53,8 +53,12 @@ const modelServer = createServer(async (request, response) => {
     assert.equal(request.url, '/v1/chat/completions');
     let raw = ''; for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw);
-    const lastUser = body.messages.findLast(item => item.role === 'user');
-    const input = typeof lastUser.content === 'string' ? lastUser.content : lastUser.content.map(part => part.text || '').join('');
+    const textOf = item => typeof item.content === 'string' ? item.content : (item.content || []).map(part => part.text || '').join('');
+    // The host splices automation notes (for example the approval-policy change)
+    // as trailing user messages, so the business prompt is the last user message
+    // that the fixture actually authored - not necessarily the final message.
+    const userTexts = body.messages.filter(item => item.role === 'user').map(textOf);
+    const input = userTexts.findLast(text => businessInputs.has(text)) ?? userTexts[userTexts.length - 1] ?? '';
     // Native automatic titles also call this model. They have their own prompt,
     // no tool history, and must not enter business-turn/replay call accounting.
     if (!businessInputs.has(input)) {

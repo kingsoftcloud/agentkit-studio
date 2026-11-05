@@ -43,7 +43,7 @@ function createExpertPages({ ui, hostRemote, actions, window = globalThis.window
       { style: { height: "100%", overflow: "auto", background: BRAND.surface } },
       h(
         "div",
-        { style: { padding: "20px 30px 0" } },
+        { "data-studio-drag-region": "true", style: { padding: "20px 30px 0" } },
         h(StudioSubnav, { value: view, onChange: choose, items: [{ id: "mine", label: "\u6211\u7684\u667A\u80FD\u4F53" }, { id: "catalog", label: "\u6A21\u677F\u5E7F\u573A" }] })
       ),
       view === "catalog" ? h(ui.StudioTemplateSquare) : h("div", { "data-agentkit-studio": "product-application", style: { padding: "18px 28px 32px" } }, h(AgentWorkspace, { onNavigate }))
