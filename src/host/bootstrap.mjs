@@ -104,7 +104,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getDeploymentClient: async () => deploymentClientPromise,
   });
   ctx.provide('studioPersonalAssistantDesktop', assistantDesktopService(assistantDesktop));
-  await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
@@ -165,6 +164,15 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     const context = await codexResourceContextBase(request);
     return withBuiltinSkillContextForBindings(context, await resolveCodexBindings(request));
   };
+  // Materialize resources consumed by DSH adapters before registering those
+  // adapters. The Host can service model discovery while this async plugin
+  // scope is still activating, so a deployment callback must never observe a
+  // temporal-dead-zone binding for the portable bundle service.
+  const credentials = credentialsService;
+  const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
+  const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
+    adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
+  await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
   const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({
@@ -204,8 +212,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
   // apply context used by the DSH loader.
-  const credentials = credentialsService;
-  const models = await import('../model-service.mjs').then(({ createModelService }) => configurationPromise.then(configuration => createModelService({ configuration, credentials })));
   const workspaceRoot = resolve(runtimeEnv.AGENTKIT_STUDIO_WORKSPACE || process.cwd());
   const { createNativeSkillConnection } = await import('../providers/native-skill-host.mjs');
   const skillConnection = await createNativeSkillConnection({ configuration: await configurationPromise, env: runtimeEnv, ...cloudEndpointOptions });
@@ -288,8 +294,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       configuration: { ...nativeA2aInbound, events: nativeA2aInbound.events ?? managedKernel?.events } });
   }
   const { describeGlobalModelCredential } = await import('../model-credential-sync.mjs');
-  const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
-    adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
   templateServices = await (await import('./services/templates.mjs')).createTemplateServices(ctx, {
     ...services, storeDir: studioStoreDir, env: runtimeEnv, models, listCodexAgentModels, codexModels, getTeamTemplates: () => teamTemplates,
   });
