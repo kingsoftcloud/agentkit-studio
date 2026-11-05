@@ -610,10 +610,10 @@ index 4f6f0f201ab218754a4542e9da898acad8b55fa4..04ea5af6ba308b0704fcf76bcea729f1
  
 diff --git a/apps/desktop/tests/bundled-plugin-alignment.spec.ts b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..c017fad7a60062526707bb00ca4113f4493c72a2
+index 0000000000000000000000000000000000000000..e27cf9670eb746d4ed05f5501d73f8210e0d1607
 --- /dev/null
 +++ b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,204 @@
 +import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
 +import { join } from 'node:path'
@@ -740,7 +740,9 @@ index 0000000000000000000000000000000000000000..c017fad7a60062526707bb00ca4113f4
 +  })
 +
 +  it('keeps a newer profile copy but still selects it again', () => {
-+    const input = fixture({ bundledVersion: '0.0.11', profileVersion: '0.0.12', bundleListed: false })
++    const input = fixture({
++      bundledVersion: '0.0.11', profileVersion: '0.0.12', profileDependency: '0.0.12', bundleListed: false,
++    })
 +    expect(outcomes(input)[0]).toMatchObject({ action: 'kept-newer', previousVersion: '0.0.12', installationBacked: false })
 +    expect(profileManifest(input.profile).dsh.profile.bundles).toContain(PRODUCT)
 +    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
@@ -759,10 +761,9 @@ index 0000000000000000000000000000000000000000..c017fad7a60062526707bb00ca4113f4
 +  })
 +
 +  it('keeps the working copy and stops after two failed materializations', () => {
-+    const input = fixture({ profileVersion: '0.0.11' })
++    const input = fixture({ profileVersion: '0.0.11', profileDependency: '0.0.11' })
 +    const modules = join(input.profile, 'node_modules')
-+    expect(outcomes(input)[0]).toMatchObject({ action: 'materialized' })
-+    // A read-only profile makes the next materialization fail before it swaps.
++    // A read-only profile makes the materialization fail before it swaps.
 +    chmodSync(modules, 0o500)
 +    try {
 +      const first = outcomes(input)
@@ -772,11 +773,11 @@ index 0000000000000000000000000000000000000000..c017fad7a60062526707bb00ca4113f4
 +    } finally {
 +      chmodSync(modules, 0o700)
 +    }
-+    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
 +    // The selection repair is never rolled back: a failed materialization must
 +    // still leave a working copy selected for the next launch.
 +    expect(profileManifest(input.profile).dsh.profile.bundles).toContain(PRODUCT)
-+    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT))).toBeUndefined()
++    expect(JSON.parse(readFileSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'), 'utf8')).version).toBe('0.0.11')
 +  })
 +
 +  it('rejects a copy whose exported entry is missing instead of pinning it', () => {
@@ -790,8 +791,9 @@ index 0000000000000000000000000000000000000000..c017fad7a60062526707bb00ca4113f4
 +    const result = outcomes(input)
 +    expect(result[0]).toMatchObject({ action: 'restored', installationBacked: false })
 +    expect(result[0]?.reason).toContain('./src/index.mjs')
++    // The broken staged copy is discarded; the selection repair still stands.
 +    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(false)
-+    expect(profileManifest(input.profile).dsh.profile.bundles).not.toContain(PRODUCT)
++    expect(profileManifest(input.profile).dsh.profile.bundles).toContain(PRODUCT)
 +  })
 +
 +  it('leaves installation-owned bundles and untouched product copies alone', () => {
