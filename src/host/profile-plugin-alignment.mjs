@@ -1,14 +1,13 @@
-/** Keep a profile-installed product plugin from shadowing the copy bundled beside dsh. */
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+/** Keep the profile-installed product plugin selected and loadable; never retire it. */
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
 
 /** The product plugin this package owns. */
 const PRODUCT_PLUGIN = '@kingsoftcloud/agentkit-studio';
 /** Profile file recording consecutive failed alignment attempts for one bundled version. */
 const ATTEMPT_MARKER_PREFIX = '.alignment-attempt-';
-/** Consecutive failures after which alignment stops trying and the profile copy keeps running. */
+/** Consecutive failures after which alignment stops trying and the profile keeps running. */
 export const ALIGNMENT_ATTEMPT_LIMIT = 2;
 
 /** Numeric dotted comparison with prerelease ordering; plugin versions are plain semver. */
@@ -31,7 +30,10 @@ const manifestOf = directory => {
   try { return JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')); } catch { return undefined; }
 };
 
-const artifactName = (name, version) => `${name.replace(/^@/, '').replace(/[/\\]/g, '-')}-${version}`;
+/** Dependency and peer names a resolvable package must supply. */
+const dependencyNames = manifest => [...new Set([
+  ...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {}),
+])];
 
 /** Resolve a package directory from an anchor inside the sealed runtime only. */
 function resolveRuntimePackage(runtimeDsh, anchor, packageName) {
@@ -46,12 +48,7 @@ function resolveRuntimePackage(runtimeDsh, anchor, packageName) {
 }
 
 /**
- * Verify the bundled package resolves every declared dependency from the sealed runtime.
- *
- * A copy moved out of the runtime tree loses the `@deepseek-ai/*` packages the
- * installation anchor supplies, which is exactly why the previous mirror broke
- * Host startup. The profile copy is retired only when every declared package
- * answers from the runtime that will resolve it on the next launch.
+ * Verify the bundled plugin resolves every declared dependency from the sealed runtime.
  * @param {string} runtimeDsh - Sealed dsh runtime directory.
  * @param {string} bundledDir - Runtime-carried plugin directory.
  * @returns {string | undefined} the first unresolved dependency, or undefined.
@@ -60,9 +57,45 @@ export function verifyBundledPlugin(runtimeDsh, bundledDir) {
   const manifest = manifestOf(bundledDir);
   if (manifest === undefined) return `unreadable package manifest in ${bundledDir}`;
   const anchor = join(bundledDir, 'package.json');
-  const names = [...new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])];
-  for (const name of names) {
+  for (const name of dependencyNames(manifest)) {
     if (resolveRuntimePackage(runtimeDsh, anchor, name) === undefined) return `bundled copy cannot resolve ${name}`;
+  }
+  return undefined;
+}
+
+/** Relative entry files the package declares through `exports` or `main`. */
+function entryFiles(manifest) {
+  const files = [];
+  const collect = value => {
+    if (typeof value === 'string') { if (value.startsWith('./')) files.push(value); return; }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
+    for (const nested of Object.values(value)) collect(nested);
+  };
+  collect(manifest.exports);
+  if (typeof manifest.main === 'string' && manifest.main.startsWith('./')) files.push(manifest.main);
+  return [...new Set(files)];
+}
+
+/**
+ * Verify the profile copy is loadable, not merely present.
+ *
+ * Installation-owned `@deepseek-ai/*` packages answer from the sealed runtime's
+ * own anchor, never from the profile, so they are not required here. Every other
+ * declared dependency must resolve from the copy and every relative export the
+ * manifest names must exist.
+ * @param {string} directory - Profile copy of the product plugin.
+ * @returns {string | undefined} the first loadability failure, or undefined.
+ */
+export function verifyProfilePlugin(directory) {
+  const manifest = manifestOf(directory);
+  if (manifest === undefined) return `unreadable package manifest in ${directory}`;
+  const require = createRequire(join(directory, 'package.json'));
+  for (const name of dependencyNames(manifest)) {
+    if (name.startsWith('@deepseek-ai/')) continue;
+    try { require.resolve(name); } catch { return `profile copy cannot resolve ${name}`; }
+  }
+  for (const entry of entryFiles(manifest)) {
+    if (!existsSync(join(directory, entry))) return `profile copy is missing ${entry}`;
   }
   return undefined;
 }
@@ -94,16 +127,6 @@ const clearMarker = path => {
   try { rmSync(path, { force: true }); } catch { /* a stale marker costs one retry */ }
 };
 
-/** Move a real directory aside, falling back to a copy across filesystems. */
-function moveAside(source, target) {
-  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  try { renameSync(source, target); } catch (error) {
-    if (error?.code !== 'EXDEV') throw error;
-    cpSync(source, target, { recursive: true });
-    rmSync(source, { recursive: true, force: true });
-  }
-}
-
 /**
  * Locate the Desktop launch triple from the Host argv.
  * The desktop Host starts as `dsh-desktop-host/index.js <dsh> <profile> <primaryRuntime> <pnpm> <nodeBin>`.
@@ -117,24 +140,48 @@ function desktopLaunch(argv) {
 }
 
 /**
- * Retire the profile copy of this plugin so the Host resolves the bundled one.
+ * Make sure the profile selects the product bundle, inserting it after the Web app.
  *
- * The Desktop shell loads this plugin through the profile, so a profile pinned to
- * an older published version keeps running stale code after an application
- * upgrade. The bundled copy lives inside the signed runtime (inside `app.asar` on
- * macOS) and cannot be copied out without losing the `@deepseek-ai/*` packages the
- * installation anchor supplies — the previous mirror did exactly that and broke
- * Host startup. Alignment therefore removes the shadowing profile dependency and
- * its `node_modules` entry; the Host then resolves the bundled copy from the
- * installation like every other in-box bundle. Module resolution already happened
- * for this launch, so the change applies on the NEXT launch.
+ * The Host selects a profile plugin only through `dsh.profile.bundles`. Native
+ * recovery writes the list back to the shipped template, and the Desktop shell's
+ * activation history then suppresses its own re-add, so a profile can keep the
+ * plugin installed yet never load it. Repairing the list keeps a running
+ * installation selected without touching the copy.
+ * @param {string} profile - Profile directory.
+ * @param {string} [packageName] - Bundle to select; defaults to this product plugin.
+ * @returns {boolean} whether the manifest changed.
+ */
+export function ensureProfileBundle(profile, packageName = PRODUCT_PLUGIN) {
+  const path = join(profile, 'package.json');
+  const original = readFileSync(path, 'utf8');
+  const manifest = JSON.parse(original);
+  const dsh = { ...(manifest.dsh ?? {}) };
+  const section = { ...(dsh.profile ?? {}) };
+  const bundles = Array.isArray(section.bundles) ? [...section.bundles] : [];
+  if (bundles.includes(packageName)) return false;
+  const anchor = bundles.indexOf('@deepseek-ai/dsh-web-app');
+  bundles.splice(anchor < 0 ? bundles.length : anchor + 1, 0, packageName);
+  section.bundles = bundles;
+  dsh.profile = section;
+  manifest.dsh = dsh;
+  writeFileSync(path, `${JSON.stringify(manifest, undefined, 2)}\n`, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Keep the profile product plugin selected and loadable.
  *
- * A retired copy is moved to `$DSH_HOME/backups/agentkit-studio`; a failed rewrite
- * restores it, and two consecutive failures for one bundled version stop further
- * attempts so the old plugin keeps starting.
+ * Patch 071 retired the profile copy so the Host would fall back to the sealed
+ * runtime copy. Bundle selection has no such fallback: the Host loads a profile
+ * bundle only when `dsh.profile.bundles` lists it, so a retired copy left the
+ * product plugin out of the running interface. Alignment therefore never deletes:
+ * it repairs the bundle selection, verifies the copy is loadable, and leaves an
+ * unloadable copy exactly where it was for the Desktop shell to materialize
+ * before the next launch. Two consecutive failures for one bundled version stop
+ * further attempts so an unfixable profile still starts.
  *
  * @param {{ argv?: readonly string[], env?: Record<string, string | undefined>, log?: { info: Function, warn: Function }, now?: () => number }} [options]
- * @returns {{ action: string, applied?: string, previousVersion?: string, bundledVersion?: string, backupPath?: string, reason?: string }}
+ * @returns {{ action: string, applied?: string, previousVersion?: string, bundledVersion?: string, reason?: string }}
  */
 export function alignProfileProductPlugin({ argv = process.argv, env = process.env, log = console, now = Date.now } = {}) {
   try {
@@ -145,15 +192,21 @@ export function alignProfileProductPlugin({ argv = process.argv, env = process.e
     if (bundledVersion === undefined) return { action: 'missing-bundled-copy' };
     const installedDir = join(launch.profile, 'node_modules', PRODUCT_PLUGIN);
     const previousVersion = manifestOf(installedDir)?.version;
-    if (previousVersion === undefined) return { action: 'skipped-absent', bundledVersion };
-    const profileManifest = manifestOf(launch.profile) ?? {};
-    const spec = profileManifest.dependencies?.[PRODUCT_PLUGIN];
-    if (typeof spec !== 'string') return { action: 'skipped-absent', bundledVersion };
+    const repaired = ensureProfileBundle(launch.profile, PRODUCT_PLUGIN);
+    if (previousVersion === undefined) {
+      // Nothing to keep: the Desktop shell materializes the bundled copy before it
+      // starts the Host, so an absent copy here means the Host is already running.
+      return { action: repaired ? 'repaired-selection' : 'skipped-absent', bundledVersion, applied: 'next-launch' };
+    }
+    const manifest = manifestOf(launch.profile) ?? {};
+    const spec = manifest.dependencies?.[PRODUCT_PLUGIN];
+    if (typeof spec !== 'string') {
+      return { action: repaired ? 'repaired-selection' : 'skipped-absent', previousVersion, bundledVersion };
+    }
     if (!spec.startsWith('file:') && comparePluginVersions(previousVersion, bundledVersion) > 0) {
-      log.warn('[studio] profile alignment: profile copy is newer than the bundled runtime', { previousVersion, bundledVersion });
+      log.info('[studio] profile alignment: keeping the newer profile copy', { previousVersion, bundledVersion });
       return { action: 'kept-newer', previousVersion, bundledVersion };
     }
-
     const marker = markerPath(launch.profile, bundledVersion);
     const previousFailure = readMarker(marker, bundledVersion);
     if ((previousFailure?.failures ?? 0) >= ALIGNMENT_ATTEMPT_LIMIT) {
@@ -162,42 +215,17 @@ export function alignProfileProductPlugin({ argv = process.argv, env = process.e
         reason: `alignment failed ${String(previousFailure?.failures)} times for ${bundledVersion}`,
       };
     }
-    const verification = verifyBundledPlugin(launch.dsh, bundledDir);
+    const verification = verifyProfilePlugin(installedDir);
     if (verification !== undefined) {
       recordFailure(marker, bundledVersion, previousFailure, verification);
-      log.warn('[studio] profile alignment: keeping the profile copy', { reason: verification });
+      log.warn('[studio] profile alignment: keeping the existing profile copy', { reason: verification });
       return { action: 'restored', previousVersion, bundledVersion, reason: verification };
     }
-
-    const original = readFileSync(join(launch.profile, 'package.json'), 'utf8');
-    const dependencies = { ...(profileManifest.dependencies ?? {}) };
-    delete dependencies[PRODUCT_PLUGIN];
-    const next = `${JSON.stringify({ ...profileManifest, dependencies }, undefined, 2)}\n`;
-    const dshHome = String(env.DSH_HOME || join(homedir(), '.dsh')).replace(/^~(?=\/|$)/, homedir());
-    const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-');
-    const backupPath = join(dshHome, 'backups', 'agentkit-studio', `${artifactName(PRODUCT_PLUGIN, previousVersion)}-${stamp}`);
-    let moved = false;
-    try {
-      moveAside(installedDir, backupPath);
-      moved = true;
-      writeFileSync(join(launch.profile, 'package.json'), next, { mode: 0o600 });
-      if (existsSync(join(installedDir, 'package.json'))) {
-        throw new Error('profile still contains the retired plugin copy');
-      }
-    } catch (error) {
-      try { writeFileSync(join(launch.profile, 'package.json'), original, { mode: 0o600 }); } catch { /* unchanged */ }
-      if (moved) {
-        try { moveAside(backupPath, installedDir); } catch { /* keep the backup */ }
-      }
-      const reason = error instanceof Error ? error.message : String(error);
-      recordFailure(marker, bundledVersion, previousFailure, reason);
-      log.warn('[studio] profile alignment: restored the profile copy', { reason });
-      return { action: 'restored', previousVersion, bundledVersion, reason };
-    }
     clearMarker(marker);
-    const result = { action: 'retired', applied: 'next-launch', previousVersion, bundledVersion, backupPath };
-    log.info('[studio] profile alignment: retired the profile copy in favour of the bundled runtime copy', result);
-    return result;
+    return {
+      action: repaired ? 'repaired-selection' : 'current', previousVersion, bundledVersion,
+      ...repaired ? { applied: 'next-launch' } : {},
+    };
   } catch (error) {
     // Alignment is best-effort: the Host already loaded its plugin and must keep serving.
     log.warn('[studio] profile alignment: skipped', { message: error instanceof Error ? error.message : String(error) });
