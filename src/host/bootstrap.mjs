@@ -43,6 +43,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     console.warn('[studio] profile alignment skipped', { message: error instanceof Error ? error.message : String(error) });
   }
   const nativeEngineContract = nativeHarnessHostContract(runtimeEnv);
+  // Partial resource loss is the default: one unreachable MCP or skill must not
+  // disable the whole Agent. Operators who need the old fail-closed contract set
+  // AGENTKIT_STRICT_RESOURCES=1 (Agent Advanced env or the runtime image).
+  const strictResources = /^(?:1|true|yes|on)$/i.test(String(runtimeEnv.AGENTKIT_STRICT_RESOURCES || '').trim());
   const configuredLocalSkillDirectory = runtimeEnv.KSADK_LOCAL_SKILLS_DIR?.trim();
   const localSkillDirectory = configuredLocalSkillDirectory ? resolve(configuredLocalSkillDirectory) : undefined;
   const hostCompatibility = await loadHostCompatibility(ctx);
@@ -320,6 +324,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   });
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
+    strictResources,
     nativeEngineContract,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),
     getBasePlugins: async agent => {
@@ -465,7 +470,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // Session prewarming substitutes for the native dependency lifecycle.
     readyService: portableRuntime || managedRuntime ? FROZEN_RUNTIME_READY : undefined,
     start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, managedRuntime, managedResourceContext, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
-      admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } }, allowUnavailableResources: true, requireModelSelection: true }) }),
+      admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } }, allowUnavailableResources: !strictResources, requireModelSelection: true }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
   });
   if (portableRuntime || managedRuntime) {

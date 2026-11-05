@@ -35,7 +35,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
     || raw.environment !== data.Environment || raw.region !== data.Region) {
     fail('DEPLOYMENT_CATALOG_INVALID', 'Studio 镜像目录格式或目标环境无效');
   }
-  const releases = [], ids = new Set(), incompatible = new Map();
+  const releases = [], ids = new Set(), incompatible = new Map(), retired = new Map(), outdated = new Map();
   for (const item of raw.releases) {
     const identity = object(item) && typeof item.id === 'string' && ID.test(item.id) ? item.id : null;
     const image = typeof item?.image === 'string' && IMAGE.exec(item.image);
@@ -51,16 +51,22 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
       fail('DEPLOYMENT_CATALOG_INVALID', `Studio 镜像版本 ${identity || '（标识无效）'} 缺少有效摘要、兼容范围或发布信息`);
     }
     ids.add(item.id);
-    // Preview releases are never silently promoted through a production scope.
+    // Preview releases are never promoted through a production scope. Retire the
+    // offending entry instead of the whole catalog: a mis-scoped copy of the
+    // pre-online history must never disable every deployment in an environment,
+    // and the retired id stays unreachable as a default or an explicit choice.
     if (item.enabled && item.channel === 'preview' && raw.environment !== 'pre-online') {
-      fail('DEPLOYMENT_CATALOG_INVALID', '预发候选镜像不能作为生产环境部署目标');
+      retired.set(item.id, 'preview-outside-pre-online'); continue;
     }
     // A newer image may advertise capabilities that this Studio build does not
     // implement yet. Retire that release for this client and keep the rest of
     // the catalog usable; the default below only resolves to a usable release.
     const unknownCapabilities = (item.capabilities || []).filter(value => !ASSISTANT_IMAGE_CAPABILITIES.includes(value));
     if (unknownCapabilities.length) { incompatible.set(item.id, unknownCapabilities); continue; }
-    if (!item.enabled || !item.runtimes.includes(runtime) || !supportedVersion(clientVersion, item.minimumStudioVersion)) continue;
+    if (!item.enabled || !item.runtimes.includes(runtime)) continue;
+    // Keep the reason a release was filtered so a stored default can report
+    // "update Studio" instead of the unactionable "no image available".
+    if (!supportedVersion(clientVersion, item.minimumStudioVersion)) { outdated.set(item.id, item.minimumStudioVersion); continue; }
     releases.push({ id: item.id, label: item.label, channel: item.channel, image: item.image, version: item.version,
       runtimeIdentity: item.runtimeIdentity === true, capabilities: [...(item.capabilities || [])], digest: `sha256:${image[4]}`, registry: image[1], namespace: image[2], repository: image[3], port: item.port, platform: item.platform,
       runtimes: [...item.runtimes], bundleFormat: item.bundleFormat, minimumStudioVersion: item.minimumStudioVersion,
@@ -71,20 +77,28 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
   const configuredDefaultReleaseId = raw.defaultReleaseId ?? null;
   let defaultReleaseId = releases.some(item => item.id === configuredDefaultReleaseId) ? configuredDefaultReleaseId : null;
   let fallback = null;
-  // Only a client-capability mismatch may fall back to another release: the
-  // publisher did not disable or remove it, this build simply cannot interpret
-  // it yet. Disabled, removed or incompatible defaults keep the previous
-  // fail-closed behavior below.
+  // Only a release this build cannot use for a scope reason may fall back to
+  // another one: the publisher did not disable or remove it on purpose. A
+  // disabled or removed default, or a default filtered out by the installed
+  // Studio version, keeps the previous fail-closed behavior below.
   if (!defaultReleaseId && configuredDefaultReleaseId && incompatible.has(configuredDefaultReleaseId) && releases.length) {
     const compatible = releases[releases.length - 1];
     compatible.notices.push('当前 Studio 版本暂不支持云端最新镜像能力，已自动选择兼容的镜像版本；升级 Studio 后可部署最新镜像');
     defaultReleaseId = compatible.id;
     fallback = { configured: configuredDefaultReleaseId, id: compatible.id, capabilities: [...incompatible.get(configuredDefaultReleaseId)] };
   }
+  if (!defaultReleaseId && configuredDefaultReleaseId && retired.has(configuredDefaultReleaseId) && releases.length) {
+    const usable = releases[releases.length - 1];
+    usable.notices.push('云端推荐镜像是预发候选，不能用于当前环境，已自动选择已发布的镜像版本');
+    defaultReleaseId = usable.id;
+    fallback = { configured: configuredDefaultReleaseId, id: usable.id, retired: retired.get(configuredDefaultReleaseId) };
+  }
   const containerStorage = containerStorageCapability(data);
   return { format: FORMAT, environment: raw.environment, region: raw.region, runtime, defaultReleaseId,
     configuredDefaultReleaseId, defaultReleaseFallback: fallback,
     incompatibleReleases: [...incompatible].map(([id, capabilities]) => ({ id, capabilities })),
+    outdatedReleases: [...outdated].map(([id, minimumStudioVersion]) => ({ id, minimumStudioVersion })),
+    retiredReleases: [...retired].map(([id, reason]) => ({ id, reason })),
     containerStorage, revision: createHash('sha256').update(JSON.stringify([raw, containerStorage])).digest('hex'), releases };
 }
 
@@ -94,6 +108,12 @@ export function selectStudioImage(catalog, releaseId) {
     const incompatible = catalog.incompatibleReleases?.find(item =>
       item.id === (releaseId || catalog.configuredDefaultReleaseId));
     if (incompatible) fail('DEPLOYMENT_CLIENT_UPDATE_REQUIRED', `云端镜像 ${incompatible.id} 需要更新 Studio 客户端后才能部署（新增能力：${incompatible.capabilities.join('、')}）；请升级 Studio 后重试`);
+    const retired = catalog.retiredReleases?.find(item => item.id === (releaseId || catalog.configuredDefaultReleaseId));
+    const outdated = catalog.outdatedReleases?.find(item => item.id === (releaseId || catalog.configuredDefaultReleaseId));
+    if (outdated) fail('DEPLOYMENT_CLIENT_UPDATE_REQUIRED', `云端镜像 ${outdated.id} 需要 Studio ${outdated.minimumStudioVersion} 或更高版本；请升级 Studio 后重试`);
+    if (retired) fail('DEPLOYMENT_IMAGE_RETIRED', catalog.releases.length
+      ? `云端镜像 ${retired.id} 是预发候选（preview），不能部署到 ${catalog.environment} 环境；请选择已发布版本`
+      : `云端镜像 ${retired.id} 是预发候选（preview），不能部署到 ${catalog.environment} 环境，且该环境暂无其他可用版本；请联系管理员更新镜像目录`);
     fail('DEPLOYMENT_IMAGE_UNAVAILABLE', '当前运行时没有可用的镜像版本，请更新目录或选择兼容版本');
   }
   return structuredClone(selected);

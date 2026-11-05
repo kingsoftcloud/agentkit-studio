@@ -73,6 +73,7 @@ export function createDeploymentRollouts({ store, owned, detail, images, assembl
     return { ...prepared, record, previewId };
   }
   async function prepare(input) {
+    await store.preflight();
     const { plan, record, previewId } = await prepareTarget(input, true);
     const { credentialScope: scope, bucket, storageEndpoint, ...preview } = plan;
     return { ...preview, deploymentId: record.id, previewId, releaseId: plan.image.id,

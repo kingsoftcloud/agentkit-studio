@@ -42,6 +42,38 @@ test('local presets pin public component bindings for DSH Native, Codex and Harn
   }
 });
 
+test('an unreachable bound resource degrades by default and fails only in strict mode', async () => {
+  const record = agent({ spec: { runtime: { type: 'codex' }, instructions: { system: '测试带有MCP的agent' },
+    bindings: { mcpServers: [{ id: 'jinshan-sap', endpoint: 'https://example.invalid/mcp', transport: 'http' }] } } });
+  const failure = Object.assign(new Error('MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置'),
+    { code: 'MCP_CONNECT_FAILED', details: { resourceId: 'jinshan-sap' } });
+  const read = preset => preset.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
+  let preset;
+  const options = { getAgent: async () => record, getToolContracts: async () => { throw failure; },
+    registry: { register: async value => { preset = value; } } };
+
+  // Default: the Agent stays conversational; only the broken binding is missing,
+  // and the model is told about it so it cannot pretend the tool still works.
+  await new DshPresetAdmission(options).ensure('demo/agent', { agent: record, allowUnavailableResources: true });
+  const degraded = read(preset);
+  assert.equal(degraded.resourcesUnavailable, true);
+  assert.equal(degraded.strictResources, undefined);
+  assert.equal(degraded.toolContracts, undefined);
+  assert.deepEqual(degraded.unavailableResources, [{ kind: 'tool', code: 'MCP_CONNECT_FAILED',
+    message: failure.message, id: 'jinshan-sap' }]);
+  const persona = preset.plugins.find(row => row.id === 'persona');
+  assert.match(persona.config.prefix, /测试带有MCP的agent/);
+  assert.match(persona.config.prefix, /以下绑定资源当前不可用/);
+  assert.match(persona.config.prefix, /MCP \/ Tool jinshan-sap（MCP_CONNECT_FAILED）/);
+
+  // Strict: a deployment that demands full resources keeps the fail-closed path.
+  const strict = new DshPresetAdmission({ ...options, strictResources: true });
+  await assert.rejects(strict.ensure('demo/agent', { agent: record, allowUnavailableResources: false }),
+    { code: 'MCP_CONNECT_FAILED' });
+  await strict.ensure('demo/agent', { agent: record, allowUnavailableResources: true });
+  assert.equal(read(preset).strictResources, true);
+});
+
 test('pinned A2A specs reach each local runtime without sharing mutable Agent objects', async () => {
   const specs = [{ local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote-id', expected_version_id: 'version' }];
   for (const runtime of ['harness', 'codex', 'dsh-native']) {
@@ -293,28 +325,40 @@ test('recovery keeps the preset registered when bound resources are temporarily 
   const admission = new DshPresetAdmission({
     registry: { async register(definition) { registered.push(definition); return () => {}; } },
     getAgent: async () => revision,
-    getToolContracts: async () => { throw new Error('old MCP resource is unavailable'); },
-    getSkillDefinitions: async () => { throw new Error('old Skill Space is unavailable'); },
+    getToolContracts: async () => { throw Object.assign(new Error('old MCP resource is unavailable'), { code: 'MCP_CONNECT_FAILED', details: { resourceId: 'mcp:old' } }); },
+    getSkillDefinitions: async () => { throw Object.assign(new Error('old Skill Space is unavailable'), { code: 'SKILL_SNAPSHOT_UNAVAILABLE', details: { resourceId: 'skill:old' } }); },
   });
   await admission.ensure('demo/agent', { allowUnavailableResources: true });
   assert.equal(registered.length, 1);
-  assert.equal(registered[0].plugins[0].name, '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin');
-  assert.equal(registered[0].plugins[0].config.agentId, 'demo/agent');
-  const config = registered[0].plugins[0].config;
+  const runtime = preset => preset.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin'));
+  assert.equal(runtime(registered[0]).config.agentId, 'demo/agent');
+  const config = runtime(registered[0]).config;
   assert.equal(config.resourcesUnavailable, true);
+  assert.deepEqual(config.unavailableResources.map(item => item.kind), ['tool', 'skill']);
+  // Default policy degrades: the turn still runs with the bindings that are left.
   let request;
   const bridge = createRuntimeBridge();
   bridge.setNativeToolsFactory(() => ({ policyDefinition() {} }));
-  applyDshRuntimePlugin({ get: () => bridge, tools: {}, on: (event, callback) => { if (event === 'agent/execute-turn') request = callback; } }, config);
-  await assert.rejects(() => request({ agent: { id: 'restored' } }, () => assert.fail('must not run without bound resources')),
-    { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+  const strictBridge = createRuntimeBridge();
+  strictBridge.setNativeToolsFactory(() => ({ policyDefinition() {} }));
+  let strictRequest;
+  applyDshRuntimePlugin({ get: () => strictBridge, tools: {}, on: (event, callback) => { if (event === 'agent/execute-turn') strictRequest = callback; } },
+    { ...config, strictResources: true });
+  await assert.rejects(() => strictRequest({ agent: { id: 'strict' } }, () => assert.fail('strict must not run')),
+    error => error.code === 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' && /MCP\/Tool mcp:old/.test(error.message));
+  strictBridge.close();
   // A strict admission on the SAME instance must not reuse the placeholder.
   await assert.rejects(() => admission.ensure('demo/agent'), /old MCP resource is unavailable/);
+  applyDshRuntimePlugin({ get: () => bridge, tools: {}, on: (event, callback) => { if (event === 'agent/execute-turn') request = callback; } }, config);
+  // The resource gate is open: the turn reaches the runtime bridge instead of
+  // failing with STUDIO_PRESET_RESOURCES_UNAVAILABLE.
+  await assert.rejects(() => request({ agent: { id: 'degraded' } }, () => ({ ok: true })),
+    { code: 'STUDIO_NATIVE_TURN_EXECUTOR_UNAVAILABLE' });
   admission.getToolContracts = async () => [];
   admission.getSkillDefinitions = async () => [];
   await admission.ensure('demo/agent');
   assert.equal(registered.length, 2);
-  assert.equal(registered[1].plugins[0].config.resourcesUnavailable, undefined);
+  assert.equal(runtime(registered[1]).config.resourcesUnavailable, undefined);
   bridge.close();
 });
 

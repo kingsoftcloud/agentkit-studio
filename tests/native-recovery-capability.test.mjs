@@ -38,17 +38,32 @@ test('native-recovery-binding returns the frozen binding facts without starting 
   } finally { await fiber.dispose(); await root.fiber.dispose(); }
 });
 
-test('resourcesUnavailable rejects identically to execute-turn', async () => {
-  const { root, bridge } = setupRoot();
-  bridge.setNativeToolsFactory(() => ({}));
-  let plugCtx;
-  const fiber = await root.plugin({ apply(ctx) { plugCtx = ctx; applyPreset(ctx, harnessConfig({ agentId: 'delta', resourcesUnavailable: true })); } });
+test('resourcesUnavailable degrades the recovery binding until strict admission', async () => {
+  const mount = async overrides => {
+    const { root, bridge } = setupRoot();
+    bridge.setNativeToolsFactory(() => ({}));
+    let plugCtx;
+    const fiber = await root.plugin({ apply(ctx) { plugCtx = ctx;
+      applyPreset(ctx, harnessConfig({ agentId: 'delta', resourcesUnavailable: true, ...overrides })); } });
+    return { root, fiber, plugCtx };
+  };
+  const degraded = await mount();
   try {
+    const binding = await degraded.plugCtx.serial({}, 'agentkit/native-recovery-binding', { agent: { id: 'delta' } });
+    assert.equal(binding.agentId, 'delta', 'a degraded admission keeps the Agent conversational');
+  } finally { await degraded.fiber.dispose(); await degraded.root.fiber.dispose(); }
+  const strict = await mount({ strictResources: true });
+  try {
+    // The recovery binding refuses exactly like the turn boundary does.
     await assert.rejects(
-      plugCtx.serial({}, 'agentkit/native-recovery-binding', { agent: { id: 'delta' } }),
+      strict.plugCtx.serial({}, 'agentkit/native-recovery-binding', { agent: { id: 'delta' } }),
       { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' },
     );
-  } finally { await fiber.dispose(); await root.fiber.dispose(); }
+    await assert.rejects(
+      strict.plugCtx.serial({}, 'agent/execute-turn', { agent: { id: 'delta' } }),
+      { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' },
+    );
+  } finally { await strict.fiber.dispose(); await strict.root.fiber.dispose(); }
 });
 
 test('non-harness presets do not register the recovery binding and return nothing', async () => {

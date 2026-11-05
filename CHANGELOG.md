@@ -41,6 +41,9 @@
 - Fix the market lifecycle on the real Host: the DSH plugin surface mounts the plain product client, so the install/enable/disable/update/uninstall methods now live on that client instead of only the compatibility extension. Install, enable and disable were verified end-to-end against the packaged DSH 0.2.1-rc.2 Host.
 - Generate the installed `dsh` terminal launcher from the packaged product name instead of a hardcoded `DeepSeek Harness`, restoring the CLI for product builds while official builds keep the upstream default (DSH patch 051).
 - 云端镜像目录出现当前 Studio 尚未实现的能力声明时，只停用该镜像版本并回退到最新的兼容镜像，同时给出升级提示；不再因一次新镜像发布拒绝整个目录，导致旧客户端无法部署任何 Agent。
+- 云端镜像目录把预发候选（`channel=preview`）发布到非 `pre-online` 环境时，同样只退役该版本并回退到已发布镜像，同时提示目录维护问题；不再因一次误把预发目录复制进线上就让整个环境的创建、升级和回滚全部不可用。显式选择被退役版本时以 `DEPLOYMENT_IMAGE_RETIRED` 说明原因。
+- 绑定资源部分不可用不再让整个 Agent 无法对话：默认按降级运行（缺失的 MCP/Skill 不进工具集，并在系统提示词里点名），只有设置 `AGENTKIT_STRICT_RESOURCES=1` 的部署才保持原 fail-closed 行为，且报错会带上是哪个资源、什么错误码。
+- 部署记录目录不支持目录 fsync 时（网络主目录、同步盘、部分安全软件过滤）不再让「确认创建云端实例」以裸 `EPERM: operation not permitted, fsync` 失败：目录 fsync 降级为尽力而为（记录内容本身仍按文件 fsync 落盘），其余本地 I/O 错误改为带路径与处置建议的 `DEPLOYMENT_STORE_IO_FAILED`；磁盘在检查部署阶段即预检，不再等用户点了确认才暴露。
 - Raise the development and CI Node.js baseline to 22.23.4 (or 24.22.1 / 26.12.1) for the October 2026 security release, and fail fast in `pnpm check`, the development doctor and CI when the runtime predates the fix.
 - Adapt generic Hosted UI Actions to frozen Studio runtimes with verified account isolation, native DSH history recovery, and explicit stream failures; retain existing personal assistant data and permissions.
 - Keep the assistant conversation quiet: one native attachment picker, concise errors and on-demand connection diagnostics.

@@ -206,6 +206,20 @@ export function apply(ctx, config = {}) {
     for (const dispose of routes.values()) dispose();
     routes.clear();
   }, 'agentkit-studio: preset route lifetime');
+  // Bound resources that could not be recovered at admission time. The default is
+  // to keep the Agent conversational without them (the tool set simply lacks
+  // them); AGENTKIT_STRICT_RESOURCES=1 restores the fail-closed behaviour for
+  // deployments that would rather refuse a turn than run with fewer tools.
+  const unavailableResources = Array.isArray(config.unavailableResources) ? config.unavailableResources : [];
+  const resourceDetail = () => unavailableResources
+    .map(item => `${item?.kind === 'tool' ? 'MCP/Tool' : item?.kind === 'skill' ? 'Skill' : '资源'}${item?.id ? ` ${item.id}` : ''}（${item?.code || 'UNAVAILABLE'}）`)
+    .join('、');
+  const assertResources = lead => {
+    if (!config.resourcesUnavailable && !unavailableResources.length) return;
+    if (!config.strictResources) return;
+    const detail = resourceDetail();
+    throw Object.assign(new Error(detail ? `${lead}：${detail}` : lead), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+  };
   const skills = Array.isArray(config.skillDefinitions) ? config.skillDefinitions : [];
   if (skills.length) {
     if (typeof ctx.skills?.register !== 'function') throw new Error('DSH SkillRegistry 不可用');
@@ -258,7 +272,7 @@ export function apply(ctx, config = {}) {
   // Local AgentKit Harness is claimed above at the whole-turn boundary.
   const nativeTools = config.local === true && config.runtime !== 'codex';
   if (wholeNativeTurn) ctx.on('agent/execute-turn', async payload => {
-    if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return bridge.executeNativeTurn({ ...payload, binding: { agentId, runtime: config.runtime, local: true,
       buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract,
@@ -267,7 +281,7 @@ export function apply(ctx, config = {}) {
   // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
   // Durable ownership grants no tools or permissions by itself.
   if (wholeNativeTurn) ctx.on('agentkit/native-recovery-binding', async ({ agent }) => {
-    if (config.resourcesUnavailable) throw Object.assign(new Error('Native Harness 资源恢复失败，请修复绑定后重试'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     const tools = bindNativeTools(agent);
     return { agentId, runtime: config.runtime, local: true,
@@ -275,7 +289,7 @@ export function apply(ctx, config = {}) {
       nativeEngineContract: config.nativeEngineContract, boundToolPolicy, nativeTools: tools };
   });
   if (!wholeNativeTurn && config.local === true && config.a2aBindings?.length) ctx.on('agentkit/dsh-a2a-binding', async () => {
-    if (config.resourcesUnavailable) throw Object.assign(new Error('A2A resources unavailable'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    assertResources('A2A resources unavailable');
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
     return { contract: 'agentkit.studio-dsh-a2a-binding/v1', agentId, runtime: config.runtime, local: true,
       agentRevision: config.agentRevision, buildId: config.buildId ?? null, tools: builtinToolBindings };
@@ -285,7 +299,7 @@ export function apply(ctx, config = {}) {
   // Studio provider at the scoped request boundary so the root adapter can
   // recover this Agent's runtime and Tool adapter by session id.
   ctx.on(AGENT_REQUEST_EVENT, async (payload, next) => {
-    if (config.resourcesUnavailable) throw Object.assign(new Error('此会话的 Agent 资源恢复失败。请检查资源配置后重新选择 Agent 或重新打开应用。'), { code: 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' });
+    assertResources('此会话的 Agent 资源恢复失败，请检查资源配置后重新选择 Agent 或重新打开应用');
     if (wholeNativeTurn) throw Object.assign(new Error('此 Harness 必须通过整轮执行接口运行，请安装兼容的 Studio Host'), { code: 'STUDIO_NATIVE_WHOLE_TURN_REQUIRED' });
     const resolved = await next();
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
