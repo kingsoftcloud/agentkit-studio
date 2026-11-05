@@ -3254,7 +3254,7 @@
       "file": "071-bundled-plugin-alignment.patch",
       "category": "general-fix",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-      "sha256": "ad62be3f1193bc70e84342714c53e60b67bfebb49516bf830f968d7b88bfcb19",
+      "sha256": "8246334d68dd7e1e52bd7bd2b66166a7692134fe2185c83e4422551d47827ea8",
       "dependsOn": [
         "013"
       ],
@@ -3287,10 +3287,10 @@
       "sequence": 64
     }
   ],
-  "patchedTree": "29a2b89cf8c58fb1a8bfe8c05c6598da26cd8933",
-  "patchedSourceSha256": "7e1579054c0a9a97ef055a25e63bd00d878546a26d04cb4dcb093fb65f863f9f",
+  "patchedTree": "15905c08019fc6f5c2ed64fb680e30985f2d8367",
+  "patchedSourceSha256": "5e4c6cfc1cd503d721dc1d30129afa5041729aa1900f7ab9461cc19e731691c8",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "3d6ea60843a399410fac6e4829f4553aa071b598aa6f2acca7df7667906bd420"
+    "sha256": "f8e57a0964a0b0f16c3cca1452ee90671fe1a7cc84271b11f5d649c3ec970295"
   }
 }
