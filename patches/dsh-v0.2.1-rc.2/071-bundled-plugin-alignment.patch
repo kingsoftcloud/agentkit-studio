@@ -1,9 +1,9 @@
 diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..6c787087318268d764d12501f2e2c7d69bda0e2e
+index 0000000000000000000000000000000000000000..ec581e82102e5ba09271d608f23a521932c47b5f
 --- /dev/null
 +++ b/apps/desktop/src/bundled-plugin-alignment.ts
-@@ -0,0 +1,521 @@
+@@ -0,0 +1,572 @@
 +/** Install the product plugin the runtime bundles into the profile that loads it. */
 +
 +import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -285,6 +285,59 @@ index 0000000000000000000000000000000000000000..6c787087318268d764d12501f2e2c7d6
 +  }
 +}
 +
++/**
++ * Select the product bundle (and keep its dependency declared) without touching the copy.
++ *
++ * The Host loads a profile plugin only when `dsh.profile.bundles` lists it. Native
++ * recovery rewrites that list to the shipped template and the shell's activation
++ * history then suppresses its own re-add, so a profile can keep a perfectly good
++ * plugin installed yet never load it. Repairing the selection first makes that
++ * failure mode impossible even when materialization later fails.
++ * @returns whether the manifest changed.
++ */
++function ensureSelection(profile: string, packageName: string, installedVersion: string | undefined): boolean {
++  const path = join(profile, 'package.json')
++  let manifest: Record<string, unknown>
++  try {
++    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
++    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
++    manifest = parsed as Record<string, unknown>
++  } catch {
++    return false
++  }
++  const dsh = { ...(typeof manifest.dsh === 'object' && manifest.dsh !== null && !Array.isArray(manifest.dsh)
++    ? manifest.dsh as Record<string, unknown>
++    : {}) }
++  const section = { ...(typeof dsh.profile === 'object' && dsh.profile !== null && !Array.isArray(dsh.profile)
++    ? dsh.profile as Record<string, unknown>
++    : {}) }
++  const bundles = Array.isArray(section.bundles) ? [...section.bundles as string[]] : []
++  const dependencies = { ...(typeof manifest.dependencies === 'object' && manifest.dependencies !== null && !Array.isArray(manifest.dependencies)
++    ? manifest.dependencies as Record<string, string>
++    : {}) }
++  let changed = false
++  if (!bundles.includes(packageName)) {
++    const index = bundles.indexOf('@deepseek-ai/dsh-web-app')
++    bundles.splice(index < 0 ? bundles.length : index + 1, 0, packageName)
++    changed = true
++  }
++  if (typeof dependencies[packageName] !== 'string' && installedVersion !== undefined) {
++    dependencies[packageName] = installedVersion
++    changed = true
++  }
++  if (!changed) return false
++  section.bundles = bundles
++  dsh.profile = section
++  manifest.dsh = dsh
++  manifest.dependencies = dependencies
++  try {
++    writeFileSync(path, `${JSON.stringify(manifest, undefined, 2)}\n`, { mode: 0o600 })
++    return true
++  } catch {
++    return false
++  }
++}
++
 +/** The profile manifest with this product pinned and its bundle selected, plus the original. */
 +function withProduct(
 +  profile: string, packageName: string, version: string,
@@ -499,6 +552,7 @@ index 0000000000000000000000000000000000000000..6c787087318268d764d12501f2e2c7d6
 +      // A bundle this profile never had is a deliberate removal: touching it would
 +      // resurrect a plugin the person turned off.
 +      if (!owned) continue
++      const selected = ensureSelection(options.profile, packageName, installedVersion) || list.includes(packageName)
 +      // A profile copy newer than the runtime keeps running: an application upgrade
 +      // must never downgrade a plugin the person installed on purpose.
 +      if (spec !== undefined && !spec.startsWith('file:') && installedVersion !== undefined
@@ -506,12 +560,9 @@ index 0000000000000000000000000000000000000000..6c787087318268d764d12501f2e2c7d6
 +        outcomes.push({ packageName, action: 'kept-newer', previousVersion: installedVersion, bundledVersion, installationBacked: false })
 +        continue
 +      }
-+      if (installedVersion === bundledVersion) {
-+        const healthy = verifyPluginCopy(installedDir)
-+        if (healthy === undefined && list.includes(packageName) && spec === bundledVersion) {
-+          outcomes.push({ packageName, action: 'current', previousVersion: installedVersion, bundledVersion, installationBacked: true })
-+          continue
-+        }
++      if (installedVersion === bundledVersion && selected && verifyPluginCopy(installedDir, bundledDir) === undefined) {
++        outcomes.push({ packageName, action: 'current', previousVersion: installedVersion, bundledVersion, installationBacked: true })
++        continue
 +      }
 +      outcomes.push(materializeCandidate({ packageName, bundledDir, bundledVersion, installedDir, installedVersion }, options, home, stamp))
 +    }
@@ -559,10 +610,10 @@ index 4f6f0f201ab218754a4542e9da898acad8b55fa4..04ea5af6ba308b0704fcf76bcea729f1
  
 diff --git a/apps/desktop/tests/bundled-plugin-alignment.spec.ts b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ff34c62d4e6987379ed2d893d04eb8a26a59f95
+index 0000000000000000000000000000000000000000..c017fad7a60062526707bb00ca4113f4493c72a2
 --- /dev/null
 +++ b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,202 @@
 +import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
 +import { join } from 'node:path'
@@ -688,10 +739,11 @@ index 0000000000000000000000000000000000000000..6ff34c62d4e6987379ed2d893d04eb8a
 +    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT))).toBeUndefined()
 +  })
 +
-+  it('keeps a profile copy newer than the bundled runtime', () => {
-+    const input = fixture({ bundledVersion: '0.0.11', profileVersion: '0.0.12' })
++  it('keeps a newer profile copy but still selects it again', () => {
++    const input = fixture({ bundledVersion: '0.0.11', profileVersion: '0.0.12', bundleListed: false })
 +    expect(outcomes(input)[0]).toMatchObject({ action: 'kept-newer', previousVersion: '0.0.12', installationBacked: false })
-+    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
++    expect(profileManifest(input.profile).dsh.profile.bundles).toContain(PRODUCT)
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
 +    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
 +  })
 +
@@ -721,6 +773,9 @@ index 0000000000000000000000000000000000000000..6ff34c62d4e6987379ed2d893d04eb8a
 +      chmodSync(modules, 0o700)
 +    }
 +    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
++    // The selection repair is never rolled back: a failed materialization must
++    // still leave a working copy selected for the next launch.
++    expect(profileManifest(input.profile).dsh.profile.bundles).toContain(PRODUCT)
 +    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT))).toBeUndefined()
 +  })
 +
