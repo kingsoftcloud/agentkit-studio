@@ -28,9 +28,12 @@ function studioConfig(env = process.env, raw = {}) {
     ...raw,
     enabled: envBoolean(env.AGENTKIT_PROMPT_PREDICTION_ENABLED, raw.enabled !== false),
     auditLog: envBoolean(env.AGENTKIT_PROMPT_PREDICTION_AUDIT, raw.auditLog === true),
-    maxOutputTokens: 256,
+    // A reasoning model spends this budget on `reasoning_content` before it writes a
+    // single character of the JSON answer, so a 256-token cap came back as HTTP 200
+    // with empty content and the suggestion silently never appeared.
+    maxOutputTokens: 2048,
     maxSuggestionChars: 600,
-    timeoutMs: 12000,
+    timeoutMs: 20000,
     compactTurns: 8,
     maxHistoryChars: 120000,
   })
@@ -253,22 +256,42 @@ async function predict(session, messages, signal, config, models, fetchImpl) {
   signal.throwIfAborted()
   const instruction = predictionInstruction({ exemplars: styleExemplars(messages), maxSuggestionChars: config.maxSuggestionChars, maxLines: 3 })
   const requestMessages = history.map(item => ({ role: item.role, content: messageText(item) }))
-  const response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
+  const payload = JSON.stringify({
+    model: profile.modelName,
+    messages: [...requestMessages, { role: 'user', content: instruction }],
+    max_tokens: config.maxOutputTokens,
+    temperature: 0.2,
+    stream: false,
+  })
+  const send = () => fetchImpl(`${profile.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { authorization: `Bearer ${profile.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: profile.modelName,
-      messages: [...requestMessages, { role: 'user', content: instruction }],
-      max_tokens: config.maxOutputTokens,
-      temperature: 0.2,
-      stream: false,
-    }),
+    body: payload,
     signal,
     redirect: 'error',
   })
+  let response
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await send()
+    } catch (error) {
+      // One retry covers a connection reset; abort (turn start, timeout) must not retry.
+      if (attempt > 0 || signal.aborted) throw error
+      await sleep(200)
+      continue
+    }
+    if (response.ok || attempt > 0 || response.status < 500) break
+    // A transient gateway 5xx used to end the turn's only attempt, so the ghost text
+    // silently never appeared even though the next request would have succeeded.
+    await sleep(200)
+  }
   if (!response.ok) return { ok: false, status: 'failed', reason: `model-${response.status}` }
   const body = await response.json()
   const raw = body?.choices?.[0]?.message?.content
   const parsed = parseSuggestion(typeof raw === 'string' ? raw : '', { maxSuggestionChars: config.maxSuggestionChars, previousAssistantText: assistant, lastUserText: messageText(lastUser) })
   return parsed.ok ? parsed : { ok: false, status: 'none', reason: parsed.reason }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }

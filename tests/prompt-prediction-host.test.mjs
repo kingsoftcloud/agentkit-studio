@@ -6,7 +6,7 @@ function message(role, text, source = role === 'assistant' ? { kind: 'model', pr
   return { role, source, content: [{ type: 'text', text }] }
 }
 
-function harness({ response = '{"suggestion":"继续跑测试"}', header = { config: { provider: 'ksyun', model: 'flash' } } } = {}) {
+function harness({ response = '{"suggestion":"继续跑测试"}', header = { config: { provider: 'ksyun', model: 'flash' } }, fetch: customFetch } = {}) {
   const routes = new Map()
   const listeners = new Map()
   const calls = []
@@ -20,10 +20,10 @@ function harness({ response = '{"suggestion":"继续跑测试"}', header = { con
     emit(name, ...args) { for (const handler of listeners.get(name) ?? []) handler(...args) },
   }
   const models = { profile: async () => ({ baseUrl: 'https://model.invalid/v1', apiKey: 'secret', modelName: 'flash' }) }
-  const fetchImpl = async (_url, options) => {
+  const fetchImpl = customFetch ?? (async (_url, options) => {
     calls.push(JSON.parse(options.body))
     return Response.json({ choices: [{ message: { content: response } }] })
-  }
+  })
   const dispose = createPromptPredictionHost(ctx, { models, fetchImpl, env: { AGENTKIT_PROMPT_PREDICTION_AUDIT: '0' } })
   return { ctx, routes, calls, session, dispose }
 }
@@ -168,7 +168,7 @@ test('a gateway that never answers releases its slot instead of pinning the host
   const h = multiSessionHarness(fetchImpl)
   h.ctx.emit('session/event', h.session('session-a'), { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
   assert.equal((await h.read('session-a')).status, 'pending')
-  t.mock.timers.tick(12000)
+  t.mock.timers.tick(20000)
   await settle()
   const timedOut = await h.read('session-a')
   assert.equal(timedOut.status, 'failed')
@@ -178,5 +178,60 @@ test('a gateway that never answers releases its slot instead of pinning the host
   h.ctx.emit('session/event', h.session('session-b'), { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
   const next = await h.read('session-b')
   assert.ok(['pending', 'ready'].includes(next.status), `expected the freed slot to predict, got ${next.status}`)
+  await h.dispose()
+})
+
+test('the model request leaves room for a reasoning model to think before it answers', async () => {
+  const h = harness()
+  h.ctx.emit('session/event', h.session, { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+  let state
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    state = await readState(h)
+    if (state.status === 'ready') break
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(state.status, 'ready')
+  assert.ok(h.calls[0].max_tokens >= 1024, `max_tokens ${h.calls[0].max_tokens} is smaller than the reasoning preamble`)
+  await h.dispose()
+})
+
+test('a transient gateway 5xx is retried once instead of ending the turn', async () => {
+  const bodies = []
+  const fetchImpl = async (_url, options) => {
+    bodies.push(JSON.parse(options.body))
+    if (bodies.length === 1) return new Response('upstream unavailable', { status: 503 })
+    return Response.json({ choices: [{ message: { content: '{"suggestion":"重试之后有了"}' } }] })
+  }
+  const h = harness({ fetch: fetchImpl })
+  h.ctx.emit('session/event', h.session, { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+  let state
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    state = await readState(h)
+    if (state.status === 'ready') break
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  assert.equal(bodies.length, 2)
+  assert.equal(state.status, 'ready')
+  assert.equal(state.text, '重试之后有了')
+  await h.dispose()
+})
+
+test('two consecutive 5xx answers fail the turn without a retry storm', async () => {
+  const bodies = []
+  const fetchImpl = async (_url, options) => {
+    bodies.push(JSON.parse(options.body))
+    return new Response('upstream unavailable', { status: 500 })
+  }
+  const h = harness({ fetch: fetchImpl })
+  h.ctx.emit('session/event', h.session, { type: 'turn/end', seq: 9, data: { reason: { kind: 'completed' } } })
+  let state
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    state = await readState(h)
+    if (state.status === 'failed') break
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  assert.equal(state.status, 'failed')
+  assert.equal(state.reason, 'model-500')
+  assert.equal(bodies.length, 2)
   await h.dispose()
 })
