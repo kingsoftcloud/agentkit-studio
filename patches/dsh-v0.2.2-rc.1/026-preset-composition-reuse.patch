@@ -1,0 +1,70 @@
+diff --git a/packages/preset/agent-preset-registry/package.json b/packages/preset/agent-preset-registry/package.json
+index 5e12ffaf7fbeb8e3ea71e59c23c83b141a4608e6..e5c2851a2e3824ea0a3dc11beeb00cbb30924b5e 100644
+--- a/packages/preset/agent-preset-registry/package.json
++++ b/packages/preset/agent-preset-registry/package.json
+@@ -40,7 +40,7 @@
+   },
+   "files": [
+     "locale/*.json",
+-    "lib/index.js",
++    "lib/*.js",
+     "lib/types/**/*.js",
+     "lib/types/**/*.d.ts",
+     "lib/typert.host.js",
+diff --git a/packages/preset/agent-preset-registry/src/index.ts b/packages/preset/agent-preset-registry/src/index.ts
+index 4281ece02ae4443423d88acdf21e0c6dfe53d56b..0ef8adc929d05ada82dfee583952b2836f722c41 100644
+--- a/packages/preset/agent-preset-registry/src/index.ts
++++ b/packages/preset/agent-preset-registry/src/index.ts
+@@ -1,6 +1,7 @@
+ /** Declarative Agent capability sets, activation and session binding. */
+ import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
+ import { Context, Service } from '@deepseek-ai/cordis'
++import { clone } from '@deepseek-ai/cosmokit'
+ import z from '@deepseek-ai/schemastery'
+ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+ import { bindScopeParent, createScope, scopeOf, scopeParentOf, type Scope, type ScopeKey, type ScopeParentBinding } from '@deepseek-ai/dsh-scope'
+@@ -228,6 +229,20 @@ export class AgentPresetRegistry extends TypertRemoteService {
+     return { id: wanted, ...(broken === undefined ? {} : { broken }) }
+   }
+ 
++  /** Snapshot a usable preset's declared rows for a derived local composition.
++   * The registry owns validation and preserves Loader expressions and group isolation.
++   * @param id Existing base preset identity.
++   * @returns Independent rows; editing them cannot change the registered base.
++   */
++  async pluginsFor(id: string): Promise<PresetDefinition['plugins']> {
++    const record = this.definitions.get(id)
++    if (record === undefined) throw new RemoteError('agent-preset/not-found', `Unknown agent preset: ${id}`,
++      { agentPreset: id, available: [...this.definitions.keys()] })
++    const broken = await this.diagnostic(record)
++    if (broken !== undefined) throw new RemoteError('agent-preset/invalid', broken, { agentPreset: id, reason: broken })
++    return clone(record.config.plugins)
++  }
++
+   /** Read one declaration's child plugin list as YAML, for viewing only.
+    * @param agentPreset Preset identity.
+    * @returns The declared composition beside its published metadata.
+diff --git a/packages/preset/agent-preset-registry/tests/registry.spec.ts b/packages/preset/agent-preset-registry/tests/registry.spec.ts
+index 17c95f0e5a61f72cf8f5bc492f05e2cb3f757b2e..5fb7eec9659760088edaed3677a13a2beb66f007 100644
+--- a/packages/preset/agent-preset-registry/tests/registry.spec.ts
++++ b/packages/preset/agent-preset-registry/tests/registry.spec.ts
+@@ -14,6 +14,19 @@ afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.di
+ async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
+ 
+ describe('declarative preset revisions', () => {
++  it('snapshots an official preset composition for a derived local Agent', async () => {
++    const ctx = await setup()
++    await declare(ctx, contribution('standard'))
++    const rows = await ctx.agentPresets.pluginsFor('standard')
++    rows[0]!.config = { tool: 'derived' }
++    await declare(ctx, { id: 'derived', plugins: rows })
++    const original = await agentOn(ctx, 'original', 'standard')
++    const derived = await agentOn(ctx, 'derived', 'derived')
++    expect(ctx.tools.schemas(original).map(row => row.name)).toEqual(['standard'])
++    expect(ctx.tools.schemas(derived).map(row => row.name)).toEqual(['derived'])
++    await expect(ctx.agentPresets.pluginsFor('missing')).rejects.toThrow('Unknown agent preset')
++  })
++
+   it('eagerly scopes tool and prompt registrations and shares one revision across Agents', async () => {
+     const ctx = await setup()
+     await declare(ctx, contribution('standard'))

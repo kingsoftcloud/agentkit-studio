@@ -21,8 +21,10 @@ function fixture() {
   };
   const services = { sessionController: controller, agents: { withoutInitiator: work => work() }, permissionPresets: { set() {} },
     approval: { setPolicy: (_agent, value, options) => { assert.equal(value, 'never'); assert.deepEqual(options, { actor: 'automation' }); } }, sessions: { flush: async () => flush },
-    schedule: { catalog: async () => [...timers.values()], create: async (sessionId, spec) => { const row = { ...spec, id: `task-${timers.size}`, sessionId }; timers.set(row.id, row); return row; },
-      delete: async ({ sessionId, id }) => { assert.equal(timers.get(id).sessionId, sessionId); timers.delete(id); return { deleted: true }; } } };
+    schedule: { catalog: async () => [...timers.values()],
+      create: async (request, actorSessionId) => { const row = { id: `task-${timers.size}`, kind: request.timing.kind, title: request.title, prompt: request.prompt,
+        scheduledAt: '2030-01-01T00:00:00.000Z', target: request.target, status: 'active', updatedAt: '2030-01-01T00:00:00.000Z', actorSessionId }; timers.set(row.id, row); return row; },
+      edit: async ({ id, action }) => { assert.equal(action, 'delete'); timers.delete(id); return { id, deleted: true }; } } };
   const calls = [], memories = [{ id: 'memory-a', text: 'prefer concise responses' }];
   const resources = async () => ({ listMemory: async (...args) => { calls.push(args); return { items: memories }; },
     writeMemory: async (...args) => { calls.push(args); return { accepted: true }; },

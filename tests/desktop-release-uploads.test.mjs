@@ -5,16 +5,16 @@ import { desktopReleaseUploads } from '../src/desktop-release-uploads.mjs'
 const STORAGE = 'https://agentkit.ks3-cn-beijing.ksyuncs.com'
 const FEED = 'https://feed.ks3-cn-beijing.ksyuncs.com'
 const base = {
-  expectedBase: 'deepseek-harness-0.2.1-rc.2.20261022.12-mac-arm64',
+  expectedBase: 'deepseek-harness-0.2.2-rc.1.20261022.12-mac-arm64',
   selectedChannel: 'preview',
   storageOrigin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
   feedOrigin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com',
 }
 const plan = {
   assets: {
-    dmg: 'studio/0.2.1-rc.2.20261022.12/AgentKit-Studio-mac-arm64.dmg',
-    zip: 'studio/0.2.1-rc.2.20261022.12/AgentKit-Studio-mac-arm64.zip',
-    blockmap: 'studio/0.2.1-rc.2.20261022.12/AgentKit-Studio-mac-arm64.zip.blockmap',
+    dmg: 'studio/0.2.2-rc.1.20261022.12/AgentKit-Studio-mac-arm64.dmg',
+    zip: 'studio/0.2.2-rc.1.20261022.12/AgentKit-Studio-mac-arm64.zip',
+    blockmap: 'studio/0.2.2-rc.1.20261022.12/AgentKit-Studio-mac-arm64.zip.blockmap',
   },
   releaseKey: 'studio/feeds/mac-arm64/mac-arm64-release.json',
   feedKey: 'studio/feeds/mac-arm64/preview-mac.yml',

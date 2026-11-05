@@ -1,0 +1,16 @@
+diff --git a/apps/web/tests/lifecycle-chrome.e2e.ts b/apps/web/tests/lifecycle-chrome.e2e.ts
+index a0259aa1318148d456738e151d77e0a68be04ed3..cb0b7f2960b9af72ed5693e6448815441b6fbd86 100644
+--- a/apps/web/tests/lifecycle-chrome.e2e.ts
++++ b/apps/web/tests/lifecycle-chrome.e2e.ts
+@@ -319,6 +319,11 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
+     const input = page.locator('[data-composer-input]').first()
+     await input.waitFor({ timeout: 10_000 })
+     if (MODE !== 'record') {
++      // Lexical's untouched root and an edited empty paragraph have different ARIA output.
++      await writeComposerDraft(page, input, 'x')
++      await input.press('Backspace')
++      await expect.poll(() => input.textContent()).toBe('')
++      await expect.poll(() => input.locator('p').count()).toBe(1)
+       await page.getByText('Into the Unknown', { exact: false }).hover()
+       await expect.poll(() => page.getByRole('tooltip').count()).toBe(0)
+       // Golden of the hero's stable waiting state (captured before any send;

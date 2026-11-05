@@ -1,3 +1,4 @@
+import dshPin from '../dsh-pin.json' with { type: 'json' };
 /**
  * Narrow identity-aware Session boundary between AgentEngine canonical events and
  * the official DSH Session wire. DSH owns the durable journal, node assembler,
@@ -397,5 +398,5 @@ export function validateInteractionAnswer(answer) {
 }
 
 export const STUDIO_SESSION_CONTRACT = 'p1-session-contract-v0.1';
-export const DSH_VERSION = '0.2.1-rc.2';
-export const DSH_COMMIT = '687f282e8625c6b8d11ff58211a90524be2e4317';
+export const DSH_VERSION = dshPin.version;
+export const DSH_COMMIT = dshPin.commit;

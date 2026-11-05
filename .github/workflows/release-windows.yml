@@ -92,7 +92,7 @@ jobs:
         if: ${{ inputs.candidate_run_id == '' }}
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.2.1-rc.2
+          ref: dsh-v0.2.2-rc.1
           path: dsh-source
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -141,7 +141,7 @@ jobs:
         if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         run: |
-          if ((git -C dsh-source rev-parse HEAD) -ne '687f282e8625c6b8d11ff58211a90524be2e4317') { throw 'DSH baseline mismatch' }
+          if ((git -C dsh-source rev-parse HEAD) -ne '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db') { throw 'DSH baseline mismatch' }
           git config --system core.longpaths true
           pnpm install --frozen-lockfile
           if ($LASTEXITCODE) { throw 'Studio dependency installation failed' }
@@ -221,7 +221,7 @@ jobs:
           STUDIO_PRODUCT_ICON: ${{ steps.product.outputs.windows_icon }}
           STUDIO_PRODUCT_TRAY_ICON: ${{ steps.product.outputs.windows_tray_icon }}
         run: |
-          [string[]]$packageArguments = @('--source', "$PWD/dsh-source", '--output', "$env:RUNNER_TEMP/studio-build", '--patches', "$PWD/patches/dsh-v0.2.1-rc.2", '--commit', '687f282e8625c6b8d11ff58211a90524be2e4317', '--target', 'win-x64', '--dsh-version', '0.2.1-rc.2', '--studio-version', $env:STUDIO_PACKAGE_VERSION, '--build-version', $env:BUILD_VERSION)
+          [string[]]$packageArguments = @('--source', "$PWD/dsh-source", '--output', "$env:RUNNER_TEMP/studio-build", '--patches', "$PWD/patches/dsh-v0.2.2-rc.1", '--commit', '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db', '--target', 'win-x64', '--dsh-version', '0.2.2-rc.1', '--studio-version', $env:STUDIO_PACKAGE_VERSION, '--build-version', $env:BUILD_VERSION)
           if ('${{ inputs.diagnostic_only }}' -eq 'true') { $packageArguments += '--unsigned' }
           $env:DSH_DESKTOP_PRODUCT_ICON = Join-Path $PWD $env:STUDIO_PRODUCT_ICON
           $env:DSH_DESKTOP_PRODUCT_TRAY_ICON = Join-Path $PWD $env:STUDIO_PRODUCT_TRAY_ICON

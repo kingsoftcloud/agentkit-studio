@@ -1,0 +1,300 @@
+diff --git a/apps/desktop/scripts/desktop-publish-route.ts b/apps/desktop/scripts/desktop-publish-route.ts
+index 9b6fedfa424ca8bfa3885f95d2e0602fcbed1ae8..4c9f7e7888037fcde5b7a5141c9e7d06dd3d9026 100644
+--- a/apps/desktop/scripts/desktop-publish-route.ts
++++ b/apps/desktop/scripts/desktop-publish-route.ts
+@@ -12,7 +12,7 @@ const runSchema = z.object({
+ const requestSchema = z.object({ source: z.object({
+   repository: z.string(), runId: z.string(), attempt: z.string(), commit: z.string().regex(/^[a-f0-9]{40}$/u),
+   workflowCommit: z.string(), sourceRef: z.string().min(1),
+-  channel: z.enum(['nightly', 'latest']),
++  channel: z.enum(['stable', 'preview', 'nightly', 'latest']),
+   runnerName: z.string(), target: z.enum(['mac-arm64', 'mac-x64', 'win-x64']), preset: z.enum(['test', 'production']),
+   qualification: z.enum(['signed', 'notarized', 'unsigned', 'unnotarized']),
+ }).refine(source => source.preset === 'test' || /^(?:master|dsh-v[0-9][0-9A-Za-z.-]*)$/u.test(source.sourceRef),
+@@ -25,7 +25,7 @@ export interface DesktopPublishRoute {
+   readonly attempt: string
+   readonly commit: string
+   readonly sourceRef: string
+-  readonly channel: 'nightly' | 'latest'
++  readonly channel: 'stable' | 'preview' | 'nightly' | 'latest'
+   readonly runnerName: string
+   readonly runnerLabel: string
+   readonly target: 'mac-arm64' | 'mac-x64' | 'win-x64'
+diff --git a/apps/desktop/scripts/desktop-release-store.ts b/apps/desktop/scripts/desktop-release-store.ts
+index c080272e1d87f9769d6c7abc2f9abcfb4b5b76cd..e19d1c513b24cbaed9ed8836468c5963f196c13b 100644
+--- a/apps/desktop/scripts/desktop-release-store.ts
++++ b/apps/desktop/scripts/desktop-release-store.ts
+@@ -14,7 +14,7 @@ const sourceSchema = z.strictObject({
+   commit: z.string().regex(/^[a-f0-9]{40}$/u),
+   workflowCommit: z.string().regex(/^[a-f0-9]{40}$/u),
+   sourceRef: z.string().min(1),
+-  channel: z.enum(['nightly', 'latest']),
++  channel: z.enum(['stable', 'preview', 'nightly', 'latest']),
+   runnerName: z.string().min(1),
+   // Storage accepts every Desktop target; CI routing separately limits currently provisioned platforms.
+   target: z.enum(['mac-arm64', 'mac-x64', 'win-x64']),
+diff --git a/apps/desktop/scripts/desktop-upload-plan.ts b/apps/desktop/scripts/desktop-upload-plan.ts
+index c227069a81c51b1b6c7d04ef25730914a35a9e1c..ad8ec6ba8a4bc0473d78ee8c30cc5e1ce9bd6996 100644
+--- a/apps/desktop/scripts/desktop-upload-plan.ts
++++ b/apps/desktop/scripts/desktop-upload-plan.ts
+@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs'
+ import { readFile, stat } from 'node:fs/promises'
+ import { basename, join, resolve } from 'node:path'
+ import { dump, load } from 'js-yaml'
++import { prerelease } from 'semver'
+ import type { DesktopPackageTargetName } from './package-target.ts'
+ import {
+   desktopBuildRecordFilename,
+diff --git a/apps/desktop/scripts/macos-app-update-config.d.mts b/apps/desktop/scripts/macos-app-update-config.d.mts
+index a4eeef2d1cf97c48f0f8776da0b6c6bf3dfa3593..83a492596dcb0e5af4c35a1564d558f727f4a5ea 100644
+--- a/apps/desktop/scripts/macos-app-update-config.d.mts
++++ b/apps/desktop/scripts/macos-app-update-config.d.mts
+@@ -1,7 +1,7 @@
+ /** Resolved fields required to embed a macOS updater feed. */
+ export interface MacOSAppUpdateFeed {
+   readonly publicUrl: string
+-  readonly channel?: 'nightly' | 'latest'
++  readonly channel?: 'stable' | 'preview' | 'nightly' | 'latest'
+ }
+ 
+ /** Packaged electron-updater configuration for macOS. */
+@@ -9,7 +9,7 @@ export interface MacOSAppUpdateConfig {
+   readonly provider: 'generic'
+   readonly useMultipleRangeRequest: false
+   readonly url: string
+-  readonly channel: 'nightly' | 'latest'
++  readonly channel: 'stable' | 'preview' | 'nightly' | 'latest'
+   readonly updaterCacheDirName: string
+ }
+ 
+diff --git a/apps/desktop/scripts/publish-desktop-ci.ts b/apps/desktop/scripts/publish-desktop-ci.ts
+index f9348ec2eb8f80f1e4857519f44157192ee4f212..b4dcb54d2d4a450c1ef378d83e2341c247023c81 100644
+--- a/apps/desktop/scripts/publish-desktop-ci.ts
++++ b/apps/desktop/scripts/publish-desktop-ci.ts
+@@ -17,7 +17,7 @@ import { publishDesktopTag } from './desktop-publish-tag.ts'
+ import { desktopPublishQualificationError } from './desktop-publish-qualification.mjs'
+ 
+ const routeSchema = z.object({ runId: z.string(), attempt: z.string(), commit: z.string(), runnerName: z.string(),
+-  sourceRef: z.string(), channel: z.enum(['nightly', 'latest']),
++  sourceRef: z.string(), channel: z.enum(['stable', 'preview', 'nightly', 'latest']),
+   target: z.enum(['mac-arm64', 'mac-x64', 'win-x64']), preset: z.enum(['test', 'production']) })
+ 
+ /**
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index d26e5dd7f3f0d194f8878cc7da690059eeaa97b6..20465a2d5d7a7669b4e4d19f22de46395429f95c 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -1436,7 +1436,7 @@ export interface DesktopLocale {
+ /** Resolve Electron's locale to one shipped Desktop dictionary. */
+ export function resolveDesktopLocale(locale: string, productName = 'DeepSeek Harness'): DesktopLocale {
+   const primary = locale.toLowerCase().split('-')[0]
+-  const selected = primary !== undefined && Object.hasOwn(dictionaries, primary)
++  const selected: DesktopLocale = primary !== undefined && Object.hasOwn(dictionaries, primary)
+     ? (() => { const id = primary as keyof typeof dictionaries; return { id: id === 'zh' ? 'zh-CN' : id, messages: dictionaries[id] } })()
+     : { id: 'en' as const, messages: en }
+   if (productName === 'DeepSeek Harness') return selected
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 2aba3a5ae19bee8698954b67af157c542df4cb97..1f27f8da932bc7390b8c5f492834e046946e0479 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -24,8 +24,9 @@ import type { DesktopRelease } from './release.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+ import { alignBundledProductPlugins } from './bundled-plugin-alignment.ts'
+ import {
+-  initProfile, PROFILE_TEMPLATES, readProfileManifest, removeLinkProjections, sanitizeProfile, writeProfileManifest, type ProfileTemplate,
++  initProfile, readProfileManifest, removeLinkProjections, sanitizeProfile, writeProfileManifest,
+ } from '@deepseek-ai/dsh-app-boot'
++import { PROFILE_TEMPLATES, type ProfileTemplate } from '@deepseek-ai/dsh-official-bundles'
+ 
+ const PROJECT_NAME = '@deepseek-ai/dsh-desktop-runtime'
+ const DSH_PACKAGE = '@deepseek-ai/dsh'
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index ca3f6c7718c96e1848385146a226d75668176bed..4b8340ccf11abb9af32bc49359dec5ddc57644b0 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -860,6 +860,7 @@ export const ja = {
+   'hero.headline': '未知への挑戦',
+   'hero.preview': 'プレビュー',
+   'hero.chooseWorkspace': 'ワークスペースを選択',
++  'hero.clearWorkspace': 'ワークスペースを解除',
+   'session.hierarchy': 'セッション階層',
+   'session.moreViews': 'その他の会話ビュー',
+   'todo.title': 'ToDo',
+@@ -1247,6 +1248,7 @@ export const es = {
+   'hero.headline': 'Hacia lo desconocido',
+   'hero.preview': 'Vista previa',
+   'hero.chooseWorkspace': 'Elige espacio de trabajo',
++  'hero.clearWorkspace': 'Borrar espacio de trabajo',
+   'session.hierarchy': 'Jerarquía de sesiones',
+   'session.moreViews': 'Más vistas de conversación',
+   'todo.title': 'Tareas pendientes',
+@@ -1636,6 +1638,7 @@ export const fr = {
+   'hero.headline': "Dans l'inconnu",
+   'hero.preview': 'Aperçu',
+   'hero.chooseWorkspace': 'Choisir un espace de travail',
++  'hero.clearWorkspace': 'Effacer l’espace de travail',
+   'session.hierarchy': 'Hiérarchie des sessions',
+   'session.moreViews': 'Plus de vues de conversations',
+   'todo.title': 'À faire',
+@@ -2025,6 +2028,7 @@ export const de = {
+   'hero.headline': 'Ins Unbekannte',
+   'hero.preview': 'Vorschau',
+   'hero.chooseWorkspace': 'Wählen Sie einen Arbeitsbereich',
++  'hero.clearWorkspace': 'Arbeitsbereich löschen',
+   'session.hierarchy': 'Sitzungshierarchie',
+   'session.moreViews': 'Weitere Konversationsansichten',
+   'todo.title': 'Aufgaben',
+@@ -2414,6 +2418,7 @@ export const ru = {
+   'hero.headline': 'В неизвестность',
+   'hero.preview': 'Предварительный просмотр',
+   'hero.chooseWorkspace': 'Выберите рабочее пространство',
++  'hero.clearWorkspace': 'Очистить рабочее пространство',
+   'session.hierarchy': 'Иерархия сеансов',
+   'session.moreViews': 'Больше просмотров беседы',
+   'todo.title': 'Дела',
+@@ -2803,6 +2808,7 @@ export const pt = {
+   'hero.headline': 'Para o desconhecido',
+   'hero.preview': 'Visualização',
+   'hero.chooseWorkspace': 'Escolha o espaço de trabalho',
++  'hero.clearWorkspace': 'Limpar espaço de trabalho',
+   'session.hierarchy': 'Hierarquia de sessão',
+   'session.moreViews': 'Mais visualizações de conversas',
+   'todo.title': 'Tarefas',
+diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
+index 7f27c9b46acc030e6e1bdfeb7078c9e6e819a512..fd1cfcfec2ffdfe3993761e9343998456ee5e0ac 100644
+--- a/packages/client/ui-workspace/src/client/index.ts
++++ b/packages/client/ui-workspace/src/client/index.ts
+@@ -309,10 +309,10 @@ export function apply(ctx: Context): void {
+     searchResultLimit: sessions.searchResultLimit,
+     requestSessionRename,
+     notifyArchivedNotOpenable: () => { notify({ kind: 'archivedNotOpenable' }) },
+-    renameWorkspace: async (workspaceId, title) => { await workspaces.rename(workspaceId, title) },
+-    deleteWorkspace: async (workspaceId) => { await workspaces.delete(workspaceId) },
++    renameWorkspace: async (workspaceId, title) => { if (workspaceId !== null) await workspaces.rename(workspaceId, title) },
++    deleteWorkspace: async (workspaceId) => { if (workspaceId !== null) await workspaces.delete(workspaceId) },
+     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
+-      await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
++      if (workspaceId !== null) await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
+     },
+     unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
+     createWorkspace: input => workspaces.create(input),
+diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
+index 1c11edb75ada0ea24513c1dbcf18f788a321c096..445dd96121fa19d435c261fc895ee79185fbada8 100644
+--- a/packages/client/ui-workspace/src/client/navigation.ts
++++ b/packages/client/ui-workspace/src/client/navigation.ts
+@@ -81,9 +81,12 @@ export interface UiWorkspace {
+    */
+   connectWorkspace(workspaceId: WorkspaceId, options?: Pick<StartSessionOptions, 'agentPreset'>): Promise<SessionId>
+   /**
+-   * Open the Workspace blank `connectWorkspace` resolves, or create an ungrouped Session when `workspaceId` is null, so New Session returns to that blank's unsent draft. A creation the Host refuses is shown through the Workspace notice and leaves the selection as it was.
++   * Open the Workspace blank `connectWorkspace` resolves, or create an ungrouped Session when
++   * `workspaceId` is null, so New Session returns to that blank's unsent draft. A creation the Host
++   * refuses is shown through the Workspace notice and leaves the selection as it was.
+    * @param workspaceId - explicit target; null creates an ungrouped Session; absent inherits the current or most recent Workspace.
+-   * @param options - initial content, the blank's preset, and `whenDraftExists`, which decides whether existing text or attachments are kept, replaced, or followed by the prompt.
++   * @param options - initial content, the blank's preset, and `whenDraftExists`, which decides
++   * whether existing text or attachments are kept, replaced, or followed by the prompt.
+    */
+   startSession(workspaceId?: WorkspaceId | null, options?: StartSessionOptions): void
+   /**
+@@ -326,7 +329,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+       const model = source?.projectionValues?.modelSelection?.next
+       sessionId = await (workspaceId === null
+         ? this.sessions.create(typeof preset === 'string' ? { agentPreset: preset } : reuse ?? {})
+-        : this.connectBlank(workspaceId, reuse))
++        : this.connectBlank(workspaceId, reuse ?? {}))
+       if (cancelled()) return
+       if (model !== undefined && model !== null) {
+         const result = await this.selectModel({ sessionId, ...model, saveDefault: false })
+diff --git a/packages/client/ui-workspace/tests/apply.client.spec.ts b/packages/client/ui-workspace/tests/apply.client.spec.ts
+index a413a3ab06c9591670a4cfdefdc0fd72d1300037..2f21c0e963ec743fa516a010106472d4e822df24 100644
+--- a/packages/client/ui-workspace/tests/apply.client.spec.ts
++++ b/packages/client/ui-workspace/tests/apply.client.spec.ts
+@@ -159,11 +159,11 @@ async function bench(access: 'fake' | 'static' = 'fake') {
+   } as never)
+   const pickDirectory = vi.fn(() => Promise.resolve({ ok: true as const, value: '/projects/picked' }))
+   const directoryPicker = { pick: pickDirectory }
+-  const session = { selectModel: vi.fn() }
+-  const commands = { execute: vi.fn() }
+-  Object.assign(new TestRemote(ctx), { directoryPicker, session, commands })
+-  ctx.provide('remote.session', session as never)
+-  ctx.provide('remote.commands', commands as never)
++  const remoteSession = { selectModel: vi.fn() }
++  const remoteCommands = { execute: vi.fn() }
++  Object.assign(new TestRemote(ctx), { directoryPicker, session: remoteSession, commands: remoteCommands })
++  ctx.provide('remote.session', remoteSession as never)
++  ctx.provide('remote.commands', remoteCommands as never)
+   ctx.provide('remote.directoryPicker', directoryPicker as never)
+   const locale = new LocaleRuntime(ctx)
+   // These specs assert the shipped Chinese copy. There is no jsdom `window`
+diff --git a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+index fc8672ed235aae51dbea0cd7fb6b205ca74c1bd5..b9a441cbbd30e961944cd51da6fcb2a1fdec23ca 100644
+--- a/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
++++ b/packages/client/ui-workspace/tests/workspaces-service.client.spec.ts
+@@ -11,6 +11,7 @@ import type {
+   IWorkspaces, WorkspaceId, WorkspaceSnapshot, WorkspaceView,
+ } from '@deepseek-ai/dsh-api-workspace-controller/client'
+ import type { ClientRemote, DirectoryListing } from '@deepseek-ai/dsh-api-remotes/client'
++import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+ import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+ import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
+ import { SessionId } from '@deepseek-ai/dsh-session/types'
+@@ -314,7 +315,10 @@ function bench(options: BenchOptions = {}) {
+     selectModel,
+     executeCommand,
+   )
+-  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, requestDraftInitialization, selectModel, executeCommand }
++  return {
++    ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify,
++    requestDraftInitialization, selectModel, executeCommand,
++  }
+ }
+ 
+ function lastOpening(open: MockInstance<UiWorkspaceService['openWorkspace']>): Promise<void> {
+@@ -766,7 +770,7 @@ describe('UiWorkspaceService', () => {
+ 
+   it('preserves the Agent preset, model and access mode when cancelling a Workspace', async () => {
+     const current = summary('source', { blank: true, projectionValues: {
+-      agentPreset: 'studio-test-preset', modelSelection: { next: { provider: 'gateway', model: 'chosen', reasoningEffort: 'high' }, lastUsed: null },
++      agentPreset: 'studio-test-preset', modelSelection: { next: { provider: 'gateway', model: 'chosen', reasoningEffort: ReasoningEffortId('high') }, lastUsed: null },
+       permissions: { currentValue: 'read-only' },
+     } })
+     const b = bench({ workspaces: workspaceState([workspace('a', [current.id])]), sessions: sessionState([current]) })
+diff --git a/packages/context/agent-instructions/tests/agent-instructions.spec.ts b/packages/context/agent-instructions/tests/agent-instructions.spec.ts
+index bc331798c8e251597c3a8583937a7bcdd7c7ba64..696c65b957a9d1fd238a4714d7eb47ca2c81b9a2 100644
+--- a/packages/context/agent-instructions/tests/agent-instructions.spec.ts
++++ b/packages/context/agent-instructions/tests/agent-instructions.spec.ts
+@@ -33,6 +33,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
+ import { defineContentToolFixture } from '@deepseek-ai/dsh-tool-testkit'
+ import type {
+   ToolExecution,
++  ToolExecutionResult,
+   ToolExecutionToken,
+ } from '@deepseek-ai/dsh-tools'
+ import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
+@@ -1874,8 +1875,11 @@ describe('workspace context request injection', () => {
+       const agent = await stubAgent(root)
+       await composeBaselinePrefix(ctx, agent)
+       const notify = (name: string, args: unknown, isError = false, signal = testToolSignal): void => {
++        const result: ToolExecutionResult = isError
++          ? { content: [{ type: 'text', text: 'result' }], isError: true, error: { message: 'result' } }
++          : { content: [{ type: 'text', text: 'result' }], isError: false, value: null }
+         ctx.emit('tools/result', stubToolExecution({ callId: ToolCallId('configured-touch'), name,
+-          arguments: args, agent, signal }), { content: [{ type: 'text', text: 'result' }], isError, value: null })
++          arguments: args, agent, signal }), result)
+       }
+       notify('read_workspace_file', { path: 'pkg/file.ts' }, true)
+       notify('read_workspace_file', { path: 'pkg/file.ts' }, false, AbortSignal.abort())
+diff --git a/packages/extensions/cordis-client-runner/src/client/api-catalog.ts b/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
+index 123c6fe2b937acbd91346ae24c08ebfeabf6e57a..a36d6ca33da9954521990cd475ca502a6802592b 100644
+--- a/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
++++ b/packages/extensions/cordis-client-runner/src/client/api-catalog.ts
+@@ -354,7 +354,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         returns: 'the child SessionId after creation and inherited-title increment.',
+       },
+       {
+-        signature: 'connectWorkspace(workspaceId: WorkspaceId, options?: Pick<StartSessionOptions, 'agentPreset'>): Promise<SessionId>',
++        signature: 'connectWorkspace(workspaceId: WorkspaceId, options?: Pick<StartSessionOptions, \'agentPreset\'>): Promise<SessionId>',
+         description: 'Resolve the Session for a new conversation in a Workspace: navigation names the first reusable blank member — listed in the Workspace, not archived, and listing no preset or the requested one — and the Host reuses it under the requested preset or its default, creating another Session when it reuses none. Concurrent calls for the same Workspace and preset share one attempt.',
+         parameters: [{ name: 'workspaceId', description: 'target Workspace.' }, { name: 'options', description: 'choices for the created or reused Session.' }],
+         returns: 'a Session already addressable through the Session Controller.',

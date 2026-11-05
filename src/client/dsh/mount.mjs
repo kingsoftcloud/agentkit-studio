@@ -8,6 +8,7 @@ import { installBridgeStartupNotice } from './startup-notice.mjs';
 import { installProductCopy } from '../../product-copy.mjs';
 import { installNativeToolViews } from './native-tool-view.mjs';
 import { installTaskTimeline } from './task-timeline.mjs';
+import { installPromptPrediction } from './prompt-prediction.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
@@ -16,6 +17,7 @@ export function mountStudio(ctx, app) {
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
+  installPromptPrediction(ctx, { React, h, window });
   const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
@@ -52,7 +54,7 @@ export function mountStudio(ctx, app) {
     return () => window.removeEventListener('agentkit-studio:open-plugin-center', open);
   }, 'agentkit-studio:plugin-center-navigation');
   // Schedule is a capability, not a hard requirement for the fixed
-  // dsh-v0.2.1-rc.2 host. Older profiles can still expose the Studio
+  // dsh-v0.2.2-rc.1 host. Older profiles can still expose the Studio
   // product surface and all model/agent/resource surfaces while the automation
   // panel reports that its host service is unavailable.
   // `remote.schedule` is optional across pinned DSH hosts. Cordis proxies

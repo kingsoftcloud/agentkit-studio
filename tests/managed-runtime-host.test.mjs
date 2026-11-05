@@ -18,7 +18,7 @@ async function fixture(t) {
   const modules = join(installation, 'node_modules');
   await mkdir(join(modules, '@deepseek-ai/dsh/lib'), { recursive: true });
   await mkdir(join(modules, '@kingsoftcloud/agentkit-studio'), { recursive: true });
-  await writeFile(join(modules, '@deepseek-ai/dsh/package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' }));
+  await writeFile(join(modules, '@deepseek-ai/dsh/package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.2-rc.1' }));
   await writeFile(join(modules, '@deepseek-ai/dsh/lib/bin.js'), '// installed CLI fixture');
   // A strict CLI installation keeps the public lock dependency under its
   // declared packages. Real cross-process kernel locking has a Host verifier.
@@ -32,7 +32,7 @@ async function fixture(t) {
   }
   await writeFile(join(system, 'package.json'), JSON.stringify({ name: '@deepseek-ai/node-addon-system', type: 'module', exports: { './flock': './flock.js' } }));
   await writeFile(join(system, 'flock.js'), 'export async function tryLockExclusive() {}');
-  await writeFile(join(modules, '@kingsoftcloud/agentkit-studio/studio.plugin.json'), JSON.stringify({ requiredDsh: '0.2.1-rc.2' }));
+  await writeFile(join(modules, '@kingsoftcloud/agentkit-studio/studio.plugin.json'), JSON.stringify({ requiredDsh: '0.2.2-rc.1' }));
   const raw = stringify({ name: 'employee', framework: 'dsh-native', artifact_type: 'ManagedRuntime',
     runtime: { name: 'dsh-native', version: 'studio-test.1' }, model: 'fixture-model', prompt: '原生声明提示词。' });
   await writeFile(manifest, raw);

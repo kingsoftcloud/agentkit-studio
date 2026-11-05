@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readGitHubJobLogs } from '../scripts/github-job-logs.mjs';
 
 const path = 'repos/example/studio/actions/jobs/123/logs';
-const raw = '\u001b[32mSTUDIO_REF_VALUE: abc123\u001b[0m\nBUILD_VERSION: 0.2.1-rc.2\n';
-const clean = 'STUDIO_REF_VALUE: abc123\nBUILD_VERSION: 0.2.1-rc.2\n';
+const raw = '\u001b[32mSTUDIO_REF_VALUE: abc123\u001b[0m\nBUILD_VERSION: 0.2.2-rc.1\n';
+const clean = 'STUDIO_REF_VALUE: abc123\nBUILD_VERSION: 0.2.2-rc.1\n';
 
 test('modern gh logs are stripped before candidate identity parsing without a retry', async () => {
   const calls = [];

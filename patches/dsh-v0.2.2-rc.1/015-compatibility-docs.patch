@@ -1,0 +1,82 @@
+diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
+index 48ff2ce633454b227b9c1210dd068dea9bf0f98a..9d615a48e1b2ecea71d090dce6ff8a02ef4eee37 100644
+--- a/docs/subsystems/core.md
++++ b/docs/subsystems/core.md
+@@ -1168,6 +1168,22 @@ Source: [`packages/core/agent-loop/src/index.ts`](../../packages/core/agent-loop
+ 
+ ### `agent-preset/*` events
+ 
++<a id="agent-presetcatalog-changed--emit"></a>
++
++#### `agent-preset/catalog-changed` — emit
++
++A declaration finished activation or was removed; roster consumers re-read.
++
++```ts cordis-catalog
++/**
++ * A declaration finished activation or was removed; roster consumers re-read.
++ * @mode emit
++ */
++'agent-preset/catalog-changed'(): void
++```
++
++Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
++
+ <a id="agent-presetselected--emit"></a>
+ 
+ #### `agent-preset/selected` — emit
+diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
+index 19acf51b51cfdea76adce282e805e6807bae76a1..10c8b31cff1d34e44992fd6d3aa38200f8d3ca93 100644
+--- a/docs/subsystems/core.zh.md
++++ b/docs/subsystems/core.zh.md
+@@ -1180,6 +1180,22 @@ Source: [`packages/core/agent-loop/src/index.ts`](../../packages/core/agent-loop
+ 
+ ### `agent-preset/*` events
+ 
++<a id="agent-presetcatalog-changed--emit"></a>
++
++#### `agent-preset/catalog-changed` — emit
++
++A declaration finished activation or was removed; roster consumers re-read.
++
++```ts cordis-catalog
++/**
++ * A declaration finished activation or was removed; roster consumers re-read.
++ * @mode emit
++ */
++'agent-preset/catalog-changed'(): void
++```
++
++Source: [`packages/preset/agent-preset-registry/src/types.ts`](../../packages/preset/agent-preset-registry/src/types.ts)
++
+ <a id="agent-presetselected--emit"></a>
+ 
+ #### `agent-preset/selected` — emit
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index 9ebb1f644f3f19f861e4a2eaccc144e46a956c59..a024b524c373f0800f2ea931345c04fc8655f358 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -4700,6 +4700,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
+     parameters: [{ name: 'payload', description: '.error - persistence, setup, or publication failure.' }],
+   },
+   {
++    name: 'agent-preset/catalog-changed',
++    mode: 'emit',
++    signature: '\'agent-preset/catalog-changed\'(): void',
++    summary: 'A declaration finished activation or was removed; roster consumers re-read.',
++    description: 'A declaration finished activation or was removed; roster consumers re-read.',
++    parameters: [],
++  },
++  {
+     name: 'agent-preset/selected',
+     mode: 'emit',
+     signature: '\'agent-preset/selected\'(sessionId: SessionId, agentPreset: string): void',
+@@ -8685,7 +8693,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
+   },
+   {
+     name: 'SessionSelectModelRequest',
+-    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n}',
++    declaration: 'export interface SessionSelectModelRequest extends ModelSelection {\n    readonly sessionId: SessionId;\n    readonly saveDefault?: boolean;\n}',
+   },
+   {
+     name: 'SessionSelectModelValue',

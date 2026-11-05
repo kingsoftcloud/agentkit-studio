@@ -1,0 +1,196 @@
+diff --git a/apps/desktop/scripts/desktop-upload-plan.ts b/apps/desktop/scripts/desktop-upload-plan.ts
+index ad8ec6ba8a4bc0473d78ee8c30cc5e1ce9bd6996..c86f0829c9183770304ced2933277d27ff994f4d 100644
+--- a/apps/desktop/scripts/desktop-upload-plan.ts
++++ b/apps/desktop/scripts/desktop-upload-plan.ts
+@@ -279,7 +279,7 @@ export async function createDesktopUploadPlan(
+     contents: dump(published),
+   }
+   artifacts.push(channelArtifact)
+-  if (prerelease(buildVersion) === null && (update.channel === 'stable' || update.channel === 'nightly')) {
++  if (prerelease(buildVersion) === null && update.channel === 'stable') {
+     const stableFilename = metadataFilename.replace(/^(?:stable|nightly)/u, 'latest')
+     artifacts.push({ ...channelArtifact, filename: stableFilename, key: `${update.keyPrefix}/${stableFilename}` })
+   }
+diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
+index 20e714e4493b163d8f3fcf0de5f44f0aee935c3b..c6e66b7c79728c81a0f0381965e1c3ccd6bc2e20 100644
+--- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
++++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
+@@ -124,14 +124,14 @@ describe('desktop auto-update environment', () => {
+       DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
+       DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
+       DSH_DESKTOP_UPDATE_CHANNEL: 'canary',
+-    }, 'darwin', 'arm64')).toThrow(/stable or preview/u)
++    }, 'darwin', 'arm64')).toThrow(/stable, preview, or latest/u)
+   })
+ 
+   it.each([undefined, '', ' ', 'nightly', 'canary'])('rejects production channel %j before packaging', (channel) => {
+     expect(() => resolveDesktopAutoUpdateConfig({
+       DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
+       DSH_DESKTOP_UPDATE_CHANNEL: channel,
+-    }, 'darwin', 'arm64')).toThrow(/must explicitly be stable or preview/u)
++    }, 'darwin', 'arm64')).toThrow(/must explicitly be stable, preview, or latest/u)
+   })
+ 
+   it('uses Nightly metadata for stable and prerelease Desktop versions', () => {
+diff --git a/apps/desktop/tests/desktop-upload-plan.spec.ts b/apps/desktop/tests/desktop-upload-plan.spec.ts
+index 6392ea0162938bc196463bc1a8860f44c514c080..0c81482d664df052a659fdf8de0307cb1c2c4d70 100644
+--- a/apps/desktop/tests/desktop-upload-plan.spec.ts
++++ b/apps/desktop/tests/desktop-upload-plan.spec.ts
+@@ -178,10 +178,11 @@ describe('desktop upload plan', () => {
+   })
+ 
+   it.each(['test', 'production'] as const)('isolates stable latest packages from nightly in %s', async (environment) => {
+-    const nightly = await createDesktopUploadPlan('win-x64', await fixture('win-x64', '1.2.3', environment, 'nightly'))
++    const primaryChannel = environment === 'production' ? 'preview' : 'nightly'
++    const nightly = await createDesktopUploadPlan('win-x64', await fixture('win-x64', '1.2.3', environment, primaryChannel))
+     const latest = await createDesktopUploadPlan('win-x64', await fixture('win-x64', '1.2.3', environment, 'latest'))
+     expect(latest.artifacts.filter(file => file.channelMetadata).map(file => file.filename)).toEqual(['latest.yml'])
+-    expect(nightly.artifacts.filter(file => file.channelMetadata).map(file => file.filename)).toEqual(['nightly.yml'])
++    expect(nightly.artifacts.filter(file => file.channelMetadata).map(file => file.filename)).toEqual([`${primaryChannel}.yml`])
+     expect(latest.artifacts.every(file => !nightly.artifacts.some(other => other.key === file.key))).toBe(true)
+     const prerelease = await fixture('win-x64', '1.2.3-alpha.1', environment, 'latest')
+     await expect(createDesktopUploadPlan('win-x64', prerelease)).rejects.toThrow(/latest requires a stable version/u)
+diff --git a/apps/desktop/tests/expected/application-menu-en-US.json b/apps/desktop/tests/expected/application-menu-en-US.json
+index 71b281c6b2eb3015a302a4e234f9e29b01c2363b..c7003dfb7d0abb55cb10051ae13aad3d0d889862 100644
+--- a/apps/desktop/tests/expected/application-menu-en-US.json
++++ b/apps/desktop/tests/expected/application-menu-en-US.json
+@@ -16,6 +16,13 @@
+     "type": "separator"
+   },
+   {
++    "label": "Reload Page",
++    "role": "reload"
++  },
++  {
++    "label": "Restart App and Host"
++  },
++  {
+     "role": "toggleDevTools",
+     "label": "Developer tools"
+   },
+diff --git a/apps/desktop/tests/expected/application-menu-zh-CN.json b/apps/desktop/tests/expected/application-menu-zh-CN.json
+index 472aa48a8ea303b2e6861bda10c70c3a976bab7b..9c73587031eed66de80b7df0ad40a3bbb9899b97 100644
+--- a/apps/desktop/tests/expected/application-menu-zh-CN.json
++++ b/apps/desktop/tests/expected/application-menu-zh-CN.json
+@@ -16,6 +16,13 @@
+     "type": "separator"
+   },
+   {
++    "label": "刷新页面",
++    "role": "reload"
++  },
++  {
++    "label": "重启应用与 Host"
++  },
++  {
+     "role": "toggleDevTools",
+     "label": "开发者工具"
+   },
+diff --git a/apps/desktop/tests/local-macos-package.spec.ts b/apps/desktop/tests/local-macos-package.spec.ts
+index ebb2cdd14ba71c4340a71e1b5e9ef4c24b35a233..fbac3792f5d1d4ad1a6df47cd2381e5547d6a252 100644
+--- a/apps/desktop/tests/local-macos-package.spec.ts
++++ b/apps/desktop/tests/local-macos-package.spec.ts
+@@ -8,9 +8,11 @@ it('explicit local macOS builds require neither release credentials nor an updat
+     DSH_DESKTOP_APP_ID: 'com.kingsoftcloud.agentkit-studio.local',
+     DSH_DESKTOP_TARGET_PLATFORM: 'darwin', DSH_DESKTOP_TARGET_ARCH: 'arm64', DSH_DESKTOP_UNSIGNED: '1',
+   }, 'darwin', 'arm64')
+-  expect(config.mac.identity).toBeNull()
++  // The current host uses an ad-hoc signature to keep local Electron builds runnable.
++  expect(config.mac.identity).toBe('-')
+   expect(config.mac.forceCodeSigning).toBe(false)
++  expect(config.mac.notarize).toBe(false)
+   expect(config.artifactName).toContain('-unsigned')
+   expect(config.publish).toBeNull()
+-  expect(config.extraMetadata).toMatchObject({ dshMandatoryUpdatePolicy: undefined })
++  expect(config.extraMetadata).not.toHaveProperty('dshMandatoryUpdatePolicy')
+ })
+diff --git a/apps/desktop/tests/package-target-stages.spec.ts b/apps/desktop/tests/package-target-stages.spec.ts
+index 2163f73e44c407aca682cd7a38f078ca42abcaab..34ddd9e2100c5f991b827cb5124bcffef2fbbb8c 100644
+--- a/apps/desktop/tests/package-target-stages.spec.ts
++++ b/apps/desktop/tests/package-target-stages.spec.ts
+@@ -429,7 +429,8 @@ it('preserves the product shell title through the official client build environm
+   await packageTarget(parseDesktopPackageInvocation(['mac-arm64', '--unsigned'], 'darwin', 'arm64'), {
+     ...environment, DSH_CLIENT_TITLE: 'AgentKit Studio',
+   }, run)
+-  const build = run.run.mock.calls.find(call => call[0] === 'run build:official')![3].env
++  // rc1 selects the local profile build for unsigned macOS targets; both stages share the build environment.
++  const build = run.run.mock.calls.find(call => call[0] === 'run build --profile local')![3].env
+   const official = officialClientBuildEnvironment(process.cwd(), build)
+   const child = clientBuildProcessEnvironment(build, official)
+   expect(child.DSH_CLIENT_TITLE).toBe('DeepSeek Harness')
+diff --git a/apps/desktop/tests/product-branding.spec.ts b/apps/desktop/tests/product-branding.spec.ts
+index 736ccd67fe4ee9235819522ab0eb2dc52b3517f1..c412026f477beca74bd14df7baaefef15ff59f06 100644
+--- a/apps/desktop/tests/product-branding.spec.ts
++++ b/apps/desktop/tests/product-branding.spec.ts
+@@ -9,7 +9,7 @@ it('product builds use the supplied icon in the macOS bundle and bundled resourc
+   expect(config.mac.icon).toBe('/tmp/studio-icon.png')
+   expect(config.asarUnpack).toContain('**/@openai/codex*/**/*')
+   expect(config.extraResources).toContainEqual({ from: '/tmp/studio-icon.png', to: 'icon.png' })
+-  expect(config.mac.extendInfo).toMatchObject({ CFBundleLocalizations: ['en', 'zh_CN'], NSMicrophoneUsageDescription: 'AgentKit Studio uses your microphone to transcribe speech into message drafts.' })
++  expect(config.mac.extendInfo).toMatchObject({ CFBundleLocalizations: ['en', 'zh_CN', 'ja', 'es', 'fr', 'de', 'ru', 'pt'], NSMicrophoneUsageDescription: 'AgentKit Studio uses your microphone to transcribe speech into message drafts.' })
+ })
+ it('ordinary DSH builds keep the official icon and name', () => {
+   const config = createElectronBuilderConfig(env, 'darwin', 'arm64')
+diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
+index 7d615937031f73f177b3f3e5820a871fd0836453..9aca0936a9fa1394e4573e72cd61d63eb23186ab 100644
+--- a/apps/desktop/tests/update-coordinator.spec.ts
++++ b/apps/desktop/tests/update-coordinator.spec.ts
+@@ -47,7 +47,7 @@ describe('desktop release metadata', () => {
+ const coordinators: InstanceType<typeof DesktopUpdateCoordinator>[] = []
+ afterEach(() => { for (const item of coordinators.splice(0)) item.dispose() })
+ 
+-function fixture(channel: 'nightly' | 'latest' = 'nightly', version = '1.1.0-alpha.1') {
++function fixture(channel: 'nightly' | 'latest' | 'stable' | 'preview' = 'nightly', version = '1.1.0-alpha.1') {
+   const events = new EventEmitter()
+   const checkForUpdates = vi.fn(async () => ({
+     isUpdateAvailable: true,
+@@ -162,12 +162,9 @@ describe('desktop update coordinator', () => {
+     })
+   })
+ 
+-  it('uses Stable metadata without allowing prerelease or downgrade', () => {
+-    vi.stubEnv('DSH_DESKTOP_UPDATE_CHANNEL', 'stable')
+-    try {
+-      const f = fixture()
+-      expect(f.updater).toMatchObject({ channel: 'stable', allowPrerelease: false, allowDowngrade: false })
+-    } finally { vi.unstubAllEnvs() }
++  it.each(['stable', 'preview'] as const)('uses packaged %s metadata without allowing downgrade', (channel) => {
++    const f = fixture(channel)
++    expect(f.updater).toMatchObject({ channel, allowPrerelease: channel === 'preview', allowDowngrade: false })
+   })
+ 
+   it('joins checks and downloads without retargeting a prepared release', async () => {
+diff --git a/packages/api/session-controller/tests/session-models.host.spec.ts b/packages/api/session-controller/tests/session-models.host.spec.ts
+index 273753b8175399371bcdb8a52afa0887080a8ba2..e4b4d1ab0fe8df435a060ad81459138f893c70db 100644
+--- a/packages/api/session-controller/tests/session-models.host.spec.ts
++++ b/packages/api/session-controller/tests/session-models.host.spec.ts
+@@ -670,7 +670,8 @@ describe('Web session model selection', () => {
+     expectValue(await remote.selectModel(request({
+       sessionId, provider: 'deepseek-official', model: 'deepseek-chat', saveDefault: false,
+     })))
+-    expect(currentSelection(ctx, sessionId)).toEqual({ provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' })
++    // rc1 installs the requested selection; an adapter-owned effort default applies at call time.
++    expect(currentSelection(ctx, sessionId)).toEqual({ provider: 'deepseek-official', model: 'deepseek-chat' })
+     expect(saved).toHaveLength(1)
+ 
+     // A refused selection never becomes anyone's default.
+diff --git a/packages/client/ui-conversation/tests/product-brand.client.spec.tsx b/packages/client/ui-conversation/tests/product-brand.client.spec.tsx
+index b1195886898987b5dcfafe5f73b96b0ec36610e1..89ce06af047a4b4e9ceae8502b2731b72502932a 100644
+--- a/packages/client/ui-conversation/tests/product-brand.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/product-brand.client.spec.tsx
+@@ -47,11 +47,12 @@ it('retains the native hover animation and reduced-motion preference', () => {
+   vi.stubGlobal('matchMedia', () => ({ matches: motion }))
+   const view = mount()
+   const hitbox = view.container.querySelector('svg')!.parentElement!
+-  fireEvent.mouseEnter(hitbox)
++  // rc1 drives the hitbox from pointer events so touch never starts the animation.
++  fireEvent.pointerEnter(hitbox)
+   expect(view.container.querySelector('animate')).not.toBeNull()
+-  fireEvent.mouseLeave(hitbox)
++  fireEvent.pointerLeave(hitbox)
+   expect(view.container.querySelector('animate')).toBeNull()
+   motion = false
+-  fireEvent.mouseEnter(hitbox)
++  fireEvent.pointerEnter(hitbox)
+   expect(view.container.querySelector('animate')).toBeNull()
+ })

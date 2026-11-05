@@ -4,6 +4,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { verifyNativePackageTree, NATIVE_PACKAGES } from './native-package-integrity.mjs';
+import { dshPin } from './dsh-pin.mjs';
 
 const archive = process.argv[2];
 if (!archive) { console.error('usage: node scripts/check-package.mjs <tarball>'); process.exit(2); }
@@ -17,7 +18,7 @@ try {
   const read = path => readFileSync(join(root, path), 'utf8');
   const metadata = JSON.parse(read('package.json')), manifest = JSON.parse(read('studio.plugin.json'));
   if (metadata.name !== '@kingsoftcloud/agentkit-studio' || metadata.private === true || metadata.publishConfig?.access !== 'public') throw Error('Studio package identity/publication mismatch');
-  if (manifest.id !== 'agentkit-studio' || manifest.version !== metadata.version || manifest.requiredDsh !== '0.2.1-rc.2') throw Error('Studio manifest identity/Host mismatch');
+  if (manifest.id !== 'agentkit-studio' || manifest.version !== metadata.version || manifest.requiredDsh !== dshPin.version) throw Error('Studio manifest identity/Host mismatch');
   if (metadata.exports?.['./agentkit-harness'] || metadata.scripts?.['build:native-source'] || metadata.scripts?.['pack:harness']) throw Error('Legacy Harness entry is still exposed');
   for (const file of files) {
     if (/^(?:docs|tests|examples|host-source|patches)\//.test(file)

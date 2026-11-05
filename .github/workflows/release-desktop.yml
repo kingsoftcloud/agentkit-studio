@@ -15,12 +15,12 @@ on:
       dsh_ref:
         description: "DSH tag or commit used by the Studio release"
         required: true
-        default: dsh-v0.2.1-rc.2
+        default: dsh-v0.2.2-rc.1
         type: string
       dsh_commit:
         description: "Expected immutable DSH commit SHA"
         required: true
-        default: 687f282e8625c6b8d11ff58211a90524be2e4317
+        default: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
         type: string
       channel:
         description: "Production update lane; empty uses product configuration"
@@ -257,7 +257,7 @@ jobs:
             echo 'qualify_installed_update requires an HTTPS installed_dmg_url' >&2
             exit 1
           }
-          test "$BUILD_VERSION_VALUE" != '0.2.1-rc.2' || {
+          test "$BUILD_VERSION_VALUE" != '0.2.2-rc.1' || {
             echo 'qualify_installed_update requires a higher build_version than the product baseline' >&2
             exit 1
           }
@@ -329,7 +329,7 @@ jobs:
         env:
           DSH_ROOT: ${{ github.workspace }}/dsh-source
           DSH_COMMIT: ${{ inputs.dsh_commit }}
-          DSH_VERSION: 0.2.1-rc.2
+          DSH_VERSION: 0.2.2-rc.1
           BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
           EXPECTED_APP_ID: ${{ needs.source-gate.outputs.app_id }}
@@ -348,7 +348,7 @@ jobs:
         env:
           DSH_ROOT: ${{ github.workspace }}/dsh-source
           DSH_COMMIT: ${{ inputs.dsh_commit }}
-          DSH_VERSION: 0.2.1-rc.2
+          DSH_VERSION: 0.2.2-rc.1
           BUILD_VERSION: ${{ needs.source-gate.outputs.build_version }}
           PACK_DIR: ${{ github.workspace }}/studio/.artifacts
           EXPECTED_APP_ID: ${{ needs.source-gate.outputs.app_id }}
@@ -745,7 +745,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.2.1-rc.2
+          ref: dsh-v0.2.2-rc.1
           path: .ci-dsh
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -760,7 +760,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build and verify the maintained Host
-        run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.1-rc.2 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+        run: node scripts/verify-patched-dsh-host.mjs --source ../.ci-dsh --patches patches/dsh-v0.2.2-rc.1 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
       - name: Install accepted plugin in an isolated test profile

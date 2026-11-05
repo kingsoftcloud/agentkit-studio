@@ -1,0 +1,126 @@
+diff --git a/native/system/packages/entry/README.i18n.yaml b/native/system/packages/entry/README.i18n.yaml
+index 6d6e6f768227b3ca29aa5348cc5425c3d41d6630..3f0ecba10e667cde0e5e0d0ef5da146145f5b006 100644
+--- a/native/system/packages/entry/README.i18n.yaml
++++ b/native/system/packages/entry/README.i18n.yaml
+@@ -6,5 +6,5 @@
+   en: 944c02a61291ff07
+   zh: 7fd2384098ea4c7f
+ /deepseek-ai-node-addon-system:
+-  en: f37a5c105b7db656
+-  zh: f2c57e01f3c91be0
++  en: 67e9b0d9bc850ce5
++  zh: f74840f3a3d6018b
+diff --git a/native/system/packages/entry/README.md b/native/system/packages/entry/README.md
+index 0ffd2b38a78c562dad7c6760e8dbd79fbf8151c2..cf737506b3ae3185598a7d8cdf396613962b5ba5 100644
+--- a/native/system/packages/entry/README.md
++++ b/native/system/packages/entry/README.md
+@@ -10,6 +10,8 @@ The `./landlock-run` entry exports the Landlock launcher path, enforcement probe
+ 
+ The lock operation attempts `LOCK_EX | LOCK_NB` asynchronously. Keep the caller-owned descriptor open until completion; contention rejects with `EAGAIN`/`EWOULDBLOCK`, other syscall failures also reject, and errors carry their code, positive errno, and `syscall: 'flock'`. Native setup errors reject the same promise. Closing the last descriptor for the open file description releases the lock. The binding does not open, duplicate, close, or explicitly unlock descriptors.
+ 
++Linux selects the libc-specific binding from Node's diagnostic report with network inspection excluded. This avoids reverse DNS lookup of live connections during the first lock attempt. The caller's `process.report.excludeNetwork` setting is restored even if report generation fails.
++
+ Optional OS/CPU platform packages carry the binaries. Their `~x.y.z` dependency ranges allow later patches within the same minor version. Linux has `bin/landlock-run` and separate `bin/glibc/system.node` / `bin/musl/system.node`; macOS has `bin/system.node`. Missing or unloadable flock bindings reject acquisition, without installation-time compilation. Landlock remains a separate executable with its existing fail-closed protocol; unsupported kernels/platforms probe unusable.
+ 
+ The two C sources ship for auditability. See the workspace [architecture](../../docs/architecture.md), [support matrix](../../docs/support-matrix.md), and [CLI contract](../../docs/cli-contract.md).
+diff --git a/native/system/packages/entry/README.zh.md b/native/system/packages/entry/README.zh.md
+index fd4f9acc56ed59d69309c5b9e8f9f6d6ce0ca926..19af093acdfdf6b1c6302e213b24eedf9585d430 100644
+--- a/native/system/packages/entry/README.zh.md
++++ b/native/system/packages/entry/README.zh.md
+@@ -10,6 +10,8 @@ kind: "package-library"
+ 
+ 锁操作异步尝试 `LOCK_EX | LOCK_NB`。在完成前保持调用方拥有的描述符打开；竞争以 `EAGAIN`/`EWOULDBLOCK` 拒绝，其他系统调用失败也会拒绝，错误携带 code、值为正数的 errno 和 `syscall: 'flock'`。原生调用准备阶段的错误也会拒绝同一个 promise。关闭指向该打开文件描述的最后一个描述符即释放锁。绑定不打开、复制、关闭或显式解锁描述符。
+ 
++Linux 从排除网络检查的 Node 诊断报告中选择对应 libc 的绑定，避免首次尝试加锁时对已有连接执行反向 DNS 查询。即使报告生成失败，也会恢复调用方的 `process.report.excludeNetwork` 设置。
++
+ 可选操作系统/CPU 平台包携带二进制。它们的 `~x.y.z` 依赖范围允许同一次版本内的后续补丁版本。Linux 包含 `bin/landlock-run` 和分别用于两种 libc 的 `bin/glibc/system.node` / `bin/musl/system.node`；macOS 包含 `bin/system.node`。flock 绑定缺失或无法加载时，锁获取请求会被拒绝，不在安装时编译。Landlock 仍是遵循既有失败关闭协议的独立可执行文件；不支持的内核或平台探测结果为不可用。
+ 
+ 两个 C 源文件随包分发以供审计。参见工作区[架构](../../docs/architecture.md)、[支持矩阵](../../docs/support-matrix.md)和 [CLI 约定](../../docs/cli-contract.md)。
+diff --git a/native/system/packages/entry/src/flock.ts b/native/system/packages/entry/src/flock.ts
+index fcbf8a9e3c0ce682848ccbc2ccfc2e76d7cafded..56db72d97c4b4044c414894cb9ce8c1b09220582 100644
+--- a/native/system/packages/entry/src/flock.ts
++++ b/native/system/packages/entry/src/flock.ts
+@@ -21,9 +21,18 @@ function loadBinding(): FlockBinding {
+ 
+   let filename = 'system.node'
+   if (platform === 'linux') {
+-    // Node's report types omit the libc field supplied by Linux reports.
+-    const report = process.report.getReport() as { header: { glibcVersionRuntime?: string } }
+-    filename = join(report.header.glibcVersionRuntime ? 'glibc' : 'musl', filename)
++    // Node's report types omit the supported network-exclusion option.
++    const diagnosticReport = process.report as typeof process.report & { excludeNetwork: boolean }
++    const excludeNetwork = diagnosticReport.excludeNetwork
++    try {
++      // Libc detection must not reverse-resolve live network endpoints.
++      diagnosticReport.excludeNetwork = true
++      // Node's report types omit the libc field supplied by Linux reports.
++      const report = diagnosticReport.getReport() as { header: { glibcVersionRuntime?: string } }
++      filename = join(report.header.glibcVersionRuntime ? 'glibc' : 'musl', filename)
++    } finally {
++      diagnosticReport.excludeNetwork = excludeNetwork
++    }
+   }
+   const require = createRequire(import.meta.url)
+   const manifest = require.resolve(`@deepseek-ai/node-addon-system-${platform}-${arch}/package.json`)
+diff --git a/native/system/test/fixtures/flock-libc-report.js b/native/system/test/fixtures/flock-libc-report.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..569b9f029e5135c6720ea9ecb1ee9f3e384169d1
+--- /dev/null
++++ b/native/system/test/fixtures/flock-libc-report.js
+@@ -0,0 +1,32 @@
++/** A fresh loader owns report interception and restores the caller's report settings. */
++import assert from 'node:assert/strict';
++import { tryLockExclusive } from '../../packages/entry/lib/flock.js';
++
++const report = process.report;
++const initial = process.argv[2] === 'enabled';
++const fail = process.argv[3] === 'failure';
++const originalExcludeNetwork = report.excludeNetwork;
++const originalGetReport = report.getReport;
++const failure = new Error('libc report unavailable');
++let calls = 0;
++try {
++  report.excludeNetwork = initial;
++  report.getReport = function (...args) {
++    calls++;
++    assert.equal(this.excludeNetwork, true, 'libc detection must exclude network inspection');
++    if (fail) throw failure;
++    return originalGetReport.apply(this, args);
++  };
++  await assert.rejects(tryLockExclusive(-1), fail
++    ? (error) => error === failure
++    : { code: 'EBADF', syscall: 'flock' });
++  assert.equal(calls, 1);
++  assert.equal(report.excludeNetwork, initial, 'libc detection must restore the caller setting');
++} finally {
++  report.getReport = originalGetReport;
++  report.excludeNetwork = originalExcludeNetwork;
++}
++await new Promise((resolve, reject) => {
++  process.send({ type: 'ready' }, (error) => error ? reject(error) : resolve());
++});
++process.disconnect();
+diff --git a/native/system/test/flock.test.js b/native/system/test/flock.test.js
+index 16e66327e9a573319e2e779b368da54266dd5b31..d5136eb0c50a89fa5d9c5b118b6998413d4c1d10 100644
+--- a/native/system/test/flock.test.js
++++ b/native/system/test/flock.test.js
+@@ -179,6 +179,19 @@ test('import succeeds with native addons disabled', { timeout }, async (t) => {
+   cleanExit(await child.waitForExit());
+ });
+ 
++for (const initial of ['enabled', 'disabled']) {
++  for (const outcome of ['success', 'failure']) {
++    test(`Linux libc detection excludes networking and restores ${initial} after ${outcome}`, {
++      timeout,
++      skip: process.platform === 'linux' ? false : 'libc detection is Linux-only',
++    }, async (t) => {
++      const scope = resources(t);
++      const child = await childFixture(t, scope, 'flock-libc-report.js', [initial, outcome]);
++      cleanExit(await child.waitForExit());
++    });
++  }
++}
++
+ for (const platform of ['win32', 'freebsd']) {
+   test(`calling flock on ${platform} rejects without loading an addon`, { timeout }, async (t) => {
+     const scope = resources(t);

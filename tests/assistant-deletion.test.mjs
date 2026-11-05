@@ -14,7 +14,7 @@ test('retirement erases only receipt-owned runtime files after native writers dr
   await writeFile(join(root, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: hash }));
   const ctx = { get: name => ({
     sessionController: { list: async () => ({ items: [{ sessionId: 'assistant' }] }), cancel: async () => calls.push('cancel') },
-    schedule: { catalog: async () => [{ id: 'timer', sessionId: 'assistant' }], delete: async () => calls.push('timer') },
+    schedule: { catalog: async () => [{ id: 'timer', target: { kind: 'session', sessionId: 'assistant' }, status: 'active' }], edit: async () => calls.push('timer') },
     agents: { get: id => id === liveAgent.session.id ? liveAgent : undefined, list: () => [liveAgent] }, sessions: { list: () => ['session'], flush: async () => { calls.push('flush'); return true; } },
     storageDomain: { closeAll: async () => { await access(join(root, 'dsh/data')); calls.push('domains'); } },
     sessionPersistence: { flush: async () => calls.push('persistence') },
