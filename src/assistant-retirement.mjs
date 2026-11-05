@@ -29,7 +29,7 @@ export async function createAssistantRetirement({ ctx, env }) {
       // This Host is a dedicated frozen deployment, proven by its boot receipt.
       // Stop timers before cancelling live Agents in that deployment. The
       // durable catalog also includes cold Sessions; cancel does not resume them.
-      if (schedule) for (const task of await schedule.catalog()) await schedule.delete({ sessionId: task.sessionId, id: task.id });
+      if (schedule) for (const task of await schedule.catalog()) await schedule.edit({ id: task.id, action: 'delete' });
       const sessions = await controller.list({}, new AbortController().signal);
       for (const item of sessions.items) {
         // Native get/cancel are synchronous: no await may separate this live
