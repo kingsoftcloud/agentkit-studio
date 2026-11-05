@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Validate repository DSH pin
+        run: node scripts/check-dsh-pin.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
@@ -52,10 +54,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Read and validate repository DSH pin
+        id: dsh-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-dsh-pin.mjs
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { dshPin } from './scripts/dsh-pin.mjs'
+          console.log(`ref=${dshPin.ref}`)
+          console.log(`commit=${dshPin.commit}`)
+          console.log(`patches=${dshPin.patchDirectory}`)
+          NODE
       - uses: actions/checkout@v4
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.2.2-rc.1
+          ref: ${{ steps.dsh-pin.outputs.ref }}
           path: .ci-dsh
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -70,7 +84,7 @@ jobs:
       - name: Install native libc test toolchain
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches patches/dsh-v0.2.2-rc.1 --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Verify normal installed assistant cold startup and restart
         shell: bash
         run: |

@@ -11,6 +11,7 @@ import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { dshPin } from './dsh-pin.mjs';
 
 const source = process.env.AGENTKIT_DSH_ROOT;
 if (!source || !process.env.DSH_HOME || !process.env.AGENTKIT_HOME) throw new Error('Specify isolated DSH source and homes');
@@ -169,7 +170,7 @@ try {
   await boot(); await mount();
   stage = 'host-compatibility';
   const compatibility = await rpc('host/compatibility');
-  assert.deepEqual(compatibility.baseline, { required: '0.2.2-rc.1', actual: '0.2.2-rc.1', compatible: true });
+  assert.deepEqual(compatibility.baseline, { required: dshPin.version, actual: dshPin.version, compatible: true });
   assert.deepEqual(compatibility.contract, { required: 1, actual: 1, compatible: true });
   assert.ok(Object.values(compatibility.features).every(feature => feature.available));
   check('running-dsh-baseline-and-live-capabilities', { compatibility });
@@ -202,7 +203,7 @@ try {
     Object.defineProperty(controllerForCompatibility, 'promptFingerprintVersion', { ...fingerprintDescriptor, value: undefined });
     await mount({ ...runtime, AGENTKIT_STUDIO_DSH_VERSION: 'display-only-version' });
     const missing = await rpc('host/compatibility');
-    assert.equal(missing.baseline.actual, '0.2.2-rc.1', 'display metadata must not establish Host identity');
+    assert.equal(missing.baseline.actual, dshPin.version, 'display metadata must not establish Host identity');
     assert.equal(missing.features['frozen-runtime'].available, false);
     assert.equal(missing.features['agent-presets'].available, true);
     assert.deepEqual(missing.features['frozen-runtime'].missingCapabilities, ['request-fingerprint']);

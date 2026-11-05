@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dshPatchRoot } from './dsh-pin.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -83,7 +84,7 @@ export async function checkPatchManifest(directory, options) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const directory = resolve(process.argv[2] || join(root, 'patches/dsh-v0.2.2-rc.1'));
+  const directory = resolve(process.argv[2] || dshPatchRoot);
   const { report } = await checkPatchManifest(directory, process.argv[3] ? { baseCommit: process.argv[3] } : undefined);
   console.log(JSON.stringify(report));
 }

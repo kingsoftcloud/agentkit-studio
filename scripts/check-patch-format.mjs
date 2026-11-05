@@ -4,9 +4,10 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { dshPatchRoot } from './dsh-pin.mjs'
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
-const patchRoot = resolve(repoRoot, process.argv[2] ?? 'patches/dsh-v0.2.2-rc.1')
+const patchRoot = resolve(process.argv[2] ?? dshPatchRoot)
 
 /** Validate text diffs, including file creation and deletion, with Git's parser. */
 export function validatePatchFormat(source) {

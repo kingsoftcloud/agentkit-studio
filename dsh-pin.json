@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+  "version": "0.2.2-rc.1",
+  "commit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+  "ref": "dsh-v0.2.2-rc.1",
+  "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+  "hostContract": 1,
+  "nodeRange": ">=24.9.0",
+  "patchDirectory": "patches/dsh-v0.2.2-rc.1",
+  "patchedTree": "b019f2637d50d72d20b04e2c3a069066128f2746",
+  "patchedSourceSha256": "750e6639e5769023dffc2edbed380a19c3b28da95071fa085b4436df7d37d381",
+  "maintenanceSource": "patches/dsh-v0.2.2-rc.1/source.json"
+}

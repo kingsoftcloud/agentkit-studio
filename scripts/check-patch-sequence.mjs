@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dshPatchRoot } from './dsh-pin.mjs';
 
-export async function checkPatchSequence(directory = fileURLToPath(new URL('../patches/dsh-v0.2.2-rc.1/', import.meta.url))) {
+export async function checkPatchSequence(directory = dshPatchRoot) {
   const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
   const patches = manifest.patches || [];
   for (const [index, patch] of patches.entries()) {

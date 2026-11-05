@@ -12,11 +12,15 @@ DSH_WEB_PORT ?= 3098
 # Keep the caller's package manager on PATH for existing Profile dependencies.
 DSH_SOURCE_CLI := node --import tsx/esm apps/cli/src/bin.ts
 PACK_DIR ?= .artifacts
-DSH_VERSION ?= 0.2.2-rc.1
-DSH_COMMIT ?= 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
+DSH_PIN_VERSION := $(shell node -p "require('./dsh-pin.json').version")
+DSH_PIN_COMMIT := $(shell node -p "require('./dsh-pin.json').commit")
+DSH_PIN_REF := $(shell node -p "require('./dsh-pin.json').ref")
+DSH_PIN_PATCH_DIRECTORY := $(shell node -p "require('./dsh-pin.json').patchDirectory")
+DSH_VERSION ?= $(DSH_PIN_VERSION)
+DSH_COMMIT ?= $(DSH_PIN_COMMIT)
 DSH_REPO ?= https://github.com/deepseek-ai/deepseek-harness.git
-DSH_REF ?= dsh-v$(DSH_VERSION)
-PATCH_ROOT ?= $(abspath patches/dsh-v$(DSH_VERSION))
+DSH_REF ?= $(DSH_PIN_REF)
+PATCH_ROOT ?= $(abspath $(DSH_PIN_PATCH_DIRECTORY))
 STUDIO_DESKTOP_INPUT = $(abspath $(PACK_DIR)/desktop-plugin-input/$(PLUGIN_VERSION))
 DESKTOP_PLUGIN_INPUTS ?= $(STUDIO_DESKTOP_INPUT)
 DESKTOP_PRODUCT_NAME := $(shell node scripts/product-config.mjs name)
@@ -57,7 +61,7 @@ doctor:
 cloud-identity:
 	node scripts/check-cloud-identity.mjs
 
-.PHONY: check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check dsh-pin-check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
@@ -66,6 +70,9 @@ cloud-identity:
 
 check:
 	pnpm check
+
+dsh-pin-check:
+	node scripts/check-dsh-pin.mjs
 
 .PHONY: client-build
 client-build:
@@ -88,6 +95,7 @@ public-gate:
 	$(MAKE) public-surface-audit
 	node scripts/public-history-audit.mjs
 	$(MAKE) secret-scan
+	$(MAKE) dsh-pin-check
 	$(MAKE) patch-manifest-check
 	$(MAKE) patch-source-check
 	$(MAKE) check

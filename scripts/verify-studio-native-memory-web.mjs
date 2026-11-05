@@ -13,6 +13,7 @@ import { mkdtemp, mkdir, readdir, readFile, writeFile, symlink } from 'node:fs/p
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dshPin } from './dsh-pin.mjs';
 import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, output: { type: 'string' } } });
@@ -80,7 +81,7 @@ try {
   await symlink(installed, join(modules, '@kingsoftcloud/agentkit-studio'));
   await writeFile(join(profileRoot, 'package.json'), JSON.stringify({ name: 'local-memory-proof', private: true, type: 'module',
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kingsoftcloud/agentkit-studio'] } },
-    dependencies: { '@deepseek-ai/dsh-base': '0.2.2-rc.1', '@deepseek-ai/dsh-web-app': '0.2.2-rc.1', '@kingsoftcloud/agentkit-studio': '0.0.2' } }));
+    dependencies: { '@deepseek-ai/dsh-base': dshPin.version, '@deepseek-ai/dsh-web-app': dshPin.version, '@kingsoftcloud/agentkit-studio': '0.0.2' } }));
   await writeFile(join(root, 'config.yaml'), JSON.stringify({ modelProfiles: [{ id: 'fixture', provider: 'openai-compatible',
     modelName: 'pinned', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, default: true, credentialName: 'LOCAL_PROOF' }],
     modelProfileKeys: { LOCAL_PROOF: 'local-fixture-key' } }), { mode: 0o600 });

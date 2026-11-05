@@ -2,10 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { dshPin } from './dsh-pin.mjs';
 
 const PLUGIN_PACKAGE = '@kingsoftcloud/agentkit-studio';
 const PLUGIN_ID = 'agentkit-studio';
-const EXPECTED_DSH = '0.2.2-rc.1';
+const EXPECTED_DSH = dshPin.version;
 
 function readJson(path, label) {
   if (!existsSync(path)) throw new Error(`${label} is missing: ${path}`);

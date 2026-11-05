@@ -10,8 +10,9 @@ import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import asar from '@electron/asar';
+import { dshPin } from './dsh-pin.mjs';
 
-const OFFICIAL_VERSION = '0.2.2-rc.1';
+const OFFICIAL_VERSION = dshPin.version;
 const OFFICIAL_URL = `https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-${OFFICIAL_VERSION}-win-x64.exe`;
 const OFFICIAL_SHA256 = '72e4a8579f11b5428dd0a1506532777924adba7ecaacc710a7e429085796537f';
 
