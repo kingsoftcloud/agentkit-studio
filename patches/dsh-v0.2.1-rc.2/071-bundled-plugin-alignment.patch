@@ -508,7 +508,7 @@ index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4
 +  return outcomes
 +}
 diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
-index 4f6f0f201ab218754a4542e9da898acad8b55fa4..b30a9567099ce517a97cc883abade151c14bfb3f 100644
+index 4f6f0f201ab218754a4542e9da898acad8b55fa4..04ea5af6ba308b0704fcf76bcea729f177a5c23f 100644
 --- a/apps/desktop/src/project-manager.ts
 +++ b/apps/desktop/src/project-manager.ts
 @@ -22,6 +22,7 @@ import {
@@ -531,7 +531,7 @@ index 4f6f0f201ab218754a4542e9da898acad8b55fa4..b30a9567099ce517a97cc883abade151
 +        for (const outcome of alignBundledProductPlugins({
 +          profile: this.paths.profile, runtimeDsh: this.runtime.dsh,
 +        })) {
-+          if (outcome.action !== 'skipped-absent') console.info('Desktop profile plugin alignment:', outcome)
++          if (outcome.action !== 'current') console.info('Desktop profile plugin alignment:', outcome)
 +        }
 +      } catch (error) {
 +        console.warn('Desktop profile plugin alignment failed; keeping the profile copy', error)
