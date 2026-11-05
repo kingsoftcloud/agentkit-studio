@@ -1,46 +1,26 @@
 export default String.raw`
-/* Window drag region for the Studio product shell.
-   DSH's layout shell owns one draggable title row, but product pages opt out
-   with -webkit-app-region: initial, which leaves their top area impossible to
-   drag. Electron ignores pointer events inside a drag region, so every
-   interactive descendant has to opt back in with no-drag.
-   Explicit markers (data-studio-drag-region / data-studio-header) are global
-   because the marked strip can sit outside the product-application scroller. */
-/* DSH's stylesheet owns the window-drag contract: it maps [data-window-drag] to
-   drag and restores interactive descendants to no-drag. Mirror that hook here
-   as well so the region still resolves if the shell sheet loads after ours. */
+/* Window drag regions for the Studio product shell.
+   Only explicit markers may become drag regions: DSH also uses CSS-module
+   classes such as "_titleRow" for ordinary list rows, so matching on class
+   name substrings swallowed the buttons inside those rows. Interactive
+   descendants always opt back out with no-drag. */
 [data-studio-drag-region],
-[data-window-drag],
 [data-studio-header],
 [data-windows-titlebar],
-[class*="_titleRow"] {
+[data-window-drag] {
   -webkit-app-region: drag;
 }
 [data-studio-drag-region] :is(
-  button, a, input, select, textarea, label,
-  [role="button"], [role="tab"], [role="menuitem"], [contenteditable="true"],
-  [data-studio-no-drag]
+  button, a, input, select, textarea, label, summary, svg, img,
+  [role="button"], [role="tab"], [role="menuitem"], [role="switch"],
+  [role="checkbox"], [role="link"], [contenteditable="true"],
+  [tabindex]:not([tabindex="-1"]), [data-studio-no-drag]
 ),
 [data-studio-header] :is(
-  button, a, input, select, textarea, label,
-  [role="button"], [role="tab"], [role="menuitem"], [contenteditable="true"],
-  [data-studio-no-drag]
-) {
-  -webkit-app-region: no-drag;
-}
-[data-agentkit-studio="product-application"] :is(
-  [class*="_pageHeader"],
-  [class*="_header"]
-) {
-  -webkit-app-region: drag;
-}
-[data-agentkit-studio="product-application"] :is(
-  [class*="_pageHeader"],
-  [class*="_header"]
-) :is(
-  button, a, input, select, textarea, label,
-  [role="button"], [role="tab"], [role="menuitem"], [contenteditable="true"],
-  [data-studio-no-drag]
+  button, a, input, select, textarea, label, summary, svg, img,
+  [role="button"], [role="tab"], [role="menuitem"], [role="switch"],
+  [role="checkbox"], [role="link"], [contenteditable="true"],
+  [tabindex]:not([tabindex="-1"]), [data-studio-no-drag]
 ) {
   -webkit-app-region: no-drag;
 }
