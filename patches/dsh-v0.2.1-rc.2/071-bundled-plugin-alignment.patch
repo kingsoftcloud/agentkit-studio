@@ -1,12 +1,12 @@
 diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb3037fb52
+index 0000000000000000000000000000000000000000..659a6082f52ef67893faf43ba239a5865758c708
 --- /dev/null
 +++ b/apps/desktop/src/bundled-plugin-alignment.ts
-@@ -0,0 +1,377 @@
-+/** Keep profile-installed product plugins from shadowing the runtime bundle that ships beside dsh. */
+@@ -0,0 +1,503 @@
++/** Install the product plugin the runtime bundles into the profile that loads it. */
 +
-+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
++import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 +import { createRequire } from 'node:module'
 +import { homedir } from 'node:os'
 +import { dirname, join, sep } from 'node:path'
@@ -15,13 +15,17 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +const INSTALLATION_SCOPE = '@deepseek-ai/'
 +/** Profile file recording consecutive failed alignment attempts for one bundled version. */
 +const ATTEMPT_MARKER_PREFIX = '.alignment-attempt-'
-+/** Consecutive failures after which alignment stops trying and the profile copy keeps running. */
++/** Profile file recording the product bundles this profile has already activated. */
++const ACTIVATION_HISTORY = 'desktop-product-bundles.json'
++/** Consecutive failures after which alignment stops trying and the profile keeps running as-is. */
 +export const ALIGNMENT_ATTEMPT_LIMIT = 2
++/** Dependencies copied in one materialization; a product plugin closure stays far below this. */
++const MAX_CLOSURE_PACKAGES = 512
 +
-+/** Why one bundled product plugin was or was not retired from the profile. */
++/** Why one bundled product plugin was or was not installed into the profile. */
 +export type PluginAlignmentAction =
-+  | 'retired'
-+  | 'skipped-absent'
++  | 'materialized'
++  | 'current'
 +  | 'kept-newer'
 +  | 'missing-runtime-copy'
 +  | 'restored'
@@ -33,11 +37,11 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +  readonly action: PluginAlignmentAction
 +  readonly previousVersion?: string | undefined
 +  readonly bundledVersion?: string | undefined
-+  /** Where the retired profile copy was moved, when one existed. */
++  /** Where the superseded profile copy was moved, when one existed. */
 +  readonly backupPath?: string | undefined
 +  /** Diagnostic for a degraded outcome; the profile and its copy are then untouched. */
 +  readonly reason?: string | undefined
-+  /** Whether the profile now resolves this bundle from the sealed runtime installation. */
++  /** Whether the profile copy is verified loadable after this pass. */
 +  readonly installationBacked: boolean
 +}
 +
@@ -53,6 +57,8 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +interface Manifest {
 +  readonly name?: string
 +  readonly version?: string
++  readonly main?: string
++  readonly exports?: string | Readonly<Record<string, unknown>>
 +  readonly dependencies?: Readonly<Record<string, string>>
 +  readonly peerDependencies?: Readonly<Record<string, string>>
 +  readonly dsh?: { readonly profile?: { readonly bundles?: readonly string[] } }
@@ -71,7 +77,7 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +  readonly bundledDir: string
 +  readonly bundledVersion: string
 +  readonly installedDir: string
-+  readonly installedVersion: string
++  readonly installedVersion: string | undefined
 +}
 +
 +/** Directory name safe for a scoped package and its version. */
@@ -110,14 +116,10 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +/**
 + * Resolve one package directory from an anchor without depending on its `exports`.
 + *
-+ * The probe walks the same node_modules lookup order Node uses, which is the
-+ * order `@deepseek-ai/dsh-app-boot` uses to select profile bundles. Electron's
-+ * asar filesystem answers the probed directories, so a bundled copy inside
-+ * `app.asar` is visible exactly where the Host will look for it.
-+ *
-+ * Only directories inside the sealed runtime are accepted: a package of the same
-+ * name installed elsewhere on the machine (or hoisted into the test runner) must
-+ * never make a bundled copy look self-contained when it is not.
++ * The probe walks the same node_modules lookup order Node uses. Electron's asar
++ * filesystem answers the probed directories, so a bundled copy inside `app.asar`
++ * is visible exactly where the Host will look for it. Only directories inside the
++ * sealed runtime are accepted.
 + */
 +function resolveRuntimePackage(runtimeDsh: string, anchor: string, packageName: string): string | undefined {
 +  const root = runtimeDsh.endsWith(sep) ? runtimeDsh : `${runtimeDsh}${sep}`
@@ -135,25 +137,71 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +  return [...new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])]
 +}
 +
++/** Relative entry files the package declares through `exports` or `main`. */
++function entryFiles(manifest: Manifest): string[] {
++  const files: string[] = []
++  const collect = (value: unknown): void => {
++    if (typeof value === 'string') {
++      if (value.startsWith('./')) files.push(value)
++      return
++    }
++    if (value === null || typeof value !== 'object' || Array.isArray(value)) return
++    for (const nested of Object.values(value as Record<string, unknown>)) collect(nested)
++  }
++  collect(manifest.exports)
++  if (typeof manifest.main === 'string' && manifest.main.startsWith('./')) files.push(manifest.main)
++  return [...new Set(files)]
++}
++
 +/**
-+ * Verify a bundled package carries every dependency its manifest declares.
++ * Verify a profile copy is loadable, not merely present.
 + *
-+ * A copy moved out of the runtime tree loses the `@deepseek-ai/*` packages the
-+ * installation anchor supplies, which is the failure mode that broke
-+ * 0.2.1-rc.2.20261104.6. The profile copy is retired only when this probe answers
-+ * every declared package from the sealed runtime that will resolve it later.
-+ * @param runtimeDsh - Sealed runtime the Host resolves the bundle from.
-+ * @param bundledDir - The runtime-carried package directory.
-+ * @returns a diagnostic naming the first unresolved dependency, or undefined.
++ * Every declared dependency and peer dependency must answer from the copy's own
++ * anchor, and every relative entry the manifest exports must exist. A copy that
++ * only looks materialized would fail inside the Host after the first launch.
++ * @param directory - the profile copy of a product plugin.
++ * @returns the first loadability failure, or undefined when the copy answers.
 + */
-+export function verifyBundledCopy(runtimeDsh: string, bundledDir: string): string | undefined {
-+  const manifest = readManifest(bundledDir)
-+  if (manifest === undefined) return `unreadable package manifest in ${bundledDir}`
-+  const anchor = join(bundledDir, 'package.json')
++export function verifyPluginCopy(directory: string): string | undefined {
++  const manifest = readManifest(directory)
++  if (manifest === undefined) return `unreadable package manifest in ${directory}`
++  const require = createRequire(join(directory, 'package.json'))
 +  for (const name of dependencyNames(manifest)) {
-+    if (resolveRuntimePackage(runtimeDsh, anchor, name) === undefined) return `bundled copy cannot resolve ${name}`
++    // Installation-owned packages answer from the sealed runtime's own anchor,
++    // never from the profile; requiring them here would reject a healthy copy.
++    if (name.startsWith(INSTALLATION_SCOPE)) continue
++    try {
++      require.resolve(name)
++    } catch {
++      return `profile copy cannot resolve ${name}`
++    }
++  }
++  for (const entry of entryFiles(manifest)) {
++    if (!existsSync(join(directory, entry))) return `profile copy is missing ${entry}`
 +  }
 +  return undefined
++}
++
++/**
++ * Copy a package tree file by file.
++ *
++ * `cpSync` cannot copy a directory out of an asar archive: Electron's ASAR
++ * filesystem has no directory handles (`opendirSync` reports ENOTDIR), which is
++ * what made 0.2.1-rc.2.20261104.6 crash before the Host started. Reading and
++ * writing each file uses the asar-aware fs calls that do work.
++ */
++function copyPackageTree(source: string, target: string): void {
++  mkdirSync(target, { recursive: true, mode: 0o700 })
++  for (const entry of readdirSync(source, { withFileTypes: true })) {
++    const from = join(source, entry.name)
++    const to = join(target, entry.name)
++    if (entry.isDirectory()) {
++      copyPackageTree(from, to)
++      continue
++    }
++    if (!entry.isFile()) continue
++    writeFileSync(to, readFileSync(from), { mode: statSync(from).mode & 0o777 })
++  }
 +}
 +
 +/** Marker path for one bundled version. */
@@ -201,6 +249,17 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +  }
 +}
 +
++/** Product bundles this profile has already activated, as recorded by the shell. */
++function activationHistory(profile: string): readonly string[] {
++  try {
++    const parsed: unknown = JSON.parse(readFileSync(join(profile, ACTIVATION_HISTORY), 'utf8'))
++    if (!Array.isArray(parsed)) return []
++    return parsed.filter((value): value is string => typeof value === 'string')
++  } catch {
++    return []
++  }
++}
++
 +/** Move a real directory aside, falling back to a copy across filesystems. */
 +function moveAside(source: string, target: string): void {
 +  mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
@@ -208,13 +267,15 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +    renameSync(source, target)
 +  } catch (error) {
 +    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
-+    cpSync(source, target, { recursive: true })
++    copyPackageTree(source, target)
 +    rmSync(source, { recursive: true, force: true })
 +  }
 +}
 +
-+/** The profile manifest text without one dependency, plus the original for rollback. */
-+function withoutDependency(profile: string, packageName: string): { original: string; next: string } | undefined {
++/** The profile manifest with this product pinned and its bundle selected, plus the original. */
++function withProduct(
++  profile: string, packageName: string, version: string,
++): { original: string; next: string } | undefined {
 +  const path = join(profile, 'package.json')
 +  let original: string
 +  try {
@@ -230,42 +291,166 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +  } catch {
 +    return undefined
 +  }
-+  const dependencies = manifest.dependencies
-+  if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)
-+    || !Object.hasOwn(dependencies, packageName)) {
-+    return undefined
++  const dependencies = { ...(typeof manifest.dependencies === 'object' && manifest.dependencies !== null && !Array.isArray(manifest.dependencies)
++    ? manifest.dependencies as Record<string, string>
++    : {}) }
++  dependencies[packageName] = version
++  const dsh = { ...(typeof manifest.dsh === 'object' && manifest.dsh !== null && !Array.isArray(manifest.dsh)
++    ? manifest.dsh as Record<string, unknown>
++    : {}) }
++  const profileSection = { ...(typeof dsh.profile === 'object' && dsh.profile !== null && !Array.isArray(dsh.profile)
++    ? dsh.profile as Record<string, unknown>
++    : {}) }
++  const current = Array.isArray(profileSection.bundles) ? profileSection.bundles as string[] : []
++  if (!current.includes(packageName)) {
++    const anchor = current.indexOf('@deepseek-ai/dsh-web-app')
++    current.splice(anchor < 0 ? current.length : anchor + 1, 0, packageName)
 +  }
-+  const nextDependencies = { ...(dependencies as Record<string, string>) }
-+  delete nextDependencies[packageName]
-+  manifest.dependencies = nextDependencies
++  profileSection.bundles = current
++  dsh.profile = profileSection
++  manifest.dependencies = dependencies
++  manifest.dsh = dsh
 +  return { original, next: `${JSON.stringify(manifest, undefined, 2)}\n` }
 +}
 +
-+/** Restore the exact profile manifest text after a failed retirement. */
++/** Restore the exact profile manifest text after a failed materialization. */
 +function restoreManifest(profile: string, original: string): void {
 +  writeFileSync(join(profile, 'package.json'), original, { mode: 0o600 })
 +}
 +
 +/**
-+ * Align every product plugin the runtime carries with the profile that shadows it.
++ * Copy the bundled plugin and any dependency it cannot answer into the profile.
 + *
-+ * The profile's `node_modules` wins module resolution, so an upgraded application
-+ * can keep running the product plugin a profile installed earlier. The bundled
-+ * copy lives inside the signed runtime (inside `app.asar` on macOS); copying that
-+ * tree out would strip the `@deepseek-ai/*` packages the installation anchor
-+ * supplies, and Electron cannot copy a directory out of an asar archive at all.
-+ * Alignment therefore retires the shadowing profile copy instead: the profile
-+ * dependency and its `node_modules` entry are backed up and removed, and the Host
-+ * resolves the bundled copy from the installation like every other in-box bundle.
++ * The bundled tree already carries the packages the build hoisted beside it; a
++ * dependency that still answers only from the sealed runtime is copied to the
++ * profile's hoisted `node_modules` so the profile copy resolves it on its own.
++ * @returns the hoisted directories created, in copy order.
++ */
++function copyClosure(runtimeDsh: string, stage: string, profile: string): string[] {
++  const created: string[] = []
++  const queue = [stage]
++  let visited = 0
++  while (queue.length > 0) {
++    const directory = queue.shift() as string
++    const manifest = readManifest(directory)
++    if (manifest === undefined) throw new Error(`unreadable package manifest in ${directory}`)
++    const require = createRequire(join(directory, 'package.json'))
++    for (const name of dependencyNames(manifest)) {
++      if (name.startsWith(INSTALLATION_SCOPE)) continue
++      try {
++        require.resolve(name)
++        continue
++      } catch {
++        // The copy does not answer this dependency yet.
++      }
++      const source = resolveRuntimePackage(runtimeDsh, join(directory, 'package.json'), name)
++      if (source === undefined) throw new Error(`bundled copy cannot resolve ${name}`)
++      const target = join(profile, 'node_modules', name)
++      if (!existsSync(join(target, 'package.json'))) {
++        if (created.length >= MAX_CLOSURE_PACKAGES) throw new Error(`dependency closure of ${name} is too large`)
++        copyPackageTree(source, target)
++        created.push(target)
++      }
++      queue.push(target)
++    }
++    visited += 1
++    if (visited > MAX_CLOSURE_PACKAGES) throw new Error('dependency closure is too large')
++  }
++  return created
++}
++
++/**
++ * Install one bundled product plugin into the profile so the Host can load it.
 + *
-+ * Safety rules: the bundled copy must pass {@link verifyBundledCopy} before the
-+ * profile is touched, a failed rewrite restores the previous manifest and copy,
-+ * and {@link ALIGNMENT_ATTEMPT_LIMIT} consecutive failures for one bundled version
-+ * stop further attempts so an unfixable profile still starts on its old plugin.
++ * The copy is staged beside its destination, the dependency closure is completed,
++ * and the staged tree must pass {@link verifyPluginCopy} before it replaces
++ * anything. A superseded copy is moved to `$DSH_HOME/backups/agentkit-studio`
++ * first and restored on any later failure, so a broken materialization can never
++ * remove a copy that used to load.
++ */
++function materializeCandidate(
++  candidate: Candidate, options: PluginAlignmentOptions, home: string, stamp: string,
++): PluginAlignmentOutcome {
++  const { packageName, bundledDir, bundledVersion, installedDir, installedVersion } = candidate
++  const stage = join(options.profile, 'node_modules', `.alignment-stage-${packageName.replace(/[/\\]/g, '-')}-${stamp}`)
++  const markerPath = attemptMarkerPath(options.profile, bundledVersion)
++  const marker = readAttemptMarker(markerPath, bundledVersion)
++  if ((marker?.failures ?? 0) >= ALIGNMENT_ATTEMPT_LIMIT) {
++    return {
++      packageName, action: 'skipped-attempt-budget', previousVersion: installedVersion, bundledVersion,
++      installationBacked: false,
++      reason: `alignment failed ${String(marker?.failures)} times for ${bundledVersion}; keeping the profile copy`,
++    }
++  }
++  const rewrite = withProduct(options.profile, packageName, bundledVersion)
++  if (rewrite === undefined) {
++    return { packageName, action: 'restored', previousVersion: installedVersion, bundledVersion, installationBacked: false, reason: 'profile manifest is not rewritable' }
++  }
++  const backupPath = join(home, 'backups', 'agentkit-studio', `${artifactName(packageName, installedVersion ?? bundledVersion)}-${stamp}`)
++  let created: string[] = []
++  let moved = false
++  let replaced = false
++  try {
++    copyPackageTree(bundledDir, stage)
++    created = copyClosure(options.runtimeDsh, stage, options.profile)
++    const staged = verifyPluginCopy(stage)
++    if (staged !== undefined) throw new Error(staged)
++    if (existsSync(join(installedDir, 'package.json'))) {
++      moveAside(installedDir, backupPath)
++      moved = true
++    }
++    renameSync(stage, installedDir)
++    replaced = true
++    writeFileSync(join(options.profile, 'package.json'), rewrite.next, { mode: 0o600 })
++    const installed = verifyPluginCopy(installedDir)
++    if (installed !== undefined) throw new Error(installed)
++    if (existsSync(stage)) throw new Error('staged copy still shadows the installed copy')
++  } catch (error) {
++    try {
++      restoreManifest(options.profile, rewrite.original)
++    } catch {
++      // The manifest is unchanged when the failed write never replaced it.
++    }
++    if (replaced) {
++      try {
++        rmSync(installedDir, { recursive: true, force: true })
++      } catch {
++        // The staged tree is discarded below; the next launch retries.
++      }
++    }
++    if (moved) {
++      try {
++        moveAside(backupPath, installedDir)
++      } catch {
++        // Keeping the backup is safer than deleting the only copy.
++      }
++    }
++    rmSync(stage, { recursive: true, force: true })
++    for (const directory of created) rmSync(directory, { recursive: true, force: true })
++    const reason = error instanceof Error ? error.message : String(error)
++    recordFailure(markerPath, bundledVersion, marker, reason)
++    return { packageName, action: 'restored', previousVersion: installedVersion, bundledVersion, installationBacked: false, reason }
++  }
++  clearMarker(markerPath)
++  return {
++    packageName, action: 'materialized', previousVersion: installedVersion, bundledVersion,
++    ...moved ? { backupPath } : {}, installationBacked: true,
++  }
++}
++
++/**
++ * Align every product plugin the runtime carries with the profile that loads it.
++ *
++ * The Host selects a plugin only when `dsh.profile.bundles` lists it, and a
++ * profile that lost that entry (native recovery rewrites the list and the
++ * activation history then suppresses the shell's re-add) starts without the
++ * product plugin. Alignment therefore materializes the bundled copy into the
++ * profile, pins its version, and re-adds the bundle entry, verifying loadability
++ * before and after the swap. Failures roll back to the profile exactly as it was;
++ * a copy that used to load is never deleted.
 + *
 + * @param options - profile and sealed runtime locations owned by the shell.
-+ * @returns one outcome per profile-managed product bundle; nothing is written for
-+ * absent or newer profile copies, and failures never throw.
++ * @returns one outcome per product bundle the runtime carries and the profile owns.
 + */
 +export function alignBundledProductPlugins(options: PluginAlignmentOptions): readonly PluginAlignmentOutcome[] {
 +  const outcomes: PluginAlignmentOutcome[] = []
@@ -275,14 +460,14 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +    if (profileManifest === undefined) return outcomes
 +    const bundles = readManifest(options.runtimeDsh)?.dsh?.profile?.bundles ?? []
 +    const dependencies = profileManifest.dependencies ?? {}
-+    const candidates: Candidate[] = []
++    const activated = activationHistory(options.profile)
++    const list = profileManifest.dsh?.profile?.bundles ?? []
++    const stamp = new Date(options.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, '-')
 +
 +    for (const packageName of bundles) {
 +      // Installation-owned bundles (`@deepseek-ai/*`) resolve from the sealed
 +      // runtime by contract and are never managed as profile product plugins.
 +      if (packageName.startsWith(INSTALLATION_SCOPE)) continue
-+      const spec = dependencies[packageName]
-+      if (spec === undefined) continue
 +      const bundledDir = join(options.runtimeDsh, 'node_modules', packageName)
 +      const bundledVersion = readManifest(bundledDir)?.version
 +      if (bundledVersion === undefined) {
@@ -291,85 +476,26 @@ index 0000000000000000000000000000000000000000..f372580f9a713108e46a3108cb7cd0cb
 +      }
 +      const installedDir = join(options.profile, 'node_modules', packageName)
 +      const installedVersion = readManifest(installedDir)?.version
-+      if (installedVersion === undefined) {
-+        outcomes.push({ packageName, action: 'skipped-absent', bundledVersion, installationBacked: true })
-+        continue
-+      }
-+      // A profile that already runs a newer plugin keeps it. A `file:` spec is
-+      // the mirror dependency 0.2.1-rc.2.20261104.6 rewrote into the profile, and
-+      // its copy cannot be trusted even when the version looks current.
-+      if (!spec.startsWith('file:') && compareVersions(installedVersion, bundledVersion) > 0) {
++      const spec = dependencies[packageName]
++      const owned = spec !== undefined || list.includes(packageName) || activated.includes(packageName)
++      // A bundle this profile never had is a deliberate removal: touching it would
++      // resurrect a plugin the person turned off.
++      if (!owned) continue
++      // A profile copy newer than the runtime keeps running: an application upgrade
++      // must never downgrade a plugin the person installed on purpose.
++      if (spec !== undefined && !spec.startsWith('file:') && installedVersion !== undefined
++        && compareVersions(installedVersion, bundledVersion) > 0) {
 +        outcomes.push({ packageName, action: 'kept-newer', previousVersion: installedVersion, bundledVersion, installationBacked: false })
 +        continue
 +      }
-+      candidates.push({ packageName, bundledDir, bundledVersion, installedDir, installedVersion })
-+    }
-+
-+    const stamp = new Date(options.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, '-')
-+    for (const { packageName, bundledDir, bundledVersion, installedDir, installedVersion } of candidates) {
-+      const markerPath = attemptMarkerPath(options.profile, bundledVersion)
-+      const marker = readAttemptMarker(markerPath, bundledVersion)
-+      if ((marker?.failures ?? 0) >= ALIGNMENT_ATTEMPT_LIMIT) {
-+        outcomes.push({
-+          packageName, action: 'skipped-attempt-budget', previousVersion: installedVersion, bundledVersion,
-+          installationBacked: false,
-+          reason: `alignment failed ${String(marker?.failures)} times for ${bundledVersion}; keeping the profile copy`,
-+        })
-+        continue
-+      }
-+      const verification = verifyBundledCopy(options.runtimeDsh, bundledDir)
-+      if (verification !== undefined) {
-+        recordFailure(markerPath, bundledVersion, marker, verification)
-+        outcomes.push({
-+          packageName, action: 'restored', previousVersion: installedVersion, bundledVersion,
-+          installationBacked: false, reason: verification,
-+        })
-+        continue
-+      }
-+      const rewrite = withoutDependency(options.profile, packageName)
-+      if (rewrite === undefined) {
-+        const reason = 'profile manifest has no removable dependency'
-+        recordFailure(markerPath, bundledVersion, marker, reason)
-+        outcomes.push({ packageName, action: 'restored', previousVersion: installedVersion, bundledVersion, installationBacked: false, reason })
-+        continue
-+      }
-+      const backupPath = join(home, 'backups', 'agentkit-studio', `${artifactName(packageName, installedVersion)}-${stamp}`)
-+      let moved = false
-+      try {
-+        moveAside(installedDir, backupPath)
-+        moved = true
-+        writeFileSync(join(options.profile, 'package.json'), rewrite.next, { mode: 0o600 })
-+        // Post-check: the profile no longer shadows the name, and the installation
-+        // anchor still resolves the bundled copy the Host will load next.
-+        if (existsSync(join(installedDir, 'package.json'))
-+          || resolveRuntimePackage(options.runtimeDsh, join(options.runtimeDsh, 'package.json'), packageName) === undefined) {
-+          throw new Error('installation anchor does not resolve the bundled copy after retirement')
++      if (installedVersion === bundledVersion) {
++        const healthy = verifyPluginCopy(installedDir)
++        if (healthy === undefined && list.includes(packageName) && spec === bundledVersion) {
++          outcomes.push({ packageName, action: 'current', previousVersion: installedVersion, bundledVersion, installationBacked: true })
++          continue
 +        }
-+      } catch (error) {
-+        try {
-+          restoreManifest(options.profile, rewrite.original)
-+        } catch {
-+          // The manifest is unchanged when the failed write never replaced it.
-+        }
-+        if (moved) {
-+          try {
-+            moveAside(backupPath, installedDir)
-+          } catch {
-+            // Keeping the backup is safer than deleting the only copy.
-+          }
-+        }
-+        const reason = error instanceof Error ? error.message : String(error)
-+        recordFailure(markerPath, bundledVersion, marker, reason)
-+        outcomes.push({ packageName, action: 'restored', previousVersion: installedVersion, bundledVersion, installationBacked: false, reason })
-+        continue
 +      }
-+      clearMarker(markerPath)
-+      const outcome: PluginAlignmentOutcome = {
-+        packageName, action: 'retired', previousVersion: installedVersion, bundledVersion, backupPath,
-+        installationBacked: true,
-+      }
-+      outcomes.push(outcome)
-+      options.log?.('desktop profile plugin retired in favour of the bundled runtime copy', outcome)
++      outcomes.push(materializeCandidate({ packageName, bundledDir, bundledVersion, installedDir, installedVersion }, options, home, stamp))
 +    }
 +  } catch (error) {
 +    // Alignment is best-effort preparation: an unexpected filesystem failure must
@@ -415,16 +541,17 @@ index 4f6f0f201ab218754a4542e9da898acad8b55fa4..b30a9567099ce517a97cc883abade151
  
 diff --git a/apps/desktop/tests/bundled-plugin-alignment.spec.ts b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..f871ea4997cf03c8e41cae6f00f0d0c53f3c32ec
+index 0000000000000000000000000000000000000000..16b1d11438ac47f597ef4492a4344fccd721bdf9
 --- /dev/null
 +++ b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
-@@ -0,0 +1,170 @@
-+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+@@ -0,0 +1,189 @@
++import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
 +import { join } from 'node:path'
++import { createRequire } from 'node:module'
 +import { afterEach, describe, expect, it } from 'vitest'
 +import {
-+  ALIGNMENT_ATTEMPT_LIMIT, alignBundledProductPlugins, verifyBundledCopy,
++  ALIGNMENT_ATTEMPT_LIMIT, alignBundledProductPlugins, verifyPluginCopy,
 +} from '../src/bundled-plugin-alignment.ts'
 +
 +const PRODUCT = '@kingsoftcloud/agentkit-studio'
@@ -440,8 +567,10 @@ index 0000000000000000000000000000000000000000..f871ea4997cf03c8e41cae6f00f0d0c5
 +/** Write a minimal package with an explicit version and optional manifest fields. */
 +function writePackage(directory: string, name: string, version: string, extra: Record<string, unknown> = {}): string {
 +  mkdirSync(directory, { recursive: true })
-+  writeFileSync(join(directory, 'package.json'), JSON.stringify({ name, version, type: 'module', ...extra }, undefined, 2))
-+  writeFileSync(join(directory, 'index.js'), 'export const identity = 1\n')
++  writeFileSync(join(directory, 'package.json'), JSON.stringify({
++    name, version, type: 'module', main: './index.js', ...extra,
++  }, undefined, 2))
++  writeFileSync(join(directory, 'index.js'), `export const identity = ${JSON.stringify(name)}\n`)
 +  return directory
 +}
 +
@@ -452,8 +581,19 @@ index 0000000000000000000000000000000000000000..f871ea4997cf03c8e41cae6f00f0d0c5
 +  readonly profile: string
 +}
 +
-+/** Runtime carrying the product plugin beside dsh, and a profile pinning an older copy. */
-+function fixture(options: { readonly bundledVersion?: string; readonly profileVersion?: string; readonly bundledDependencies?: Record<string, string>; readonly keepDshBase?: boolean } = {}): Fixture {
++interface FixtureOptions {
++  readonly bundledVersion?: string
++  readonly profileVersion?: string | null | undefined
++  readonly profileDependency?: string | null | undefined
++  readonly bundleListed?: boolean
++  readonly activationHistory?: boolean
++  readonly bundledDependencies?: Record<string, string>
++  readonly keepDshBase?: boolean
++  readonly hoistDependency?: boolean
++}
++
++/** Runtime carrying the product plugin beside dsh, and a profile that may shadow it. */
++function fixture(options: FixtureOptions = {}): Fixture {
 +  const root = temporaryRoot()
 +  const home = join(root, '.dsh')
 +  const dsh = join(root, 'resources', 'dsh')
@@ -462,16 +602,30 @@ index 0000000000000000000000000000000000000000..f871ea4997cf03c8e41cae6f00f0d0c5
 +  })
 +  writePackage(join(dsh, 'node_modules', '@deepseek-ai', 'dsh-web-app'), '@deepseek-ai/dsh-web-app', '0.2.1-rc.2')
 +  if (options.keepDshBase !== false) writePackage(join(dsh, 'node_modules', '@deepseek-ai', 'dsh-base'), DSH_BASE, '0.2.1-rc.2')
-+  writePackage(join(dsh, 'node_modules', PRODUCT), PRODUCT, options.bundledVersion ?? '0.0.10', {
-+    dependencies: options.bundledDependencies ?? { [DSH_BASE]: '0.2.1-rc.2' },
++  if (options.hoistDependency !== false) {
++    writePackage(join(dsh, 'node_modules', '@kingsoftcloud', 'agentkit-harness-core'), '@kingsoftcloud/agentkit-harness-core', '0.0.13')
++  }
++  writePackage(join(dsh, 'node_modules', PRODUCT), PRODUCT, options.bundledVersion ?? '0.0.12', {
++    dependencies: options.bundledDependencies ?? {
++      [DSH_BASE]: '0.2.1-rc.2', '@kingsoftcloud/agentkit-harness-core': '0.0.13',
++    },
 +  })
 +  const profile = join(home, 'profiles', 'desktop-agentkit-studio')
++  const bundles = [DSH_BASE, '@deepseek-ai/dsh-web-app']
++  if (options.bundleListed !== false) bundles.push(PRODUCT)
++  const dependencies: Record<string, string> = {}
++  if (options.profileDependency !== null) dependencies[PRODUCT] = options.profileDependency ?? '0.0.11'
 +  writePackage(profile, 'dsh-profile-desktop-agentkit-studio', '0.0.0', {
-+    private: true,
-+    dependencies: { [PRODUCT]: options.profileVersion ?? '0.0.7' },
-+    dsh: { profile: { bundles: [DSH_BASE, '@deepseek-ai/dsh-web-app', PRODUCT] } },
++    private: true, dependencies, dsh: { profile: { bundles } },
 +  })
-+  writePackage(join(profile, 'node_modules', PRODUCT), PRODUCT, options.profileVersion ?? '0.0.7')
++  if (options.activationHistory !== false) {
++    writeFileSync(join(profile, 'desktop-product-bundles.json'), `${JSON.stringify([PRODUCT], undefined, 2)}\n`)
++  }
++  if (options.profileVersion !== null) {
++    writePackage(join(profile, 'node_modules', PRODUCT), PRODUCT, options.profileVersion ?? '0.0.11', {
++      dependencies: { '@kingsoftcloud/agentkit-harness-core': '0.0.13' },
++    })
++  }
 +  return { root, home, dsh, profile }
 +}
 +
@@ -479,10 +633,11 @@ index 0000000000000000000000000000000000000000..f871ea4997cf03c8e41cae6f00f0d0c5
 +  return alignBundledProductPlugins({ profile: input.profile, runtimeDsh: input.dsh, home: input.home })
 +}
 +
-+function profileDependency(profile: string): string | undefined {
-+  return (JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as {
++function profileManifest(profile: string) {
++  return JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8')) as {
 +    dependencies?: Record<string, string>
-+  }).dependencies?.[PRODUCT]
++    dsh: { profile: { bundles: string[] } }
++  }
 +}
 +
 +afterEach(() => {
@@ -490,102 +645,92 @@ index 0000000000000000000000000000000000000000..f871ea4997cf03c8e41cae6f00f0d0c5
 +})
 +
 +describe('bundled product plugin alignment', () => {
-+  it('retires the older profile copy so the sealed runtime supplies the bundle', () => {
-+    const input = fixture()
-+    expect(verifyBundledCopy(input.dsh, join(input.dsh, 'node_modules', PRODUCT))).toBeUndefined()
++  it('materializes the bundled copy and restores a bundle list that native recovery cleared', () => {
++    const input = fixture({ bundleListed: false, profileVersion: null, profileDependency: null })
++    expect(profileManifest(input.profile).dsh.profile.bundles).not.toContain(PRODUCT)
 +
 +    const result = outcomes(input)
 +
 +    expect(result).toHaveLength(1)
-+    expect(result[0]).toMatchObject({ packageName: PRODUCT, action: 'retired', previousVersion: '0.0.7', bundledVersion: '0.0.10', installationBacked: true })
-+    expect(profileDependency(input.profile)).toBeUndefined()
-+    expect(existsSync(join(input.profile, 'node_modules', PRODUCT))).toBe(false)
-+    expect(existsSync(result[0]!.backupPath!)).toBe(true)
-+    expect(JSON.parse(readFileSync(join(result[0]!.backupPath!, 'package.json'), 'utf8')).version).toBe('0.0.7')
-+    // The installation anchor still resolves the bundled copy the Host loads next.
-+    expect(existsSync(join(input.dsh, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
-+    // Nothing left to do on the next launch.
-+    expect(outcomes(input)).toEqual([])
++    expect(result[0]).toMatchObject({ packageName: PRODUCT, action: 'materialized', bundledVersion: '0.0.12', installationBacked: true })
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
++    expect(profileManifest(input.profile).dsh.profile.bundles).toContain(PRODUCT)
++    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT))).toBeUndefined()
++    // The hoisted dependency the profile did not carry is copied beside it.
++    expect(existsSync(join(input.profile, 'node_modules', '@kingsoftcloud', 'agentkit-harness-core', 'package.json'))).toBe(true)
++    // Nothing to do once the profile is healthy.
++    expect(outcomes(input)[0]).toMatchObject({ action: 'current', installationBacked: true })
 +  })
 +
-+  it('never throws and keeps the old copy when the bundled copy cannot resolve an in-box package', () => {
-+    const input = fixture({ keepDshBase: false })
-+    expect(verifyBundledCopy(input.dsh, join(input.dsh, 'node_modules', PRODUCT))).toContain(DSH_BASE)
++  it('replaces an older profile copy and keeps the superseded tree as a backup', () => {
++    const input = fixture({ profileVersion: '0.0.11' })
++    const result = outcomes(input)
++    expect(result[0]).toMatchObject({ action: 'materialized', previousVersion: '0.0.11', bundledVersion: '0.0.12', installationBacked: true })
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
++    expect(existsSync(result[0]!.backupPath!)).toBe(true)
++    expect(JSON.parse(readFileSync(join(result[0]!.backupPath!, 'package.json'), 'utf8')).version).toBe('0.0.11')
++    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT))).toBeUndefined()
++  })
 +
++  it('keeps a profile copy newer than the bundled runtime', () => {
++    const input = fixture({ bundledVersion: '0.0.11', profileVersion: '0.0.12' })
++    expect(outcomes(input)[0]).toMatchObject({ action: 'kept-newer', previousVersion: '0.0.12', installationBacked: false })
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++  })
++
++  it('keeps a loadable profile copy when the bundled copy cannot resolve its closure', () => {
++    const input = fixture({ keepDshBase: false })
 +    const first = outcomes(input)
 +    expect(first[0]).toMatchObject({ action: 'restored', installationBacked: false })
 +    expect(first[0]?.reason).toContain(DSH_BASE)
-+    expect(profileDependency(input.profile)).toBe('0.0.7')
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
 +    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
-+    const marker = JSON.parse(readFileSync(join(input.profile, `.alignment-attempt-${'0.0.10'}`), 'utf8'))
-+    expect(marker.failures).toBe(1)
++    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.12'), 'utf8')).failures).toBe(1)
 +
 +    expect(outcomes(input)[0]).toMatchObject({ action: 'restored' })
-+    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.10'), 'utf8')).failures).toBe(ALIGNMENT_ATTEMPT_LIMIT)
++    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.12'), 'utf8')).failures).toBe(ALIGNMENT_ATTEMPT_LIMIT)
 +
-+    // The same version stops retrying and still starts on the profile copy.
++    // The third launch stops trying and still starts on the profile copy.
 +    expect(outcomes(input)[0]).toMatchObject({ action: 'skipped-attempt-budget', installationBacked: false })
-+    expect(profileDependency(input.profile)).toBe('0.0.7')
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
 +    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
 +  })
 +
-+  it('restores the profile when the manifest rewrite fails after moving the copy', () => {
-+    const input = fixture()
-+    const manifestPath = join(input.profile, 'package.json')
-+    const original = readFileSync(manifestPath, 'utf8')
-+    chmodSync(manifestPath, 0o400)
-+    try {
-+      const result = outcomes(input)
-+      expect(result[0]).toMatchObject({ action: 'restored', installationBacked: false })
-+      expect(readFileSync(manifestPath, 'utf8')).toBe(original)
-+      expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
-+    } finally {
-+      chmodSync(manifestPath, 0o600)
-+    }
-+  })
-+
-+  it('keeps a profile copy that is newer than the bundled runtime', () => {
-+    const input = fixture({ bundledVersion: '0.0.10', profileVersion: '0.0.12' })
-+    expect(outcomes(input)[0]).toMatchObject({ action: 'kept-newer', previousVersion: '0.0.12', installationBacked: false })
-+    expect(profileDependency(input.profile)).toBe('0.0.12')
-+    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
-+  })
-+
-+  it('cleans up the mirror dependency an earlier .6 launch rewrote into the profile', () => {
-+    const input = fixture({ bundledVersion: '0.0.10', profileVersion: '0.0.10' })
-+    const manifestPath = join(input.profile, 'package.json')
-+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
-+    manifest.dependencies[PRODUCT] = 'file:../../bundled-plugins/agentkit-studio-0.0.10'
++  it('rejects a copy whose exported entry is missing instead of pinning it', () => {
++    const input = fixture({ profileVersion: null, profileDependency: null })
++    // The bundled manifest exports a file the tree does not carry.
++    const manifestPath = join(input.dsh, 'node_modules', PRODUCT, 'package.json')
++    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
++    manifest.exports = { '.': './src/index.mjs' }
 +    writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2))
-+    const result = outcomes(input)
-+    expect(result[0]).toMatchObject({ action: 'retired', previousVersion: '0.0.10', bundledVersion: '0.0.10' })
-+    expect(profileDependency(input.profile)).toBeUndefined()
-+  })
-+
-+  it('leaves installation-owned bundles and absent product copies untouched', () => {
-+    const input = fixture()
-+    // A profile dependency on an in-box bundle is never a product-plugin candidate.
-+    const manifestPath = join(input.profile, 'package.json')
-+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
-+    manifest.dependencies['@deepseek-ai/dsh-web-app'] = '0.2.1-rc.2'
-+    writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2))
-+    writePackage(join(input.profile, 'node_modules', '@deepseek-ai', 'dsh-web-app'), '@deepseek-ai/dsh-web-app', '0.2.1-rc.2')
 +
 +    const result = outcomes(input)
-+    expect(result.map(outcome => outcome.action)).toEqual(['retired'])
-+    expect(existsSync(join(input.profile, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'package.json'))).toBe(true)
-+    expect(existsSync(join(input.dsh, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'package.json'))).toBe(true)
-+
-+    rmSync(join(input.profile, 'node_modules', PRODUCT), { recursive: true, force: true })
-+    manifest.dependencies[PRODUCT] = '0.0.10'
-+    writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2))
-+    expect(outcomes(input)[0]).toMatchObject({ action: 'skipped-absent', installationBacked: true })
++    expect(result[0]).toMatchObject({ action: 'restored', installationBacked: false })
++    expect(result[0]?.reason).toContain('./src/index.mjs')
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(false)
++    expect(profileManifest(input.profile).dsh.profile.bundles).not.toContain(PRODUCT)
 +  })
 +
-+  it('reports a missing runtime copy without touching the profile', () => {
++  it('leaves installation-owned bundles and untouched product copies alone', () => {
 +    const input = fixture()
++    expect(outcomes(input).map(outcome => outcome.action)).toEqual(['materialized'])
 +    rmSync(join(input.dsh, 'node_modules', PRODUCT), { recursive: true, force: true })
-+    expect(outcomes(input)[0]).toMatchObject({ action: 'missing-runtime-copy', installationBacked: false })
-+    expect(profileDependency(input.profile)).toBe('0.0.7')
++    expect(outcomes(input)[0]).toMatchObject({ action: 'missing-runtime-copy' })
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++  })
++
++  it('keeps working when the profile manifest cannot be parsed', () => {
++    const input = fixture()
++    writeFileSync(join(input.profile, 'package.json'), '{')
++    expect(outcomes(input)).toEqual([])
++    expect(existsSync(join(input.dsh, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++  })
++
++  it('resolves every declared dependency from the materialized profile anchor', () => {
++    const input = fixture({ profileVersion: null, profileDependency: null })
++    outcomes(input)
++    const require = createRequire(join(input.profile, 'node_modules', PRODUCT, 'package.json'))
++    expect(require.resolve('@kingsoftcloud/agentkit-harness-core')).toContain('agentkit-harness-core')
 +  })
 +})

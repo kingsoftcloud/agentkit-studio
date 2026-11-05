@@ -3254,7 +3254,7 @@
       "file": "071-bundled-plugin-alignment.patch",
       "category": "general-fix",
       "baseCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
-      "sha256": "27fb345b3686280a6941da572dbc78676ba80d2355043ccaf3a91017f4578746",
+      "sha256": "6728fde22bf63921c756af113367ac44b7adc873e29a2a830bffa47937a95202",
       "dependsOn": [
         "013"
       ],
@@ -3267,7 +3267,7 @@
         "@deepseek-ai/dsh-desktop"
       ],
       "contracts": [
-        "A profile that pins an older product plugin no longer shadows the sealed runtime: alignment backs up and retires the profile dependency and its node_modules copy, and the Host resolves the bundled product plugin from the installation anchor inside app.asar. Installation-owned @deepseek-ai/* bundles are never mirrored. Before touching the profile the bundled copy must resolve every declared dependency from the runtime; a failed rewrite restores the previous package.json and copy, and two consecutive failures for one bundled version stop further attempts so the old plugin still starts."
+        "A profile that ships an older product plugin is materialized, not retired: the Desktop shell copies the bundled product plugin and every dependency of its closure that the profile cannot answer into the profile, pins the bundled version, repairs a `dsh.profile.bundles` list that native recovery cleared, and verifies the copy is loadable (every declared non-installation dependency resolves from the profile anchor and every relative export exists) before and after the swap. The copy uses readdir/readFile because Electron's ASAR filesystem has no directory handles; `cpSync` on an asar directory fails with ENOTDIR and made 0.2.1-rc.2.20261104.6 crash before the Host started. A superseded copy is moved to `$DSH_HOME/backups/agentkit-studio` and restored on any failure, so a broken materialization never deletes a copy that used to load. Two consecutive failures for one bundled version stop further attempts."
       ],
       "risk": "medium",
       "maintainerRole": "Studio Host maintainers",
@@ -3287,8 +3287,8 @@
       "sequence": 64
     }
   ],
-  "patchedTree": "adb9fa85df43515c80ae3e44e7c047151ee502bc",
-  "patchedSourceSha256": "4a598a7966fec4b291ecc5d8ce67014c6c7e15c30f0cf989c1b309a26643c7b9",
+  "patchedTree": "db421725a08772c132293970f0bb586ed01bf515",
+  "patchedSourceSha256": "94dad5f65c1f85390ba3e46a0fe096219f51f9fb18c075955e1a819c42b771f9",
   "maintenanceSource": {
     "descriptor": "source.json",
     "sha256": "be29f3021693d0c335e43de99bdeba2361e618c6b6ffdfbca12fea9ce6b3093d"

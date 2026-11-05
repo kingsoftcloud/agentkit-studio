@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.12
+
+- 桌面端启动对齐改为“物化”而不是“退役”：把运行时内置的产品插件连同其依赖闭包按文件写入 profile（Electron 的 asar 没有目录句柄，`cpSync` 会把 `.6` 直接拷崩），钉住版本，并在原生恢复清空 `dsh.profile.bundles` 后把 `@kingsoftcloud/agentkit-studio` 补回——此前正是这一项缺失导致界面只剩默认 DSH、插件根本不参与加载。
+- 装完必须“可加载”才算成功：每个非安装自带的依赖都要从 profile 锚点解析成功、每个相对导出入口都要存在；校验不过就回滚 `package.json` 与旧副本，绝不删除原本可用的插件。同一版本连续失败两次后停止尝试。
+- Host 侧对齐不再搬迁/删除 profile 副本，只补齐 bundle 选择并校验可加载性；`.alignment-attempt` 预算保留。
+
 ## 0.0.11
 
 - 桌面端启动时的插件对齐不再把运行时自带的插件复制到 profile：改为备份并移除旧的 profile 副本，让 DSH 的安装锚点直接解析 `app.asar` 内的插件，避免搬出 asar 后缺失 `@deepseek-ai/*` 依赖；改写前逐一校验 bundled 依赖，失败立即还原 `package.json` 与旧副本，同一版本连续失败两次后停止尝试并降级启动。
