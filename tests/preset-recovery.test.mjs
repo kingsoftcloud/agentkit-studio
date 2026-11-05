@@ -39,7 +39,8 @@ test('startup restores the exact historical preset even when its resources canno
     build: { list: async () => [] }, admission });
   const presetId = dshPresetId(row.metadata.id, 2);
   assert.ok(presets.has(presetId), `agent-preset/not-found: Unknown agent preset: ${presetId}`);
-  assert.equal(presets.get(presetId).plugins[0].config.agentRevision, 2);
+  const runtime = presets.get(presetId).plugins.find(row => row.name.endsWith('/dsh-runtime-plugin'));
+  assert.equal(runtime.config.agentRevision, 2);
   await admission.dispose();
 });
 

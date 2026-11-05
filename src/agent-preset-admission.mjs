@@ -148,10 +148,14 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
     if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
     this.nativeEngineContract = nativeEngineContract;
     this.assertHostCompatible = assertHostCompatible;
+    // Strict deployments refuse to run a preset whose bound resources could not
+    // be recovered; the default keeps the Agent conversational and only removes
+    // the unavailable bindings, because one flaky MCP must not disable chat.
+    this.strictResources = strictResources === true;
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
     this.getModelSelection = getModelSelection;
@@ -249,6 +253,7 @@ export class DshPresetAdmission {
       || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
     const plugins = basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web');
     let resourcesUnavailable = false;
+    const unavailableResources = [];
     if (prefix) {
       const persona = plugins.find(row => row.id === 'persona');
       const row = {
@@ -268,17 +273,23 @@ export class DshPresetAdmission {
       // Cloud tools/resources are executed by the frozen runtime;
       // asking the local DSH registry to materialize them would incorrectly
       // turn a valid cloud Agent into a local binding failure.
-      const recoverResources = async (load) => {
+      const recoverResources = async (load, kind) => {
         try { return await load(); }
         catch (error) {
           if (!allowUnavailableResources) throw error;
           resourcesUnavailable = true;
-          console.warn('[agentkit-studio] preset resource snapshot unavailable during recovery:', eligibility.presetId, error?.code || 'RESOURCE_UNAVAILABLE');
+          const details = error && typeof error.details === 'object' && error.details ? error.details : {};
+          const id = String(details.resourceId || details.id || '').trim();
+          const entry = { kind, code: String(error?.code || 'RESOURCE_UNAVAILABLE'),
+            message: String(error?.message || '').slice(0, 240), ...(id ? { id } : {}) };
+          unavailableResources.push(entry);
+          console.warn('[agentkit-studio] preset resource snapshot unavailable during recovery:', eligibility.presetId,
+            entry.code, entry.id ? `(${kind}:${entry.id})` : `(${kind})`, this.strictResources ? '| strict' : '| degraded');
           return [];
         }
       };
       const toolContracts = eligibility.local && typeof this.getToolContracts === 'function'
-        ? await recoverResources(() => this.getToolContracts(agent))
+        ? await recoverResources(() => this.getToolContracts(agent), 'tool')
         : [];
       // Catalog resource IDs can differ from their formal builtin names.
       if (toolContracts.some(tool => tool.executor === 'builtin' && tool.enabled !== false
@@ -287,10 +298,19 @@ export class DshPresetAdmission {
           if (plugins[index].name === '@deepseek-ai/dsh-tool-web') plugins.splice(index, 1);
       }
       const skillDefinitions = eligibility.local && typeof this.getSkillDefinitions === 'function'
-        ? await recoverResources(() => this.getSkillDefinitions(agent))
+        ? await recoverResources(() => this.getSkillDefinitions(agent), 'skill')
         : [];
       const boundToolPolicy = eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
         ? nativeAgentPolicyFromSpec(agent.spec) : null;
+      if (unavailableResources.length) {
+        // The unavailable bindings are absent from the tool set; without this
+        // note the model still believes it can call them and hallucinates.
+        const describe = item => `- ${item.kind === 'tool' ? 'MCP / Tool' : item.kind === 'skill' ? 'Skill' : '资源'}${item.id ? ` ${item.id}` : ''}（${item.code}）`;
+        const notice = ['以下绑定资源当前不可用，请勿声称已调用或已读取它们：', ...unavailableResources.map(describe)].join('\n');
+        const persona = plugins.find(row => row.id === 'persona');
+        if (persona) persona.config = { ...persona.config, prefix: [persona.config?.prefix, notice].filter(Boolean).join('\n\n') };
+        else plugins.push({ id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: notice, includeRuntimeContext: false } });
+      }
       if (skillDefinitions.length) {
         const shell = process.platform === 'win32' ? '@deepseek-ai/dsh-tool-pwsh' : '@deepseek-ai/dsh-tool-bash';
         if (!plugins.some(row => row.name === '@deepseek-ai/dsh-tool-skill')) plugins.push({ id: 'bound-skill-loader', name: '@deepseek-ai/dsh-tool-skill' });
@@ -306,6 +326,8 @@ export class DshPresetAdmission {
           ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),
             legacyMemoryBindings: legacyMemoryBindings(agent.spec) } : {}),
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),
+          ...(unavailableResources.length ? { unavailableResources: unavailableResources.map(item => ({ ...item })) } : {}),
+          ...(this.strictResources ? { strictResources: true } : {}),
           ...(eligibility.local ? {agentRevision:eligibility.revision} : {}),
           ...(eligibility.local && eligibility.runtime === 'harness' && nativeEngineContract
             ? { nativeEngineContract } : {}),
