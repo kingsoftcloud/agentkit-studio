@@ -46,7 +46,8 @@ function sessionEligible(session) {
   if (!session || typeof session.deriveMessages !== 'function') return { ok: false, reason: 'unknown-session' }
   if (isDerivedSession(session.header)) return { ok: false, reason: 'derived-session' }
   if (!predictionRouteAllowed(session)) return { ok: false, reason: 'unsupported-route' }
-  const messages = session.deriveMessages()
+  let messages
+  try { messages = session.deriveMessages() } catch { return { ok: false, reason: 'history-unavailable' } }
   if (lastAssistantText(messages).length === 0) return { ok: false, reason: 'no-assistant-reply' }
   return { ok: true, messages }
 }
