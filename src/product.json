@@ -29,7 +29,7 @@
     "updates": {
       "environment": "production",
       "origin": "https://agentkit.ks3-cn-beijing.ksyuncs.com",
-      "channel": "preview"
+      "channel": "nightly"
     },
     "platforms": {
       "mac-arm64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"},

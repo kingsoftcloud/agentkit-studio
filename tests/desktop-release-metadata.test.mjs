@@ -35,11 +35,31 @@ test('Windows feed preserves signed installer metadata and gives the installed l
   const version = '0.2.0-rc.2.20261014.8', sha512 = Buffer.alloc(64, 42).toString('base64');
   const metadata = { version, path: `deepseek-harness-${version}-win-x64.exe`, sha512,
     files: [{ url: `deepseek-harness-${version}-win-x64.exe`, size: 400000000, sha512 }] };
-  const plan = studioWindowsPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' });
+  const plan = studioWindowsPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', channel: 'preview' });
   assert.equal(plan.feedKey, 'studio/feeds/win-x64/preview.yml');
   assert.equal(plan.bridgeFeedKey, 'dsh-desk/feeds/win-x64/preview.yml');
+  const latest = studioWindowsPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', channel: 'latest' });
+  assert.equal(latest.feedKey, 'studio/feeds/win-x64/latest.yml');
+  assert.equal(latest.bridgeFeedKey, 'dsh-desk/feeds/win-x64/latest.yml');
   assert.equal(plan.metadata.files[0].sha512, sha512);
   assert.equal(plan.metadata.files[0].size, metadata.files[0].size);
   assert.equal(plan.metadata.files[0].url, `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${version}/AgentKit-Studio-win-x64.exe`);
   assert.throws(() => studioWindowsPublication({ ...metadata, version: '1.0.0' }, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' }), /signed installer/);
+});
+
+test('every accepted lane publishes its own macOS and Windows feed object', () => {
+  const version = '0.2.2-rc.1.20261105.2';
+  const metadata = { version, files: [{ url: `deepseek-harness-${version}-mac-arm64.zip`, sha512: 'signed', size: 123 }] };
+  const sha512 = Buffer.alloc(64, 42).toString('base64');
+  const windows = { version, sha512, files: [{ url: `deepseek-harness-${version}-win-x64.exe`, size: 4000, sha512 }] };
+  for (const channel of ['latest', 'nightly', 'preview', 'stable']) {
+    assert.equal(studioDesktopPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', channel }).feedKey,
+      `studio/feeds/mac-arm64/${channel}-mac.yml`);
+    assert.equal(studioWindowsPublication(windows, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', channel }).feedKey,
+      `studio/feeds/win-x64/${channel}.yml`);
+  }
+  assert.throws(() => studioDesktopPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', channel: 'beta' }),
+    /channel must be one of nightly, latest, preview, stable/);
+  assert.throws(() => studioWindowsPublication(windows, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', channel: 'beta' }),
+    /channel must be one of nightly, latest, preview, stable/);
 });

@@ -76,3 +76,40 @@ test('Studio verifier requests the packaged canonical feed and rejects a legacy-
   canonical = false;
   await assert.rejects(run(process.execPath, args, { cwd: root }), /404/);
 });
+
+test('a native lane verifies its own feed file and refuses unknown lanes before network access', async t => {
+  const version = '0.2.2-rc.1.20261105.2';
+  const bytes = Buffer.from('native latest lane ZIP');
+  const sha512 = createHash('sha512').update(bytes).digest('base64');
+  const requests = []; let origin;
+  const server = createServer((request, response) => {
+    requests.push({ url: request.url, method: request.method });
+    if (request.url === '/studio/feeds/mac-arm64/latest-mac.yml') {
+      const body = `version: ${version}\nfiles:\n  - url: ${origin}/studio/${version}/AgentKit-Studio-mac-arm64.zip\n    size: ${bytes.length}\n    sha512: ${sha512}\n`;
+      response.writeHead(200, { 'content-length': Buffer.byteLength(body) }); response.end(body); return;
+    }
+    if (request.url !== `/studio/${version}/AgentKit-Studio-mac-arm64.zip`) { response.writeHead(404); response.end(); return; }
+    if (request.headers.range) { response.writeHead(206, { 'accept-ranges': 'bytes', 'content-range': `bytes 0-0/${bytes.length}` }); response.end(bytes.subarray(0, 1)); return; }
+    response.writeHead(200, { 'content-length': bytes.length }); response.end(request.method === 'HEAD' ? undefined : bytes);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  origin = `http://127.0.0.1:${server.address().port}`;
+  const output = await mkdtemp(join(tmpdir(), 'studio-latest-feed-'));
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(output, { recursive: true, force: true }); });
+  await run(process.execPath, ['scripts/desktop-release.mjs', 'verify-feed', '--origin', origin, '--allow-loopback', '--channel', 'latest', '--version', version, '--output', output], { cwd: root });
+  const report = JSON.parse(await readFile(join(output, `feed-latest-${version}.json`)));
+  assert.equal(report.channel, 'latest');
+  assert.equal(report.feedUrl, `${origin}/studio/feeds/mac-arm64/latest-mac.yml`);
+  assert.ok(!requests.some(request => request.url.endsWith('/preview-mac.yml')));
+  await assert.rejects(run(process.execPath, ['scripts/desktop-release.mjs', 'verify-feed', '--origin', origin, '--allow-loopback', '--channel', 'beta', '--version', version], { cwd: root }),
+    /channel must be one of nightly, latest, preview, stable/);
+});
+
+test('feed mirroring requires exactly one source before touching the network', async () => {
+  const origin = 'http://127.0.0.1:9';
+  const baseArgs = ['scripts/desktop-release.mjs', 'mirror-feed', '--origin', origin, '--allow-loopback', '--channel', 'latest', '--version', '0.2.2-rc.1.20261105.2'];
+  await assert.rejects(run(process.execPath, baseArgs, { cwd: root }), /requires exactly one of --from-channel or --from-file/);
+  await assert.rejects(run(process.execPath, [...baseArgs, '--from-channel', 'preview', '--from-file', 'feed.yml'], { cwd: root }),
+    /requires exactly one of --from-channel or --from-file/);
+  await assert.rejects(run(process.execPath, [...baseArgs, '--from-channel', 'beta'], { cwd: root }), /--from-channel must be one of nightly, latest, preview, stable/);
+});
