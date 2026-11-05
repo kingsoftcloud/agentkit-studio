@@ -48,7 +48,10 @@ function project(entry) {
 
 /** Read the tasks that deliver to one Session, in the retained catalog order. */
 async function scoped(schedule, sessionId) {
-  const tasks = (await schedule.catalog()).filter(task => task?.target?.kind === 'session' && task.target.sessionId === sessionId);
+  // rc1 dropped the owning Session field: a task belongs to the Sessions that created,
+  // edited or receive it, which is exactly the recorded involvement set.
+  const tasks = (await schedule.catalog()).filter(task => Array.isArray(task?.involvedSessionIds) && task.involvedSessionIds.includes(sessionId)
+    || task?.target?.kind === 'session' && task.target.sessionId === sessionId);
   return tasks.map(project).sort((left, right) => String(left.scheduledAt).localeCompare(String(right.scheduledAt)) || String(left.id).localeCompare(String(right.id)));
 }
 

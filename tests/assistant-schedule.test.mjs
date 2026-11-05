@@ -4,10 +4,11 @@ import { assistantScheduleExpected, executeAssistantSchedule } from '../src/assi
 const record = { id: 'task', kind: 'weekly', title: 'Review', prompt: 'Review reports', scheduledAt: '2030-01-01T09:00:00.000Z', time: '09:00:00.000', timeZone: 'UTC', weekdays: [1, 3] };
 const native = (overrides = {}) => ({ ...record, target: { kind: 'session', sessionId: 'current' }, involvedSessionIds: ['current'],
   status: 'active', createdAt: '2029-12-31T00:00:00.000Z', updatedAt: '2029-12-31T00:00:00.000Z', ...overrides });
+const foreign = () => native({ id: 'foreign', target: { kind: 'session', sessionId: 'other' }, involvedSessionIds: ['other'], status: 'ended' });
 const deferred = () => Promise.withResolvers();
 function fixture() {
   const calls = [], schedule = {
-    catalog: async () => [native(), native({ id: 'foreign', target: { kind: 'session', sessionId: 'other' }, status: 'ended' })],
+    catalog: async () => [native(), foreign()],
     history: async request => { calls.push(['history', request]); return { id: request.id, records: [], earlierRecordsUnavailable: false }; },
     edit: async (request, actor, signal) => { calls.push(['edit', request, actor, signal]);
       return request.action === 'delete' ? { id: request.id, deleted: true } : { id: request.id, code: 'schedule_conflict' }; },
