@@ -1,9 +1,9 @@
 diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4e76c602d
+index 0000000000000000000000000000000000000000..6c787087318268d764d12501f2e2c7d69bda0e2e
 --- /dev/null
 +++ b/apps/desktop/src/bundled-plugin-alignment.ts
-@@ -0,0 +1,503 @@
+@@ -0,0 +1,521 @@
 +/** Install the product plugin the runtime bundles into the profile that loads it. */
 +
 +import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -132,6 +132,19 @@ index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4
 +  return undefined
 +}
 +
++/**
++ * Resolve one package directory the way Node's lookup order does, without
++ * consulting its `exports` map: an ESM-only package still answers a directory
++ * probe but rejects CommonJS `require.resolve`.
++ */
++function resolvePackageDir(anchor: string, packageName: string): string | undefined {
++  for (const searchPath of createRequire(anchor).resolve.paths(packageName) ?? []) {
++    const candidate = join(searchPath, packageName)
++    if (existsSync(join(candidate, 'package.json'))) return candidate
++  }
++  return undefined
++}
++
 +/** Dependency and peer names a resolvable package must supply. */
 +function dependencyNames(manifest: Manifest): string[] {
 +  return [...new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])]
@@ -162,19 +175,19 @@ index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4
 + * @param directory - the profile copy of a product plugin.
 + * @returns the first loadability failure, or undefined when the copy answers.
 + */
-+export function verifyPluginCopy(directory: string): string | undefined {
++export function verifyPluginCopy(directory: string, reference?: string): string | undefined {
 +  const manifest = readManifest(directory)
 +  if (manifest === undefined) return `unreadable package manifest in ${directory}`
-+  const require = createRequire(join(directory, 'package.json'))
++  const anchor = join(directory, 'package.json')
++  // A dependency the shipped tree itself cannot answer is not a load
++  // requirement: the product ships packages whose manifests declare optional
++  // tooling (`@cfworker/json-schema` beside the MCP SDK) that no build carries.
 +  for (const name of dependencyNames(manifest)) {
 +    // Installation-owned packages answer from the sealed runtime's own anchor,
 +    // never from the profile; requiring them here would reject a healthy copy.
 +    if (name.startsWith(INSTALLATION_SCOPE)) continue
-+    try {
-+      require.resolve(name)
-+    } catch {
-+      return `profile copy cannot resolve ${name}`
-+    }
++    if (reference !== undefined && resolvePackageDir(join(reference, 'package.json'), name) === undefined) continue
++    if (resolvePackageDir(anchor, name) === undefined) return `profile copy cannot resolve ${name}`
 +  }
 +  for (const entry of entryFiles(manifest)) {
 +    if (!existsSync(join(directory, entry))) return `profile copy is missing ${entry}`
@@ -328,30 +341,35 @@ index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4
 + */
 +function copyClosure(runtimeDsh: string, bundledDir: string, stage: string, profile: string): string[] {
 +  const created: string[] = []
-+  const queue = [stage]
++  const queue: { source: string; target: string }[] = [{ source: bundledDir, target: stage }]
++  const seen = new Set<string>()
 +  let visited = 0
 +  while (queue.length > 0) {
-+    const directory = queue.shift() as string
-+    const manifest = readManifest(directory)
-+    if (manifest === undefined) throw new Error(`unreadable package manifest in ${directory}`)
-+    const require = createRequire(join(directory, 'package.json'))
++    const { source, target } = queue.shift() as { source: string; target: string }
++    if (seen.has(target)) continue
++    seen.add(target)
++    const manifest = readManifest(target)
++    if (manifest === undefined) throw new Error(`unreadable package manifest in ${target}`)
++    const anchor = join(target, 'package.json')
 +    for (const name of dependencyNames(manifest)) {
 +      if (name.startsWith(INSTALLATION_SCOPE)) continue
-+      try {
-+        require.resolve(name)
-+        continue
-+      } catch {
-+        // The copy does not answer this dependency yet.
-+      }
-+      const source = resolveRuntimePackage(runtimeDsh, join(bundledDir, 'package.json'), name)
-+      if (source === undefined) throw new Error(`bundled copy cannot resolve ${name}`)
-+      const target = join(profile, 'node_modules', name)
-+      if (!existsSync(join(target, 'package.json'))) {
++      // Package-directory lookup, not `require.resolve`: ESM-only packages such
++      // as the MCP SDK reject the CommonJS resolver even when they are present.
++      if (resolvePackageDir(anchor, name) !== undefined) continue
++      // Resolve from the package being copied, not from the plugin root: a
++      // dependency the build nested under its own package (for example the
++      // schema package beside the MCP SDK) only answers there.
++      const resolved = resolveRuntimePackage(runtimeDsh, join(source, 'package.json'), name)
++      // Not shipped anywhere in the sealed runtime: it cannot be required at
++      // load, so the copy is not incomplete without it.
++      if (resolved === undefined) continue
++      const destination = join(profile, 'node_modules', name)
++      if (!existsSync(join(destination, 'package.json'))) {
 +        if (created.length >= MAX_CLOSURE_PACKAGES) throw new Error(`dependency closure of ${name} is too large`)
-+        copyPackageTree(source, target)
-+        created.push(target)
++        copyPackageTree(resolved, destination)
++        created.push(destination)
 +      }
-+      queue.push(target)
++      queue.push({ source: resolved, target: destination })
 +    }
 +    visited += 1
 +    if (visited > MAX_CLOSURE_PACKAGES) throw new Error('dependency closure is too large')
@@ -393,7 +411,7 @@ index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4
 +  try {
 +    copyPackageTree(bundledDir, stage)
 +    created = copyClosure(options.runtimeDsh, bundledDir, stage, options.profile)
-+    const staged = verifyPluginCopy(stage)
++    const staged = verifyPluginCopy(stage, bundledDir)
 +    if (staged !== undefined) throw new Error(staged)
 +    if (existsSync(join(installedDir, 'package.json'))) {
 +      moveAside(installedDir, backupPath)
@@ -402,7 +420,7 @@ index 0000000000000000000000000000000000000000..d276426bea3daee7b9d5e458433478e4
 +    renameSync(stage, installedDir)
 +    replaced = true
 +    writeFileSync(join(options.profile, 'package.json'), rewrite.next, { mode: 0o600 })
-+    const installed = verifyPluginCopy(installedDir)
++    const installed = verifyPluginCopy(installedDir, bundledDir)
 +    if (installed !== undefined) throw new Error(installed)
 +    if (existsSync(stage)) throw new Error('staged copy still shadows the installed copy')
 +  } catch (error) {
@@ -541,18 +559,16 @@ index 4f6f0f201ab218754a4542e9da898acad8b55fa4..04ea5af6ba308b0704fcf76bcea729f1
  
 diff --git a/apps/desktop/tests/bundled-plugin-alignment.spec.ts b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..16b1d11438ac47f597ef4492a4344fccd721bdf9
+index 0000000000000000000000000000000000000000..6ff34c62d4e6987379ed2d893d04eb8a26a59f95
 --- /dev/null
 +++ b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
-@@ -0,0 +1,189 @@
-+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+@@ -0,0 +1,198 @@
++import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
 +import { join } from 'node:path'
 +import { createRequire } from 'node:module'
 +import { afterEach, describe, expect, it } from 'vitest'
-+import {
-+  ALIGNMENT_ATTEMPT_LIMIT, alignBundledProductPlugins, verifyPluginCopy,
-+} from '../src/bundled-plugin-alignment.ts'
++import { alignBundledProductPlugins, verifyPluginCopy } from '../src/bundled-plugin-alignment.ts'
 +
 +const PRODUCT = '@kingsoftcloud/agentkit-studio'
 +const DSH_BASE = '@deepseek-ai/dsh-base'
@@ -679,22 +695,33 @@ index 0000000000000000000000000000000000000000..16b1d11438ac47f597ef4492a4344fcc
 +    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
 +  })
 +
-+  it('keeps a loadable profile copy when the bundled copy cannot resolve its closure', () => {
-+    const input = fixture({ keepDshBase: false })
-+    const first = outcomes(input)
-+    expect(first[0]).toMatchObject({ action: 'restored', installationBacked: false })
-+    expect(first[0]?.reason).toContain(DSH_BASE)
-+    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
-+    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
-+    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.12'), 'utf8')).failures).toBe(1)
++  it('does not treat a dependency the shipped tree cannot answer as a load requirement', () => {
++    const input = fixture({
++      profileVersion: null,
++      profileDependency: null,
++      bundledDependencies: { '@kingsoftcloud/agentkit-harness-core': '0.0.13', '@cfworker/json-schema': '3.2.1' },
++    })
++    const result = outcomes(input)
++    expect(result[0]).toMatchObject({ action: 'materialized', installationBacked: true })
++    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT), join(input.dsh, 'node_modules', PRODUCT))).toBeUndefined()
++  })
 +
-+    expect(outcomes(input)[0]).toMatchObject({ action: 'restored' })
-+    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.12'), 'utf8')).failures).toBe(ALIGNMENT_ATTEMPT_LIMIT)
-+
-+    // The third launch stops trying and still starts on the profile copy.
-+    expect(outcomes(input)[0]).toMatchObject({ action: 'skipped-attempt-budget', installationBacked: false })
-+    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.11')
-+    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++  it('keeps the working copy and stops after two failed materializations', () => {
++    const input = fixture({ profileVersion: '0.0.11' })
++    const modules = join(input.profile, 'node_modules')
++    expect(outcomes(input)[0]).toMatchObject({ action: 'materialized' })
++    // A read-only profile makes the next materialization fail before it swaps.
++    chmodSync(modules, 0o500)
++    try {
++      const first = outcomes(input)
++      expect(first[0]).toMatchObject({ action: 'restored', installationBacked: false })
++      expect(outcomes(input)[0]).toMatchObject({ action: 'restored' })
++      expect(outcomes(input)[0]).toMatchObject({ action: 'skipped-attempt-budget', installationBacked: false })
++    } finally {
++      chmodSync(modules, 0o700)
++    }
++    expect(profileManifest(input.profile).dependencies?.[PRODUCT]).toBe('0.0.12')
++    expect(verifyPluginCopy(join(input.profile, 'node_modules', PRODUCT))).toBeUndefined()
 +  })
 +
 +  it('rejects a copy whose exported entry is missing instead of pinning it', () => {
