@@ -2109,12 +2109,53 @@
         ]
       },
       "sequence": 44
+    },
+    {
+      "id": "076",
+      "file": "076-studio-feed-prefix-all-platforms.patch",
+      "category": "updater",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "688305edba7f6504d2beff987bb6251282213d03ba03bda8096c493bcd94eb9f",
+      "dependsOn": [
+        "032",
+        "075"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/desktop-auto-update-environment.mjs",
+        "apps/desktop/tests/desktop-auto-update-environment.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Production Studio packaging resolves `<origin>/studio/feeds/<target>/` on macOS and Windows alike: the feed prefix keeps the Studio app-id condition and no longer requires the Windows platform gate.",
+        "The focused updater test pins the Studio public feed directory for darwin/arm64, darwin/x64 and win32/x64."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Backport of the rc2 041 integration feed-prefix change to the DSH 0.2.2-rc.1 maintenance source; the rc1 target has no direct upstream merge."
+      },
+      "removeWhen": "The pinned upstream DSH derives the Studio product feed prefix on every target platform without a Windows-only gate.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/desktop-auto-update-environment.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "electron"
+        ]
+      },
+      "sequence": 45
     }
   ],
-  "patchedTree": "ecc943386a62d1c22a87aa87f9e186a11ae600f1",
-  "patchedSourceSha256": "0e55020e69beac7fe9f80331a46ea47025a4faec3f210cff85d273b7b4da3dd2",
+  "patchedTree": "16850850c816c86e6c2a991d0b3b9c5e85c38114",
+  "patchedSourceSha256": "1bfe69f2578ffa30007e9dcd969efd5f6625d067f81e9b95b98fbc6a8bd6a1bf",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "6a86616ce1fde7a4e294bdcd326130e5835b207e87afd18216806804d777e083"
+    "sha256": "6d593a90f39c501c50e263c1bd1315284669057e38412988df99ee5e3cc57cbd"
   }
 }
