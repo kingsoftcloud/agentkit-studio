@@ -2150,12 +2150,55 @@
         ]
       },
       "sequence": 45
+    },
+    {
+      "id": "077",
+      "file": "077-desktop-runtime-update-channel.patch",
+      "category": "updater",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "f2effc51fa75ac82fbc12805e16a23ec64dbf768f79dfad1f52aa7f7f9a2b820",
+      "dependsOn": [
+        "019",
+        "072"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/mandatory-update-policy.ts",
+        "apps/desktop/src/update-channel.ts",
+        "apps/desktop/tests/update-channel.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "The packaged Host accepts the nightly, latest, stable and preview installer channels from the application manifest, and rejects unknown channels instead of silently changing feeds.",
+        "The mandatory-update policy identity carries the same whitelist through the shared DesktopUpdateChannel type, so its x-client-update-channel header cannot narrow or drift from the updater.",
+        "The focused runtime test pins all four lanes plus the unknown-channel and missing-key fallbacks."
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Backport of the rc2 041 runtime update-channel contract to the DSH 0.2.2-rc.1 maintenance source; not submitted upstream."
+      },
+      "removeWhen": "The pinned upstream DSH accepts the Studio Stable/Preview installer channels without a compatibility patch.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/update-channel.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "electron"
+        ]
+      },
+      "sequence": 46
     }
   ],
-  "patchedTree": "16850850c816c86e6c2a991d0b3b9c5e85c38114",
-  "patchedSourceSha256": "1bfe69f2578ffa30007e9dcd969efd5f6625d067f81e9b95b98fbc6a8bd6a1bf",
+  "patchedTree": "5023188bdca27469032b8e63299f6afe073f4a95",
+  "patchedSourceSha256": "bfe719de3b3506800fa9933505ca15647ccec269163246f68cf3c94350bd3a2e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "6d593a90f39c501c50e263c1bd1315284669057e38412988df99ee5e3cc57cbd"
+    "sha256": "a113a5330e1e3db4c4ad21d85d3bb773f94e8c33b510f14e44a235ae498eb282"
   }
 }

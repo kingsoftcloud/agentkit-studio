@@ -1,0 +1,58 @@
+diff --git a/apps/desktop/src/mandatory-update-policy.ts b/apps/desktop/src/mandatory-update-policy.ts
+index 92168a7ea3b2cc9fb866b29bfa6c795208ff44c4..5e978572227821ee859559b24e6bee9adf4fbbf7 100644
+--- a/apps/desktop/src/mandatory-update-policy.ts
++++ b/apps/desktop/src/mandatory-update-policy.ts
+@@ -1,6 +1,7 @@
+ /** Mandatory-update policy, independent of local business traffic and updater artifacts. */
+ 
+ import { valid } from 'semver'
++import type { DesktopUpdateChannel } from './update-channel.ts'
+ import { platformClientHeaders, type AccountClientMetadata } from '@deepseek-ai/dsh-deepseek-account'
+ 
+ /** Installed release identity; no field is supplied by a renderer. */
+@@ -8,7 +9,7 @@ export interface DesktopPolicyIdentity {
+   readonly platform: 'win32' | 'darwin'
+   readonly bundledDshVersion: string
+   readonly arch: 'x64' | 'arm64'
+-  readonly channel: 'nightly' | 'latest'
++  readonly channel: DesktopUpdateChannel
+ }
+ 
+ /** Validated deployment choices; test authentication is explicitly enabled, never inferred from a redirect. */
+diff --git a/apps/desktop/src/update-channel.ts b/apps/desktop/src/update-channel.ts
+index ac767ea642befd24082cc4711528d4660bbae944..7ca5a5113876aeb98498334d798f5e2f673d25f3 100644
+--- a/apps/desktop/src/update-channel.ts
++++ b/apps/desktop/src/update-channel.ts
+@@ -1,7 +1,7 @@
+ /** Resolve the update channel sealed into the installed application manifest. */
+ 
+ /** Installer-owned channel, independent of release version and upload environment. */
+-export type DesktopUpdateChannel = 'nightly' | 'latest'
++export type DesktopUpdateChannel = 'nightly' | 'latest' | 'stable' | 'preview'
+ 
+ /**
+  * Read the packaged channel; older manifests retain their existing nightly behavior.
+@@ -12,6 +12,6 @@ export function desktopUpdateChannel(manifest: unknown): DesktopUpdateChannel {
+   if (typeof manifest !== 'object' || manifest === null) throw new Error('desktop update: invalid application manifest')
+   if (!('dshDesktopUpdateChannel' in manifest)) return 'nightly'
+   const channel = manifest.dshDesktopUpdateChannel
+-  if (channel !== 'nightly' && channel !== 'latest') throw new Error('desktop update: invalid packaged channel')
++  if (channel !== 'nightly' && channel !== 'latest' && channel !== 'stable' && channel !== 'preview') throw new Error('desktop update: invalid packaged channel')
+   return channel
+ }
+diff --git a/apps/desktop/tests/update-channel.spec.ts b/apps/desktop/tests/update-channel.spec.ts
+index 8ea7bb98a4f0bdc7e28a562fb536c2ee29561c54..b48142239a9f0e8378ac253b59788b15f191f44d 100644
+--- a/apps/desktop/tests/update-channel.spec.ts
++++ b/apps/desktop/tests/update-channel.spec.ts
+@@ -2,8 +2,9 @@ import { expect, it } from 'vitest'
+ import { desktopUpdateChannel } from '../src/update-channel.ts'
+ 
+ it('reads the installed channel independently from the current version', () => {
+-  expect(desktopUpdateChannel({ version: '1.0.0', dshDesktopUpdateChannel: 'nightly' })).toBe('nightly')
+-  expect(desktopUpdateChannel({ version: '1.0.0', dshDesktopUpdateChannel: 'latest' })).toBe('latest')
++  for (const channel of ['nightly', 'latest', 'stable', 'preview']) {
++    expect(desktopUpdateChannel({ version: '0.2.2-rc.1', dshDesktopUpdateChannel: channel })).toBe(channel)
++  }
+   expect(desktopUpdateChannel({ version: '1.0.0' })).toBe('nightly')
+   expect(() => desktopUpdateChannel({ dshDesktopUpdateChannel: 'beta' })).toThrow(/channel/u)
+   expect(() => desktopUpdateChannel(null)).toThrow(/manifest/u)

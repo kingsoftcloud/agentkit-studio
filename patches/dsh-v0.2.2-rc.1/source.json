@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "1beb066362066a6f81424a3897086fd5e8b58642",
+  "headCommit": "7aec8dccfd3c901a5e1cb9158d1223b1fecfc73a",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "16850850c816c86e6c2a991d0b3b9c5e85c38114",
-  "sourceSha256": "1bfe69f2578ffa30007e9dcd969efd5f6625d067f81e9b95b98fbc6a8bd6a1bf",
+  "tree": "5023188bdca27469032b8e63299f6afe073f4a95",
+  "sourceSha256": "bfe719de3b3506800fa9933505ca15647ccec269163246f68cf3c94350bd3a2e",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "bcc2f9f397c45e6bf1787ddc86c0ad9c387617ebe33361fce6d131b2a4ab32ce"
+    "sha256": "404e98135c4e7cafa1944eeb20d352bc3c4b551b7dd855663d56be97d8807027"
   },
   "commits": [
     {
@@ -280,6 +280,12 @@
       "file": "076-studio-feed-prefix-all-platforms.patch",
       "commit": "1beb066362066a6f81424a3897086fd5e8b58642",
       "sha256": "688305edba7f6504d2beff987bb6251282213d03ba03bda8096c493bcd94eb9f"
+    },
+    {
+      "id": "077",
+      "file": "077-desktop-runtime-update-channel.patch",
+      "commit": "7aec8dccfd3c901a5e1cb9158d1223b1fecfc73a",
+      "sha256": "f2effc51fa75ac82fbc12805e16a23ec64dbf768f79dfad1f52aa7f7f9a2b820"
     }
   ]
 }
