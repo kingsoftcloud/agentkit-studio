@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { portableCodexOptions } from '../src/portable-codex.mjs';
+import { isolatedRuntimeCodexOptions, portableCodexOptions } from '../src/portable-codex.mjs';
 
 const manifest = { bundleId: `bundle_${'a'.repeat(64)}` };
 async function fixture(t) {
@@ -43,4 +43,15 @@ test('state creation refuses a symlink into an existing personal Codex home', as
   await assert.rejects(portableCodexOptions({ home, manifest }), { code: 'PORTABLE_CODEX_SCOPE_INVALID' });
   assert.equal(await readFile(join(personal, 'auth.json'), 'utf8'), 'must stay intact');
   await assert.rejects(portableCodexOptions({ home, manifest: { bundleId: '../personal' } }), { code: 'PORTABLE_CODEX_SCOPE_INVALID' });
+});
+
+test('the managed runtime defaults Codex to full access and accepts an explicit narrower tier', async t => {
+  const home = await fixture(t), scopeId = `manifest_${'c'.repeat(64)}`;
+  const full = await isolatedRuntimeCodexOptions({ home, scopeId, env: { PATH: '/usr/bin' } });
+  assert.equal(full.sandbox, 'danger-full-access');
+  assert.equal(full.approvalPolicy, 'never');
+  const narrowed = await isolatedRuntimeCodexOptions({ home, scopeId, env: { PATH: '/usr/bin', AGENTKIT_CODEX_SANDBOX: 'workspace-write' } });
+  assert.equal(narrowed.sandbox, 'workspace-write');
+  const bogus = await isolatedRuntimeCodexOptions({ home, scopeId, env: { PATH: '/usr/bin', AGENTKIT_CODEX_SANDBOX: 'root' } });
+  assert.equal(bogus.sandbox, 'danger-full-access');
 });

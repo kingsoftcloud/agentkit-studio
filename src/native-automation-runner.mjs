@@ -22,7 +22,10 @@ async function persistCompletedSession(persistence, session, signal) {
   } finally { signal.removeEventListener('abort', abort); }
 }
 
-export function createNativeAutomationRunner({ getService, admit, observe, selectModel, loadReplay, assertHostCompatible, timeoutMs = 300000, reuseSession = false } = {}) {
+export function createNativeAutomationRunner({ getService, admit, observe, selectModel, loadReplay, assertHostCompatible, executionPolicy, timeoutMs = 300000, reuseSession = false } = {}) {
+  // A frozen cloud runtime declares its own default; unattended local automation
+  // keeps the stricter headless default.
+  const declaredMode = readExecutionMode(executionPolicy?.permissionMode) || UNATTENDED_EXECUTION_POLICY.permissionMode;
   const lanes = new Map();
   const service = name => {
     const value = getService?.(name);
@@ -65,7 +68,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
       { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     // The command is a user action and would misattribute its approval notice.
     // Only a validated request mode can narrow the default unattended policy.
-    service('permissionPresets').set(agent.session, readExecutionMode(permissionMode) || UNATTENDED_EXECUTION_POLICY.permissionMode);
+    service('permissionPresets').set(agent.session, readExecutionMode(permissionMode) || declaredMode);
     // A managed run may ask a person through the Host's approval answerer;
     // every other run stays headless and rejects escalation through the same
     // public approval service. Confinement is unchanged either way.
