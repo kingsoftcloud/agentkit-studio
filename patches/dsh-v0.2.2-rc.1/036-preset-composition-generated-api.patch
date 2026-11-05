@@ -1,0 +1,53 @@
+diff --git a/docs/subsystems/core.md b/docs/subsystems/core.md
+index 9d615a48e1b2ecea71d090dce6ff8a02ef4eee37..4329c6a761565852e42023307293f418467ec252 100644
+--- a/docs/subsystems/core.md
++++ b/docs/subsystems/core.md
+@@ -613,6 +613,13 @@ async list(): Promise<AgentPreset[]>
+  */
+ async resolve(id?: string): Promise<AgentPreset>
+ 
++/** Snapshot a usable preset's declared rows for a derived local composition.
++ * The registry owns validation and preserves Loader expressions and group isolation.
++ * @param id Existing base preset identity.
++ * @returns Independent rows; editing them cannot change the registered base.
++ */
++async pluginsFor(id: string): Promise<PresetDefinition['plugins']>
++
+ /** Read one declaration's child plugin list as YAML, for viewing only.
+  * @param agentPreset Preset identity.
+  * @returns The declared composition beside its published metadata.
+diff --git a/docs/subsystems/core.zh.md b/docs/subsystems/core.zh.md
+index 10c8b31cff1d34e44992fd6d3aa38200f8d3ca93..6fdca00acabd22b7b2da97b96b2112fff9f47f1c 100644
+--- a/docs/subsystems/core.zh.md
++++ b/docs/subsystems/core.zh.md
+@@ -625,6 +625,13 @@ async list(): Promise<AgentPreset[]>
+  */
+ async resolve(id?: string): Promise<AgentPreset>
+ 
++/** Snapshot a usable preset's declared rows for a derived local composition.
++ * The registry owns validation and preserves Loader expressions and group isolation.
++ * @param id Existing base preset identity.
++ * @returns Independent rows; editing them cannot change the registered base.
++ */
++async pluginsFor(id: string): Promise<PresetDefinition['plugins']>
++
+ /** Read one declaration's child plugin list as YAML, for viewing only.
+  * @param agentPreset Preset identity.
+  * @returns The declared composition beside its published metadata.
+diff --git a/packages/extensions/tool-cordis/src/api-catalog.ts b/packages/extensions/tool-cordis/src/api-catalog.ts
+index c18f88e4ce18bd7e90049834ee237c7496b4ac77..a8eb588cab5ab65281d5430df5e77011cd48b7a9 100644
+--- a/packages/extensions/tool-cordis/src/api-catalog.ts
++++ b/packages/extensions/tool-cordis/src/api-catalog.ts
+@@ -204,6 +204,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
+         returns: 'Current metadata, including failure when activation failed.',
+       },
+       {
++        signature: 'async pluginsFor(id: string): Promise<PresetDefinition[\'plugins\']>',
++        description: 'Snapshot a usable preset\'s declared rows for a derived local composition. The registry owns validation and preserves Loader expressions and group isolation.',
++        parameters: [{ name: 'id', description: 'Existing base preset identity.' }],
++        returns: 'Independent rows; editing them cannot change the registered base.',
++      },
++      {
+         signature: '@Remote(\'read\') readDocument(agentPreset: string): Promise<AgentPresetDocument>',
+         description: 'Read one declaration\'s child plugin list as YAML, for viewing only.',
+         parameters: [{ name: 'agentPreset', description: 'Preset identity.' }],

@@ -50,13 +50,13 @@ test('alignment restores a bundle list that native recovery cleared', async t =>
   t.after(() => rm(root, { recursive: true, force: true }));
   const pkg = async (dir, value, extra = {}) => { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), JSON.stringify({ ...value, ...extra }, null, 2)); };
   const dsh = join(root, 'dsh');
-  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' });
-  await pkg(join(dsh, 'node_modules', '@deepseek-ai', 'dsh-base'), { name: '@deepseek-ai/dsh-base', version: '0.2.1-rc.2' });
-  await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' }, { dependencies: { '@deepseek-ai/dsh-base': '0.2.1-rc.2' } });
+  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.2-rc.1' });
+  await pkg(join(dsh, 'node_modules', '@deepseek-ai', 'dsh-base'), { name: '@deepseek-ai/dsh-base', version: '0.2.2-rc.1' });
+  await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' }, { dependencies: { '@deepseek-ai/dsh-base': '0.2.2-rc.1' } });
   const profile = join(root, 'home', 'profiles', 'desktop-agentkit-studio');
   // sanitizeProfile() wrote the shipped template back and nothing re-added the product.
   await pkg(profile, { name: 'profiles', dependencies: { [PLUGIN]: '0.0.10' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } } });
-  await pkg(join(profile, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' }, { dependencies: { '@deepseek-ai/dsh-base': '0.2.1-rc.2' } });
+  await pkg(join(profile, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' }, { dependencies: { '@deepseek-ai/dsh-base': '0.2.2-rc.1' } });
   const argv = [process.execPath, '/host/index.js', dsh, profile, join(root, 'runtime'), join(root, 'pnpm.mjs'), join(root, 'bin')];
   const log = { info: () => {}, warn: () => {} };
 
@@ -80,7 +80,7 @@ test('alignment keeps an unloadable profile copy and stops after two failures', 
   t.after(() => rm(root, { recursive: true, force: true }));
   const pkg = async (dir, value, extra = {}) => { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), JSON.stringify({ ...value, ...extra }, null, 2)); };
   const dsh = join(root, 'dsh');
-  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' });
+  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.2-rc.1' });
   await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' });
   const profile = join(root, 'home', 'profiles', 'desktop-agentkit-studio');
   await pkg(profile, { name: 'profiles', dependencies: { [PLUGIN]: '0.0.7' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', PLUGIN] } } });
@@ -109,7 +109,7 @@ test('alignment leaves a newer profile copy and non-desktop hosts untouched', as
   t.after(() => rm(root, { recursive: true, force: true }));
   const pkg = async (dir, value, extra = {}) => { await mkdir(dir, { recursive: true }); await writeFile(join(dir, 'package.json'), JSON.stringify({ ...value, ...extra }, null, 2)); };
   const dsh = join(root, 'dsh');
-  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.1-rc.2' });
+  await pkg(dsh, { name: '@deepseek-ai/dsh', version: '0.2.2-rc.1' });
   await pkg(join(dsh, 'node_modules', PLUGIN), { name: PLUGIN, version: '0.0.10' });
   const profile = join(root, 'home', 'profiles', 'p');
   await pkg(profile, { name: 'p', dependencies: { [PLUGIN]: '9.9.9' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', PLUGIN] } } });

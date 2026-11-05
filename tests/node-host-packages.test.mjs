@@ -9,7 +9,7 @@ import { NODE_HOST_ROOTS, readNodeHostPackages } from '../scripts/node-host-pack
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'node-host-packages-')));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const studio = join(root, 'studio'), output = join(root, 'packages'), version = '0.2.1-rc.2';
+  const studio = join(root, 'studio'), output = join(root, 'packages'), version = '0.2.2-rc.1';
   await mkdir(join(studio, 'patches', `dsh-v${version}`), { recursive: true }); await mkdir(output);
   const source = { baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), tree: 'c'.repeat(40) };
   await writeFile(join(studio, 'studio.plugin.json'), JSON.stringify({ requiredDsh: version }));

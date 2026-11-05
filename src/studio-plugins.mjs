@@ -1,6 +1,6 @@
-/** DSH plugin ecosystem adapter for the Studio plugin Node host (0.2.1-rc.2).
+/** DSH plugin ecosystem adapter for the Studio plugin Node host (0.2.2-rc.1).
  *
- * DSH 0.2.1-rc.2 ships a first-class plugin manager service
+ * DSH 0.2.2-rc.1 ships a first-class plugin manager service
  * (`PluginManager`, `PluginInventoryGateway`) inside the host process. The
  * plugin Node half shares that context, so this adapter calls the services
  * directly — no profile file reads, no CLI forwarding.
@@ -13,6 +13,7 @@
 import { createDshPluginDiscovery } from './dsh-plugin-discovery.mjs';
 import { createDshPluginIndex } from './dsh-plugin-index.mjs';
 import { dshCuratedEntries, dshCuratedPlugin } from './dsh-plugin-catalog.mjs';
+import dshPin from '../dsh-pin.json' with { type: 'json' };
 
 /** Curated entry for an install spec such as ``name`` or ``name@1.2.3``. */
 function curatedPluginForSpec(spec) {
@@ -121,7 +122,7 @@ export function createStudioPlugins({
 } = {}) {
   function service(name) {
     const instance = getService?.(name);
-    if (!instance) throw new StudioPluginsError('SERVICE_UNAVAILABLE', `宿主服务 ${name} 不可用（需要 DSH 0.2.1-rc.2）`, { service: name });
+    if (!instance) throw new StudioPluginsError('SERVICE_UNAVAILABLE', `宿主服务 ${name} 不可用（需要 DSH ${dshPin.version}）`, { service: name });
     return instance;
   }
 

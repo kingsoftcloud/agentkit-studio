@@ -25,3 +25,10 @@ test('overlapping title owners restore the latest native title only after the la
   assert.equal(document.title, 'New Session — DeepSeek Harness');
   assert.equal(observers.size, 0);
 });
+
+test('does not expose the removed full-width drag overlay effect', () => {
+  const document = { body: { append() {} }, head: { append() {} }, querySelector: () => null };
+  const window = {}; window.parent = window;
+  const effects = createProductDocumentEffects({ window, document });
+  assert.equal('installWindowDragStrip' in effects, false);
+});

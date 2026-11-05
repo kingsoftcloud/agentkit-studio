@@ -5,9 +5,9 @@
  * runs this after the candidate build finishes:
  *
  *   node scripts/publish-locally.mjs mac --run <run-id> --studio-ref <sha> \
- *     --expected-previous-version 0.2.1-rc.2
+ *     --expected-previous-version 0.2.2-rc.1
  *   node scripts/publish-locally.mjs win --run <run-id> --studio-ref <sha> \
- *     --version 0.2.1-rc.2.20261021.2 --expected-previous-version 0.2.1-rc.2
+ *     --version 0.2.2-rc.1.20261021.2 --expected-previous-version 0.2.2-rc.1
  *   node scripts/publish-locally.mjs alias --channel preview
  *
  * The command only reuses artifacts that already carry CI signing evidence: it
