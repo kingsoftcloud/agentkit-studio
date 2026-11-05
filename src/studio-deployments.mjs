@@ -86,6 +86,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     return { plan, zip, resolved, values, fingerprint: sha256(JSON.stringify(plan)) };
   }
   async function prepare(input) {
+    await store.preflight();
     const { plan, fingerprint } = await assemble(input, true);
     const { credentialScope: _, bucket, storageEndpoint, ...preview } = plan;
     return { ...preview, previewId: fingerprint, releaseId: plan.image.id,

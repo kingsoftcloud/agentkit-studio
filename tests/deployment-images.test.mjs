@@ -72,17 +72,48 @@ test('invalid scopes, mutable image references and ambiguous releases are refuse
 });
 
 test('disabled, incompatible and removed defaults never silently choose another release', () => {
-  for (const unavailable of [{ enabled: false }, { runtimes: ['codex'] }, { minimumStudioVersion: '0.1.0' }]) {
+  for (const unavailable of [{ enabled: false }, { runtimes: ['codex'] }]) {
     const catalog = parseStudioImageCatalog(response({ releases: [{ ...release, ...unavailable }, { ...release, id: 'another' }] }), { runtime: 'harness' });
     assert.equal(catalog.defaultReleaseId, null);
     assert.throws(() => selectStudioImage(catalog), { code: 'DEPLOYMENT_IMAGE_UNAVAILABLE' });
     assert.equal(selectStudioImage(catalog, 'another').id, 'another');
   }
+  // A default this client is too old for names the required Studio version
+  // instead of the unactionable "no image available".
+  const outdated = parseStudioImageCatalog(response({ releases: [{ ...release, minimumStudioVersion: '0.9.0' }, { ...release, id: 'another' }] }), { runtime: 'harness' });
+  assert.deepEqual(outdated.outdatedReleases, [{ id: release.id, minimumStudioVersion: '0.9.0' }]);
+  assert.throws(() => selectStudioImage(outdated), error =>
+    error.code === 'DEPLOYMENT_CLIENT_UPDATE_REQUIRED' && /需要 Studio 0\.9\.0 或更高版本/.test(error.message));
 });
 
-test('preview metadata cannot become a production target by moving its database scope', () => {
-  const data = response({ environment: 'production' }); data.Environment = 'production';
-  assert.throws(() => parseStudioImageCatalog(data, { runtime: 'harness' }), { code: 'DEPLOYMENT_CATALOG_INVALID' });
+test('preview metadata can never become a production target by moving its database scope', () => {
+  const stable = { ...release, id: 'stable-online', channel: 'stable' };
+  const data = response({ environment: 'production', defaultReleaseId: stable.id, releases: [stable, { ...release }] });
+  data.Environment = 'production';
+  const catalog = parseStudioImageCatalog(data, { runtime: 'harness' });
+  // The preview entry is retired instead of poisoning the whole catalog: an
+  // accidental copy of the pre-online history must not disable every deployment.
+  assert.deepEqual(catalog.releases.map(item => item.id), [stable.id]);
+  assert.deepEqual(catalog.retiredReleases, [{ id: release.id, reason: 'preview-outside-pre-online' }]);
+  assert.equal(catalog.defaultReleaseId, stable.id);
+  assert.equal(selectStudioImage(catalog).id, stable.id);
+  assert.throws(() => selectStudioImage(catalog, release.id), { code: 'DEPLOYMENT_IMAGE_RETIRED' });
+  // With no usable release left the catalog stays deployable-free, not silently promoted.
+  const only = response({ environment: 'production' }); only.Environment = 'production';
+  assert.throws(() => selectStudioImage(parseStudioImageCatalog(only, { runtime: 'harness' })),
+    error => error.code === 'DEPLOYMENT_IMAGE_RETIRED' && /暂无其他可用版本/.test(error.message));
+});
+
+test('a retired preview default falls back to a published release and says so', () => {
+  const stable = { ...release, id: 'stable-online', channel: 'stable' };
+  const data = response({ environment: 'production', defaultReleaseId: release.id, releases: [stable, { ...release }] });
+  data.Environment = 'production';
+  const catalog = parseStudioImageCatalog(data, { runtime: 'harness' });
+  assert.equal(catalog.configuredDefaultReleaseId, release.id);
+  assert.equal(catalog.defaultReleaseId, stable.id);
+  assert.deepEqual(catalog.defaultReleaseFallback, { configured: release.id, id: stable.id, retired: 'preview-outside-pre-online' });
+  assert.match(catalog.releases[0].notices.at(-1), /预发候选/);
+  assert.equal(selectStudioImage(catalog).id, stable.id);
 });
 
 test('image lookup uses the existing signed bootstrap Action and makes no mutation or IAM call', async () => {
