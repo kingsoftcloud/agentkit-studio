@@ -16,7 +16,7 @@ export function mountStudio(ctx, app) {
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
-  const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion, installWindowDragStrip } = documentEffects;
+  const { adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles, installWindowDragRegion } = documentEffects;
   const { openAgentAuthoring } = authoring;
   ctx.effect(() => () => app.dispose(), 'agentkit-studio:application-owner');
   ctx.inject(['locale'], copyCtx => {
@@ -102,8 +102,7 @@ export function mountStudio(ctx, app) {
   ctx.effect(() => installResponsiveStyles(), 'agentkit-studio: responsive layout');
   ctx.effect(() => installStudioFormStyles(), 'agentkit-studio: native forms');
   ctx.effect(() => installBridgeStartupNotice({ window }), 'agentkit-studio: bridge startup notice');
-  ctx.effect(() => installWindowDragRegion(), 'agentkit-studio: window drag region')
-  ctx.effect(() => installWindowDragStrip(), 'agentkit-studio: window drag strip');
+  ctx.effect(() => installWindowDragRegion(), 'agentkit-studio: window drag region');
   // The public launcher owns only the entry button. DSH retains settings
   // state, shortcuts and the original modal, including Studio's sections.
   ctx.slots.inject('settings.launcher', () => ctx.slots.register(
