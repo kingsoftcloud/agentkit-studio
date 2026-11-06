@@ -48,7 +48,7 @@ index 5b9ed75661ccc406c1530ed746cd41ade9e27e5b..3822d4e830ddb1027bb0b26ba4439630
    if ((document.documentElement as HTMLElement | null) !== null) mark()
 diff --git a/apps/desktop/src/windows-drag-region.ts b/apps/desktop/src/windows-drag-region.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..15cb63ef5a74384dab20d17ad3c7d45447765fc9
+index 0000000000000000000000000000000000000000..5c00f13febf4b6aa5ffad9a3af3e21332c5c2d43
 --- /dev/null
 +++ b/apps/desktop/src/windows-drag-region.ts
 @@ -0,0 +1,376 @@
@@ -204,7 +204,7 @@ index 0000000000000000000000000000000000000000..15cb63ef5a74384dab20d17ad3c7d454
 +  }
 +  const regionOf = (element) => {
 +    if (!element) return null
-+    try { return getComputedStyle(element).webkitAppRegion || null } catch { return null }
++    try { return getComputedStyle(element).getPropertyValue('-webkit-app-region') || null } catch { return null }
 +  }
 +`
 +
@@ -272,10 +272,10 @@ index 0000000000000000000000000000000000000000..15cb63ef5a74384dab20d17ad3c7d454
 +    const styleOf = (element) => {
 +      if (!element) return null
 +      let computed = null
-+      try { computed = getComputedStyle(element) } catch {}
++      try { computed = getComputedStyle(element).getPropertyValue('-webkit-app-region') || null } catch {}
 +      return {
 +        inline: element.style && element.style.getPropertyValue ? element.style.getPropertyValue('-webkit-app-region') : null,
-+        computed: computed && computed.webkitAppRegion ? computed.webkitAppRegion : null,
++        computed,
 +        inlineStyle: element.getAttribute && element.getAttribute('style') ? element.getAttribute('style').slice(0, 300) : null,
 +      }
 +    }
@@ -430,7 +430,7 @@ index 0000000000000000000000000000000000000000..15cb63ef5a74384dab20d17ad3c7d454
 +}
 diff --git a/apps/desktop/tests/windows-drag-region.spec.ts b/apps/desktop/tests/windows-drag-region.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..c7f89eac63ebc16ff064798c83f1b849946b824f
+index 0000000000000000000000000000000000000000..7192393b8d5313522e8d748203ea55d73744ba7f
 --- /dev/null
 +++ b/apps/desktop/tests/windows-drag-region.spec.ts
 @@ -0,0 +1,194 @@
@@ -552,7 +552,7 @@ index 0000000000000000000000000000000000000000..c7f89eac63ebc16ff064798c83f1b849
 +it('samples the root, the strip, the caption markers and what a click would hit', () => {
 +  const snapshot = windowsDragSnapshotScript()
 +  expect(snapshot).toContain('data-windows-titlebar')
-+  expect(snapshot).toContain('webkitAppRegion')
++  expect(snapshot).toContain("getPropertyValue('-webkit-app-region')")
 +  expect(snapshot).toContain('data-studio-window-drag-strip')
 +  expect(snapshot).toContain('data-studio-drag-region')
 +  expect(snapshot).toContain('elementFromPoint')

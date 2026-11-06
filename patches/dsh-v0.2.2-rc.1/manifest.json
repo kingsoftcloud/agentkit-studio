@@ -2203,7 +2203,7 @@
       "file": "078-windows-drag-region-authority.patch",
       "category": "general-fix",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "d0298e0e0c02306402d2b06bc1588617d69de156dde0ca8545da1b6810c7287c",
+      "sha256": "9e257f5252f3feb1858be546c780d6a2a498691792dcdcb4fe539e7a7468f7ed",
       "dependsOn": [
         "024"
       ],
@@ -2243,10 +2243,10 @@
       "sequence": 47
     }
   ],
-  "patchedTree": "c68439be58e9c88713d5d3a5bd98fe02d40d5d79",
-  "patchedSourceSha256": "9bd69b01f0ffa142af5815cdc46ed0652c670cb9857e0b624d5edbb9cfbc1199",
+  "patchedTree": "7ea1d6d0f7362f6d32b1346dd65854290a05db48",
+  "patchedSourceSha256": "e0b7e5ced197a37dee9b97ce96f16b19b667bcd8290ee9f4b488311e1b54a527",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "78a5bcff2be156a3a01b33e6d95f70cc6a9902711c805fb05665af7449de0268"
+    "sha256": "4f200288ef6b22b357fb36432cca165de45368c28e43bf1060b2e37827157138"
   }
 }

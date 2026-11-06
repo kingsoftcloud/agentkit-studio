@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "802c84888d59b22c5e029950623d59ba31faa181",
+  "headCommit": "b2ff8cee515d00514821a7fe5d195df2f5bdbabe",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "c68439be58e9c88713d5d3a5bd98fe02d40d5d79",
-  "sourceSha256": "9bd69b01f0ffa142af5815cdc46ed0652c670cb9857e0b624d5edbb9cfbc1199",
+  "tree": "7ea1d6d0f7362f6d32b1346dd65854290a05db48",
+  "sourceSha256": "e0b7e5ced197a37dee9b97ce96f16b19b667bcd8290ee9f4b488311e1b54a527",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "bb57638caa3851aff5cad4d325fa840e071b7ffc99d28a0d0e95714dae092e3b"
+    "sha256": "644bdc9b07079bfc531aaa6bae5520a6388e89f580c269b2ec9061407866db15"
   },
   "commits": [
     {
@@ -290,8 +290,8 @@
     {
       "id": "078",
       "file": "078-windows-drag-region-authority.patch",
-      "commit": "802c84888d59b22c5e029950623d59ba31faa181",
-      "sha256": "d0298e0e0c02306402d2b06bc1588617d69de156dde0ca8545da1b6810c7287c"
+      "commit": "b2ff8cee515d00514821a7fe5d195df2f5bdbabe",
+      "sha256": "9e257f5252f3feb1858be546c780d6a2a498691792dcdcb4fe539e7a7468f7ed"
     }
   ]
 }
