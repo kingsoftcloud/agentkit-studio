@@ -8,7 +8,7 @@
  * conversation history.
  */
 import { resolveCodexCommand } from './codex-command.mjs';
-import { readExecutionMode } from '../execution-policy.mjs';
+import { readExecutionMode, UNATTENDED_EXECUTION_POLICY } from '../execution-policy.mjs';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute } from 'node:path';
@@ -133,9 +133,13 @@ export function createCodexRuntime(options = {}) {
       if (!isAbsolute(cwd)) throw new CodexRuntimeError('CODEX_WORKSPACE_INVALID', 'Codex 工作目录必须是绝对路径');
       const selectedModel = String(requestedModel || model || '').trim() || undefined;
       // Each turn starts its own App Server thread, so a permission change may
-      // apply to this turn alone; an invalid or absent value falls back to the
-      // runtime default instead of reaching Codex.
-      const turnSandbox = readExecutionMode(requestedSandbox) || sandbox;
+      // Each turn starts its own App Server thread, so a permission change may
+      // apply to this turn alone. An absent value keeps the runtime default; a
+      // present but unrecognised one (for example the DSH-derived `custom`)
+      // fails closed to read-only instead of silently widening to the default.
+      const requestedMode = readExecutionMode(requestedSandbox);
+      const turnSandbox = requestedSandbox === undefined || requestedSandbox === null
+        ? sandbox : requestedMode || UNATTENDED_EXECUTION_POLICY.permissionMode;
       // A managed approval run may lift the process-wide unattended default for
       // this turn only. Portable turns without a bridge keep `never`.
       const turnApprovalPolicy = typeof requestedApprovalPolicy === 'string' && requestedApprovalPolicy.trim()

@@ -4,6 +4,24 @@ import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
 
+/**
+ * Apply one execution mode to a Session. A configured preset writes both the
+ * sandbox knob and the approval policy; images whose preset table omits a mode
+ * (DSH 0.2.2 configures only workspace-write / danger-full-access) still expose
+ * the closed three-value sandbox knob, so write that event directly instead of
+ * throwing `unknown preset` or silently keeping the previous, wider mode.
+ */
+function applySessionExecutionMode(presets, session, mode) {
+  const selected = readExecutionMode(mode) || UNATTENDED_EXECUTION_POLICY.permissionMode;
+  const names = Array.isArray(presets?.names) ? presets.names : null;
+  if (names === null || names.includes(selected)) {
+    presets.set(session, selected);
+    return selected;
+  }
+  session.append('sandbox/mode', { mode: selected });
+  return selected;
+}
+
 async function persistCompletedSession(persistence, session, signal) {
   signal.throwIfAborted();
   let abort;
@@ -68,7 +86,8 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
       { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     // The command is a user action and would misattribute its approval notice.
     // Only a validated request mode can narrow the default unattended policy.
-    service('permissionPresets').set(agent.session, readExecutionMode(permissionMode) || declaredMode);
+    applySessionExecutionMode(service('permissionPresets'), agent.session,
+      readExecutionMode(permissionMode) || declaredMode);
     // A managed run may ask a person through the Host's approval answerer;
     // every other run stays headless and rejects escalation through the same
     // public approval service. Confinement is unchanged either way.

@@ -139,3 +139,35 @@ test('completed request history reconstructs presentation only; a delivery cache
   history = null;
   await assert.rejects(run({ ...request, requireReplay: true }), { code: 'RUNTIME_REQUEST_HISTORY_UNAVAILABLE' });
 });
+
+test('read-only reaches the sandbox knob when the image configures no such preset', async () => {
+  const applied = [], presets = [];
+  const f = harness();
+  f.services.permissionPresets = {
+    names: ['workspace-write', 'danger-full-access'],
+    set: (_session, preset) => presets.push(preset),
+  };
+  const resolveAgent = f.services.sessionController.resolveAgent;
+  f.services.sessionController.resolveAgent = async () => {
+    const resolved = await resolveAgent();
+    resolved.agent.session.append = (type, data) => applied.push([type, data]);
+    return resolved;
+  };
+  const run = createNativeAutomationRunner({ getService: name => f.services[name], admit: async () => ({ presetId: 'frozen' }) });
+  await run({ agentId: 'a', sessionId: 's', occurrenceId: 'o', input: 'probe', permissionMode: 'read-only' });
+
+  assert.deepEqual(presets, [], 'an unconfigured preset name must not be written');
+  assert.deepEqual(applied, [['sandbox/mode', { mode: 'read-only' }]]);
+});
+
+test('a configured preset keeps writing through the preset service', async () => {
+  const f = harness();
+  f.services.permissionPresets = {
+    names: ['read-only', 'workspace-write', 'danger-full-access'],
+    set: (_session, preset) => f.calls.push(['permission', preset]),
+  };
+  const run = createNativeAutomationRunner({ getService: name => f.services[name], admit: async () => ({ presetId: 'frozen' }) });
+  await run({ agentId: 'a', sessionId: 's', occurrenceId: 'o', input: 'probe', permissionMode: 'read-only' });
+
+  assert.deepEqual(f.calls.filter(call => call[0] === 'permission'), [['permission', 'read-only']]);
+});

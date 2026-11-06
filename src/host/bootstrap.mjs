@@ -25,6 +25,7 @@ import { registerControlPlaneRoutes } from './routes/http.mjs';
 import { registerBuildDownload } from './routes/download.mjs';
 import { createAgentModelSelection } from './services/model-selection.mjs';
 import { createCloudExecutionModes } from '../cloud-execution-modes.mjs';
+import { readSessionPermissionMode } from '../session-permission-mode.mjs';
 import { loadHostCompatibility } from './compatibility.mjs';
 import { bindFrozenRuntime, FROZEN_RUNTIME_READY } from './frozen-runtime-lifecycle.mjs';
 import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
@@ -189,14 +190,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     localHandler: localRuntimeHandler,
     codexRuntime,
     // The permission picker (local, Studio cloud and Hosted UI) converges on the
-    // Session preset; read it here so Codex's own sandbox follows the picker.
-    permissionModeForSession: session => {
-      try {
-        const current = ctx.get?.('permissionPresets')?.current?.(session);
-        if (typeof current === 'string' && current) return current;
-        return ctx.get?.('sessionProjections')?.stateOf?.(session, 'sandboxMode') ?? undefined;
-      } catch { return undefined; }
-    },
+    // Session sandbox knob; the resolver reads that before the preset name.
+    permissionModeForSession: session => readSessionPermissionMode(ctx, session),
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     codexResourceContext,
     resolveResourceUser,

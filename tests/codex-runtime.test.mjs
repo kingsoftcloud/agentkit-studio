@@ -62,9 +62,12 @@ test('a turn selects its own Codex sandbox without leaking into the next turn', 
   }, cwd: '/tmp', sandbox: 'workspace-write' });
   for await (const _ of runtime.stream({ input: 'a' })) {}
   for await (const _ of runtime.stream({ input: 'b', sandbox: 'danger-full-access' })) {}
-  // An unknown value never reaches Codex; the runtime default stays in force.
-  for await (const _ of runtime.stream({ input: 'c', sandbox: 'root' })) {}
-  assert.deepEqual(starts, ['workspace-write', 'danger-full-access', 'workspace-write']);
+  for await (const _ of runtime.stream({ input: 'c', sandbox: 'read-only' })) {}
+  // A present but unrecognised value (DSH derives `custom` when the image has
+  // no read-only preset) fails closed to read-only instead of the wider default.
+  for await (const _ of runtime.stream({ input: 'd', sandbox: 'custom' })) {}
+  for await (const _ of runtime.stream({ input: 'e', sandbox: 'root' })) {}
+  assert.deepEqual(starts, ['workspace-write', 'danger-full-access', 'read-only', 'read-only', 'read-only']);
 });
 
 test('App Server receives persisted tool observations without dispatching an old call', async () => {
