@@ -185,8 +185,9 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   ctx.tools.resultRetentions = options.resultRetentions ?? ['caller/v1'];
   if (options.argumentEncodings) ctx.tools.argumentEncodings = options.argumentEncodings;
   if (options.nativeEngineContract) {
-    ctx.tools.guard = () => () => {};
-    ctx.tools.dispatchGuard = () => () => {};
+    ctx.guards = [];
+    ctx.tools.guard = guard => { ctx.guards.push(guard); return () => {}; };
+    if (options.dispatchGuard !== false) ctx.tools.dispatchGuard = () => () => {};
   }
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: names, toolContracts: contracts,
     ...(options.nativeEngineContract ? { nativeEngineContract: options.nativeEngineContract } : {}) },
@@ -666,6 +667,14 @@ test('child reads use independent workspace state and cannot grant writes to eit
   assert.equal(readFileSync(join(host.workspaceRoot, 'proof.txt'), 'utf8'), 'Original');
   await parent.execute(host.request({ path: 'proof.txt' }, 'read_workspace_file'));
   assert.equal((await parent.execute(host.request({ path: 'proof.txt', content: 'Replacement' }, 'write_workspace_file'))).status, 'ok');
+});
+
+test('DSH 0.2.2 without the removed dispatch hook still installs the Native owned guard', async t => {
+  const host = setup(t, ['write_workspace_file'], [], {
+    nativeEngineContract: 'agentkit.native-dsh-turn/v1', dispatchGuard: false,
+  });
+  assert.equal(host.ctx.guards.length, 1);
+  assert.ok(host.gateway.definitions(host.agent, [...host.registry.values()]).some(tool => tool.name === 'write_workspace_file'));
 });
 
 test('an allowed registry pipeline cannot bypass read-only Native writes or reuse a one-shot approval', async t => {
