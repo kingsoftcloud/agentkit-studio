@@ -2149,12 +2149,60 @@
         ]
       },
       "sequence": 45
+    },
+    {
+      "id": "077",
+      "file": "077-certificate-store-signing-parity.patch",
+      "category": "signing",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "4a42adf2ccbbb34e29900eef8e551302a37b82805c827b9466dbe601db6badb3",
+      "dependsOn": [
+        "019",
+        "025"
+      ],
+      "affectedFiles": [
+        "apps/desktop/.env.macos.example",
+        "apps/desktop/scripts/desktop-package-environment.mjs",
+        "apps/desktop/scripts/macos-signing-keychain.mjs",
+        "apps/desktop/scripts/test-windows-installer.mjs",
+        "apps/desktop/scripts/windows-signing-preflight.ts",
+        "apps/desktop/tests/macos-signing-keychain.spec.ts",
+        "apps/desktop/tests/windows-signing-preflight.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Certificate-store Windows packaging compiles and signs the probe without a SafeNet key container or PIN; the token path still verifies the public container identity before signing.",
+        "The Windows signing preflight records the certificate-store thumbprint, rejects an unknown signing mode before compiling or signing, and keeps the configured certificate and timestamp verification.",
+        "An existing macOS signing keychain can be selected with DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN instead of CSC_LINK and CSC_KEY_PASSWORD; the keychain is never unlocked, modified or deleted by the packaging invocation.",
+        "The manual Windows installer signing harness passes the selected signing mode so certificate-store signing works there too."
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop release maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Backport of the rc2 041 integration signing configuration to the DSH 0.2.2-rc.1 maintenance source; the rc2 patch set does not adapt the 0.2.2 certificate-store preflight."
+      },
+      "removeWhen": "The pinned upstream DSH preflight understands certificate-store signing and its packaging scripts accept an existing macOS signing keychain.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/macos-signing-keychain.spec.ts",
+          "apps/desktop/tests/windows-signing-preflight.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 46
     }
   ],
-  "patchedTree": "23c3668e78340a8082daebff75c2481b9d61b6e6",
-  "patchedSourceSha256": "7ba8e26eb021748279d5af3b64fb6030d5f5923ec18ef62b25ad94e8521e3299",
+  "patchedTree": "54959adf25ca0c3dd02241167022402a1161d202",
+  "patchedSourceSha256": "593273a03342695f9f5ec82cd4a9e5c782bd2a47132b2f2b0f5852a5f805c779",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "476505fb358f5a637835c76ffbf2f6f3443c0bc63298a2559f7a1030373389d2"
+    "sha256": "62619304a76c41b72e8df7369809d7e56fef8d34121f78f8a30663c1707cc4c3"
   }
 }
