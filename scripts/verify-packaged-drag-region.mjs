@@ -9,7 +9,7 @@
  * when the shipped plugin is not the repaired build.
  *
  * Usage:
- *   node scripts/verify-packaged-drag-region.mjs <app.asar | plugin-dir> [--expect-version 0.0.13] [--json report.json]
+ *   node scripts/verify-packaged-drag-region.mjs <app.asar | plugin-dir> [--expect-version 0.0.14] [--json report.json]
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -249,6 +249,58 @@ for (const directory of directories) {
       /left:320px/.test(bundle) && /right:160px/.test(bundle) && /height:40px/.test(bundle));
   }
 }
+
+/**
+ * The plugin files above are only one of two layers: a repaired plugin cannot
+ * reach a renderer that never loads it, so the desktop shell that ships in the
+ * same archive must own the invariant too. These assertions read the compiled
+ * Electron main and preload bundles, not the TypeScript sources.
+ */
+const DSH_MAIN_BUNDLE = 'lib/main.js';
+const DSH_PRELOAD_BUNDLE = 'lib/preload-app.cjs';
+/** Read a packaged file without aborting the whole report when it is absent. */
+function optional(relative) {
+  try {
+    return opened.read(relative).toString('utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+const dshMain = optional(DSH_MAIN_BUNDLE);
+check('dsh desktop main bundle is packaged', dshMain !== undefined, dshMain === undefined
+  ? `${DSH_MAIN_BUNDLE} is missing; the archive does not look like a DSH desktop build`
+  : `${dshMain.length} bytes`);
+if (dshMain !== undefined) {
+  check('dsh desktop pins html and body against page drag sheets',
+    /html, body \{\s*-webkit-app-region: no-drag !important/.test(dshMain)
+    && /insertCSS\(/.test(dshMain) && /cssOrigin: "user"/.test(dshMain),
+    'the shell must insert a user-origin no-drag rule for the root box');
+  check('dsh desktop keeps the root box out of every drag rule',
+    !/html\s*,\s*body\s*\{[^}]*(?:-webkit-)?app-region\s*:\s*drag/.test(dshMain),
+    'a drag rule for html/body captions the whole client area');
+  check('dsh desktop mounts the Windows caption strip',
+    dshMain.includes('data-dsh-windows-drag-strip') && dshMain.includes('-webkit-app-region: drag !important'),
+    'the shell caption strip is missing or no longer declares drag');
+  check('dsh desktop hides the strip in fullscreen',
+    dshMain.includes('__dshWindowsDragSetFullscreen') && dshMain.includes('data-fullscreen'),
+    'the strip must disappear when the window has no caption');
+  check('dsh desktop writes the installed-build drag diagnostic',
+    dshMain.includes('win-drag-diag.json') && dshMain.includes('elementFromPoint')
+    && dshMain.includes('desktop-product-bundles.json'),
+    'the launch diagnostic must sample the click target and the resolved plugin copies');
+  check('dsh desktop gates the repair to Windows',
+    /process\.platform === "win32"/.test(dshMain) && dshMain.includes('installWindowsDragRegion'),
+    'the shell repair must be Windows-gated so macOS keeps its native caption');
+}
+
+const dshPreload = optional(DSH_PRELOAD_BUNDLE);
+check('dsh Windows preload pins the root box before the first paint', dshPreload !== undefined
+  && dshPreload.includes('windowsTitlebar')
+  && dshPreload.includes('setProperty("-webkit-app-region", "no-drag")'),
+  dshPreload === undefined
+    ? `${DSH_PRELOAD_BUNDLE} is missing`
+    : 'the preload must state the no-drag invariant inline with the titlebar marker');
 
 const failed = checks.filter(entry => !entry.ok);
 const report = {
