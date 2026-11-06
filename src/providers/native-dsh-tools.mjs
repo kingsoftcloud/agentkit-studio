@@ -69,8 +69,11 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspa
     resolve(process.env.DSH_AGENTS_HOME?.trim() || join(homedir(), '.agents'))],
   skillConnection, skillFetch, skillInputFiles = [], getSkillManagement, getKnowledgeTools, getLegacyMemoryTools }) {
   invariant(typeof ctx.tools?.register === 'function' && typeof ctx.tools?.execute === 'function', 'studio_native_tools_unavailable');
+  // DSH 0.2.2 dropped the separate dispatch hook; the shared guard pipeline
+  // now evaluates every dispatch, so only `guard` is required. Older hosts
+  // still get the extra dispatch guard below.
   invariant(config.nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT
-    || typeof ctx.tools.guard === 'function' && typeof ctx.tools.dispatchGuard === 'function',
+    || typeof ctx.tools.guard === 'function',
     'studio_native_tool_guard_unavailable');
   const argumentEncoding = ctx.tools.argumentEncodings?.includes('dsh.raw-json-number/v1') ? 'dsh.raw-json-number/v1' : null;
   const resultRetention = ctx.tools.resultRetentions?.includes('caller/v1') ? 'caller/v1' : null;
