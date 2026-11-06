@@ -13,7 +13,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -109,12 +109,21 @@ function openTarget(path) {
     } catch (error) {
       throw new Error(`@electron/asar is required to inspect an app.asar (${error.message})`);
     }
-    const listing = asar.listPackage(path).map(entry => entry.replace(/^\/+/, ''));
+    // `listPackage` builds paths with path.join, so on Windows entries use
+    // backslashes while the archive's internal names use `/`. Key the listing by
+    // a separator-free path and hand extractFile the platform form (its own
+    // getFile splits on path.sep), the same normalization the DSH UI verifier uses.
+    const entries = new Map();
+    for (const entry of asar.listPackage(path)) {
+      const archivePath = entry.replace(/^[\\/]+/, '');
+      entries.set(archivePath.split(sep).join('/'), archivePath);
+    }
     return {
-      kind: 'asar', size: info.size, files: listing,
+      kind: 'asar', size: info.size, files: [...entries.keys()],
       read(relative) {
-        if (!listing.includes(relative)) throw new Error(`missing from archive: ${relative}`);
-        return asar.extractFile(path, relative);
+        const archivePath = entries.get(relative);
+        if (archivePath === undefined) throw new Error(`missing from archive: ${relative}`);
+        return asar.extractFile(path, archivePath);
       },
     };
   }
@@ -136,8 +145,11 @@ function pluginDirectories(packageFiles) {
 
 const opened = openTarget(targetPath);
 const directories = opened.kind === 'directory' ? ['.'] : pluginDirectories(opened.files);
+const related = opened.files.filter(file => file.includes('agentkit-studio')).slice(0, 5);
 check('plugin package is present', directories.length > 0,
-  directories.length ? `${directories.length} copy/copies` : `no ${PLUGIN_NAME} package.json in ${targetPath}`);
+  directories.length
+    ? `${directories.length} copy/copies`
+    : `no ${PLUGIN_NAME} package.json in ${targetPath}${related.length ? `; related entries: ${related.join(', ')}` : ''}`);
 
 for (const directory of directories) {
   const prefix = directory === '.' ? '' : `${directory}/`;
