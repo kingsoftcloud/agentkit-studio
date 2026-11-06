@@ -1,0 +1,630 @@
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index ab4c6f00ce99486c7904b74170ea31bc7f28e31a..4efc6f62f31ec3b5a5fada6b6d224b340423af91 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1,6 +1,7 @@
+ import { installFileActions } from './file-actions.ts'
+ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++import { installWindowsDragRegion, WINDOWS_DRAG_DIAGNOSTIC_FILE } from './windows-drag-region.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { access, readFile, writeFile } from 'node:fs/promises'
+@@ -1180,6 +1181,18 @@ async function main(): Promise<void> {
+   const createMainWindow = (): BrowserWindow => {
+     const window = createWindow(appPreload, false, true)
+     mainWindow = window
++    if (process.platform === 'win32') {
++      // The renderer owns the caption band, never the root box: pin the client
++      // area clickable, keep the window movable through the shell strip, and
++      // leave a diagnostic when the running client still captions the viewport.
++      installWindowsDragRegion(window, {
++        app: { name: app.getName(), version: app.getVersion(), electron: process.versions.electron ?? '',
++          platform: process.platform, arch: process.arch },
++        logPath: join(app.getPath('logs'), WINDOWS_DRAG_DIAGNOSTIC_FILE),
++        profile: paths.profile,
++        bundledPlugin: join(resources.dsh, 'node_modules', '@kingsoftcloud', 'agentkit-studio'),
++      })
++    }
+     browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
+     shortcuts.attach(window)
+     window.on('focus', automaticCheck)
+diff --git a/apps/desktop/src/preload-windows.ts b/apps/desktop/src/preload-windows.ts
+index 5b9ed75661ccc406c1530ed746cd41ade9e27e5b..3822d4e830ddb1027bb0b26ba443963075043bb5 100644
+--- a/apps/desktop/src/preload-windows.ts
++++ b/apps/desktop/src/preload-windows.ts
+@@ -11,6 +11,12 @@ export function syncWindowsAppearance(): void {
+     const root = document.documentElement
+     root.dataset.windowsTitlebar = ''
+     root.style.setProperty('--dsh-windows-titlebar-height', `${WINDOWS_TITLEBAR_HEIGHT}px`)
++    // The caption marker is chrome metadata, not a drag subject. A product
++    // client sheet that reads it as one would caption the whole viewport, so
++    // the root states the other half of the contract inline before any page
++    // style runs; the shell later reinforces it with an inserted user sheet.
++    root.style.setProperty('-webkit-app-region', 'no-drag')
++    if (document.body !== null) document.body.style.setProperty('-webkit-app-region', 'no-drag')
+   }
+   // The root can be absent before the HTML parser creates it.
+   if ((document.documentElement as HTMLElement | null) !== null) mark()
+diff --git a/apps/desktop/src/windows-drag-region.ts b/apps/desktop/src/windows-drag-region.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..15cb63ef5a74384dab20d17ad3c7d45447765fc9
+--- /dev/null
++++ b/apps/desktop/src/windows-drag-region.ts
+@@ -0,0 +1,376 @@
++/**
++ * Windows client-area drag authority.
++ *
++ * Electron composes the native caption from `-webkit-app-region` boxes, and a
++ * `drag` box on `<html>` covers the whole viewport. The Windows preload marks
++ * `<html data-windows-titlebar>` so product client sheets can paint the caption,
++ * and a product sheet that declares `[data-windows-titlebar] { …: drag }` then
++ * turns the entire client area into the caption: pointer moves stop reaching
++ * the page (no hover), and a click is a caption double-click that maximizes.
++ *
++ * The renderer owns the caption band but must never own the root box, so the
++ * shell pins it: an inserted user-origin sheet declares `no-drag !important`
++ * for the document element and body, and no author rule can outrank it. Only
++ * explicit descendants may declare drag again. A fixed caption strip is
++ * installed for surfaces that paint no caption band of their own, so the window
++ * stays movable without a draggable viewport.
++ *
++ * The same installer writes a credential-free diagnostic after the first and
++ * second paint, so an installed build can explain a swallowed click without a
++ * console: `<logs>/win-drag-diag.json`.
++ */
++import { mkdir, readFile, writeFile } from 'node:fs/promises'
++import { dirname, join } from 'node:path'
++import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++
++/** Marker on the shell-owned caption strip. */
++export const WINDOWS_DRAG_STRIP_MARKER = 'data-dsh-windows-drag-strip'
++/** Marker set while the shell hides the strip (fullscreen). */
++export const WINDOWS_DRAG_STRIP_HIDDEN = 'data-dsh-windows-drag-strip-hidden'
++/** Diagnostic file written under the application logs directory. */
++export const WINDOWS_DRAG_DIAGNOSTIC_FILE = 'win-drag-diag.json'
++/** Left inset that reserves the Windows menu bar and leading controls. */
++const STRIP_LEFT_INSET = 320
++/** Right inset that reserves the native caption buttons. */
++const STRIP_RIGHT_INSET = 160
++/** Delay before the second sample, which sees the product client after mount. */
++const DIAGNOSTIC_SETTLE_MS = 3000
++/** Upper bound on elements measured for drag regions in one sample. */
++const SAMPLE_ELEMENT_LIMIT = 4000
++
++/**
++ * User-origin sheet: `!important` outranks every author declaration.
++ * The strip is hidden in fullscreen, where the window has no caption.
++ */
++export const WINDOWS_DRAG_REGION_CSS = `html, body {
++  -webkit-app-region: no-drag !important;
++}
++[${WINDOWS_DRAG_STRIP_MARKER}] {
++  position: fixed !important;
++  top: 0 !important;
++  height: ${WINDOWS_TITLEBAR_HEIGHT}px !important;
++  z-index: 2147483000 !important;
++  background: transparent !important;
++  -webkit-app-region: drag !important;
++}
++[${WINDOWS_DRAG_STRIP_MARKER}][${WINDOWS_DRAG_STRIP_HIDDEN}],
++html[data-fullscreen] [${WINDOWS_DRAG_STRIP_MARKER}],
++html:fullscreen [${WINDOWS_DRAG_STRIP_MARKER}] {
++  display: none !important;
++}`
++
++/** Minimal WebContents surface the installer owns; Electron supplies the rest. */
++export interface DragRegionWebContents {
++  insertCSS(css: string, options?: { cssOrigin?: 'user' | 'author' }): Promise<string>
++  executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>
++  getURL(): string
++  on(event: 'dom-ready' | 'did-finish-load', listener: () => void): unknown
++}
++
++/** Minimal window surface the installer owns; Electron supplies the rest. */
++export interface DragRegionWindow {
++  readonly webContents: DragRegionWebContents
++  on(event: 'enter-full-screen' | 'leave-full-screen' | 'closed', listener: () => void): unknown
++  isDestroyed(): boolean
++  isFullScreen(): boolean
++}
++
++/** Facts the shell, not the page, contributes to the diagnostic. */
++export interface WindowsDragDiagnosticEnvironment {
++  readonly app: {
++    readonly name: string
++    readonly version: string
++    readonly electron: string
++    readonly platform: string
++    readonly arch: string
++  }
++  readonly logPath: string
++  /** Desktop plugin profile directory, when the caller knows it. */
++  readonly profile?: string | undefined
++  /** Bundled product plugin directory shipped in the application archive. */
++  readonly bundledPlugin?: string | undefined
++  readonly now?: (() => Date) | undefined
++}
++
++function errorMessage(error: unknown): string {
++  return error instanceof Error ? error.message : String(error)
++}
++
++/** Read the product plugin versions a directory exposes; an absent copy is reported absent. */
++async function readPluginCopy(directory: string | undefined): Promise<Record<string, unknown> | undefined> {
++  if (directory === undefined) return undefined
++  const read = async (name: string): Promise<unknown> => {
++    try { return JSON.parse(await readFile(join(directory, name), 'utf8')) } catch { return undefined }
++  }
++  const manifest = await read('package.json') as { name?: unknown; version?: unknown } | undefined
++  const plugin = await read('studio.plugin.json') as { version?: unknown; requiredDsh?: unknown } | undefined
++  if (manifest === undefined && plugin === undefined) return undefined
++  return {
++    directory,
++    name: typeof manifest?.name === 'string' ? manifest.name : undefined,
++    packageVersion: typeof manifest?.version === 'string' ? manifest.version : undefined,
++    pluginVersion: typeof plugin?.version === 'string' ? plugin.version : undefined,
++    requiredDsh: typeof plugin?.requiredDsh === 'string' ? plugin.requiredDsh : undefined,
++  }
++}
++
++/**
++ * Collect what is installed for the product plugin: the archive copy the
++ * Desktop Host resolves, and every copy the plugin profile can still shadow it
++ * with. A stale profile copy is the difference between a repaired archive and a
++ * running renderer that still carries the old caption sheet.
++ */
++export async function readProductPluginInventory(
++  profile: string | undefined,
++  bundledPlugin: string | undefined,
++): Promise<Record<string, unknown>> {
++  const bundled = await readPluginCopy(bundledPlugin)
++  const profileCopies: Record<string, unknown>[] = []
++  const scoped = profile === undefined ? undefined : join(profile, 'node_modules', '@kingsoftcloud', 'agentkit-studio')
++  const profileCopy = await readPluginCopy(scoped)
++  if (profileCopy !== undefined) profileCopies.push(profileCopy)
++  let profileBundleRecord: unknown
++  if (profile !== undefined) {
++    try { profileBundleRecord = JSON.parse(await readFile(join(profile, 'desktop-product-bundles.json'), 'utf8')) } catch { profileBundleRecord = undefined }
++  }
++  return { bundled, profileCopies, profileBundleRecord, profileDirectory: profile }
++}
++
++/** Text shared by both injected scripts: selector naming and element descriptions. */
++const SCRIPT_HELPERS = String.raw`
++  const describe = (element) => {
++    if (!element) return null
++    const name = element.tagName ? element.tagName.toLowerCase() : String(element)
++    const id = element.id ? '#' + element.id : ''
++    const classes = typeof element.className === 'string' && element.className.trim()
++      ? '.' + element.className.trim().split(/\s+/).slice(0, 3).join('.') : ''
++    const marker = ['data-studio-window-drag-strip', 'data-studio-drag-region', 'data-studio-header', 'data-window-drag', 'data-windows-menu']
++      .find((attribute) => element.hasAttribute && element.hasAttribute(attribute))
++    return name + id + classes + (marker ? '[' + marker + ']' : '')
++  }
++  const regionOf = (element) => {
++    if (!element) return null
++    try { return getComputedStyle(element).webkitAppRegion || null } catch { return null }
++  }
++`
++
++/** Bootstrap: pin inline fallbacks and mount the caption strip once per document. */
++export function windowsDragBootstrapScript(leftInset = STRIP_LEFT_INSET, rightInset = STRIP_RIGHT_INSET): string {
++  return String.raw`(() => {
++    const marker = ${JSON.stringify(WINDOWS_DRAG_STRIP_MARKER)}
++    const hidden = ${JSON.stringify(WINDOWS_DRAG_STRIP_HIDDEN)}
++    const height = ${WINDOWS_TITLEBAR_HEIGHT}
++    const root = document.documentElement
++    if (!root) return { mounted: false, reason: 'no-document-element' }
++    // Inline fallback for the frames between navigation and the inserted sheet.
++    root.style.setProperty('-webkit-app-region', 'no-drag')
++    if (document.body) document.body.style.setProperty('-webkit-app-region', 'no-drag')
++    ${SCRIPT_HELPERS}
++    const mount = () => {
++      if (!document.body) return null
++      let strip = document.querySelector('[' + marker + ']')
++      if (!strip) {
++        strip = document.createElement('div')
++        strip.setAttribute(marker, '')
++        strip.setAttribute('aria-hidden', 'true')
++        document.body.append(strip)
++      }
++      const menu = document.querySelector('[data-windows-menu]')
++      let left = ${leftInset}
++      if (menu) {
++        const rect = menu.getBoundingClientRect()
++        if (rect.width > 0) left = Math.max(left, Math.ceil(rect.right) + 12)
++      }
++      strip.style.left = left + 'px'
++      strip.style.right = ${rightInset} + 'px'
++      strip.style.top = '0px'
++      strip.style.height = height + 'px'
++      strip.style.position = 'fixed'
++      strip.style.zIndex = '2147483000'
++      strip.style.background = 'transparent'
++      strip.style.setProperty('-webkit-app-region', 'drag')
++      strip.toggleAttribute(hidden, root.hasAttribute('data-fullscreen'))
++      return strip
++    }
++    const strip = mount()
++    if (strip && typeof MutationObserver !== 'undefined' && !window.__dshWindowsDragObserver) {
++      // A renderer that replaces body content must not lose the caption.
++      const observer = new MutationObserver(() => { if (!document.querySelector('[' + marker + ']')) mount() })
++      observer.observe(document.body, { childList: true })
++      Object.defineProperty(window, '__dshWindowsDragObserver', { value: observer, configurable: true })
++    }
++    window.__dshWindowsDragSetFullscreen = (fullscreen) => {
++      const current = document.querySelector('[' + marker + ']')
++      if (current) current.toggleAttribute(hidden, Boolean(fullscreen))
++    }
++    return { mounted: Boolean(strip), strip: strip ? { left: strip.style.left, right: strip.style.right } : null }
++  })()`
++}
++
++/** One page sample: root/body regions, the caption strip, and what a click would hit. */
++export function windowsDragSnapshotScript(titlebarHeight = WINDOWS_TITLEBAR_HEIGHT): string {
++  return String.raw`(() => {
++    const marker = ${JSON.stringify(WINDOWS_DRAG_STRIP_MARKER)}
++    const hidden = ${JSON.stringify(WINDOWS_DRAG_STRIP_HIDDEN)}
++    const root = document.documentElement
++    const body = document.body
++    ${SCRIPT_HELPERS}
++    const styleOf = (element) => {
++      if (!element) return null
++      let computed = null
++      try { computed = getComputedStyle(element) } catch {}
++      return {
++        inline: element.style && element.style.getPropertyValue ? element.style.getPropertyValue('-webkit-app-region') : null,
++        computed: computed && computed.webkitAppRegion ? computed.webkitAppRegion : null,
++        inlineStyle: element.getAttribute && element.getAttribute('style') ? element.getAttribute('style').slice(0, 300) : null,
++      }
++    }
++    const all = body ? Array.from(body.querySelectorAll('*')).slice(0, ${SAMPLE_ELEMENT_LIMIT}) : []
++    const dragElements = []
++    for (const element of all) {
++      const rect = element.getBoundingClientRect()
++      if (!(rect.width > 0 && rect.height > 0) || rect.top > ${titlebarHeight} || rect.bottom < 0) continue
++      const region = regionOf(element)
++      if (region === 'drag') dragElements.push({ element: describe(element), region, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } })
++    }
++    const points = []
++    for (const xRatio of [0.25, 0.5, 0.75]) for (const y of [20, ${titlebarHeight + 20}, 200]) {
++      const x = Math.round(window.innerWidth * xRatio)
++      const target = document.elementFromPoint(x, y)
++      const chain = []
++      for (let node = target, depth = 0; node && depth < 4; node = node.parentElement, depth += 1) {
++        chain.push({ element: describe(node), region: regionOf(node) })
++      }
++      points.push({ x, y, target: describe(target), targetRegion: regionOf(target), chain })
++    }
++    const markers = {}
++    for (const attribute of ['data-studio-window-drag-strip', 'data-studio-drag-region', 'data-studio-header', 'data-window-drag', 'data-windows-menu']) {
++      markers[attribute] = document.querySelectorAll('[' + attribute + ']').length
++    }
++    const studioStyles = []
++    for (const style of document.querySelectorAll('style[data-agentkit-studio-drag-region]')) {
++      const css = (style.textContent || '').replace(/\/\*[\s\S]*?\*\//g, '')
++      const rules = css.split('}').map((rule) => rule.split('{'))
++      const selectors = rules.map((parts) => (parts[0] || '').trim()).filter(Boolean)
++      const rootDragSelectors = rules.filter((parts) => {
++        const subject = (parts[0] || '').split(',').map((selector) => selector.trim()).filter(Boolean)
++        return /-webkit-app-region\s*:\s*drag\b/.test(parts[1] || '') && subject.some((selector) => /\[data-windows-titlebar\]$/.test(selector))
++      }).map((parts) => (parts[0] || '').trim())
++      studioStyles.push({ selectors: selectors.slice(0, 20), rootDragSelectors, bytes: css.length })
++    }
++    const strip = document.querySelector('[' + marker + ']')
++    return {
++      url: location.href,
++      title: document.title,
++      readyState: document.readyState,
++      viewport: { width: window.innerWidth, height: window.innerHeight },
++      html: {
++        marker: root.hasAttribute('data-windows-titlebar'),
++        dataPlatform: root.getAttribute('data-platform'),
++        dataFullscreen: root.hasAttribute('data-fullscreen'),
++        style: styleOf(root),
++      },
++      body: body ? { style: styleOf(body) } : null,
++      strip: strip ? {
++        present: true,
++        hidden: strip.hasAttribute(hidden),
++        style: styleOf(strip),
++        rect: (() => { const rect = strip.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height } })(),
++      } : { present: false },
++      markers,
++      studioStyles,
++      dragElements: dragElements.slice(0, 12),
++      points,
++    }
++  })()`
++}
++
++/** Write the diagnostic; failures are logged, never allowed to interrupt the window. */
++async function writeDiagnostic(
++  logPath: string,
++  report: Record<string, unknown>,
++  log: (message: string, detail?: unknown) => void,
++): Promise<void> {
++  try {
++    await mkdir(dirname(logPath), { recursive: true })
++    await writeFile(logPath, `${JSON.stringify(report, null, 2)}\n`)
++    log(`Windows drag diagnostic written: ${logPath}`)
++  } catch (error) {
++    log(`Windows drag diagnostic could not be written: ${errorMessage(error)}`)
++  }
++}
++
++/**
++ * Install the shell-owned drag authority on the Windows main window.
++ * No-op on every other platform, so macOS keeps its native caption behavior.
++ * @param window - main product window whose renderer paints the caption.
++ * @param environment - local facts and the diagnostic destination.
++ * @param platform - injectable platform for tests.
++ */
++export function installWindowsDragRegion(
++  window: DragRegionWindow,
++  environment: WindowsDragDiagnosticEnvironment,
++  platform: NodeJS.Platform = process.platform,
++): void {
++  if (platform !== 'win32') return
++  const webContents = window.webContents
++  const log = (message: string, detail?: unknown): void => {
++    if (detail === undefined) console.info(`dsh desktop: ${message}`)
++    else console.info(`dsh desktop: ${message}`, detail)
++  }
++  const inventory = readProductPluginInventory(environment.profile, environment.bundledPlugin).catch(() => undefined)
++  const samples: Record<string, unknown>[] = []
++  let cssInserted = false
++  let disposed = false
++  const now = (): Date => environment.now?.() ?? new Date()
++
++  const capture = async (phase: string): Promise<void> => {
++    if (disposed || window.isDestroyed()) return
++    const app = environment.app
++    try {
++      const sample = await webContents.executeJavaScript(windowsDragSnapshotScript(), false)
++      samples.push({ phase, capturedAt: now().toISOString(), page: sample })
++      await writeDiagnostic(environment.logPath, {
++        schemaVersion: 1,
++        kind: 'dsh-windows-drag-diagnostic',
++        writtenAt: now().toISOString(),
++        platform,
++        app,
++        window: { url: webContents.getURL(), fullscreen: window.isFullScreen() },
++        css: { inserted: cssInserted, rootRule: 'html, body { -webkit-app-region: no-drag !important; }', strip: `[${WINDOWS_DRAG_STRIP_MARKER}]` },
++        plugins: await inventory ?? null,
++        samples,
++      }, log)
++    } catch (error) {
++      log(`Windows drag sample failed: ${errorMessage(error)}`, { phase })
++    }
++  }
++
++  const inject = (phase: string): void => {
++    if (disposed || window.isDestroyed()) return
++    void webContents.insertCSS(WINDOWS_DRAG_REGION_CSS, { cssOrigin: 'user' }).then(
++      () => { cssInserted = true; log('client-area drag authority inserted', { phase }) },
++      (error: unknown) => log(`client-area drag authority failed: ${errorMessage(error)}`, { phase }),
++    )
++    void webContents.executeJavaScript(windowsDragBootstrapScript(), false).then(
++      result => log('caption strip prepared', { phase, result }),
++      (error: unknown) => log(`caption strip failed: ${errorMessage(error)}`, { phase }),
++    )
++  }
++
++  webContents.on('dom-ready', () => {
++    inject('dom-ready')
++    void capture('dom-ready')
++    setTimeout(() => { void capture('settled') }, DIAGNOSTIC_SETTLE_MS)
++  })
++  // Reloads and navigations create a new document, and the inserted sheet is
++  // owned by the old one; a second injection costs one style sheet.
++  webContents.on('did-finish-load', () => { inject('did-finish-load') })
++  window.on('enter-full-screen', () => {
++    if (!window.isDestroyed()) void webContents.executeJavaScript('window.__dshWindowsDragSetFullscreen && window.__dshWindowsDragSetFullscreen(true)', false).catch(() => undefined)
++  })
++  window.on('leave-full-screen', () => {
++    if (!window.isDestroyed()) void webContents.executeJavaScript('window.__dshWindowsDragSetFullscreen && window.__dshWindowsDragSetFullscreen(false)', false).catch(() => undefined)
++  })
++  window.on('closed', () => { disposed = true })
++}
+diff --git a/apps/desktop/tests/windows-drag-region.spec.ts b/apps/desktop/tests/windows-drag-region.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c7f89eac63ebc16ff064798c83f1b849946b824f
+--- /dev/null
++++ b/apps/desktop/tests/windows-drag-region.spec.ts
+@@ -0,0 +1,194 @@
++import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, expect, it, vi } from 'vitest'
++import {
++  installWindowsDragRegion,
++  readProductPluginInventory,
++  WINDOWS_DRAG_DIAGNOSTIC_FILE,
++  WINDOWS_DRAG_REGION_CSS,
++  WINDOWS_DRAG_STRIP_MARKER,
++  windowsDragBootstrapScript,
++  windowsDragSnapshotScript,
++  type DragRegionWindow,
++} from '../src/windows-drag-region.ts'
++
++const roots: string[] = []
++afterEach(async () => {
++  vi.useRealTimers()
++  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
++})
++
++async function scratch(): Promise<string> {
++  const root = await mkdtemp(join(tmpdir(), 'desktop-drag-region-'))
++  roots.push(root)
++  return root
++}
++
++class FakeWebContents {
++  readonly css: { css: string; options?: { cssOrigin?: 'user' | 'author' } }[] = []
++  readonly scripts: string[] = []
++  url = 'dsh://app/'
++  snapshot: unknown = { url: 'dsh://app/', html: { marker: true, style: { computed: 'no-drag' } } }
++  private readonly listeners = new Map<string, (() => void)[]>()
++  insertCSS = vi.fn(async (css: string, options?: { cssOrigin?: 'user' | 'author' }) => {
++    this.css.push({ css, options })
++    return 'inserted-css-key'
++  })
++  executeJavaScript = vi.fn(async (code: string) => {
++    this.scripts.push(code)
++    return this.snapshot
++  })
++  getURL = (): string => this.url
++  on(event: string, listener: () => void): this {
++    this.listeners.set(event, [...this.listeners.get(event) ?? [], listener])
++    return this
++  }
++  emit(event: string): void {
++    for (const listener of this.listeners.get(event) ?? []) listener()
++  }
++}
++
++class FakeWindow implements DragRegionWindow {
++  readonly webContents = new FakeWebContents()
++  readonly events = new Map<string, (() => void)[]>()
++  destroyed = false
++  fullscreen = false
++  on(event: string, listener: () => void): this {
++    this.events.set(event, [...this.events.get(event) ?? [], listener])
++    return this
++  }
++  emit(event: string): void {
++    for (const listener of this.events.get(event) ?? []) listener()
++  }
++  isDestroyed(): boolean { return this.destroyed }
++  isFullScreen(): boolean { return this.fullscreen }
++}
++
++async function settled(): Promise<void> {
++  await Promise.resolve()
++  await new Promise(resolve => setTimeout(resolve, 0))
++  await Promise.resolve()
++}
++
++function environment(logPath: string, overrides: Record<string, unknown> = {}) {
++  return {
++    app: { name: 'AgentKit Studio', version: '0.2.2-rc.1', electron: '44.0.0', platform: 'win32', arch: 'x64' },
++    logPath,
++    now: () => new Date('2026-11-07T00:00:00.000Z'),
++    ...overrides,
++  }
++}
++
++it('is inert off Windows so the macOS caption keeps its native behavior', () => {
++  const window = new FakeWindow()
++  installWindowsDragRegion(window, environment('/nonexistent/win-drag-diag.json'), 'darwin')
++  window.webContents.emit('dom-ready')
++  expect(window.webContents.insertCSS).not.toHaveBeenCalled()
++  expect(window.webContents.executeJavaScript).not.toHaveBeenCalled()
++  expect(window.events.size).toBe(0)
++})
++
++it('inserts the user-origin root no-drag rule before the product client runs', async () => {
++  const window = new FakeWindow()
++  installWindowsDragRegion(window, environment('/nonexistent/win-drag-diag.json'), 'win32')
++  window.webContents.emit('dom-ready')
++  await settled()
++  expect(window.webContents.insertCSS).toHaveBeenCalledTimes(1)
++  const [css, options] = window.webContents.insertCSS.mock.calls[0] ?? []
++  expect(options).toEqual({ cssOrigin: 'user' })
++  expect(css).toContain('html, body {')
++  expect(css).toContain('-webkit-app-region: no-drag !important;')
++  expect(css).not.toMatch(/html[^{]*\{[^}]*app-region:\s*drag/)
++  expect(css).toContain(`[${WINDOWS_DRAG_STRIP_MARKER}]`)
++  expect(css).toContain('html[data-fullscreen]')
++})
++
++it('mounts a captioned strip while the root stays the only no-drag subject', () => {
++  const bootstrap = windowsDragBootstrapScript()
++  expect(bootstrap).toContain(WINDOWS_DRAG_STRIP_MARKER)
++  expect(bootstrap).toContain("root.style.setProperty('-webkit-app-region', 'no-drag')")
++  expect(bootstrap).toContain("strip.style.setProperty('-webkit-app-region', 'drag')")
++  expect(bootstrap).toContain('[data-windows-menu]')
++  expect(bootstrap).toContain('data-fullscreen')
++})
++
++it('samples the root, the strip, the caption markers and what a click would hit', () => {
++  const snapshot = windowsDragSnapshotScript()
++  expect(snapshot).toContain('data-windows-titlebar')
++  expect(snapshot).toContain('webkitAppRegion')
++  expect(snapshot).toContain('data-studio-window-drag-strip')
++  expect(snapshot).toContain('data-studio-drag-region')
++  expect(snapshot).toContain('elementFromPoint')
++  expect(snapshot).toContain('rootDragSelectors')
++})
++
++it('writes the installed-build diagnostic with the page, url and plugin inventory', async () => {
++  const root = await scratch()
++  const bundled = join(root, 'bundled', 'agentkit-studio')
++  const profilePlugin = join(root, 'profile', 'node_modules', '@kingsoftcloud', 'agentkit-studio')
++  await mkdir(bundled, { recursive: true })
++  await mkdir(profilePlugin, { recursive: true })
++  await writeFile(join(bundled, 'package.json'), JSON.stringify({ name: '@kingsoftcloud/agentkit-studio', version: '0.0.14' }))
++  await writeFile(join(bundled, 'studio.plugin.json'), JSON.stringify({ version: '0.0.14', requiredDsh: '0.2.2-rc.1' }))
++  await writeFile(join(profilePlugin, 'package.json'), JSON.stringify({ name: '@kingsoftcloud/agentkit-studio', version: '0.0.12' }))
++  await writeFile(join(profilePlugin, 'studio.plugin.json'), JSON.stringify({ version: '0.0.12' }))
++  const profile = join(root, 'profile')
++  await writeFile(join(profile, 'desktop-product-bundles.json'), JSON.stringify({ bundles: ['@kingsoftcloud/agentkit-studio'] }))
++  const logPath = join(root, 'logs', WINDOWS_DRAG_DIAGNOSTIC_FILE)
++  const window = new FakeWindow()
++  window.webContents.snapshot = {
++    url: 'dsh://app/',
++    html: { marker: true, style: { inline: 'no-drag', computed: 'no-drag' } },
++    studioStyles: [{ selectors: ['[data-windows-titlebar]'], rootDragSelectors: ['[data-windows-titlebar]'], bytes: 120 }],
++    strip: { present: true },
++  }
++  installWindowsDragRegion(window, environment(logPath, { profile, bundledPlugin: bundled }), 'win32')
++  window.webContents.emit('dom-ready')
++  await vi.waitFor(async () => {
++    const report = JSON.parse(await readFile(logPath, 'utf8')) as Record<string, unknown>
++    expect(report.kind).toBe('dsh-windows-drag-diagnostic')
++    expect(report.window).toMatchObject({ url: 'dsh://app/', fullscreen: false })
++    expect(report.css).toMatchObject({ inserted: true, rootRule: 'html, body { -webkit-app-region: no-drag !important; }' })
++    expect((report.plugins as { bundled: { pluginVersion: string } }).bundled.pluginVersion).toBe('0.0.14')
++    const copies = (report.plugins as { profileCopies: { pluginVersion: string }[] }).profileCopies
++    expect(copies.map(copy => copy.pluginVersion)).toEqual(['0.0.12'])
++    const samples = report.samples as { phase: string; capturedAt: string; page: { url: string } }[]
++    expect(samples[0]?.phase).toBe('dom-ready')
++    expect(samples[0]?.capturedAt).toBe('2026-11-07T00:00:00.000Z')
++    expect(samples[0]?.page.url).toBe('dsh://app/')
++  })
++})
++
++it('re-injects after navigation and toggles the strip for fullscreen', async () => {
++  const window = new FakeWindow()
++  installWindowsDragRegion(window, environment('/nonexistent/win-drag-diag.json'), 'win32')
++  window.webContents.emit('dom-ready')
++  window.webContents.emit('did-finish-load')
++  await settled()
++  expect(window.webContents.insertCSS).toHaveBeenCalledTimes(2)
++  window.emit('enter-full-screen')
++  window.emit('leave-full-screen')
++  await settled()
++  const calls = window.webContents.executeJavaScript.mock.calls.map(([code]) => code)
++  expect(calls.some(code => code.includes('__dshWindowsDragSetFullscreen(true)'))).toBe(true)
++  expect(calls.some(code => code.includes('__dshWindowsDragSetFullscreen(false)'))).toBe(true)
++})
++
++it('reads every plugin copy that can shadow the archive bundle', async () => {
++  const root = await scratch()
++  const bundled = join(root, 'bundled')
++  const profile = join(root, 'profile')
++  await mkdir(bundled, { recursive: true })
++  await writeFile(join(bundled, 'package.json'), JSON.stringify({ name: '@kingsoftcloud/agentkit-studio', version: '0.0.14' }))
++  expect(await readProductPluginInventory(profile, bundled)).toMatchObject({
++    bundled: { packageVersion: '0.0.14' },
++    profileCopies: [],
++    profileDirectory: profile,
++  })
++})
++
++it('never captions the document root in the inserted sheet', () => {
++  const rules = WINDOWS_DRAG_REGION_CSS.replace(/\/\*[\s\S]*?\*\//g, '')
++  expect(rules).not.toMatch(/(?:^|\})\s*(?:html|:root|body)\s*\{[^}]*-webkit-app-region:\s*drag/)
++})
