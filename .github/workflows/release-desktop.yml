@@ -171,7 +171,7 @@ jobs:
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     needs: [source-gate]
     if: ${{ inputs.candidate_run_id == '' }}
-    runs-on: macos-14
+    runs-on: macos-latest
     environment: studio-signing
     timeout-minutes: 60
     steps:
@@ -627,7 +627,7 @@ jobs:
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.qualify_installed_update && needs.macos-arm64.result == 'success' && (needs.publish-mac-arm64.result == 'success' || needs.publish-mac-arm64.result == 'skipped') }}
     needs: [source-gate, macos-arm64, publish-mac-arm64]
-    runs-on: macos-14
+    runs-on: macos-latest
     environment: studio-signing
     timeout-minutes: 30
     steps:
