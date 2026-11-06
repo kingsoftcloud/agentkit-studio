@@ -227,6 +227,25 @@ jobs:
           $env:DSH_DESKTOP_PRODUCT_TRAY_ICON = Join-Path $PWD $env:STUDIO_PRODUCT_TRAY_ICON
           pnpm exec node scripts/package-desktop.mjs @packageArguments
           if ($LASTEXITCODE) { throw 'Signed Windows packaging failed' }
+      - name: Verify the packaged drag-region contract
+        # The previous Windows package shipped the old whole-viewport caption rule
+        # even though the repair existed on a branch. Inspect the final archive
+        # before the installer is retained; a mismatch fails the build.
+        if: ${{ inputs.candidate_run_id == '' }}
+        id: packaged-drag-region
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .artifacts/windows-proof | Out-Null
+          $targets = Join-Path $env:RUNNER_TEMP 'studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64'
+          $found = @(Get-ChildItem -Path $targets -Recurse -Filter app.asar -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]win-unpacked[\\/]resources[\\/]app\.asar$' })
+          if ($found.Count -ne 1) { throw "Expected exactly one packaged app.asar, found $($found.Count)" }
+          $archive = $found[0].FullName
+          node .qualification-tools/scripts/verify-packaged-drag-region.mjs $archive --json .artifacts/windows-proof/drag-region.json
+          if ($LASTEXITCODE) { throw 'Packaged drag-region contract failed' }
+          Copy-Item -LiteralPath $archive -Destination .artifacts/windows-proof/app.asar
+          (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content .artifacts/windows-proof/app.asar.sha256
       - name: Verify timestamped installer and actual installation
         if: ${{ ! inputs.diagnostic_only }}
         shell: pwsh
@@ -277,7 +296,8 @@ jobs:
             }
           }
       - name: Retain signed installer and acceptance evidence
-        if: always()
+        # A failed packaged drag-region check must not leave an installer behind.
+        if: ${{ always() && (inputs.candidate_run_id != '' || steps.packaged-drag-region.outcome == 'success') }}
         uses: actions/upload-artifact@v4
         with:
           name: agentkit-studio-${{ steps.product.outputs.build_version }}-win-x64
