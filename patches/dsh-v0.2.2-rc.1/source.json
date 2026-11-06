@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "7fc4fe7628d6d0f68cfb58593bb11f665eb4c2fd",
+  "headCommit": "96a1a6ff3f463d5574459c1a4c49459d30af4912",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "23c3668e78340a8082daebff75c2481b9d61b6e6",
-  "sourceSha256": "7ba8e26eb021748279d5af3b64fb6030d5f5923ec18ef62b25ad94e8521e3299",
+  "tree": "54959adf25ca0c3dd02241167022402a1161d202",
+  "sourceSha256": "593273a03342695f9f5ec82cd4a9e5c782bd2a47132b2f2b0f5852a5f805c779",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "f8a147f89d010cbbc4e8b2c8ab446c6a2ffc1577865358b1f22343cb831c2e28"
+    "sha256": "e1f0ee14d62b96029b1725d9acfe7920e81b25aaaf8cb80c5066372f37a3a206"
   },
   "commits": [
     {
@@ -280,6 +280,12 @@
       "file": "076-studio-feed-prefix-all-platforms.patch",
       "commit": "7fc4fe7628d6d0f68cfb58593bb11f665eb4c2fd",
       "sha256": "370cc4609d0c5dc735cb61c51e0ad55e68a92e94b48cfec341fe90cfee4fb678"
+    },
+    {
+      "id": "077",
+      "file": "077-certificate-store-signing-parity.patch",
+      "commit": "96a1a6ff3f463d5574459c1a4c49459d30af4912",
+      "sha256": "4a42adf2ccbbb34e29900eef8e551302a37b82805c827b9466dbe601db6badb3"
     }
   ]
 }

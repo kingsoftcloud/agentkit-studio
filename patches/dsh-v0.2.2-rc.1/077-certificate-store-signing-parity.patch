@@ -1,0 +1,206 @@
+diff --git a/apps/desktop/.env.macos.example b/apps/desktop/.env.macos.example
+index 7d2336d546f2ce50e01a6bb6f1bdd1cc5302a2c9..05ccc991f5bbccad879d4af6143e317977c5410f 100644
+--- a/apps/desktop/.env.macos.example
++++ b/apps/desktop/.env.macos.example
+@@ -33,6 +33,9 @@ DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://login.examp
+ DSH_DESKTOP_MACOS_SIGNING_IDENTITY=
+ DSH_DESKTOP_MACOS_TEAM_ID=
+ 
++# Optional existing keychain instead of CSC_LINK and CSC_KEY_PASSWORD; it must already allow codesign.
++# DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN=
++
+ # Required local p12 containing the Developer ID Application certificate and private key.
+ # CSC_KEY_PASSWORD is the p12 export password, not an Apple account or login password.
+ # An explicitly empty password is accepted for an unencrypted p12.
+diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
+index f52fe6d7f0a6620e576a6b76454823ed9583f697..c9b147753944d42d76120d73f72d835e5db0cd79 100644
+--- a/apps/desktop/scripts/desktop-package-environment.mjs
++++ b/apps/desktop/scripts/desktop-package-environment.mjs
+@@ -17,9 +17,9 @@ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
+ const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|UPDATE_ORIGIN|UPDATE_CHANNEL|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+ const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:SIGNING_MODE|CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY|PACK_CONCURRENCY|COMPRESSION_LEVEL)$/u
+-const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
++const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_KEYCHAIN|SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
+ const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
+-const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
++const FILE_SETTINGS = ['DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN', 'DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
+ 
+ /**
+  * Select local macOS test defaults without reading dotenv files or inheriting release settings.
+@@ -186,8 +186,12 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+       if ('appleApiKey' in credentials) requireReadableFile(environment, 'APPLE_API_KEY')
+       if ('keychain' in credentials) requireReadableFile(environment, 'APPLE_KEYCHAIN')
+     }
+-    requireReadableFile(environment, 'CSC_LINK')
+-    if (environment.CSC_KEY_PASSWORD === undefined) {
++    if (environment.DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN !== undefined) {
++      if (environment.CSC_LINK !== undefined || environment.CSC_KEY_PASSWORD !== undefined) throw new Error('desktop package: configure either a signing keychain or a p12, never both')
++      requireReadableFile(environment, 'DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN')
++    }
++    else { requireReadableFile(environment, 'CSC_LINK') }
++    if (environment.DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN === undefined && environment.CSC_KEY_PASSWORD === undefined) {
+       throw new Error('desktop package: CSC_KEY_PASSWORD must be set to the p12 export password (use an explicit empty value for an unencrypted p12)')
+     }
+   }
+diff --git a/apps/desktop/scripts/macos-signing-keychain.mjs b/apps/desktop/scripts/macos-signing-keychain.mjs
+index 425eb6a96c5b3bf927a86ddfb93430ecc5b218b8..dda04eeb57f9103151ba5e7514fd154dd27dfddb 100644
+--- a/apps/desktop/scripts/macos-signing-keychain.mjs
++++ b/apps/desktop/scripts/macos-signing-keychain.mjs
+@@ -1,4 +1,4 @@
+-/** Own a temporary PKCS#12 signing identity for one macOS packaging invocation. */
++/** Scope one macOS packaging invocation to its explicitly configured signing keychain. */
+ import { execFileSync } from 'node:child_process'
+ import { randomBytes } from 'node:crypto'
+ import { mkdtempSync, rmSync } from 'node:fs'
+@@ -35,17 +35,31 @@ function readUserKeychains(run) {
+ }
+ 
+ /**
+- * Import and authorize the required p12 before work; delete the owned keychain after work settles.
++ * Probe an explicitly configured existing keychain, or import a p12 into an owned temporary keychain.
++ * An existing keychain is never unlocked, modified, or deleted by this invocation.
+  * Children receive only its path, never the p12 password. Existing login keychains are not unlocked.
+  * codesign resolves an identity only from a keychain on the user search list, so the owned keychain
+  * is prepended during the run and the previous list is restored before deletion.
+  * Abrupt process termination requires the CI runner to clean its temporary directory.
+- * @param {NodeJS.ProcessEnv} environment Validated platform configuration with local CSC_LINK and CSC_KEY_PASSWORD.
++ * @param {NodeJS.ProcessEnv} environment Validated configuration selecting DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN or local CSC_LINK and CSC_KEY_PASSWORD.
+  * @param {(environment: NodeJS.ProcessEnv) => Promise<void>} action All signing work, settled before cleanup.
+  * @param {(command: string, args: string[]) => string} run Apple command executor.
+  * @returns {Promise<void>} Resolves after work and cleanup; rejects on setup, work, or cleanup failure.
+  */
+ export async function withMacOSSigningKeychain(environment, action, run = execute) {
++  const existing = environment.DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN
++  if (existing !== undefined) {
++    if (environment.CSC_LINK !== undefined || environment.CSC_KEY_PASSWORD !== undefined) throw new Error('desktop macOS signing: configure either a signing keychain or a p12, never both')
++    const directory = mkdtempSync(join(tmpdir(), 'dsh-macos-signing-probe-'))
++    try {
++      const probe = join(directory, 'probe')
++      run('/bin/cp', ['/usr/bin/true', probe])
++      run('/usr/bin/codesign', ['--force', '--sign', `Developer ID Application: ${environment.DSH_DESKTOP_MACOS_SIGNING_IDENTITY}`, '--keychain', existing, '--timestamp', '--options', 'runtime', probe])
++      run('/usr/bin/codesign', ['--verify', '--strict', probe])
++      await action({ ...environment, CSC_KEYCHAIN: existing, DSH_DESKTOP_MACOS_SIGNING_PROBE: probe })
++    } finally { rmSync(directory, { recursive: true, force: true }) }
++    return
++  }
+   const certificate = environment.CSC_LINK
+   const exportPassword = environment.CSC_KEY_PASSWORD
+   if (!certificate || exportPassword === undefined) throw new Error('desktop macOS signing: CSC_LINK and CSC_KEY_PASSWORD are required')
+diff --git a/apps/desktop/scripts/test-windows-installer.mjs b/apps/desktop/scripts/test-windows-installer.mjs
+index 1cb7a5aae6a63c1f577c5cd16b0807a8043e38b9..cfd5ba5edd1a6234dce4eb6ae0b353b708fa7563 100644
+--- a/apps/desktop/scripts/test-windows-installer.mjs
++++ b/apps/desktop/scripts/test-windows-installer.mjs
+@@ -35,6 +35,7 @@ const signingEnvironment = process.argv.includes('--signed') ? loadDesktopPackag
+ const signingRun = process.argv.includes('--signed')
+   ? createPackagingRun(join(output, 'packaging-runs'), { target: 'installer-test' }) : undefined
+ const sign = process.argv.includes('--signed') ? createWindowsTokenSigner({
++  mode: signingEnvironment.DSH_DESKTOP_WINDOWS_SIGNING_MODE,
+   certificateFile: signingEnvironment.DSH_DESKTOP_WINDOWS_CER_FILE,
+   signTool: signingEnvironment.DSH_DESKTOP_WINDOWS_SIGNTOOL,
+   tokenPin: signingEnvironment.DSH_DESKTOP_WINDOWS_TOKEN_PIN,
+diff --git a/apps/desktop/scripts/windows-signing-preflight.ts b/apps/desktop/scripts/windows-signing-preflight.ts
+index a166d7adfc18e6c5d289f08316d09a17fa2a3cf2..ec1d691dce1b95124843c2375c45cad5507a84e3 100644
+--- a/apps/desktop/scripts/windows-signing-preflight.ts
++++ b/apps/desktop/scripts/windows-signing-preflight.ts
+@@ -37,8 +37,9 @@ async function compileProbe(compiler: string, source: string, output: string, en
+ export async function preflightWindowsSigning(options: SigningPreflightOptions): Promise<void> {
+   const { environment, runDirectory } = options
+   const record = (event: object): void => { recordPackagingEvent(runDirectory, event) }
++  const mode = environment.DSH_DESKTOP_WINDOWS_SIGNING_MODE ?? 'token'
+   const signer = createWindowsTokenSigner({
+-    mode: environment.DSH_DESKTOP_WINDOWS_SIGNING_MODE,
++    mode,
+     certificateFile: environment.DSH_DESKTOP_WINDOWS_CER_FILE,
+     signTool: environment.DSH_DESKTOP_WINDOWS_SIGNTOOL,
+     keyContainer: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER,
+@@ -74,12 +75,17 @@ export async function preflightWindowsSigning(options: SigningPreflightOptions):
+     compilerSha256: createHash('sha256').update(await readFile(compiler)).digest('hex'),
+     signToolSha256: createHash('sha256').update(await readFile(environment.DSH_DESKTOP_WINDOWS_SIGNTOOL!)).digest('hex'),
+     certificateSha256: createHash('sha256').update(certificate).digest('hex') })
+-  const identity = await (options.inspectIdentity ?? inspectWindowsTokenIdentity)({
+-    certificate, container: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER!.trim(),
+-    environment: scrubWindowsSigningEnvironment(environment),
+-  })
+-  record({ type: 'signing-preflight-public-identity', result: identity, pinSupplied: false })
+-  if (identity !== 'matched') throw new Error(windowsTokenIdentityFailure(identity))
++  // A certificate-store identity has no SafeNet container to query; the probe signature
++  // below already proves the configured certificate and private key can sign on this host.
++  if (mode === 'token') {
++    const identity = await (options.inspectIdentity ?? inspectWindowsTokenIdentity)({
++      certificate, container: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER!.trim(),
++      environment: scrubWindowsSigningEnvironment(environment),
++    })
++    record({ type: 'signing-preflight-public-identity', result: identity, pinSupplied: false })
++    if (identity !== 'matched') throw new Error(windowsTokenIdentityFailure(identity))
++  }
++  else { record({ type: 'signing-preflight-certificate-store', thumbprint }) }
+   await (options.compile ?? compileProbe)(compiler, source, output, environment)
+   const inspect = options.inspect ?? inspectWindowsRuntimeSignature
+   if ((await inspect(output)).status !== 'NotSigned') throw new Error('Windows signing preflight requires a new unsigned probe')
+diff --git a/apps/desktop/tests/macos-signing-keychain.spec.ts b/apps/desktop/tests/macos-signing-keychain.spec.ts
+index 6b41fe7bcffa5da8dab42fd22d9bf68e7358e39f..6248384c9727fcd7574877b1879d647cab4af886 100644
+--- a/apps/desktop/tests/macos-signing-keychain.spec.ts
++++ b/apps/desktop/tests/macos-signing-keychain.spec.ts
+@@ -67,3 +67,28 @@ describe('temporary macOS signing identity', () => {
+     expect(paths.every(path => !existsSync(dirname(path)))).toBe(true)
+   })
+ })
++
++
++it.each([false, true])('uses an explicitly selected existing keychain without modifying it; build failure %s', async (fails) => {
++  const run = vi.fn<(command: string, args: string[]) => string>(() => '')
++  const keychain = '/existing/signing.keychain-db'
++  let probe = ''
++  const action = async (env: NodeJS.ProcessEnv) => {
++    expect(env.CSC_KEYCHAIN).toBe(keychain)
++    probe = env.DSH_DESKTOP_MACOS_SIGNING_PROBE!
++    expect(existsSync(dirname(probe))).toBe(true)
++    if (fails) throw new Error('build failure')
++  }
++  const result = withMacOSSigningKeychain({ DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN: keychain, DSH_DESKTOP_MACOS_SIGNING_IDENTITY: 'Example (TEAMID1234)' }, action, run)
++  if (fails) await expect(result).rejects.toThrow('build failure')
++  else await result
++  expect(existsSync(dirname(probe))).toBe(false)
++  expect(run.mock.calls.filter(([command]) => command === '/usr/bin/security')).toHaveLength(0)
++  expect(run.mock.calls.find(([command]) => command === '/usr/bin/codesign')?.[1]).toContain(keychain)
++})
++
++it('rejects ambiguous p12 and keychain settings before invoking either identity', async () => {
++  const run = vi.fn(() => '')
++  await expect(withMacOSSigningKeychain({ ...environment, DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN: '/existing' }, async () => {}, run)).rejects.toThrow(/never both/u)
++  expect(run).not.toHaveBeenCalled()
++})
+diff --git a/apps/desktop/tests/windows-signing-preflight.spec.ts b/apps/desktop/tests/windows-signing-preflight.spec.ts
+index 008b9bfcc0ae5cae632752d0732f3b43645e8555..577aa4bcec483b77278af0a6cd0166484dea7d0b 100644
+--- a/apps/desktop/tests/windows-signing-preflight.spec.ts
++++ b/apps/desktop/tests/windows-signing-preflight.spec.ts
+@@ -100,6 +100,28 @@ it('compiles one new probe and verifies one production-format signature before s
+   expect(events).not.toContain('fixture-pin')
+ })
+ 
++it('signs a certificate-store probe without a token container or PIN', async () => {
++  const options = await fixture()
++  const environment: NodeJS.ProcessEnv = { ...options.environment, DSH_DESKTOP_WINDOWS_SIGNING_MODE: 'certificate-store' }
++  delete environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER
++  delete environment.DSH_DESKTOP_WINDOWS_TOKEN_PIN
++  const inspectIdentity = vi.fn(async () => 'matched' as const)
++  await preflightWindowsSigning({ ...options, environment, inspectIdentity })
++  expect(inspectIdentity).not.toHaveBeenCalled()
++  expect(options.sequence).toEqual(['compile', 'inspect', 'sign', 'inspect'])
++  const events = await readFile(join(options.runDirectory, 'events.jsonl'), 'utf8')
++  expect(events).toContain('signing-preflight-certificate-store')
++  expect(events).not.toContain('signing-preflight-public-identity')
++})
++
++it('rejects an unknown signing mode before compiling or signing', async () => {
++  const options = await fixture()
++  const environment: NodeJS.ProcessEnv = { ...options.environment, DSH_DESKTOP_WINDOWS_SIGNING_MODE: 'invalid' }
++  await expect(preflightWindowsSigning({ ...options, environment })).rejects.toThrow('signing mode')
++  expect(options.compile).not.toHaveBeenCalled()
++  expect(options.sign).not.toHaveBeenCalled()
++})
++
+ it.each(['interlock', 'fatal', 'compiler', 'certificate', 'signTool', 'pin', 'audit'] as const)
+ ('rejects static %s failure without compiling or signing', async (failure) => {
+   const options = await fixture()
