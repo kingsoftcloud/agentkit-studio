@@ -1,5 +1,5 @@
 /** Shared installed profile ownership, migration and locking for ZIP and manifest inputs. */
-import { cp, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, cp, lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -335,7 +335,35 @@ async function prepareLockedProfile({ profiles, profile, modules, studioDigest, 
 }
 
 
-const installationFail = (prefix, suffix, message) => { throw Object.assign(new Error(message), { code: `${prefix}_${suffix}` }); };
+const installationFail = (prefix, suffix, message, details) => {
+  throw Object.assign(new Error(message), { code: `${prefix}_${suffix}`, ...(details ? { details } : {}) });
+};
+
+/**
+ * Report an installed-Host startup failure where a person can see it: the
+ * entry script's stderr and the deployment's own state directory. Version
+ * mismatches name both versions because that is the actionable fact; every
+ * other failure keeps the entry script's sanitized message so a dependency
+ * URL, credential or local path never reaches the log.
+ */
+export async function reportHostStartupFailure(error, { event = 'host.failed', state, generic } = {}) {
+  const code = String(error?.code || 'HOST_STARTUP_FAILED');
+  const versionMismatch = /_VERSION_MISMATCH$/.test(code);
+  const message = versionMismatch
+    ? String(error?.message || '安装的 DSH 与 Studio 固定版本不一致')
+    : String(generic || 'Host 启动失败，请检查固定安装、运行包、专用状态和注入配置');
+  const record = { event, code, message, ...(versionMismatch && error?.details ? { detail: error.details } : {}) };
+  const line = JSON.stringify(record);
+  try { console.error(line); } catch { /* stderr may be closed during shutdown */ }
+  if (state) {
+    try {
+      const directory = resolve(String(state));
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await appendFile(join(directory, 'host-startup-error.log'), `${new Date().toISOString()} ${line}\n`, { mode: 0o600 });
+    } catch { /* diagnostics must never replace the original startup failure */ }
+  }
+  return record;
+}
 
 export async function privateRuntimeDirectory(path, prefix = 'BUNDLE_HOST') {
   await mkdir(path, { recursive: true, mode: 0o700 });
@@ -347,7 +375,11 @@ export async function inspectRuntimeInstallation(installation, prefix = 'BUNDLE_
   const modules = await realpath(join(resolve(installation), 'node_modules'));
   const dshRoot = join(modules, '@deepseek-ai/dsh'), studioRoot = join(modules, '@kingsoftcloud/agentkit-studio');
   const dsh = await json(join(dshRoot, 'package.json')), studio = await json(join(studioRoot, 'studio.plugin.json'));
-  if (dsh.name !== '@deepseek-ai/dsh' || dsh.version !== studio.requiredDsh) installationFail(prefix, 'VERSION_MISMATCH', '安装的 DSH 与 Studio 固定版本不一致');
+  if (dsh.name !== '@deepseek-ai/dsh' || dsh.version !== studio.requiredDsh) {
+    installationFail(prefix, 'VERSION_MISMATCH',
+      `安装的 DSH 与 Studio 固定版本不一致（需要 ${String(studio.requiredDsh)}，实际 ${String(dsh.version)}）`,
+      { requiredDsh: studio.requiredDsh ?? null, actualDsh: dsh.version ?? null });
+  }
   const entry = join(dshRoot, 'lib/bin.js');
   if (!(await exists(entry))?.isFile()) installationFail(prefix, 'INSTALLATION_INCOMPLETE', '镜像未包含已构建的 DSH CLI');
   return { modules, entry, dshVersion: dsh.version };
