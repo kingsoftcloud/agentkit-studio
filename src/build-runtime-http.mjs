@@ -10,6 +10,7 @@ import { ASSISTANT_BROWSER_CAPABILITY, ASSISTANT_CODE_EXECUTION_CAPABILITY, ASSI
 import { ASSISTANT_NATIVE_CAPABILITY, isAssistantNativeOperation } from './contracts/assistant-native.mjs';
 import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachments.mjs';
 import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
+import { createSessionAdmission } from './runtime-session-admission.mjs';
 
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -36,7 +37,7 @@ function readRequestedExecutionMode(value) {
   return mode;
 }
 
-export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, assistant, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, assistant, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, sessionAdmission, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
   const managed = !buildId && managedIdentity?.agentId === agentId && identity(managedIdentity?.versionId || '') && /^[a-f0-9]{64}$/.test(managedIdentity?.manifestSha256 || '');
   if (!agentId || (managedIdentity ? !managed : !/^build_[0-9a-f]{20}$/.test(buildId || '')) || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
@@ -46,17 +47,24 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
   const tokenHash = hash(token);
   const responses = createRuntimeResponsesContract({ agentId, buildId, definitionId: managedIdentity?.manifestSha256, versionId: managedIdentity?.versionId, token, model, models });
   const active = new Map();
+  // Managed Sessions admit one turn at a time. A second request waits in a
+  // bounded queue instead of failing immediately, and an admitted turn that
+  // stops making progress is reclaimed on its wall-clock deadline so a stuck
+  // handler cannot hold the Session forever.
+  const admission = platformActions ? createSessionAdmission({ ...sessionAdmission,
+    onReclaim: entry => { try { runLog({ at: new Date().toISOString(), event: 'runtime.session.reclaimed', agentId, ...entry }); } catch { /* diagnostics cannot change admission */ } } }) : null;
   platformActions?.setRunControl({ cancelRun: (runId, sessionId, principalDigest) => {
     const target = active.get(runId);
     if (!target || target.sessionId !== sessionId || target.principalDigest !== principalDigest) return false;
     target.abort.abort(fail('RUNTIME_CANCELLED', 409)); return true;
   }, cancelSession: sessionId => {
     for (const target of active.values()) if (target.sessionId === sessionId) target.abort.abort(fail('RUNTIME_CANCELLED', 409));
+    admission?.cancelSession(sessionId, fail('RUNTIME_CANCELLED', 409));
   } });
   let closing = false;
-  const json = (res, status, value) => { if (!res.destroyed) { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)); } };
+  const json = (res, status, value, headers = {}) => { if (!res.destroyed) { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers }); res.end(JSON.stringify(value)); } };
   const server = createServer(async (req, res) => {
-    let runId, abort, heartbeat, projection, approvalRun, action, input, runStartedAt, logIdentity, terminalLogged = false;
+    let runId, abort, heartbeat, projection, approvalRun, action, input, runStartedAt, logIdentity, lease, started = false, terminalLogged = false;
     // Stdout is the existing cloud collector's input. Log only correlation and
     // outcomes: never prompts, model output, tool arguments or upstream errors.
     const logRun = (event, code, extra = {}) => {
@@ -180,11 +188,36 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       }
       const sessionId = isResponses ? input.sessionId : `runtime-${hash(`${agentId}\0${scope}\0${input.sessionId || input.requestId}`).toString('hex').slice(0, 32)}`;
       runId = isResponses ? input.runId : `run_${hash(`${sessionId}\0${input.requestId}`).toString('hex').slice(0, 32)}`;
-      if (active.has(runId)) throw fail('RUNTIME_RUN_ACTIVE', 409);
-      if (platformActions && [...active.values()].some(target => target.sessionId === sessionId)) throw fail('RUNTIME_SESSION_BUSY', 409);
+      if (!admission && active.has(runId)) throw fail('RUNTIME_RUN_ACTIVE', 409);
       if (active.size >= maxActive) throw fail('RUNTIME_BUSY', 429);
-      abort = new AbortController(); active.set(runId, { abort, responseId: input.responseId, sessionId, principalDigest: input.principalDigest });
+      abort = new AbortController();
       res.on('close', () => { if (!res.writableEnded) abort.abort(fail('RUNTIME_CLIENT_DISCONNECTED', 499)); });
+      if (admission) {
+        // A retried request (same invocation) reuses the turn already owning
+        // this Session; a new request queues behind it. Refusal carries the
+        // holder and the suggested retry delay.
+        lease = await admission.acquire({ sessionId, turnId: runId, requestId: input.requestId, signal: abort.signal,
+          onTurnTimeout: () => { if (!abort.signal.aborted) abort.abort(fail('RUNTIME_TURN_TIMEOUT', 504)); },
+          onFence: () => {
+            // The handler ignored the deadline abort. Tell the caller the turn
+            // was reclaimed instead of resetting the socket silently, then let
+            // the queued turn take the Session.
+            if (!res.destroyed && !res.writableEnded) {
+              if (!res.headersSent) { try {
+                json(res, 504, action ? { Code: 504, ReasonCode: 'RUNTIME_TURN_TIMEOUT', Message: 'RUNTIME_TURN_TIMEOUT', Action: action,
+                  RequestId: String(req.headers['x-ksc-request-id'] || ''),
+                  Data: { ReasonCode: 'RUNTIME_TURN_TIMEOUT', Error: { Code: 'RUNTIME_TURN_TIMEOUT' } } }
+                  : { error: { code: 'RUNTIME_TURN_TIMEOUT' } });
+              } catch { /* the transport is already gone */ } }
+              else res.destroy();
+            }
+            if (active.get(runId)?.abort === abort) active.delete(runId);
+          } });
+        abort.signal.throwIfAborted();
+        if (active.has(runId)) throw fail('RUNTIME_RUN_ACTIVE', 409);
+      }
+      started = true;
+      active.set(runId, { abort, responseId: input.responseId, sessionId, principalDigest: input.principalDigest });
       const emit = (event, data) => {
         if (res.destroyed || !input.stream) return;
         const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -268,7 +301,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       // but it must not replace the failure that actually ended the run:
       // keep the original code for callers and record settlement separately.
       let settlementFailure;
-      if (abort && platformActions) {
+      if (started && platformActions) {
         try { await platformActions.settleRun(input); }
         catch (settlement) { settlementFailure = settlement; }
       }
@@ -282,9 +315,21 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         if (projection) { projection.fail(code, detail); res.end('data: [DONE]\n\n'); }
         else res.end(`event: run.failed\ndata: ${JSON.stringify({ runId, error: { code } })}\n\n`);
       }
-      else if (!res.destroyed) json(res, error?.status || 500, action ? { Code: error?.status || 500, ReasonCode: code, Message: code, Action: action,
-        RequestId: String(req.headers['x-ksc-request-id'] || ''), Data: { ReasonCode: code, Error: { Code: code } } } : { error: { code } });
-    } finally { clearInterval(heartbeat); approvalRun?.close(); if (abort && active.get(runId)?.abort === abort) active.delete(runId); }
+      else if (!res.destroyed) {
+        // Admission refusals carry the holder and the retry delay; other
+        // failures stay code-only.
+        const body = action ? { Code: error?.status || 500, ReasonCode: code, Message: code, Action: action,
+          RequestId: String(req.headers['x-ksc-request-id'] || ''),
+          Data: { ReasonCode: code, Error: { Code: code, ...(error?.detail ? { Detail: error.detail } : {}) } } }
+          : { error: { code, ...(error?.detail ? { message: detail, detail: error.detail } : {}) } };
+        json(res, error?.status || 500, body,
+          error?.retryAfterMs ? { 'retry-after': String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))) } : {});
+      }
+    } finally {
+      clearInterval(heartbeat); approvalRun?.close();
+      lease?.release(); lease = null;
+      if (abort && active.get(runId)?.abort === abort) active.delete(runId);
+    }
   });
   server.requestTimeout = 30000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(); }); });
@@ -292,6 +337,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
     address: server.address(),
     close: async () => {
       closing = true;
+      admission?.close();
       await assistant?.dispose?.();
       for (const { abort } of active.values()) abort.abort(fail('RUNTIME_STOPPING', 503));
       const closed = new Promise(resolve => server.close(resolve));

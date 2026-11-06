@@ -52,6 +52,20 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   // The image declares the default conversation policy. A deployment may narrow
   // the ceiling later through its environment; image defaults keep parity with
   // Local DSH sessions (workspace-write) while allowing every mode to be chosen.
+  // Session admission bounds how many turns may wait behind the active one and
+  // how long a single turn keeps its lease. Deployment env may narrow it.
+  const admissionInt = (name, minimum = 0) => {
+    const raw = env[name];
+    if (raw === undefined || raw === '') return undefined;
+    const value = Number(raw);
+    return Number.isSafeInteger(value) && value >= minimum ? value : undefined;
+  };
+  const sessionAdmission = {
+    queueLimit: admissionInt('AGENTKIT_RUNTIME_SESSION_QUEUE_LIMIT'),
+    waitTimeoutMs: admissionInt('AGENTKIT_RUNTIME_SESSION_WAIT_TIMEOUT_MS'),
+    turnTimeoutMs: admissionInt('AGENTKIT_RUNTIME_TURN_TIMEOUT_MS'),
+    fenceGraceMs: admissionInt('AGENTKIT_RUNTIME_TURN_FENCE_GRACE_MS'),
+  };
   const executionModeDefault = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_DEFAULT) || DEFAULT_CLOUD_EXECUTION_MODE;
   const executionModeMax = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_MAX) || DEFAULT_CLOUD_EXECUTION_MAX;
   const declaredPolicy = cloudExecutionPolicy(executionModeDefault);
@@ -112,7 +126,7 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   return startBuildRuntimeHttp({ hosted, agentId, buildId, managedIdentity: managedRuntime?.identity, platformActions,
     withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
-    validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
+    validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, approval, model, models, sessionAdmission, token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

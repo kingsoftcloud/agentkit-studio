@@ -94,8 +94,24 @@ principal digest, immutable platform version, native source creation identity,
 history epoch, lifecycle phase and request-ID mapping. Metadata writes use a
 private atomic file and durability barrier. Message bodies remain in DSH.
 Creating the same session is serialized and idempotent. A lost native source
-cannot silently become an empty conversation. Each session admits one active
-run; another returns `RUNTIME_SESSION_BUSY` before execution.
+cannot silently become an empty conversation.
+
+Each session executes one turn at a time. A second request waits in a bounded
+per-session queue and starts after the active turn settles; only a full queue
+(`RUNTIME_SESSION_BUSY`) or an expired wait (`RUNTIME_SESSION_WAIT_TIMEOUT`)
+is refused before execution, with the current holder, queue depth, elapsed time
+and a `Retry-After` delay. A retried invocation (same request ID) joins the
+turn already owning the session instead of starting a second execution, and a
+retry that arrives after settlement replays the recorded request. An admitted
+turn holds the session under `turnId` plus a runtime owner identity, a
+heartbeat and a wall-clock deadline. On the deadline the turn is aborted
+(`RUNTIME_TURN_TIMEOUT`) and, after a fence grace, its lease is revoked so a
+queued turn can take over; a revoked turn can no longer release the session.
+Queue limit, wait, deadline and fence grace are tunable through
+`AGENTKIT_RUNTIME_SESSION_QUEUE_LIMIT`, `AGENTKIT_RUNTIME_SESSION_WAIT_TIMEOUT_MS`,
+`AGENTKIT_RUNTIME_TURN_TIMEOUT_MS` and `AGENTKIT_RUNTIME_TURN_FENCE_GRACE_MS`.
+This lease is process-local; durable cross-process turn ownership and resume of
+an open native turn remain the DSH external-turn seam's responsibility.
 
 History uses the public native persistence handle's bounded read API, without
 activating an Agent or parsing private files. Public seq is native seq plus one.

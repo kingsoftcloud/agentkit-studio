@@ -468,8 +468,13 @@ test('CancelRun validates the subject and invocation, and waits for native durab
   const iterator = readSse(response.body)[Symbol.asyncIterator]();
   const initial = (await iterator.next()).value;
   assert.equal(initial.type, 'response.created');
-  const concurrent = await api.run('another', 'another');
-  assert.equal(concurrent.status, 409); assert.equal((await concurrent.json()).error.code, 'RUNTIME_SESSION_BUSY');
+  // A second request waits behind the active turn instead of failing with
+  // RUNTIME_SESSION_BUSY; it is admitted once the pending turn settles.
+  const concurrent = api.run('another', 'another');
+  let concurrentSettled = false;
+  concurrent.then(() => { concurrentSettled = true; }, () => { concurrentSettled = true; });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(concurrentSettled, false, 'the second turn must wait behind the pending one');
   assert.equal((await api.action('CancelRun', { SessionId: 'public-session', InvocationId: 'pending' }, 'bob')).status, 404);
   assert.equal((await api.action('CancelRun', { SessionId: 'public-session', InvocationId: 'wrong' })).status, 404);
   let ended = false;
@@ -481,8 +486,9 @@ test('CancelRun validates the subject and invocation, and waits for native durab
   const frames = await remaining;
   assert.ok(frames.some(event => event.type === 'response.canceled'));
   assert.equal(frames.some(event => event.type === 'response.completed'), false);
+  assert.equal((await concurrent).status, 200, 'the queued turn runs after the cancelled one settles');
   const events = (await (await api.action('ListSessionEvents', { SessionId: 'public-session' })).json()).Data.Events;
-  assert.equal(events.at(-1).Metadata.status, 'cancelled');
+  assert.equal(events.findLast(event => event.InvocationId === 'pending').Metadata.status, 'cancelled');
 });
 
  test('the model-step bridge refuses local Harness before resolving resources or calling a model', async () => {
