@@ -236,11 +236,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .artifacts/windows-proof | Out-Null
-          $targets = Join-Path $env:RUNNER_TEMP 'studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64'
-          $found = @(Get-ChildItem -Path $targets -Recurse -Filter app.asar -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '[\\/]win-unpacked[\\/]resources[\\/]app\.asar$' })
-          if ($found.Count -ne 1) { throw "Expected exactly one packaged app.asar, found $($found.Count)" }
-          $archive = $found[0].FullName
+          $targetRoot = "$env:RUNNER_TEMP/studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64"
+          $outputs = @(Get-Item "$targetRoot/artifacts", "$targetRoot/unsigned-artifacts" -ErrorAction SilentlyContinue)
+          $archives = @($outputs | ForEach-Object { Join-Path $_.FullName 'win-unpacked/resources/app.asar' } |
+            Where-Object { Test-Path -LiteralPath $_ })
+          Write-Host "Packaged output directories: $($outputs.FullName -join ', ')"
+          Write-Host "Packaged app.asar candidates: $($archives -join ', ')"
+          if ($archives.Count -ne 1) { throw "Expected exactly one packaged app.asar, found $($archives.Count)" }
+          $archive = $archives[0]
           node .qualification-tools/scripts/verify-packaged-drag-region.mjs $archive --json .artifacts/windows-proof/drag-region.json
           if ($LASTEXITCODE) { throw 'Packaged drag-region contract failed' }
           Copy-Item -LiteralPath $archive -Destination .artifacts/windows-proof/app.asar
