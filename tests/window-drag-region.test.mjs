@@ -2,19 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import dragRegionStyles from '../src/client/styles/drag-region.css.mjs';
 
-/* `-webkit-app-region` inherits, and Chromium composes drag regions from
-   geometry, so a drag declaration on a box also captions every descendant that
-   does not subtract itself. A drag rule whose subject can match the document
-   element therefore captions the whole client area: hover never reaches the
-   renderer and each click is a non-client click. DSH marks the Windows titlebar
-   on <html> (`data-windows-titlebar`, apps/desktop preload-windows.ts), so the
-   sheet must never turn that marker into a drag region. */
+/* The chrome-row contract. `-webkit-app-region` makes the element's own box part
+   of the window caption and Chromium composes the boxes from geometry in
+   document order, so a drag rule whose subject can match the document element
+   captions the whole client area: hover never reaches the renderer and each
+   click is a non-client click. DSH marks the Windows titlebar on <html>
+   (`data-windows-titlebar`, apps/desktop preload-windows.ts), so the sheet must
+   never turn that marker into a drag region.
+   Studio chrome rows are a macOS drag surface, like DSH's own `[data-window-drag]`
+   rows (ui-web base.css scopes every rule to data-platform='darwin'). Windows
+   keeps one explicit drag surface: the caption strip product-document mounts
+   over the blank 40px band. */
 
-/** Markers this sheet may make draggable: explicit Studio chrome only. */
-const DRAG_MARKERS = ['data-studio-drag-region', 'data-studio-header', 'data-window-drag'];
+/** Markers this sheet may make draggable, in their two platform roles. */
+const MACOS_DRAG_MARKERS = ['data-studio-drag-region', 'data-studio-header', 'data-window-drag'];
+
+/** The one Windows drag surface, mounted by product-document. */
+const WINDOWS_DRAG_STRIP = 'data-studio-window-drag-strip';
+
+/** The only selectors allowed to declare a drag region. */
+const DRAG_MARKERS = [...MACOS_DRAG_MARKERS, WINDOWS_DRAG_STRIP];
 
 /** The marker DSH sets on the document element, which can only ever be no-drag. */
 const WINDOWS_ROOT_MARKER = 'data-windows-titlebar';
+
+/** Scope of the macOS chrome rows. */
+const DARWIN_SCOPE = "html[data-platform='darwin']";
 
 /** Remove block comments so the parser sees only rules. */
 function stripComments(css) {
@@ -74,6 +87,12 @@ function declarations(css) {
   });
 }
 
+/** Every rule with its selector list and declarations, for non-app-region claims. */
+function rules(css) {
+  return [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(([, selectorText, body]) => ({ selectors: splitTopLevel(selectorText.trim(), ','), body }));
+}
+
 const sheetDeclarations = declarations(dragRegionStyles);
 const dragSelectors = sheetDeclarations.filter(entry => entry.value === 'drag').map(entry => entry.selector);
 const noDragSelectors = sheetDeclarations.filter(entry => entry.value === 'no-drag').map(entry => entry.selector);
@@ -106,7 +125,23 @@ test('only explicit Studio chrome markers become drag regions', () => {
     }
   }
   assert.deepEqual([...declaredMarkers].sort(), [...DRAG_MARKERS].sort(),
-    'the draggable chrome rows changed; macOS drag rows must keep their marker');
+    'the draggable surfaces changed; macOS chrome rows and the Windows caption strip must keep their markers');
+});
+
+test('macOS keeps every chrome row draggable', () => {
+  for (const marker of MACOS_DRAG_MARKERS) {
+    const selectors = dragSelectors.filter(selector => subjectOf(selector).includes(`[${marker}]`));
+    assert.equal(selectors.length, 1, `macOS lost the [${marker}] drag row`);
+    assert.ok(selectors[0].startsWith(DARWIN_SCOPE),
+      `macOS drag rows must stay scoped to the darwin platform: ${selectors[0]}`);
+  }
+});
+
+test('Windows has exactly one drag surface: the caption strip', () => {
+  const windowsDrag = dragSelectors.filter(selector => !selector.startsWith(DARWIN_SCOPE));
+  assert.deepEqual(windowsDrag, [`html[${WINDOWS_ROOT_MARKER}] [${WINDOWS_DRAG_STRIP}]`],
+    'a second Windows drag surface would caption content the user needs to click');
+  assert.equal(subjectOf(windowsDrag[0]), `[${WINDOWS_DRAG_STRIP}]`);
 });
 
 test('the Windows titlebar marker never becomes a drag region', () => {
@@ -116,25 +151,29 @@ test('the Windows titlebar marker never becomes a drag region', () => {
   }
 });
 
-test('the Windows document element subtracts itself from any drag region', () => {
+test('the Windows document element and body subtract themselves from any drag region', () => {
   const rootGuard = noDragSelectors.filter(selector => subjectOf(selector) === `html[${WINDOWS_ROOT_MARKER}]`);
   assert.equal(rootGuard.length, 1,
     `expected exactly one html[${WINDOWS_ROOT_MARKER}] no-drag rule, found ${rootGuard.length}`);
+  assert.ok(noDragSelectors.includes(`html[${WINDOWS_ROOT_MARKER}] body`),
+    'the body still inherits a draggable root box');
 });
 
-test('a control inside every drag region keeps its own clicks', () => {
-  for (const marker of DRAG_MARKERS) {
+test('a control inside every macOS drag region keeps its own clicks', () => {
+  for (const marker of MACOS_DRAG_MARKERS) {
     const optOut = noDragSelectors.filter(selector => selector.includes(`[${marker}]`)
       && /(^|[^\w-])button(?![\w-])/.test(subjectOf(selector)));
     assert.ok(optOut.length > 0, `a button inside [${marker}] would be a caption hit target`);
     assert.ok(optOut.some(selector => subjectOf(selector).includes('[tabindex]')),
       `a tabbable custom widget inside [${marker}] would be a caption hit target`);
+    assert.ok(optOut.every(selector => selector.startsWith(DARWIN_SCOPE)),
+      `the opt-out must not affect other platforms: ${optOut.join(', ')}`);
   }
 });
 
-test('the sheet applies the same rules on every platform', () => {
-  for (const { selector } of sheetDeclarations) {
-    assert.doesNotMatch(selector, /data-platform/,
-      `platform-gated app-region rules split the Windows and macOS behaviour: ${selector}`);
-  }
+test('fullscreen hides the caption strip with the caption band', () => {
+  const hidden = rules(dragRegionStyles).filter(rule => rule.selectors.some(selector =>
+    selector.includes('[data-fullscreen]') && subjectOf(selector) === `[${WINDOWS_DRAG_STRIP}]`));
+  assert.equal(hidden.length, 1, 'the strip would cover content once the caption band disappears');
+  assert.match(hidden[0].body, /display:\s*none/);
 });
