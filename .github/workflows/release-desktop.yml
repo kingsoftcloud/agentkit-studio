@@ -23,7 +23,7 @@ on:
         default: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
         type: string
       channel:
-        description: "Production update lane; empty uses product configuration"
+        description: "Production update lane: nightly, latest (stable GA only), preview or stable; empty uses the product configuration (nightly)"
         required: false
         default: ""
         type: string
@@ -110,6 +110,20 @@ jobs:
       plugin_roots: ${{ steps.product.outputs.plugin_roots }}
       plugin_bundles: ${{ steps.product.outputs.plugin_bundles }}
     steps:
+      # The packaged DSH 0.2.2-rc.1 Host accepts nightly/latest; nightly is the
+      # default because latest rejects prerelease versions. Preview and stable
+      # stay selectable so an in-flight or emergency release can still be rebuilt
+      # until every installed client has moved to a native lane.
+      - name: Validate the update lane
+        shell: bash
+        env:
+          STUDIO_CHANNEL_INPUT: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          case "$STUDIO_CHANNEL_INPUT" in
+            ''|latest|nightly|preview|stable) ;;
+            *) echo "::error::channel must be nightly, latest, preview, stable, or empty" >&2; exit 1 ;;
+          esac
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.studio_checkout_ref }}

@@ -113,3 +113,24 @@ test('Windows artifact support does not admit arbitrary version files or feeds',
       objectKey, path: '/unused', contentType: 'application/octet-stream', fetchImpl: async () => { throw Error('Must not request denied paths'); } }), /invalid KS3 release object key/);
   }
 });
+
+test('release feed object keys accept every lane and reject unknown lanes', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'studio-ks3-lane-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'feed.yml'); await writeFile(path, 'version: 1.0.0\n');
+  for (const objectKey of ['studio/feeds/mac-arm64/latest-mac.yml', 'studio/feeds/mac-arm64/nightly-mac.yml',
+    'studio/feeds/mac-arm64/preview-mac.yml', 'studio/feeds/win-x64/latest.yml', 'studio/feeds/win-x64/nightly.yml']) {
+    let request;
+    const result = await uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
+      objectKey, path, contentType: 'application/yaml',
+      fetchImpl: async (url, init) => { request = { url: String(url), method: init.method }; return { ok: true, status: 200 }; } });
+    assert.equal(result.objectKey, objectKey);
+    assert.equal(request.method, 'PUT');
+    assert.ok(request.url.endsWith(`/${objectKey}`));
+  }
+  for (const objectKey of ['studio/feeds/mac-arm64/beta-mac.yml', 'studio/feeds/win-x64/beta.yml', 'studio/feeds/mac-arm64/latest.yml']) {
+    await assert.rejects(uploadKs3ReleaseArtifact({ origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', bucket: 'agentkit', accessKey: 'ak', secretKey: 'sk',
+      objectKey, path, contentType: 'application/yaml', fetchImpl: async () => { throw new Error('network must not be reached'); } }),
+    /invalid KS3 release object key/);
+  }
+});

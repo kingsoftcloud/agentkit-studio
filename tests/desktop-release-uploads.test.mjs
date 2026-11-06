@@ -42,6 +42,20 @@ test('the Studio layout writes the canonical feed only to the requested origin',
   ])
 })
 
+test('a native lane uploads its own metadata filename and feed key', () => {
+  for (const channel of ['latest', 'nightly']) {
+    const nativePlan = { ...plan, feedKey: `studio/feeds/mac-arm64/${channel}-mac.yml` }
+    const uploads = desktopReleaseUploads({ ...base, selectedChannel: channel, plan: nativePlan })
+    const feeds = uploads.filter(upload => upload[0] === `${channel}-mac.yml`)
+    assert.equal(feeds.length, 1)
+    assert.equal(feeds[0][1], nativePlan.feedKey)
+    const legacy = desktopReleaseUploads({ ...base, selectedChannel: channel })
+    assert.equal(legacy.at(-1)[0], `${channel}-mac.yml`)
+    assert.equal(legacy.at(-1)[1], `dsh-desk/feeds/mac-arm64/${channel}-mac.yml`)
+  }
+  assert.throws(() => desktopReleaseUploads({ ...base, selectedChannel: 'beta' }), /channel must be one of nightly, latest, preview, stable/)
+})
+
 test('the explicit compatibility origin keeps the legacy feed for old installed builds', () => {
   const compatibility = 'https://compat.example.com'
   const uploads = desktopReleaseUploads({ ...base, plan, compatibilityOrigin: compatibility })

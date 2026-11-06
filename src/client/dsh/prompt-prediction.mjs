@@ -52,6 +52,7 @@ function PromptPredictionOverlay(props) {
     let timer
     let controller
     let revision = -1
+    let lastStatus = null
     const poll = async () => {
       if (cancelled) return
       controller = new AbortController()
@@ -62,8 +63,14 @@ function PromptPredictionOverlay(props) {
         })
         if (!response.ok) throw new Error(`prediction state ${response.status}`)
         const next = await response.json()
-        if (!cancelled && next?.unchanged !== true && Number.isSafeInteger(next?.rev)) {
+        if (!cancelled && next?.unchanged === true) {
+          // The host can decline to start a prediction (for example while concurrent
+          // models are saturated). Ask for a full snapshot again instead of letting the
+          // revision short-circuit the poll forever.
+          if (lastStatus === 'idle' || lastStatus === 'pending') revision = -1
+        } else if (!cancelled && Number.isSafeInteger(next?.rev)) {
           revision = next.rev
+          lastStatus = next.status
           setSnapshot({ ...next, sessionId })
         }
       } catch {

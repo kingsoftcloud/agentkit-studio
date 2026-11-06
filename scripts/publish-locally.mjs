@@ -8,7 +8,7 @@
  *     --expected-previous-version 0.2.2-rc.1
  *   node scripts/publish-locally.mjs win --run <run-id> --studio-ref <sha> \
  *     --version 0.2.2-rc.1.20261021.2 --expected-previous-version 0.2.2-rc.1
- *   node scripts/publish-locally.mjs alias --channel preview
+ *   node scripts/publish-locally.mjs alias --channel nightly
  *
  * The command only reuses artifacts that already carry CI signing evidence: it
  * downloads the signed candidate, verifies SHA-256 sums, publishes the feed and
@@ -26,6 +26,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import product from '../src/product.json' with { type: 'json' };
+import { isReleaseChannel, RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs';
 
 const execute = promisify(execFile);
 const root = resolve(import.meta.dirname, '..');
@@ -47,7 +48,7 @@ const { values, positionals } = parseArgs({
 });
 const [command] = positionals;
 if (!['mac', 'win', 'alias'].includes(command)) throw new Error('usage: publish-locally.mjs <mac|win|alias> [options]');
-if (!['preview', 'stable'].includes(values.channel)) throw new Error('--channel must be preview or stable');
+if (!isReleaseChannel(values.channel)) throw new Error(`--channel must be one of ${RELEASE_CHANNELS.join(', ')}`);
 const channel = values.channel;
 
 // The candidate download and the original Windows build logs are read with the

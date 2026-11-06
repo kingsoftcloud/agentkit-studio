@@ -49,6 +49,24 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('a turn selects its own Codex sandbox without leaking into the next turn', async () => {
+  const starts = [];
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn(), write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'thread/start') starts.push(request.params.sandbox);
+      return write(data, ...args);
+    };
+    return child;
+  }, cwd: '/tmp', sandbox: 'workspace-write' });
+  for await (const _ of runtime.stream({ input: 'a' })) {}
+  for await (const _ of runtime.stream({ input: 'b', sandbox: 'danger-full-access' })) {}
+  // An unknown value never reaches Codex; the runtime default stays in force.
+  for await (const _ of runtime.stream({ input: 'c', sandbox: 'root' })) {}
+  assert.deepEqual(starts, ['workspace-write', 'danger-full-access', 'workspace-write']);
+});
+
 test('App Server receives persisted tool observations without dispatching an old call', async () => {
   let text, executions = 0;
   const runtime = createCodexRuntime({ spawnImpl: () => {

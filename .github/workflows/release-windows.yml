@@ -30,7 +30,7 @@ on:
         required: false
         default: ''
       channel:
-        description: Empty uses the qualified product definition; otherwise stable or preview
+        description: Empty uses the qualified product definition; otherwise nightly, latest, preview or stable
         type: string
         default: ''
       update_origin:

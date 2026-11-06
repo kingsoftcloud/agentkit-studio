@@ -10,6 +10,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
+import { isReleaseChannel, RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs';
 
 const { values } = parseArgs({ options: {
   origin: { type: 'string' },
@@ -22,9 +23,9 @@ if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || 
 const fromEnvironment = (...names) => names.map(name => process.env[name]).find(Boolean) ?? '';
 const bucket = values.bucket || fromEnvironment('STUDIO_DOWNLOAD_PROD_KS3_BUCKET') || 'agentkit';
 const region = values.region ?? 'cn-beijing';
-const channel = values.channel ?? 'preview';
+const channel = values.channel ?? 'nightly';
 if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) || !/^cn-(?:beijing|shanghai|guangzhou|ningbo|qinghai|qingyang)$/.test(region)) throw new Error('invalid bucket or region');
-if (!['preview', 'stable'].includes(channel)) throw new Error('--channel must be preview or stable');
+if (!isReleaseChannel(channel)) throw new Error(`--channel must be one of ${RELEASE_CHANNELS.join(', ')}`);
 
 const ALIAS = 'studio/latest/';
 // The Host configuration wins locally; the release workflows pass the bucket

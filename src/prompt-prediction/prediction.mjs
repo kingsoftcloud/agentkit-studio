@@ -9,7 +9,7 @@
  */
 
 /** Bumped whenever {@link predictionInstruction} or the output contract changes. */
-export const PROMPT_VERSION = 'pp-3'
+export const PROMPT_VERSION = 'pp-4'
 
 /** Characters kept from model output before it is rejected as unusable. */
 const DEFAULT_MAX_SUGGESTION_CHARS = 1000
@@ -87,22 +87,21 @@ export function predictionInstruction(options = {}) {
     '- Move the work forward: a follow-up request, a correction, a choice among options the',
     '  assistant just offered, or the answer to a question it just asked.',
     '- If the assistant ended with a question or a numbered list of options, answer or pick one.',
+    '- If the assistant asked the user to check, try, confirm or report something, predict the',
+    '  short reply they would type: a plain confirmation, or a plain failure report.',
     "- Do not restate the user's own previous message; assume it was already sent.",
     '- Never invent file names, numbers, results, or facts that are not in the conversation.',
     '- Never output credentials of any kind: no verification codes, one-time passwords,',
     '  passwords, API keys, or tokens. If the only sensible next step is one of those,',
     '  return null instead of inventing a value.',
     '',
-    'Abstaining is expected and cheap. Return null instead of a weak guess when:',
+    'Return null only when a guess would be dishonest, unsafe or misleading. When the',
+    'conversation points at a next step, a concrete short guess is more useful than silence:',
     '- the assistant just asked an open question whose answer depends on facts only the',
-    '  user has (a preference, a deadline, a secret, an external result);',
-    '- the next step is a decision only the user can make, and the conversation does not',
-    '  hint at which way they lean;',
-    '- the recent messages are greetings, thanks or acknowledgements with no task left;',
-    '- your best guess would be a generic filler such as "continue", "ok" or "thanks" that',
-    '  adds nothing the user would not have typed anyway;',
-    '- you are not reasonably confident this specific user would type that sentence now.',
-    'A shown suggestion the user ignores is worse than no suggestion at all.',
+    '  user has, and nothing in the conversation hints at the answer;',
+    '- the next step is a decision only the user can make and no option is more likely;',
+    '- the conversation has no open request and nothing the assistant just asked or offered;',
+    '- your best guess would be pure filler such as "continue" or "thanks" with no content.',
   ]
   if (exemplars.length > 0) {
     lines.push('', "Style anchors - the user's own recent messages. Match their tone and length; do not copy them:")

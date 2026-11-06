@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
+import { assertReleaseChannel } from '../src/desktop-release-channels.mjs';
 import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
 
 async function digest(body, algorithm = 'sha512', encoding = 'base64') {
@@ -15,8 +16,9 @@ async function digest(body, algorithm = 'sha512', encoding = 'base64') {
   return { size, hash: hash.digest(encoding) };
 }
 
-export async function publishWindowsCandidate({ candidate, proof, origin, source, version, previous, channel = 'preview',
+export async function publishWindowsCandidate({ candidate, proof, origin, source, version, previous, channel = 'nightly',
   environment = process.env, fetchImpl = fetch, upload = uploadKs3ReleaseArtifact }) {
+  assertReleaseChannel(channel, 'channel')
   if (!/^[0-9a-f]{40}$/.test(source || '') || !previous) throw Error('Source and previous feed state are required');
   const root = resolve(candidate), output = join(root, '.publication');
   const metadata = YAML.parse(await readFile(join(root, `${channel}.yml`), 'utf8'));

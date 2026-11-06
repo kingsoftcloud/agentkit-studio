@@ -520,7 +520,7 @@ async function syncCodexTrace(observability, { traceId, sessionId, agentId, agen
 }
 
 /** Create the one provider route mounted by the AgentKit Studio host. */
-export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, AdapterBase, bridge } = {}) {
+export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandler, codexRuntime, resolveCodexModel, codexResourceContext, resourceAdapter, resolveResourceUser, observability, attachments, permissionModeForSession, AdapterBase, bridge } = {}) {
   const adapter = {
     providerInfo(provider) { return { id: provider, name: 'AgentKit Studio Runtime' }; },
     resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model, modalities: ['text'] }); },
@@ -646,6 +646,9 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             yield* codexFrames(codexRuntime, {
               agentId,
               ...(cwd ? { cwd } : {}),
+              // The Session's current picker value; the provider validates it.
+              ...(typeof permissionModeForSession === 'function' && toolAgent?.session
+                ? { sandbox: permissionModeForSession(toolAgent.session) } : {}),
               ...selected,
               ...(options.reasoningEffort && selected.reasoningEfforts?.[options.reasoningEffort]
                 ? { reasoningEffort: studioCodexReasoningWire(options.reasoningEffort) }

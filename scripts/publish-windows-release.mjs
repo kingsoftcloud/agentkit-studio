@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
 import { studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
+import { assertReleaseChannel } from '../src/desktop-release-channels.mjs';
 
 async function digest(path, algorithm = 'sha512') {
   const hash = createHash(algorithm); let size = 0;
@@ -15,7 +16,8 @@ async function digest(path, algorithm = 'sha512') {
   return { size, hash: hash.digest(algorithm === 'sha512' ? 'base64' : 'hex') };
 }
 
-export async function publishWindowsRelease({ candidate, evidence, origin, channel = 'preview', sourceCommit, credentials }) {
+export async function publishWindowsRelease({ candidate, evidence, origin, channel = 'nightly', sourceCommit, credentials }) {
+  assertReleaseChannel(channel, 'channel')
   if (!/^[0-9a-f]{40}$/.test(sourceCommit || '')) throw new Error('The actual signed Studio source commit is required');
   const root = resolve(candidate), proofRoot = resolve(evidence);
   const metadata = YAML.parse(await readFile(join(root, `${channel}.yml`), 'utf8'));

@@ -28,9 +28,12 @@ function studioConfig(env = process.env, raw = {}) {
     ...raw,
     enabled: envBoolean(env.AGENTKIT_PROMPT_PREDICTION_ENABLED, raw.enabled !== false),
     auditLog: envBoolean(env.AGENTKIT_PROMPT_PREDICTION_AUDIT, raw.auditLog === true),
-    maxOutputTokens: 256,
+    // A reasoning model spends this budget on `reasoning_content` before it writes a
+    // single character of the JSON answer, so a 256-token cap came back as HTTP 200
+    // with empty content and the suggestion silently never appeared.
+    maxOutputTokens: 2048,
     maxSuggestionChars: 600,
-    timeoutMs: 12000,
+    timeoutMs: 20000,
     compactTurns: 8,
     maxHistoryChars: 120000,
   })
@@ -133,6 +136,13 @@ export function createPromptPredictionHost(ctx, {
     state.rev += 1
     running += 1
     const startedAt = Date.now()
+    // A gateway that never answers must not pin `running`: with MAX_CONCURRENT === 2 two
+    // stuck sessions would silently starve every other session's prediction forever.
+    const timer = setTimeout(() => {
+      if (state.inflight !== controller) return
+      publish(state, { status: 'failed', text: null, reason: 'timeout', latencyMs: Date.now() - startedAt, candidateTurnSeq: null })
+      controller.abort()
+    }, config.timeoutMs)
     void predict(session, eligibility.messages, controller.signal, config, models, fetchImpl)
       .then((result) => {
         if (controller.signal.aborted || state.inflight !== controller || state.turnOpen || state.candidateTurnSeq !== turnSeq) return
@@ -149,6 +159,7 @@ export function createPromptPredictionHost(ctx, {
         publish(state, { status: 'failed', text: null, reason: error?.code || 'exception', latencyMs: Date.now() - startedAt, candidateTurnSeq: null })
       })
       .finally(() => {
+        clearTimeout(timer)
         running -= 1
         if (state.inflight === controller) state.inflight = null
       })
@@ -185,9 +196,12 @@ export function createPromptPredictionHost(ctx, {
     if (!sessionId || sessionId.length > 256) return json({ error: { code: 'SESSION_ID_INVALID' } }, 400)
     const state = stateOf(sessionId)
     if (state.session === undefined) return json({ ...stateSnapshot(state), status: 'unknown-session', reason: 'unknown-session' })
+    // A poll is also the only driver that starts a prediction, so schedule before the
+    // revision comparison: an unchanged client revision must still be able to kick the
+    // model call, otherwise the client and host wait for each other forever.
+    if (state.candidateTurnSeq !== null && !state.turnOpen) schedule(state.session, state, state.candidateTurnSeq)
     const revision = Number(url.searchParams.get('rev'))
     if (Number.isSafeInteger(revision) && revision >= state.rev) return json({ rev: state.rev, unchanged: true })
-    if (state.candidateTurnSeq !== null && !state.turnOpen) schedule(state.session, state, state.candidateTurnSeq)
     return json(stateSnapshot(state))
   }
 
@@ -242,22 +256,42 @@ async function predict(session, messages, signal, config, models, fetchImpl) {
   signal.throwIfAborted()
   const instruction = predictionInstruction({ exemplars: styleExemplars(messages), maxSuggestionChars: config.maxSuggestionChars, maxLines: 3 })
   const requestMessages = history.map(item => ({ role: item.role, content: messageText(item) }))
-  const response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
+  const payload = JSON.stringify({
+    model: profile.modelName,
+    messages: [...requestMessages, { role: 'user', content: instruction }],
+    max_tokens: config.maxOutputTokens,
+    temperature: 0.2,
+    stream: false,
+  })
+  const send = () => fetchImpl(`${profile.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { authorization: `Bearer ${profile.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: profile.modelName,
-      messages: [...requestMessages, { role: 'user', content: instruction }],
-      max_tokens: config.maxOutputTokens,
-      temperature: 0.2,
-      stream: false,
-    }),
+    body: payload,
     signal,
     redirect: 'error',
   })
+  let response
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await send()
+    } catch (error) {
+      // One retry covers a connection reset; abort (turn start, timeout) must not retry.
+      if (attempt > 0 || signal.aborted) throw error
+      await sleep(200)
+      continue
+    }
+    if (response.ok || attempt > 0 || response.status < 500) break
+    // A transient gateway 5xx used to end the turn's only attempt, so the ghost text
+    // silently never appeared even though the next request would have succeeded.
+    await sleep(200)
+  }
   if (!response.ok) return { ok: false, status: 'failed', reason: `model-${response.status}` }
   const body = await response.json()
   const raw = body?.choices?.[0]?.message?.content
   const parsed = parseSuggestion(typeof raw === 'string' ? raw : '', { maxSuggestionChars: config.maxSuggestionChars, previousAssistantText: assistant, lastUserText: messageText(lastUser) })
   return parsed.ok ? parsed : { ok: false, status: 'none', reason: parsed.reason }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }

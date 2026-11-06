@@ -11,27 +11,6 @@ index ad8ec6ba8a4bc0473d78ee8c30cc5e1ce9bd6996..c86f0829c9183770304ced2933277d27
      const stableFilename = metadataFilename.replace(/^(?:stable|nightly)/u, 'latest')
      artifacts.push({ ...channelArtifact, filename: stableFilename, key: `${update.keyPrefix}/${stableFilename}` })
    }
-diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index 20e714e4493b163d8f3fcf0de5f44f0aee935c3b..c6e66b7c79728c81a0f0381965e1c3ccd6bc2e20 100644
---- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-+++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-@@ -124,14 +124,14 @@ describe('desktop auto-update environment', () => {
-       DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
-       DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
-       DSH_DESKTOP_UPDATE_CHANNEL: 'canary',
--    }, 'darwin', 'arm64')).toThrow(/stable or preview/u)
-+    }, 'darwin', 'arm64')).toThrow(/stable, preview, or latest/u)
-   })
- 
-   it.each([undefined, '', ' ', 'nightly', 'canary'])('rejects production channel %j before packaging', (channel) => {
-     expect(() => resolveDesktopAutoUpdateConfig({
-       DSH_DESKTOP_AUTO_UPDATE_ENV: 'production', DSH_DESKTOP_UPDATE_ORIGIN: 'https://studio-updates.example.com',
-       DSH_DESKTOP_UPDATE_CHANNEL: channel,
--    }, 'darwin', 'arm64')).toThrow(/must explicitly be stable or preview/u)
-+    }, 'darwin', 'arm64')).toThrow(/must explicitly be stable, preview, or latest/u)
-   })
- 
-   it('uses Nightly metadata for stable and prerelease Desktop versions', () => {
 diff --git a/apps/desktop/tests/desktop-upload-plan.spec.ts b/apps/desktop/tests/desktop-upload-plan.spec.ts
 index 6392ea0162938bc196463bc1a8860f44c514c080..0c81482d664df052a659fdf8de0307cb1c2c4d70 100644
 --- a/apps/desktop/tests/desktop-upload-plan.spec.ts
