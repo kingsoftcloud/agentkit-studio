@@ -15,6 +15,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { DEFAULT_CLOUD_MODEL, managedRuntimeModelConfig } from './managed-runtime-model.mjs';
 
 const FORMAT = 'agentkit.studio-assistant-binding/v1';
 const SERVICE = 'studioPersonalAssistantDesktop';
@@ -31,7 +32,6 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
 const MAX_ENV_VALUE = 4096;
 const MAX_ENV_VARIABLES = 64;
 const MAX_MANIFEST_BYTES = 16 * 1024;
-const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
 const DEFAULT_PROMPT = '请用中文完成用户任务。只使用提供的云电脑工具，不得假装已经执行。';
 // The platform publishes each environment's managed-runtime catalog in its
 // client bootstrap config. Studio reads the same document the server resolves
@@ -416,7 +416,7 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
     if (typeof getClient !== 'function' && typeof getDeploymentClient !== 'function')
       throw fail('ASSISTANT_CREATE_UNAVAILABLE', '当前 Studio 版本不支持创建个人助理', 503);
     const version = text(env.AGENTKIT_PERSONAL_ASSISTANT_RUNTIME_VERSION) || '0.1.42'; // 与平台 catalog 默认版本保持一致（预发保留 0.1.39-0.1.42）
-    const model = text(env.AGENTKIT_PERSONAL_ASSISTANT_MODEL) || DEFAULT_MODEL;
+    const model = text(env.AGENTKIT_PERSONAL_ASSISTANT_MODEL) || DEFAULT_CLOUD_MODEL;
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
     const name = `personal-assistant-${stamp}-${randomUUID().slice(0, 10)}`;
     // Keep the declaration Studio writes, so later settings edits can rebuild
@@ -428,6 +428,9 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
       Name: name, Description: '个人助理', Framework: 'personal-assistant', Region: region,
       DeploymentType: 'ManagedRuntime', AutoPay: true,
       ManagedRuntimeConfig: { RuntimeName: 'personal-assistant', RuntimeVersion: version, Manifest: manifest },
+      // The platform persists the model from the manifest *and* from here, and
+      // refuses to start the runtime when they differ; both come from `model`.
+      ModelConfig: managedRuntimeModelConfig(model),
       Resource: { Cpu: 1, Memory: 4 }, Scaling: { MinReplicas: 1, MaxReplicas: 1 },
       Storage: { MountPath: '/data', SizeGi: 20 }, Network: { EnablePublicAccess: true, EnableVpcAccess: false },
       Advanced: { EnableObservability: false, EnvironmentVariables: [{ Key: 'OPENAI_BASE_URL', Value: text(values?.modelBaseUrl) || 'https://kspmas.ksyun.com/v1' }] },
@@ -608,7 +611,7 @@ export function createAssistantDesktop({ storeDir, fetchImpl = fetch, env = proc
       throw fail('ASSISTANT_SETTINGS_MANIFEST_MISSING',
         '这个个人助理是用旧版 Studio 创建的，本机没有记录它的配置清单，暂时不能在线修改；可以先关闭再重新创建，等平台提供读取接口后即可直接编辑', 409);
     }
-    const model = parsed.model ?? recorded.model ?? DEFAULT_MODEL;
+    const model = parsed.model ?? recorded.model ?? DEFAULT_CLOUD_MODEL;
     if (!MODEL_NAME.test(model)) throw fail('ASSISTANT_SETTINGS_MODEL_INVALID', '模型名称无效', 400);
     const prompt = parsed.prompt ?? recorded.prompt ?? DEFAULT_PROMPT;
     const manifest = buildManifest({ name, version, model, prompt });
