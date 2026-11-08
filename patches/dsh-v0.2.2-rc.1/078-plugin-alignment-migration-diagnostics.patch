@@ -1,0 +1,1574 @@
+diff --git a/apps/desktop/src/bundled-plugin-alignment.ts b/apps/desktop/src/bundled-plugin-alignment.ts
+index 721309fb344dad0b0eeb52ccf702b3f243bb1e07..7a4bcea62e5249468227ba2d4b2cceff5365a3ad 100644
+--- a/apps/desktop/src/bundled-plugin-alignment.ts
++++ b/apps/desktop/src/bundled-plugin-alignment.ts
+@@ -3,25 +3,35 @@
+ import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+ import { createRequire } from 'node:module'
+ import { homedir } from 'node:os'
+-import { dirname, join, sep } from 'node:path'
++import { dirname, join } from 'node:path'
+ 
+ /** Scope of the in-box DSH packages, which always resolve from the sealed runtime installation. */
+ const INSTALLATION_SCOPE = '@deepseek-ai/'
+ /** Activation history owned by the Desktop profile manager. */
+ const ACTIVATION_HISTORY = 'desktop-product-bundles.json'
+-/** Profile file recording consecutive failed alignment attempts for one bundled version. */
++/**
++ * Profile file recording how often alignment already failed for one bundled version.
++ *
++ * The marker is diagnostic state only: it is written so a later launch and the
++ * startup report can explain a degraded profile, and it never suppresses a
++ * retry. A version difference is always re-aligned, because the profile copy
++ * that a previous launch could not retire is exactly the stale code an upgrade
++ * has to replace.
++ */
+ const ATTEMPT_MARKER_PREFIX = '.alignment-attempt-'
+-/** Consecutive failures after which alignment stops trying and the profile copy keeps running. */
+-export const ALIGNMENT_ATTEMPT_LIMIT = 2
++/** Bounded waits before a locked profile copy is treated as immovable. */
++const MOVE_RETRY_DELAYS_MS = [120, 300] as const
+ 
+ /** Why one bundled product plugin was or was not retired from the profile. */
+ export type PluginAlignmentAction =
+   | 'retired'
++  | 'downgraded'
++  | 'repaired-corrupt'
++  | 'skipped-equal'
+   | 'skipped-absent'
+   | 'kept-newer'
+   | 'missing-runtime-copy'
+   | 'restored'
+-  | 'skipped-attempt-budget'
+ 
+ /** One product plugin inspected during profile preparation. */
+ export interface PluginAlignmentOutcome {
+@@ -33,8 +43,16 @@ export interface PluginAlignmentOutcome {
+   readonly backupPath?: string | undefined
+   /** Diagnostic for a degraded outcome; the profile and its copy are then untouched. */
+   readonly reason?: string | undefined
++  /** Non-fatal observation a reader must see, such as a downgrade. */
++  readonly warning?: string | undefined
++  /** Failures already recorded for this bundled version before the current launch. */
++  readonly attempts?: number | undefined
++  /** Profile path that was inspected for a shadowing copy. */
++  readonly profileCopyPath?: string | undefined
+   /** Whether the profile now resolves this bundle from the sealed runtime installation. */
+   readonly installationBacked: boolean
++  /** Version the Host resolves for this bundle after alignment. */
++  readonly resolvedVersion?: string | undefined
+ }
+ 
+ /** Inputs the Desktop shell owns while preparing the external plugin profile. */
+@@ -67,7 +85,12 @@ interface Candidate {
+   readonly bundledDir: string
+   readonly bundledVersion: string
+   readonly installedDir: string
+-  readonly installedVersion: string
++  /** Absent when the directory exists but its manifest cannot be read. */
++  readonly installedVersion?: string | undefined
++  /** The profile copy exists but cannot describe itself, so it must be quarantined. */
++  readonly corrupt: boolean
++  /** Positive when the profile copy is newer than the bundled one. */
++  readonly comparison: number
+ }
+ 
+ /** Directory name safe for a scoped package and its version. */
+@@ -116,42 +139,143 @@ function compareVersions(left: string, right: string): number {
+  * never make a bundled copy look self-contained when it is not.
+  */
+ function resolveRuntimePackage(runtimeDsh: string, anchor: string, packageName: string): string | undefined {
+-  const root = runtimeDsh.endsWith(sep) ? runtimeDsh : `${runtimeDsh}${sep}`
+   const require = createRequire(anchor)
+-  for (const searchPath of require.resolve.paths(packageName) ?? []) {
+-    if (!searchPath.startsWith(root)) continue
++  const searchPaths = [...(require.resolve.paths(packageName) ?? []), ...runtimeNodeModulesChain(runtimeDsh, anchor)]
++  for (const searchPath of searchPaths) {
++    if (!insideRuntime(runtimeDsh, searchPath)) continue
+     const candidate = join(searchPath, packageName)
+     if (existsSync(join(candidate, 'package.json'))) return candidate
+   }
+   return undefined
+ }
+ 
++/**
++ * Compare two installation paths the way the platform filesystem does.
++ *
++ * Windows reports the same directory with a different drive-letter case and
++ * with either separator, so a raw `startsWith` check rejected the sealed
++ * runtime on every Windows launch and alignment never retired the stale copy.
++ * @param value - path reported by Node or the shell.
++ * @param platform - platform whose comparison rules apply.
++ * @returns a stable comparison key.
++ */
++function pathKey(value: string, platform: NodeJS.Platform): string {
++  const normalized = value.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/+$/, '')
++  return platform === 'win32' ? normalized.toLowerCase() : normalized
++}
++
++/** Whether a probed directory lives inside the sealed runtime installation. */
++export function insideRuntime(runtimeDsh: string, candidate: string, platform: NodeJS.Platform = process.platform): boolean {
++  const root = pathKey(runtimeDsh, platform)
++  const path = pathKey(candidate, platform)
++  return path === root || path.startsWith(`${root}/`)
++}
++
++/**
++ * Every `node_modules` directory between an anchor and the runtime root.
++ *
++ * The explicit chain keeps the probe working when `createRequire` reports paths
++ * the runtime does not literally contain, which is how a packed asar archive
++ * answers on Windows.
++ */
++function runtimeNodeModulesChain(runtimeDsh: string, anchor: string): string[] {
++  const chain: string[] = []
++  let current = dirname(anchor)
++  for (let depth = 0; depth < 32; depth += 1) {
++    chain.push(join(current, 'node_modules'))
++    if (pathKey(current, process.platform) === pathKey(runtimeDsh, process.platform)) break
++    const parent = dirname(current)
++    if (parent === current) break
++    current = parent
++  }
++  return chain
++}
++
+ /** Dependency and peer names a resolvable package must supply. */
+ function dependencyNames(manifest: Manifest): string[] {
+   return [...new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])]
+ }
+ 
+ /**
+- * Verify a bundled package carries every dependency its manifest declares.
++ * Verify a bundled package can resolve the in-box packages only the sealed
++ * runtime supplies.
+  *
+  * A copy moved out of the runtime tree loses the `@deepseek-ai/*` packages the
+  * installation anchor supplies, which is the failure mode that broke
+- * 0.2.1-rc.2.20261104.6. The profile copy is retired only when this probe answers
+- * every declared package from the sealed runtime that will resolve it later.
++ * 0.2.1-rc.2.20261104.6, so an unresolved in-box package stops the retirement
++ * and keeps the profile copy loadable. Third-party dependencies are reported by
++ * {@link unresolvedBundledDependencies} as a warning instead: a profile that
++ * hoisted them hides whether the runtime carries them, and a fresh profile loads
++ * exactly the same runtime copy, so they are not a reason to leave stale code in
++ * front of the fixed build.
+  * @param runtimeDsh - Sealed runtime the Host resolves the bundle from.
+  * @param bundledDir - The runtime-carried package directory.
+- * @returns a diagnostic naming the first unresolved dependency, or undefined.
++ * @returns a diagnostic naming the first unresolved in-box dependency, or undefined.
+  */
+ export function verifyBundledCopy(runtimeDsh: string, bundledDir: string): string | undefined {
+   const manifest = readManifest(bundledDir)
+   if (manifest === undefined) return `unreadable package manifest in ${bundledDir}`
+   const anchor = join(bundledDir, 'package.json')
+   for (const name of dependencyNames(manifest)) {
++    if (!name.startsWith(INSTALLATION_SCOPE)) continue
+     if (resolveRuntimePackage(runtimeDsh, anchor, name) === undefined) return `bundled copy cannot resolve ${name}`
+   }
+   return undefined
+ }
+ 
++/**
++ * Name every declared dependency the sealed runtime cannot resolve.
++ *
++ * A non-empty answer is an observation, not a blocker: the profile copy is still
++ * retired, and the record says which package the runtime is missing so the next
++ * report explains a Host that fails to load the bundle.
++ * @param runtimeDsh - Sealed runtime the Host resolves the bundle from.
++ * @param bundledDir - The runtime-carried package directory.
++ * @returns unresolved dependency names, sorted, empty when everything resolves.
++ */
++export function unresolvedBundledDependencies(runtimeDsh: string, bundledDir: string): readonly string[] {
++  const manifest = readManifest(bundledDir)
++  if (manifest === undefined) return ['unreadable package manifest']
++  const anchor = join(bundledDir, 'package.json')
++  return dependencyNames(manifest)
++    .filter(name => resolveRuntimePackage(runtimeDsh, anchor, name) === undefined)
++    .sort()
++}
++
++/** One profile copy of a runtime-carried product bundle. */
++export interface ProductPluginCopy {
++  readonly packageName: string
++  readonly path: string
++  /** Manifest version, or null when the directory exists but cannot describe itself. */
++  readonly version: string | null
++}
++
++/**
++ * List the profile copies that can shadow the runtime-carried product bundles.
++ *
++ * The startup record needs the state that existed before alignment ran, so this
++ * probe is deliberately read-only and reports an unreadable copy as a null
++ * version instead of skipping it.
++ * @param profile - external plugin profile directory.
++ * @param runtimeDsh - sealed runtime that declares the product bundles.
++ * @returns one entry per product bundle that has a directory in the profile.
++ */
++export function inspectProductPluginCopies(profile: string, runtimeDsh: string): readonly ProductPluginCopy[] {
++  const copies: ProductPluginCopy[] = []
++  try {
++    const bundles = readManifest(runtimeDsh)?.dsh?.profile?.bundles ?? []
++    for (const packageName of bundles) {
++      if (packageName.startsWith(INSTALLATION_SCOPE)) continue
++      const path = join(profile, 'node_modules', packageName)
++      if (!existsSync(path)) continue
++      copies.push({ packageName, path, version: readManifest(path)?.version ?? null })
++    }
++  } catch {
++    // A profile that cannot be read has no copies to report, and must not fail startup.
++  }
++  return copies
++}
++
+ /** Marker path for one bundled version. */
+ function attemptMarkerPath(profile: string, version: string): string {
+   return join(profile, `${ATTEMPT_MARKER_PREFIX}${version.replace(/[^0-9A-Za-z._-]/g, '-')}`)
+@@ -208,15 +332,41 @@ function activationHistory(profile: string): readonly string[] {
+   }
+ }
+ 
+-/** Move a real directory aside, falling back to a copy across filesystems. */
++/** Block without a timer: startup order depends on the move finishing first. */
++function sleepSync(milliseconds: number): void {
++  try {
++    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
++  } catch {
++    // A runtime that forbids a blocking wait simply retries without the pause.
++  }
++}
++
++/**
++ * Move a real directory aside, falling back to a copy across filesystems.
++ *
++ * Windows keeps a handle open for a moment after the previous Host exits and
++ * security software scans new plugin files, so a rename can fail with EPERM,
++ * EACCES or EBUSY even though the directory is free a few hundred
++ * milliseconds later. Retrying keeps the upgrade from degrading into "keep the
++ * stale copy" on the first attempt of every launch.
++ */
+ function moveAside(source: string, target: string): void {
+   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
+-  try {
+-    renameSync(source, target)
+-  } catch (error) {
+-    if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+-    cpSync(source, target, { recursive: true })
+-    rmSync(source, { recursive: true, force: true })
++  for (let attempt = 0; ; attempt += 1) {
++    try {
++      renameSync(source, target)
++      return
++    } catch (error) {
++      const code = (error as NodeJS.ErrnoException).code
++      if (code === 'EXDEV') {
++        cpSync(source, target, { recursive: true })
++        rmSync(source, { recursive: true, force: true })
++        return
++      }
++      const delay = MOVE_RETRY_DELAYS_MS[attempt]
++      if (delay === undefined || !['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY', 'EAGAIN'].includes(code ?? '')) throw error
++      sleepSync(delay)
++    }
+   }
+ }
+ 
+@@ -314,22 +464,31 @@ function ensureSelection(profile: string, packageName: string, installedVersion:
+  * Align every product plugin the runtime carries with the profile that shadows it.
+  *
+  * The profile's `node_modules` wins module resolution, so an upgraded application
+- * can keep running the product plugin a profile installed earlier. The bundled
+- * copy lives inside the signed runtime (inside `app.asar` on macOS); copying that
+- * tree out would strip the `@deepseek-ai/*` packages the installation anchor
+- * supplies, and Electron cannot copy a directory out of an asar archive at all.
+- * Alignment therefore retires the shadowing profile copy instead: the profile
+- * dependency and its `node_modules` entry are backed up and removed, and the Host
+- * resolves the bundled copy from the installation like every other in-box bundle.
++ * can keep running the product plugin a profile installed earlier — the failure
++ * that made a Windows build carrying a fix behave exactly like the broken one.
++ * The bundled copy lives inside the signed runtime (inside `app.asar` on macOS);
++ * copying that tree out would strip the `@deepseek-ai/*` packages the
++ * installation anchor supplies, and Electron cannot copy a directory out of an
++ * asar archive at all. Alignment therefore retires the shadowing profile copy:
++ * the profile dependency and its `node_modules` entry are backed up and removed,
++ * and the Host resolves the bundled copy from the installation like every other
++ * in-box bundle.
++ *
++ * The decision is version driven and keeps no memory: whenever the profile copy
++ * and the bundled copy differ, the profile copy is retired. A profile that an
++ * earlier launch could not repair therefore heals on the next launch instead of
++ * keeping stale code forever, which is what a persisted attempt budget caused.
++ * An equal version is left untouched, so a normal launch costs one manifest
++ * read, and a copy without a readable manifest is quarantined the same way.
+  *
+  * Safety rules: the bundled copy must pass {@link verifyBundledCopy} before the
+  * profile is touched, a failed rewrite restores the previous manifest and copy,
+- * and {@link ALIGNMENT_ATTEMPT_LIMIT} consecutive failures for one bundled version
+- * stop further attempts so an unfixable profile still starts on its old plugin.
++ * and no filesystem failure escapes this function.
+  *
+  * @param options - profile and sealed runtime locations owned by the shell.
+- * @returns one outcome per profile-managed product bundle; nothing is written for
+- * absent or newer profile copies, and failures never throw.
++ * @returns one outcome per inspected product bundle; nothing is written for an
++ * equal version, an absent copy or a newer installation-owned bundle, and
++ * failures never throw.
+  */
+ export function alignBundledProductPlugins(options: PluginAlignmentOptions): readonly PluginAlignmentOutcome[] {
+   const outcomes: PluginAlignmentOutcome[] = []
+@@ -348,20 +507,26 @@ export function alignBundledProductPlugins(options: PluginAlignmentOptions): rea
+       // runtime by contract and are never managed as profile product plugins.
+       if (packageName.startsWith(INSTALLATION_SCOPE)) continue
+       const installedDir = join(options.profile, 'node_modules', packageName)
++      const installedPresent = existsSync(installedDir)
+       const installedVersion = readManifest(installedDir)?.version
+       const spec = dependencies[packageName]
+       const owned = spec !== undefined || selectedBundles.includes(packageName) || activated.includes(packageName)
+-      if (!owned) continue
++      // A directory left in `node_modules` shadows the runtime even without a
++      // manifest entry, so presence alone is alignment work.
++      if (!owned && !installedPresent) continue
+       // Native recovery can leave a valid profile copy unselected. Repair this
+       // before the newer-copy and failure paths below; do not roll it back later.
+       const selectionChanged = ensureSelection(options.profile, packageName, installedVersion)
+       const bundledDir = join(options.runtimeDsh, 'node_modules', packageName)
+       const bundledVersion = readManifest(bundledDir)?.version
+       if (bundledVersion === undefined) {
+-        outcomes.push({ packageName, action: 'missing-runtime-copy', installationBacked: false })
++        outcomes.push({
++          packageName, action: 'missing-runtime-copy', installationBacked: false,
++          profileCopyPath: installedDir, previousVersion: installedVersion,
++        })
+         continue
+       }
+-      if (installedVersion === undefined) {
++      if (!installedPresent) {
+         // A successful retirement leaves the product selected while its old
+         // profile copy is gone. The sealed runtime already owns that copy, so
+         // the next launch has no alignment work left to report. A failed pnpm
+@@ -371,53 +536,94 @@ export function alignBundledProductPlugins(options: PluginAlignmentOptions): rea
+         // resolves the unavailable registry version before it can do useful work.
+         if (spec !== undefined) {
+           const verification = verifyBundledCopy(options.runtimeDsh, bundledDir)
+-          if (verification === undefined && removeAbsentDependency(options.profile, packageName)) {
+-            continue
+-          }
++          if (verification === undefined && removeAbsentDependency(options.profile, packageName)) continue
+         }
+         if (spec === undefined && (selectedBundles.includes(packageName) || selectionChanged)) continue
+-        outcomes.push({ packageName, action: 'skipped-absent', bundledVersion, installationBacked: true })
++        outcomes.push({
++          packageName, action: 'skipped-absent', bundledVersion, installationBacked: true,
++          profileCopyPath: installedDir, resolvedVersion: bundledVersion,
++        })
++        continue
++      }
++      if (installedVersion === undefined) {
++        // The directory exists but cannot describe itself: a half-finished
++        // install or a damaged profile. Quarantine it so the Host falls back to
++        // the bundled copy instead of failing to load a broken package.
++        candidates.push({
++          packageName, bundledDir, bundledVersion, installedDir, corrupt: true, comparison: 0,
++        })
+         continue
+       }
+-      // A profile that already runs a newer plugin keeps it. A `file:` spec is
+-      // the mirror dependency 0.2.1-rc.2.20261104.6 rewrote into the profile, and
+-      // its copy cannot be trusted even when the version looks current.
+-      if (spec !== undefined && !spec.startsWith('file:') && compareVersions(installedVersion, bundledVersion) > 0) {
+-        outcomes.push({ packageName, action: 'kept-newer', previousVersion: installedVersion, bundledVersion, installationBacked: false })
++      const comparison = compareVersions(installedVersion, bundledVersion)
++      // Equal versions are already aligned, except for the mirror dependency an
++      // earlier launch rewrote into the profile: that copy cannot be trusted.
++      if (comparison === 0 && !(spec ?? '').startsWith('file:')) {
++        outcomes.push({
++          packageName, action: 'skipped-equal', previousVersion: installedVersion, bundledVersion,
++          installationBacked: false, profileCopyPath: installedDir, resolvedVersion: installedVersion,
++        })
+         continue
+       }
+-      candidates.push({ packageName, bundledDir, bundledVersion, installedDir, installedVersion })
++      candidates.push({
++        packageName, bundledDir, bundledVersion, installedDir, installedVersion, corrupt: false, comparison,
++      })
+     }
+ 
+     const stamp = new Date(options.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, '-')
+-    for (const { packageName, bundledDir, bundledVersion, installedDir, installedVersion } of candidates) {
++    for (const candidate of candidates) {
++      const { packageName, bundledDir, bundledVersion, installedDir, installedVersion, corrupt, comparison } = candidate
+       const markerPath = attemptMarkerPath(options.profile, bundledVersion)
+       const marker = readAttemptMarker(markerPath, bundledVersion)
+-      if ((marker?.failures ?? 0) >= ALIGNMENT_ATTEMPT_LIMIT) {
+-        outcomes.push({
+-          packageName, action: 'skipped-attempt-budget', previousVersion: installedVersion, bundledVersion,
+-          installationBacked: false,
+-          reason: `alignment failed ${String(marker?.failures)} times for ${bundledVersion}; keeping the profile copy`,
+-        })
+-        continue
+-      }
++      const attempts = marker?.failures ?? 0
++      // The attempt marker is diagnostic state, never a reason to skip: a
++      // version difference is re-aligned on every launch until the profile copy
++      // is gone, so a transient Windows lock cannot pin the installation to the
++      // stale plugin for the rest of its life.
+       const verification = verifyBundledCopy(options.runtimeDsh, bundledDir)
+       if (verification !== undefined) {
+         recordFailure(markerPath, bundledVersion, marker, verification)
+         outcomes.push({
+           packageName, action: 'restored', previousVersion: installedVersion, bundledVersion,
+-          installationBacked: false, reason: verification,
++          installationBacked: false, reason: verification, attempts: attempts + 1, profileCopyPath: installedDir,
++          resolvedVersion: installedVersion,
+         })
+         continue
+       }
++      if (corrupt) {
++        const backupPath = join(home, 'backups', 'agentkit-studio', `${artifactName(packageName, 'corrupt')}-${stamp}`)
++        try {
++          moveAside(installedDir, backupPath)
++        } catch (error) {
++          const reason = `corrupt profile copy cannot be quarantined: ${error instanceof Error ? error.message : String(error)}`
++          recordFailure(markerPath, bundledVersion, marker, reason)
++          outcomes.push({
++            packageName, action: 'restored', bundledVersion, installationBacked: false,
++            reason, attempts: attempts + 1, profileCopyPath: installedDir,
++          })
++          continue
++        }
++        clearMarker(markerPath)
++        const outcome: PluginAlignmentOutcome = {
++          packageName, action: 'repaired-corrupt', bundledVersion, backupPath, installationBacked: true,
++          profileCopyPath: installedDir, resolvedVersion: bundledVersion,
++          reason: 'profile copy has no readable package manifest',
++        }
++        outcomes.push(outcome)
++        options.log?.('desktop profile plugin copy was corrupt and has been quarantined', outcome)
++        continue
++      }
+       const rewrite = withoutDependency(options.profile, packageName)
+       if (rewrite === undefined) {
+         const reason = 'profile manifest has no removable dependency'
+         recordFailure(markerPath, bundledVersion, marker, reason)
+-        outcomes.push({ packageName, action: 'restored', previousVersion: installedVersion, bundledVersion, installationBacked: false, reason })
++        outcomes.push({
++          packageName, action: 'restored', previousVersion: installedVersion, bundledVersion,
++          installationBacked: false, reason, attempts: attempts + 1, profileCopyPath: installedDir,
++          resolvedVersion: installedVersion,
++        })
+         continue
+       }
+-      const backupPath = join(home, 'backups', 'agentkit-studio', `${artifactName(packageName, installedVersion)}-${stamp}`)
++      const backupPath = join(home, 'backups', 'agentkit-studio', `${artifactName(packageName, installedVersion ?? 'unknown')}-${stamp}`)
+       let moved = false
+       try {
+         moveAside(installedDir, backupPath)
+@@ -444,16 +650,41 @@ export function alignBundledProductPlugins(options: PluginAlignmentOptions): rea
+         }
+         const reason = error instanceof Error ? error.message : String(error)
+         recordFailure(markerPath, bundledVersion, marker, reason)
+-        outcomes.push({ packageName, action: 'restored', previousVersion: installedVersion, bundledVersion, installationBacked: false, reason })
++        outcomes.push({
++          packageName, action: 'restored', previousVersion: installedVersion, bundledVersion,
++          installationBacked: false, reason, attempts: attempts + 1, profileCopyPath: installedDir,
++          resolvedVersion: installedVersion,
++        })
+         continue
+       }
+       clearMarker(markerPath)
++      // A profile copy newer than the shipped one is still retired: the
++      // application owns its product bundle, and a downgrade install passed
++      // through here looks exactly like this. The copy is backed up and the
++      // downgrade is reported instead of silently running newer code.
++      const downgraded = comparison > 0
++      const warnings: string[] = []
++      if (downgraded) {
++        warnings.push(`profile copy ${installedVersion} was newer than bundled ${bundledVersion}; the shipped copy wins and the newer copy is backed up`)
++      }
++      const unresolved = unresolvedBundledDependencies(options.runtimeDsh, bundledDir)
++      if (unresolved.length > 0) warnings.push(`bundled copy cannot resolve ${unresolved.join(', ')} from the runtime`)
+       const outcome: PluginAlignmentOutcome = {
+-        packageName, action: 'retired', previousVersion: installedVersion, bundledVersion, backupPath,
++        packageName,
++        action: downgraded ? 'downgraded' : 'retired',
++        previousVersion: installedVersion,
++        bundledVersion,
++        backupPath,
+         installationBacked: true,
++        profileCopyPath: installedDir,
++        resolvedVersion: bundledVersion,
++        attempts,
++        ...(warnings.length === 0 ? {} : { warning: warnings.join('; ') }),
+       }
+       outcomes.push(outcome)
+-      options.log?.('desktop profile plugin retired in favour of the bundled runtime copy', outcome)
++      options.log?.(downgraded
++        ? 'desktop profile plugin replaced by an older bundled runtime copy'
++        : 'desktop profile plugin retired in favour of the bundled runtime copy', outcome)
+     }
+   } catch (error) {
+     // Alignment is best-effort preparation: an unexpected filesystem failure must
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index ab4c6f00ce99486c7904b74170ea31bc7f28e31a..277b7d256120195604c1eca47e37d37c5ccbfc32 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1,6 +1,7 @@
+ import { installFileActions } from './file-actions.ts'
+ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++import { installWindowDiagnostic } from './window-diagnostic.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { access, readFile, writeFile } from 'node:fs/promises'
+@@ -309,6 +310,9 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+     // current state so a fullscreen reload does not fall back to windowed CSS.
+     window.webContents.on('did-finish-load', sendFullscreen)
+   }
++  // One post-load sample names the layer that owns the caption band, so a
++  // window that keeps eating clicks is diagnosable without a debugger.
++  installWindowDiagnostic(window.webContents, { directory: join(app.getPath('userData'), 'logs') })
+   if (process.platform === 'darwin') {
+     // Deminiaturize reattaches the NSVisualEffectView material late
+     // (electron/electron#25368), so a transparent window shows the desktop
+@@ -671,7 +675,7 @@ async function main(): Promise<void> {
+     startup ??= (async () => {
+       await navigateMain(applicationUrl)
+       await backend.start(async () => {
+-        await Promise.all([manager.applyRelease(), prepareHostEnvironment()])
++        await Promise.all([manager.applyRelease({ logsDirectory: join(app.getPath('userData'), 'logs') }), prepareHostEnvironment()])
+       })
+       if (backend.host !== undefined) await openInitialWindow()
+       if (backend.host !== undefined) updateJournal?.action('workspace-ready')
+diff --git a/apps/desktop/src/plugin-alignment-log.ts b/apps/desktop/src/plugin-alignment-log.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d9b6ec4bf7cfb0586744131b83a3b18fd3d9e31b
+--- /dev/null
++++ b/apps/desktop/src/plugin-alignment-log.ts
+@@ -0,0 +1,226 @@
++/**
++ * Startup diagnostics for profile plugin alignment.
++ *
++ * An upgrade that keeps loading an older profile copy of the product plugin is
++ * invisible without a record: the window looks exactly like the broken build.
++ * The shell therefore writes what it compared, what it did, and which version
++ * the Host will load, plus one sample of the loaded document. Records are
++ * bounded so a machine that launches the application every day cannot grow the
++ * directory without limit.
++ */
++
++import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
++import { join } from 'node:path'
++import type { PluginAlignmentOutcome } from './bundled-plugin-alignment.ts'
++
++/** Stable name of the latest alignment record. */
++export const ALIGNMENT_LOG_FILE = 'plugin-alignment.json'
++/** Stable name of the latest window sample. */
++export const WINDOW_DIAGNOSTIC_FILE = 'window-diagnostic.json'
++/** Records kept per name: the current file plus four rotations. */
++export const LOG_RETENTION = 5
++/** Upper bound for one record; a bound record is trimmed, never dropped. */
++export const LOG_MAX_BYTES = 262_144
++
++/** Action vocabulary an operator reads first. */
++export type AlignmentLogAction = 'kept' | 'reinstalled' | 'retired' | 'failed'
++
++/** One profile copy that was inspected for a shadowing product plugin. */
++export interface AlignmentLogCopy {
++  readonly packageName: string
++  readonly path: string
++  readonly version: string | null
++}
++
++/** One alignment decision for one product bundle. */
++export interface AlignmentLogEvent {
++  readonly packageName: string
++  readonly action: AlignmentLogAction
++  readonly previousVersion: string | null
++  readonly bundledVersion: string | null
++  readonly reason?: string
++  readonly warning?: string
++  readonly backupPath?: string
++}
++
++/** The record written for one launch. */
++export interface AlignmentReport {
++  readonly schemaVersion: 1
++  readonly timestamp: string
++  readonly platform: string
++  readonly bundledPluginVersion: string | null
++  readonly loadedPluginVersion: string | null
++  readonly action: AlignmentLogAction
++  readonly actions: readonly AlignmentLogEvent[]
++  readonly profileCopies: readonly AlignmentLogCopy[]
++}
++
++/** Inputs the shell gathers before writing the record. */
++export interface AlignmentReportInput {
++  readonly platform?: string | undefined
++  readonly bundledVersion?: string | undefined
++  readonly loadedVersion?: string | undefined
++  readonly copies?: readonly AlignmentLogCopy[] | undefined
++  readonly outcomes: readonly PluginAlignmentOutcome[]
++  readonly now?: (() => number) | undefined
++}
++
++/** Properties that must never reach a diagnostic file. */
++const FORBIDDEN_KEY = /token|secret|passw(?:or)?d|authorization|cookie|credential|api[-_]?key/i
++/** Longest diagnostic string kept verbatim; stack traces are not wanted here. */
++const MAX_TEXT = 512
++
++/**
++ * Translate an alignment outcome into the operator-facing vocabulary.
++ *
++ * Retirement and quarantine both put the installation copy back in charge, so a
++ * repaired or downgraded profile reads as `reinstalled`; a degraded run reads as
++ * `failed` and carries its reason.
++ * @param outcome - one outcome from {@link alignBundledProductPlugins}.
++ * @returns the action recorded for that bundle.
++ */
++export function alignmentLogAction(outcome: PluginAlignmentOutcome): AlignmentLogAction {
++  switch (outcome.action) {
++    case 'retired': return 'retired'
++    case 'repaired-corrupt':
++    case 'downgraded': return 'reinstalled'
++    case 'skipped-equal':
++    case 'skipped-absent':
++    case 'kept-newer': return 'kept'
++    default: return 'failed'
++  }
++}
++
++/** Aggregate order: a failure outranks a migration, which outranks an unchanged profile. */
++const ACTION_PRECEDENCE: readonly AlignmentLogAction[] = ['failed', 'retired', 'reinstalled', 'kept']
++
++/** Shorten one diagnostic string without cutting a surrogate pair in half. */
++function clamp(value: string, limit = MAX_TEXT): string {
++  if (value.length <= limit) return value
++  let end = limit
++  const code = value.charCodeAt(end - 1)
++  if (code >= 0xd800 && code <= 0xdbff) end -= 1
++  return `${value.slice(0, end)}...`
++}
++
++/**
++ * Drop secret-shaped properties and bound every string.
++ *
++ * The record is built from paths, versions and error messages, none of which
++ * carry credentials; this guard keeps a later field addition from turning the
++ * file into a credential leak.
++ * @param value - candidate report value.
++ * @returns the same shape with secret-shaped keys removed and text bounded.
++ */
++export function sanitizeReportValue(value: unknown): unknown {
++  if (typeof value === 'string') return clamp(value)
++  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value
++  if (Array.isArray(value)) return value.map(entry => sanitizeReportValue(entry))
++  if (typeof value !== 'object') return undefined
++  const result: Record<string, unknown> = {}
++  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
++    if (FORBIDDEN_KEY.test(key)) continue
++    const sanitized = sanitizeReportValue(entry)
++    if (sanitized !== undefined) result[key] = sanitized
++  }
++  return result
++}
++
++/** Build the record for one launch from the outcomes and the copies that were seen. */
++export function buildAlignmentReport(input: AlignmentReportInput): AlignmentReport {
++  const actions: AlignmentLogEvent[] = input.outcomes.map(outcome => ({
++    packageName: outcome.packageName,
++    action: alignmentLogAction(outcome),
++    previousVersion: outcome.previousVersion ?? null,
++    bundledVersion: outcome.bundledVersion ?? null,
++    ...(outcome.action === 'restored' && outcome.reason !== undefined ? { reason: clamp(outcome.reason) } : {}),
++    ...(outcome.warning === undefined ? {} : { warning: clamp(outcome.warning) }),
++    ...(outcome.backupPath === undefined ? {} : { backupPath: outcome.backupPath }),
++  }))
++  const observed = new Set(actions.map(entry => entry.action))
++  const action = ACTION_PRECEDENCE.find(candidate => observed.has(candidate)) ?? 'kept'
++  const primary = input.outcomes.find(outcome => outcome.resolvedVersion !== undefined)
++  return {
++    schemaVersion: 1,
++    timestamp: new Date(input.now?.() ?? Date.now()).toISOString(),
++    platform: input.platform ?? process.platform,
++    bundledPluginVersion: input.bundledVersion ?? primary?.bundledVersion ?? null,
++    loadedPluginVersion: input.loadedVersion ?? primary?.resolvedVersion ?? null,
++    action,
++    actions,
++    profileCopies: (input.copies ?? []).slice(0, 32).map(copy => ({
++      packageName: copy.packageName, path: copy.path, version: copy.version,
++    })),
++  }
++}
++
++/** Move the current record to `.1` and shift older rotations down one slot. */
++function rotateLog(path: string, retention: number): void {
++  for (let index = retention - 1; index >= 1; index -= 1) {
++    const from = `${path}.${String(index)}`
++    if (!existsSync(from)) continue
++    const to = `${path}.${String(index + 1)}`
++    rmSync(to, { force: true })
++    renameSync(from, to)
++  }
++  rmSync(`${path}.${String(retention)}`, { force: true })
++  if (existsSync(path)) renameSync(path, `${path}.1`)
++}
++
++/** Remove rotations a smaller retention no longer owns. */
++function pruneRotations(directory: string, name: string, retention: number): void {
++  let names: string[]
++  try {
++    names = readdirSync(directory)
++  } catch {
++    return
++  }
++  for (const entry of names) {
++    const match = /^(.*)\.(\d+)$/.exec(entry)
++    if (match === null || match[1] !== name) continue
++    if (Number.parseInt(match[2] ?? '0', 10) <= retention) continue
++    rmSync(join(directory, entry), { force: true })
++  }
++}
++
++/**
++ * Write one JSON record under a bounded retention.
++ *
++ * Every failure is swallowed: startup diagnostics must never become a startup
++ * failure, and a read-only data directory simply means no record this launch.
++ * @param directory - log directory, normally `<userData>/logs`.
++ * @param name - record file name inside the directory.
++ * @param value - report object; secret-shaped properties are removed first.
++ * @returns the written path, or undefined when nothing was written.
++ */
++export function writeDiagnosticRecord(directory: string, name: string, value: unknown): string | undefined {
++  try {
++    mkdirSync(directory, { recursive: true, mode: 0o700 })
++    const path = join(directory, name)
++    let body = `${JSON.stringify(sanitizeReportValue(value), undefined, 2)}\n`
++    if (Buffer.byteLength(body) > LOG_MAX_BYTES) {
++      const bounded = { ...(value as Record<string, unknown>), truncated: true }
++      body = `${JSON.stringify(sanitizeReportValue(bounded), undefined, 2)}\n`
++      if (Buffer.byteLength(body) > LOG_MAX_BYTES) body = `${body.slice(0, LOG_MAX_BYTES)}\n`
++    }
++    rotateLog(path, LOG_RETENTION)
++    pruneRotations(directory, name, LOG_RETENTION)
++    // Write through a sibling so an interrupted launch never leaves a partial record.
++    const temporary = `${path}.${String(process.pid)}.tmp`
++    writeFileSync(temporary, body, { mode: 0o600 })
++    renameSync(temporary, path)
++    return path
++  } catch {
++    return undefined
++  }
++}
++
++/**
++ * Write the startup alignment record.
++ * @param directory - log directory owned by the shell.
++ * @param input - outcomes plus the copies and versions that were observed.
++ * @returns the written path, or undefined when the directory is unusable.
++ */
++export function writeAlignmentReport(directory: string, input: AlignmentReportInput): string | undefined {
++  return writeDiagnosticRecord(directory, ALIGNMENT_LOG_FILE, buildAlignmentReport(input))
++}
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index b4f7ba4856c1d72ba77a3259c1497a6b41380f9e..4091903137cb2db7469bd31dac96538e871e130b 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -22,7 +22,8 @@ import {
+ import type { DesktopPaths } from './paths.ts'
+ import type { DesktopRelease } from './release.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+-import { alignBundledProductPlugins } from './bundled-plugin-alignment.ts'
++import { alignBundledProductPlugins, inspectProductPluginCopies } from './bundled-plugin-alignment.ts'
++import { writeAlignmentReport } from './plugin-alignment-log.ts'
+ import {
+   initProfile, readProfileManifest, removeLinkProjections, sanitizeProfile, writeProfileManifest,
+ } from '@deepseek-ai/dsh-app-boot'
+@@ -94,8 +95,9 @@ export class DesktopProjectManager {
+ 
+   /**
+    * Load application metadata and prepare the external plugin profile without installing packages.
++   * @param options - startup diagnostics owned by the shell; omitted by recovery-only callers.
+    */
+-  async applyRelease(): Promise<void> {
++  async applyRelease(options: { readonly logsDirectory?: string | undefined } = {}): Promise<void> {
+     await this.withLock(() => {
+       // Validation only: an unreadable or mismatched runtime descriptor stops preparation before the Host starts.
+       readDesktopRuntime(this.runtime.dsh)
+@@ -105,12 +107,33 @@ export class DesktopProjectManager {
+       // The profile wins module resolution, so an upgraded application can still load an
+       // older profile copy of a product plugin. Retire it before the Host starts; failures
+       // keep the profile copy and must never block startup.
++      const copies = inspectProductPluginCopies(this.paths.profile, this.runtime.dsh)
+       try {
+-        for (const outcome of alignBundledProductPlugins({ profile: this.paths.profile, runtimeDsh: this.runtime.dsh })) {
++        const outcomes = alignBundledProductPlugins({ profile: this.paths.profile, runtimeDsh: this.runtime.dsh })
++        for (const outcome of outcomes) {
+           if (outcome.action !== 'skipped-absent') console.info('Desktop profile plugin alignment:', outcome)
+         }
++        // The record is what turns "the upgrade changed nothing" into a named
++        // layer: bundled version, the copy that shadowed it, and the action taken.
++        if (options.logsDirectory !== undefined) {
++          writeAlignmentReport(options.logsDirectory, {
++            outcomes,
++            copies,
++            loadedVersion: outcomes.find(outcome => outcome.resolvedVersion !== undefined)?.resolvedVersion,
++            bundledVersion: outcomes.find(outcome => outcome.bundledVersion !== undefined)?.bundledVersion,
++          })
++        }
+       } catch (error) {
+         console.warn('Desktop profile plugin alignment failed; keeping the profile copy', error)
++        if (options.logsDirectory !== undefined) {
++          writeAlignmentReport(options.logsDirectory, {
++            outcomes: [{
++              packageName: '*', action: 'restored', installationBacked: false,
++              reason: error instanceof Error ? error.message : String(error),
++            }],
++            copies,
++          })
++        }
+       }
+     })
+   }
+diff --git a/apps/desktop/src/window-diagnostic.ts b/apps/desktop/src/window-diagnostic.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f236cf0c3562b9e44025ca04c5a9cfb7d0247bbb
+--- /dev/null
++++ b/apps/desktop/src/window-diagnostic.ts
+@@ -0,0 +1,140 @@
++/**
++ * One sample of the loaded document, written after the window finishes loading.
++ *
++ * A client sheet that captions the whole viewport makes every button dead, and
++ * the same window looks identical whether the fix is missing, shadowed by an
++ * older profile copy, or overwritten by the shell. The sample records what the
++ * renderer actually resolved — the computed `-webkit-app-region` of `<html>` and
++ * `<body>`, the presence of the shell drag strip, and how many legacy drag
++ * markers the document still carries — so the next report can name the layer
++ * instead of guessing.
++ */
++
++import { join } from 'node:path'
++import { writeDiagnosticRecord, WINDOW_DIAGNOSTIC_FILE } from './plugin-alignment-log.ts'
++
++/** The part of `webContents` this sample needs; injected so tests dispatch a fake. */
++export interface DiagnosticContents {
++  getURL(): string
++  isDestroyed(): boolean
++  executeJavaScript(code: string): Promise<unknown>
++  on(event: 'did-finish-load', listener: () => void): unknown
++}
++
++/** Where and how the sample is taken. */
++export interface WindowDiagnosticOptions {
++  /** Directory that owns the record, normally `<userData>/logs`. */
++  readonly directory: string
++  readonly platform?: string | undefined
++  /** Product plugin version the Host resolved, when the shell knows it. */
++  readonly pluginVersion?: string | undefined
++  /** Delay after `did-finish-load` before sampling; the client bundle mounts late. */
++  readonly settleMs?: number | undefined
++  readonly now?: (() => number) | undefined
++}
++
++/** The document probes, evaluated inside the renderer. */
++export const WINDOW_SAMPLE_SCRIPT = `(() => {
++  const describe = (element) => {
++    if (element === null || element === undefined) return { computedAppRegion: null, inlineAppRegion: null }
++    const style = getComputedStyle(element)
++    const computed = (style.webkitAppRegion || style.getPropertyValue('-webkit-app-region') || '').trim()
++    return {
++      computedAppRegion: computed === '' ? null : computed,
++      inlineAppRegion: (element.style.webkitAppRegion || '').trim() || null,
++    }
++  }
++  const html = document.documentElement
++  return {
++    url: String(location.href),
++    html: { ...describe(html), windowsTitlebar: html instanceof HTMLElement
++      && html.hasAttribute('data-windows-titlebar') },
++    body: describe(document.body),
++    dragStrip: document.querySelector('[data-studio-window-drag-strip]') !== null,
++    legacyDragMarkers: document.querySelectorAll(
++      '[data-studio-drag-region],[data-studio-header],[data-window-drag]').length,
++  }
++})()`
++
++/**
++ * Keep only the parts of a page URL that identify the document.
++ *
++ * A local Host URL can carry a one-time token in its query string, and a
++ * diagnostic file must never store one.
++ * @param url - URL reported by `webContents.getURL()`.
++ * @returns scheme, host and path only.
++ */
++export function diagnosticUrl(url: string): string {
++  try {
++    const parsed = new URL(url)
++    return `${parsed.origin}${parsed.pathname}`
++  } catch {
++    return url.split(/[?#]/, 1)[0] ?? ''
++  }
++}
++
++/** Coerce the renderer answer into a record without trusting its shape. */
++function sampleRecord(value: unknown): Record<string, unknown> {
++  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
++  const sample = value as Record<string, unknown>
++  const region = (entry: unknown): Record<string, unknown> => {
++    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return {}
++    const record = entry as Record<string, unknown>
++    return {
++      computedAppRegion: typeof record.computedAppRegion === 'string' ? record.computedAppRegion : null,
++      ...(typeof record.inlineAppRegion === 'string' ? { inlineAppRegion: record.inlineAppRegion } : {}),
++      ...(typeof record.windowsTitlebar === 'boolean' ? { windowsTitlebar: record.windowsTitlebar } : {}),
++    }
++  }
++  const markers = typeof sample.legacyDragMarkers === 'number' && Number.isFinite(sample.legacyDragMarkers)
++    ? sample.legacyDragMarkers
++    : null
++  return {
++    rendererUrl: typeof sample.url === 'string' ? diagnosticUrl(sample.url) : null,
++    html: region(sample.html),
++    body: region(sample.body),
++    dragStrip: typeof sample.dragStrip === 'boolean' ? sample.dragStrip : null,
++    legacyDragMarkers: markers,
++  }
++}
++
++/**
++ * Sample the document once per successful load and write the record.
++ *
++ * The sample is delayed because the product client mounts after the document
++ * finishes loading; sampling immediately would report the pre-hydration markup
++ * and accuse a working build of missing its drag strip.
++ * @param contents - the window's `webContents`, or a test double.
++ * @param options - record directory and timing.
++ */
++export function installWindowDiagnostic(contents: DiagnosticContents, options: WindowDiagnosticOptions): void {
++  const platform = options.platform ?? process.platform
++  const settle = options.settleMs ?? 2_000
++  contents.on('did-finish-load', () => {
++    const sample = (): void => {
++      if (contents.isDestroyed()) return
++      void contents.executeJavaScript(WINDOW_SAMPLE_SCRIPT)
++        .then(answer => ({ ...sampleRecord(answer) }))
++        .catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }))
++        .then(sample => {
++          writeDiagnosticRecord(options.directory, WINDOW_DIAGNOSTIC_FILE, {
++            schemaVersion: 1,
++            timestamp: new Date(options.now?.() ?? Date.now()).toISOString(),
++            platform,
++            url: diagnosticUrl(contents.getURL()),
++            ...(options.pluginVersion === undefined ? {} : { pluginVersion: options.pluginVersion }),
++            ...sample,
++          })
++        })
++    }
++    const timer: unknown = setTimeout(sample, settle)
++    // A pending sample must not hold the process open during quit.
++    if (typeof timer === 'object' && timer !== null && 'unref' in timer
++      && typeof (timer as { unref?: unknown }).unref === 'function') (timer as { unref(): void }).unref()
++  })
++}
++
++/** Resolve the record path for one directory; exported for the shell's report. */
++export function windowDiagnosticPath(directory: string): string {
++  return join(directory, WINDOW_DIAGNOSTIC_FILE)
++}
+diff --git a/apps/desktop/tests/bundled-plugin-alignment.spec.ts b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
+index cf76253eb6edac592b01fb66a9860e21979ba699..6dd3138a39274eb1401d9d0be39feec515cb784d 100644
+--- a/apps/desktop/tests/bundled-plugin-alignment.spec.ts
++++ b/apps/desktop/tests/bundled-plugin-alignment.spec.ts
+@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { afterEach, describe, expect, it } from 'vitest'
+ import {
+-  ALIGNMENT_ATTEMPT_LIMIT, alignBundledProductPlugins, verifyBundledCopy,
++  alignBundledProductPlugins, insideRuntime, inspectProductPluginCopies, verifyBundledCopy,
+ } from '../src/bundled-plugin-alignment.ts'
++import { buildAlignmentReport, writeAlignmentReport } from '../src/plugin-alignment-log.ts'
+ 
+ const PRODUCT = '@kingsoftcloud/agentkit-studio'
+ const DSH_BASE = '@deepseek-ai/dsh-base'
+@@ -37,7 +38,10 @@ function fixture(options: {
+   readonly profileVersion?: string
+   readonly bundledDependencies?: Record<string, string>
+   readonly keepDshBase?: boolean
+-  readonly bundleListed?: boolean
++  /** Leave a directory whose manifest cannot be parsed where the profile copy belongs. */
++  readonly corruptProfileCopy?: boolean
++  /** Skip the dependency entry, as a natively recovered profile can. */
++  readonly selectedOnly?: boolean
+ } = {}): Fixture {
+   const root = temporaryRoot()
+   const home = join(root, '.dsh')
+@@ -51,13 +55,20 @@ function fixture(options: {
+     dependencies: options.bundledDependencies ?? { [DSH_BASE]: '0.2.1-rc.2' },
+   })
+   const profile = join(home, 'profiles', 'desktop-agentkit-studio')
++  const profileVersion = options.profileVersion ?? '0.0.7'
+   writePackage(profile, 'dsh-profile-desktop-agentkit-studio', '0.0.0', {
+     private: true,
+-    dependencies: { [PRODUCT]: options.profileVersion ?? '0.0.7' },
+-    dsh: { profile: { bundles: [DSH_BASE, '@deepseek-ai/dsh-web-app', ...(options.bundleListed === false ? [] : [PRODUCT])] } },
++    ...(options.selectedOnly === true ? {} : { dependencies: { [PRODUCT]: profileVersion } }),
++    dsh: { profile: { bundles: [DSH_BASE, '@deepseek-ai/dsh-web-app', PRODUCT] } },
+   })
+-  writePackage(join(profile, 'node_modules', PRODUCT), PRODUCT, options.profileVersion ?? '0.0.7')
+-  writeFileSync(join(profile, 'desktop-product-bundles.json'), `${JSON.stringify([PRODUCT])}\n`)
++  if (options.corruptProfileCopy === true) {
++    const directory = join(profile, 'node_modules', PRODUCT)
++    mkdirSync(directory, { recursive: true })
++    writeFileSync(join(directory, 'package.json'), '{ this is not a manifest')
++    writeFileSync(join(directory, 'index.js'), 'export const stale = 1\n')
++  } else {
++    writePackage(join(profile, 'node_modules', PRODUCT), PRODUCT, profileVersion)
++  }
+   return { root, home, dsh, profile }
+ }
+ 
+@@ -71,8 +82,22 @@ function profileDependency(profile: string): string | undefined {
+   }).dependencies?.[PRODUCT]
+ }
+ 
++/** Leave the retry bookkeeping an older launch wrote after two failed alignments. */
++function writeAttemptMarker(profile: string, version: string, failures: number): void {
++  writeFileSync(join(profile, `.alignment-attempt-${version}`), JSON.stringify({
++    version, failures, reason: 'earlier launch could not retire the profile copy', updatedAt: '2026-11-01T00:00:00.000Z',
++  }, undefined, 2))
++}
++
+ afterEach(() => {
+-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
++  for (const root of roots.splice(0)) {
++    try {
++      chmodSync(join(root, '.dsh', 'profiles', 'desktop-agentkit-studio'), 0o700)
++    } catch {
++      // Recursive cleanup must succeed even when the fixture never changed modes.
++    }
++    rmSync(root, { recursive: true, force: true })
++  }
+ })
+ 
+ describe('bundled product plugin alignment', () => {
+@@ -83,7 +108,10 @@ describe('bundled product plugin alignment', () => {
+     const result = outcomes(input)
+ 
+     expect(result).toHaveLength(1)
+-    expect(result[0]).toMatchObject({ packageName: PRODUCT, action: 'retired', previousVersion: '0.0.7', bundledVersion: '0.0.10', installationBacked: true })
++    expect(result[0]).toMatchObject({
++      packageName: PRODUCT, action: 'retired', previousVersion: '0.0.7', bundledVersion: '0.0.10',
++      installationBacked: true, resolvedVersion: '0.0.10',
++    })
+     expect(profileDependency(input.profile)).toBeUndefined()
+     expect(existsSync(join(input.profile, 'node_modules', PRODUCT))).toBe(false)
+     expect(existsSync(result[0]!.backupPath!)).toBe(true)
+@@ -94,43 +122,66 @@ describe('bundled product plugin alignment', () => {
+     expect(outcomes(input)).toEqual([])
+   })
+ 
+-  it('reselects an installed product bundle cleared by native recovery', () => {
+-    const input = fixture({ bundleListed: false })
++  it('leaves an equal version untouched so a normal launch performs no work', () => {
++    const input = fixture({ bundledVersion: '0.0.13', profileVersion: '0.0.13' })
++
+     const result = outcomes(input)
+ 
+-    expect(result[0]).toMatchObject({ action: 'retired', previousVersion: '0.0.7', bundledVersion: '0.0.10' })
+-    const manifest = JSON.parse(readFileSync(join(input.profile, 'package.json'), 'utf8')) as {
+-      dsh: { profile: { bundles: string[] } }
+-    }
+-    expect(manifest.dsh.profile.bundles).toContain(PRODUCT)
++    expect(result[0]).toMatchObject({
++      action: 'skipped-equal', previousVersion: '0.0.13', bundledVersion: '0.0.13', resolvedVersion: '0.0.13',
++    })
++    expect(profileDependency(input.profile)).toBe('0.0.13')
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++    expect(existsSync(join(input.profile, '.alignment-attempt-0.0.13'))).toBe(false)
+   })
+ 
+-  it('reselects a bundled product after recovery removed its profile copy', () => {
+-    const input = fixture({ bundleListed: false })
+-    const manifestPath = join(input.profile, 'package.json')
+-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+-      dependencies: Record<string, string>
+-      dsh: { profile: { bundles: string[] } }
+-    }
+-    manifest.dependencies = Object.fromEntries(
+-      Object.entries(manifest.dependencies).filter(([name]) => name !== PRODUCT),
+-    )
+-    writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
+-    rmSync(join(input.profile, 'node_modules', PRODUCT), { recursive: true, force: true })
++  it('re-aligns a newer bundled version even when an earlier launch exhausted its attempts', () => {
++    // The regression this covers: the profile still carries the shipped 0.0.12
++    // copy while the application ships 0.0.13, and the attempt marker written by
++    // the failed upgrade used to suppress every later launch.
++    const input = fixture({ bundledVersion: '0.0.13', profileVersion: '0.0.12' })
++    writeAttemptMarker(input.profile, '0.0.13', 2)
+ 
++    const result = outcomes(input)
++
++    expect(result[0]).toMatchObject({
++      action: 'retired', previousVersion: '0.0.12', bundledVersion: '0.0.13',
++      installationBacked: true, resolvedVersion: '0.0.13', attempts: 2,
++    })
++    expect(profileDependency(input.profile)).toBeUndefined()
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT))).toBe(false)
++    // A successful alignment clears the marker instead of carrying it forward.
++    expect(existsSync(join(input.profile, '.alignment-attempt-0.0.13'))).toBe(false)
++    // The next launch loads the shipped copy without doing anything else.
+     expect(outcomes(input)).toEqual([])
+-    const repaired = JSON.parse(readFileSync(manifestPath, 'utf8')) as typeof manifest
+-    expect(repaired.dsh.profile.bundles).toContain(PRODUCT)
+   })
+ 
+-  it('removes a stale dependency after a failed install removed the profile copy', () => {
+-    const input = fixture()
+-    const manifestPath = join(input.profile, 'package.json')
+-    rmSync(join(input.profile, 'node_modules', PRODUCT), { recursive: true, force: true })
++  it('retires a newer profile copy after a downgrade install and reports the warning', () => {
++    const input = fixture({ bundledVersion: '0.0.10', profileVersion: '0.0.12' })
+ 
+-    expect(outcomes(input)).toEqual([])
++    const result = outcomes(input)
++
++    expect(result[0]).toMatchObject({
++      action: 'downgraded', previousVersion: '0.0.12', bundledVersion: '0.0.10',
++      installationBacked: true, resolvedVersion: '0.0.10',
++    })
++    expect(result[0]!.warning).toContain('0.0.12')
+     expect(profileDependency(input.profile)).toBeUndefined()
+-    expect(JSON.parse(readFileSync(manifestPath, 'utf8')).dsh.profile.bundles).toContain(PRODUCT)
++    // The newer copy stays recoverable instead of disappearing.
++    expect(JSON.parse(readFileSync(join(result[0]!.backupPath!, 'package.json'), 'utf8')).version).toBe('0.0.12')
++  })
++
++  it('quarantines a profile copy that cannot describe itself', () => {
++    const input = fixture({ bundledVersion: '0.0.13', corruptProfileCopy: true })
++
++    const result = outcomes(input)
++
++    expect(result[0]).toMatchObject({
++      action: 'repaired-corrupt', bundledVersion: '0.0.13', installationBacked: true, resolvedVersion: '0.0.13',
++    })
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT))).toBe(false)
++    expect(existsSync(result[0]!.backupPath!)).toBe(true)
++    expect(outcomes(input)).toEqual([])
+   })
+ 
+   it('never throws and keeps the old copy when the bundled copy cannot resolve an in-box package', () => {
+@@ -138,20 +189,39 @@ describe('bundled product plugin alignment', () => {
+     expect(verifyBundledCopy(input.dsh, join(input.dsh, 'node_modules', PRODUCT))).toContain(DSH_BASE)
+ 
+     const first = outcomes(input)
+-    expect(first[0]).toMatchObject({ action: 'restored', installationBacked: false })
++    expect(first[0]).toMatchObject({ action: 'restored', installationBacked: false, attempts: 1 })
+     expect(first[0]?.reason).toContain(DSH_BASE)
+     expect(profileDependency(input.profile)).toBe('0.0.7')
+     expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
+-    const marker = JSON.parse(readFileSync(join(input.profile, `.alignment-attempt-${'0.0.10'}`), 'utf8'))
++    const marker = JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.10'), 'utf8'))
+     expect(marker.failures).toBe(1)
+ 
+-    expect(outcomes(input)[0]).toMatchObject({ action: 'restored' })
+-    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.10'), 'utf8')).failures).toBe(ALIGNMENT_ATTEMPT_LIMIT)
+-
+-    // The same version stops retrying and still starts on the profile copy.
+-    expect(outcomes(input)[0]).toMatchObject({ action: 'skipped-attempt-budget', installationBacked: false })
++    // The marker never becomes a skip: the next launch tries again and keeps the
++    // recorded failure visible instead of silently running the stale copy.
++    const second = outcomes(input)
++    expect(second[0]).toMatchObject({ action: 'restored', attempts: 2 })
++    expect(JSON.parse(readFileSync(join(input.profile, '.alignment-attempt-0.0.10'), 'utf8')).failures).toBe(2)
++    expect(outcomes(input)[0]).toMatchObject({ action: 'restored', attempts: 3 })
+     expect(profileDependency(input.profile)).toBe('0.0.7')
+-    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++  })
++
++  it('still retires when only a third-party dependency is missing from the runtime', () => {
++    // The shipped plugin declares packages such as `ws`; a profile that hoisted
++    // them must not hide whether the runtime carries them, and a fresh profile
++    // loads the same runtime copy, so this is an observation, not a blocker.
++    const input = fixture({
++      bundledVersion: '0.0.13', profileVersion: '0.0.12',
++      bundledDependencies: { [DSH_BASE]: '0.2.1-rc.2', ws: '8.21.0' },
++    })
++
++    const result = outcomes(input)
++
++    expect(result[0]).toMatchObject({
++      action: 'retired', previousVersion: '0.0.12', bundledVersion: '0.0.13',
++      installationBacked: true, resolvedVersion: '0.0.13',
++    })
++    expect(result[0]!.warning).toContain('ws')
++    expect(existsSync(join(input.profile, 'node_modules', PRODUCT))).toBe(false)
+   })
+ 
+   it('restores the profile when the manifest rewrite fails after moving the copy', () => {
+@@ -169,14 +239,31 @@ describe('bundled product plugin alignment', () => {
+     }
+   })
+ 
+-  it('keeps a profile copy that is newer than the bundled runtime', () => {
+-    const input = fixture({ bundledVersion: '0.0.10', profileVersion: '0.0.12' })
+-    expect(outcomes(input)[0]).toMatchObject({ action: 'kept-newer', previousVersion: '0.0.12', installationBacked: false })
+-    expect(profileDependency(input.profile)).toBe('0.0.12')
+-    expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++  it('degrades without throwing when the profile copy cannot be moved', () => {
++    const input = fixture({ bundledVersion: '0.0.13', profileVersion: '0.0.12' })
++    // The rename needs a writable parent; a locked or protected profile answers EACCES here.
++    const scope = join(input.profile, 'node_modules', '@kingsoftcloud')
++    chmodSync(scope, 0o500)
++    try {
++      const copies = inspectProductPluginCopies(input.profile, input.dsh)
++      const result = outcomes(input)
++      expect(result[0]).toMatchObject({ action: 'restored', installationBacked: false })
++      expect(result[0]?.reason).toBeTruthy()
++      // The stale copy is still loadable, so the Host can start on it.
++      expect(existsSync(join(input.profile, 'node_modules', PRODUCT, 'package.json'))).toBe(true)
++      const report = buildAlignmentReport({ outcomes: result, copies })
++      expect(report.action).toBe('failed')
++      expect(report.actions[0]).toMatchObject({ action: 'failed' })
++      expect(report.actions[0]?.reason).toBeTruthy()
++      expect(report.profileCopies).toEqual([
++        { packageName: PRODUCT, path: join(input.profile, 'node_modules', PRODUCT), version: '0.0.12' },
++      ])
++    } finally {
++      chmodSync(scope, 0o700)
++    }
+   })
+ 
+-  it('cleans up the mirror dependency an earlier .6 launch rewrote into the profile', () => {
++  it('cleans up the mirror dependency an earlier launch rewrote into the profile', () => {
+     const input = fixture({ bundledVersion: '0.0.10', profileVersion: '0.0.10' })
+     const manifestPath = join(input.profile, 'package.json')
+     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+@@ -187,7 +274,7 @@ describe('bundled product plugin alignment', () => {
+     expect(profileDependency(input.profile)).toBeUndefined()
+   })
+ 
+-  it('leaves installation-owned bundles intact and cleans absent product copies', () => {
++  it('leaves installation-owned bundles and absent product copies untouched', () => {
+     const input = fixture()
+     // A profile dependency on an in-box bundle is never a product-plugin candidate.
+     const manifestPath = join(input.profile, 'package.json')
+@@ -204,6 +291,8 @@ describe('bundled product plugin alignment', () => {
+     rmSync(join(input.profile, 'node_modules', PRODUCT), { recursive: true, force: true })
+     manifest.dependencies[PRODUCT] = '0.0.10'
+     writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2))
++    // The sealed copy passes the dependency probe, so the stale edge is removed
++    // and the next launch has nothing left to report.
+     expect(outcomes(input)).toEqual([])
+     expect(profileDependency(input.profile)).toBeUndefined()
+   })
+@@ -214,4 +303,52 @@ describe('bundled product plugin alignment', () => {
+     expect(outcomes(input)[0]).toMatchObject({ action: 'missing-runtime-copy', installationBacked: false })
+     expect(profileDependency(input.profile)).toBe('0.0.7')
+   })
++
++  it('lists the profile copies a startup record has to explain', () => {
++    const input = fixture({ bundledVersion: '0.0.13', profileVersion: '0.0.12' })
++    expect(inspectProductPluginCopies(input.profile, input.dsh)).toEqual([
++      { packageName: PRODUCT, path: join(input.profile, 'node_modules', PRODUCT), version: '0.0.12' },
++    ])
++    outcomes(input)
++    expect(inspectProductPluginCopies(input.profile, input.dsh)).toEqual([])
++  })
++
++  it('treats a runtime root reported with different separators or case as the same installation', () => {
++    expect(insideRuntime('/opt/app/resources/app.asar/dsh', '/opt/app/resources/app.asar/dsh/node_modules/x', 'linux')).toBe(true)
++    expect(insideRuntime('/opt/app/resources/dsh/', '/opt/app/resources/dsh/node_modules/x', 'darwin')).toBe(true)
++    expect(insideRuntime('/opt/app/resources/dsh', '/opt/app/resources/dsh-other/node_modules/x', 'linux')).toBe(false)
++    // Windows reports the same directory with a different drive-letter case.
++    expect(insideRuntime('C:\\Studio\\Apps\\studio\\resources\\app.asar\\dsh',
++      'c:/studio/apps/studio/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-base', 'win32')).toBe(true)
++    expect(insideRuntime('C:\\Studio\\Apps\\studio\\resources\\app.asar\\dsh',
++      'C:\\Studio\\Data\\agentkit-studio-desktop\\node_modules\\x', 'win32')).toBe(false)
++  })
++
++  it('writes the diagnostic record and survives an unusable log directory', () => {
++    const input = fixture({ bundledVersion: '0.0.13', profileVersion: '0.0.12' })
++    const copies = inspectProductPluginCopies(input.profile, input.dsh)
++    const result = outcomes(input)
++    const logs = join(input.root, 'logs')
++    const written = writeAlignmentReport(logs, {
++      outcomes: result, copies,
++      platform: 'win32', now: () => Date.parse('2026-11-07T00:00:00.000Z'),
++    })
++    expect(written).toBe(join(logs, 'plugin-alignment.json'))
++    const report = JSON.parse(readFileSync(written!, 'utf8')) as Record<string, unknown>
++    expect(report).toMatchObject({
++      schemaVersion: 1, platform: 'win32', action: 'retired', bundledPluginVersion: '0.0.13',
++      loadedPluginVersion: '0.0.13', timestamp: '2026-11-07T00:00:00.000Z',
++    })
++    expect(report.profileCopies).toEqual([
++      { packageName: PRODUCT, path: join(input.profile, 'node_modules', PRODUCT), version: '0.0.12' },
++    ])
++
++    // A read-only log directory is a missing record, never a failed startup.
++    chmodSync(logs, 0o500)
++    try {
++      expect(writeAlignmentReport(logs, { outcomes: result })).toBeUndefined()
++    } finally {
++      chmodSync(logs, 0o700)
++    }
++  })
+ })
+diff --git a/apps/desktop/tests/plugin-alignment-log.spec.ts b/apps/desktop/tests/plugin-alignment-log.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0e364e599cdeb4709ff1e6ff3c38b18c20bf9c35
+--- /dev/null
++++ b/apps/desktop/tests/plugin-alignment-log.spec.ts
+@@ -0,0 +1,115 @@
++import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, describe, expect, it } from 'vitest'
++import type { PluginAlignmentOutcome } from '../src/bundled-plugin-alignment.ts'
++import {
++  ALIGNMENT_LOG_FILE, LOG_RETENTION, alignmentLogAction, buildAlignmentReport, sanitizeReportValue,
++  writeAlignmentReport, writeDiagnosticRecord,
++} from '../src/plugin-alignment-log.ts'
++
++const roots: string[] = []
++
++function temporaryRoot(): string {
++  const root = mkdtempSync(join(tmpdir(), 'dsh-alignment-log-'))
++  roots.push(root)
++  return root
++}
++
++function outcome(overrides: Partial<PluginAlignmentOutcome>): PluginAlignmentOutcome {
++  return { packageName: '@kingsoftcloud/agentkit-studio', action: 'retired', installationBacked: true, ...overrides }
++}
++
++afterEach(() => {
++  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
++})
++
++describe('plugin alignment record', () => {
++  it('translates every outcome into the operator vocabulary', () => {
++    expect(alignmentLogAction(outcome({ action: 'retired' }))).toBe('retired')
++    expect(alignmentLogAction(outcome({ action: 'repaired-corrupt' }))).toBe('reinstalled')
++    expect(alignmentLogAction(outcome({ action: 'downgraded' }))).toBe('reinstalled')
++    expect(alignmentLogAction(outcome({ action: 'skipped-equal' }))).toBe('kept')
++    expect(alignmentLogAction(outcome({ action: 'skipped-absent' }))).toBe('kept')
++    expect(alignmentLogAction(outcome({ action: 'kept-newer' }))).toBe('kept')
++    expect(alignmentLogAction(outcome({ action: 'restored', reason: 'locked' }))).toBe('failed')
++    expect(alignmentLogAction(outcome({ action: 'missing-runtime-copy' }))).toBe('failed')
++  })
++
++  it('reports a failure above a migration in the aggregate action', () => {
++    const report = buildAlignmentReport({
++      platform: 'win32',
++      copies: [{ packageName: '@kingsoftcloud/agentkit-studio', path: 'C:\\p', version: '0.0.12' }],
++      outcomes: [
++        outcome({ action: 'retired', previousVersion: '0.0.12', bundledVersion: '0.0.13', resolvedVersion: '0.0.13' }),
++        outcome({ packageName: 'other', action: 'restored', bundledVersion: '1.0.0', reason: 'EBUSY' }),
++      ],
++    })
++    expect(report.action).toBe('failed')
++    expect(report.actions.map(entry => entry.action)).toEqual(['retired', 'failed'])
++    expect(report.actions[1]?.reason).toBe('EBUSY')
++    expect(report.loadedPluginVersion).toBe('0.0.13')
++    expect(report.platform).toBe('win32')
++  })
++
++  it('writes the required fields and keeps five records', () => {
++    const directory = join(temporaryRoot(), 'logs')
++    for (let index = 0; index < LOG_RETENTION + 2; index += 1) {
++      const path = writeAlignmentReport(directory, {
++        outcomes: [outcome({ action: 'skipped-equal', previousVersion: '0.0.13', bundledVersion: '0.0.13', resolvedVersion: '0.0.13' })],
++        copies: [], bundledVersion: '0.0.13', now: () => 1_700_000_000_000 + index,
++      })
++      expect(path).toBe(join(directory, ALIGNMENT_LOG_FILE))
++    }
++    const names = readdirSync(directory).filter(name => name.startsWith(ALIGNMENT_LOG_FILE)).sort()
++    expect(names).toEqual([
++      ALIGNMENT_LOG_FILE, `${ALIGNMENT_LOG_FILE}.1`, `${ALIGNMENT_LOG_FILE}.2`,
++      `${ALIGNMENT_LOG_FILE}.3`, `${ALIGNMENT_LOG_FILE}.4`,
++    ])
++    const latest = JSON.parse(readFileSync(join(directory, ALIGNMENT_LOG_FILE), 'utf8')) as Record<string, unknown>
++    expect(latest).toMatchObject({
++      schemaVersion: 1, action: 'kept', bundledPluginVersion: '0.0.13', loadedPluginVersion: '0.0.13',
++      profileCopies: [],
++    })
++    expect(typeof latest.timestamp).toBe('string')
++    expect(typeof latest.platform).toBe('string')
++  })
++
++  it('never writes credential-shaped properties', () => {
++    const directory = join(temporaryRoot(), 'logs')
++    // A future caller adding credentials to a record must not leak them.
++    const path = writeDiagnosticRecord(directory, ALIGNMENT_LOG_FILE, {
++      schemaVersion: 1, accessToken: 'leaked', nested: { apiKey: 'leaked', keep: 'visible' },
++    })
++    const body = readFileSync(path!, 'utf8')
++    expect(body).not.toContain('leaked')
++    expect(body).toContain('visible')
++    expect(sanitizeReportValue({ authToken: 'x' })).toEqual({})
++  })
++
++  it('bounds one record instead of dropping it', () => {
++    const directory = join(temporaryRoot(), 'logs')
++    const path = writeDiagnosticRecord(directory, ALIGNMENT_LOG_FILE, {
++      schemaVersion: 1, filler: 'x'.repeat(400_000),
++    })
++    expect(path).toBe(join(directory, ALIGNMENT_LOG_FILE))
++    expect(readFileSync(path!, 'utf8').length).toBeLessThanOrEqual(262_144)
++  })
++
++  it('returns undefined instead of throwing when the directory cannot be written', () => {
++    const root = temporaryRoot()
++    const directory = join(root, 'logs')
++    mkdirSync(directory, { recursive: true })
++    writeFileSync(join(directory, 'occupied'), 'x')
++    chmodSync(directory, 0o500)
++    try {
++      expect(writeAlignmentReport(directory, { outcomes: [outcome({ action: 'retired' })] })).toBeUndefined()
++    } finally {
++      chmodSync(directory, 0o700)
++    }
++    // A path that is a file, not a directory, is equally survivable.
++    const blocked = join(root, 'logs-file')
++    writeFileSync(blocked, 'x')
++    expect(writeAlignmentReport(join(blocked, 'logs'), { outcomes: [] })).toBeUndefined()
++  })
++})
+diff --git a/apps/desktop/tests/window-diagnostic.spec.ts b/apps/desktop/tests/window-diagnostic.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ad107db7f93ae14a81f8c16886caf2ac59192bb
+--- /dev/null
++++ b/apps/desktop/tests/window-diagnostic.spec.ts
+@@ -0,0 +1,128 @@
++import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, describe, expect, it } from 'vitest'
++import {
++  WINDOW_SAMPLE_SCRIPT, diagnosticUrl, installWindowDiagnostic, windowDiagnosticPath,
++  type DiagnosticContents,
++} from '../src/window-diagnostic.ts'
++import { WINDOW_DIAGNOSTIC_FILE } from '../src/plugin-alignment-log.ts'
++
++const roots: string[] = []
++
++function temporaryRoot(): string {
++  const root = mkdtempSync(join(tmpdir(), 'dsh-window-diagnostic-'))
++  roots.push(root)
++  return root
++}
++
++interface Fake extends DiagnosticContents {
++  /** Trigger the captured `did-finish-load` listener. */
++  load(): void
++  readonly calls: string[]
++}
++
++function fakeContents(options: {
++  url?: string
++  answer?: unknown
++  failure?: Error
++  destroyed?: boolean
++} = {}): Fake {
++  const calls: string[] = []
++  let listener: (() => void) | undefined
++  return {
++    calls,
++    load: () => { listener?.() },
++    getURL: () => options.url ?? 'http://127.0.0.1:49152/?nonce=do-not-store',
++    isDestroyed: () => options.destroyed === true,
++    executeJavaScript: (code: string) => {
++      calls.push(code)
++      return options.failure === undefined ? Promise.resolve(options.answer) : Promise.reject(options.failure)
++    },
++    on: (_event, handler) => { listener = handler },
++  }
++}
++
++/** Give the delayed sample a chance to run. */
++function settle(): Promise<void> {
++  return new Promise(resolve => { setTimeout(resolve, 25) })
++}
++
++afterEach(() => {
++  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
++})
++
++describe('window diagnostic', () => {
++  it('records the resolved caption state after the load event', async () => {
++    const directory = join(temporaryRoot(), 'logs')
++    const contents = fakeContents({
++      answer: {
++        url: 'http://127.0.0.1:49152/?nonce=do-not-store',
++        html: { computedAppRegion: 'no-drag', inlineAppRegion: 'no-drag', windowsTitlebar: true },
++        body: { computedAppRegion: 'no-drag' },
++        dragStrip: true,
++        legacyDragMarkers: 2,
++      },
++    })
++    installWindowDiagnostic(contents, { directory, platform: 'win32', settleMs: 0, now: () => 1_700_000_000_000 })
++    expect(contents.calls).toHaveLength(0)
++    contents.load()
++    await settle()
++
++    const record = JSON.parse(readFileSync(windowDiagnosticPath(directory), 'utf8')) as Record<string, unknown>
++    expect(record).toMatchObject({
++      schemaVersion: 1,
++      platform: 'win32',
++      // The query string can carry a one-time Host token and is never recorded.
++      url: 'http://127.0.0.1:49152/',
++      rendererUrl: 'http://127.0.0.1:49152/',
++      html: { computedAppRegion: 'no-drag', inlineAppRegion: 'no-drag', windowsTitlebar: true },
++      body: { computedAppRegion: 'no-drag' },
++      dragStrip: true,
++      legacyDragMarkers: 2,
++      timestamp: '2023-11-14T22:13:20.000Z',
++    })
++    expect(readFileSync(windowDiagnosticPath(directory), 'utf8')).not.toContain('do-not-store')
++    expect(contents.calls[0]).toBe(WINDOW_SAMPLE_SCRIPT)
++    expect(windowDiagnosticPath(directory)).toBe(join(directory, WINDOW_DIAGNOSTIC_FILE))
++  })
++
++  it('records an error sample when the renderer cannot answer', async () => {
++    const directory = join(temporaryRoot(), 'logs')
++    const contents = fakeContents({ failure: new Error('frame detached') })
++    installWindowDiagnostic(contents, { directory, settleMs: 0 })
++    contents.load()
++    await settle()
++
++    const record = JSON.parse(readFileSync(windowDiagnosticPath(directory), 'utf8')) as Record<string, unknown>
++    expect(record.error).toContain('frame detached')
++    expect(record.url).toBe('http://127.0.0.1:49152/')
++  })
++
++  it('skips a destroyed window and survives an unusable log directory', async () => {
++    const directory = join(temporaryRoot(), 'logs')
++    const destroyed = fakeContents({ destroyed: true })
++    installWindowDiagnostic(destroyed, { directory, settleMs: 0 })
++    destroyed.load()
++    await settle()
++    expect(destroyed.calls).toHaveLength(0)
++
++    const blocked = join(temporaryRoot(), 'logs')
++    mkdirSync(blocked, { recursive: true })
++    chmodSync(blocked, 0o500)
++    try {
++      const contents = fakeContents({ answer: { html: {}, body: {}, dragStrip: false, legacyDragMarkers: 0 } })
++      installWindowDiagnostic(contents, { directory: blocked, settleMs: 0 })
++      contents.load()
++      await settle()
++      expect(contents.calls).toHaveLength(1)
++    } finally {
++      chmodSync(blocked, 0o700)
++    }
++  })
++
++  it('keeps only the document identity of a page URL', () => {
++    expect(diagnosticUrl('http://127.0.0.1:49152/chat/1?token=abc#frag')).toBe('http://127.0.0.1:49152/chat/1')
++    expect(diagnosticUrl('not a url?token=abc')).toBe('not a url')
++  })
++})

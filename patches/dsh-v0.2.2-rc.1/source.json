@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "96a1a6ff3f463d5574459c1a4c49459d30af4912",
+  "headCommit": "4fd0ee0a9b37ebf5a638f14f5b9ff4e368ff7987",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "54959adf25ca0c3dd02241167022402a1161d202",
-  "sourceSha256": "593273a03342695f9f5ec82cd4a9e5c782bd2a47132b2f2b0f5852a5f805c779",
+  "tree": "a1da1530cdc31489daf579049a83adb93865b68d",
+  "sourceSha256": "c2736d2d0d3742b4f340dd2446527cea02b903f5d75a38cbd2f73695b64ca330",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "e1f0ee14d62b96029b1725d9acfe7920e81b25aaaf8cb80c5066372f37a3a206"
+    "sha256": "f5cd8de9a94ea42651a008abea469e89cd77088587b92dd346d8d9f0036878ba"
   },
   "commits": [
     {
@@ -286,6 +286,12 @@
       "file": "077-certificate-store-signing-parity.patch",
       "commit": "96a1a6ff3f463d5574459c1a4c49459d30af4912",
       "sha256": "4a42adf2ccbbb34e29900eef8e551302a37b82805c827b9466dbe601db6badb3"
+    },
+    {
+      "id": "078",
+      "file": "078-plugin-alignment-migration-diagnostics.patch",
+      "commit": "4fd0ee0a9b37ebf5a638f14f5b9ff4e368ff7987",
+      "sha256": "1d08be52d0d21b47f0b39a9896d2f091fa8304f700d410fed45853aa74117dd7"
     }
   ]
 }
