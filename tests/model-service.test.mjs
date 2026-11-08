@@ -54,6 +54,24 @@ test('model service resolves independent provider credentials and catalog capabi
   assert.equal(byModelName.modelName, 'gpt');
 });
 
+test('model endpoint probe reads an unsaved catalog with the candidate key and does not persist it', async () => {
+  const values = { modelProfiles: [{ id: 'existing', provider: 'ksyun', modelName: 'old', baseUrl: 'https://old.test/v1', credentialName: 'OLD_KEY', default: true }] };
+  const calls = [];
+  const service = createModelService({
+    configuration: configuration(values),
+    credentials: { resolve: async () => ({ value: 'stored-key' }), set: async () => {} },
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, async json() { return { data: [{ id: 'candidate-model', architecture: { input_modalities: ['text', 'image'] } }] }; } };
+    },
+  });
+  const result = await service.probe({ provider: 'openai', baseUrl: 'https://candidate.test/v1', apiKey: 'unsaved-key', modelName: 'candidate-model' });
+  assert.equal(result.selectedAvailable, true);
+  assert.deepEqual(result.items[0], { id: 'candidate-model', name: 'candidate-model', input: ['text', 'image'] });
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer unsaved-key');
+  assert.deepEqual(values.modelProfiles, [{ id: 'existing', provider: 'ksyun', modelName: 'old', baseUrl: 'https://old.test/v1', credentialName: 'OLD_KEY', default: true }]);
+});
+
 test('model service returns typed errors for missing credentials and unknown profiles', async () => {
   const service = createModelService({
     configuration: configuration({ modelProfiles: [{ id: 'missing', provider: 'custom', modelName: 'm', baseUrl: 'https://example.test/v1', credentialName: 'KEY_MISSING', enabled: true }] }),
