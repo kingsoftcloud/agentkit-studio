@@ -36,6 +36,8 @@ export default String.raw`
 @media (max-width: 960px) {
   [data-agentkit-studio="product-application"] > main { padding: 18px 16px 28px !important; }
   [data-agentkit-studio="product-application"] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+  [data-agentkit-studio="product-application"] [data-studio-agent-grid],
+  [data-agentkit-studio="product-application"] [data-studio-resource-grid] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   [data-agentkit-studio="product-application"] [data-studio-heading],
   [data-agentkit-studio="product-application"] [data-studio-content-intro] { align-items: flex-start; }
   [data-agentkit-studio="product-application"] [data-studio-header] { gap: 14px !important; }
@@ -51,5 +53,9 @@ export default String.raw`
   [data-agentkit-studio="product-application"] [data-studio-pager] select { max-width: 100%; }
   [data-agentkit-studio="product-application"] [data-studio-dialog] { width: calc(100vw - 20px) !important; max-height: calc(100vh - 20px) !important; padding: 14px !important; }
   [data-agentkit-studio="product-application"] table { font-size: 11px !important; }
+}
+@media (max-width: 560px) {
+  [data-agentkit-studio="product-application"] [data-studio-agent-grid],
+  [data-agentkit-studio="product-application"] [data-studio-resource-grid] { grid-template-columns: minmax(0, 1fr) !important; }
 }
 `;

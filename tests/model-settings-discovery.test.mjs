@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createModelService } from '../src/model-service.mjs';
 import { createModelSettingsSection } from '../src/client/pages/model-settings.mjs';
 
-function ui(metadata, input, runtimeOptions = {}) {
+function ui(metadata, input, runtimeOptions = {}, hostOverrides = {}) {
   const values = { modelProfiles: [{ id: 'configured', provider: 'custom', modelName: 'vision', baseUrl: 'https://gateway.test/v1', credentialName: 'KEY', enabled: true, default: true, input, ...runtimeOptions }] };
   const config = {
     resolve: async () => ({ values }), describe: async () => ({ modelProfiles: values.modelProfiles }),
@@ -20,7 +20,7 @@ function ui(metadata, input, runtimeOptions = {}) {
     return [states[index], next => { states[index] = typeof next === 'function' ? next(states[index]) : next; dirty = true; }];
   };
   const useEffect = callback => { const index = cursor++; if (!(index in states)) { states[index] = true; effects.push(callback); } };
-  const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync };
+  const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync, ...hostOverrides };
   const dshModel = { describe: async () => ({ namespaces: [] }), credentialStatus: async () => ({ configured: true }), applyProfiles: async payload => { applied = payload; } };
   const Component = createModelSettingsSection({
     ui: { React: { createElement: h, useState, useEffect }, BRAND: {}, Pill: 'pill', inputStyle: () => ({}), buttonStyle: () => ({}), SecretInput: 'SecretInput' },
@@ -87,4 +87,43 @@ test('the Native thinking control changes only its declared option and preserves
   view.nodes().find(node => node.type === 'select' && node.props.value === 'enabled').props.onChange({ target: { value: 'default' } });
   await view.settle(); await view.save(); await view.settle();
   assert.deepEqual(view.values.modelProfiles[0].parameters, { stream: true, temperature: 0.2 });
+});
+
+test('model settings keeps at least one enabled profile', async () => {
+  const view = ui({ id: 'vision', input: ['text'] }, ['text']);
+  await view.settle();
+  const toggle = view.nodes().find(node => node.type === 'button' && node.children.includes('停用'));
+  assert.ok(toggle);
+  toggle.props.onClick();
+  await view.settle();
+  assert.match(view.text(), /至少保留一个启用的模型/);
+  assert.match(view.text(), /已配置/);
+});
+
+test('model settings reads an unsaved key before selecting a model and keeps it out of save payloads', async () => {
+  let probed;
+  const view = ui({ id: 'vision', input: ['text'] }, ['text'], {}, {
+    probeModelEndpoint: async payload => {
+      probed = payload;
+      return { items: [{ id: 'catalog-model', name: 'Catalog model', input: ['text'] }] };
+    },
+  });
+  await view.settle();
+  const keyField = view.nodes().find(node => node.props?.label === 'API Key');
+  assert.ok(keyField);
+  keyField.props.onChange({ target: { value: 'unsaved-key' } });
+  await view.settle();
+  const readButton = view.nodes().find(node => node.type === 'button' && node.children.includes('读取模型'));
+  assert.ok(readButton);
+  readButton.props.onClick();
+  await view.settle();
+  assert.equal(probed.apiKey, 'unsaved-key');
+  assert.equal(view.values.modelProfiles[0].apiKey, undefined);
+  assert.match(view.text(), /Catalog model/);
+  assert.match(view.text(), /已读取 1 个模型/);
+  const testButton = view.nodes().find(node => node.type === 'button' && node.children.includes('测试连接'));
+  assert.ok(testButton);
+  testButton.props.onClick();
+  await view.settle();
+  assert.match(view.text(), /连接成功/);
 });
