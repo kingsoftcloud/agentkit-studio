@@ -132,7 +132,12 @@ export function createCompatibilityMethods({ connection, window, directServer, b
         models: () => request('/api/v1/catalog/models'),
         credential: name => request('/api/v1/credentials/' + encodeURIComponent(name)),
         deleteCredential: name => request('/api/v1/credentials/' + encodeURIComponent(name), { method: 'DELETE' }),
-        probeModelEndpoint: payload => request('/api/v1/model-endpoints:probe', { method: 'POST', body: JSON.stringify(payload) }),
+        // Keep the legacy REST fallback, but route connected Studio Hosts
+        // through the authenticated model probe action so unsaved API keys
+        // never leave the Host boundary.
+        probeModelEndpoint: payload => bridgeAvailable()
+            ? serverAction('models/probe', payload || {})
+            : request('/api/v1/model-endpoints:probe', { method: 'POST', body: JSON.stringify(payload) }),
         evaluations: (query = '') => directServer() ? studioBridgeOperation('evaluations/list', {}) : request('/api/v1/evaluations' + (query ? '?' + query : ''))
     };
 }

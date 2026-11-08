@@ -103,6 +103,32 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     const selected = await profile(id);
     return { defaultModel: selected.modelName, items: await gatewayModels(selected, true) };
   }
+  /**
+   * Probe a not-yet-saved model endpoint. The candidate is intentionally kept
+   * in memory for this request only; the API key never enters configuration or
+   * the persisted model profile projection. This powers the settings flow of
+   * entering a key first, then reading the provider's model directory.
+   */
+  async function probe(candidate = {}) {
+    const provider = String(candidate.provider || 'custom').trim() || 'custom';
+    const baseUrl = String(candidate.baseUrl || (provider === 'ksyun' ? 'http://kspmas.ksyun.com/v1' : '')).replace(/\/$/, '');
+    const apiKey = String(candidate.apiKey || '').trim();
+    if (!apiKey) throw Object.assign(new Error('请先填写模型 API Key'), { code: 'MODEL_CREDENTIAL_MISSING', status: 409 });
+    let url;
+    try { url = new URL(baseUrl); } catch { /* validated below */ }
+    if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+      throw Object.assign(new Error('模型 API 地址无效'), { code: 'MODEL_URL_INVALID', status: 400 });
+    const items = await gatewayModels({ baseUrl: url.href.replace(/\/$/, ''), apiKey }, true);
+    const modelName = String(candidate.modelName || '').trim();
+    return {
+      provider,
+      baseUrl: url.href.replace(/\/$/, ''),
+      defaultModel: modelName || items[0]?.id || '',
+      selectedModel: modelName,
+      selectedAvailable: !modelName || items.some(item => item.id === modelName),
+      items,
+    };
+  }
   async function capabilities(selected, signal) {
     signal?.throwIfAborted();
     let items;
@@ -126,5 +152,5 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     if (!apiKey || !baseUrl) return admitModelCapabilities(candidate);
     return capabilities({ ...candidate, baseUrl, apiKey }, signal);
   }
-  return { settings, save, create, sync, profile, catalog, capabilities, capabilitiesOf };
+  return { settings, save, create, sync, profile, catalog, probe, capabilities, capabilitiesOf };
 }

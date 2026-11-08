@@ -92,42 +92,50 @@ export function createAgentPages({
     });
     const filteredPageAgents = filteredAgents;
     const pageCount = Math.max(1, Math.ceil((total || filteredPageAgents.length) / pageSize));
-    const agentTable = agents.length || query.trim() ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface, overflow: 'hidden' } },
+    const agentTable = agents.length || query.trim() ? h('section', { 'data-studio-agent-list': 'true', style: { border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface, overflow: 'hidden' } },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '14px 16px', borderBottom: '1px solid ' + BRAND.border, flexWrap: 'wrap' } },
         h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, `${total} 个${tab === 'cloud' ? '云端' : '本地'} Agent · 最新创建优先`),
         h('div', { style: { display: 'flex', gap: '8px', minWidth: 'min(100%, 430px)' } },
           h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索 Agent 名称或 ID', 'aria-label': '搜索 Agent', style: { ...inputStyle(), marginTop: 0, flex: 1, minWidth: '180px' } }),
           h('select', { hidden: tab === 'cloud', value: statusFilter, onChange: event => setStatusFilter(event.target.value), 'aria-label': '筛选 Agent 状态', style: { ...inputStyle(), display: tab === 'cloud' ? 'none' : undefined, marginTop: 0, width: '112px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'built' }, '已构建'), h('option', { value: 'draft' }, '草稿')))),
-      h('div', { style: { overflow: 'auto', maxHeight: 'min(64vh, 680px)' } }, h('table', { style: { width: '100%', borderCollapse: 'collapse', minWidth: '860px', fontSize: '12px' } },
-        h('thead', null, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas, position: 'sticky', top: 0, zIndex: 1 } }, ['Agent', '运行时', '能力', '版本', '创建时间', tab === 'cloud' ? '部署状态' : '构建', '操作'].map(label => h('th', { key: label, style: { padding: '11px 14px', borderBottom: '1px solid ' + BRAND.border, fontWeight: 750, whiteSpace: 'nowrap' } }, label)))),
-        h('tbody', null, filteredPageAgents.map(agent => {
-          const metadata = agent?.metadata || agent || {};
-          const spec = agent?.spec || {};
-          const id = metadata.id || agent?.id || '—';
-          const runtime = spec.runtime?.type || agent?.runtime?.type || 'harness';
-          const createdTime = new Date(String(metadata.createdAt || agent.createdAt || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1'));
-          const bindings = spec.bindings || {};
-          const plugins = Array.isArray(bindings.plugins) ? bindings.plugins : [];
-          const platformCount = kind => plugins.filter(item => String(item?.config?.binding?.resource?.kind || '') === kind).length;
-          const counts = [
-            ['模型', bindings.modelProfileIds?.length || (bindings.modelProfileId ? 1 : 0)],
-            ['MCP', bindings.mcpServers?.length || 0],
-            ['Skill', bindings.skills?.length || 0],
-            ['Tool', bindings.tools?.length || 0],
-            ['知识库', platformCount('knowledge-base')],
-            ['记忆库', platformCount('memory-instance') || (spec.memory?.enabled ? 1 : 0)],
-            ['Skill Center', platformCount('skill-space')],
-          ].filter(([, count]) => count);
-          const built = hasCurrentBuild(agent);
-          return h('tr', { key: id, style: { borderBottom: '1px solid ' + BRAND.border } },
-            h('td', { style: { padding: '13px 14px' } }, h('div', { style: { color: BRAND.ink, fontWeight: 800 } }, metadata.name || id), agent.assistant?.configuration ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '4px' } }, '个人助理配置 · 云端运行') : null, h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, id)),
-            h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, RUNTIME_LABELS[runtime] || runtime),
-            h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, counts.length ? counts.map(([label, count]) => `${count} ${label}`).join(' · ') : '—'),
-            h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `r${metadata.revision || 1}`),
-            h('td', { style: { padding: '13px 14px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, Number.isFinite(createdTime.getTime()) ? createdTime.toLocaleString('zh-CN', { hour12: false }) : '—'),
-            h('td', { style: { padding: '13px 14px' } }, h(Pill, { tone: built ? 'accent' : 'signal' }, agent.deployment ? (DEPLOYMENT_LABELS[agent.deployment.state] || agent.deployment.state) : built ? '已构建' : successfulBuilds(agent).length ? '有历史构建' : agent.source === 'local-studio' ? '本地配置' : '草稿')),
-            h('td', { style: { padding: '13px 14px', whiteSpace: 'nowrap' } }, h('div', { style: { display: 'flex', gap: '6px' } }, h('button', { type: 'button', disabled: Boolean(bindingAgent) || agent.deployment?.available === false, onClick: () => { void bindAgent(agent); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } }, bindingAgent === (agent?.metadata?.id || agent?.id) ? '正在绑定…' : agent.assistant?.configuration ? '绑定云端助理' : '绑定到新会话'), h('button', { type: 'button', onClick: () => agent.deployment ? onNavigate('studio-operations') : onEdit(agent), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, agent.deployment ? '管理部署' : '编辑 Agent'), agent?.metadata?.local ? h('button', { type: 'button', onClick: async () => { if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, '删除') : null)));
-        })))),
+      h('div', { 'data-studio-agent-grid': 'true', style: { overflow: 'auto', maxHeight: 'min(64vh, 680px)', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', alignItems: 'stretch' } }, filteredPageAgents.map(agent => {
+        const metadata = agent?.metadata || agent || {};
+        const spec = agent?.spec || {};
+        const id = metadata.id || agent?.id || '—';
+        const runtime = spec.runtime?.type || agent?.runtime?.type || 'harness';
+        const createdTime = new Date(String(metadata.createdAt || agent.createdAt || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1'));
+        const bindings = spec.bindings || {};
+        const plugins = Array.isArray(bindings.plugins) ? bindings.plugins : [];
+        const platformCount = kind => plugins.filter(item => String(item?.config?.binding?.resource?.kind || '') === kind).length;
+        const counts = [
+          ['模型', bindings.modelProfileIds?.length || (bindings.modelProfileId ? 1 : 0)],
+          ['MCP', bindings.mcpServers?.length || 0],
+          ['Skill', bindings.skills?.length || 0],
+          ['Tool', bindings.tools?.length || 0],
+          ['知识库', platformCount('knowledge-base')],
+          ['记忆库', platformCount('memory-instance') || (spec.memory?.enabled ? 1 : 0)],
+          ['Skill Center', platformCount('skill-space')],
+        ].filter(([, count]) => count);
+        const built = hasCurrentBuild(agent);
+        const statusLabel = agent.deployment ? (DEPLOYMENT_LABELS[agent.deployment.state] || agent.deployment.state) : built ? '已构建' : successfulBuilds(agent).length ? '有历史构建' : agent.source === 'local-studio' ? '本地配置' : '草稿';
+        const openCard = () => { if (agent.deployment) onNavigate?.('studio-operations'); else onEdit?.(agent); };
+        const stop = event => event?.stopPropagation?.();
+        return h('article', { key: id, 'data-studio-agent-card': id, tabIndex: 0, role: 'article', onClick: openCard, onKeyDown: event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); openCard(); } }, style: { display: 'flex', flexDirection: 'column', gap: '14px', minWidth: 0, padding: '18px', border: '1px solid ' + BRAND.border, borderRadius: '16px', background: BRAND.surface, boxShadow: '0 8px 24px rgba(11,18,32,0.04)', cursor: 'pointer', outline: 'none' } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' } },
+            h('div', { style: { minWidth: 0 } }, h('strong', { style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: BRAND.ink, fontSize: '15px', fontWeight: 800 } }, metadata.name || id), agent.assistant?.configuration ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '5px' } }, '个人助理配置 · 云端运行') : null, h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '4px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, id)),
+            h(Pill, { tone: built ? 'accent' : 'signal' }, statusLabel)),
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px 14px', padding: '12px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border } },
+            h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '运行时'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45 } }, RUNTIME_LABELS[runtime] || runtime)),
+            h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, 'Revision'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' } }, `r${metadata.revision || 1}`)),
+            h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '能力'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45 } }, counts.length ? counts.map(([label, count]) => `${count} ${label}`).join(' · ') : '—')),
+            h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '创建时间'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45 } }, Number.isFinite(createdTime.getTime()) ? createdTime.toLocaleString('zh-CN', { hour12: false }) : '—'))),
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: 'auto' } },
+            h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, tab === 'cloud' ? '云端 Agent' : '本地 Agent'),
+            h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+              h('button', { type: 'button', disabled: Boolean(bindingAgent) || agent.deployment?.available === false, onClick: event => { stop(event); void bindAgent(agent); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } }, bindingAgent === (agent?.metadata?.id || agent?.id) ? '正在绑定…' : agent.assistant?.configuration ? '绑定云端助理' : '绑定到新会话'),
+              h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, agent.deployment ? '管理部署' : '编辑 Agent'),
+              agent?.metadata?.local ? h('button', { type: 'button', onClick: async event => { stop(event); if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); }, style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, '删除') : null)));
+      })),
       h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid ' + BRAND.border, color: BRAND.inkMuted, fontSize: '11px' } },
         h('span', null, `${total || filteredPageAgents.length} 个 Agent · 第 ${Math.min(page, pageCount)}/${pageCount} 页`),
         h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
