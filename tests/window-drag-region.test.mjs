@@ -177,3 +177,25 @@ test('fullscreen hides the caption strip with the caption band', () => {
   assert.equal(hidden.length, 1, 'the strip would cover content once the caption band disappears');
   assert.match(hidden[0].body, /display:\s*none/);
 });
+
+/* The macOS chrome pages reserve the frame-top clearance, so the shell mounts a
+   fixed strip over that blank band. It is a caption surface like the Windows
+   strip, so fullscreen (which removes the native traffic lights and the band)
+   must hide it with the same rule the Windows strip uses. */
+test('the macOS title-band strip hides with the native caption band in fullscreen', () => {
+  const stripSelector = `[data-studio-macos-drag-strip]`;
+  const hidden = rules(dragRegionStyles).filter(rule => rule.selectors.some(selector =>
+    selector.includes(stripSelector) && selector.includes('[data-fullscreen]')));
+  assert.equal(hidden.length, 1, 'the macOS strip would cover the page once fullscreen removes the caption band');
+  const selector = hidden[0].selectors.find(candidate => candidate.includes(stripSelector));
+  assert.ok(selector.startsWith(DARWIN_SCOPE), `the strip hide rule must stay scoped to darwin: ${selector}`);
+  assert.equal(subjectOf(selector), stripSelector);
+  assert.match(hidden[0].body, /display:\s*none/);
+});
+
+test('the macOS title-band strip never captions the document root', () => {
+  for (const selector of dragSelectors) {
+    assert.ok(!selector.includes('data-studio-macos-drag-strip'),
+      `the macOS strip is mounted as an element with inline geometry, not a sheet-level root caption: ${selector}`);
+  }
+});
