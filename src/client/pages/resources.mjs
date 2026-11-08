@@ -126,30 +126,29 @@ export function createResourcePages({
     const kindDetail = item => resourceKind === 'skill' && item.source === 'agentengine-server' ? 'Skill Space' : item.contract?.model || item.contract?.entrypoint || item.contract?.transport || item.region || item.version || '—';
     const rows = isPlatform ? (platformCatalog?.items || []) : resources;
     const tableRows = rows.map(resource => {
-          const id = resource.resourceId || resource.id || resource.name;
-          const name = resource.displayName || resource.name || id;
-          const localMcp = resourceKind === 'mcp' && resource.source === 'local';
-          const canDelete = localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
-          const displayStatus = resourceStatusPresentation(resource, resourceKind);
-          return h('tr', { key: id, style: { borderBottom: '1px solid ' + BRAND.border } },
-            h('td', { style: { padding: '12px 13px', color: BRAND.ink } }, h('strong', null, name), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' } }, id)),
-            h('td', { style: { padding: '12px 13px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, sourceLabel(resource)),
-            h('td', { style: { padding: '12px 13px', color: BRAND.inkMuted, whiteSpace: 'nowrap' } }, kindDetail(resource)),
-            h('td', { title: displayStatus.detail, style: { padding: '12px 13px' } }, h(Pill, { tone: displayStatus.tone }, displayStatus.label), resource.health?.errorCode ? h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '4px' } }, resource.health.errorCode) : null),
-            h('td', { style: { padding: '12px 13px', whiteSpace: 'nowrap' } },
-              h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-                h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看'),
-                localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '编辑凭证') : null,
-                resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '重新探测') : null,
-                resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看工具') : null,
-                resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '查看文件') : null,
-                canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px', color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null,
-              )));
+      const id = resource.resourceId || resource.id || resource.name;
+      const name = resource.displayName || resource.name || id;
+      const localMcp = resourceKind === 'mcp' && resource.source === 'local';
+      const canDelete = localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
+      const displayStatus = resourceStatusPresentation(resource, resourceKind);
+      return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, style: { display: 'flex', flexDirection: 'column', gap: '13px', minWidth: 0, padding: '18px', border: '1px solid ' + BRAND.border, borderRadius: '16px', background: BRAND.surface, boxShadow: '0 8px 24px rgba(11,18,32,0.04)' } },
+        h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 } },
+          h('div', { 'aria-hidden': 'true', style: { display: 'grid', placeItems: 'center', width: '42px', height: '42px', flex: '0 0 auto', borderRadius: '12px', color: BRAND.accentStrong, background: BRAND.accentSoft, fontSize: '18px', fontWeight: 800 } }, resourceKind === 'mcp' ? '⌘' : resourceKind === 'skill' ? '✦' : resourceKind === 'model' ? '◌' : '◈'),
+          h('div', { style: { minWidth: 0, flex: 1 } }, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '14px', lineHeight: 1.45, overflowWrap: 'anywhere' } }, name), h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' } }, id))),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px 14px', padding: '12px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border } },
+          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '来源'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45 } }, sourceLabel(resource))),
+          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '版本 / 类型'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45, overflowWrap: 'anywhere' } }, kindDetail(resource))),
+          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '状态'), h('div', { style: { marginTop: '4px' } }, h(Pill, { tone: displayStatus.tone }, displayStatus.label))),
+          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '说明'), h('span', { style: { display: 'block', marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.45, overflowWrap: 'anywhere' } }, resource.health?.errorCode || displayStatus.detail || '已返回目录信息'))),
+        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: 'auto' } },
+          h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '查看'),
+          localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑凭证') : null,
+          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '重新探测') : null,
+          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '查看工具') : null,
+          resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '查看文件') : null,
+          canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null));
     });
-    const table = rows.length ? h('div', { style: { maxHeight: 'min(58vh, 620px)', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
-      h('table', { style: { width: '100%', borderCollapse: 'collapse', minWidth: '760px', fontSize: '12px' } },
-        h('thead', { style: { position: 'sticky', top: 0, zIndex: 1 } }, h('tr', { style: { color: BRAND.inkMuted, textAlign: 'left', background: BRAND.canvas } }, ['名称', '来源', '版本 / 类型', '状态', '操作'].map(column => h('th', { key: column, style: { padding: '11px 13px', borderBottom: '1px solid ' + BRAND.border, fontWeight: 750, whiteSpace: 'nowrap' } }, column)))),
-        h('tbody', null, tableRows))) : null;
+    const table = rows.length ? h('div', { 'data-studio-resource-grid': resourceKind, style: { maxHeight: 'min(64vh, 680px)', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.canvas, padding: '14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'stretch' } }, tableRows) : null;
     const platformTable = platformCatalog ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', marginBottom: '10px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, label), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '4px' } }, platformCatalog.connectionRef ? '云端目录资源只在这里做发现、查看和刷新；每类默认只允许绑定一个资源。绑定动作在 Agent 创建或编辑页完成。' : '当前没有可用云端凭证，先到设置页配置后再读取目录。')), h(Pill, { tone: platformCatalog.connectionRef ? 'accent' : 'signal' }, platformCatalog.connectionRef ? '目录已连接' : '待连接')),
       platformCatalog.items?.length ? table : h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: platformCatalog.connectionRef ? '云端目录没有返回可用资源。' : '连接云端后刷新此目录。' })) : null;

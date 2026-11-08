@@ -1,22 +1,24 @@
 export default String.raw`
 /* Window drag regions for the Studio product shell.
    Only explicit markers may become drag regions: DSH also uses CSS-module
-   classes such as "_titleRow" for ordinary list rows, so matching on class
-   name substrings swallowed the buttons inside those rows. Interactive
-   descendants always opt back out with no-drag. */
-[data-studio-drag-region],
-[data-studio-header],
-[data-windows-titlebar],
-[data-window-drag] {
+   classes such as "_titleRow" for ordinary list rows, so matching on class-name
+   substrings swallowed the buttons inside those rows.
+   data-windows-titlebar is deliberately not one of them. DSH sets it on the
+   document element (apps/desktop preload-windows.ts), and the root box is the
+   whole client area: declaring drag for it made the window caption cover every
+   pixel, so pointer events never reached the page and a click became a caption
+   drag (and a repeated click a maximize).
+   Studio chrome rows stay a macOS drag surface, like DSH's own drag rows
+   (ui-web base.css gates every app-region rule to data-platform='darwin').
+   Windows keeps one drag surface only — the explicit caption strip below, which
+   product-document mounts over the blank 40px band and keeps clear of the
+   caption menu and the native window buttons. */
+html[data-platform='darwin'] :is([data-studio-drag-region], [data-studio-header], [data-window-drag]) {
   -webkit-app-region: drag;
 }
-[data-studio-drag-region] :is(
-  button, a, input, select, textarea, label, summary, svg, img,
-  [role="button"], [role="tab"], [role="menuitem"], [role="switch"],
-  [role="checkbox"], [role="link"], [contenteditable="true"],
-  [tabindex]:not([tabindex="-1"]), [data-studio-no-drag]
-),
-[data-studio-header] :is(
+/* Interactive descendants of any drag marker opt back out, so a control inside
+   a draggable row still receives its own clicks. */
+html[data-platform='darwin'] :is([data-studio-drag-region], [data-studio-header], [data-window-drag]) :is(
   button, a, input, select, textarea, label, summary, svg, img,
   [role="button"], [role="tab"], [role="menuitem"], [role="switch"],
   [role="checkbox"], [role="link"], [contenteditable="true"],
@@ -25,4 +27,19 @@ export default String.raw`
   -webkit-app-region: no-drag;
 }
 [data-studio-no-drag] { -webkit-app-region: no-drag; }
+/* The Windows root box is never draggable. product-document also writes the same
+   value inline (the strongest source), so no later sheet can re-caption the
+   window by targeting the document element. */
+html[data-windows-titlebar],
+html[data-windows-titlebar] body { -webkit-app-region: no-drag; }
+/* The one Windows drag surface: product-document mounts this fixed strip over
+   the blank caption band only. It starts after the caption menu (which reserves
+   up to 84px and grows with the locale) and stops before the native window
+   buttons, so it never covers a clickable control. Fullscreen has no caption. */
+html[data-windows-titlebar] [data-studio-window-drag-strip] {
+  -webkit-app-region: drag;
+}
+html[data-windows-titlebar][data-fullscreen] [data-studio-window-drag-strip] {
+  display: none;
+}
 `;

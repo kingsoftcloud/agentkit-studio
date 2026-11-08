@@ -23,5 +23,5 @@ test('model settings hydrate gateway modality metadata and repair the DSH route'
   assert.match(clientSource, /hydrateModelInputs\s*=\s*async profiles/);
   assert.match(clientSource, /hostRemote\.modelCatalog\(profile\.id\)/);
   assert.match(clientSource, /input:\s*model\.input/);
-  assert.match(clientSource, /dshModel\.applyProfiles\(\{ profiles: discoveredProfiles/);
+  assert.match(clientSource, /dshModel\.applyProfiles\(\{ profiles: persistedProfiles/);
 });

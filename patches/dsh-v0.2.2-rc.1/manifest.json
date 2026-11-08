@@ -2197,12 +2197,62 @@
         ]
       },
       "sequence": 46
+    },
+    {
+      "id": "078",
+      "file": "078-plugin-alignment-migration-diagnostics.patch",
+      "category": "packaging",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "1d08be52d0d21b47f0b39a9896d2f091fa8304f700d410fed45853aa74117dd7",
+      "dependsOn": [
+        "024",
+        "074"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/bundled-plugin-alignment.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/plugin-alignment-log.ts",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/src/window-diagnostic.ts",
+        "apps/desktop/tests/bundled-plugin-alignment.spec.ts",
+        "apps/desktop/tests/plugin-alignment-log.spec.ts",
+        "apps/desktop/tests/window-diagnostic.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Alignment retires a profile copy of a product bundle whenever its version differs from the bundled copy; a recorded earlier failure never suppresses the retry, so a profile a previous launch could not repair heals on the next launch.",
+        "An equal version performs no work, a profile copy without a readable manifest is quarantined, and a profile copy newer than the shipped one is replaced with the shipped copy and reported as a downgrade with the newer copy backed up.",
+        "The sealed runtime copy is located under Windows path rules (drive-letter case and separator differences) and through the explicit runtime node_modules chain before a profile copy is retired.",
+        "Every launch writes a bounded startup record (bundled version, profile copies, action, loaded version, platform, timestamp) and one post-load window sample (URL, html/body computed app region, drag-strip presence, legacy marker count); no record contains a credential and an unwritable log directory never blocks startup."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local rc1 reconciliation: the alignment, log and window-diagnostic suites pass on the maintained rc1 source (24 focused cases); no upstream submission or remote CI receipt."
+      },
+      "removeWhen": "Pinned upstream DSH aligns profile product-bundle copies by version without a persisted attempt budget and ships equivalent startup diagnostics.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/bundled-plugin-alignment.spec.ts",
+          "apps/desktop/tests/plugin-alignment-log.spec.ts",
+          "apps/desktop/tests/window-diagnostic.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 47
     }
   ],
-  "patchedTree": "54959adf25ca0c3dd02241167022402a1161d202",
-  "patchedSourceSha256": "593273a03342695f9f5ec82cd4a9e5c782bd2a47132b2f2b0f5852a5f805c779",
+  "patchedTree": "a1da1530cdc31489daf579049a83adb93865b68d",
+  "patchedSourceSha256": "c2736d2d0d3742b4f340dd2446527cea02b903f5d75a38cbd2f73695b64ca330",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "62619304a76c41b72e8df7369809d7e56fef8d34121f78f8a30663c1707cc4c3"
+    "sha256": "a576478f8804f8e67515be9fa62f851556e202ade7567caeb86aed5baec77691"
   }
 }
