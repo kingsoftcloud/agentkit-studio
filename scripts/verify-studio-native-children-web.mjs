@@ -156,7 +156,6 @@ try {
   await page.getByLabel('角色 1 标识', { exact: true }).fill('reader');
   await page.getByLabel('角色 1 任务说明', { exact: true }).fill('CHILD_WEB_READER: read proof.txt and report the evidence.');
   for (const id of ['read_workspace_file', 'write_workspace_file']) await page.getByLabel(`角色 1 工具 ${id}`, { exact: true }).check();
-  await page.getByRole('button', { name: '下一步', exact: true }).click();
   await page.getByRole('button', { name: '创建 Agent', exact: true }).click();
   const row = page.getByRole('row').filter({ hasText: 'Children Web proof' }); await row.waitFor({ state: 'visible' });
   const list = await rpc('agents/list', { query: 'Children Web proof', source: 'local', page: 1, limit: 10 });

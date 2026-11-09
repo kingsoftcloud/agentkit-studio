@@ -37,7 +37,6 @@ export async function verifyStudioClientPages(page) {
     assert.ok(modelIds.length >= 2, 'the real catalog must offer two models to verify a binding edit');
     await model.selectOption(modelIds[0]);
     await page.getByRole('button', { name: '下一步', exact: true }).click();
-    await page.getByRole('button', { name: '下一步', exact: true }).click();
     await page.getByRole('button', { name: '创建 Agent', exact: true }).click();
     const row = page.getByRole('row').filter({ hasText: name });
     await row.waitFor({ state: 'visible', timeout: 30000 });
@@ -55,7 +54,6 @@ export async function verifyStudioClientPages(page) {
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic updated prompt.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     await model.selectOption(modelIds[1]);
-    await page.getByRole('button', { name: '下一步', exact: true }).click();
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     await page.getByRole('button', { name: '保存 Agent', exact: true }).click();
     await row.waitFor({ state: 'visible', timeout: 30000 });
