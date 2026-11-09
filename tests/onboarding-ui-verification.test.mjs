@@ -74,6 +74,14 @@ test('the onboarding acceptance script locates controls by their shipped accessi
   assert.ok(select, 'the catalog dropdown must expose the 选择模型 name');
   assert.deepEqual(select.children.map(option => option.props.value), ['onboarding-proof', 'onboarding-proof-secondary', '__custom__']);
   assert.equal(select.props.value, '__custom__', 'an off-catalog model stays on the manual option');
+  // Reading the catalog must not rename the manual input: the acceptance
+  // script resolves it once through `getByLabel('模型名称', {exact: true})`
+  // and reuses that locator after the catalog loads. Keep the accessible name
+  // stable and let the placeholder carry the "自定义" wording instead.
+  const manualAfterCatalog = field(view, '模型名称');
+  assert.equal(manualAfterCatalog?.type, 'input', 'the manual input keeps the 模型名称 name after the catalog is read');
+  assert.equal(view.nodes().some(node => node.props?.['aria-label'] === '自定义模型名称'), false, 'the accessible name never switches to 自定义模型名称');
+  assert.match(manualAfterCatalog.props.placeholder, /自定义/, 'the custom wording lives in the placeholder');
   // The redesigned surface labels this step with a section heading instead of
   // the old bold step numeral; the control names above are the contract.
   assert.ok(view.nodes().some(node => node.type === 'h5' && node.children.includes('模型')), 'the model step keeps a visible section title');
@@ -98,6 +106,8 @@ test('the acceptance script drives the shipped five-step model form and asserts 
     "getByRole('button',{name:'读取模型'",
     "getByRole('button',{name:'保存并继续'",
   ]) assert.ok(verification.includes(locator), `the acceptance script must keep using ${locator}`);
+  assert.doesNotMatch(settings, /'aria-label':\s*'[^']*自定义/, 'no accessible name carries the 自定义 wording');
+  assert.doesNotMatch(settings, /'aria-label':\s*catalogItems\.length/, 'no accessible name may depend on whether the catalog loaded');
   assert.match(verification, /每个模型配置都需要填写模型名称/, 'model name validation is asserted');
   assert.match(verification, /请先填写 API Key/, 'the catalog probe must block without an API key');
   assert.match(verification, /toHaveValue\('onboarding-proof'\)/, 'the selected model value is asserted');
