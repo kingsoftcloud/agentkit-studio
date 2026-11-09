@@ -50,6 +50,8 @@ export const STUDIO_OPERATION_IDS = /* @__PURE__ */ Object.freeze(/** @type {con
   "sessions/native-child-result",
   "sessions/native-child-file",
   "sessions/native-command-output",
+  "sessions/native-approval-status",
+  "sessions/native-approval-decision",
   "agents/list",
   "agents/create-local",
   "agents/update-cloud",
