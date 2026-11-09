@@ -9,6 +9,7 @@ import { createAgentSelector } from "./dsh/agent-selector.mjs";
 import { createCloudPermissionPresentation } from './dsh/cloud-permission.mjs';
 import { createCloudSessionStatus } from "./dsh/cloud-status.mjs";
 import { createNativeChildPanel } from "./dsh/native-children.mjs";
+import { createNativeApprovalPanel } from './dsh/native-approval.mjs';
 import { createNavigation } from "./components/navigation.mjs";
 import { createRuntimeCatalogPage } from "./pages/runtime-catalog.mjs";
 import { createNativeAuthoringButton } from "./dsh/native-authoring.mjs";
@@ -83,6 +84,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.CloudPermissionPresentation = createCloudPermissionPresentation({ ui, hostRemote, window });
   ui.CloudSessionStatus = createCloudSessionStatus({ ui, hostRemote });
   ui.NativeChildPanel = createNativeChildPanel({ ui, hostRemote });
+  ui.NativeApprovalPanel = createNativeApprovalPanel({ ui, hostRemote });
   ui.RuntimeCatalogPage = createRuntimeCatalogPage({ ui, hostRemote, window, CustomEvent });
   ui.DomainPage = createDomainPage({ ui });
   Object.assign(ui, createResourceDialogs({ ui, hostRemote, window, CustomEvent }));

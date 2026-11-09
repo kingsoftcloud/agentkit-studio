@@ -102,9 +102,16 @@ export function createNativeHostInteraction({ ctx, store }) {
         kind: 'submit_interaction', payload: { interactionId: pending.interactionId, decision, feedback } };
     }
     if (typeof approval?.request !== 'function') return null;
-    const outcome = await approval.request({ agent, signal, callId, toolName: call.name,
-      reason: childRunId ? `Native child ${childRunId} requests approval for ${call.name}.`
-        : `Native tool ${call.name} requires approval.` });
+    const reason = childRunId ? `Native child ${childRunId} requests approval for ${call.name}.`
+      : `Native tool ${call.name} requires approval.`;
+    const outcome = await approval.request({ agent, signal, callId, toolName: call.name, reason,
+      studioNativeApproval: { contract: 'agentkit.studio-native-approval/v1', agentId: snapshot.scope.agentId,
+        sessionId: snapshot.sessionId, runId: snapshot.runId, interactionId: pending.interactionId,
+        hostInteractionId: pending.hostInteractionId, callId, toolName: call.name, reason,
+        assertCurrent: () => {
+          signal.throwIfAborted(); assertCurrent?.();
+          invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
+        } } });
     signal.throwIfAborted();
     invariant(same(store.load(snapshot.scope, snapshot.runId).snapshot, snapshot), 'studio_native_approval_checkpoint_stale');
     // Only the Host's one-call grant authorizes execution. Unavailable, rejected

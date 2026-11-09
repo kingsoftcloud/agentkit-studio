@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "ec4f84a5a7a627fe1d03bb86a7dcca346ca8ef75",
+  "headCommit": "fc5da3e3199213670de4c856e2a28f60d5378504",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "ecc943386a62d1c22a87aa87f9e186a11ae600f1",
-  "sourceSha256": "0e55020e69beac7fe9f80331a46ea47025a4faec3f210cff85d273b7b4da3dd2",
+  "tree": "db04bfe4617fecd6e08d3c1e54fab7f18f4130aa",
+  "sourceSha256": "ed06f5b7a0d8a2972647d3086d962db680a8ace2c3791842f70cdab7bebbced3",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "9a4fc7dd96e228b7ee3d0dfeb283670849d533c3d319670508a4628791521a7e"
+    "sha256": "fc5a30b2ddc2560bd5dc430d8cde38f06395c77c32a5481f236e964609232391"
   },
   "commits": [
     {
@@ -274,6 +274,12 @@
       "file": "075-rc1-host-test-contracts.patch",
       "commit": "ec4f84a5a7a627fe1d03bb86a7dcca346ca8ef75",
       "sha256": "a981c13f9005820aea596dd88542436e52cc2bf40d747f274f945a77b6ac81d9"
+    },
+    {
+      "id": "076",
+      "file": "076-session-controller-approval-decision.patch",
+      "commit": "fc5da3e3199213670de4c856e2a28f60d5378504",
+      "sha256": "3cf07780e6e6bbf9380c1be423d823a98c769bb4414e097a94285a34f1733c6c"
     }
   ]
 }

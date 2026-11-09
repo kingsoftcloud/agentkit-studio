@@ -508,6 +508,8 @@ export function createProductClient(connection, { window = globalThis.window } =
         nativeChildResult: (payload, signal) => studioBridgeOperation('sessions/native-child-result', payload, signal),
         nativeChildFile: (payload, signal) => studioBridgeOperation('sessions/native-child-file', payload, signal),
         nativeCommandOutput: (payload, signal) => studioBridgeOperation('sessions/native-command-output', payload, signal),
+        nativeApprovalStatus: (payload, signal) => studioBridgeOperation('sessions/native-approval-status', payload, signal),
+        decideNativeApproval: (payload, signal) => studioBridgeOperation('sessions/native-approval-decision', payload, signal),
         promoteNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-promote', payload, signal),
         sendNativeChildInput: (payload, signal) => studioBridgeOperation('sessions/native-child-send', payload, signal),
         cancelNativeChild: (payload, signal) => studioBridgeOperation('sessions/native-child-cancel', payload, signal),

@@ -5,9 +5,26 @@ import { validateNativeReconciliationRequest, validateNativeBackgroundReviewRequ
 import { validateDshA2aRequest } from '../services/dsh-a2a-control.mjs';
 import { validateNativeConversationRequest } from '../services/native-conversation.mjs';
 import { validateNativeCommandOutputRequest } from '../services/native-command-output.mjs';
+import { validateNativeApprovalStatusRequest, validateNativeApprovalDecisionRequest } from '../services/native-approval.mjs';
 /** sessions operations; authentication and lifetime belong to the dispatcher. */
 export function createSessionRoutes({ ctx, getSessionLogExporter, getNativeHost, getDshA2aControls }) {
     return async (endpoint, payload, signal) => {
+        if (endpoint === 'sessions/native-approval-status') {
+            validateNativeApprovalStatusRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            if (typeof host.nativeApprovalStatus !== 'function')
+                throw Object.assign(new Error('Native approval unavailable'), { code: 'STUDIO_NATIVE_APPROVAL_UNAVAILABLE' });
+            return { ok: true, value: host.nativeApprovalStatus(payload) };
+        }
+        if (endpoint === 'sessions/native-approval-decision') {
+            validateNativeApprovalDecisionRequest(payload);
+            signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
+            if (typeof host.nativeApprovalDecision !== 'function')
+                throw Object.assign(new Error('Native approval unavailable'), { code: 'STUDIO_NATIVE_APPROVAL_UNAVAILABLE' });
+            return { ok: true, value: host.nativeApprovalDecision({ agentId: payload.agentId, sessionId: payload.sessionId,
+                runId: payload.runId, interactionId: payload.interactionId, requestId: payload.requestId,
+                expectedGeneration: payload.expectedGeneration, decision: payload.decision }) };
+        }
         if (endpoint === 'sessions/native-resource-retire') {
             validateNativeResourceRetirementRequest(payload);
             signal?.throwIfAborted(); const host = await getNativeHost(); signal?.throwIfAborted();
