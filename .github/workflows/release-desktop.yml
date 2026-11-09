@@ -203,6 +203,23 @@ jobs:
           version: 11.28.5
           package_json_file: dsh-source/package.json
 
+      - name: Select the Electron download mirror
+        # The GitHub release CDN intermittently answers 504 for the Electron
+        # checksum manifest while the archive itself still returns 200, which
+        # aborts packaging before signing starts. Probe the manifest once and
+        # only redirect Electron downloads to the npmmirror copy when the
+        # official source is unusable, so a healthy runner keeps using GitHub.
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe='https://github.com/electron/electron/releases/download/v44.7.0/SHASUMS256.txt'
+          if curl -fsSL --retry 3 --retry-delay 2 --max-time 45 -o /dev/null "$probe"; then
+            echo 'electron mirror fallback: disabled'
+          else
+            echo 'electron mirror fallback: enabled'
+            echo 'ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/' >> "$GITHUB_ENV"
+          fi
+
       - name: Verify immutable source inputs
         shell: bash
         env:
