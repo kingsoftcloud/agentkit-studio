@@ -1372,9 +1372,11 @@ for (const governed of [false, true]) test(`real local command keeps full retain
       try {
       models++;
       if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'command', name: 'run_command',
-        arguments: { command: `"${process.execPath}" -e "process.stdout.write('x'.repeat(40000)+'TAIL_完整😀')"` } }] };
+        arguments: { command: `"${process.execPath}" --jitless -e "process.stdout.write('x'.repeat(40000)+'TAIL_完整😀')"` } }] };
       const saved = store.load(scope, snapshot.runId), result = saved.receipts.flatMap(row => row.result.results ?? [])[0];
-      assert.equal(result.status, 'ok'); assert.equal(saved.snapshot.artifactRefs.length, 1);
+      assert.equal(result.status, 'ok');
+      assert.equal(result.content.exit_code, 0, result.content.stderr);
+      assert.equal(saved.snapshot.artifactRefs.length, 1);
       archive = { content: '' }; let offset = 0;
       for (;;) {
         const page = await artifacts.read({ ...h.request(), ref: saved.snapshot.artifactRefs[0], offset, limit: 32000 });
