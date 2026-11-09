@@ -17,12 +17,8 @@ export default String.raw`
 :where([data-studio-settings], [data-studio-model-settings], [data-studio-agent-form], .agentkit-start-checks) button { font: inherit; }
 :where([data-studio-settings], .agentkit-start-checks) button:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); }
 :where([data-studio-settings], [data-studio-agent-form], .agentkit-start-checks) :is(button,input,select,textarea):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
-[data-studio-model-settings] form { gap: 24px !important; }
-[data-studio-model-settings] article { padding: 18px 0 !important; }
-[data-studio-model-settings] :is(label,input,select) { font-weight: 400 !important; }
-[data-studio-model-settings] [data-model-input-capability] { padding: 8px 0; border-block: .5px solid var(--dsw-alias-border-l2); }
-[data-studio-model-settings] details summary { font-size: 13px; font-weight: 400 !important; }
-[data-studio-model-settings] [data-studio-form-footer] { justify-content: flex-start !important; padding-top: 16px; }
+/* The model settings surface owns its layout, control and chip styles in
+   styles/model-settings.css.mjs; keep this sheet free of overrides for it. */
 [data-studio-agent-form] [data-studio-heading] h2 { font-size: 18px !important; font-weight: 500; }
 [data-studio-agent-form] [data-studio-heading] p { font-size: 12px !important; }
 [data-studio-agent-form] [data-agent-form-layout] { grid-template-columns: 170px minmax(0,1fr) !important; gap: 24px !important; }
