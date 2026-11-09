@@ -18452,10 +18452,10 @@ index 0000000000000000000000000000000000000000..3239ba0423e6fd5ba4f210a972c1632e
 +  })
 +})
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 89f0173b55a4ec915dc4809d09caa42dfd017662..905712f23b2220e32f9b0f03d9d41aa1981a911c 100644
+index 4c632a3050aef5a73567572afe87c51ab93d686f..794a3b024c9d51fc2f113b39f5a3777c3cb49046 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
-@@ -7760,6 +7760,9 @@ importers:
+@@ -7763,6 +7763,9 @@ importers:
        '@deepseek-ai/dsh-agent':
          specifier: workspace:*
          version: link:../agent

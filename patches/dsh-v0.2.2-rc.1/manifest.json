@@ -2249,16 +2249,66 @@
       "sequence": 47
     },
     {
+      "id": "079",
+      "file": "079-session-controller-approval-decision.patch",
+      "category": "session-contract",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "3cf07780e6e6bbf9380c1be423d823a98c769bb4414e097a94285a34f1733c6c",
+      "dependsOn": [
+        "078"
+      ],
+      "affectedFiles": [
+        "packages/api/session-controller/package.json",
+        "packages/api/session-controller/src/index.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/approval-decision.host.spec.ts",
+        "packages/api/session-controller/tests/test-remote.ts",
+        "packages/experimental/liveshare/src/endpoint-classification.ts",
+        "packages/interaction/user-approval/src/index.ts",
+        "packages/interaction/user-approval/src/types.ts",
+        "packages/interaction/user-approval/tests/approval.spec.ts",
+        "pnpm-lock.yaml"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-experimental-liveshare",
+        "@deepseek-ai/dsh-user-approval"
+      ],
+      "contracts": [
+        "The public SessionController approvalDecision RPC accepts only an authenticated Session-owned live approval request id and an allowed-once or rejected decision; the approval service owns stale checks and the paired audit outcome.",
+        "Studio Native answerers consume the DSH approval/decision waterfall while the existing compatibility bridge remains available for older Host routes.",
+        "The public approval decision endpoint is owner-only in LiveShare endpoint classification and is never exposed to a viewer."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Implemented and tested in the local DSH 0.2.2-rc.1 maintenance checkout; no upstream or production submission made."
+      },
+      "removeWhen": "Upstream DSH exposes the same SessionController approval decision contract and live approval-service decision seam.",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/approval-decision.host.spec.ts",
+          "packages/interaction/user-approval/tests/approval.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 48
+    },
+    {
       "id": "080",
       "file": "080-native-owned-turn-recovery-and-dispatch.patch",
       "category": "session-contract",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "fef73f15d939a99b3cc2a7d93b319953053c6d418d860f8856ccd612802ac29c",
+      "sha256": "bb15f9f58ec16a2fca7148cb3039d548b56b4403f290db8b40c3fd7ea1995ed7",
       "dependsOn": [
         "016",
         "038",
         "054",
-        "072"
+        "072",
+        "079"
       ],
       "affectedFiles": [
         "docs/architecture.md",
@@ -2384,13 +2434,13 @@
           "source"
         ]
       },
-      "sequence": 48
+      "sequence": 49
     }
   ],
-  "patchedTree": "ec6092ac93154d532f2f48ebcbf52e6108980fbd",
-  "patchedSourceSha256": "1ee23175be2c2d0812ac215ab011176ff12382c73ff2822cb19b219c9a190b00",
+  "patchedTree": "acb9025f30640ab4ec7398d885a20d6d632c2d37",
+  "patchedSourceSha256": "88af4d935519156635dc02678db26de4a6c2357174a19eaa59704a5f772b12a0",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "e31643e10571ee6fcf58a8df033bdc27049b51ef45bcea3d56163f57e38e4e63"
+    "sha256": "b86d93c17d83cffa23f6324934c5519c4725b6df93ebdd5046c9af66cd652a51"
   }
 }

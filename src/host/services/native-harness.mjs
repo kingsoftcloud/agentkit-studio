@@ -29,6 +29,7 @@ import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATIO
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
+import { createNativeApprovalBridge } from '../../providers/native-approval-bridge.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
 import { createStudioNativeChildWorkspaces } from '../../providers/native-child-workspace-host.mjs';
 import { childCommandResource } from '@kingsoftcloud/agentkit-harness-node/native/child-command-resource';
@@ -67,6 +68,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
   const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
+  const nativeApproval = createNativeApprovalBridge({ ctx });
   const bindingLeases = new Map(), streamRevisions = new WeakMap();
   async function acquireBinding(sessionId, signal) {
     const scoped = AbortSignal.any([signal, lifetime.signal]);
@@ -837,6 +839,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     return starting;
   };
   return {
+    nativeApprovalStatus: nativeApproval.snapshot,
+    nativeApprovalDecision: nativeApproval.decide,
     injectSession: sessionInjection.inject,
     resolveInjectionScope: sessionInjection.resolveScope,
     async resolveManagedBinding(payload, { store: managedStore, admission, runId, target, principal }) {
@@ -980,6 +984,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         childOwners.clear();
         childObservations.clear();
         commandProgress.close();
+        nativeApproval.dispose();
         try { backgroundRegistry?.close(); }
         finally { try { unregister(); } finally { if (!ledger) store.close(); } }
         const failures = [...background, ...children].filter(result => result.status === 'rejected').map(result => result.reason);

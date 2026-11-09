@@ -508,11 +508,15 @@ export function createModelSettingsSection({
       value: hasSelectedModel ? selected.modelName : '__custom__',
       onChange: event => setProfile(selectedIndex, 'modelName', event.target.value === '__custom__' ? '' : event.target.value),
     }, catalogItems.map(item => h('option', { key: item.id, value: item.id }, item.name || item.id)), h('option', { value: '__custom__' }, '手动填写模型名')) : null;
+    // The accessible name is the stable contract the acceptance scripts use
+    // (`getByLabel('模型名称')`), so it must not change when the catalog loads.
+    // "自定义" belongs in the placeholder/hint, which screen readers get as
+    // description rather than as a different control name.
     const customModel = (!catalogItems.length || !hasSelectedModel) ? h('input', {
       className: 'ms-input',
-      'aria-label': catalogItems.length ? '自定义模型名称' : '模型名称',
+      'aria-label': '模型名称',
       value: selected.modelName,
-      placeholder: catalogItems.length ? '输入目录外的模型名' : '先读取模型目录，或手动填写',
+      placeholder: catalogItems.length ? '输入目录外的自定义模型名' : '先读取模型目录，或手动填写',
       onChange: event => setProfile(selectedIndex, 'modelName', event.target.value),
     }) : null;
     const capabilityHint = { unknown: '模型目录未提供能力信息', unavailable: '暂时无法读取模型目录', missing: '模型目录中未找到该模型' }[selected.inputCapability]
@@ -625,7 +629,7 @@ export function createModelSettingsSection({
       section(3, '模型', null,
         h('div', { className: 'ms-grid ms-grid-2' },
           h('label', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel,
-            h('span', { className: 'ms-hint' }, catalogItems.length ? '可从目录选择，也可以手动填写目录外的模型名。'
+            h('span', { className: 'ms-hint' }, catalogItems.length ? '可从目录选择，也可以手动填写目录外的自定义模型名。'
               : profileCredential(selected).configured ? '点击「读取模型」从目录中选择，也可以直接手写模型名。'
                 : '填写 API Key 后点击「读取模型」，也可以直接手写模型名。')),
           reasoningField),
