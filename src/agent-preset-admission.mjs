@@ -18,6 +18,22 @@ import { knowledgeBindings } from './knowledge-tools.mjs';
 import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
 import { nativeAgentPolicyFromSpec } from './native-agent-policy.mjs';
 
+// A degraded preset is usable immediately, but the Host keeps the exact same
+// prompt: one transport blip must not remove an MCP/Skill binding for the rest
+// of the process. Probe again at 30s, 2min and 10min after degradation; a
+// strict probe is the only way to retire the placeholder without guessing that
+// recovery happened.
+const DEFAULT_RESOURCE_REPROBE_DELAYS_MS = Object.freeze([30000, 120000, 600000]);
+
+function resourceReprobeDelays(value) {
+  if (value === undefined) return DEFAULT_RESOURCE_REPROBE_DELAYS_MS;
+  if (!Array.isArray(value) || value.some((delay, index) => !Number.isFinite(Number(delay))
+    || Number(delay) < 0 || (index > 0 && Number(delay) < Number(value[index - 1])))) {
+    throw new TypeError('reprobeDelaysMs 必须是从降级时刻起递增的非负毫秒数组');
+  }
+  return Object.freeze(value.map(Number));
+}
+
 function encodedId(value) {
   return encodeURIComponent(String(value))
     .replace(/%/g, '_')
@@ -148,7 +164,7 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, reprobeDelaysMs, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
     if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
     this.nativeEngineContract = nativeEngineContract;
     this.assertHostCompatible = assertHostCompatible;
@@ -156,6 +172,8 @@ export class DshPresetAdmission {
     // be recovered; the default keeps the Agent conversational and only removes
     // the unavailable bindings, because one flaky MCP must not disable chat.
     this.strictResources = strictResources === true;
+    this.reprobeDelaysMs = resourceReprobeDelays(reprobeDelaysMs);
+    this.reprobeTimers = new Map();
     this.getAgent = getAgent;
     this.getActiveModel = getActiveModel;
     this.getModelSelection = getModelSelection;
@@ -178,6 +196,64 @@ export class DshPresetAdmission {
     // unregister handle can leak into the new registry.
     this.registry = registry;
     if (registry) this.disposed = false;
+  }
+
+  clearResourceReprobe(presetId) {
+    const armed = this.reprobeTimers.get(presetId);
+    if (!armed) return;
+    clearTimeout(armed.timer);
+    this.reprobeTimers.delete(presetId);
+  }
+
+  armResourceReprobe(agent, eligibility, buildId, attempt = 0) {
+    const presetId = eligibility.presetId;
+    // Strict mode owns a fail-closed contract: it never degrades, so it must
+    // not gain a background retry path either. A disposed Host owns no timers.
+    if (this.disposed || this.strictResources || attempt >= this.reprobeDelaysMs.length) return;
+    const placeholder = this.registrations.get(presetId);
+    if (!placeholder?.resourcesUnavailable) return;
+    this.clearResourceReprobe(presetId);
+    // The configured values are offsets from degradation, so the next timer is
+    // only the gap between the previous and the current checkpoint.
+    const delay = this.reprobeDelaysMs[attempt] - (this.reprobeDelaysMs[attempt - 1] ?? 0);
+    const timer = setTimeout(() => {
+      const armed = this.reprobeTimers.get(presetId);
+      if (armed?.timer === timer) this.reprobeTimers.delete(presetId);
+      void this.reprobeResources(agent, eligibility, buildId, placeholder, attempt);
+    }, delay);
+    // The Host process must be able to exit while a long 10-minute probe is
+    // armed; dispose() is the explicit unmount boundary.
+    timer.unref?.();
+    this.reprobeTimers.set(presetId, { timer, attempt, placeholder });
+  }
+
+  async reprobeResources(agent, eligibility, buildId, placeholder, attempt) {
+    const presetId = eligibility.presetId;
+    if (this.disposed || this.strictResources || this.registrations.get(presetId) !== placeholder
+      || !placeholder.resourcesUnavailable) return;
+    const pending = this.pending.get(presetId);
+    if (pending) {
+      // An explicit admission is already rebuilding this preset. Let it finish
+      // rather than racing two registry writes, then re-read the live entry.
+      try { await pending; } catch { /* the explicit admission owns its error */ }
+    }
+    if (this.disposed || this.strictResources || this.registrations.get(presetId) !== placeholder
+      || !placeholder.resourcesUnavailable) return;
+    const registration = this.register(agent, eligibility, buildId, { allowUnavailableResources: false });
+    this.pending.set(presetId, registration);
+    try {
+      await registration;
+      console.info('[agentkit-studio] preset resource snapshot recovered:', presetId,
+        `after ${attempt + 1} reprobe(s)`);
+    } catch (error) {
+      if (this.disposed || this.registrations.get(presetId) !== placeholder) return;
+      console.warn('[agentkit-studio] preset resource snapshot reprobe failed:', presetId,
+        `attempt ${attempt + 1}/${this.reprobeDelaysMs.length}`,
+        String(error?.code || error?.message || 'RESOURCE_UNAVAILABLE'));
+      this.armResourceReprobe(agent, eligibility, buildId, attempt + 1);
+    } finally {
+      if (this.pending.get(presetId) === registration) this.pending.delete(presetId);
+    }
   }
 
   async ensure(agentId, {
@@ -365,10 +441,14 @@ export class DshPresetAdmission {
     // A newer revision must not remove a preset still referenced by an older
     // native Session. Dispose all registrations with the Host scope instead.
     this.registrations.set(eligibility.presetId, { presetId: eligibility.presetId, unregister, resourcesUnavailable });
+    if (resourcesUnavailable) this.armResourceReprobe(agent, eligibility, buildId);
+    else this.clearResourceReprobe(eligibility.presetId);
   }
 
   async dispose() {
     this.disposed = true;
+    for (const armed of this.reprobeTimers.values()) clearTimeout(armed.timer);
+    this.reprobeTimers.clear();
     await Promise.allSettled(this.pending.values());
     const entries = [...this.registrations.values()];
     this.registrations.clear();
