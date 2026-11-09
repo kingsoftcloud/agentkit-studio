@@ -269,6 +269,37 @@
 - **待移除的模型**：不是删除操作，重新读取或（同一页面内）重开面板都会让它回到列表，
   真正删除发生在保存时。
 
+**交互截图**（浅色；设置弹窗 1180 × 820 视口内渲染，字体与布局与真实页面一致。表单高于
+820 视口——页脚与主按钮落在首屏外，故截图取完整表单高度（1180 × 1176），让编辑区 chip、
+页脚说明与主按钮态同框；严格 1180 × 820 的首屏版可用
+`.artifacts/ui-redesign/shoot-drafts.mjs --variant=screen` 复现）：
+
+1. `draft-1-dirty`：选中 A 改 API Key → 标题出现「未保存」chip、列表 A 项出现空心圆点、
+   页脚出现「有未保存的改动 · 草稿仅保存在内存，刷新后丢失」、主按钮加 accent ring。
+
+   ![draft-1-dirty](assets/model-settings/draft-1-dirty.png)
+
+2. `draft-2-switch`：切到 B → B 显示已保存值（OpenAI / https://api.openai.com/v1 / gpt-5），
+   A 的列表项保留空心圆点，编辑区没有「未保存」chip。
+
+   ![draft-2-switch](assets/model-settings/draft-2-switch.png)
+
+3. `draft-3-back`：切回 A → 草稿 Key 原样恢复（点小眼睛可见），chip 与页脚提示仍在。
+
+   ![draft-3-back](assets/model-settings/draft-3-back.png)
+
+4. `draft-4-saved`：点「保存配置」成功 → chip、列表圆点、页脚草稿说明、主按钮醒目态一起消失，
+   页脚显示保存成功。
+
+   ![draft-4-saved](assets/model-settings/draft-4-saved.png)
+
+5. `draft-5-new-draft` / `draft-5-cancel-new`：点「＋ 添加模型」得到第 3 个草稿
+   （新模型 · 未保存 · 动作为「取消」，列表 3 个）；点「取消」后回到添加前的 2 个模型、
+   选中 A，所有未保存提示消失。
+
+   ![draft-5-new-draft](assets/model-settings/draft-5-new-draft.png)
+   ![draft-5-cancel-new](assets/model-settings/draft-5-cancel-new.png)
+
 ## 5. 验证
 
 - `node --test tests/model-settings-discovery.test.mjs`：7/7 通过（能力发现、保存载荷、
@@ -289,4 +320,5 @@
   完整设置弹窗（DSH 宿主所有）在 Web profile 下无法脚本打开，故整页对比图由
   本地 harness 渲染**同一份组件源码**（Mock Host 数据 + 从真实页面采集的 DSH token）截取。
 - 截图：`docs/assets/model-settings/before-after-dialog.jpg`、
-  `before-after-full.jpg`、`before-after-onboarding.jpg`。
+  `before-after-full.jpg`、`before-after-onboarding.jpg`；方案 C 的 6 张交互截图见 4.4 节
+  （`draft-1-dirty.png` … `draft-5-cancel-new.png`，另有新增草稿的 `draft-5-new-draft.png`）。
