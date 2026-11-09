@@ -260,3 +260,54 @@ test('request metrics measure the actual outbound body without retaining prompt 
     assert.doesNotMatch(JSON.stringify(metrics), /private-|upstream-secret|private system/);
   } finally { await proxy.close(); }
 });
+
+test('a 400 naming reasoning_effort is retried once at the provider’s highest legal level', async () => {
+  const attempts = [], logs = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, provider: 'openai' },
+    onReasoningFallback: event => logs.push(event),
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      attempts.push(body);
+      if (attempts.length === 1) {
+        return new Response(JSON.stringify({ error: { message: "Unsupported value: 'max' for 'reasoning_effort'" } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+      return Response.json({ model: body.model, choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: 'hi', reasoning: { effort: 'max', summary: 'auto' } }) });
+    assert.equal(response.status, 200);
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].reasoning_effort, 'max');
+    assert.equal(attempts[1].reasoning_effort, 'high');
+    assert.deepEqual(logs, [{ provider: 'openai', model: 'bound-model', from: 'max', to: 'high', status: 400 }]);
+    // The observable record must never carry the credential.
+    assert.doesNotMatch(JSON.stringify(logs), /upstream-secret/);
+  } finally { await proxy.close(); }
+});
+
+test('a reasoning 400 is not retried when no lower legal value exists or the error is unrelated', async () => {
+  const cases = [
+    ['ksyun', 'max', '{"error":{"message":"reasoning_effort max rejected"}}'],
+    ['openai', 'high', '{"error":{"message":"reasoning_effort high rejected"}}'],
+    ['openai', 'max', '{"error":{"message":"model not found"}}'],
+  ];
+  for (const [provider, effort, detail] of cases) {
+    let attempts = 0;
+    const proxy = await createCodexModelProxy({
+      profile: { ...profile, provider },
+      fetchImpl: async () => { attempts += 1; return new Response(detail, { status: 400, headers: { 'Content-Type': 'application/json' } }); },
+    });
+    try {
+      const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+        headers: { Authorization: `Bearer ${proxy.apiKey}` },
+        body: JSON.stringify({ model: 'gpt-5', input: 'hi', reasoning: { effort } }) });
+      assert.equal(response.status, 400, `${provider}/${effort}`);
+      assert.equal(attempts, 1, `${provider}/${effort}`);
+    } finally { await proxy.close(); }
+  }
+});

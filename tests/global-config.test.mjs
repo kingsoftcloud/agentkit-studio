@@ -134,3 +134,20 @@ test('reasoning opt-in survives describe so a reload cannot erase the model decl
   assert.equal(normalized.reasoningEfforts, true);
   assert.equal(normalized.defaultReasoningEffort, 'high');
 });
+
+test('reasoning defaults are validated against the provider capability table', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'agentkit-reasoning-provider-'));
+  const config = createGlobalConfiguration({ home, env: { AGENTKIT_HOME: home } });
+  await config.update({ modelProfiles: [
+    // OpenAI's medium is a legal level even though the old three-level
+    // allow-list did not know it.
+    { id: 'gpt', provider: 'openai', modelName: 'gpt-5', credentialName: 'OPENAI_KEY', reasoningEfforts: true, defaultReasoningEffort: 'medium' },
+    // An unknown provider may not keep `max`, which it never sends.
+    { id: 'custom', provider: 'custom', modelName: 'compatible', credentialName: 'CUSTOM_KEY', reasoningEfforts: true, defaultReasoningEffort: 'max' },
+    // Ksyun keeps max; only the provider's own enum is authoritative.
+    { id: 'ksyun', provider: 'ksyun', modelName: 'deepseek', credentialName: 'KEY', reasoningEfforts: true, defaultReasoningEffort: 'max' },
+  ] });
+  const described = await config.describe();
+  assert.deepEqual(described.modelProfiles.map(profile => [profile.provider, profile.defaultReasoningEffort]),
+    [['openai', 'medium'], ['custom', 'high'], ['ksyun', 'max']]);
+});

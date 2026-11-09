@@ -2,6 +2,7 @@ import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, DSH_
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { modelRuntimeOptions } from '../../model-profile-contract.mjs';
+import { reasoningProfileFor, studioReasoning } from '../../model-reasoning.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import modelSettingsStyles from '../styles/model-settings.css.mjs';
 
@@ -78,6 +79,19 @@ const SOURCE_LABELS = {
 };
 
 const PROVIDER_LABELS = { ksyun: '金山云模型服务', openai: 'OpenAI' };
+
+/** Reasoner labels shared by the「思考等级」selector and its notices. */
+const REASONING_LABELS = { low: '低', medium: '中', high: '高', max: '最高' };
+
+/** One line per provider explaining what the selector actually sends. */
+const REASONING_HINTS = {
+  ksyun: '金山云接受 low/high/max，按所选值原样发送。',
+  deepseek: 'DeepSeek 接受 low/high/max，按所选值原样发送。',
+  openai: 'OpenAI 只接受 minimal/low/medium/high；没有「最高 → max」，越界档位不会被发送。',
+  codex: 'Codex 只接受 minimal/low/medium/high，「最高」会按 high 发送。',
+  custom: '未识别的提供商只提供低/高两档，并按同名值发送，避免上游拒绝非法档位。',
+};
+const reasoningHint = capability => REASONING_HINTS[capability.provider] || REASONING_HINTS.custom;
 
 export function createModelSettingsSection({
   ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, BRAND = DEFAULT_BRAND },
@@ -299,7 +313,7 @@ export function createModelSettingsSection({
         }
         const rawProfiles = form.profiles.map((profile, index) => ({ ...modelRuntimeOptions(profile),
           ...(typeof profile.displayName === 'string' ? { displayName: profile.displayName } : {}),
-          id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, default: profile.default === true, codexApi: profile.codexApi || 'responses', input: profile.input || ['text'], ...(profile.reasoningEfforts ? { reasoningEfforts: true, defaultReasoningEffort: profile.defaultReasoningEffort || 'high' } : {}) }));
+          id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, default: profile.default === true, codexApi: profile.codexApi || 'responses', input: profile.input || ['text'], ...(profile.reasoningEfforts ? { reasoningEfforts: true, defaultReasoningEffort: profile.defaultReasoningEffort || reasoningProfileFor(profile.provider).default } : {}) }));
         const activeDefaultIndex = rawProfiles.findIndex(profile => profile.enabled !== false && profile.default);
         const firstEnabledIndex = rawProfiles.findIndex(profile => profile.enabled !== false);
         const defaultIndex = activeDefaultIndex >= 0 ? activeDefaultIndex : firstEnabledIndex;
@@ -343,6 +357,23 @@ export function createModelSettingsSection({
       return defaultIndex >= 0 ? defaultIndex : 0;
     })();
     const selected = profiles[selectedIndex] || profiles[0];
+    // 思考等级的单一数据源在 src/model-reasoning.mjs：这里只负责把该提供商
+    // 支持的档位、默认档和实际发送值呈现出来，不再硬编码任何 wire 值。
+    const reasoningFor = profile => {
+      const declared = profile?.reasoningEfforts;
+      if (declared && typeof declared === 'object' && !Array.isArray(declared)) {
+        const resolved = studioReasoning(profile);
+        if (resolved) return resolved;
+      }
+      return studioReasoning({ ...profile, reasoningEfforts: true });
+    };
+    const reasoningCapability = reasoningProfileFor(selected?.provider);
+    const selectedReasoning = reasoningFor(selected);
+    const reasoningLevels = Object.keys(selectedReasoning.efforts);
+    const reasoningValue = selected?.reasoningEfforts
+      ? (selectedReasoning.efforts[selected.defaultReasoningEffort] ? selected.defaultReasoningEffort : selectedReasoning.defaultEffort)
+      : '';
+    const reasoningWire = reasoningValue ? selectedReasoning.efforts[reasoningValue] : '';
     const defaultProfile = profiles.find(profile => profile.enabled !== false && profile.default) || profiles.find(profile => profile.enabled !== false) || profiles[0];
     const profileCredential = profile => modelStatus[profile.credentialName] || {};
     const profileStatus = profile => profile.enabled === false ? { tone: 'neutral', label: '已停用' } : profileCredential(profile).configured ? { tone: 'success', label: '已配置' } : { tone: 'warn', label: '需要配置' };
@@ -492,6 +523,27 @@ export function createModelSettingsSection({
         ? [h(Chip, { key: 'text' }, '文字'), selected.input?.includes('image') ? h(Chip, { key: 'image' }, '图片') : null, h('span', { key: 'hint', className: 'ms-hint' }, '模型目录已识别')]
         : h('span', { className: 'ms-hint' }, capabilityHint));
 
+    // 「思考等级」只展示当前提供商支持的档位，选项里直接写出实际发送值：
+    // 选「最高」在 Codex 下会显示「最高 → high」，不需要用户猜测降级。
+    const reasoningField = h('label', { className: 'ms-field' },
+      h('span', { className: 'ms-label' }, '思考等级'),
+      h('select', {
+        className: 'ms-select',
+        'aria-label': '思考等级',
+        'data-model-reasoning': reasoningWire,
+        value: reasoningValue,
+        onChange: event => {
+          const level = event.target.value;
+          setProfile(selectedIndex, 'reasoningEfforts', level ? true : undefined);
+          setProfile(selectedIndex, 'defaultReasoningEffort', level || undefined);
+        },
+      }, h('option', { value: '' }, '不启用'),
+        reasoningLevels.map(level => h('option', { key: level, value: level },
+          `${REASONING_LABELS[level] || level} → ${selectedReasoning.efforts[level]}`))),
+      h('span', { className: 'ms-hint' }, reasoningValue
+        ? `实际发送 reasoning_effort=${reasoningWire}。${reasoningHint(reasoningCapability)}`
+        : `不启用时不写入任何思考档位；模型不支持 reasoning_effort 时保持此项为空。${reasoningHint(reasoningCapability)}`));
+
     const detail = h('article', {
       className: 'ms-detail',
       'data-model-profile-card': selected.id || selectedIndex,
@@ -523,6 +575,17 @@ export function createModelSettingsSection({
               onChange: event => {
                 const provider = event.target.value;
                 const fields = { provider, baseUrl: provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : provider === 'openai' ? 'https://api.openai.com/v1' : '', input: undefined, inputCapability: 'pending' };
+                // 切换提供商后，原档位可能不在新提供商的枚举里（例如「最高」在
+                // OpenAI 下没有 max）：自动落到新提供商的默认档，并给一条
+                // 非阻塞提示，而不是等保存后才由上游拒绝。
+                const capability = reasoningProfileFor(provider);
+                // An explicit object map described the previous provider's wire
+                // contract; after a provider switch the new table governs again.
+                if (selected.reasoningEfforts && typeof selected.reasoningEfforts === 'object') fields.reasoningEfforts = true;
+                if (selected.reasoningEfforts && reasoningValue && !capability.levels.includes(reasoningValue)) {
+                  fields.defaultReasoningEffort = capability.default;
+                  setMessage(`已切换到${providerLabel(provider)}：思考等级「${REASONING_LABELS[reasoningValue] || reasoningValue}」不受支持，已改为「${REASONING_LABELS[capability.default]}」（发送 ${capability.wire[capability.default]}）。`);
+                } else setMessage('');
                 rememberDraft(form.profiles[selectedIndex], selectedIndex, fields);
                 setForm(current => ({ ...current, profiles: current.profiles.map((item, cursor) => cursor === selectedIndex ? { ...item, ...fields } : item) }));
               },
@@ -560,10 +623,12 @@ export function createModelSettingsSection({
           h('span', { className: 'ms-meta' }, '凭证来源 · ', sourceLabel(profileCredential(selected).source))),
         connection.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': connection.state === 'error' ? 'danger' : connection.state === 'warning' ? 'warn' : 'success' }, connection.message) : null),
       section(3, '模型', null,
-        h('label', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel,
-          h('span', { className: 'ms-hint' }, catalogItems.length ? '可从目录选择，也可以手动填写目录外的模型名。'
-            : profileCredential(selected).configured ? '点击「读取模型」从目录中选择，也可以直接手写模型名。'
-              : '填写 API Key 后点击「读取模型」，也可以直接手写模型名。')),
+        h('div', { className: 'ms-grid ms-grid-2' },
+          h('label', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel,
+            h('span', { className: 'ms-hint' }, catalogItems.length ? '可从目录选择，也可以手动填写目录外的模型名。'
+              : profileCredential(selected).configured ? '点击「读取模型」从目录中选择，也可以直接手写模型名。'
+                : '填写 API Key 后点击「读取模型」，也可以直接手写模型名。')),
+          reasoningField),
         capability),
       section(4, '高级', null,
         h('details', { className: 'ms-advanced' },

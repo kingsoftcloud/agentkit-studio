@@ -6,8 +6,9 @@ import { responsesToChat, chatToResponses, createResponsesStreamTransformer } fr
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
+import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
-export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
+export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, onReasoningFallback = logReasoningFallback, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
   if (!['chat-completions', 'responses'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');
   return async (request, response) => {
     const admission = admit(request);
@@ -48,7 +49,7 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       // An unbound native Codex provider may let Codex select its default model.
       if (!nativeResponses || profile.modelName) body.model = profile.modelName;
       if (body.stream && !nativeResponses) body.stream_options = { ...body.stream_options, include_usage: true };
-      const serialized = JSON.stringify(body);
+      let serialized = JSON.stringify(body);
       if (onRequestMetrics) {
         const chars = value => JSON.stringify(value).length;
         const items = nativeResponses ? body.input : body.messages;
@@ -59,13 +60,39 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
           instructionsChars: (body.instructions ? chars(body.instructions) : 0) + messages.filter(message => ['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0),
           conversationChars: messages.filter(message => !['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0) });
       }
-      const upstream = await fetchImpl(`${profile.baseUrl}/${nativeResponses ? 'responses' : 'chat/completions'}`, {
+      const upstreamUrl = `${profile.baseUrl}/${nativeResponses ? 'responses' : 'chat/completions'}`;
+      const requestUpstream = serializedBody => fetchImpl(upstreamUrl, {
         method: 'POST', headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' },
-        body: serialized, signal: deadline.signal, redirect: 'error',
+        body: serializedBody, signal: deadline.signal, redirect: 'error',
       });
+      let upstream = await requestUpstream(serialized);
       deadline.touch();
+      let upstreamBodyConsumed = false;
+      // Some OpenAI-compatible gateways answer with a 400 that names the
+      // reasoning option instead of ignoring an unsupported level. Downgrade
+      // once to the provider's highest legal value rather than failing a turn
+      // whose content would otherwise succeed. Only one retry, only when the
+      // body actually carried a different value.
+      if (upstream.status === 400) {
+        const detail = (await upstream.text().catch(() => '')).slice(0, 4096);
+        upstreamBodyConsumed = true;
+        const fallback = studioReasoningFallbackWire(profile);
+        const replaced = isReasoningEffortRejection(upstream.status, detail) ? applyReasoningFallback(body, fallback) : undefined;
+        if (replaced !== undefined) {
+          // Observability must never turn a recoverable 400 into a turn
+          // failure, so a misbehaving hook is ignored.
+          try {
+            onReasoningFallback({ provider: String(profile.provider || ''), model: String(profile.modelName || body.model || ''),
+              from: replaced, to: fallback, status: upstream.status });
+          } catch { /* logging is best-effort */ }
+          serialized = JSON.stringify(body);
+          upstream = await requestUpstream(serialized);
+          deadline.touch();
+          upstreamBodyConsumed = false;
+        }
+      }
       if (!upstream.ok) {
-        await upstream.body?.cancel();
+        if (!upstreamBodyConsumed) await upstream.body?.cancel();
         throw Object.assign(new Error(`模型服务返回 ${upstream.status}`), { status: upstream.status, code: 'MODEL_UPSTREAM_ERROR' });
       }
       if (!body.stream) {

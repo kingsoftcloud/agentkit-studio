@@ -127,3 +127,67 @@ test('model settings reads an unsaved key before selecting a model and keeps it 
   await view.settle();
   assert.match(view.text(), /连接成功/);
 });
+
+const reasoningSelect = view => view.nodes().find(node => node.type === 'select' && node.props['aria-label'] === '思考等级');
+const providerSelect = view => view.nodes().find(node => node.type === 'select' && node.props['aria-label'] === '提供商');
+const optionValues = select => select.children.filter(node => node.type === 'option').map(node => node.props.value);
+
+test('the reasoning selector lists only the levels the provider accepts and shows the wire value', async () => {
+  const view = ui({ id: 'gpt', input: ['text'] }, ['text'], { provider: 'openai', reasoningEfforts: true, defaultReasoningEffort: 'medium' });
+  await view.settle();
+  const select = reasoningSelect(view);
+  assert.ok(select);
+  assert.equal(select.props.value, 'medium');
+  assert.equal(select.props['data-model-reasoning'], 'medium');
+  assert.deepEqual(optionValues(select), ['', 'low', 'medium', 'high']);
+  const labels = Object.fromEntries(select.children.filter(node => node.type === 'option').map(node => [node.props.value, node.children.join('')]));
+  assert.equal(labels.high, '高 → high');
+  assert.equal(labels.medium, '中 → medium');
+  assert.equal('max' in labels, false);
+  assert.match(view.text(), /实际发送 reasoning_effort=medium/);
+});
+
+test('a Codex profile shows that its top level is sent as high', async () => {
+  const view = ui({ id: 'gpt', input: ['text'] }, ['text'], { provider: 'codex', reasoningEfforts: true, defaultReasoningEffort: 'max' });
+  await view.settle();
+  const select = reasoningSelect(view);
+  assert.equal(select.props.value, 'max');
+  assert.equal(select.props['data-model-reasoning'], 'high');
+  const top = select.children.find(node => node.type === 'option' && node.props.value === 'max');
+  assert.equal(top.children.join(''), '最高 → high');
+  assert.match(view.text(), /实际发送 reasoning_effort=high/);
+});
+
+test('an unknown provider exposes only the two safe, same-named levels', async () => {
+  const view = ui({ id: 'custom', input: ['text'] }, ['text'], { provider: 'custom', reasoningEfforts: true });
+  await view.settle();
+  const select = reasoningSelect(view);
+  assert.deepEqual(optionValues(select), ['', 'low', 'high']);
+  assert.match(view.text(), /未识别的提供商/);
+});
+
+test('switching provider falls back to its default level instead of keeping an illegal one', async () => {
+  const view = ui({ id: 'deepseek', input: ['text'] }, ['text'], { provider: 'ksyun', reasoningEfforts: true, defaultReasoningEffort: 'max' });
+  await view.settle();
+  assert.equal(reasoningSelect(view).props.value, 'max');
+  providerSelect(view).props.onChange({ target: { value: 'openai' } });
+  await view.settle();
+  assert.equal(reasoningSelect(view).props.value, 'medium');
+  assert.match(view.text(), /思考等级「最高」不受支持，已改为「中」/);
+  assert.match(view.text(), /发送 medium/);
+  await view.save();
+  await view.settle();
+  assert.equal(view.values.modelProfiles[0].provider, 'openai');
+  assert.equal(view.values.modelProfiles[0].reasoningEfforts, true);
+  assert.equal(view.values.modelProfiles[0].defaultReasoningEffort, 'medium');
+});
+
+test('a model without reasoning keeps「不启用」and writes no effort into the profile', async () => {
+  const view = ui({ id: 'vision', input: ['text'] }, ['text']);
+  await view.settle();
+  assert.equal(reasoningSelect(view).props.value, '');
+  await view.save();
+  await view.settle();
+  assert.equal('reasoningEfforts' in view.values.modelProfiles[0], false);
+  assert.equal('defaultReasoningEffort' in view.values.modelProfiles[0], false);
+});
