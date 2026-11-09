@@ -293,11 +293,14 @@
 
    ![draft-4-saved](assets/model-settings/draft-4-saved.png)
 
-5. `draft-5-new-draft` / `draft-5-cancel-new`：点「＋ 添加模型」得到第 3 个草稿
-   （新模型 · 未保存 · 动作为「取消」，列表 3 个）；点「取消」后回到添加前的 2 个模型、
-   选中 A，所有未保存提示消失。
+5. `draft-5-new-draft`：点「＋ 添加模型」→ 列表变成 3 个、新条目带空心圆点，
+   编辑区「新模型」带「未保存」chip，动作从「移除」换成「取消」，主按钮仍带 ring。
 
    ![draft-5-new-draft](assets/model-settings/draft-5-new-draft.png)
+
+   `draft-5-cancel-new`：点「取消」→ 列表与计数回到添加前的 2 个、选中态回到 A，
+   所有未保存提示消失。
+
    ![draft-5-cancel-new](assets/model-settings/draft-5-cancel-new.png)
 
 ## 5. 验证
