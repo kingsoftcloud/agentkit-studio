@@ -659,15 +659,6 @@ export default String.raw`
   padding: 0 var(--ms-space-4);
 }
 
-[data-studio-model-settings] .ms-btn[data-variant="link"] {
-  height: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--ms-accent-ink);
-  font-weight: 500;
-}
-
 [data-studio-model-settings] .ms-link {
   color: var(--ms-accent-ink);
   font-size: 12px;

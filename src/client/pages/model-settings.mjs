@@ -33,7 +33,7 @@ const SOURCE_LABELS = {
 const PROVIDER_LABELS = { ksyun: '金山云模型服务', openai: 'OpenAI' };
 
 export function createModelSettingsSection({
-  ui: { React: { createElement: h, useEffect, useState, useRef }, Pill, SecretInput, buttonStyle, inputStyle, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent
 }) {
   const Chip = ({ children, tone = 'neutral' }) => h('span', { className: 'ms-chip', 'data-tone': tone }, children);
