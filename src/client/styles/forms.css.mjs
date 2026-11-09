@@ -19,14 +19,7 @@ export default String.raw`
 :where([data-studio-settings], [data-studio-agent-form], .agentkit-start-checks) :is(button,input,select,textarea):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 /* The model settings surface owns its layout, control and chip styles in
    styles/model-settings.css.mjs; keep this sheet free of overrides for it. */
-[data-studio-agent-form] [data-studio-heading] h2 { font-size: 18px !important; font-weight: 500; }
-[data-studio-agent-form] [data-studio-heading] p { font-size: 12px !important; }
-[data-studio-agent-form] [data-agent-form-layout] { grid-template-columns: 170px minmax(0,1fr) !important; gap: 24px !important; }
-[data-studio-agent-form] [data-agent-form-steps] { border: 0 !important; background: transparent !important; padding: 0 !important; }
-[data-studio-agent-form] [data-agent-form-body] { border: 0 !important; border-left: .5px solid var(--dsw-alias-border-l2) !important; border-radius: 0 !important; padding: 0 0 0 24px !important; background: transparent !important; }
-[data-studio-agent-form] label { font-size: 13px !important; font-weight: 400 !important; }
-[data-studio-agent-form] :is(input,select,textarea) { font-size: 14px !important; }
-[data-studio-agent-form] h3 { font-size: 16px !important; font-weight: 500; }
+/* The Agent form owns its layout and controls in styles/agent-form.css.mjs. */
 .agentkit-check-toggle { display: flex; justify-content: flex-end; margin-top: 12px; }
 .agentkit-check-toggle button { font-size: 12px; padding: 5px 10px !important; }
 .agentkit-start-checks { margin: 12px 0; padding: 18px 20px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-layer-3); }
@@ -38,10 +31,6 @@ export default String.raw`
 [data-check-state=confirmed] .agentkit-check-state { color: var(--dsw-alias-state-success-primary,var(--dsw-alias-label-secondary)); }
 [data-check-state=missing] .agentkit-check-state { color: var(--dsw-alias-state-warn-primary); }
 @container (max-width: 540px) {
-  [data-studio-agent-form] [data-agent-form-layout] { grid-template-columns: minmax(0,1fr) !important; }
-  [data-studio-agent-form] [data-agent-form-body] { border-left: 0 !important; padding-left: 0 !important; }
-  [data-studio-agent-form] [data-agent-form-steps] > div:nth-child(2) { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  [data-studio-agent-form] [style*="grid-template-columns"] { grid-template-columns: minmax(0,1fr) !important; }
   [data-studio-settings-row], .agentkit-check-row { flex-wrap: wrap; gap: 8px; }
   [data-studio-settings-row] > div { flex-basis: 100%; }
   [data-studio-settings-row] > span { max-width: 100%; text-align: left; }
