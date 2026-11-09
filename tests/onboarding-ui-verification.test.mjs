@@ -74,7 +74,9 @@ test('the onboarding acceptance script locates controls by their shipped accessi
   assert.ok(select, 'the catalog dropdown must expose the 选择模型 name');
   assert.deepEqual(select.children.map(option => option.props.value), ['onboarding-proof', 'onboarding-proof-secondary', '__custom__']);
   assert.equal(select.props.value, '__custom__', 'an off-catalog model stays on the manual option');
-  assert.ok(view.nodes().some(node => node.type === 'label' && node.children.includes('2. 选择模型')), 'the visible 2. 选择模型 step label is unchanged');
+  // The redesigned surface labels this step with a section heading instead of
+  // the old bold step numeral; the control names above are the contract.
+  assert.ok(view.nodes().some(node => node.type === 'h5' && node.children.includes('模型')), 'the model step keeps a visible section title');
   assert.equal(view.probe().apiKey, 'onboarding-local-fixture', 'reading the catalog probes the entered endpoint with the unsaved key');
   assert.ok(view.probe().modelName, 'the probe carries the current model name');
 

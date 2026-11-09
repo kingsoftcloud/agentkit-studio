@@ -206,22 +206,28 @@
   - 提供商、API 地址、Codex 协议、思考模式各自有 `aria-label`，不再依赖视觉标签；
   - 校验消息 `role="status"`，错误 `role="alert"`；列表项 `aria-current` 标记当前编辑项。
 
-### 4.3 与 `fix/onboarding-ui-verification-20261109` 的关系
+### 4.3 与 `#102`（原 `fix/onboarding-ui-verification-20261109`）的关系
 
-该分支的 `scripts/verify-studio-onboarding-ui.mjs` 依赖
-`model.getByLabel('模型名称', { exact: true })`。本分支已经补上该 label（目录下拉与
-手动输入互斥渲染，任一时刻只有一个「模型名称」控件），因此：
+该分支已经以 PR #102 合入 `main`，本分支已 rebase 到它之上。两边对同一页的处理：
 
-- **建议合并顺序**：先合本分支（含 aria-label 与整页重构），再合
-  `fix/onboarding-ui-verification-20261109`；后者若只改 label 会与本分支重复，
-  可 rebase 后仅保留脚本/断言部分。
-- 若先合该分支，本分支 rebase 时冲突点只在 `model-settings.mjs` 的模型字段一段，
-  保留本分支的 `.ms-field` 结构与 `aria-label` 即可。
+- #102 为控件补了可供语义定位的 accessible name：`提供商`、`API 地址`、`API Key`、
+  `模型名称`（手填）、`选择模型`（目录下拉），并新增
+  `tests/onboarding-ui-verification.test.mjs` 守护这组名字；
+- 本分支保留全部名字（下拉与手填互斥渲染，任一时刻只有 `模型名称` 一个输入框），
+  并额外保证 profile 卡片里保留 `<strong>` 承载模型名（宿主验收脚本用
+  `card.locator('strong')` 断言当前模型）；
+- 唯一被修改的 #102 断言是「必须存在 `2. 选择模型` 的可见 label」——
+  本次重做正是要把大号步骤标签换成分区标题，因此改为断言 `模型` 分区标题存在，
+  控件名契约（上面五个 label）一字未动。
+
+合并顺序：本分支已包含 #102，直接合入即可，无需再单独排序。
 
 ## 5. 验证
 
 - `node --test tests/model-settings-discovery.test.mjs`：7/7 通过（能力发现、保存载荷、
   thinking 参数、至少一个启用、未保存 Key 读取目录）。
+- `node --test tests/onboarding-ui-verification.test.mjs`：2/2 通过（#102 的控件名契约与
+  验收脚本断言）。
 - 视觉验证：真实 DSH Web + 真实 Studio 插件（临时 `DSH_HOME` profile），
   打开「凭证引导 → 连接你的模型」，组件在真实 token/字体下渲染正常；
   完整设置弹窗（DSH 宿主所有）在 Web profile 下无法自动打开，故整页对比图由
