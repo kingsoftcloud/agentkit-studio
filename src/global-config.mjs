@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'yaml';
 import { normalizeModelEndpoint } from './model-endpoint.mjs';
 import { modelRuntimeOptions } from './model-profile-contract.mjs';
+import { reasoningProfileFor } from './model-reasoning.mjs';
 
 const FIELDS = {
   modelProvider: ['MODEL_PROVIDER'], modelName: ['OPENAI_MODEL_NAME', 'DEEPSEEK_MODEL_NAME'],
@@ -42,6 +43,14 @@ async function readDocument(path, json = false) {
   } catch { throw new ConfigurationError('全局配置格式无效，请检查配置文件'); }
 }
 
+/** The opt-in marker plus a default level the provider actually offers. */
+function reasoningDefaults(profile) {
+  if (!profile.reasoningEfforts) return {};
+  const capability = reasoningProfileFor(profile.provider);
+  const level = scalar(profile.defaultReasoningEffort);
+  return { reasoningEfforts: true, defaultReasoningEffort: capability.levels.includes(level) ? level : capability.default };
+}
+
 function normalizeProfiles(value) {
   if (!Array.isArray(value)) return [];
   const profiles = value.filter(record).map(profile => ({
@@ -58,8 +67,10 @@ function normalizeProfiles(value) {
     ...(Array.isArray(profile.input) ? { input: [...new Set(profile.input.filter(item => ['text', 'image'].includes(item)))] } : {}),
     // Read back the opt-in marker and its default level only: the wire map is
     // the gateway's business and is materialized at bridge time, so it must
-    // not be frozen into the user's configuration file.
-    ...(profile.reasoningEfforts ? { reasoningEfforts: true, defaultReasoningEffort: ['low', 'high', 'max'].includes(scalar(profile.defaultReasoningEffort)) ? scalar(profile.defaultReasoningEffort) : 'high' } : {}),
+    // not be frozen into the user's configuration file. The level is validated
+    // against this provider's table, so OpenAI's `medium` survives a reread
+    // instead of being rewritten to `high`.
+    ...reasoningDefaults({ ...profile, provider: scalar(profile.provider) || 'ksyun' }),
   })).filter(profile => profile.modelName);
   if (!profiles.length) return profiles;
   // Older config files did not have a default marker. Preserve their first
