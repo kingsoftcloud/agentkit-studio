@@ -510,7 +510,11 @@ export function createModelSettingsSection({
     }, catalogItems.map(item => h('option', { key: item.id, value: item.id }, item.name || item.id)), h('option', { value: '__custom__' }, '手动填写模型名')) : null;
     const customModel = (!catalogItems.length || !hasSelectedModel) ? h('input', {
       className: 'ms-input',
-      'aria-label': catalogItems.length ? '自定义模型名称' : '模型名称',
+      // The accessible name must not change when a catalog loads: the field is
+      // still the model-name input, and the onboarding and online-update
+      // acceptance scripts locate it by `模型名称`. Swapping the name made both
+      // installed-App checks fail with "element(s) not found" after 读取模型.
+      'aria-label': '模型名称',
       value: selected.modelName,
       placeholder: catalogItems.length ? '输入目录外的模型名' : '先读取模型目录，或手动填写',
       onChange: event => setProfile(selectedIndex, 'modelName', event.target.value),

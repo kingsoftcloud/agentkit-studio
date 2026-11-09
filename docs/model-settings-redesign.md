@@ -203,8 +203,8 @@
   `data-model-input-capability`、`data-studio-form-footer`。
 - 保留源码中的历史检索串「添加提供商或模型」（注释），以及 `ksp.console.ksyun.com/#/apiKey`。
 - 无障碍：
-  - 模型名称控件补 `aria-label="模型名称"`（目录选择）/ `"自定义模型名称"`（手动输入），
-    与同页另一分支的 onboarding 校验脚本一致；
+  - 模型名称控件固定使用 `aria-label="模型名称"`，不随模型目录是否已读取而改名，
+    与 onboarding 和在线更新两处校验脚本的 `getByLabel('模型名称')` 一致；
   - 提供商、API 地址、Codex 协议、思考模式各自有 `aria-label`，不再依赖视觉标签；
   - 校验消息 `role="status"`，错误 `role="alert"`；列表项 `aria-current` 标记当前编辑项。
 

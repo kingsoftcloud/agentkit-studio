@@ -74,6 +74,12 @@ test('the onboarding acceptance script locates controls by their shipped accessi
   assert.ok(select, 'the catalog dropdown must expose the 选择模型 name');
   assert.deepEqual(select.children.map(option => option.props.value), ['onboarding-proof', 'onboarding-proof-secondary', '__custom__']);
   assert.equal(select.props.value, '__custom__', 'an off-catalog model stays on the manual option');
+  // Reading the catalog renders the dropdown next to the manual field. The
+  // manual field keeps the same accessible name: renaming it here made the
+  // installed-App onboarding and online-update checks time out on
+  // getByLabel('模型名称') right after 读取模型.
+  assert.equal(field(view, '模型名称')?.type, 'input', 'reading the catalog must not rename the manual model input');
+  assert.equal(field(view, '自定义模型名称'), undefined, 'the manual model input never adopts a second accessible name');
   // The redesigned surface labels this step with a section heading instead of
   // the old bold step numeral; the control names above are the contract.
   assert.ok(view.nodes().some(node => node.type === 'h5' && node.children.includes('模型')), 'the model step keeps a visible section title');
