@@ -92,6 +92,21 @@ export default String.raw`
 .af-footer-actions { display: flex; align-items: center; gap: 8px; }
 .af-stack > * + * { margin-top: 12px; }
 [data-studio-agent-form] :is(.af-input,.af-textarea,.af-select,.af-btn,.af-choice,.af-step):focus-visible, [data-studio-agent-form] :is(.af-check,.af-switch) input:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
+/* Agent list entry page */
+.ak-agents-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.ak-agents-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ak-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2,#f4f5f6)); }
+.ak-segmented > button { height: 32px; padding: 0 14px; border: 0; border-radius: var(--dsw-radius-sm,8px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; white-space: nowrap; }
+.ak-segmented > button:hover { color: var(--dsw-alias-label-primary); }
+.ak-segmented > button[aria-current="page"] { background: var(--dsw-alias-bg-layer-1,#fff); color: var(--dsw-alias-label-primary); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.ak-segmented > button:focus-visible, .ak-agents-toolbar .af-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
+.ak-agents-notice { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
+.ak-agents-list { border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
+.ak-agents-list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.ak-agents-list-head > strong { font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-primary); }
+.ak-agent-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); cursor: pointer; }
+.ak-agent-card:hover { border-color: var(--dsw-alias-border-l4); }
+.ak-agent-card:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
 @container (max-width: 640px) {
   .af-layout { grid-template-columns: minmax(0,1fr); gap: 16px; }
   .af-steps { position: static; flex-direction: row; flex-wrap: wrap; }
