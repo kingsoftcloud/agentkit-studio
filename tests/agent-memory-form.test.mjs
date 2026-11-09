@@ -343,9 +343,8 @@ test('form create(): harness local memory with recall off, candidate write, enab
   tree = harness.render();
   findBy(tree, byAria('记忆写入开关')).props.onChange({ target: { value: 'enabled' } });
   tree = harness.render();
-  tree = advance(harness, tree);   // -> step 3
   const save = findBy(tree, byButtonText('创建 Agent'));
-  assert.ok(save, 'create button present at step 3');
+  assert.ok(save, 'create button present on the final step');
   await save.props.onClick();
   assert.ok(captured.create, 'quickAuthorAgent was invoked');
   const spec = captured.create.spec;
@@ -372,13 +371,13 @@ test('form saves exact custom Native rules and refuses malformed rules before cr
   tree = harness.render();
   const rules = findBy(tree, byAria('逐工具权限规则'));
   rules.props.onChange({ target: { value: '{"save_crm":"allow"}' } });
-  tree = advance(harness, harness.render());
+  tree = harness.render();
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   assert.equal(captured.create, undefined);
   assert.ok(findBy(harness.render(), node => node.props?.role === 'alert'));
   harness.render().find(node => node.props?.['aria-label'] === '逐工具权限规则')
     .props.onChange({ target: { value: '{"save_crm":"ask","read_workspace_file":"inherit"}' } });
-  tree = advance(harness, harness.render());
+  tree = harness.render();
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   assert.deepEqual(captured.create.spec.bindings.nativeAgentPolicy.rules,
     { read_workspace_file: 'inherit', save_crm: 'ask' });
@@ -390,7 +389,6 @@ test('form create(): disabling memory does not fabricate a rollout or a cloud bi
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);
   // leave memory disabled (default for blank)
-  tree = advance(harness, tree);   // -> step 3
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   const spec = captured.create.spec;
   assert.equal(spec.memory.enabled, false);
@@ -412,7 +410,7 @@ test('form create persists opt-in model extraction and restores it for editing w
   findBy(tree, byAria('启用模型记忆提炼')).props.onChange({ target: { checked: true } }); tree = harness.render();
   findBy(tree, byAria('记忆提炼累计字符数')).props.onChange({ target: { value: '128' } });
   findBy(tree, byAria('记忆写入方式')).props.onChange({ target: { value: 'candidate' } });
-  tree = harness.render(); tree = advance(harness, tree);
+  tree = harness.render();
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   assert.deepEqual(captured.create.spec.memory.extraction, { enabled: true, minUserCharacters: 128 });
   const restored = readAgentMemoryConfig({ spec: captured.create.spec, runtime: 'harness', editing: true });
@@ -429,7 +427,6 @@ test('form create(): local memory with shadow rollout never claims a write', asy
   findBy(tree, byAria('启用跨会话记忆')).props.onChange({ target: { checked: true } });
   tree = harness.render();
   // keep default rollout = shadow
-  tree = advance(harness, tree);
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   assert.equal(captured.create.spec.context.rollout.memoryWrite, 'shadow');
   assert.equal(captured.create.spec.memory.write.mode, 'explicit_only');
@@ -453,7 +450,6 @@ test('form edit save: disabling a cloud memory Agent preserves provider/scopes/r
   tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2
   findBy(tree, byAria('启用跨会话记忆')).props.onChange({ target: { checked: false } });
   tree = harness.render();
-  tree = advance(harness, tree);   // -> step 3
   await findBy(tree, byButtonText('保存 Agent')).props.onClick();
   const spec = captured.update.spec;
   assert.equal(spec.memory.enabled, false);
@@ -479,7 +475,6 @@ test('form edit save: an explicit scopes:[] survives a local memory edit', async
   const harness = formHarness({ initialAgent, onBack: () => {}, onCreated: () => {} }, { captured });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2 (memory already enabled + local)
-  tree = advance(harness, tree);   // -> step 3, no changes
   await findBy(tree, byButtonText('保存 Agent')).props.onClick();
   const spec = captured.update.spec;
   assert.deepEqual(spec.memory.scopes, [], 'empty scopes not widened to defaults');
@@ -515,7 +510,6 @@ test('form seed roundtrip: a harness memory template seed supports local-default
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2
   assert.ok(findBy(tree, byAria('记忆来源-本地记忆')), 'harness memory seed offers local source without a binding');
-  tree = advance(harness, tree);   // -> step 3
   await findBy(tree, byButtonText('创建 Agent')).props.onClick();
   assert.ok(captured.store, 'template authoring service created the Agent');
   const spec = captured.store.spec;
