@@ -256,11 +256,13 @@ export function createModelSettingsSection({
       const hasSelectedModel = catalogItems.some(item => item.id === profile.modelName);
       const modelSelect = catalogItems.length ? h('select', {
         value: hasSelectedModel ? profile.modelName : '__custom__',
+        'aria-label': '选择模型',
         onChange: event => setProfile(index, 'modelName', event.target.value === '__custom__' ? '' : event.target.value),
         style: inputStyle(),
       }, catalogItems.map(item => h('option', { key: item.id, value: item.id }, item.name || item.id)), h('option', { value: '__custom__' }, '手动填写模型名')) : null;
       const customModel = (!catalogItems.length || !hasSelectedModel) ? h('input', {
         value: profile.modelName,
+        'aria-label': '模型名称',
         placeholder: catalogItems.length ? '输入目录外的模型名' : '先读取模型目录，或手动填写',
         onChange: event => setProfile(index, 'modelName', event.target.value),
         style: inputStyle(),
@@ -296,6 +298,7 @@ export function createModelSettingsSection({
           }, h('option', { value: 'ksyun' }, '金山云模型服务'), h('option', { value: 'openai' }, 'OpenAI'), h('option', { value: 'custom' }, '自定义提供商')),
           profile.provider === 'ksyun' ? h('div', { style: { padding: '10px 12px', borderRadius: '10px', background: BRAND.canvas, color: BRAND.inkMuted, fontSize: '12px', alignSelf: 'end' } }, '金山云使用默认地址，无需填写 API 地址。') : h('label', { style: { color: BRAND.inkMuted, fontSize: '12px', fontWeight: 700 } }, 'API 地址', h('input', {
             value: profile.baseUrl,
+            'aria-label': 'API 地址',
             placeholder: '例如：https://api.example.com/v1',
             onChange: event => setProfile(index, 'baseUrl', event.target.value),
             onBlur: () => { try { setProfile(index, 'baseUrl', normalizeModelEndpoint(profile.baseUrl, profile.provider)); } catch (reason) { setError(reason.message); } },
