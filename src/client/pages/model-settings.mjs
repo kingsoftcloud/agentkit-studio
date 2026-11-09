@@ -18,6 +18,53 @@ function ensureModelSettingsStyles(document) {
   });
 }
 
+/*
+ * 方案 C：切换模型时，未保存的编辑只活在内存草稿里。
+ *
+ * The table is keyed by profile id and lives at module scope so that closing
+ * and reopening the settings sheet — a full unmount, including the
+ * Electron-embedded host where `beforeunload` never fires — restores the draft
+ * of the same model. It is intentionally never persisted: no Host write, no
+ * localStorage, no file. Reloading the page, opening a second window or using
+ * another device starts from the saved configuration, and nothing here is
+ * shared between windows.
+ */
+const MODEL_DRAFT_EDIT = 'edit';
+const MODEL_DRAFT_NEW = 'new';
+const MODEL_DRAFT_REMOVED = 'removed';
+const modelDrafts = new Map();
+const CLOUD_FIELDS = ['cloudAccessKey', 'cloudSecretKey', 'cloudAccountId', 'cloudRegion', 'cloudServerUrl', 'cloudBucket'];
+
+/** Forget every in-memory draft (tests, and any surface that discards drafts). */
+export function clearModelSettingsDrafts() { modelDrafts.clear(); }
+
+/** The model ids that currently hold an in-memory draft (tests/diagnostics). */
+export function modelSettingsDraftKeys() { return [...modelDrafts.keys()]; }
+
+const profileKey = (profile, index) => String(profile?.id || profile?.credentialName || index || 'default');
+const cloudSnapshot = source => Object.fromEntries(CLOUD_FIELDS.map(key => [key, String(source?.[key] ?? '')]));
+
+/** JSON with recursively sorted object keys, so a field-order change never reads as an edit. */
+const stableString = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)))
+  : item);
+
+/** Overlay the window's drafts on the just-loaded saved profiles. */
+function restoreModelDrafts(profiles) {
+  const restored = [];
+  const known = new Set();
+  for (const [index, profile] of profiles.entries()) {
+    known.add(profileKey(profile, index));
+    const draft = modelDrafts.get(profileKey(profile, index));
+    if (draft?.kind === MODEL_DRAFT_REMOVED) continue;
+    restored.push(draft?.kind === MODEL_DRAFT_EDIT ? { ...profile, ...draft.fields } : profile);
+  }
+  for (const [key, draft] of modelDrafts) {
+    if (draft.kind === MODEL_DRAFT_NEW && !known.has(key)) restored.push(draft.profile);
+  }
+  return restored.length ? restored : profiles.slice(0, 1);
+}
+
 const SOURCE_LABELS = {
   file: '本机保存',
   'legacy-global': '全局配置',
@@ -36,10 +83,9 @@ export function createModelSettingsSection({
   ui: { React: { createElement: h, useEffect, useState, useRef }, SecretInput, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document, CustomEvent = globalThis.CustomEvent
 }) {
-  const Chip = ({ children, tone = 'neutral' }) => h('span', { className: 'ms-chip', 'data-tone': tone }, children);
+  const Chip = ({ children, tone = 'neutral', ...rest }) => h('span', { className: 'ms-chip', 'data-tone': tone, ...rest }, children);
   const providerLabel = provider => PROVIDER_LABELS[provider] || provider || '自定义提供商';
   const sourceLabel = source => SOURCE_LABELS[source] || source || '未配置';
-  const profileKey = (profile, index) => String(profile?.id || profile?.credentialName || index || 'default');
 
   function ModelSettingsSection({ dshModel, mode = 'all', onSaved }) {
     const [form, setForm] = useState({
@@ -56,7 +102,11 @@ export function createModelSettingsSection({
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
     const [selectedKey, setSelectedKey] = useState('');
+    // The last configuration the Host confirmed; drafts are compared against it.
+    const [savedState, setSavedState] = useState({ profiles: [], cloud: {} });
     const pendingProviderFocus = typeof useRef === 'function' ? useRef('') : { current: '' };
+    const selectionRef = typeof useRef === 'function' ? useRef('') : { current: '' };
+    selectionRef.current = selectedKey;
 
     const runtimeProfiles = profiles => profiles.map(profile => {
       const { apiKey: _apiKey, inputCapability: _inputCapability, ...runtimeProfile } = profile;
@@ -74,8 +124,9 @@ export function createModelSettingsSection({
       }
     }));
 
-    const load = async () => {
+    const load = async ({ discardDrafts = false } = {}) => {
       setStatus('loading'); setError('');
+      if (discardDrafts) clearModelSettingsDrafts();
       try {
         const [settings, dshDocument] = await Promise.all([hostRemote.settings(), dshModel.describe()]);
         const legacy = { id: 'default', provider: settings?.modelProvider || 'ksyun', modelName: settings?.modelName || DEFAULT_KSYUN_MODEL, baseUrl: settings?.modelBaseUrl || (settings?.modelProvider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : ''), credentialName: DSH_MODEL_CREDENTIAL, enabled: true };
@@ -99,8 +150,17 @@ export function createModelSettingsSection({
         const dshProfile = (dshDocument?.namespaces || []).find(item => item.ns === DSH_MODEL_SETTINGS_NS)?.value?.providers;
         const firstDsh = dshProfile ? Object.values(dshProfile)[0] : null;
         setDshStatus({ configured: Boolean(firstDsh?.models?.length), model: firstDsh?.models?.[0]?.id || '', credentialConfigured: Boolean(statusMap[discoveredProfiles[0].credentialName]?.configured) });
-        setForm(current => ({ ...current, profiles: discoveredProfiles, cloudAccountId: settings?.cloudAccountId || '', cloudRegion: settings?.cloudRegion || '', cloudServerUrl: settings?.cloudServerUrl || '', cloudBucket: settings?.cloudBucket || '' }));
-        setSelectedKey(profileKey(discoveredProfiles[defaultIndex]));
+        // Saved profiles are the comparison baseline; the editor shows the same
+        // list with this window's drafts laid back over it.
+        const restoredProfiles = restoreModelDrafts(discoveredProfiles);
+        const restoredDefaultIndex = restoredProfiles.findIndex(profile => profile.enabled !== false && profile.default === true);
+        const restoredEnabledIndex = restoredProfiles.findIndex(profile => profile.enabled !== false);
+        const fallbackIndex = restoredDefaultIndex >= 0 ? restoredDefaultIndex : restoredEnabledIndex >= 0 ? restoredEnabledIndex : 0;
+        const keptIndex = restoredProfiles.findIndex((profile, index) => profileKey(profile, index) === selectionRef.current);
+        const selectionIndex = keptIndex >= 0 ? keptIndex : fallbackIndex;
+        setSavedState({ profiles: discoveredProfiles, cloud: cloudSnapshot(settings) });
+        setForm(current => ({ ...current, profiles: restoredProfiles, cloudAccountId: settings?.cloudAccountId || '', cloudRegion: settings?.cloudRegion || '', cloudServerUrl: settings?.cloudServerUrl || '', cloudBucket: settings?.cloudBucket || '' }));
+        setSelectedKey(profileKey(restoredProfiles[selectionIndex], selectionIndex));
         setStatus('ready');
       } catch (reason) { setStatus('error'); setError(reason?.message || 'Host 尚未连接'); }
     };
@@ -113,16 +173,53 @@ export function createModelSettingsSection({
       if (provider) { provider.focus(); pendingProviderFocus.current = ''; }
     }, [form.profiles.length]);
     const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
-    const setProfile = (index, key, value) => setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => cursor === index
-      ? { ...profile, ...(['modelName', 'provider', 'baseUrl'].includes(key) ? { input: undefined, inputCapability: 'pending' } : {}), [key]: value } : profile) }));
+
+    const savedProfile = key => (savedState.profiles || []).find((profile, index) => profileKey(profile, index) === key);
+    const isNewProfile = (profile, index) => Boolean(profile) && !savedProfile(profileKey(profile, index));
+    // Capability discovery (模型目录识别出的 input) is derived metadata, not an
+    // edit: reading the catalog must not by itself raise the unsaved chip.
+    const editableProfile = ({ input: _input, inputCapability: _inputCapability, ...profile }) => profile;
+    /** A profile is edited when it differs from the last configuration the Host confirmed. */
+    const isDirtyProfile = (profile, index) => {
+      if (!profile) return false;
+      const persisted = savedProfile(profileKey(profile, index));
+      return persisted ? stableString(editableProfile(profile)) !== stableString(editableProfile(persisted)) : true;
+    };
+    const cloudIsDirty = () => CLOUD_FIELDS.some(key => String(form[key] ?? '') !== String(savedState.cloud?.[key] ?? ''));
+    // 方案 C：任何字段改动先写进这张内存草稿表，再更新编辑区视图；只有
+    // 「保存配置」会调用 Host 存储。
+    const rememberDraft = (profile, index, fields) => {
+      if (!profile) return;
+      const key = profileKey(profile, index);
+      if (isNewProfile(profile, index)) {
+        const previous = modelDrafts.get(key);
+        // `returnTo` remembers which model to re-select when this new draft is cancelled.
+        modelDrafts.set(key, { kind: MODEL_DRAFT_NEW, profile: { ...profile, ...fields }, ...(previous?.returnTo ? { returnTo: previous.returnTo } : {}) });
+        return;
+      }
+      const previous = modelDrafts.get(key);
+      modelDrafts.set(key, { kind: MODEL_DRAFT_EDIT, fields: { ...(previous?.kind === MODEL_DRAFT_EDIT ? previous.fields : {}), ...fields } });
+    };
+    const setProfile = (index, key, value) => {
+      const fields = { [key]: value, ...(['modelName', 'provider', 'baseUrl'].includes(key) ? { input: undefined, inputCapability: 'pending' } : {}) };
+      rememberDraft(form.profiles[index], index, fields);
+      setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => cursor === index ? { ...profile, ...fields } : profile) }));
+    };
     // Keep the historical ‘添加提供商或模型’ wording in source for older surface checks; the visible action is now ‘添加模型’.
     const addProfile = () => {
       const id = `profile-${Date.now()}`;
+      const profile = { id, provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: '', credentialName: `AGENTKIT_MODEL_API_KEY_${Date.now().toString(36).toUpperCase()}`, apiKey: '', enabled: true, default: false };
       pendingProviderFocus.current = id;
+      modelDrafts.set(profileKey(profile), { kind: MODEL_DRAFT_NEW, profile, returnTo: selectionRef.current });
       setSelectedKey(id);
-      setForm(current => ({ ...current, profiles: [...current.profiles, { id, provider: 'ksyun', baseUrl: DEFAULT_KSYUN_BASE_URL, modelName: '', credentialName: `AGENTKIT_MODEL_API_KEY_${Date.now().toString(36).toUpperCase()}`, apiKey: '', enabled: true, default: false }] }));
+      setForm(current => ({ ...current, profiles: [...current.profiles, profile] }));
     };
-    const setDefaultProfile = index => setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index })) }));
+    const setDefaultProfile = index => {
+      form.profiles.forEach((profile, cursor) => {
+        if ((cursor === index) !== (profile.default === true)) rememberDraft(profile, cursor, { default: cursor === index });
+      });
+      setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => ({ ...profile, default: cursor === index })) }));
+    };
     const toggleProfileEnabled = index => {
       const target = form.profiles[index];
       if (!target) return;
@@ -131,25 +228,60 @@ export function createModelSettingsSection({
         return;
       }
       setError('');
-      setForm(current => {
-        const enabling = current.profiles[index]?.enabled === false;
-        const profiles = current.profiles.map((profile, cursor) => cursor === index ? { ...profile, enabled: enabling } : { ...profile });
-        const enabledIndexes = profiles.map((profile, cursor) => profile.enabled !== false ? cursor : -1).filter(cursor => cursor >= 0);
-        const currentDefault = profiles.findIndex(profile => profile.enabled !== false && profile.default === true);
-        const fallbackDefault = currentDefault >= 0 ? currentDefault : enabledIndexes[0];
-        return { ...current, profiles: profiles.map((profile, cursor) => ({ ...profile, default: cursor === fallbackDefault })) };
+      const enabling = target.enabled === false;
+      const flipped = form.profiles.map((profile, cursor) => cursor === index ? { ...profile, enabled: enabling } : { ...profile });
+      const enabledIndexes = flipped.map((profile, cursor) => profile.enabled !== false ? cursor : -1).filter(cursor => cursor >= 0);
+      const activeDefault = flipped.findIndex(profile => profile.enabled !== false && profile.default === true);
+      const fallbackDefault = activeDefault >= 0 ? activeDefault : enabledIndexes[0];
+      const next = flipped.map((profile, cursor) => ({ ...profile, default: cursor === fallbackDefault }));
+      next.forEach((profile, cursor) => {
+        const before = form.profiles[cursor];
+        const fields = {};
+        if (profile.enabled !== before.enabled) fields.enabled = profile.enabled;
+        if (profile.default !== before.default) fields.default = profile.default;
+        if (Object.keys(fields).length) rememberDraft(profile, cursor, fields);
       });
+      setForm(current => ({ ...current, profiles: next }));
     };
     const removeProfile = index => {
       if (form.profiles.length <= 1) return;
-      const neighbour = form.profiles[index === form.profiles.length - 1 ? index - 1 : index + 1];
-      setSelectedKey(profileKey(neighbour));
-      setForm(current => {
-        if (current.profiles.length <= 1) return current;
-        const removedDefault = current.profiles[index]?.default === true;
-        const profiles = current.profiles.filter((_, cursor) => cursor !== index);
-        return { ...current, profiles: removedDefault ? profiles.map((profile, cursor) => ({ ...profile, default: cursor === 0 })) : profiles };
-      });
+      const target = form.profiles[index];
+      const remaining = form.profiles.filter((_, cursor) => cursor !== index);
+      const neighbourIndex = Math.min(index, remaining.length - 1);
+      const removedDefault = target?.default === true;
+      const next = removedDefault ? remaining.map((profile, cursor) => ({ ...profile, default: cursor === 0 })) : remaining;
+      // A pending removal is a draft too: it survives closing the sheet and only
+      // reaches storage on 「保存配置」; 「重新读取」 brings the model back.
+      if (target) {
+        if (isNewProfile(target, index)) modelDrafts.delete(profileKey(target, index));
+        else modelDrafts.set(profileKey(target, index), { kind: MODEL_DRAFT_REMOVED });
+      }
+      if (removedDefault && next[0]) rememberDraft(next[0], 0, { default: true });
+      if (remaining[neighbourIndex]) setSelectedKey(profileKey(remaining[neighbourIndex], neighbourIndex));
+      setForm(current => ({ ...current, profiles: next }));
+    };
+    // 取消新增：这份新草稿还没进过存储，直接丢弃，列表与选中项回到添加前。
+    const cancelProfile = index => {
+      const target = form.profiles[index];
+      if (!target) return;
+      const draft = modelDrafts.get(profileKey(target, index));
+      modelDrafts.delete(profileKey(target, index));
+      if (pendingProviderFocus.current === target.id) pendingProviderFocus.current = '';
+      const remaining = form.profiles.filter((_, cursor) => cursor !== index);
+      const returnIndex = draft?.returnTo ? remaining.findIndex((profile, cursor) => profileKey(profile, cursor) === draft.returnTo) : -1;
+      const neighbourIndex = returnIndex >= 0 ? returnIndex : Math.min(index, remaining.length - 1);
+      if (remaining[neighbourIndex]) setSelectedKey(profileKey(remaining[neighbourIndex], neighbourIndex));
+      setForm(current => ({ ...current, profiles: remaining }));
+    };
+    // 撤销修改：只丢掉当前模型的草稿，回到已保存的那份配置。
+    const revertProfile = index => {
+      const target = form.profiles[index];
+      if (!target) return;
+      if (isNewProfile(target, index)) { cancelProfile(index); return; }
+      const persisted = savedProfile(profileKey(target, index));
+      modelDrafts.delete(profileKey(target, index));
+      if (!persisted) return;
+      setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => cursor === index ? { ...persisted } : profile) }));
     };
     const save = async event => {
       event.preventDefault(); if (saving || status !== 'ready') return;
@@ -160,6 +292,7 @@ export function createModelSettingsSection({
           if (!cloudStatus.configured && (!access || !secret)) throw new Error('请填写 Access Key 和 Secret Key，或跳过云端配置');
           await hostRemote.updateSettings({ ...(access ? { cloudAccessKey: access } : {}), ...(secret ? { cloudSecretKey: secret } : {}), cloudAccountId: form.cloudAccountId.trim(), cloudRegion: form.cloudRegion.trim(), cloudServerUrl: form.cloudServerUrl.trim(), cloudBucket: form.cloudBucket.trim() });
           setForm(current => ({ ...current, cloudAccessKey: '', cloudSecretKey: '' }));
+          setSavedState(current => ({ ...current, cloud: { ...cloudSnapshot(form), cloudAccessKey: '', cloudSecretKey: '' } }));
           setMessage('云端凭证已保存');
           onSaved?.();
           return;
@@ -185,12 +318,21 @@ export function createModelSettingsSection({
         const persistedProfiles = runtimeProfiles(discoveredProfiles);
         await hostRemote.updateSettings({ modelProfiles: persistedProfiles });
         await dshModel.applyProfiles({ profiles: persistedProfiles, keys });
+        // The Host now holds these values: every draft has served its purpose.
+        clearModelSettingsDrafts();
         setForm(current => ({ ...current, profiles: current.profiles.map(profile => ({ ...profile, apiKey: '' })), cloudAccessKey: '', cloudSecretKey: '' }));
         window.dispatchEvent(new CustomEvent('agentkit-studio:model-credential-changed'));
         setMessage('已保存多个模型配置；标记为“默认”的模型用于新会话，Agent 可在创建或编辑时多选模型绑定。');
         await load();
         onSaved?.();
       } catch (reason) { setError(reason?.message || '保存模型与凭证失败'); } finally { setSaving(false); }
+    };
+    // 重新读取：显式回到存储里的配置，因此丢弃全部草稿；丢弃过就说明白。
+    const reload = async () => {
+      const discarded = modelDrafts.size;
+      setMessage('');
+      await load({ discardDrafts: true });
+      if (discarded) setMessage('已丢弃未保存的草稿，并重新读取已保存的配置');
     };
 
     const profiles = form.profiles;
@@ -271,6 +413,14 @@ export function createModelSettingsSection({
     const enabledCount = profiles.filter(profile => profile.enabled !== false).length;
     const configuredCount = profiles.filter(profile => profileCredential(profile).configured).length;
     const showRail = mode === 'all';
+    // 方案 C 的提示态：编辑区标题旁的「未保存」chip 与页脚主按钮的醒目态，
+    // 都由「当前视图 vs 已保存快照」推导，因此保存成功后自动消失。
+    const ready = status === 'ready';
+    const selectedDirty = ready && isDirtyProfile(selected, selectedIndex);
+    const selectedDraft = selectedDirty && isNewProfile(selected, selectedIndex);
+    const draftCount = ready ? profiles.filter((profile, index) => isDirtyProfile(profile, index)).length : 0;
+    const cloudDirty = ready && cloudIsDirty();
+    const formDirty = draftCount > 0 || cloudDirty;
     const cloudField = (label, key, placeholder, type = 'text') => h('label', { className: 'ms-field' },
       h('span', { className: 'ms-label' }, label),
       h(type === 'password' ? SecretInput : 'input', {
@@ -297,21 +447,25 @@ export function createModelSettingsSection({
       h('div', { className: 'ms-rail-items' },
         profiles.map((profile, index) => {
           const state = profileStatus(profile);
+          const dirty = ready && isDirtyProfile(profile, index);
           return h('button', {
             key: profileKey(profile, index), type: 'button', className: 'ms-rail-item',
             'data-selected': index === selectedIndex ? 'true' : 'false',
+            'data-draft': dirty ? 'true' : 'false',
             'aria-current': index === selectedIndex ? 'true' : undefined,
+            title: dirty ? '有未保存的修改（仅保存在内存）' : undefined,
             onClick: () => setSelectedKey(profileKey(profile, index)),
           },
             h('span', { className: 'ms-rail-name-row' },
               h('span', { className: 'ms-rail-name' }, profile.modelName || '未命名模型'),
-              profile.default && profile.enabled !== false ? h('span', { className: 'ms-chip', 'data-size': 'xs', 'data-tone': 'accent' }, '默认') : null),
+              profile.default && profile.enabled !== false ? h('span', { className: 'ms-chip', 'data-size': 'xs', 'data-tone': 'accent' }, '默认') : null,
+              dirty ? h('span', { className: 'ms-rail-draft', 'data-unsaved': 'true', 'aria-hidden': 'true' }) : null),
             h('span', { className: 'ms-rail-sub' },
               h('span', null, providerLabel(profile.provider)),
               h('span', { className: 'ms-dot', 'data-tone': state.tone === 'success' ? 'success' : state.tone === 'warn' ? 'warn' : undefined, 'aria-hidden': 'true' }),
               h('span', null, state.label)));
         })),
-      h('p', { className: 'ms-rail-foot' }, '「默认」模型用于新会话'));
+      h('p', { className: 'ms-rail-foot' }, '「默认」模型用于新会话；带圆点的模型有未保存草稿'));
 
     const connection = connectionFor(selected);
     const catalogItems = catalogItemsFor(selected);
@@ -347,12 +501,16 @@ export function createModelSettingsSection({
           h('div', { className: 'ms-detail-name' },
             h('h4', null, h('strong', { className: 'ms-detail-name-text' }, selected.modelName || '新模型')),
             selected.default && selected.enabled !== false ? h(Chip, { tone: 'accent' }, '默认') : null,
-            h(Chip, { tone: selectedStatus.tone }, selectedStatus.label)),
+            h(Chip, { tone: selectedStatus.tone }, selectedStatus.label),
+            selectedDirty ? h(Chip, { tone: 'warn', 'data-unsaved': 'true', title: '草稿只保存在内存里，刷新或关闭窗口后会丢失' }, '未保存') : null),
           h('p', { className: 'ms-detail-meta' }, providerLabel(selected.provider), h('span', { className: 'ms-dot', 'aria-hidden': 'true' }), selected.id || '未命名 profile')),
         h('div', { className: 'ms-detail-actions' },
           selected.default && selected.enabled !== false ? null : h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', disabled: selected.enabled === false, onClick: () => setDefaultProfile(selectedIndex) }, '设为默认'),
           h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => toggleProfileEnabled(selectedIndex) }, selected.enabled === false ? '启用' : '停用'),
-          profiles.length <= 1 ? null : h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '移除'))),
+          selectedDirty && !selectedDraft ? h('button', { type: 'button', 'data-size': 'sm', className: 'ms-btn', onClick: () => revertProfile(selectedIndex) }, '撤销修改') : null,
+          selectedDraft
+            ? h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => cancelProfile(selectedIndex) }, '取消')
+            : profiles.length <= 1 ? null : h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '移除'))),
       section(1, '连接', null,
         h('div', { className: 'ms-grid ms-grid-2' },
           h('label', { className: 'ms-field' },
@@ -364,9 +522,9 @@ export function createModelSettingsSection({
               value: selected.provider === 'ksyun' || selected.provider === 'openai' ? selected.provider : 'custom',
               onChange: event => {
                 const provider = event.target.value;
-                setForm(current => ({ ...current, profiles: current.profiles.map((item, cursor) => cursor === selectedIndex ? {
-                  ...item, provider, baseUrl: provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : provider === 'openai' ? 'https://api.openai.com/v1' : '', input: undefined, inputCapability: 'pending',
-                } : item) }));
+                const fields = { provider, baseUrl: provider === 'ksyun' ? DEFAULT_KSYUN_BASE_URL : provider === 'openai' ? 'https://api.openai.com/v1' : '', input: undefined, inputCapability: 'pending' };
+                rememberDraft(form.profiles[selectedIndex], selectedIndex, fields);
+                setForm(current => ({ ...current, profiles: current.profiles.map((item, cursor) => cursor === selectedIndex ? { ...item, ...fields } : item) }));
               },
             }, h('option', { value: 'ksyun' }, '金山云模型服务'), h('option', { value: 'openai' }, 'OpenAI'), h('option', { value: 'custom' }, '自定义提供商'))),
           h('div', { className: 'ms-field' },
@@ -444,7 +602,8 @@ export function createModelSettingsSection({
     const cloudSection = mode !== 'model' ? h('section', { className: 'ms-cloud', 'data-solo': mode === 'cloud' ? 'true' : 'false' },
       h('div', { className: 'ms-cloud-head' },
         h('div', null,
-          h('div', { className: 'ms-cloud-title' }, h('h4', null, '云端凭证'), h(Chip, { tone: cloudStatus.configured ? 'success' : 'warn' }, cloudStatus.configured ? '已配置' : '未配置')),
+          h('div', { className: 'ms-cloud-title' }, h('h4', null, '云端凭证'), h(Chip, { tone: cloudStatus.configured ? 'success' : 'warn' }, cloudStatus.configured ? '已配置' : '未配置'),
+            cloudDirty ? h(Chip, { tone: 'warn', 'data-unsaved': 'true', title: '草稿只保存在内存里，刷新或关闭窗口后会丢失' }, '未保存') : null),
           h('p', null, '用于构建、部署和资源访问，只保存在本机。'))),
       h('div', { className: 'ms-grid ms-grid-2' },
         cloudField('Access Key', 'cloudAccessKey', cloudStatus.configured ? '已配置，留空保持不变' : '云端 Access Key', 'password'),
@@ -464,10 +623,12 @@ export function createModelSettingsSection({
         modelPanel,
         cloudSection,
         h('div', { 'data-studio-form-footer': true, className: 'ms-footer' },
-          message ? h('span', { role: 'status', className: 'ms-footer-note' }, message) : null,
-          error && status !== 'error' ? h('span', { role: 'alert', className: 'ms-footer-note', 'data-tone': 'danger' }, error) : null,
-          h('button', { type: 'button', className: 'ms-btn', onClick: load }, '重新读取'),
-          h('button', { type: 'submit', 'data-size': 'lg', 'data-variant': 'primary', className: 'ms-btn', disabled: saving || status !== 'ready' }, saving ? '保存中…' : mode === 'model' ? '保存并继续' : mode === 'cloud' ? '保存并完成' : '保存配置'))));
+          h('div', { className: 'ms-footer-notes' },
+            message ? h('span', { role: 'status', className: 'ms-footer-note' }, message) : null,
+            error && status !== 'error' ? h('span', { role: 'alert', className: 'ms-footer-note', 'data-tone': 'danger' }, error) : null,
+            formDirty ? h('span', { className: 'ms-footer-note', 'data-tone': 'draft' }, '有未保存的改动 · 草稿仅保存在内存，刷新后丢失') : null),
+          h('button', { type: 'button', className: 'ms-btn', onClick: reload }, '重新读取'),
+          h('button', { type: 'submit', 'data-size': 'lg', 'data-variant': 'primary', 'data-dirty': formDirty ? 'true' : 'false', className: 'ms-btn', disabled: saving || status !== 'ready' }, saving ? '保存中…' : mode === 'model' ? '保存并继续' : mode === 'cloud' ? '保存并完成' : '保存配置'))));
   }
   return ModelSettingsSection;
 }

@@ -553,6 +553,27 @@ export default String.raw`
   color: var(--ms-danger);
 }
 
+/*
+ * 方案 C draft marker: the same chip without a leading dot would read as another
+ * status; the dot makes “this is unsaved memory state” scannable at a glance.
+ */
+[data-studio-model-settings] .ms-chip[data-unsaved="true"]::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+[data-studio-model-settings] .ms-rail-draft {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border: 1.5px solid var(--ms-accent);
+  border-radius: 50%;
+  background: transparent;
+}
+
 [data-studio-model-settings] .ms-dot {
   display: inline-block;
   width: 5px;
@@ -648,6 +669,15 @@ export default String.raw`
 [data-studio-model-settings] .ms-btn[data-variant="primary"]:hover:not(:disabled) {
   border-color: transparent;
   background: var(--dsw-alias-button-primary-hover, #43454a);
+}
+
+/*
+ * 方案 C: while memory drafts exist the primary save is the one action that
+ * resolves them, so it gains an accent ring instead of a new colour or a modal.
+ */
+[data-studio-model-settings] .ms-btn[data-variant="primary"][data-dirty="true"] {
+  border-color: var(--ms-accent);
+  box-shadow: var(--ms-focus-ring);
 }
 
 [data-studio-model-settings] .ms-btn[data-variant="danger"] {
@@ -777,8 +807,16 @@ export default String.raw`
   border-top: 1px solid var(--ms-line);
 }
 
-[data-studio-model-settings] .ms-footer-note {
+[data-studio-model-settings] .ms-footer-notes {
+  display: flex;
+  align-items: center;
+  gap: var(--ms-space-2);
+  flex-wrap: wrap;
+  min-width: 0;
   margin-right: auto;
+}
+
+[data-studio-model-settings] .ms-footer-note {
   color: var(--ms-success);
   font-size: 12px;
   line-height: 18px;
@@ -786,6 +824,10 @@ export default String.raw`
 
 [data-studio-model-settings] .ms-footer-note[data-tone="danger"] {
   color: var(--ms-danger);
+}
+
+[data-studio-model-settings] .ms-footer-note[data-tone="draft"] {
+  color: var(--ms-warn);
 }
 
 [data-studio-model-settings] .ms-alert {

@@ -3,6 +3,7 @@
 > 分支：`feat/settings-models-redesign-20261109`（基于 `upstream/main`）
 > 范围：仅前端呈现层（`src/client/pages/model-settings.mjs` + 样式表）。
 > 数据流、Host RPC、保存载荷与协议均未改动。
+> 追加（2026-11-09）：未保存编辑改为内存草稿（方案 C，见 4.4）；仍是纯前端状态，未新增 RPC。
 
 ## 1. 问题核实
 
@@ -184,11 +185,12 @@
 
 | 文件 | 变更 |
 | --- | --- |
-| `src/client/pages/model-settings.mjs` | 重写渲染层：主从布局、状态带、chip、分区、控件 class；新增 `selectedKey` 选中态与样式注入；行为/载荷不变 |
-| `src/client/styles/model-settings.css.mjs` | 新增：设计 token + 全部页面样式（含容器查询、明暗 tint、focus/hover/disabled） |
+| `src/client/pages/model-settings.mjs` | 重写渲染层：主从布局、状态带、chip、分区、控件 class；新增 `selectedKey` 选中态与样式注入；2026-11-09 追加方案 C 内存草稿（切换/重开恢复、未保存提示），保存载荷不变 |
+| `src/client/styles/model-settings.css.mjs` | 新增：设计 token + 全部页面样式（含容器查询、明暗 tint、focus/hover/disabled）；追加「未保存」chip、列表草稿圆点、页脚草稿说明、主按钮醒目态 |
 | `src/client/styles/forms.css.mjs` | 删除会破坏新布局的 `!important` 覆盖（`article` 内边距、`form` gap、label 字重等） |
 | `src/client/styles/responsive.css.mjs` | 删除与本页冲突的尺寸/字号覆盖（32px 输入、12px 圆角、`h3` 字号、蓝框 focus 等） |
 | `src/client/styles/credential-onboarding.css.mjs` | 删除会把云端分组压平的 `form > section` 覆盖，改由 `.ms-cloud[data-solo]` 处理 |
+| `tests/model-settings-drafts.test.mjs` | 新增：方案 C 的 6 项交互单测（切换恢复、保存清空、新增取消、重开恢复、重新读取、撤销修改） |
 
 ### 4.2 细节
 
@@ -222,16 +224,65 @@
 
 合并顺序：本分支已包含 #102，直接合入即可，无需再单独排序。
 
+### 4.4 交互：未保存编辑的内存草稿（方案 C）
+
+**问题**：编辑区原先直接改 `form.profiles`，切换模型虽然不会丢值（同一数组），但没有任何
+「这份改动还没保存」的信号；关闭设置面板即静默丢弃，用户无从判断哪些改动生效。
+
+**方案 C**：编辑区是「Host 已保存快照 + 本窗口内存草稿」的合并视图。每次字段改动先写进
+`src/client/pages/model-settings.mjs` 顶部的模块级 `modelDrafts: Map<profileId, draft>`，
+再更新视图；只有「保存配置」会调用 Host 存储。草稿表在组件卸载后仍存在，因此同一页面
+生命周期内重新打开面板可恢复。
+
+| 场景 | 行为 | 是否写 Host |
+| --- | --- | --- |
+| 编辑任意字段（含 API Key / 启用 / 默认 / 思考模式） | 写入该模型的内存草稿；编辑区标题出现「未保存」chip，页脚出现「有未保存的改动 · 草稿仅保存在内存，刷新后丢失」，主按钮加 accent ring | 否 |
+| 列表 A → B | B 显示已保存值；A 的草稿留在草稿表，A 的列表项加空心圆点 | 否 |
+| 列表 A → B → A | A 的草稿原样恢复（含未保存的 API Key），不弹窗、不打断 | 否 |
+| 保存成功（`保存配置`/`保存并继续`/`保存并完成`） | 清空草稿表；chip、页脚提示、按钮醒目态一起消失 | 是（唯一写入点） |
+| 保存失败 | 草稿保留，错误提示后可直接重试 | 否 |
+| 添加模型 | 新条目本身是一份「新增草稿」：`未保存` chip + `取消`（替代 `移除`） | 否 |
+| 取消新增 | 丢弃该新增草稿，列表回到添加前的数量与选中项 | 否 |
+| 移除已有模型 | 记为「待移除」草稿；列表立即少一项 | 否 |
+| 撤销修改 | 仅丢弃当前模型的草稿，恢复到已保存快照；不动其它模型的草稿 | 否 |
+| 重新读取 | 丢弃全部草稿与待移除项，从 Host 重读；确有丢弃时页脚说明「已丢弃未保存的草稿…」 | 否 |
+| 关闭设置面板 / 组件卸载 | 不拦截、不阻塞；草稿留在内存表 | 否 |
+| 重新打开同一模型 | 同一页面生命周期内恢复草稿，并重新显示未保存提示 | 否 |
+| 刷新页面 / 新窗口 / 另一设备 | 草稿不存在，从已保存配置开始 | — |
+
+**边界与取舍**（写清楚，避免误以为能持久化）：
+
+- **只存内存**：草稿表是模块级 `Map`，不写 localStorage、不写文件、不调用 Host；刷新即丢。
+  导出 `clearModelSettingsDrafts()` / `modelSettingsDraftKeys()` 仅用于测试与诊断。
+- **多窗口不共享**：每个窗口有独立 JS 上下文，A 窗口的草稿在 B 窗口不可见；两窗口各自
+  保存时以最后保存者为准（与改动前一致）。
+- **不注册 `beforeunload`**：Electron 内嵌宿主里关闭设置面板不会触发 `beforeunload`，
+  拦截既不可靠又打断用户；因此不做退出拦截，改为「内存表 + 重开恢复」，并在界面上用
+  页脚提示说明草稿的易失性。
+- **云端凭证字段**：与模型列表无切换关系，仍留在当前挂载的表单里；`Access Key`/`Secret Key`
+  不进入草稿表（密钥不跨挂载保留），关闭面板会丢弃未保存的云端改动——但关闭前同样有
+  「未保存」chip 与页脚提示。`保存并完成` 只写云端字段，不会清掉模型草稿。
+- **草稿里的密钥**：未保存的 `apiKey` 与其它字段一样只在该内存表中，随页面销毁而消失；
+  它从来不会因为切换模型或关闭面板而被写入存储。
+- **能力发现不算编辑**：`input`/`inputCapability` 由模型目录识别得出，比较「是否未保存」时
+  被排除，因此点「读取模型」本身不会让按钮变醒目；一旦模型名/地址/提供商变化仍会标记未保存。
+- **待移除的模型**：不是删除操作，重新读取或（同一页面内）重开面板都会让它回到列表，
+  真正删除发生在保存时。
+
 ## 5. 验证
 
 - `node --test tests/model-settings-discovery.test.mjs`：7/7 通过（能力发现、保存载荷、
   thinking 参数、至少一个启用、未保存 Key 读取目录）。
+- `node --test tests/model-settings-drafts.test.mjs`：6/6 通过（切换 A→B→A 恢复草稿、
+  保存成功后清空、新增取消、卸载/重开恢复、重新读取丢弃并告知、撤销修改只丢当前模型）。
 - `node --test tests/onboarding-ui-verification.test.mjs`：2/2 通过（#102 的控件名契约与
   验收脚本断言）。
-- `node scripts/test-studio.mjs`：5490 项，5484 通过。失败 3 项中，1 项为
-  `dsh-node-browser-tools`（本机无缓存 Chromium，`AGENTKIT_NATIVE_TEST_CHROMIUM`
-  未设置，环境限制）；另外 2 项属 `native-a2a-question-wait` 的计时用例，并发跑全套时
-  偶发、单独重跑 21/21 通过，与本页无关。
+- 上述 4 个相关文件一起跑：26/26 通过。
+- `node scripts/test-studio.mjs`（Node.js v24.22.1，2026-11-09）：5496 项，5493 通过、
+  2 跳过、1 失败。唯一失败是 `tests/dsh-node-browser-tools.test.mjs`：本机无缓存 Chromium
+  且未设 `AGENTKIT_NATIVE_TEST_CHROMIUM`（`Error: Real cached Chromium ... is required`），
+  属环境限制，与本页无关；两个跳过同样是环境项（Node 22 二进制、`GITLEAKS_BIN`）。
+  上一轮记录的 `native-a2a-question-wait` 计时偶发本次未复现。
 - 视觉验证：真实 DSH Web + 真实 Studio 插件（临时 `DSH_HOME` profile），
   打开「凭证引导 → 连接你的模型」，组件在真实 token/字体下渲染正常（`提供商`、
   `API Key`、`模型名称`、`API 地址` 均可按 label 定位）；
