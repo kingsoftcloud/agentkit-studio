@@ -106,7 +106,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   Object.assign(ui, createTemplateSquare({ ui, hostRemote, window, CustomEvent }));
   Object.assign(ui, createStudioTeamPages({ ui, hostRemote, actions, window, CustomEvent }));
   Object.assign(ui, createTemplateResourcePages({ ui, hostRemote, window, CustomEvent }));
-  Object.assign(ui, createStudioShell({ ui, hostRemote }));
+  Object.assign(ui, createStudioShell({ ui, hostRemote, documentEffects }));
   ui.StudioSettingsLauncher = createSettingsLauncher({ ui, window });
   ui.StudioSettingsSection = createStudioSettingsSection({ ui, hostRemote, window, versions: { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } });
 

@@ -12,7 +12,12 @@ export default String.raw`
    (ui-web base.css gates every app-region rule to data-platform='darwin').
    Windows keeps one drag surface only — the explicit caption strip below, which
    product-document mounts over the blank 40px band and keeps clear of the
-   caption menu and the native window buttons. */
+   caption menu and the native window buttons.
+   macOS chrome pages also reserve the frame-top clearance, so their header sits
+   below the traffic lights and the band above it had no marker at all; the
+   shell mounts the same kind of fixed strip there (product-document's
+   installMacWindowDragStrip, inserted before the React root so later controls
+   subtract themselves). */
 html[data-platform='darwin'] :is([data-studio-drag-region], [data-studio-header], [data-window-drag]) {
   -webkit-app-region: drag;
 }
@@ -40,6 +45,16 @@ html[data-windows-titlebar] [data-studio-window-drag-strip] {
   -webkit-app-region: drag;
 }
 html[data-windows-titlebar][data-fullscreen] [data-studio-window-drag-strip] {
+  display: none;
+}
+/* The one macOS title-band drag surface: product-document prepends a fixed,
+   transparent strip over the blank frame-top clearance (80px after the traffic
+   lights to the right edge, 40px tall) for the Studio chrome pages. It is
+   inserted before the React root so later no-drag controls (the sidebar toggle
+   in DSH's shell.leading seat, right-panel buttons) subtract themselves instead
+   of being swallowed. Fullscreen hides the native traffic lights and with them
+   the caption band, so the strip goes too. */
+html[data-platform='darwin'][data-fullscreen] [data-studio-macos-drag-strip] {
   display: none;
 }
 `;

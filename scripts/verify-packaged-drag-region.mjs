@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Verify the Windows drag-region repair actually shipped in a packaged Studio app.
+ * Verify the Windows and macOS drag-region repairs actually shipped in a packaged
+ * Studio app.
  *
  * The release lane packs this plugin, installs it into the DSH Desktop runtime and
  * produces `app.asar`. A green source checkout is not evidence: the previous
  * Windows package carried the old `[data-windows-titlebar]` drag rule even though
- * a branch contained the repair. This script inspects the final archive and fails
- * when the shipped plugin is not the repaired build.
+ * a branch contained the repair, and the macOS package before this change only
+ * marked the Studio header below the frame-top clearance. This script inspects the
+ * final archive and fails when the shipped plugin is not the repaired build.
  *
  * Usage:
  *   node scripts/verify-packaged-drag-region.mjs <app.asar | plugin-dir> [--expect-version 0.0.13] [--json report.json]
@@ -20,9 +22,11 @@ import { createRequire } from 'node:module';
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN_NAME = '@kingsoftcloud/agentkit-studio';
 const DRAG_STRIP_MARKER = 'data-studio-window-drag-strip';
+const MACOS_DRAG_STRIP_MARKER = 'data-studio-macos-drag-strip';
 const WINDOW_REGION_MARKER = 'data-studio-window-region';
 const WINDOWS_ROOT_MARKER = 'data-windows-titlebar';
 const MACOS_SCOPE = "html[data-platform='darwin']";
+const MACOS_DESKTOP_MARKER = 'data-platform';
 const MIN_BUNDLE_BYTES = 500_000;
 
 const args = process.argv.slice(2);
@@ -97,6 +101,12 @@ function appRegionSelectors(css) {
     if (value === null) return [];
     return splitTopLevel(selectorText.trim(), ',').map(selector => ({ selector, value }));
   });
+}
+
+/** Every rule with its selector list and declarations, for non-app-region claims. */
+function rules(css) {
+  return [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(([, selectorText, body]) => ({ selectors: splitTopLevel(selectorText.trim(), ','), body }));
 }
 
 /** Read a packaged file listing and a reader for one target. */
@@ -204,6 +214,17 @@ for (const directory of directories) {
     check(`the Windows body also subtracts itself (${directory})`,
       noDrag.some(entry => entry.selector === `html[${WINDOWS_ROOT_MARKER}] body`),
       noDrag.map(entry => entry.selector).join(', '));
+    const macStripHidden = rules(css).filter(rule => rule.selectors.some(selector =>
+      selector.includes(`[${MACOS_DRAG_STRIP_MARKER}]`) && selector.includes('[data-fullscreen]')));
+    check(`the macOS title-band strip hides in fullscreen (${directory})`,
+      macStripHidden.length === 1
+      && macStripHidden[0].selectors.every(selector => !selector.includes(`[${MACOS_DRAG_STRIP_MARKER}]`)
+        || selector.startsWith(MACOS_SCOPE))
+      && /display:\s*none/.test(macStripHidden[0].body),
+      'the fixed strip would cover the page once fullscreen removes the native caption band');
+    check(`the macOS title-band strip is not a sheet-level root caption (${directory})`,
+      drag.every(entry => !entry.selector.includes(MACOS_DRAG_STRIP_MARKER)),
+      'the strip is an element with inline geometry; a sheet rule must not caption a container');
   }
 
   let doc;
@@ -223,6 +244,18 @@ for (const directory of directories) {
     check(`drag strip only mounts on Windows (${directory})`,
       /isWindowsDesktopDocument/.test(doc) && /Electron/i.test(doc) && /Windows/i.test(doc),
       'the strip must not mount on macOS or in a plain browser');
+    check(`runtime macOS title-band strip implementation (${directory})`,
+      doc.includes(MACOS_DRAG_STRIP_MARKER) && /top:0/.test(doc) && /left:80px/.test(doc)
+      && /right:0/.test(doc) && /height:40px/.test(doc) && /pointer-events:none/.test(doc),
+      'the macOS title-band strip is missing or its traffic-light-safe geometry changed');
+    check(`macOS strip only mounts on the darwin desktop (${directory})`,
+      /isMacDesktopDocument/.test(doc) && doc.includes(MACOS_DESKTOP_MARKER)
+      && /['"]darwin['"]/.test(doc) && /Electron/i.test(doc) && /Macintosh|Mac OS X/.test(doc),
+      'the strip must not mount on Windows or in a plain browser');
+    check(`macOS strip stays off the native session page (${directory})`,
+      doc.includes('data-studio-shell-main') && doc.includes('installMacWindowDragStrip')
+      && /insertBefore/.test(doc),
+      'the strip must be shell-scoped and prepended so later controls keep their clicks');
   }
 
   let bundle;
@@ -247,6 +280,14 @@ for (const directory of directories) {
       'a drag rule on <html> covers the whole client area');
     check(`bundle carries the blank-band strip geometry (${directory})`,
       /left:320px/.test(bundle) && /right:160px/.test(bundle) && /height:40px/.test(bundle));
+    check(`bundle ships the macOS title-band strip (${directory})`, bundle.includes(MACOS_DRAG_STRIP_MARKER));
+    check(`bundle carries the macOS title-band geometry (${directory})`,
+      /left:80px/.test(bundle) && /right:0/.test(bundle) && /height:40px/.test(bundle) && /pointer-events:none/.test(bundle));
+    check(`bundle hides the macOS strip in fullscreen (${directory})`,
+      new RegExp(`\\[data-fullscreen\\][^{}]*\\[${MACOS_DRAG_STRIP_MARKER}\\][^{}]*\\{[^{}]*display\\s*:\\s*none`).test(bundle),
+      'fullscreen must drop the strip with the native traffic lights');
+    check(`bundle ships the shell-scoped macOS mount (${directory})`,
+      bundle.includes('data-studio-shell-main') && bundle.includes('installMacWindowDragStrip'));
   }
 }
 

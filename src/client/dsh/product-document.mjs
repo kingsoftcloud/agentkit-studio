@@ -6,10 +6,14 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_SVG as STU
 
 /** DSH's Windows preload marks the document element; the marker selects the shell. */
 const WINDOWS_TITLEBAR_ATTRIBUTE = 'data-windows-titlebar';
+/** DSH's desktop preloads mark the host platform on the document element. */
+const PLATFORM_ATTRIBUTE = 'data-platform';
 /** Marks the elements whose inline app-region the plugin owns, for verification. */
 const WINDOW_REGION_ATTRIBUTE = 'data-studio-window-region';
 /** Marks the plugin's one explicit Windows drag surface. */
 const WINDOW_DRAG_STRIP_ATTRIBUTE = 'data-studio-window-drag-strip';
+/** Marks the plugin's one explicit macOS title-band drag surface. */
+const MACOS_DRAG_STRIP_ATTRIBUTE = 'data-studio-macos-drag-strip';
 
 /**
  * Whether this document belongs to the Windows desktop shell.
@@ -26,6 +30,24 @@ function isWindowsDesktopDocument(ownerDocument) {
   if (root?.hasAttribute?.(WINDOWS_TITLEBAR_ATTRIBUTE)) return true;
   const userAgent = String(ownerDocument?.defaultView?.navigator?.userAgent || '');
   return /Electron/i.test(userAgent) && /Windows/i.test(userAgent);
+}
+
+/**
+ * Whether this document belongs to the macOS desktop shell.
+ *
+ * `data-platform='darwin'` is the marker DSH's desktop preload sets
+ * (`document.documentElement.dataset.platform = process.platform`); the
+ * Electron/Mac user agent pair is the fallback for a plugin that boots before
+ * the marker lands. A plain browser on macOS never matches the Electron half,
+ * so the web surface gains no overlay and keeps its own click handling.
+ * @param ownerDocument - document the product effects write to.
+ * @returns true for the macOS desktop document only.
+ */
+function isMacDesktopDocument(ownerDocument) {
+  const root = ownerDocument?.documentElement;
+  if (root?.getAttribute?.(PLATFORM_ATTRIBUTE) === 'darwin') return true;
+  const userAgent = String(ownerDocument?.defaultView?.navigator?.userAgent || '');
+  return /Electron/i.test(userAgent) && /Macintosh|Mac OS X/i.test(userAgent);
 }
 
 export function createProductDocumentEffects({ window = globalThis.window, document = globalThis.document, MutationObserver = globalThis.MutationObserver }) {
@@ -156,6 +178,60 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
     };
   }
 
+  /**
+   * Give the macOS window one explicit drag surface over the blank title band.
+   *
+   * DSH's macOS chrome rows only mark themselves (`data-window-drag`), and the
+   * Studio chrome pages reserve the frame-top clearance, so the top ~40px band
+   * above the Studio header is empty but had no marker of its own: the header
+   * starts at 48px and the natural grab band stayed inert. This mounts the same
+   * kind of fixed strip Windows uses, gated to the darwin desktop document.
+   *
+   * The strip is inserted *before* the React root on purpose. Chromium composes
+   * app-regions from element geometry in document order, so a later drag box
+   * beats an earlier no-drag hole. Prepending puts the sheet (and every control
+   * after it — the sidebar toggle in DSH's shell.leading seat, right-panel
+   * buttons, page controls that reach into the band) last in that composition:
+   * a control that overlaps the band subtracts itself, and the strip never
+   * swallows its click. `pointer-events:none` keeps the DOM hit test out of the
+   * way as well, so only the window caption consumes input. `left:80px` clears
+   * the traffic lights (`trafficLightPosition:{x:16,y:18}`, right edge ≈68px);
+   * `right:0` is safe because macOS has no native right-hand window buttons and
+   * the page header starts 48px down. Fullscreen is hidden by the drag sheet,
+   * which matches the missing traffic lights.
+   * @param ownerDocument - macOS desktop document to update.
+   * @returns disposer restoring the document exactly.
+   */
+  function installMacWindowRegion(ownerDocument) {
+    const parent = ownerDocument.body || ownerDocument.documentElement;
+    if (!parent) return () => {};
+    const strip = ownerDocument.createElement('div');
+    strip.setAttribute(MACOS_DRAG_STRIP_ATTRIBUTE, 'true');
+    strip.setAttribute(WINDOW_REGION_ATTRIBUTE, 'macos-drag');
+    strip.setAttribute('aria-hidden', 'true');
+    strip.style.cssText = 'position:fixed;top:0;left:80px;right:0;height:40px;margin:0;padding:0;'
+      + 'border:0;background:transparent;pointer-events:none;z-index:2147483000;'
+      + '-webkit-app-region:drag;app-region:drag';
+    parent.insertBefore(strip, parent.firstChild || null);
+    return () => strip.remove();
+  }
+
+  /**
+   * Mount the macOS title-band drag strip for the duration of a Studio chrome
+   * page. The native session page already owns DSH's conversation header drag;
+   * it has no `[data-studio-shell-main]` band, so the strip is never mounted
+   * over it and the two surfaces cannot stack. A browser document (no
+   * `data-platform='darwin'`, no Electron) gets a no-op disposer.
+   * @returns disposer removing the strip (no-op outside a Studio chrome page).
+   */
+  function installMacWindowDragStrip() {
+    const ownerDocument = productDocument();
+    if (!ownerDocument || !isMacDesktopDocument(ownerDocument)) return () => {};
+    if (!ownerDocument.querySelector?.('[data-studio-shell-main]')) return () => {};
+    return leaseDocumentResource(ownerDocument, 'agentkit-studio:macos-drag-strip',
+      () => installMacWindowRegion(ownerDocument));
+  }
+
   function installWindowDragRegion() {
     const ownerDocument = productDocument();
     if (!ownerDocument) return () => {};
@@ -173,5 +249,5 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
     });
   }
   return { productDocument, adoptProductDocumentTitle, adoptProductDocumentBrand, installResponsiveStyles, installStudioFormStyles,
-    installWindowDragRegion };
+    installWindowDragRegion, installMacWindowDragStrip };
 }
