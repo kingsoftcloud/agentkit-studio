@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import { createAssistantDesktop, ASSISTANT_DESKTOP_SERVICE, assistantDesktopService } from '../src/assistant-desktop.mjs';
+import { DEFAULT_CLOUD_MODEL } from '../src/managed-runtime-model.mjs';
 
 const GATEWAY = 'https://pa-desktop-dev.agent-pre.kspmas.ksyun.com';
 const AGENT = 'ar-20261026143422-edd563a1';
@@ -191,8 +193,34 @@ test('creating an assistant waits for the instance and binds its credential', as
   // The managed order is settled by the platform, so the client must ask for
   // automatic payment; otherwise the Ding callback never creates the runtime.
   assert.equal(createRequest.AutoPay, true);
+  // The platform stores the model twice (the manifest declaration and
+  // ModelConfig) and refuses to start the runtime unless they agree, so the
+  // one value Studio chose has to reach both fields.
+  assert.deepEqual(createRequest.ModelConfig, { Model: DEFAULT_CLOUD_MODEL, Mode: 'aicp' });
+  assert.equal(parseYaml(createRequest.ManagedRuntimeConfig.Manifest).model, createRequest.ModelConfig.Model);
   const saved = JSON.parse(await readFile(join(dir, 'assistant-binding.json'), 'utf8'));
   assert.equal(saved.agentId, NEW_AGENT);
+});
+
+test('an explicitly selected model reaches both declared fields unchanged', async () => {
+  const NEW_AGENT = 'ar-20261028090000-cccccccc';
+  const dir = await mkdtemp(join(tmpdir(), 'assistant-desktop-'));
+  const { options } = harness({ store: dir, fetchOptions: { agent: NEW_AGENT } });
+  // The other real model stays itself: no canonicalisation onto the default.
+  options.env = { AGENTKIT_PERSONAL_ASSISTANT_MODEL: 'deepseek-v4.1-flash' };
+  let created = false;
+  let createRequest = null;
+  options.getClient = async () => ({ action: async (name, request) => {
+    if (name === 'CreateAgent') { created = true; createRequest = request; return { data: { AgentId: NEW_AGENT } }; }
+    if (name === 'ListAgents') return { data: { Agents: created ? [{ AgentId: NEW_AGENT, Name: 'personal-assistant-x',
+      Framework: 'personal-assistant', Status: 'RUNNING', CreatedAt: '2026-10-28T01:00:00Z' }] : [] } };
+    if (name === 'CreateAgentApiKey') return { data: { ApiKey: KEY } };
+    throw new Error(name);
+  } });
+  const service = createAssistantDesktop(options);
+  await service.create({}, undefined);
+  assert.deepEqual(createRequest.ModelConfig, { Model: 'deepseek-v4.1-flash', Mode: 'aicp' });
+  assert.equal(parseYaml(createRequest.ManagedRuntimeConfig.Manifest).model, 'deepseek-v4.1-flash');
 });
 
 test('the provided service keeps only the documented surface', () => {
