@@ -228,8 +228,14 @@
   thinking 参数、至少一个启用、未保存 Key 读取目录）。
 - `node --test tests/onboarding-ui-verification.test.mjs`：2/2 通过（#102 的控件名契约与
   验收脚本断言）。
+- `node scripts/test-studio.mjs`：5490 项，5484 通过。失败 3 项中，1 项为
+  `dsh-node-browser-tools`（本机无缓存 Chromium，`AGENTKIT_NATIVE_TEST_CHROMIUM`
+  未设置，环境限制）；另外 2 项属 `native-a2a-question-wait` 的计时用例，并发跑全套时
+  偶发、单独重跑 21/21 通过，与本页无关。
 - 视觉验证：真实 DSH Web + 真实 Studio 插件（临时 `DSH_HOME` profile），
-  打开「凭证引导 → 连接你的模型」，组件在真实 token/字体下渲染正常；
-  完整设置弹窗（DSH 宿主所有）在 Web profile 下无法自动打开，故整页对比图由
-  本地 harness 渲染**同一份组件源码**（Mock Host 数据 + DSH token 常量）截取。
-- 截图：`compare-full.png`、`compare-dialog.png`、`compare-onboarding.png`。
+  打开「凭证引导 → 连接你的模型」，组件在真实 token/字体下渲染正常（`提供商`、
+  `API Key`、`模型名称`、`API 地址` 均可按 label 定位）；
+  完整设置弹窗（DSH 宿主所有）在 Web profile 下无法脚本打开，故整页对比图由
+  本地 harness 渲染**同一份组件源码**（Mock Host 数据 + 从真实页面采集的 DSH token）截取。
+- 截图：`docs/assets/model-settings/before-after-dialog.jpg`、
+  `before-after-full.jpg`、`before-after-onboarding.jpg`。
