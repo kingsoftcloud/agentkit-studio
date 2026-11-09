@@ -12,11 +12,12 @@ import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 test('a production Native preset rejects a ToolRegistry without the monotonic guard', t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-guard-contract-'))), workspaceRoot = join(root, 'workspace');
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
-  assert.throws(() => createNativeDshTools({ ctx: { tools: { register() {}, execute() {} } },
+  assert.throws(() => createNativeDshTools({ ctx: { tools: nativeDshBatchPeer({ register() {}, execute() {} }) },
     config: { nativeEngineContract: 'agentkit.native-dsh-turn/v1', toolBindings: [] },
     workspaceRoot, stateDir: join(root, 'state') }), /studio_native_tool_guard_unavailable/);
 });
@@ -55,7 +56,7 @@ for (const lossAt of ['none', 'registry', 'credentials', 'connection']) test(`pa
   const binding = { resourceId: 'bound-crm', server: { transport: 'streamable-http', endpointUrl: `http://127.0.0.1:${http.address().port}/mcp`,
     envRefs: { Authorization: 'env://LOCAL_TEST' } } };
   const registry = new Map(), agent = { session: { id: 'session' } };
-  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     execute: async input => {
       await Promise.resolve(); if (lossAt === 'registry') release();
@@ -63,7 +64,7 @@ for (const lossAt of ['none', 'registry', 'credentials', 'connection']) test(`pa
       try { const value = await tool.execute(input.arguments, input); return { isError: false, content: tool.output.render(input.arguments, value) }; }
       catch (error) { return { isError: true, content: [{ type: 'text', text: error.code || error.message }] }; }
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: ['save_crm'],
     toolContracts: [{ name: 'save_crm', executor: 'mcp', resourceId: 'bound-crm', parameters: { type: 'object', properties: {} } }] },
     workspaceRoot, stateDir: join(root, 'state'), executeMcpTool: async input => {
@@ -107,7 +108,7 @@ for (const lossAt of ['pre-execute', 'around-dispatch']) test(`a bound Skill she
   const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
   const registry = new Map(), guards = new Set(), dispatchGuards = new Set(), agent = { session: { id: 'session' } };
   let effects = 0, released = false;
-  const ctx = { effect: install => install(), tools: {
+  const ctx = { effect: install => install(), tools: nativeDshBatchPeer({
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     guard: guard => { guards.add(guard); return () => guards.delete(guard); },
     dispatchGuard: guard => { dispatchGuards.add(guard); return () => dispatchGuards.delete(guard); },
@@ -127,7 +128,7 @@ for (const lossAt of ['pre-execute', 'around-dispatch']) test(`a bound Skill she
       const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
       return { isError: false, value, content: tool.output.render(input.arguments, value) };
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, nativeEngineContract: 'agentkit.native-dsh-turn/v1', toolBindings: [], toolContracts: [],
     skillDefinitions: [{ name: 'authority-skill', content: '---\nname: authority-skill\ndescription: Authority check\n---\nUse bash.' }] },
     workspaceRoot, stateDir: join(root, 'state') });
@@ -156,7 +157,7 @@ for (const driftAt of ['pre-execute', 'around-dispatch']) test(`a bound third-pa
   const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
   const registry = new Map(), guards = new Set(), agent = { session: { id: 'session' } };
   let effects = 0, denied = false;
-  const ctx = { effect: install => install(), tools: {
+  const ctx = { effect: install => install(), tools: nativeDshBatchPeer({
     register: definition => { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     guard: guard => { guards.add(guard); return () => guards.delete(guard); },
     execute: async input => {
@@ -172,7 +173,7 @@ for (const driftAt of ['pre-execute', 'around-dispatch']) test(`a bound third-pa
       const value = await registry.get(input.name).execute(input.arguments, input);
       return { isError: false, content: [{ type: 'text', text: JSON.stringify(value) }] };
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: ['external'], toolContracts: [] },
     workspaceRoot, stateDir: join(root, 'state') });
   t.after(() => gateway.close());

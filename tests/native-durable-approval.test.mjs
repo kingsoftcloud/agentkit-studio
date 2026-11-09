@@ -71,7 +71,7 @@ test('negotiation, live authority and the exact post-policy pending value are re
   const result = { isError: false, value: pending.value, content: [{ type: 'text', text: pending.value.result }] };
   assert.doesNotThrow(() => f.bridge.assertProjection(f.invocation, result));
   assert.throws(() => f.bridge.assertProjection(f.invocation, { ...result, content: [{ type: 'text', text: 'changed' }] }),
-    { code: 'studio_native_deferred_approval_projection_changed' });
+    { code: 'native_approval_preflight_projection_changed' });
   assert.doesNotThrow(() => f.bridge.assertProjection(f.invocation, { isError: true }), 'A post-policy rejection wins');
   f.invocation.assertCurrent = () => false;
   assert.throws(() => f.bridge.resolve(f.exec, 'Write'), { code: 'studio_native_durable_approval_stale' });

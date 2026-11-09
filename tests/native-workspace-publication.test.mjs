@@ -12,6 +12,7 @@ import { createNativeToolAuthority } from '../src/providers/native-tool-authorit
 import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 function setup(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-workspace-publication-'))), workspaceRoot = join(root, 'workspace');
@@ -82,11 +83,11 @@ test('permission-wait identity replacement and asynchronous authority cannot pub
 function gateway(t, f, limits = {}) {
   const store = new SqliteRunStore(join(f.root, 'ledger.sqlite')), registry = new Map(), agent = { session: { id: 'session' } };
   t.after(() => store.close());
-  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     execute: async input => { const tool = registry.get(input.name), result = await tool.execute(input.arguments, input);
       return { isError: false, content: tool.output.render(input.arguments, result) }; },
-  } };
+  }) };
   const bound = createNativeDshTools({ ctx, config: { toolBindings: ['write_workspace_file'] }, workspaceRoot: f.workspaceRoot,
     stateDir: join(f.root, 'gateway-state') }); t.after(() => bound.close());
   assert.equal(bound.workspaceMutationContract, 'agentkit.workspace-mutation-lock/v1');

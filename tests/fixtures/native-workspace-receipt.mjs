@@ -7,19 +7,20 @@ import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { fixture, scope, digest } from './native-core.mjs';
+import { nativeDshBatchPeer } from './native-dsh-batch-peer.mjs';
 
 const [root, phase, policy] = process.argv.slice(2), rejected = policy === 'reject';
 const workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot, { recursive: true });
 const store = new SqliteRunStore(join(root, 'runs.sqlite')), registry = new Map(), agent = { session: { id: 'session' } };
 let effects = 0, models = 0;
-const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
   register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
   execute: async input => {
     assert.equal(phase, 'write', 'receipt inspection cannot invoke the DSH tool dispatcher'); effects++;
     await registry.get(input.name).execute(input.arguments, input);
     return { isError: rejected, content: [{ type: 'text', text: rejected ? 'Post-policy blocked' : 'Host-filtered write receipt' }] };
   },
-} };
+}) };
 const bound = createNativeDshTools({ ctx, config: { toolBindings: ['write_workspace_file'] }, workspaceRoot,
   stateDir: join(root, 'tool-state') });
 const admitted = phase === 'write' ? fixture({ tools: bound.definitions(agent, [...registry.values()]) }) : null;

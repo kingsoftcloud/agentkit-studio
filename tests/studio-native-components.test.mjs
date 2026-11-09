@@ -12,6 +12,7 @@ import { studioNativeComponentStatus } from '../src/providers/native-component-s
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { createNativeSkillConnection } from '../src/providers/native-skill-host.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoadSdk, skillConnection, skillSpaceIds } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-component-host-')), workspaceRoot = join(root, 'workspace');
@@ -27,7 +28,7 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
     stateOf(session, key) { const definition = definitions.get(key); return definition
       ? events.get(session.id).reduce(definition.apply, definition.init()) : undefined; },
   } };
-  const ctx = { get: key => services[key], effect: install => install(), tools: {
+  const ctx = { get: key => services[key], effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'],
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(input) {
@@ -37,7 +38,7 @@ async function setup(t, { intercept = async () => {}, commandEnvironment, e2bLoa
       const value = await definition.execute(input.arguments, input);
       return { isError: false, value, content: definition.output.render(input.arguments, value) };
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id,
     toolBindings: record.spec.bindings.tools, toolContracts: [], ...(skillSpaceIds ? { skillSpaceIds } : {}) }, workspaceRoot, stateDir: join(root, 'state'),
     ...(skillConnection ? { skillConnection } : {}),

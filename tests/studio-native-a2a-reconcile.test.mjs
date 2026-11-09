@@ -17,6 +17,7 @@ import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 import { hostFetch } from '../src/http-fetch.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check) {
@@ -86,12 +87,12 @@ async function setup(t) {
           : event.type === 'turn/end' ? { ...state, openTurnStartSeq: null } : state, { lastTurn: 0, openTurnStartSeq: null }) : projections.has(id)
         ? events.reduce(projections.get(id).apply, projections.get(id).init()) : undefined,
     } };
-  const ctx = { effect: install => install(), get: key => services[key], tools: {
+  const ctx = { effect: install => install(), get: key => services[key], tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'],
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(exec) { const tool = registry.get(exec.name), value = await tool.execute(exec.arguments, exec);
       return { isError: false, value, content: tool.output.render(exec.arguments, value) }; },
-  } };
+  }) };
   gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, a2aBindings: [{ local_name: 'remote', binding_id: 'binding',
     space_id: 'space', target_agent_id: 'remote', expected_version_id: 'version' }] }, workspaceRoot, stateDir: join(root, 'state'),
   commandEnvironment: { KSADK_A2A_SERVICE_URL: origin, KSADK_A2A_ALLOW_PRIVATE: 'true' } });

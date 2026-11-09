@@ -12,6 +12,7 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { bindStudioNativeMemoryHost } from '../src/providers/native-memory-host.mjs';
 import { bindNativeContext } from '../src/providers/native-context.mjs';
 import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 // Focused guard tests (items 2-3): the Memory tool write is re-verified against
 // the real ledger/fence/capsule at authorize, after the async consent, and right
@@ -45,9 +46,9 @@ function setup(t, { spec, buildId = null, approval }) {
   const toolRegistry = new Map();
   const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
     approval: approvalService,
-    tools: { register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
+    tools: nativeDshBatchPeer({ register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
       execute: async input => { const r = toolRegistry.get(input.name); const value = await r.execute(input.arguments, input);
-        return { isError: false, value, content: r.output.render(input.arguments, value) }; } },
+        return { isError: false, value, content: r.output.render(input.arguments, value) }; } }),
     get: id => id === 'approval' ? approvalService : id === 'sandboxPolicy' ? ctx.sandboxPolicy : undefined };
   const gateway = createNativeDshTools({ ctx, config: { toolBindings: [], toolContracts: [] }, workspaceRoot, stateDir: join(root, 'state') });
   t.after(() => gateway.close());
@@ -95,8 +96,8 @@ for (const decision of ['allow', 'deny', 'cancel', 'post-policy-deny']) test(`re
   } };
   h.resolveApproval('allowed-once');
   if (decision === 'post-policy-deny') {
-    const execute = h.ctx.tools.execute;
-    h.ctx.tools.execute = async request => ({ ...await execute(request), isError: true,
+    const execute = h.ctx.tools.executeSingle;
+    h.ctx.tools.executeSingle = async request => ({ ...await execute(request), isError: true,
       content: [{ type: 'text', text: 'Post-policy rejects this tool result' }] });
   }
   const agent = { session: { id: 'session' } };
@@ -403,9 +404,9 @@ test('two sessions sharing one preset gateway isolate their Memory owners', asyn
   const toolRegistry = new Map();
   const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
     approval: { request: async req => approvals.get(String(req.agent.session.id))?.request(req) },
-    tools: { register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
+    tools: nativeDshBatchPeer({ register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
       execute: async input => { const r = toolRegistry.get(input.name); const value = await r.execute(input.arguments, input);
-        return { isError: false, value, content: r.output.render(input.arguments, value) }; } },
+        return { isError: false, value, content: r.output.render(input.arguments, value) }; } }),
     get: id => id === 'approval' ? ctx.approval : id === 'sandboxPolicy' ? ctx.sandboxPolicy : undefined };
   // ONE shared preset gateway, exactly as production (one activate per preset).
   const gateway = createNativeDshTools({ ctx, config: { toolBindings: [], toolContracts: [] }, workspaceRoot, stateDir: join(root, 'state') });

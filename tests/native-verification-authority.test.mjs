@@ -15,6 +15,7 @@ import { createNativeVerification, nativeGoalContract } from '../src/providers/n
 import { installNativeBoundPolicy } from '../src/providers/native-bound-policy.mjs';
 import { HOST_PREFLIGHT_DEFER } from '../src/providers/native-durable-approval.mjs';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 // Actual Chromium, loopback file owner, SQLite/Kernel and registry body. The
 // registry/permissions and model peer are controlled; no remote model is used.
@@ -40,7 +41,7 @@ for (const disposition of ['allow', 'deny', 'lost-lease', 'bound-policy']) test(
   const guards = new Set(), dispatchGuards = new Set();let preExecute;
   const ctx = { get: key => key === 'attachments' ? attachments : undefined,
     on: (_name, listener) => { preExecute = listener; return () => { preExecute = undefined; }; },
-    effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+    effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'], preflightDeferContract: HOST_PREFLIGHT_DEFER,
     guard: callback => { guards.add(callback); return () => guards.delete(callback); },
     dispatchGuard: callback => { dispatchGuards.add(callback); return () => dispatchGuards.delete(callback); },
@@ -65,7 +66,7 @@ for (const disposition of ['allow', 'deny', 'lost-lease', 'bound-policy']) test(
       return { isError: false, value, content: tool.output.render(input.arguments, value) };
       } catch (error) { return { isError: true, content: [{ type: 'text', text: error.message }] }; }
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: ['browser_inspect_workspace'],
     nativeEngineContract: 'agentkit.native-dsh-turn/v1',
     ...(disposition === 'bound-policy' ? { boundToolPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} } } : {}) }, workspaceRoot: workspace, stateDir: join(root, 'state'),

@@ -13,6 +13,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { prepareNativeA2AHost } from '../src/providers/native-a2a-host.mjs';
 import { createA2AProjection } from '../src/providers/native-a2a-protocol.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 const spec = { local_name: 'research', binding_id: 'binding-1', space_id: 'a2a-space-1', target_agent_id: 'a2a-agent-remote-1',
   expected_version_id: 'version-1', exposure: 'tool' };
@@ -83,7 +84,7 @@ async function setup(t, { protocol = 'JSONRPC', streaming = true, source = 'host
       .map(file => JSON.parse(readFileSync(join(directory, owner, file), 'utf8'))));
   }
   const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: policy }) },
-    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: {
+    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: nativeDshBatchPeer({
       register(value) { registry.set(value.name, value); return () => registry.delete(value.name); },
       async execute(input) {
         if (denied) return { isError: true, content: [{ type: 'text', text: 'Policy denied' }] };
@@ -92,7 +93,7 @@ async function setup(t, { protocol = 'JSONRPC', streaming = true, source = 'host
           return { isError: false, value, content: tool.output.render(input.arguments, value) }; }
         catch (error) { return { isError: true, content: [{ type: 'text', text: error.code ?? error.message }] }; }
       },
-    } };
+    }) };
   function bind() { gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, a2aBindings: [spec] },
     workspaceRoot, stateDir, commandEnvironment: env }); }
   bind();

@@ -21,6 +21,7 @@ import { command as managedCommand, permitIssuer } from './fixtures/native-manag
 import { createStudioNativeManagedScopeControl } from '../src/host/services/native-managed-scope-control.mjs';
 import { a2aDecisionDigest } from '../src/providers/native-a2a-decision.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 async function setup(t, { expectedAnswer = 42, managed = false, scoped = false, strict = false, unknownCancel = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-a2a-control-'))), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
@@ -54,11 +55,11 @@ async function setup(t, { expectedAnswer = 42, managed = false, scoped = false, 
   })().catch(error => { failures.push(error); res.statusCode = 500; res.end('{}'); }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${server.address().port}`;
   const agent = { session: { id: 'session' } }, lifetime = new AbortController(), active = new Set();
-  const ctx = { effect: install => install(), get: name => services[name], tools: {
+  const ctx = { effect: install => install(), get: name => services[name], tools: nativeDshBatchPeer({
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(exec) { const tool = registry.get(exec.name), value = await tool.execute(exec.arguments, exec);
       return { isError: false, value, content: tool.output.render(exec.arguments, value) }; },
-  } };
+  }) };
   const services = { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
     sessions: { flush: async () => true },
     sessionProjections: { stateOf: (_session, name) => name === 'turnBoundary' ? { lastTurn: 1, openTurnStartSeq: 0 } : 'actual-preset' },
