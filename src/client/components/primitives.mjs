@@ -60,11 +60,11 @@ export function createStudioPrimitives({ React }) {
     }, children);
   }
 
-  function SectionHeading({ eyebrow, title, detail, action }) {
-    return h('div', { 'data-studio-heading': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '20px', marginBottom: '18px' } },
+  function SectionHeading({ eyebrow, title, detail, action, compact = false }) {
+    return h('div', { 'data-studio-heading': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: compact ? 'center' : 'flex-end', gap: '20px', marginBottom: '18px' } },
       h('div', null,
         eyebrow ? h('div', { style: { color: BRAND.accentStrong, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '7px' } }, eyebrow) : null,
-        h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '22px', letterSpacing: '-0.02em' } }, title),
+        h('h2', { style: compact ? { margin: 0, color: BRAND.ink, fontSize: '18px', fontWeight: 500, lineHeight: '26px' } : { margin: 0, color: BRAND.ink, fontSize: '22px', letterSpacing: '-0.02em' } }, title),
         detail ? h('p', { style: { color: BRAND.inkMuted, margin: '7px 0 0', lineHeight: 1.55, fontSize: '13px' } }, detail) : null),
       action || null);
   }
