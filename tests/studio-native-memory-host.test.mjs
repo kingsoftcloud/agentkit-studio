@@ -15,6 +15,7 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { buildExecutionEngine } from '../src/build-engine.mjs';
 import { StudioNativeMemoryExtractionStore } from '../src/host/services/native-memory-extraction-store.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 // Host-level Memory integration. Real SqliteRunStore, real Memory provider
 // opened by the Host, and the production createNativeDshTools gateway. The DSH
@@ -57,7 +58,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
     effect: install => install(),
     sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
     approval: approvalService,
-    tools: {
+    tools: nativeDshBatchPeer({
       resultRetentions: ['caller/v1'],
       register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
       execute: async input => {
@@ -66,7 +67,7 @@ async function setup(t, { spec, approval = async () => 'allowed-once', respond, 
         const value = await registered.execute(input.arguments, input);
         return { isError: false, value, content: registered.output.render(input.arguments, value) };
       },
-    },
+    }),
     get: id => id === 'approval' ? approvalService : id === 'sandboxPolicy' ? toolCtx.sandboxPolicy : undefined,
   };
   const nativeTools = createNativeDshTools({ ctx: toolCtx, config: { toolBindings: [], toolContracts: [] },

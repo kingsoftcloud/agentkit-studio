@@ -11,6 +11,7 @@ import { createStudioNativeHarness } from '../src/host/services/native-harness.m
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 test('actual Studio task uses execution-owned facts, a complete small Skill directory and workspace pixels through SQLite and HTTP projection', async t => {
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'studio-model-surface-')), workspaceRoot = join(root, 'work');
@@ -37,12 +38,12 @@ test('actual Studio task uses execution-owned facts, a complete small Skill dire
     saveImages: async images => { attachments += images.length;
     return images.map((image, index) => ({ attachmentId: `image-${index}`, mediaType: image.mediaType,
       bytes: image.data.length, width: 256, height: 256 })); } } };
-  const ctx = { get: key => services[key], effect: install => install(), tools: {
+  const ctx = { get: key => services[key], effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'], register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(input) { try { const definition = registry.get(input.name), value = await definition.execute(input.arguments, input);
       return { isError: false, value, content: definition.output.render(input.arguments, value) }; }
       catch (error) { toolException = error.stack; throw error; } },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, toolBindings: ['read_workspace_file', 'browser_inspect_workspace'],
     toolContracts: [{ name: 'read_workspace_file', executor: 'builtin' }, { name: 'browser_inspect_workspace', executor: 'builtin' }], skillDefinitions: skills }, workspaceRoot,
   stateDir: join(root, 'state'), commandEnvironment: { KSADK_BROWSER_EXECUTABLE_PATH: join(root, 'not-installed-browser') } });

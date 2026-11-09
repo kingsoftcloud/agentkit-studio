@@ -41,7 +41,10 @@ export async function runOwnedRecoveryWorker(api, { directory, fault, recovering
       profile: { profileId: 'fixture', profileVersion: '1', providerFamily: 'fixture', compatibilityDigest: 'owned-recovery/v1' },
       contract: { objective: 'Write exactly once', revision: 'original-compiled-contract' },
       instructions: 'Original immutable instructions', hostBindingDigest: 'original-trusted-preset/v1',
-      inputMessages: [{ role: 'user', content: 'Write exactly once' }], limits: { leaseMs: 100, maxModelCalls: 4, maxToolCalls: 2 },
+      inputMessages: [{ role: 'user', content: 'Write exactly once' }],
+      // Leave room for SQLite and event-loop scheduling on shared runners.
+      // The parent verifier still waits for this actual lease to expire after the crash.
+      limits: { leaseMs: 2_000, maxModelCalls: 4, maxToolCalls: 2 },
       tools: [tool({ name: 'write', readOnly: false, concurrentSafe: false })],
     });
     const binding = { scope, buildId: 'original-build', configuration, taskChainId: 'original-chain',
@@ -87,7 +90,15 @@ export async function runOwnedRecoveryWorker(api, { directory, fault, recovering
         if (fault === 'terminal-delivered' && snapshot.phase === 'completed') await crash();
       },
     });
-    const setup = scope => { scope.on('agent/execute-turn', payload => execute(payload)); };
+    const setup = scope => {
+      scope.on('agent/execute-turn', async payload => {
+        try { return await execute(payload); }
+        catch (error) {
+          if (!recovering) console.error('Owned turn failed before the injected fault:', error);
+          throw error;
+        }
+      });
+    };
     const options = { agentOptions: { provider: 'fixture', model: 'pinned' }, setup };
     const handle = recovering
       ? await ctx.agents.resume({ ...options, resumeSessionId: SessionId('original-session') })

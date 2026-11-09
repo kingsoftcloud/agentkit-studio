@@ -59,8 +59,8 @@ test('actual Native kernel owns legacy Memory writes, full intent and post-polic
     }) });
   t.after(() => memory.close());
   const h = setup(t, [name], [], { workspaceRoot, stateDir: join(root, 'state'), getLegacyMemoryTools: () => memory });
-  const original = h.ctx.tools.execute;
-  h.ctx.tools.execute = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered Memory' }] });
+  const original = h.ctx.tools.executeSingle;
+  h.ctx.tools.executeSingle = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered Memory' }] });
   const tools = h.gateway.definitions(h.agent, [...h.registry.values()]); assert.equal(tools[0].readOnly, false);
   assert.equal(h.gateway.legacyMemoryBinding.backend, 'sdk');
   const data = fixture({ tools, limits: { effectTimeoutMs: 200000 } }); let models = 0;
@@ -90,8 +90,8 @@ test('actual Native kernel owns the knowledge intent, original read receipt and 
     }) });
   t.after(() => knowledge.close());
   const h = setup(t, [name], [], { workspaceRoot, stateDir: join(root, 'state'), getKnowledgeTools: () => knowledge });
-  const original = h.ctx.tools.execute;
-  h.ctx.tools.execute = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered knowledge' }] });
+  const original = h.ctx.tools.executeSingle;
+  h.ctx.tools.executeSingle = async request => ({ ...await original(request), content: [{ type: 'text', text: 'Host-filtered knowledge' }] });
   const tools = h.gateway.definitions(h.agent, [...h.registry.values()]); assert.equal(tools[0].readOnly, true);
   assert.equal(h.gateway.knowledgeBinding.datasetIds[0], 'kb');
   const data = fixture({ tools, limits: { effectTimeoutMs: 200000 } }); let models = 0;
@@ -138,8 +138,8 @@ test('actual Native kernel owns all three Skill management effects and preserves
   assert.deepEqual(tools.map(tool => tool.name).sort(), [...names].sort());
   const { config, snapshot } = fixture({ tools, limits: { effectTimeoutMs: 200000 } }); snapshot.scope = nativeScope;
   let models = 0, inspection, installed;
-  const originalExecute = host.ctx.tools.execute;
-  host.ctx.tools.execute = async input => {
+  const originalExecute = host.ctx.tools.executeSingle;
+  host.ctx.tools.executeSingle = async input => {
     const result = await originalExecute(input);
     if (input.name === 'skill_discover_github') inspection = JSON.parse(result.value.result);
     if (input.name === 'skill_install') installed = JSON.parse(result.value.result).installed_resource;
@@ -172,7 +172,7 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
   mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
   const registry = new Map(), calls = [];
   let deny = false, postFailure = false;
-  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     execute: async input => {
       calls.push(input);
@@ -181,7 +181,7 @@ function setup(t, names = ['write_workspace_file'], contracts = [], options = {}
       if (postFailure) return { isError: true, content: [{ type: 'text', text: 'Post-execution pipeline failed' }] };
       return { isError: false, value, content: registered.output.render(input.arguments, value) };
     },
-  } };
+  }) };
   ctx.tools.resultRetentions = options.resultRetentions ?? ['caller/v1'];
   if (options.argumentEncodings) ctx.tools.argumentEncodings = options.argumentEncodings;
   if (options.nativeEngineContract) {
@@ -389,8 +389,8 @@ for (const redact of [false, true]) test(`${protocol}: source capture uses alrea
   const h = setup(t, ['read_workspace_file']);
   const lines = Array.from({ length: 80 }, (_, index) => `row-${index + 1} ${'中文😀'.repeat(20)}${index === 59 ? ' state=confirmed' : ''}`);
   writeFileSync(join(h.workspaceRoot, 'source.txt'), lines.join('\n'));
-  const original = h.ctx.tools.execute;
-  h.ctx.tools.execute = async request => {
+  const original = h.ctx.tools.executeSingle;
+  h.ctx.tools.executeSingle = async request => {
     const result = await original(request), raw = parseNativeJson(result.content[0].text);
     if (redact) delete raw.requested_source;
     writeFileSync(join(h.workspaceRoot, 'source.txt'), 'CURRENT FILE WAS REPLACED AFTER THE READ');
@@ -464,8 +464,8 @@ for (const filtered of [false, true]) test(`full Read hydration metadata follows
   const h = setup(t, ['read_workspace_file']);
   writeFileSync(join(h.workspaceRoot, 'small.txt'), 'complete observed file\n');
   if (filtered) {
-    const execute = h.ctx.tools.execute;
-    h.ctx.tools.execute = async request => ({ ...await execute(request), content: [{ type: 'text', text: '{"ok":true,"content":"filtered"}' }] });
+    const execute = h.ctx.tools.executeSingle;
+    h.ctx.tools.executeSingle = async request => ({ ...await execute(request), content: [{ type: 'text', text: '{"ok":true,"content":"filtered"}' }] });
   }
   const { config, snapshot, store, ports } = await sourceRuntime(t, h); let calls = 0;
   const kernel = new NativeKernel({ store, digest, owner: 'read-observer', ports: { ...ports, model: { generate: async request => {
@@ -783,8 +783,8 @@ test('Plan MCP admission binds actual MCP identity, preserves Host denials and f
   const frozen = host.gateway.definitions(host.agent, schemas, { planModeMcpAccess: ['allowed'] });
   assert.deepEqual(frozen.filter(tool => tool.planModeAccess).map(tool => tool.name), ['allowed']);
   assert.equal(frozen[0].planModeAccess.destructive, false, 'Caller mutations cannot change the binding');
-  const execute = host.ctx.tools.execute;
-  host.ctx.tools.execute = request => request.name === 'blocked_by_host'
+  const execute = host.ctx.tools.executeSingle;
+  host.ctx.tools.executeSingle = request => request.name === 'blocked_by_host'
     ? { isError: true, content: [{ type: 'text', text: 'Host policy denied' }] } : execute(request);
   const data = fixture({ planModePolicy: 'session-plan/v1', planModeInitialActive: true,
     tools: [...host.gateway.definitions(host.agent, schemas, { planModeMcpAccess: true }), ...planModeToolDefinitions()],
@@ -811,8 +811,8 @@ test('Plan command permissions reach real Node execution and recheck runtime aft
   assert.equal(host.gateway.definitions(host.agent, schemas)[0].planModeCommandPolicy, undefined);
   const tools = host.gateway.definitions(host.agent, schemas, { planModeCommandPolicy: 'zcode-posix-readonly/v1' });
   assert.equal(tools[0].readOnly, false); assert.equal(tools[0].concurrentSafe, false);
-  const execute = host.ctx.tools.execute;
-  host.ctx.tools.execute = async request => {
+  const execute = host.ctx.tools.executeSingle;
+  host.ctx.tools.executeSingle = async request => {
     if (request.arguments.command === 'git status --short') writeFileSync(join(host.workspaceRoot, 'HEAD'), 'ref: refs/heads/main\n');
     if (request.arguments.command === 'printf host-denied') return { isError: true, content: [{ type: 'text', text: 'Host policy denied command' }] };
     return execute(request);
@@ -857,8 +857,8 @@ test('Native owns revision-bound MCP receipts while post-policy output controls 
   assert.equal(output.status, 'ok'); assert.deepEqual(output.content, reply);
   assert.match(output.context.content, /"structuredContent":\{"count":7\}/);
   assert.equal(invoked[0].resultFormat, 'mcp-result/v1'); assert.equal(invoked[0].resourceId, 'catalog');
-  const execute = host.ctx.tools.execute;
-  host.ctx.tools.execute = async input => ({ ...await execute(input), content: [{ type: 'text', text: 'Host redacted result' }] });
+  const execute = host.ctx.tools.executeSingle;
+  host.ctx.tools.executeSingle = async input => ({ ...await execute(input), content: [{ type: 'text', text: 'Host redacted result' }] });
   const redacted = await port.execute(host.request({}, 'lookup'));
   assert.equal(redacted.context.content, 'Host redacted result'); assert.deepEqual(redacted.content, reply);
   host.deny(); const denied = await port.execute(host.request({}, 'lookup'));
@@ -872,8 +872,8 @@ test('a known MCP error is an error receipt while a transport failure requires r
       return { content: [{ type: 'text', text: 'remote refused' }], isError: true };
     },
   });
-  const execute = host.ctx.tools.execute;
-  host.ctx.tools.execute = async input => {
+  const execute = host.ctx.tools.executeSingle;
+  host.ctx.tools.executeSingle = async input => {
     try { return await execute(input); } catch { return { isError: true, content: [{ type: 'text', text: 'transport lost' }] }; }
   };
   const port = host.gateway.forAgent(host.agent).tools;
@@ -892,8 +892,8 @@ test('MCP images enter the attachment policy while its public omission cannot ex
     imageLimits: { mediaTypes: ['image/png'], maxImageBytes: 1024, maxMessageImageBytes: 1024, maxImagesPerMessage: 1 },
     saveImages: async images => { saves++; assert.equal(images[0].data.toString('base64'), png); return [ref]; },
   } : undefined;
-  const execute = host.ctx.tools.execute;
-  host.ctx.tools.execute = async input => {
+  const execute = host.ctx.tools.executeSingle;
+  host.ctx.tools.executeSingle = async input => {
     const result = await execute(input);
     assert.equal(result.content.some(block => block.type === 'image'), true);
     return { ...result, content: [{ type: 'text', text: 'Host omitted MCP image' }] };
@@ -1032,7 +1032,7 @@ test('registry denial prevents a Node write and post-write failure becomes uncer
 });
 test('one admitted registry invocation cannot execute the same Native builtin body twice', async t => {
   const host = setup(t), registered = host.registry.get('write_workspace_file');
-  host.ctx.tools.execute = async input => {
+  host.ctx.tools.executeSingle = async input => {
     const value = await registered.execute(input.arguments, input);
     await assert.rejects(registered.execute(input.arguments, input), /studio_native_tool_already_dispatched/);
     return { isError: false, value, content: registered.output.render(input.arguments, value) };
@@ -1071,14 +1071,14 @@ test('MCP names are not replaced by workspace builtins; external failure require
   const host = setup(t, ['workspace_status'], [{ name: 'workspace_status', executor: 'mcp', parameters: { type: 'object' } }]);
   assert.equal(host.registry.has('workspace_status'), false);
   host.registry.set('workspace_status', { name: 'workspace_status', parameters: { type: 'object' } });
-  host.ctx.tools.execute = async () => ({ isError: true, content: [{ type: 'text', text: 'Acknowledgment lost' }] });
+  host.ctx.tools.executeSingle = async () => ({ isError: true, content: [{ type: 'text', text: 'Acknowledgment lost' }] });
   assert.equal((await host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'workspace_status'))).status, 'uncertain');
 });
 test('external tool additional contexts are retained in the Native receipt', async t => {
   const host = setup(t, ['external']);
   host.registry.set('external', { name: 'external', parameters: { type: 'object' } });
   const contexts = [{ role: 'user', source: { kind: 'tool' }, content: [{ type: 'text', text: 'Skill body' }] }];
-  host.ctx.tools.execute = async () => ({ isError: false, content: [{ type: 'text', text: 'Loaded' }], additionalContexts: contexts });
+  host.ctx.tools.executeSingle = async () => ({ isError: false, content: [{ type: 'text', text: 'Loaded' }], additionalContexts: contexts });
   const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'external'));
   assert.equal(result.status, 'ok'); assert.deepEqual(result.content.additionalContexts, contexts);
   assert.equal(result.context.content, 'Loaded');
@@ -1088,7 +1088,7 @@ test('external tool additional contexts are retained in the Native receipt', asy
 });
 test('Native model and display views use the authoritative post-policy receipt', async t => {
   const host = setup(t);
-  host.ctx.tools.execute = async input => {
+  host.ctx.tools.executeSingle = async input => {
     await host.registry.get(input.name).execute(input.arguments, input);
     return { isError: false, content: [{ type: 'text', text: 'Policy-redacted result' }] };
   };
@@ -1102,7 +1102,7 @@ test('Native model and display views use the authoritative post-policy receipt',
 
 test('post-policy display cannot replace the canonical builtin error diagnostics', async t => {
   const host = setup(t);
-  host.ctx.tools.execute = async input => {
+  host.ctx.tools.executeSingle = async input => {
     await host.registry.get(input.name).execute(input.arguments, input);
     return { isError: false, content: [{ type: 'text', text: 'Host display replaced' }],
       additionalContexts: [{ role: 'user', content: [{ type: 'text', text: 'Host follow-up' }] }] };
@@ -1116,7 +1116,7 @@ test('post-policy display cannot replace the canonical builtin error diagnostics
 
 test('Native ledger keeps the typed builtin receipt while the next model sees only post-policy context', async t => {
   const host = setup(t), request = host.request(), ports = host.gateway.forAgent(host.agent);
-  host.ctx.tools.execute = async input => {
+  host.ctx.tools.executeSingle = async input => {
     await host.registry.get(input.name).execute(input.arguments, input);
     return { isError: false, content: [{ type: 'text', text: 'Policy-approved view' }] };
   };
@@ -1145,7 +1145,7 @@ test('tool image observations use Host-owned bytes and retain their structured d
   host.ctx.get = name => name === 'attachments' ? { readImageRequest: async receipt => {
     assert.deepEqual(receipt, ref); reads++; return { mediaType: 'image/png', data: new Uint8Array([1, 2, 3]) };
   } } : undefined;
-  host.ctx.tools.execute = async () => ({ isError: false, content: blocks });
+  host.ctx.tools.executeSingle = async () => ({ isError: false, content: blocks });
   const result = await host.gateway.forAgent(host.agent).tools.execute(host.request({}, 'external'));
   assert.equal(reads, 1); assert.equal(result.context.content, 'Image observation');
   assert.equal(result.context.media[0].image_url.url, 'data:image/png;base64,AQID');
@@ -1162,6 +1162,7 @@ import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node
 import { bindStudioNativeMemoryHost } from '../src/providers/native-memory-host.mjs';
 import { bindNativeContext } from '../src/providers/native-context.mjs';
 import { authorizeNativeBuiltin } from '../src/providers/native-tool-policy.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 function memorySetup(t, { mode = 'workspace-write', approvalOutcome = 'allowed-once' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'studio-native-memory-gateway-'));
@@ -1172,10 +1173,10 @@ function memorySetup(t, { mode = 'workspace-write', approvalOutcome = 'allowed-o
   const ctx = { effect: install => install(),
     sandboxPolicy: { resolve: () => ({ mode }) },
     approval: approvalService,
-    tools: { register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
+    tools: nativeDshBatchPeer({ register: tool => { toolRegistry.set(tool.name, tool); return () => toolRegistry.delete(tool.name); },
       execute: async input => { const registered = toolRegistry.get(input.name);
         const value = await registered.execute(input.arguments, input);
-        return { isError: false, value, content: registered.output.render(input.arguments, value) }; } },
+        return { isError: false, value, content: registered.output.render(input.arguments, value) }; } }),
     get: id => id === 'approval' ? approvalService : id === 'sandboxPolicy' ? ctx.sandboxPolicy : undefined };
   const gateway = createNativeDshTools({ ctx, config: { toolBindings: [], toolContracts: [] },
     workspaceRoot, stateDir: join(root, 'state') });
@@ -1275,8 +1276,8 @@ test('gateway close disposes a bound Memory owner registration without leaking',
   // After close the Memory registration is gone; a fresh gateway can bind again.
   const toolRegistry2 = new Map();
   const ctx2 = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
-    approval: { request: async () => 'allowed-once' }, tools: { register: tool => { toolRegistry2.set(tool.name, tool); return () => toolRegistry2.delete(tool.name); },
-      execute: async input => { const r = toolRegistry2.get(input.name); return { isError: false, value: await r.execute(input.arguments, input), content: r.output.render(input.arguments, undefined) }; } },
+    approval: { request: async () => 'allowed-once' }, tools: nativeDshBatchPeer({ register: tool => { toolRegistry2.set(tool.name, tool); return () => toolRegistry2.delete(tool.name); },
+      execute: async input => { const r = toolRegistry2.get(input.name); return { isError: false, value: await r.execute(input.arguments, input), content: r.output.render(input.arguments, undefined) }; } }),
     get: id => id === 'approval' ? ctx2.approval : undefined };
   const gateway2 = createNativeDshTools({ ctx: ctx2, config: { toolBindings: [], toolContracts: [] },
     workspaceRoot: join(h.root, 'workspace'), stateDir: join(h.root, 'state2') });
@@ -1338,8 +1339,8 @@ for (const version of [1, 2, 3]) test(`directory v${version}: actual Node listin
 test('directory post-policy redaction is respected by both full archives and receipt navigation', async t => {
   const h = setup(t, ['list_workspace_files']), root = join(h.workspaceRoot, '..');
   mkdirSync(join(h.workspaceRoot, 'private')); mkdirSync(join(h.workspaceRoot, 'public'));
-  const execute = h.ctx.tools.execute;
-  h.ctx.tools.execute = async input => {
+  const execute = h.ctx.tools.executeSingle;
+  h.ctx.tools.executeSingle = async input => {
     const result = await execute(input), raw = parseNativeJson(result.content[0].text);
     raw.entries = raw.entries.filter(entry => entry.path !== 'private');
     return { ...result, content: [{ type: 'text', text: canonical(raw) }] };
@@ -1371,9 +1372,11 @@ for (const governed of [false, true]) test(`real local command keeps full retain
       try {
       models++;
       if (models === 1) return { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'command', name: 'run_command',
-        arguments: { command: `"${process.execPath}" -e "process.stdout.write('x'.repeat(40000)+'TAIL_完整😀')"` } }] };
+        arguments: { command: `"${process.execPath}" --jitless -e "process.stdout.write('x'.repeat(40000)+'TAIL_完整😀')"` } }] };
       const saved = store.load(scope, snapshot.runId), result = saved.receipts.flatMap(row => row.result.results ?? [])[0];
-      assert.equal(result.status, 'ok'); assert.equal(saved.snapshot.artifactRefs.length, 1);
+      assert.equal(result.status, 'ok');
+      assert.equal(result.content.exit_code, 0, result.content.stderr);
+      assert.equal(saved.snapshot.artifactRefs.length, 1);
       archive = { content: '' }; let offset = 0;
       for (;;) {
         const page = await artifacts.read({ ...h.request(), ref: saved.snapshot.artifactRefs[0], offset, limit: 32000 });
@@ -1419,7 +1422,7 @@ test('post-policy redaction removes captured edit display metadata without chang
   const h=setup(t),port=h.gateway.forAgent(h.agent).tools;
   const first=await port.execute(h.request({path:'visible.txt',content:'visible\n'}));
   assert.equal(first.status,'ok');assert.equal(first.metadata.nativeTaskDisplay.contract,'agentkit.workspace-display/v1');
-  h.ctx.tools.execute=async input=>{
+  h.ctx.tools.executeSingle=async input=>{
     await h.registry.get(input.name).execute(input.arguments,input);
     return {isError:false,content:[{type:'text',text:'Authorized redacted receipt'}]};
   };

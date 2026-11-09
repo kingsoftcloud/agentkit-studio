@@ -90,7 +90,8 @@ test('Native turn retirement waits for the worker to drain and rejects late comp
   void pending.then(() => { settled = true; }, () => { settled = true; });
   await started.promise; bridge.close();
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(workerSignal.aborted, true); assert.equal(settled, false);
+  assert.equal(workerSignal.aborted, true);
+  assert.equal(workerSignal.reason.kind, 'disposed'); assert.equal(settled, false);
   assert.equal(bridge.diagnostics().requests, 1);
   drained.resolve(); await assert.rejects(pending, { code: 'STUDIO_RUNTIME_BRIDGE_CLOSED' });
   assert.equal(bridge.diagnostics().requests, 0);

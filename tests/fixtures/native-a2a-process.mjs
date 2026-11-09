@@ -6,6 +6,7 @@ import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { nativeDshBatchPeer } from './native-dsh-batch-peer.mjs';
 const [mode, root, origin, queryId = 'cold-query'] = process.argv.slice(2), workspaceRoot = join(root, 'workspace');
 const store = new SqliteRunStore(join(root, 'runs.sqlite'));
 if (mode === 'recover') {
@@ -19,13 +20,13 @@ if (mode === 'recover') {
 } else {
   mkdirSync(workspaceRoot, { recursive: true });
   const registry = new Map(), agent = { session: { id: 'session' } };
-  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(input) {
       const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
       return { isError: false, value, content: tool.output.render(input.arguments, value) };
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, a2aBindings: [{ local_name: 'remote',
     binding_id: 'binding', space_id: 'space', target_agent_id: 'remote', expected_version_id: 'version', exposure: 'tool' }] },
     workspaceRoot, stateDir: join(root, 'state'), commandEnvironment: {

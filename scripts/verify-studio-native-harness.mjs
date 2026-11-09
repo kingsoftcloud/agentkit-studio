@@ -243,7 +243,11 @@ const server = createServer(async (request, response) => {
     const artifactTools = artifactToolDefinitions();
     const finalTool = body.tools.find(tool => tool.function.name === 'submit_final_output');
     const [declaration] = deliveryToolDefinitions();
-    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName, declaration.name,
+    // The production preset also exposes the built-in skill catalog and
+    // deferred-tool discovery even when the test binds only one write tool.
+    const discovery = values.recovery ? ['skill_catalog', 'skill_read_manifest', 'skill_read_instructions',
+      'skill_read_resource', 'ToolSearch', 'DeferredToolCall'] : [];
+    assert.deepEqual(body.tools.map(tool => tool.function.name), [toolName, ...discovery, declaration.name,
       ...artifactTools.map(tool => tool.name), ...(finalTool ? ['submit_final_output'] : [])]);
     assert.deepEqual(body.tools.find(tool => tool.function.name === declaration.name).function.parameters, declaration.parameters);
     for (const definition of artifactTools) assert.deepEqual(body.tools.find(tool => tool.function.name === definition.name).function.parameters, definition.parameters);
@@ -257,8 +261,14 @@ const server = createServer(async (request, response) => {
       assert.equal(body.messages.filter(message => message.role === 'tool').at(-1).content, `Published published-${turn}.txt (policy view)`);
       // Core may append authoritative execution facts after the Host inbox.
       // The steering message must still be the latest actual user input.
-      assert.equal(body.messages.filter(message => message.role === 'user').at(-1)?.content,
-        `Live instruction for published-${turn}.txt`);
+      const userMessages = body.messages.filter(message => message.role === 'user');
+      const steering = `Live instruction for published-${turn}.txt`;
+      const steeringIndex = userMessages.findLastIndex(message => message.content === steering);
+      assert.ok(steeringIndex >= 0);
+      assert.equal(userMessages.filter(message => message.content === steering).length, 1);
+      for (const message of userMessages.slice(steeringIndex + 1)) {
+        assert.equal(JSON.parse(message.content).item?.contract, 'agentkit.native-instruction-files/v1');
+      }
       assert.ok(body.messages.some(message => message.role === 'user' && message.content === `Loaded context for published-${turn}.txt`));
     }
     if (count === 3) {

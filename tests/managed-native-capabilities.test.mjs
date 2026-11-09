@@ -11,6 +11,7 @@ import { nativeLocalToolContract } from '../src/native-tool-catalog.mjs';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { NativeKernel, MemoryRunStore, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { fixture, scope, digest } from './fixtures/native-core.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 async function definition(t, framework, extraEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), 'managed-native-capabilities-'));
@@ -73,13 +74,13 @@ test('managed defaults reach the Native kernel and write, execute, then read an 
   const workspaceRoot = join(root, 'workspace'); await mkdir(workspaceRoot);
   const registry = new Map(), called = [];
   const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) },
-    tools: { resultRetentions: ['caller/v1'], register(tool) {
+    tools: nativeDshBatchPeer({ resultRetentions: ['caller/v1'], register(tool) {
       registry.set(tool.name, tool); return () => registry.delete(tool.name);
     }, async execute(input) {
       called.push(input.name);
       const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
       return { isError: false, value, content: tool.output.render(input.arguments, value) };
-    } } };
+    } }) };
   const toolBindings = runtime.agent.spec.bindings.tools.map(ref => ref.resourceId);
   const gateway = createNativeDshTools({ ctx, config: { agentId: runtime.identity.agentId, toolBindings,
     toolContracts: toolBindings.map(nativeLocalToolContract) }, workspaceRoot, stateDir: join(root, 'state') });

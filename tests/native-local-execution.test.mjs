@@ -85,8 +85,9 @@ test('a real foreground command can write a repository-size file under developme
       captureWorkspace: () => ({ revision: 'fixture', entries: {} }) });
     const code = 'const f=require("fs");const fd=f.openSync("' + label + '.bin","wx");const b=Buffer.alloc(1024*1024);for(let i=0;i<70;i++)f.writeSync(fd,b);f.closeSync(fd);';
     const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+    // Keep the writer inside the real address-space limit on Linux x64.
     const result = await transport.execute({ sessionId: 'session', runId: 'run', operationKey: label,
-      call: { callId: label, name: 'run_command', arguments: { command: quote(process.execPath) + ' -e ' + quote(code) } },
+      call: { callId: label, name: 'run_command', arguments: { command: quote(process.execPath) + ' --jitless -e ' + quote(code) } },
       definition: transport.definitions.find(x => x.name === 'run_command'), signal: new AbortController().signal,
       resultGovernance: 'runtime-artifacts/v1' });
     assert.equal(result.content.exit_code === 0, succeeds, canonical(result));

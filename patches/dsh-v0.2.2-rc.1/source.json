@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "4e6a52cbbea1851d8e352ac1b1f44986f29a0cd8",
+  "headCommit": "a974b89994bf1dfa6c38ec749d8a8259339af9fb",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "057340e2ee80fbb5981613bb3882870ae1d32c52",
-  "sourceSha256": "bac4590774d8799921e194892ac089af70033739271c3a0226e8e611b1154414",
+  "tree": "acb9025f30640ab4ec7398d885a20d6d632c2d37",
+  "sourceSha256": "88af4d935519156635dc02678db26de4a6c2357174a19eaa59704a5f772b12a0",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "e3fc5c233fd38ef464ee492920a86a3043e41dd9ca5edee55bf8943b58f7e763"
+    "sha256": "851e40f8e687eb2666a90bee0719d771d76d78323f7df23b2aad3c5eae66dc79"
   },
   "commits": [
     {
@@ -298,6 +298,12 @@
       "file": "079-session-controller-approval-decision.patch",
       "commit": "4e6a52cbbea1851d8e352ac1b1f44986f29a0cd8",
       "sha256": "3cf07780e6e6bbf9380c1be423d823a98c769bb4414e097a94285a34f1733c6c"
+    },
+    {
+      "id": "080",
+      "file": "080-native-owned-turn-recovery-and-dispatch.patch",
+      "commit": "a974b89994bf1dfa6c38ec749d8a8259339af9fb",
+      "sha256": "bb15f9f58ec16a2fca7148cb3039d548b56b4403f290db8b40c3fd7ea1995ed7"
     }
   ]
 }

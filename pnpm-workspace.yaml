@@ -2,4 +2,4 @@ patchedDependencies:
   "@modelcontextprotocol/sdk@1.32.0": patches/@modelcontextprotocol__sdk@1.32.0.patch
 nodeLinker: hoisted
 overrides:
-  "@kingsoftcloud/agentkit-harness-core": 0.0.13
+  "@kingsoftcloud/agentkit-harness-core": 0.0.15

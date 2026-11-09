@@ -16,7 +16,8 @@ import { createNativeSkillDisclosurePort } from '@kingsoftcloud/agentkit-harness
 import { createNativeDshA2aTools } from './native-dsh-a2a.mjs';
 import { createNativeA2aReceiptObserver, createNativeA2aReceiptWaiter, createNativeA2aQuestionTerminator } from './native-a2a-receipt.mjs';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
-import { NATIVE_DURABLE_APPROVAL, HOST_PREFLIGHT_DEFER } from './native-durable-approval.mjs';
+import { NATIVE_DURABLE_APPROVAL } from './native-durable-approval.mjs';
+import { executeNativeDshToolCall } from './native-dsh-tool-call.mjs';
 
 /** Per-agent ports share the preset registry but retain their original ledger authority. */
 export function createNativeDshAgentTools(environment, agent, commandAuthority) {
@@ -172,7 +173,7 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
         const envelope = result => ({ contract: request.contract, originalOperationKey: request.originalOperationKey, callId: request.call.callId, result });
         calls.set(callId, invocation);
         try {
-          const output = await ctx.tools.execute({ name: WORKSPACE_REPAIR_TOOL, callId, agent, signal: request.signal,
+          const output = await executeNativeDshToolCall(ctx.tools, { name: WORKSPACE_REPAIR_TOOL, callId, agent, signal: request.signal,
             arguments: { original_operation_key: request.originalOperationKey } });
           invariant(assertCurrent(request), 'studio_native_repair_authority_stale');
           // The raw compensation is an error result by design. Only its
@@ -266,14 +267,17 @@ export function createNativeDshAgentTools(environment, agent, commandAuthority) 
         invariant(typeof context?.source === 'string', 'studio_native_raw_number_source_missing');
         return JSON.rawJSON(context.source);
       }) : structuredClone(request.call.arguments);
-      const result = await ctx.tools.execute({ callId, name: codeNames.has(request.call.name) ? sandboxRegistryName(request.call.name) : request.call.name,
+      const result = await executeNativeDshToolCall(ctx.tools, { callId, name: codeNames.has(request.call.name) ? sandboxRegistryName(request.call.name) : request.call.name,
         arguments: args, ...(exactNumbers ? { argumentEncoding } : {}),
         ...(request.resultGovernance === 'runtime-artifacts/v1' ? { resultRetention } : {}),
-        ...(request.definition.approvalPolicy === NATIVE_DURABLE_APPROVAL ? { preflightDefer: HOST_PREFLIGHT_DEFER } : {}),
+        ...(request.definition.approvalPolicy === NATIVE_DURABLE_APPROVAL ? { preflightDefer: durableApproval.hostContract } : {}),
         signal: request.signal, agent });
       request.signal.throwIfAborted();
       invariant(typeof result?.isError === 'boolean' && Array.isArray(result.content), 'studio_native_tool_result_invalid');
       durableApproval.assertProjection(invocation, result);
+      if (result.isError && durableApproval.hostContract === 'dsh.tool-preflight-defer/v2'
+        && result.preflightRejected === durableApproval.hostContract)
+        invocation.outcome = { status: 'error', content: { code: 'native_tool_preflight_rejected', executed: false } };
       if (invocation.deferredApproval && result.isError)
         invocation.outcome = { status: 'error', content: { code: 'native_approval_preflight_denied', executed: false } };
       // Memory tools live per-session (not in the shared formal map): resolve

@@ -24,6 +24,7 @@ import { createStudioManagedNativeBinding } from '../src/host/services/native-ma
 import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';
 import { managedNativeOwnerProjection, STUDIO_MANAGED_NATIVE_EXECUTION } from '../src/host/services/native-managed-execution.mjs';
 import { command as managedCommand, permitIssuer } from './fixtures/native-managed-kernel.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 async function setup(t, { sqlite = false, role = {}, forged = false, control = false, query = false, childArguments = {},
   goal = 'Use the bounded reader', childResult = 'Child read actual workspace evidence', parentResult = 'Parent delivery',
@@ -53,7 +54,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
     attachments: { readImageRequest: async ref => ({ mediaType: 'image/png', data: Buffer.from(ref.attachmentId) }) },
     sessionProjections: { register: definition => { projections.set(definition.key, definition); return () => projections.delete(definition.key); },
       stateOf: (_session, key) => { const projection = projections.get(key); return projection ? events.reduce(projection.apply, projection.init()) : undefined; } } };
-  const ctx = { get: name => services[name], effect: install => install(), tools: {
+  const ctx = { get: name => services[name], effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'],
     ...(governed ? {
       guard: callback => { guards.add(callback); return () => guards.delete(callback); },
@@ -70,7 +71,7 @@ async function setup(t, { sqlite = false, role = {}, forged = false, control = f
       catch (error) { dispatchErrors.push(error); throw error; }
       return { isError: false, content: definition.output.render(request.arguments, value) };
     },
-  } };
+  }) };
   if (instructionOwnership) {
     let directory = realpathSync(workspaceRoot);
     services.workingDirectory = { get: () => directory, set: async (_agent, value) => { directory = value; }, ensure: async () => directory };

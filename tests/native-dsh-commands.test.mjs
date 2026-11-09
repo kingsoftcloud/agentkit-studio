@@ -8,6 +8,7 @@ import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { LocalCommandStore } from '@kingsoftcloud/agentkit-harness-node/native/local-background';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 const names = ['sandbox_status', 'run_command', 'read_command_output', 'stop_command'];
 const final = () => ({ kind: 'final_candidate', text: 'Done', toolCalls: [], usage: emptyUsage() });
 const call = (name, args) => ({ kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{ callId: 'model-call', name, arguments: args }] });
@@ -29,6 +30,7 @@ function setup(t, commandSettings = {}) {
       return { isError: false, value, content: registered.output.render(input.arguments, value) };
     },
   } };
+  ctx.tools = nativeDshBatchPeer(ctx.tools);
   function bind() { gateway = createNativeDshTools({ ctx, workspaceRoot, stateDir, config: { toolBindings: names },
     commandSettings: { wallSeconds: 5, ...commandSettings }, commandEnvironment: { PATH: '/bin:/usr/bin', HOST_SECRET: 'host-private' } }); }
   bind(); let currentRun;

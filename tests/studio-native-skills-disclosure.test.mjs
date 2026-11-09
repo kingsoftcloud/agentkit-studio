@@ -10,6 +10,7 @@ import { createStudioNativeHarness } from '../src/host/services/native-harness.m
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 const skillId = 'skill://alpha@1.0.0';
 const calls = [
@@ -36,7 +37,7 @@ async function setup(t, plan = calls, intercept = async () => {}) {
     stateOf(_session, key) { const definition = definitions.get(key);
       return definition ? events.reduce(definition.apply, definition.init()) : undefined; },
   } };
-  const ctx = { get: key => services[key], effect: install => install(), tools: {
+  const ctx = { get: key => services[key], effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'],
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(input) {
@@ -44,7 +45,7 @@ async function setup(t, plan = calls, intercept = async () => {}) {
       const definition = registry.get(input.name), value = await definition.execute(input.arguments, input);
       return { isError: false, value, content: definition.output.render(input.arguments, value) };
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: record.metadata.id, toolBindings: [], toolContracts: [],
     skillDefinitions: [{ name: 'alpha', content, path: join(skillRoot, 'SKILL.md'),
       resourceBase: { kind: 'directory', path: skillRoot } }] }, workspaceRoot, stateDir: join(root, 'state'),

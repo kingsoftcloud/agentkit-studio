@@ -974,7 +974,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     },
     close() {
       if (closing) return closing;
-      closed = true; lifetime.abort(new Error('Studio Native host closed'));
+      closed = true; lifetime.abort(Object.assign(new Error('Studio Native host closed'), { kind: 'disposed' }));
       return closing = (async () => {
         await Promise.all([backgroundStart, waitRecoveryStart]);
         const background = await Promise.allSettled([backgroundOwner?.close(), waitRecoveryOwner?.close(), memoryExtraction.close()]);
