@@ -2247,12 +2247,61 @@
         ]
       },
       "sequence": 47
+    },
+    {
+      "id": "079",
+      "file": "079-session-controller-approval-decision.patch",
+      "category": "session-contract",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "3cf07780e6e6bbf9380c1be423d823a98c769bb4414e097a94285a34f1733c6c",
+      "dependsOn": [
+        "078"
+      ],
+      "affectedFiles": [
+        "packages/api/session-controller/package.json",
+        "packages/api/session-controller/src/index.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/approval-decision.host.spec.ts",
+        "packages/api/session-controller/tests/test-remote.ts",
+        "packages/experimental/liveshare/src/endpoint-classification.ts",
+        "packages/interaction/user-approval/src/index.ts",
+        "packages/interaction/user-approval/src/types.ts",
+        "packages/interaction/user-approval/tests/approval.spec.ts",
+        "pnpm-lock.yaml"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-experimental-liveshare",
+        "@deepseek-ai/dsh-user-approval"
+      ],
+      "contracts": [
+        "The public SessionController approvalDecision RPC accepts only an authenticated Session-owned live approval request id and an allowed-once or rejected decision; the approval service owns stale checks and the paired audit outcome.",
+        "Studio Native answerers consume the DSH approval/decision waterfall while the existing compatibility bridge remains available for older Host routes.",
+        "The public approval decision endpoint is owner-only in LiveShare endpoint classification and is never exposed to a viewer."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Implemented and tested in the local DSH 0.2.2-rc.1 maintenance checkout; no upstream or production submission made."
+      },
+      "removeWhen": "Upstream DSH exposes the same SessionController approval decision contract and live approval-service decision seam.",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/approval-decision.host.spec.ts",
+          "packages/interaction/user-approval/tests/approval.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 48
     }
   ],
-  "patchedTree": "a1da1530cdc31489daf579049a83adb93865b68d",
-  "patchedSourceSha256": "c2736d2d0d3742b4f340dd2446527cea02b903f5d75a38cbd2f73695b64ca330",
+  "patchedTree": "057340e2ee80fbb5981613bb3882870ae1d32c52",
+  "patchedSourceSha256": "bac4590774d8799921e194892ac089af70033739271c3a0226e8e611b1154414",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "a576478f8804f8e67515be9fa62f851556e202ade7567caeb86aed5baec77691"
+    "sha256": "56059e1e8c8756eaaed727818fd181d19a55936d22f4479245f64744f6dc8105"
   }
 }
