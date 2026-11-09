@@ -110,18 +110,26 @@ jobs:
           package_json_file: package.json
       - name: Select the Electron download mirror
         # The GitHub release CDN intermittently answers 504 for the Electron
-        # checksum manifest while the archive itself still returns 200, which
-        # aborts packaging before signing starts. Probe the manifest once and
-        # only redirect Electron downloads to the npmmirror copy when the
-        # official source is unusable, so a healthy runner keeps using GitHub.
+        # inputs. The checksum manifest and the platform archive fail
+        # independently - on 2026-11-09 the manifest was healthy while
+        # electron-v44.7.0-win32-x64.zip returned 504 for every attempt, which
+        # aborted packaging after the probe had already passed. Probe both with
+        # a HEAD request and only redirect Electron downloads to the npmmirror
+        # copy when the official source is unusable, so a healthy runner keeps
+        # using GitHub.
         shell: pwsh
         run: |
-          $probe = 'https://github.com/electron/electron/releases/download/v44.7.0/SHASUMS256.txt'
-          curl.exe -fsSL --retry 3 --retry-delay 2 --max-time 45 --output NUL $probe
-          if ($LASTEXITCODE -eq 0) {
+          $base = 'https://github.com/electron/electron/releases/download/v44.7.0'
+          $probes = @("$base/SHASUMS256.txt", "$base/electron-v44.7.0-win32-x64.zip")
+          $unreachable = @()
+          foreach ($probe in $probes) {
+            curl.exe -fsSLI --retry 3 --retry-delay 2 --max-time 60 --output NUL $probe
+            if ($LASTEXITCODE -ne 0) { $unreachable += $probe }
+          }
+          if ($unreachable.Count -eq 0) {
             Write-Host 'electron mirror fallback: disabled'
           } else {
-            Write-Host "official Electron checksum probe failed: curl exit $LASTEXITCODE"
+            Write-Host "official Electron probe failed for: $($unreachable -join ', ')"
             'ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/' | Out-File $env:GITHUB_ENV -Append -Encoding utf8
             Write-Host 'electron mirror fallback: enabled'
           }
