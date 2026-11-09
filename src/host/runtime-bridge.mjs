@@ -8,6 +8,10 @@ function unavailable(code = 'STUDIO_RUNTIME_BRIDGE_CLOSED') {
   return Object.assign(new Error('Studio runtime bridge is unavailable'), { code });
 }
 
+function disposed(code) {
+  return Object.assign(unavailable(code), { kind: 'disposed' });
+}
+
 function abortable(value, signal) {
   if (signal.aborted) return Promise.reject(signal.reason || unavailable());
   return new Promise((resolve, reject) => {
@@ -41,7 +45,7 @@ export function createRuntimeBridge() {
     else if (slot === 'builtin-tools') builtinToolsFactory = record;
     else executor = record;
     return () => {
-      record.controller.abort(unavailable('STUDIO_RUNTIME_REGISTRATION_RETIRED'));
+      record.controller.abort(disposed('STUDIO_RUNTIME_REGISTRATION_RETIRED'));
       if (slot === 'adapter' && adapter === record) adapter = undefined;
       if (slot === 'executor' && executor === record) executor = undefined;
       if (slot === 'native-turn' && nativeTurnExecutor === record) nativeTurnExecutor = undefined;
@@ -173,7 +177,7 @@ export function createRuntimeBridge() {
       return { closed: lifetime.signal.aborted, adapters: Number(Boolean(adapter)), executors: Number(Boolean(executor)), routes: routes.size, requests: pending.size };
     },
     close() {
-      lifetime.abort(unavailable());
+      lifetime.abort(disposed());
       adapter = undefined;
       executor = undefined;
       nativeTurnExecutor = undefined;

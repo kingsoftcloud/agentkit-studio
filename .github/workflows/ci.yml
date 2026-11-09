@@ -25,7 +25,7 @@ jobs:
           version: 10.33.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.23.4
+          node-version-file: .node-version
           cache: pnpm
       - run: node scripts/check-node-version.mjs
       - run: pnpm install --frozen-lockfile
@@ -85,6 +85,17 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - name: Verify actual Native turn ownership, approvals and process recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$PWD/.artifacts/native-host-contracts.log"
+          trap 'cat "$log"' EXIT
+          dsh_root="$(node -p "JSON.parse(require('fs').readFileSync('.artifacts/patched-host-acceptance.json')).checkout")"
+          node scripts/verify-native-dsh-turn.mjs --source "$dsh_root" --context --live > "$log" 2>&1
+          node scripts/verify-native-durable-approval.mjs --source "$dsh_root" >> "$log" 2>&1
+          node scripts/verify-native-owned-recovery.mjs --source "$dsh_root" >> "$log" 2>&1
+          node scripts/verify-studio-native-harness.mjs --source "$dsh_root" --mount-host --recovery >> "$log" 2>&1
       - name: Verify normal installed assistant cold startup and restart
         shell: bash
         run: |
@@ -110,6 +121,7 @@ jobs:
             .artifacts/patched-host-acceptance.json
             .artifacts/patched-host/host-tests.json
             .artifacts/patched-host/host-dependency-lifecycle.json
+            .artifacts/native-host-contracts.log
             .artifacts/assistant-automatic-startup.json
           if-no-files-found: error
           retention-days: 7

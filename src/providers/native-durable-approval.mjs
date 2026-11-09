@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { canonical, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { nativeApprovalPreflightContract, nativeApprovalPreflight, assertNativeApprovalPreflightProjection,
+  SCHEMA_BOUND_PREFLIGHT } from '@kingsoftcloud/agentkit-harness-node/native/approval-preflight';
 
 export const NATIVE_DURABLE_APPROVAL = 'durable-preflight/v1';
-export const HOST_PREFLIGHT_DEFER = 'dsh.tool-preflight-defer/v1';
+export const HOST_PREFLIGHT_DEFER = SCHEMA_BOUND_PREFLIGHT;
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 
 /** A permission belongs to one immutable call until that call settles. A
@@ -27,6 +29,7 @@ function decisionFor(record, request, interactionId) {
 /** The gateway owns this bridge and its live invocation map. Durable grants
  * come only from the original Native ledger, never from registry arguments. */
 export function createNativeDurableApproval({ ctx, calls }) {
+  const hostContract = nativeApprovalPreflightContract(ctx.tools);
   // This registry also contains verification and workspace-repair owners.
   // Their claims have their own authority checks and normal Host permission
   // pipeline; a model-tool approval contract cannot be borrowed by them.
@@ -39,7 +42,7 @@ export function createNativeDurableApproval({ ctx, calls }) {
     const invocation = durableInvocation(exec);
     if (!invocation) return null;
     const request = invocation.request;
-    invariant(ctx.tools?.preflightDeferContract === HOST_PREFLIGHT_DEFER && exec.preflightDefer === HOST_PREFLIGHT_DEFER,
+    invariant(hostContract !== null && exec.preflightDefer === hostContract,
       'studio_native_durable_approval_host_unavailable');
     invariant(invocation.agent === exec.agent && invocation.registryName === exec.name
       && !invocation.dispatched && !exec.signal.aborted && !request.signal.aborted
@@ -49,6 +52,7 @@ export function createNativeDurableApproval({ ctx, calls }) {
     return invocation;
   };
   return {
+    hostContract,
     // Eligibility only selects the stricter policy path. Resolve rechecks the
     // complete live ledger authority before yielding or consuming a grant.
     eligible: exec => durableInvocation(exec) !== null,
@@ -66,14 +70,13 @@ export function createNativeDurableApproval({ ctx, calls }) {
         toolName: request.call.name, argumentDigest: hash(request.call.arguments) };
       const outcome = { status: 'approval_required', interactionId, approvalPolicy: NATIVE_DURABLE_APPROVAL, content };
       invocation.outcome = outcome;
-      invocation.deferredApproval = { outcome, value: { result: canonical(content) } };
-      return { kind: 'defer', value: invocation.deferredApproval.value };
+      invocation.deferredApproval = { outcome, ...nativeApprovalPreflight(content, hostContract) };
+      return invocation.deferredApproval.decision;
     },
     assertProjection(invocation, result) {
       if (!invocation.deferredApproval || result.isError) return;
-      invariant(!invocation.dispatched && canonical(result.value) === canonical(invocation.deferredApproval.value)
-        && canonical(result.content) === canonical([{ type: 'text', text: invocation.deferredApproval.value.result }]),
-      'studio_native_deferred_approval_projection_changed');
+      invariant(!invocation.dispatched, 'studio_native_deferred_approval_projection_changed');
+      assertNativeApprovalPreflightProjection(invocation.deferredApproval, result);
     },
   };
 }

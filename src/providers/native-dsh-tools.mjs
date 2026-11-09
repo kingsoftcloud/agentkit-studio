@@ -33,7 +33,8 @@ import { NATIVE_MCP_JSON_CODEC } from './native-mcp-json.mjs';
 import { bindNativeMcpSchema, bindNativeMcpPlanAccess, NATIVE_MCP_SCHEMA_CONTRACT } from './native-mcp-schema.mjs';
 import { authorizeNativeBuiltin, STUDIO_NATIVE_TOOL_PERMISSION_CONTRACT } from './native-tool-policy.mjs';
 import { hasNativeBoundApproval } from './native-bound-policy.mjs';
-import { createNativeDurableApproval, NATIVE_DURABLE_APPROVAL, HOST_PREFLIGHT_DEFER } from './native-durable-approval.mjs';
+import { createNativeDurableApproval, NATIVE_DURABLE_APPROVAL } from './native-durable-approval.mjs';
+import { executeNativeDshToolCall } from './native-dsh-tool-call.mjs';
 import { nativeAgentPolicyDecision } from '../native-agent-policy.mjs';
 import { nativeChildToolDefinitions, NATIVE_CHILD_TOOLS_CONTRACT, CHILD_CAPABILITY_POLICY,
   childCapabilityDirectory, childRequiredToolsSchema } from '@kingsoftcloud/agentkit-harness-node/native/child-tools';
@@ -617,7 +618,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspa
       return builtinNames.has(browserName) ? [browserTools.capability] : [];
     },
     get durableApprovalContract() {
-      return ctx.tools?.preflightDeferContract === HOST_PREFLIGHT_DEFER && config.boundToolPolicy ? NATIVE_DURABLE_APPROVAL : null;
+      return durableApproval.hostContract && config.boundToolPolicy ? NATIVE_DURABLE_APPROVAL : null;
     },
     policyDefinition(agent, registryName) {
       const name = registryName === sandboxRegistryName('run_code') ? 'run_code' : registryName;
@@ -815,7 +816,7 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspa
           assertCurrent, verificationDispatch: dispatch };
         calls.set(callId, invocation);
         try {
-          const result = await ctx.tools.execute({ callId, name: browserName, arguments: arguments_, signal: request.signal, agent });
+          const result = await executeNativeDshToolCall(ctx.tools, { callId, name: browserName, arguments: arguments_, signal: request.signal, agent });
           request.signal.throwIfAborted();
           if (assertCurrent) invariant(assertCurrent(), 'studio_native_verification_authority_stale');
           invariant(result?.isError === false && !result.concludesTurn && invocation.dispatched && invocation.observation,

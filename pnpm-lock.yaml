@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@kingsoftcloud/agentkit-harness-core': 0.0.13
+  '@kingsoftcloud/agentkit-harness-core': 0.0.15
 
 patchedDependencies:
   '@modelcontextprotocol/sdk@1.32.0':
@@ -26,14 +26,14 @@ importers:
         specifier: 0.2.2-rc.1
         version: 0.2.2-rc.1(bce30cfcf40c4156d3ec8aad7b0d6762)
       '@kingsoftcloud/agentkit-harness-core':
-        specifier: 0.0.13
-        version: 0.0.13
+        specifier: 0.0.15
+        version: 0.0.15
       '@kingsoftcloud/agentkit-harness-node':
-        specifier: 0.0.13
-        version: 0.0.13
+        specifier: 0.0.15
+        version: 0.0.15
       '@kingsoftcloud/agentkit-harness-ui':
-        specifier: 0.0.13
-        version: 0.0.13(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: 0.0.15
+        version: 0.0.15(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@modelcontextprotocol/sdk':
         specifier: 1.32.0
         version: 1.32.0(patch_hash=905b5039a9965104e7ef24338020cfe96b5dd53fc4cf6f53e067a66677b28044)(zod@4.6.5)
@@ -512,17 +512,17 @@ packages:
     resolution: {integrity: sha512-hloP58zRVCRSpgDxmqCWJNlizAlUgJFqG2ypq79DCvyv9tHjRYMDOcPFjzfl/A1/YxDvRCZz8wvZvmapQnKwFQ==}
     engines: {node: '>=12'}
 
-  '@kingsoftcloud/agentkit-harness-core@0.0.13':
-    resolution: {integrity: sha512-/p0zaAPZ+xFU8N1LawiH52P7nYiU3gXDWXCJSlbC3gp1zVtLOYRTYlrJQfgXdw3u7HVr9EdqKhqt1D2I7F/iIQ==}
+  '@kingsoftcloud/agentkit-harness-core@0.0.15':
+    resolution: {integrity: sha512-BOdQZZOKHHoCDOQQBQWDi5UsbIdt0YZtpPVJH33xJoCMe+R4jnZUkeuUPQd0HSRjKo4ebqsR5anGUnZdA2WQBQ==}
     engines: {node: '>=22.19.0'}
 
-  '@kingsoftcloud/agentkit-harness-node@0.0.13':
-    resolution: {integrity: sha512-laZLvDiBDymHpdUZR8McHeHJn4YuTQNtivmo6aEyx/JH2ghgNpsVZvMnA0U5CH0NAk841bwNJzxGhiYNChBCoQ==}
+  '@kingsoftcloud/agentkit-harness-node@0.0.15':
+    resolution: {integrity: sha512-A9QS0qFtQeS73qPwuB0kxiQ9E93jpVUS0D/8fb6skcOBRhR4XtGELHyTMyRlSuOB3yj2BexdrKYUWNlgq1Vosg==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@kingsoftcloud/agentkit-harness-ui@0.0.13':
-    resolution: {integrity: sha512-9/Y2UEtdKdhCeOF/yawiYXETSlxSFcQl+QZCIeweMP2HcCBlzUBTfRgWfrEcPaBPYThm4dSsGhxHnr6SkCQLgQ==}
+  '@kingsoftcloud/agentkit-harness-ui@0.0.15':
+    resolution: {integrity: sha512-qdkWNd66jKnuOW2tvbKtctEmWuamybZk7dbq+iYhgZH02wIrsi0SAhD+abTnMjzX4Nd7RwUc75KR2zCquSEyyw==}
     engines: {node: '>=22'}
     peerDependencies:
       react: '>=18'
@@ -1466,24 +1466,24 @@ snapshots:
     dependencies:
       jsbi: 4.3.2
 
-  '@kingsoftcloud/agentkit-harness-core@0.0.13':
+  '@kingsoftcloud/agentkit-harness-core@0.0.15':
     dependencies:
       ajv: 8.20.0
       ajv-draft-04: 1.0.0(ajv@8.20.0)
       ajv-formats: 3.0.1(ajv@8.20.0)
 
-  '@kingsoftcloud/agentkit-harness-node@0.0.13':
+  '@kingsoftcloud/agentkit-harness-node@0.0.15':
     dependencies:
       '@astral-sh/ruff-wasm-nodejs': 0.16.8
-      '@kingsoftcloud/agentkit-harness-core': 0.0.13
+      '@kingsoftcloud/agentkit-harness-core': 0.0.15
       diff: 9.0.0
       parse5: 7.3.0
       playwright-core: 1.58.2
       pngjs: 7.0.0
 
-  '@kingsoftcloud/agentkit-harness-ui@0.0.13(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@kingsoftcloud/agentkit-harness-ui@0.0.15(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
-      '@kingsoftcloud/agentkit-harness-core': 0.0.13
+      '@kingsoftcloud/agentkit-harness-core': 0.0.15
     optionalDependencies:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
