@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Superseded pull-request runs never block a newer commit's gate.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: public-gate
@@ -29,11 +34,22 @@ jobs:
           cache: pnpm
       - run: node scripts/check-node-version.mjs
       - run: pnpm install --frozen-lockfile
+      - name: Restore test Chromium cache
+        id: playwright-browsers
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/studio-native-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install test Chromium
+        timeout-minutes: 12
         run: |
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
-          pnpm exec playwright install --with-deps chromium
+          if [[ "${{ steps.playwright-browsers.outputs.cache-hit }}" == "true" ]]; then
+            pnpm exec playwright install-deps chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
       - run: pnpm build:harness
       - run: |
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
@@ -83,7 +99,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install native libc test toolchain
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          # A flaky runner mirror used to consume the whole job budget here.
+          sudo apt-get update -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
+          sudo apt-get install -y --no-install-recommends musl-tools
       - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Verify actual Native turn ownership, approvals and process recovery
         shell: bash
