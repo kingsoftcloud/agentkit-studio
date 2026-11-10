@@ -1,8 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   buildOtlpPayload,
+  caCertificateChain,
   createOtelExporter,
   installManagedObservability,
   parseOtelHeaders,
@@ -40,6 +44,36 @@ test('parses the primary route, secondary route and pinned CA', () => {
   assert.equal(config.serviceName, 'agent-runtime-1')
   assert.equal(config.resourceAttributes['agentengine.framework'], 'dsh-native')
   assert.equal(config.caPemBase64, 'cGVt')
+  assert.equal(config.certificatePath, '')
+  assert.equal(config.caPem, 'pem')
+})
+
+test('pins the mounted OTel CA file and appends it to the platform roots', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'otel-ca-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const bundle = join(dir, 'ca-bundle.pem')
+  const pem = '-----BEGIN CERTIFICATE-----\nfixture-langfuse-ca\n-----END CERTIFICATE-----\n'
+  await writeFile(bundle, pem)
+
+  const config = resolveObservabilityConfig({ ...baseEnv, OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE: bundle })
+  assert.equal(config.certificatePath, bundle)
+  assert.equal(config.caPem, pem.trim())
+  // Node replaces the default store when `ca` is set: the platform roots must
+  // stay in front so the CloudMonitor secondary route keeps validating.
+  const chain = caCertificateChain(config.caPem)
+  assert.ok(chain.length > 1, 'platform roots must be preserved')
+  assert.equal(chain.at(-1), pem.trim())
+  assert.equal(caCertificateChain(''), undefined)
+
+  // The generic OTel path is the fallback; both sources concatenate.
+  const both = resolveObservabilityConfig({ ...baseEnv,
+    OTEL_EXPORTER_OTLP_CERTIFICATE: bundle, DSH_OTEL_CA_PEM_BASE64: 'cGVt' })
+  assert.match(both.caPem, /fixture-langfuse-ca/)
+  assert.match(both.caPem, /^pem\n/)
+  // An unreadable path must not disable export: the platform store still works.
+  const missing = resolveObservabilityConfig({ ...baseEnv, OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE: join(dir, 'missing.pem') })
+  assert.equal(missing.caPem, '')
+  assert.equal(caCertificateChain(missing.caPem), undefined)
 })
 
 test('derives the traces endpoint and header/resource encodings', () => {

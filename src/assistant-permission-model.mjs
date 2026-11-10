@@ -43,6 +43,10 @@ const fail = message => Object.assign(new Error(message), { code: 'ASSISTANT_PER
 const inside = (root, target) => { const path = relative(root, target); return path === '' || (!path.startsWith('..' + sep) && path !== '..' && !isAbsolute(path)); };
 const legacy = Object.freeze({ profile: 'legacy-read-only/v1', permission: 'read-only', approval: 'never', managed: false });
 
+// Portable and frozen-build deployments keep DSH_HOME beside AGENTKIT_HOME. A
+// managed runtime uses one Agent-scoped DSH home instead (managed-runtime-host),
+// so this deny-only fence is inert there; the assistant workspace profile is
+// only built for portable deployments.
 function expectedWorkspaceBase(env) {
   if (!env.AGENTKIT_HOME || !env.DSH_HOME) return null;
   const root = dirname(resolve(env.AGENTKIT_HOME));
