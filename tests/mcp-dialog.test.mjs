@@ -119,6 +119,7 @@ test('bare single-server JSON with a literal custom auth header fills the form w
   assert.equal(harness.transport(), 'http');
   assert.match(JSON.stringify(tree), new RegExp(`X-Service-Token=env://${expectedCredential}`));
   assert.match(JSON.stringify(tree), /认证：X-Service-Token/);
+  assert.equal(harness.find(node => node.type === 'details' && node.props['data-studio-mcp-credentials'] === 'true').props.open, true, 'recognized custom header auto-expands the advanced section');
   assert.equal(harness.byPlaceholder('仅保存到本机凭证服务').props.value, 'fixture-custom-header-token');
   await harness.submit();
   assert.deepEqual(host.calls.filter(call => Array.isArray(call) && call[0] === 'credential'),
@@ -244,10 +245,14 @@ test('MCP JSON textarea grows with the pasted document instead of staying five r
   assert.equal(textarea().props.rows, 6, 'short input falls back to the minimum height');
 });
 
-test('Header credential section is always visible and manual add creates the credential row', async () => {
+test('advanced credential section is collapsible, discoverable and manual add creates the credential row', async () => {
   const host = createRecordingHost();
   const harness = createDialogHarness({ host });
-  assert.match(JSON.stringify(harness.render()), /认证 Header \/ 环境变量凭证/);
+  const details = () => harness.find(node => node.type === 'details' && node.props['data-studio-mcp-credentials'] === 'true');
+  assert.match(JSON.stringify(harness.render()), /认证 Header \/ 环境变量凭证（进阶）/);
+  assert.equal(details().props.open, false, 'advanced credential section starts collapsed');
+  details().props.onToggle({ currentTarget: { open: true } });
+  assert.equal(details().props.open, true, 'expanding the summary is respected');
   assert.match(JSON.stringify(harness.render()), /还没有认证 Header 凭证/);
   harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 名称').props.onChange({ target: { value: 'X-KIP-Token' } });
   harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 凭证名称').props.onChange({ target: { value: 'KIP_TOKEN' } });
@@ -255,6 +260,7 @@ test('Header credential section is always visible and manual add creates the cre
   const tree = harness.render();
   assert.match(JSON.stringify(tree), /X-KIP-Token=env:\/\/KIP_TOKEN/);
   assert.match(JSON.stringify(tree), /X-KIP-Token · KIP_TOKEN/);
+  assert.equal(details().props.open, true, 'a configured credential row auto-expands the section');
   harness.byPlaceholder('例如：企业搜索').props.onChange({ target: { value: 'KIP MCP' } });
   harness.byPlaceholder('例如：enterprise-search').props.onChange({ target: { value: 'kip-mcp' } });
   harness.byPlaceholder('例如：https://mcp.example.com').props.onChange({ target: { value: 'https://kip.example.test/mcp' } });
