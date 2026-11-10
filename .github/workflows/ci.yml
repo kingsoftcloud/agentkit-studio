@@ -97,6 +97,13 @@ jobs:
           version: 11.28.5
           package_json_file: .ci-dsh/package.json
       - run: pnpm install --frozen-lockfile
+      - name: Restore pnpm store cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', '.ci-dsh/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
       - name: Install native libc test toolchain
         if: runner.os == 'Linux'
         timeout-minutes: 8
@@ -106,8 +113,11 @@ jobs:
           sudo apt-get update -o Acquire::Retries=5 \
             -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
           sudo apt-get install -y --no-install-recommends musl-tools
-      - run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - name: Build and test the patched DSH host
+        timeout-minutes: 15
+        run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
       - name: Verify actual Native turn ownership, approvals and process recovery
+        timeout-minutes: 8
         shell: bash
         run: |
           set -euo pipefail
@@ -119,6 +129,7 @@ jobs:
           node scripts/verify-native-owned-recovery.mjs --source "$dsh_root" >> "$log" 2>&1
           node scripts/verify-studio-native-harness.mjs --source "$dsh_root" --mount-host --recovery >> "$log" 2>&1
       - name: Verify normal installed assistant cold startup and restart
+        timeout-minutes: 20
         shell: bash
         run: |
           set -euo pipefail
