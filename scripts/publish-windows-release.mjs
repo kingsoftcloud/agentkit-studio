@@ -8,7 +8,8 @@ import { pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
 import { studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
-import { assertReleaseChannel } from '../src/desktop-release-channels.mjs';
+import { assertChannelSupportsVersion, assertReleaseChannel, COMPATIBILITY_RELEASE_CHANNELS, DEFAULT_RELEASE_CHANNEL } from '../src/desktop-release-channels.mjs';
+import { compatMirrorEvidence, compatMirrorIsCurrent, compatMirrorPlan } from '../src/desktop-release-feed.mjs';
 
 async function digest(path, algorithm = 'sha512') {
   const hash = createHash(algorithm); let size = 0;
@@ -16,11 +17,21 @@ async function digest(path, algorithm = 'sha512') {
   return { size, hash: hash.digest(algorithm === 'sha512' ? 'base64' : 'hex') };
 }
 
-export async function publishWindowsRelease({ candidate, evidence, origin, channel = 'nightly', sourceCommit, credentials }) {
-  assertReleaseChannel(channel, 'channel')
+/** Read a compatibility feed that may not exist yet; undefined means "create it". */
+async function readOptionalFeed(url) {
+  const response = await fetch(url, { cache: 'no-store', redirect: 'error' });
+  if (response.status === 404) { await response.body?.cancel(); return undefined; }
+  if (!response.ok) { await response.body?.cancel(); throw new Error(`Compatibility feed could not be read: ${response.status} ${url}`); }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+export async function publishWindowsRelease({ candidate, evidence, origin, channel = DEFAULT_RELEASE_CHANNEL, sourceCommit, credentials }) {
   if (!/^[0-9a-f]{40}$/.test(sourceCommit || '')) throw new Error('The actual signed Studio source commit is required');
+  assertReleaseChannel(channel, 'channel');
   const root = resolve(candidate), proofRoot = resolve(evidence);
   const metadata = YAML.parse(await readFile(join(root, `${channel}.yml`), 'utf8'));
+  // Fail before uploading when this version cannot live on the selected lane.
+  assertChannelSupportsVersion(channel, metadata.version, 'candidate version');
   const plan = studioWindowsPublication(metadata, { origin, channel });
   const install = JSON.parse(await readFile(join(proofRoot, 'windows-install.json'), 'utf8'));
   const ui = JSON.parse(await readFile(join(proofRoot, 'windows-installed-ui.json'), 'utf8'));
@@ -64,6 +75,23 @@ export async function publishWindowsRelease({ candidate, evidence, origin, chann
     const response = await fetch(`${origin}/${objectKey}`, { cache: 'no-store', redirect: 'error' });
     if (!response.ok || Buffer.compare(Buffer.from(await response.arrayBuffer()), await readFile(path))) throw new Error('Public Windows feed/release bytes differ from publication');
   }
+  // Old installs keep reading the channel sealed into their own manifest, so
+  // mirror the verified feed bytes onto the compatibility lanes (both layouts).
+  const compatMirrors = [];
+  const feedBytes = await readFile(feed);
+  for (const mirror of compatMirrorPlan({ version: metadata.version, sourceChannel: channel, target: 'win-x64', channels: COMPATIBILITY_RELEASE_CHANNELS }).mirrors) {
+    const feedUrl = new URL(mirror.objectKey, origin).href;
+    let status = 'unchanged';
+    const mirrorUploads = [];
+    if (!compatMirrorIsCurrent(await readOptionalFeed(feedUrl), feedBytes)) {
+      mirrorUploads.push(await uploadKs3ReleaseArtifact({ ...credentials, origin, objectKey: mirror.objectKey, path: feed, contentType: mirror.contentType }));
+      uploaded.push(...mirrorUploads);
+      if (!compatMirrorIsCurrent(await readOptionalFeed(feedUrl), feedBytes)) throw new Error(`Published compatibility feed differs: ${mirror.objectKey}`);
+      status = 'updated';
+    }
+    compatMirrors.push(compatMirrorEvidence({ mirror, feedUrl, bytes: feedBytes, status, uploaded: mirrorUploads }));
+  }
+  report.compatMirrors = compatMirrors;
   await writeFile(join(output, 'publication.json'), JSON.stringify({ ...report, uploaded }, null, 2));
   return report;
 }

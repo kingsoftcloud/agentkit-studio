@@ -8,8 +8,8 @@ import YAML from 'yaml'
 import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs'
 import { publishedDesktopMetadata, studioDesktopPublication } from '../src/desktop-release-metadata.mjs'
 import { desktopReleaseUploads } from '../src/desktop-release-uploads.mjs'
-import { assertReleaseChannel, channelMetadataFilename, isNativeReleaseChannel, RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs'
-import { verifyMirroredFeed } from '../src/desktop-release-feed.mjs'
+import { assertChannelSupportsVersion, assertReleaseChannel, channelMetadataFilename, COMPATIBILITY_RELEASE_CHANNELS, isNativeReleaseChannel, parseReleaseChannelList, RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs'
+import { assertFeedLayout, compatMirrorEvidence, compatMirrorIsCurrent, compatMirrorPlan, compatMirrorUploads, feedObjectKey, FEED_LAYOUTS, parseFeedLayoutList, verifyMirroredFeed } from '../src/desktop-release-feed.mjs'
 
 const STUDIO_ROOT = resolve(new URL('..', import.meta.url).pathname)
 const TARGET = 'mac-arm64'
@@ -82,6 +82,20 @@ async function fetchBytes(url, options = {}) {
   return { response, bytes: Buffer.from(await response.arrayBuffer()) }
 }
 
+/** Read a feed that may legitimately not exist yet; undefined means "create it". */
+async function readExistingFeed(url) {
+  const response = await fetch(url, { redirect: 'error', cache: 'no-store' })
+  if (response.status === 404) {
+    await response.body?.cancel()
+    return undefined
+  }
+  if (!response.ok || !response.body) {
+    await response.body?.cancel()
+    throw new Error(`feed request failed: ${response.status} ${url}`)
+  }
+  return Buffer.from(await response.arrayBuffer())
+}
+
 async function digestResponse(response) {
   if (!response.ok || !response.body) {
     await response.body?.cancel()
@@ -145,7 +159,52 @@ async function verifyFeed({ feedOrigin, selectedChannel, expectedVersion, expect
   return evidence
 }
 
-async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion, layout, storageOrigin, mode, compatibilityOrigin }) {
+/**
+ * Copy one verified feed onto the compatibility channel objects for old installs.
+ *
+ * The bytes are published unchanged (same version, digest and absolute binary
+ * URL); only the channel object name changes. Each target is read first, so a
+ * repeated publication or mirror leaves an already-current object untouched and
+ * records no duplicate upload evidence.
+ */
+async function mirrorCompatFeeds({ version, sourceChannel, sourceFeed, feedOrigin, storageOrigin, compatibilityOrigin, channels, layouts, output }) {
+  const plan = compatMirrorPlan({ version, sourceChannel, target: TARGET, channels, layouts })
+  if (plan.mirrors.length === 0) return []
+  const origins = [...new Set([feedOrigin, storageOrigin, compatibilityOrigin].filter(Boolean))]
+  const uploads = compatMirrorUploads(plan, { origins })
+  const directory = resolve(output)
+  await mkdir(directory, { recursive: true })
+  const localPath = join(directory, `compat-${sourceChannel}-${version}-mac.yml`)
+  await writeFile(localPath, sourceFeed, { mode: 0o600 })
+  const mirrors = []
+  for (const mirror of plan.mirrors) {
+    // Validate the bytes against the target feed layout before copying: a
+    // legacy dsh-desk feed may point at canonical studio binaries, while a
+    // studio feed must stay inside the versioned Studio storage.
+    verifyMirroredFeed(sourceFeed, { expectedVersion: version, storageOrigin, layout: mirror.targetLayout })
+    const feedUrl = new URL(mirror.objectKey, feedOrigin).href
+    const current = await readExistingFeed(feedUrl)
+    let status = 'unchanged'
+    const uploaded = []
+    if (!compatMirrorIsCurrent(current, sourceFeed)) {
+      status = 'updated'
+      for (const upload of uploads.filter(candidate => candidate.objectKey === mirror.objectKey)) {
+        uploaded.push({ origin: upload.origin, ...await uploadKs3ReleaseArtifact({ ...resolveKs3OriginCredentials(process.env, upload.origin), origin: upload.origin,
+          objectKey: upload.objectKey, path: localPath, contentType: upload.contentType }) })
+      }
+      const published = await fetchBytes(feedUrl)
+      if (!published.bytes.equals(sourceFeed)) throw new Error(`compat feed ${mirror.objectKey} does not match the published bytes`)
+    }
+    mirrors.push(compatMirrorEvidence({ mirror, feedUrl, bytes: sourceFeed, status, uploaded }))
+    console.log(`compat feed ${status}: ${feedUrl}`)
+  }
+  return mirrors
+}
+
+async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviousVersion, layout, storageOrigin, mode, compatibilityOrigin, compatEnabled, compatChannels, compatLayouts }) {
+  // Fail before uploading anything: a prerelease feed on `latest` makes every
+  // packaged client throw and stop checking for updates.
+  assertChannelSupportsVersion(selectedChannel, candidate.metadata.version, 'candidate version')
   const credentialsFor = selectedOrigin => resolveKs3OriginCredentials(process.env, selectedOrigin)
   const output = join(candidate.root, '.desktop-release')
   await mkdir(output, { recursive: true })
@@ -166,7 +225,22 @@ async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviou
   }
   const evidence = await verifyFeed({ feedOrigin, storageOrigin, layout, selectedChannel, expectedVersion: candidate.metadata.version,
     expectedPreviousVersion, output: join(candidate.root, '.desktop-release'), allowLoopback: false })
-  const report = { ...evidence, previous: previous?.version, release: candidate.release, storage: 'ks3', uploaded }
+  let compatMirrors = []
+  if (compatEnabled) {
+    try {
+      compatMirrors = await mirrorCompatFeeds({ version: candidate.metadata.version, sourceChannel: selectedChannel,
+        sourceFeed: await readFile(publishedFeed), feedOrigin, storageOrigin, compatibilityOrigin,
+        channels: compatChannels, layouts: compatLayouts, output })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const permissionHint = /403|forbidden|access ?denied|not authorized|permission/iu.test(message)
+        ? ` The release credential appears unable to write the legacy dsh-desk/feeds prefix; retry with --compat-layouts ${layout}, or run 'mirror-feed --layout legacy' from a machine whose credential may write it.`
+        : ''
+      throw new Error(`canonical ${selectedChannel} feed is published, but the compatibility feed mirror failed: ${message}. `
+        + `Re-run the mirror for the affected target layout with 'desktop-release.mjs mirror-feed' (see usage) or repeat publish with --no-compat-mirror.${permissionHint}`)
+    }
+  }
+  const report = { ...evidence, previous: previous?.version, release: candidate.release, storage: 'ks3', uploaded, compatMirrors }
   await writeFile(join(output, 'publication.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
   return report
 }
@@ -176,9 +250,13 @@ async function publish({ candidate, feedOrigin, selectedChannel, expectedPreviou
  * A feed points at one immutable binary through an absolute URL, so mirroring
  * the metadata is how installed clients move to a new channel without
  * rebuilding or re-uploading the signed ZIP. The same command restores a saved
- * feed during a rollback.
+ * feed during a rollback and repairs a compatibility lane whose automatic
+ * mirror did not finish.
  */
 async function mirrorFeed({ feedOrigin, storageOrigin, layout, targetChannel, sourceChannel, sourceFile, expectedVersion, output }) {
+  const target = assertReleaseChannel(targetChannel, 'target channel')
+  const version = assertChannelSupportsVersion(target, required(expectedVersion, '--version'), 'mirror version')
+  if (sourceChannel !== undefined) assertChannelSupportsVersion(assertReleaseChannel(sourceChannel, '--from-channel'), version, 'source feed version')
   const feedRoot = targetPrefix(feedOrigin, layout)
   let source
   let bytes
@@ -189,25 +267,26 @@ async function mirrorFeed({ feedOrigin, storageOrigin, layout, targetChannel, so
     source = `${feedRoot}${channelMetadataFilename(sourceChannel)}`
     bytes = (await fetchBytes(source)).bytes
   }
-  const feed = verifyMirroredFeed(bytes, { expectedVersion, storageOrigin, layout })
-  const targetName = channelMetadataFilename(targetChannel)
+  const feed = verifyMirroredFeed(bytes, { expectedVersion: version, storageOrigin, layout })
+  const objectKey = feedObjectKey({ layout, channel: target, target: TARGET })
+  const targetName = basename(objectKey)
   const directory = resolve(output)
   await mkdir(directory, { recursive: true })
   const localPath = join(directory, targetName)
   await writeFile(localPath, bytes, { mode: 0o600 })
-  const objectKey = `${feedPrefix(layout)}${targetName}`
   const uploaded = []
   for (const uploadOrigin of new Set([storageOrigin, feedOrigin])) {
     uploaded.push({ origin: uploadOrigin, ...await uploadKs3ReleaseArtifact({ ...resolveKs3OriginCredentials(process.env, uploadOrigin), origin: uploadOrigin,
       objectKey, path: localPath, contentType: 'application/yaml' }) })
   }
-  const published = await fetchBytes(`${feedRoot}${targetName}`)
+  const feedUrl = new URL(objectKey, feedOrigin).href
+  const published = await fetchBytes(feedUrl)
   if (!published.bytes.equals(bytes)) throw new Error(`mirrored feed ${targetName} does not match the source bytes`)
-  const evidence = { schemaVersion: 1, mirroredAt: new Date().toISOString(), origin: feedOrigin, storageOrigin, layout,
-    targetChannel, sourceChannel: sourceFile === undefined ? sourceChannel : undefined, sourceFile: sourceFile === undefined ? undefined : source,
-    version: feed.version, feedUrl: `${feedRoot}${targetName}`, feedBytes: bytes.length,
+  const evidence = { schemaVersion: 1, mirroredAt: new Date().toISOString(), origin: feedOrigin, storageOrigin, layout: assertFeedLayout(layout),
+    targetChannel: target, sourceChannel: sourceFile === undefined ? sourceChannel : undefined, sourceFile: sourceFile === undefined ? undefined : source,
+    version: feed.version, objectKey, feedUrl, feedBytes: bytes.length,
     feedSha512: createHash('sha512').update(bytes).digest('base64'), binaryUrl: feed.binaryUrl, uploaded }
-  const path = join(directory, `mirror-${targetChannel}-${expectedVersion}.json`)
+  const path = join(directory, `mirror-${target}-${version}.json`)
   await writeFile(path, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600, flag: 'w' })
   console.log(`desktop feed mirrored: ${path}`)
   return evidence
@@ -216,6 +295,7 @@ async function mirrorFeed({ feedOrigin, storageOrigin, layout, targetChannel, so
 function usage() {
   console.error(`usage: desktop-release.mjs verify-feed --origin <https-origin> --channel <${RELEASE_CHANNELS.join('|')}> --version <version> [--output dir] [--allow-loopback]\n`
     + `       desktop-release.mjs publish --candidate dir --origin <https-origin> --channel <${RELEASE_CHANNELS.join('|')}> [--expected-previous-version version]\n`
+    + `         [--compat-channels ${COMPATIBILITY_RELEASE_CHANNELS.join(',')}] [--compat-layouts ${FEED_LAYOUTS.join(',')}] [--no-compat-mirror]\n`
     + `       desktop-release.mjs mirror-feed --origin <https-origin> --channel <${RELEASE_CHANNELS.join('|')}> --version <version> (--from-channel <channel> | --from-file <path>) [--layout studio]`)
 }
 
@@ -225,6 +305,7 @@ const { positionals, values } = parseArgs({ allowPositionals: true, options: {
   'dsh-commit': { type: 'string' }, 'dsh-version': { type: 'string' },
   'storage-origin': { type: 'string' }, layout: { type: 'string' }, 'update-mode': { type: 'string' },
   'compatibility-origin': { type: 'string' }, 'from-channel': { type: 'string' }, 'from-file': { type: 'string' },
+  'compat-channels': { type: 'string' }, 'compat-layouts': { type: 'string' }, 'no-compat-mirror': { type: 'boolean' },
 } })
 const command = positionals[0]
 if (!['verify-feed', 'publish', 'mirror-feed'].includes(command)) { usage(); process.exitCode = 2 }
@@ -240,7 +321,22 @@ else {
     const storageOrigin = values['storage-origin'] ? origin(values['storage-origin'], values['allow-loopback'] === true) : feedOrigin
     if (layout === 'legacy' && storageOrigin !== feedOrigin) throw new Error('separate storage origin requires the Studio layout')
     const compatibilityOrigin = values['compatibility-origin'] ? origin(values['compatibility-origin']) : undefined
+    const compatChannels = values['compat-channels'] === undefined
+      ? [...COMPATIBILITY_RELEASE_CHANNELS]
+      : parseReleaseChannelList(values['compat-channels'], '--compat-channels')
+    // Default to the publication layout: the Studio release credential is scoped
+    // to studio/*, so an automatic dsh-desk write would 403 and block the whole
+    // publication. Operators whose credential covers dsh-desk/feeds opt in with
+    // --compat-layouts studio,legacy (or run mirror-feed --layout legacy).
+    const compatLayouts = values['compat-layouts'] === undefined
+      ? [layout]
+      : parseFeedLayoutList(values['compat-layouts'], '--compat-layouts')
+    if (layout === 'legacy' && compatLayouts.includes('studio')) {
+      throw new Error('--compat-layouts studio requires the Studio publication layout')
+    }
     if (command === 'verify-feed') {
+      // Verification and rollback must be able to describe a feed that is already
+      // published; only publishing and copying enforce the lane/version pairing.
       const expectedVersion = required(values.version, '--version')
       await verifyFeed({ feedOrigin, storageOrigin, layout, selectedChannel, expectedVersion, output: values.output ?? join(STUDIO_ROOT, '.artifacts', 'desktop-release'), allowLoopback: values['allow-loopback'] === true })
     } else if (command === 'mirror-feed') {
@@ -252,7 +348,8 @@ else {
       console.log(JSON.stringify(result, null, 2))
     } else {
       const candidate = await readCandidate(values.candidate, selectedChannel)
-      const result = await publish({ candidate, feedOrigin, storageOrigin, layout, mode, compatibilityOrigin, selectedChannel, expectedPreviousVersion: values['expected-previous-version'] })
+      const result = await publish({ candidate, feedOrigin, storageOrigin, layout, mode, compatibilityOrigin, selectedChannel,
+        expectedPreviousVersion: values['expected-previous-version'], compatEnabled: values['no-compat-mirror'] !== true, compatChannels, compatLayouts })
       console.log(JSON.stringify(result, null, 2))
     }
   } catch (error) {

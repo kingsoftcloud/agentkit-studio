@@ -15,8 +15,8 @@ test('empty workflow fields resolve from the product definition and explicit rel
   assert.equal(defaults.update_origin, product.settings.DSH_DESKTOP_UPDATE_ORIGIN);
   assert.equal(defaults.channel, product.settings.DSH_DESKTOP_UPDATE_CHANNEL);
   assert.equal(defaults.storage_origin, defaults.update_origin);
-  const release = resolveWorkflowProductOutputs({ buildVersion: '0.2.0-rc.2.20261015.3', channel: 'stable', updateOrigin: 'https://updates.example.org', storageOrigin: 'https://binaries.example.org' });
-  assert.equal(release.channel, 'stable');
+  const release = resolveWorkflowProductOutputs({ buildVersion: '0.2.0-rc.2.20261015.3', channel: 'nightly', updateOrigin: 'https://updates.example.org', storageOrigin: 'https://binaries.example.org' });
+  assert.equal(release.channel, 'nightly');
   assert.equal(release.build_version, '0.2.0-rc.2.20261015.3');
   assert.equal(release.update_origin, 'https://updates.example.org');
   assert.equal(release.storage_origin, 'https://binaries.example.org');
@@ -62,11 +62,11 @@ test('historical signed sources keep their frozen identity and require explicit 
 
 test('workflow output CLI emits only normalized public values and its consumers declare the gate dependency', () => {
   const output = execFileSync(process.execPath, ['scripts/product-config.mjs', 'github-outputs'], { encoding: 'utf8', env: { ...process.env,
-    STUDIO_PRODUCT_BUILD_VERSION: '0.2.0-rc.2.20261015.3', STUDIO_PRODUCT_CHANNEL: 'stable',
+    STUDIO_PRODUCT_BUILD_VERSION: '0.2.0-rc.2.20261015.3', STUDIO_PRODUCT_CHANNEL: 'nightly',
     STUDIO_PRODUCT_UPDATE_ORIGIN: 'https://updates.example.org', STUDIO_PRODUCT_STORAGE_ORIGIN: '', PRIVATE_TEST_SIGNING_VALUE: 'synthetic-private-marker',
   } });
   const values = Object.fromEntries(output.trim().split('\n').map(line => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; }));
-  assert.equal(values.channel, 'stable');
+  assert.equal(values.channel, 'nightly');
   assert.equal(values.storage_origin, 'https://updates.example.org');
   assert.ok(!output.includes('synthetic-private-marker'));
   const workflow = parse(readFileSync('.github/workflows/release-desktop.yml', 'utf8'));
