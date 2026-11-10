@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 test('new local Agents default to Native while explicit runtimes and saved revisions stay intact', async t => {
   const root = await mkdtemp(join(tmpdir(), 'agent-runtime-default-')); t.after(() => rm(root, { recursive: true, force: true }));
   const store = createAgentStore({ storeDir: root });
-  assert.equal((await store.create({ name: 'Default' })).spec.runtime.type, 'harness');
+  assert.equal((await store.create({ name: 'Default' })).spec.runtime.type, 'dsh-native');
   for (const type of ['dsh-native', 'codex', 'harness']) {
     const original = await store.create({ name: type, spec: { runtime: { type, marker: 'explicit' } } });
     assert.deepEqual(original.spec.runtime, { type, marker: 'explicit' });

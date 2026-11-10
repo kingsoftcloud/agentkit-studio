@@ -1,4 +1,3 @@
-import { normalizeMcpCredentialBindings } from '../../credential-ref.mjs';
 import { parseMcpJsonImport } from '../state/mcp-json-import.mjs';
 import { buildSkillFileTree, formatResourceSize } from '../state/skill-files.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
@@ -30,6 +29,13 @@ export function createResourceDialogs({
     const [credentialValues, setCredentialValues] = useState({});
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [draftHeader, setDraftHeader] = useState('');
+    const [draftCredential, setDraftCredential] = useState('');
+    const [credentialError, setCredentialError] = useState('');
+    // Advanced section: collapsed for a blank form, auto-expanded as soon as a
+    // recognized or saved custom credential row exists. `null` means "follow
+    // the row count"; a boolean is the user's explicit choice.
+    const [credentialOpen, setCredentialOpen] = useState(null);
     const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
     const requiredCredentialNames = new Set((resource?.requiredCredentials || []).map(row => row.name));
     // Every envRefs row is a Host credential reference. Keep a per-header secret
@@ -40,6 +46,22 @@ export function createResourceDialogs({
       return { key: String(key || ''), reference: String(reference || ''), name: String(reference || '').replace(/^env:\/\//, '') };
     }).filter(row => row.key && row.reference.startsWith('env://') && row.name && !requiredCredentialNames.has(row.name))
       .filter(row => form.transport === 'stdio' || row.key.toLowerCase() !== 'authorization');
+    const addCredentialRow = () => {
+      setCredentialError('');
+      const header = draftHeader.trim(), credential = draftCredential.trim();
+      if (!header || !credential) { setCredentialError('请填写 Header 名称和凭证名称。'); return; }
+      if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(header)) { setCredentialError('Header 名称格式无效。'); return; }
+      if (!/^[A-Za-z_][A-Za-z0-9_./:-]{0,127}$/.test(credential)) { setCredentialError('凭证名称需要以字母或下划线开头，只能包含字母、数字、点、短横线、下划线、冒号或斜杠。'); return; }
+      setDraftHeader(''); setDraftCredential('');
+      if (header.toLowerCase() === 'authorization') { setField('apiKeyName', credential); return; }
+      const rows = String(form.envRefs || '').split(',').map(item => item.trim()).filter(Boolean)
+        .filter(item => item.split('=')[0].trim().toLowerCase() !== header.toLowerCase());
+      rows.push(`${header}=env://${credential}`);
+      setField('envRefs', rows.join(', '));
+    };
+    // Grow with the pasted document instead of scrolling inside a five-line box.
+    const jsonRows = Math.min(20, Math.max(6, String(jsonDraft || '').split('\n').length + 1));
+    const credentialExpanded = credentialOpen === null ? envRefRows.length > 0 : credentialOpen;
     const selectedEntry = recognition?.entries?.[recognition.index] || null;
     const applyEntry = (entries, index) => {
       const entry = entries[index];
@@ -88,25 +110,17 @@ export function createResourceDialogs({
         if (rawEndpoint.includes('${')) { setError('服务地址包含 ${...} 变量，当前不支持替换，请填写真实地址。'); return; }
       }
       if (form.transport === 'stdio' && !form.command.trim()) { setError('stdio MCP 需要填写启动命令。'); return; }
-      // Credential references are the only accepted form here: a literal value
-      // would otherwise be persisted into the public MCP record on disk.
-      const typedEnvRefs = {}, invalidRefs = [];
+      const envRefs = {}, invalidRefs = [];
       form.envRefs.split(',').map(item => item.trim()).filter(Boolean).forEach(item => {
         const [key, ref] = item.split('=').map(part => part.trim());
         if (!key || !ref) return;
-        if (!/^env:\/\/[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(ref)) invalidRefs.push(key);
-        typedEnvRefs[key] = ref;
+        // Credential references are the only accepted form: a literal value here
+        // would otherwise be persisted into the public MCP record on disk.
+        if (!/^env:\/\/[A-Za-z_][A-Za-z0-9_./:-]{0,127}$/.test(ref)) invalidRefs.push(key);
+        envRefs[key] = ref;
       });
-      if (invalidRefs.length) { setError(`环境变量引用需要使用 env://凭证名称 格式（凭证名只允许字母、数字和下划线）：${invalidRefs.join('、')}`); return; }
-      // Derived once, here: the MCP server authenticates on the header name while
-      // the DSH credential store only holds POSIX identifiers, and both sides of
-      // the binding are written by this same save.
-      const bindings = normalizeMcpCredentialBindings({
-        envRefs: typedEnvRefs, credentialName: form.apiKeyName, credentialValues,
-        requiredCredentials: resource?.requiredCredentials || [],
-      });
-      const envRefs = bindings.envRefs;
-      const credentialName = bindings.credentialName;
+      if (invalidRefs.length) { setError(`环境变量引用需要使用 env://凭证名称 格式：${invalidRefs.join('、')}`); return; }
+      const credentialName = form.apiKeyName.trim();
       let args;
       try { args = form.args.trim().startsWith('[') ? JSON.parse(form.args) : form.args.split(/\s+/).filter(Boolean); if (!Array.isArray(args) || args.some(value => typeof value !== 'string')) throw new Error(); }
       catch { setError('命令参数请填写字符串 JSON 数组，例如 ["-y", "@acme/server"]'); return; }
@@ -116,9 +130,7 @@ export function createResourceDialogs({
       const environment = { ...(server.env && typeof server.env === 'object' ? server.env : {}), ...(selectedEntry?.publicEnv || {}) };
       setSaving(true);
       try {
-        // Secrets are stored under the same derived references the binding above
-        // declares, so the server resolves exactly what was just saved.
-        for (const [reference, value] of bindings.writes) await hostRemote.putCredential(reference, value);
+        for (const [credential, value] of Object.entries(credentialValues)) if (String(value).trim()) await hostRemote.putCredential(credential, String(value).trim());
         if (credentialName && form.apiKeyValue.trim()) await hostRemote.putCredential(credentialName, form.apiKeyValue.trim());
         if (credentialName) envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
         const payload = {
@@ -149,7 +161,7 @@ export function createResourceDialogs({
         h('section', { style: { display: 'grid', gap: '8px', padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.canvas } },
           h('div', { style: { color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, '从 JSON 识别 MCP'),
           h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '支持 Claude/Cursor 的 mcpServers、VS Code 的 servers，或直接粘贴单个或多个服务配置；自定义认证 Header 会转成本机凭证引用，密钥不会写入资源目录。'),
-          h('textarea', { 'aria-label': 'MCP JSON', value: jsonDraft, onChange: event => setJsonDraft(event.target.value), placeholder: '{ "custom-header-mcp": { "type": "http", "url": "https://mcp.example.com/mcp", "headers": { "X-Service-Token": "${MCP_TOKEN}" } } }', rows: 5, style: { ...inputStyle(), resize: 'vertical', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' } }),
+          h('textarea', { 'aria-label': 'MCP JSON', value: jsonDraft, onChange: event => setJsonDraft(event.target.value), placeholder: '{ "custom-header-mcp": { "type": "http", "url": "https://mcp.example.com/mcp", "headers": { "X-Service-Token": "${MCP_TOKEN}" } } }', rows: jsonRows, style: { ...inputStyle(), minHeight: '140px', maxHeight: '360px', overflow: 'auto', resize: 'vertical', fieldSizing: 'content', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' } }),
           jsonError ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px' } }, jsonError) : null,
           h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h('button', { type: 'button', onClick: importJson, disabled: !jsonDraft.trim(), style: buttonStyle() }, '识别并填充')),
           recognition ? h('div', { 'data-studio-mcp-recognition': 'true', style: { display: 'grid', gap: '5px', padding: '10px', border: '1px solid ' + BRAND.border, borderRadius: '8px', background: BRAND.surface } },
@@ -169,13 +181,22 @@ export function createResourceDialogs({
         form.transport === 'stdio' ? field('命令参数', 'args', '例如：-y @acme/search-mcp') : null,
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('Authorization 凭证名称（可选）', 'apiKeyName', '例如：SEARCH_API_KEY'), field('Authorization 凭证值（仅本次保存）', 'apiKeyValue', '不会写入资源目录', 'password')),
         field('环境变量引用（可选）', 'envRefs', '例如：API_KEY=env://SEARCH_API_KEY'),
-        envRefRows.length ? h('section', { style: { display: 'grid', gap: '6px', padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.canvas } },
-          h('div', { style: { color: BRAND.ink, fontWeight: 750, fontSize: '12px' } }, '认证 Header / 环境变量凭证'),
-          h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '每行是一个 Header（stdio 为环境变量）到 Host 凭证的引用；留空表示沿用已保存的凭证，填写的值只会保存到本机凭证服务。'),
-          ...envRefRows.map(row => h('label', { key: `credential:${row.key}:${row.name}`, style: { display: 'grid', gap: '5px', marginTop: '4px', fontSize: '12px' } }, `${row.key} · ${row.name}（留空沿用已保存凭证）`,
-            h(SecretInput, { label: row.name, value: credentialValues[row.name] || '', onChange: event => setCredentialValues(current => ({ ...current, [row.name]: event.target.value })), placeholder: '仅保存到本机凭证服务', style: inputStyle() })))) : null,
+        h('details', { 'data-studio-mcp-credentials': 'true', open: credentialExpanded, onToggle: event => setCredentialOpen(event.currentTarget.open),
+          style: { padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px', background: BRAND.canvas } },
+          h('summary', { style: { color: BRAND.ink, fontWeight: 750, fontSize: '12px', cursor: 'pointer' } }, '认证 Header / 环境变量凭证（进阶）'),
+          h('p', { style: { margin: '6px 0 0', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.5 } }, '自定义认证 Header 不常见，默认收起；从 JSON 识别到时会自动展开，也可以在下面手动添加。每行是一个 Header（stdio 为环境变量）到 Host 凭证的引用；留空表示沿用已保存的凭证，填写的值只会保存到本机凭证服务。Authorization 请使用上方两个输入框。'),
+          envRefRows.length ? envRefRows.map(row => h('label', { key: `credential:${row.key}:${row.name}`, style: { display: 'grid', gap: '5px', marginTop: '4px', fontSize: '12px' } }, `${row.key} · ${row.name}（留空沿用已保存凭证）`,
+            h(SecretInput, { label: row.name, value: credentialValues[row.name] || '', onChange: event => setCredentialValues(current => ({ ...current, [row.name]: event.target.value })), placeholder: '仅保存到本机凭证服务', style: inputStyle() })))
+            : h('div', { 'data-studio-mcp-credential-empty': 'true', style: { color: BRAND.inkMuted, fontSize: '11px' } }, '还没有认证 Header 凭证。'),
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', gap: '8px', alignItems: 'end', marginTop: '4px' } },
+            h('label', { style: { display: 'grid', gap: '4px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, 'Header 名称',
+              h('input', { 'aria-label': '新增 Header 名称', value: draftHeader, placeholder: '例如：X-KIP-Token', onChange: event => setDraftHeader(event.target.value), style: inputStyle() })),
+            h('label', { style: { display: 'grid', gap: '4px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '凭证名称',
+              h('input', { 'aria-label': '新增 Header 凭证名称', value: draftCredential, placeholder: '例如：KIP_TOKEN', onChange: event => setDraftCredential(event.target.value), style: inputStyle() })),
+            h('button', { type: 'button', onClick: addCredentialRow, disabled: !draftHeader.trim() || !draftCredential.trim(), style: buttonStyle() }, '添加')),
+          credentialError ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '11px' } }, credentialError) : null),
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
-        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: BRAND.primaryText, background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '正在探测…' : editing ? '保存修改并探测' : '保存并探测'))));
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: saving ? BRAND.inkMuted : BRAND.primaryText, background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '正在探测…' : editing ? '保存修改并探测' : '保存并探测'))));
   }
 
   function SkillPreviewDialog({ title, preview, file, onClose, onSelect }) {
@@ -259,7 +280,7 @@ export function createResourceDialogs({
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'end' } }, h('label', { style: { flex: 1, display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '扫描目录（逗号分隔）', h('input', { value: scanPaths, onChange: event => setScanPaths(event.target.value), placeholder: '留空扫描 skills, .agents/skills, .codex/skills, .claude/skills', style: inputStyle() })), h('button', { type: 'button', disabled: status === 'scanning', onClick: scan, style: buttonStyle() }, status === 'scanning' ? '扫描中…' : '扫描')),
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
         candidates.length ? h('div', { style: { display: 'grid', gap: '7px', maxHeight: '330px', overflow: 'auto' } }, candidates.map(candidate => h('div', { key: candidate.candidateId, style: { display: 'flex', alignItems: 'center', gap: '9px', padding: '10px', border: '1px solid ' + BRAND.border, borderRadius: '9px', background: BRAND.surface } }, h('input', { type: 'checkbox', checked: selected.includes(candidate.candidateId), disabled: candidate.status === 'invalid', onChange: () => toggle(candidate.candidateId), 'aria-label': `选择 ${candidate.displayName || candidate.name}` }), h('div', { style: { flex: 1, minWidth: 0 } }, h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, candidate.displayName || candidate.name), h('div', { style: { color: BRAND.inkMuted, fontSize: '10px', marginTop: '3px' } }, `${candidate.path || '—'} · ${candidate.version || '未知版本'} · ${candidate.fileCount || 0} 文件`), candidate.risk?.requiresReview ? h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #8a5b13)', fontSize: '10px' } }, '包含脚本或网络标记，需人工复核') : null), h(Pill, { tone: candidate.status === 'ready' ? 'accent' : 'signal' }, candidate.status === 'conflict' ? '已安装' : candidate.status === 'invalid' ? '无效' : '可导入'), h('button', { type: 'button', onClick: () => void showPreview(candidate), style: { ...buttonStyle(), padding: '5px 8px', fontSize: '10px' } }, '预览')))) : status === 'ready' ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', padding: '22px 0', textAlign: 'center' } }, '安全扫描目录中没有发现 Skill。') : null,
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '3px' } }, h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, discovery ? `发现 ${candidates.length} 个候选 · 已选择 ${selected.length}` : '请先扫描'), h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'button', disabled: !selected.length || status === 'committing', onClick: commit, style: { ...buttonStyle(), color: BRAND.primaryText, background: !selected.length || status === 'committing' ? BRAND.accentSoft : BRAND.primaryFill, borderColor: !selected.length || status === 'committing' ? BRAND.border : 'transparent' } }, status === 'committing' ? '导入中…' : '导入选中 Skill')))),
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '3px' } }, h('span', { style: { color: BRAND.inkMuted, fontSize: '11px' } }, discovery ? `发现 ${candidates.length} 个候选 · 已选择 ${selected.length}` : '请先扫描'), h('div', { style: { display: 'flex', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'button', disabled: !selected.length || status === 'committing', onClick: commit, style: { ...buttonStyle(), color: !selected.length || status === 'committing' ? BRAND.inkMuted : BRAND.primaryText, background: !selected.length || status === 'committing' ? BRAND.accentSoft : BRAND.primaryFill, borderColor: !selected.length || status === 'committing' ? BRAND.border : 'transparent' } }, status === 'committing' ? '导入中…' : '导入选中 Skill')))),
         preview ? h(SkillPreviewDialog, { title: preview.title, preview: preview.files, onClose: () => setPreview(null), onSelect: async path => { await selectFile(path); }, file: previewFile }) : null);
   }
 
@@ -267,6 +288,13 @@ export function createResourceDialogs({
     const [form, setForm] = useState({ name: '', displayName: '', model: '', endpointUrl: '', credentialRef: 'env://MODEL_API_KEY', description: '' });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [draftHeader, setDraftHeader] = useState('');
+    const [draftCredential, setDraftCredential] = useState('');
+    const [credentialError, setCredentialError] = useState('');
+    // Advanced section: collapsed for a blank form, auto-expanded as soon as a
+    // recognized or saved custom credential row exists. `null` means "follow
+    // the row count"; a boolean is the user's explicit choice.
+    const [credentialOpen, setCredentialOpen] = useState(null);
     const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
     const save = async event => {
       event.preventDefault();
@@ -297,13 +325,20 @@ export function createResourceDialogs({
         field('凭证引用（可选）', 'credentialRef', 'env://MODEL_API_KEY'),
         field('说明（可选）', 'description', '模型用途和协议说明'),
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
-        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: BRAND.primaryText, background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '创建中…' : '创建模型'))));
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: saving ? BRAND.inkMuted : BRAND.primaryText, background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '创建中…' : '创建模型'))));
   }
 
   function ToolResourceDialog({ onClose, onCreated }) {
     const [form, setForm] = useState({ name: '', displayName: '', description: '', category: 'custom', executor: 'builtin' });
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [draftHeader, setDraftHeader] = useState('');
+    const [draftCredential, setDraftCredential] = useState('');
+    const [credentialError, setCredentialError] = useState('');
+    // Advanced section: collapsed for a blank form, auto-expanded as soon as a
+    // recognized or saved custom credential row exists. `null` means "follow
+    // the row count"; a boolean is the user's explicit choice.
+    const [credentialOpen, setCredentialOpen] = useState(null);
     const setField = (key, value) => setForm(current => ({ ...current, [key]: value }));
     const save = async event => {
       event.preventDefault();
@@ -325,7 +360,7 @@ export function createResourceDialogs({
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } }, field('分类', 'category', 'custom'), h('label', { style: { display: 'grid', gap: '5px', color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, '执行器', h('select', { value: form.executor, onChange: event => setField('executor', event.target.value), style: inputStyle() }, h('option', { value: 'builtin' }, 'builtin'), h('option', { value: 'deferred' }, 'deferred'), h('option', { value: 'python' }, 'python'), h('option', { value: 'mcp' }, 'mcp')))),
         field('说明（可选）', 'description', 'Tool 的用途和副作用'),
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, fontSize: '12px' } }, error) : null,
-        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: BRAND.primaryText, background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '创建中…' : '创建 Tool'))));
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } }, h('button', { type: 'button', onClick: onClose, style: buttonStyle() }, '取消'), h('button', { type: 'submit', disabled: saving, style: { ...buttonStyle(), color: saving ? BRAND.inkMuted : BRAND.primaryText, background: saving ? BRAND.accentSoft : BRAND.primaryFill, borderColor: saving ? BRAND.border : 'transparent' } }, saving ? '创建中…' : '创建 Tool'))));
   }
   return { McpResourceDialog, SkillPreviewDialog, McpToolsDialog, SkillDiscoveryDialog, ModelResourceDialog };
 }
