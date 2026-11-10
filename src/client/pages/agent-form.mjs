@@ -6,7 +6,7 @@ import { NATIVE_AGENT_POLICY_CONTRACT, normalizeNativeAgentPolicy } from '../../
 import { NATIVE_CAPABILITY_PRESETS, nativeCapabilitySummary } from '../state/native-capabilities.mjs';
 import { createFormKit } from '../components/form-kit.mjs';
 
-const RUNTIME_HELP = 'DSH Native 使用本地原生循环；Star Harness 和 Codex 由各自运行端执行。创建后不可更改。';
+const RUNTIME_HELP = 'DSH Native 使用本地原生循环；Star Harness 和 Codex 由各自运行端执行。决定可绑定的工具和记忆方式，创建后不可更改。';
 const NATIVE_TOOL_HELP = 'Native 自动配备可用的文件、命令和网页工具，Agent 按需调用；写入与命令仍遵循会话审批，企业资源按授权使用。';
 const POLICY_HELP = '规则随 Agent 版本固定；会话权限和 Host 审批仍可进一步拒绝。';
 const RECALL_HELP = '本地按词项覆盖率检索，置信度非语义相关度；关闭后不再自动召回已有事实。';
@@ -74,7 +74,7 @@ export function createAgentForm({
         description: !previous.description.trim() || previous.description === old?.[2] ? next[2] : previous.description,
         prompt: !previous.prompt.trim() || previous.prompt === old?.[3] ? next[3] : previous.prompt };
     });
-    const steps = ['定义 Agent', '绑定能力', '运行策略', '检查并创建'];
+    const steps = ['基本信息', '绑定能力', '策略与确认'];
     const update = (key, value) => setForm(previous => ({ ...previous, [key]: value }));
 
     useEffect(() => {
@@ -129,7 +129,7 @@ export function createAgentForm({
     const bindingReady = !missingRequirements.length && memoryBindingOk;
     const canNext = step === 0
       ? Boolean(form.id.trim() && form.name.trim())
-      : step === 1 || step === 3 ? (cloudEditing || (catalogStatus === 'ready' && Boolean(selectedModel) && bindingReady)) : (step !== 2 || bindingReady);
+      : cloudEditing || (catalogStatus === 'ready' && Boolean(selectedModel) && bindingReady);
 
     const create = async () => {
       if (!cloudEditing && !bindingReady) { setError(requiresCloudBinding && !memoryInstanceBound ? '启用云记忆前，请在「绑定能力」步骤选择记忆库。' : (missingRequirements.map(item => item.label).join('、') || '启用长期记忆前请选择记忆库')); setStep(1); return; }
@@ -277,9 +277,7 @@ export function createAgentForm({
       !cloudEditing ? capabilityPicker('skill', '技能', selectedSkills, setSelectedSkills) : null,
       missingRequirements.length ? Note({ role: 'status', tone: 'warn' }, '此模板需要：' + missingRequirements.map(item => item.label).join('、')) : null,
       h(PlatformResourcePicker, { value: platformBindings, onChange: setPlatformBindings, onMemory: value => updateMemory({ enabled: value, source: value ? 'cloud' : (memoryCtx.canLocal ? 'local' : 'cloud') }) }),
-    ) : step === 2 ? h(Fragment, null,
-      Section({ title: '运行目标', help: RUNTIME_HELP },
-        h('div', { className: 'af-choices' }, runtimeOptions.map(item => Choice({ key: item.runtimeType, selected: form.runtime === item.runtimeType, title: item.displayName, disabled: editing, onClick: () => update('runtime', item.runtimeType) })))),
+    ) : h(Fragment, null,
       Section({ title: '权限与记忆' },
         form.runtime === 'harness' && !cloudEditing
           ? Row({ title: 'Agent 工具约束', help: POLICY_HELP }, Select({ value: policy, onChange: event => setPolicy(event.target.value) }, h('option', { value: 'strict' }, '严格：写入和未知副作用需审批'), h('option', { value: 'loose' }, '遵循会话与 Host 权限'), h('option', { value: 'custom' }, '自定义：默认拒绝未知副作用')))
@@ -293,10 +291,9 @@ export function createAgentForm({
       form.runtime === 'harness' && !cloudEditing ? nativeRoleFields({ roles: nativeRoles, onChange: setNativeRoles,
         models: catalog.model, selectedModels: selectedModels.length ? selectedModels : [selectedModel],
         tools: catalog.tool, selectedTools, hasMcp: selectedMcp.length > 0 }) : null,
-    ) : h(Fragment, null,
-      Section({ title: '检查并创建' },
+      Section({ title: '确认配置' },
         capabilitySummary(),
-        Summary({ rows: [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行目标', runtimeLabel], ['默认模型', (model => model?.displayName || model?.name)(catalog.model.find(item => item.resourceId === selectedModel)) || selectedModel || '未选择'], ['可用模型', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项`], ['记忆', memoryEnabled ? (effectiveMemorySource === 'local' ? '本地记忆' : '云记忆库') : '未启用'],
+        Summary({ rows: [['Agent ID', form.id.trim().toLowerCase()], ['名称', form.name.trim()], ['运行时', runtimeLabel], ['默认模型', (model => model?.displayName || model?.name)(catalog.model.find(item => item.resourceId === selectedModel)) || selectedModel || '未选择'], ['可用模型', `${selectedModels.length || (selectedModel ? 1 : 0)} 个`], ['能力', `${selectedTools.length} Tool · ${selectedMcp.length} MCP · ${selectedSkills.length} Skill`], ['平台资源', `${platformBindings.length} 项`], ['记忆', memoryEnabled ? (effectiveMemorySource === 'local' ? '本地记忆' : '云记忆库') : '未启用'],
           ...(form.runtime === 'harness' && !cloudEditing ? [['子任务角色', nativeRoles.length ? nativeRoles.map(role => role.name).join('、') : '未启用']] : []),
           ['模板', creationSeed?.name || templateSource?.id || templates.find(item => item[0] === form.template)?.[1]]] }),
         editing ? Note({ style: { marginTop: '12px' } }, cloudEditing ? '保存后调用 AgentEngine UpdateAgent；云端已有会话继续使用旧快照，新运行使用更新后的组件绑定。' : `保存后创建新的配置版本（当前 r${initialAgent.metadata.revision}）；已有会话和构建不会被自动切换。`) : null),
@@ -314,7 +311,7 @@ export function createAgentForm({
           conflict && onReload ? Button({ disabled: saving, onClick: onReload }, '读取最新版本') : null,
           h('div', { className: 'af-footer' },
             Button({ onClick: step === 0 ? onBack : () => setStep(step - 1) }, step === 0 ? '取消' : '上一步'),
-            step < 3 ? Button({ variant: 'primary', disabled: !canNext, onClick: () => setStep(step + 1) }, '下一步')
+            step < steps.length - 1 ? Button({ variant: 'primary', disabled: !canNext, onClick: () => setStep(step + 1) }, '下一步')
               : Button({ variant: 'primary', disabled: saving || !canNext, onClick: create }, saving ? '保存中…' : editing ? '保存 Agent' : '创建 Agent'))
         )
       )

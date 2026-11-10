@@ -3,7 +3,9 @@ import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 export function createNavigation({
   ui: { React: { createElement: h }, BRAND = DEFAULT_BRAND },
 }) {
-  function StudioSubnav({ items, value, onChange }) {
+  function StudioSubnav({ items, value, onChange, variant, ariaLabel }) {
+    if (variant === 'segmented') return h('nav', { 'aria-label': ariaLabel || 'Studio 二级导航', className: 'ak-segmented' },
+      items.map(item => h('button', { key: item.id, type: 'button', onClick: () => onChange(item.id), 'aria-current': value === item.id ? 'page' : undefined }, item.label)));
     return h('nav', {
       'aria-label': 'Studio 二级导航',
       'data-studio-tabs': 'true',

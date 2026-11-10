@@ -48,7 +48,7 @@ test('ordinary Native creation needs no manual tool binding and does not admit u
   await editor.flush(); editor.next();
   assert.ok(editor.nodes().some(node => node.type === 'summary' && node.children.includes('高级：调整工具范围')));
   assert.ok(editor.nodes().some(node => node.props.role === 'status' && node.children.some(text => String(text).includes('尚未配置网页搜索服务'))));
-  editor.next(); editor.next(); await editor.button('创建 Agent').props.onClick();
+  editor.next(); await editor.button('创建 Agent').props.onClick();
   assert.deepEqual(editor.result().spec.bindings.tools.map(item => item.resourceId), ['read_workspace_file', 'web_fetch', 'run_command']);
   assert.equal(editor.result().spec.security.toolPolicy, 'deny-by-default');
 });
@@ -57,11 +57,11 @@ test('Native capability presets require an explicit click and preserve the Agent
   const original = existing([]); original.spec.bindings.tools = [];
   const editor = form(original); await editor.flush(); editor.next();
   assert.ok(editor.nodes().some(node => node.type === 'p' && node.children.some(text => typeof text === 'string' && text.includes('纯对话 Agent'))));
-  editor.next(); editor.next(); await editor.button('保存 Agent').props.onClick();
+  editor.next(); await editor.button('保存 Agent').props.onClick();
   assert.deepEqual(editor.result().spec.bindings.tools, []);
   assert.deepEqual(editor.result().spec.security, original.spec.security);
   const selected = form(original); await selected.flush(); selected.next();
-  selected.button('添加本地文件读取').props.onClick(); selected.render(); selected.next(); selected.next();
+  selected.button('添加本地文件读取').props.onClick(); selected.render(); selected.next();
   await selected.button('保存 Agent').props.onClick();
   assert.deepEqual(selected.result().spec.bindings.tools, [{ resourceId: 'read_workspace_file' }]);
   assert.deepEqual(selected.result().spec.security, original.spec.security);
@@ -73,7 +73,7 @@ test('editing a Native role preserves advanced legacy options and publishes with
     output_schema: { type: 'object', properties: { evidence: { type: 'string' } } }, concurrent_safe: false }]);
   const editor = form(original); await editor.flush(); editor.next(); editor.next();
   editor.aria('角色 1 任务说明').props.onChange({ target: { value: 'Read the original evidence' } }); editor.render();
-  editor.next(); await editor.button('保存 Agent').props.onClick();
+  await editor.button('保存 Agent').props.onClick();
   const { spec, revision } = editor.result(); assert.equal(revision, 7); assert.equal(spec.sub_agents, undefined);
   const roles = nativeChildRoles(spec); assert.equal(roles[0].instructions, 'Read the original evidence');
   assert.equal(roles[0].maxTurns, 5); assert.equal(roles[0].maxToolCalls, 2); assert.equal(roles[0].timeoutSeconds, 90);
@@ -86,7 +86,7 @@ test('removing a parent tool blocks saving its dependent child rather than silen
   await editor.flush(); editor.next();
   const toolLabel = editor.nodes().find(node => node.type === 'label' && walk(node).some(child => child.type === 'strong' && child.children.includes('read_workspace_file')));
   walk(toolLabel).find(node => node.type === 'input').props.onChange({ target: { checked: false } }); editor.render();
-  editor.next(); editor.next(); await editor.button('保存 Agent').props.onClick(); editor.render();
+  editor.next(); await editor.button('保存 Agent').props.onClick(); editor.render();
   assert.equal(editor.result(), undefined);
   assert.ok(editor.nodes().some(node => node.props.role === 'alert' && node.children.some(value => typeof value === 'string' && value.includes('未绑定'))));
 });
@@ -95,17 +95,17 @@ test('editing another Harness preserves its original role metadata and offers no
   const original = existing({ planner: 'vendor-owned-role-configuration' }); original.spec.runtime.type = 'dsh-native';
   const editor = form(original); await editor.flush(); editor.next(); editor.next();
   assert.equal(editor.button('添加子任务角色'), undefined);
-  editor.next(); await editor.button('保存 Agent').props.onClick();
+  await editor.button('保存 Agent').props.onClick();
   assert.deepEqual(editor.result().spec.sub_agents, original.spec.sub_agents); assert.equal(editor.result().spec.subAgents, undefined);
 });
 
 test('an inherited concurrent-safe role can be repaired explicitly before adding a write tool', async () => {
   const original = existing([{ name: 'writer', instructions: 'Write an isolated file', tools: ['write_workspace_file'], concurrent_safe: true }]);
   original.spec.bindings.tools.push({ resourceId: 'write_workspace_file' });
-  const editor = form(original); await editor.flush(); editor.next(); editor.next(); editor.next();
+  const editor = form(original); await editor.flush(); editor.next(); editor.next();
   await editor.button('保存 Agent').props.onClick(); editor.render(); assert.equal(editor.result(), undefined);
   assert.ok(editor.nodes().some(node => node.props.role === 'alert' && node.children.some(value => typeof value === 'string' && value.includes('并发安全'))));
-  editor.aria('角色 1 要求并发安全').props.onChange({ target: { checked: false } }); editor.render(); editor.next();
+  editor.aria('角色 1 要求并发安全').props.onChange({ target: { checked: false } }); editor.render();
   await editor.button('保存 Agent').props.onClick();
   assert.equal(nativeChildRoles(editor.result().spec)[0].concurrentSafe, false);
 });
@@ -117,7 +117,7 @@ test('a newly authored role inherits no additional tool permission and passes th
     editor.aria(label).props.onChange({ target: { value } }); editor.render();
   }
   editor.aria('角色 1 工具 read_workspace_file').props.onChange({ target: { checked: true } }); editor.render();
-  editor.next(); await editor.button('保存 Agent').props.onClick();
+  await editor.button('保存 Agent').props.onClick();
   const roles = nativeChildRoles(editor.result().spec);
   assert.deepEqual(roles[0].tools, ['read_workspace_file']); assert.equal(roles[0].modelProfileId, null);
   assert.equal(roles[0].inheritMcp, false); assert.equal(roles[0].maxTurns, 4);
