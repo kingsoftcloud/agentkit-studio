@@ -25,10 +25,12 @@ const DSH_SETTINGS_PATCH = join('profiles', RUNTIME_PROFILE, 'cordis.patch.yml')
 // Platform-managed observability env. Runtime Service rebuilds the Langfuse
 // primary route and the Server forwards the trusted CloudMonitor bundle; both
 // are already applied to the pod's container env, so the Host only has to stop
-// filtering them from its child. DSH_OTEL_CA_PEM_BASE64 carries an optional
-// pinned trust anchor for deployments without a publicly trusted endpoint.
+// filtering them from its child. The OTel certificate paths carry the mounted
+// CA bundle for a private primary endpoint; DSH_OTEL_CA_PEM_BASE64 remains a
+// legacy inline anchor.
 const MANAGED_OBSERVABILITY_ENV_NAMES = ['OTEL_EXPORTER_OTLP_PROTOCOL', 'OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_EXPORTER_OTLP_ENDPOINT',
   'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_TRACES_HEADERS', 'OTEL_EXPORTER_OTLP_TRACES_PROTOCOL',
+  'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE', 'OTEL_EXPORTER_OTLP_CERTIFICATE',
   'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
   'CLOUD_MONITOR_OTLP_ENDPOINT', 'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'CLOUD_MONITOR_OTLP_PROTOCOL',
   'CLOUD_MONITOR_OTLP_TRACES_PROTOCOL', 'CLOUD_MONITOR_OTLP_TRACES_HEADERS', 'CLOUD_MONITOR_APP_KEY',
