@@ -180,7 +180,6 @@
     "dsh-plugin",
     "agentkit",
     "studio",
-    "cloud-assistant",
-    "personal-assistant"
+    "cloud-assistant"
   ]
 }

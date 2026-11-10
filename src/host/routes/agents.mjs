@@ -2,7 +2,7 @@
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
 import { clampExecutionMode, readExecutionMode } from '../../execution-policy.mjs';
 
-export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, assistantSetup, cloudExecutionModes }) {
+export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, cloudExecutionModes }) {
     return async (endpoint, payload, signal) => {
         const serverClient = await serverClientPromise;
         if (endpoint === 'agents/local-delete') {
@@ -98,18 +98,11 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
             if (!agentId)
                 return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 不能为空', details: {} } };
             try {
-                const reference = assistantSetup ? await (await assistantSetup()).reference() : null;
-                const assistantConfiguration = reference?.agentId === agentId;
-                if (assistantConfiguration) {
-                    if (!reference.cloudAgentId) throw Object.assign(new Error('个人助理的云端实例尚未就绪，请先完成开通'), { code: 'ASSISTANT_DEPLOYMENT_NOT_READY' });
-                    agentId = reference.cloudAgentId;
-                }
                 const localStore = await agentStorePromise;
-                const local = assistantConfiguration ? null : await localStore.get(agentId);
-                if (local?.metadata?.purpose === 'personal-assistant') throw Object.assign(new Error('此个人助理配置没有当前环境下可用的云端实例，请先连接个人助理'), { code: 'ASSISTANT_DEPLOYMENT_NOT_READY' });
+                const local = await localStore.get(agentId);
                 if (!local)
                     await (await deployments()).agents.connect(agentId);
-                const buildId = assistantConfiguration ? '' : String(payload?.buildId || '').trim();
+                const buildId = String(payload?.buildId || '').trim();
                 const build = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId) : null;
                 // The no-build path remains the original local admission contract:
                 // getAdmission().ensure(agentId, { agent: local }).

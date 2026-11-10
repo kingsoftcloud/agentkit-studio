@@ -156,8 +156,7 @@ export function createDshPluginPages({
     const applyInstalled = (pluginId, enabled) => {
       setDiscovery(current => {
         if (!current) return current;
-        // The host decides the post-install state: curated plugins that are not
-        // enabled by default (the personal assistant) stay listed but inactive.
+        // The host decides the post-install state for each curated plugin.
         return {
           ...current,
           items: current.items.map(entry => idOf(entry) === pluginId ? { ...entry, installed: true, enabled: enabled === true } : entry)

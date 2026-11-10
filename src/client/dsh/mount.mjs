@@ -40,8 +40,7 @@ export function mountStudio(ctx, app) {
   // an official plugin item through the public plugin-manager slot, so the
   // existing Codex catalog stays available without a second DSH market.
   // Studio contributes the DSH plugin market (curated bundles plus an optional
-  // remote index) as a row inside the official 插件 page, so the bundled
-  // personal assistant stays discoverable and default-off after installation.
+  // remote index) as a row inside the official 插件 page.
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-dsh-plugin-market', order: 50, label: '插件市场',
   }, props => h(DshPluginMarketItem, props)));

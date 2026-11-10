@@ -22,8 +22,7 @@ const SERVER_ACTIONS = new Set([
   'ListSessionMessages', 'ListSessionEvents', 'ListAgentSchedules', 'GetAgentSchedule',
   'ListAgentScheduleOccurrences', 'GetObservabilityOverview', 'ListAgentRuntimeStats',
   'RunAgent', 'CancelRun', 'ResumeRun', 'SubmitInteraction', 'SubmitAgentControl',
-  // Studio Host owns the personal-assistant desktop credential chain; these two
-  // actions never reach the browser Action bridge.
+  // Credential actions remain host-owned and never reach the browser bridge.
   'ListAgentApiKeys', 'CreateAgentApiKey',
 ]);
 

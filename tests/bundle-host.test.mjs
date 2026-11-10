@@ -145,14 +145,6 @@ test('versioned state isolates immutable bundles and preserves prior history on 
 });
 
 
-test('a deleted assistant cannot be resurrected from its old runtime directory', async t => {
-  const f = await fixture(t);
-  await prepareBundleHost(f);
-  await writeFile(join(f.state, '.assistant-closed.json'), JSON.stringify({ phase: 'closed' }));
-  await assert.rejects(prepareBundleHost(f), { code: 'BUNDLE_HOST_ASSISTANT_CLOSED' });
-});
-
-
 test('verified legacy whole-directory profiles migrate once and retain rollback code, Settings and session state', async t => {
   const f = await fixture(t), plan = await prepareBundleHost(f);
   const profile = join(plan.env.DSH_HOME, 'profiles/agentkit-runtime'), modules = join(profile, 'node_modules');

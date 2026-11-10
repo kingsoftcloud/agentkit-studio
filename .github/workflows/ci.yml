@@ -128,24 +128,6 @@ jobs:
           node scripts/verify-native-durable-approval.mjs --source "$dsh_root" >> "$log" 2>&1
           node scripts/verify-native-owned-recovery.mjs --source "$dsh_root" >> "$log" 2>&1
           node scripts/verify-studio-native-harness.mjs --source "$dsh_root" --mount-host --recovery >> "$log" 2>&1
-      - name: Verify normal installed assistant cold startup and restart
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          set -euo pipefail
-          export DSH_HOME="$RUNNER_TEMP/assistant-automatic-startup/dsh"
-          export AGENTKIT_HOME="$RUNNER_TEMP/assistant-automatic-startup/agentkit"
-          export CODEX_HOME="$RUNNER_TEMP/assistant-automatic-startup/codex"
-          export DSH_TELEMETRY_DISABLED=1
-          dsh_root="$(node -p "JSON.parse(require('fs').readFileSync('.artifacts/patched-host-acceptance.json')).checkout")"
-          make profile-install DSH_ROOT="$dsh_root" DSH_PROFILE=automatic-startup PACK_DIR=.artifacts/automatic-startup
-          installation="$DSH_HOME/profiles/automatic-startup"
-          ln -s "$dsh_root/apps/cli" "$installation/node_modules/@deepseek-ai/dsh"
-          version="$(node -p "require('./package.json').version")"
-          archive="$PWD/.artifacts/automatic-startup/kingsoftcloud-agentkit-studio-$version.tgz"
-          digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-          node scripts/verify-assistant-automatic-startup.mjs "$installation" "$archive" \
-            .artifacts/assistant-automatic-startup.json "$digest" --profile-migration --source-commit "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -155,6 +137,5 @@ jobs:
             .artifacts/patched-host/host-tests.json
             .artifacts/patched-host/host-dependency-lifecycle.json
             .artifacts/native-host-contracts.log
-            .artifacts/assistant-automatic-startup.json
           if-no-files-found: error
           retention-days: 7

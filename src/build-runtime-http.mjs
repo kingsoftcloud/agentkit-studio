@@ -4,11 +4,6 @@ import { createServer } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
 import { createRuntimeResponsesStream } from './runtime-responses-stream.mjs';
-import { assistantInputLimit } from './assistant-transport.mjs';
-import { ASSISTANT_SCHEDULE_CAPABILITY } from './contracts/assistant-schedule.mjs';
-import { ASSISTANT_BROWSER_CAPABILITY, ASSISTANT_CODE_EXECUTION_CAPABILITY, ASSISTANT_MANAGED_PERMISSION_CAPABILITY } from './contracts/assistant-capabilities.mjs';
-import { ASSISTANT_NATIVE_CAPABILITY, isAssistantNativeOperation } from './contracts/assistant-native.mjs';
-import { ASSISTANT_ATTACHMENT_CAPABILITIES } from './contracts/assistant-attachments.mjs';
 import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
 
 const hash = value => createHash('sha256').update(value).digest();
@@ -36,7 +31,7 @@ function readRequestedExecutionMode(value) {
   return mode;
 }
 
-export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, assistant, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
   const managed = !buildId && managedIdentity?.agentId === agentId && identity(managedIdentity?.versionId || '') && /^[a-f0-9]{64}$/.test(managedIdentity?.manifestSha256 || '');
   if (!agentId || (managedIdentity ? !managed : !/^build_[0-9a-f]{20}$/.test(buildId || '')) || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
@@ -76,37 +71,13 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       const bearer = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
       if (req.headers.origin || !bearer || !timingSafeEqual(hash(bearer[1]), tokenHash)) throw fail('RUNTIME_UNAUTHORIZED', 401);
       if (closing) throw fail('RUNTIME_STOPPING', 503);
-      if (assistant?.retiring?.() && !['/v1/assistant/close', '/v1/agentkit/runtime'].includes(url.pathname)) throw fail('ASSISTANT_CLOSED', 410);
       if (req.method === 'GET' && url.pathname === '/v1/agentkit/runtime') {
         const owner = managed ? { format: 'agentengine.managed-runtime/v1', ...managedIdentity }
           : { format: 'agentkit.runtime-identity/v1', agentId, buildId, bundleSha256, deploymentVersion };
-        json(res, 200, { ...owner, status: 'ready', model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : []), ...(assistant ? ['personal-assistant/v1', ...(assistant.managedPermissionsSupported ? [ASSISTANT_MANAGED_PERMISSION_CAPABILITY] : []), ...(assistant.nativeCarrierSupported ? [ASSISTANT_NATIVE_CAPABILITY] : []), ...(assistant.cloudExecutionSupported ? [ASSISTANT_CODE_EXECUTION_CAPABILITY] : []), ...(assistant.cloudBrowserSupported ? [ASSISTANT_BROWSER_CAPABILITY] : []), ...(assistant.scopedCancelSupported ? ['personal-assistant-cancel-turn/v1'] : []), ...(assistant.imageReadSupported ? ['personal-assistant-images/v1'] : []), ...(assistant.attachmentUploadSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.upload] : []), ...(assistant.contentSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.content] : []), ...(assistant.fileReadSupported ? [ASSISTANT_ATTACHMENT_CAPABILITIES.read] : []), ...(assistant.approvalBridgeSupported ? ['personal-assistant-approval-bridge/v1'] : []), ...(assistant.deletionSupported ? ['personal-assistant-delete/v1'] : []), ...(assistant.identitySupported ? ['personal-assistant-identity/v1'] : []), ...(assistant.scheduleManagerSupported ? [ASSISTANT_SCHEDULE_CAPABILITY] : [])] : [])] }); return;
+        json(res, 200, { ...owner, status: 'ready', model, models, ...(declaredPolicy ? { executionPolicy: declaredPolicy } : {}), ...(declaredPolicy && allowedPermissionModes.length ? { allowedPermissionModes } : {}), capabilities: ['bound-model-selection', 'resource-checks', ...(declaredPolicy && allowedPermissionModes.length ? [CLOUD_EXECUTION_POLICY_CAPABILITY] : [])] }); return;
       }
       if (managed && (req.headers['x-agentengine-target-version-id'] !== managedIdentity.versionId
         || req.headers['x-agentengine-manifest-sha256'] !== managedIdentity.manifestSha256)) throw fail('RUNTIME_DEPLOYMENT_CHANGED', 409);
-      const assistantRoute = /^\/v1\/assistant\/([a-z-]+)$/.exec(url.pathname);
-      if (req.method === 'POST' && assistantRoute && assistant) {
-        if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw fail('RUNTIME_JSON_REQUIRED', 415);
-        const chunks = []; let bytes = 0;
-        for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-          bytes += chunk.length;
-          if (bytes > assistantInputLimit(assistantRoute[1])) { req.resume(); throw fail('RUNTIME_INPUT_TOO_LARGE', 413); }
-          chunks.push(chunk);
-        }
-        const body = Buffer.concat(chunks).toString('utf8');
-        let payload; try { payload = JSON.parse(body); } catch { throw fail('RUNTIME_INVALID_JSON'); }
-        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw fail('RUNTIME_INPUT_INVALID');
-        // Read-side native long polls release their resources on disconnect.
-        // Durable submit/upload admission remains cloud-owned and never uses
-        // this transport AbortSignal to cancel an accepted Agent turn.
-        const readAbort = isAssistantNativeOperation(assistantRoute[1]) ? new AbortController() : null;
-        const disconnect = () => { if (!res.writableEnded) readAbort?.abort(); };
-        if (readAbort) res.on('close', disconnect);
-        let result;
-        try { result = await assistant(assistantRoute[1], payload, readAbort ? { signal: readAbort.signal } : undefined); }
-        finally { if (readAbort) res.off('close', disconnect); }
-        json(res, assistantRoute[1] === 'submit' ? 202 : 200, result); return;
-      }
       const cancel = /^\/runs\/(run_[0-9a-f]{32})\/cancel$/.exec(url.pathname);
       const cancelResponse = /^\/v1\/responses\/([^/]+)\/cancel$/.exec(url.pathname);
       if (req.method === 'POST' && (cancel || cancelResponse)) {
@@ -292,7 +263,6 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
     address: server.address(),
     close: async () => {
       closing = true;
-      await assistant?.dispose?.();
       for (const { abort } of active.values()) abort.abort(fail('RUNTIME_STOPPING', 503));
       const closed = new Promise(resolve => server.close(resolve));
       server.closeAllConnections();
