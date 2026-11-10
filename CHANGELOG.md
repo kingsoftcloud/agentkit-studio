@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.13
+
+- Remove Personal Assistant runtime, Host routes, contracts, documentation and tests from Studio so the package remains a generic DSH plugin.
+- Keep the Studio surface compatible with DSH 0.2.2 public APIs and add a standalone DSH plugin purity gate.
+- Verify the decoupled package with the complete Studio gate: 5180 tests, 5178 passed, 0 failed, 2 skipped.
+
 ## 0.0.12
 
 - Upgrade Studio's pinned DSH baseline to `dsh-v0.2.2-rc.1`; the maintained series now has 43 active patches and 7 retired entries.
