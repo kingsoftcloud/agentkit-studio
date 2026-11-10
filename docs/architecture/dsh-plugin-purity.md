@@ -12,6 +12,10 @@ The boundary is intentionally small:
 - Cross-plugin communication uses DSH registration, connection admission and
   versioned wire contracts; it does not use private service names or source
   imports from another product.
+- Shared Host cloud access is exposed only through the generic
+  `agentkitHostCloud` capability. It contains Host-owned configuration and
+  client factories; consumers construct their own adapters and never receive
+  credentials or product-specific services.
 - Runtime images advertise opaque capability labels. Each plugin interprets the
   labels it owns after checking the DSH kernel compatibility.
 

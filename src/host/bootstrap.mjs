@@ -96,6 +96,18 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
 
+  // Generic cloud-control capability for independent DSH plugins. The Host
+  // owns configuration, credentials, and AgentEngine clients; consumers only
+  // receive this narrow provider and do not become Studio product modules.
+  ctx.provide('agentkitHostCloud', Object.freeze({
+    storeDir: studioStoreDir,
+    env: runtimeEnv,
+    fetchImpl: services.runtimeFetch,
+    configuration: configurationPromise,
+    getClient: async () => serverClientPromise,
+    getDeploymentClient: async () => deploymentClientPromise,
+  }));
+
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
