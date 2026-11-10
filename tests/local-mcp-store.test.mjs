@@ -46,3 +46,18 @@ test('local MCP store updates the declaration and invalidates an old probe contr
   assert.deepEqual(updated.contract.discoveredTools, []);
   assert.equal(updated.health.toolCount, 0);
 });
+
+test('local MCP store only persists env:// credential references for header secrets', async () => {
+  const store = createLocalMcpStore({ storeDir: await mkdtemp(join(tmpdir(), 'agentkit-mcp-')) });
+  for (const envRefs of [
+    { 'X-Agent-Token': 'inline-plaintext-secret' },
+    { Authorization: 'Bearer inline-secret' },
+    { 'X-Agent-Token': 'env://not a valid name' },
+  ]) {
+    await assert.rejects(() => store.create({ displayName: 'inline', server: { name: 'inline', transport: 'http', endpointUrl: 'https://example.test/mcp', envRefs } }),
+      error => error instanceof LocalMcpStoreError && error.code === 'MCP_ENV_REF_INVALID');
+  }
+  const created = await store.create({ displayName: 'referenced', server: { name: 'referenced', transport: 'http', endpointUrl: 'https://example.test/mcp',
+    envRefs: { 'X-Agent-Token': 'env://MCP_DATAAGENT_TOKEN' } } });
+  assert.deepEqual(created.server.envRefs, { 'X-Agent-Token': 'env://MCP_DATAAGENT_TOKEN' });
+});

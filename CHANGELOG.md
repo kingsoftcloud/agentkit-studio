@@ -104,6 +104,7 @@
 - Adapt team message forwarding to direct Inbox delivery so member reports reach the lead model. Install missing official plugin bundles through their exact Host-provided target, and use the new built-in scheduling service.
 - Require a valid packaged update source before accepting signed desktop artifacts. Support signing with an explicitly selected existing macOS keychain without exporting private keys.
 - Show the environment and region when a cloud runtime image catalog is absent, with an entry to the cloud settings. Preserve the user's selected environment.
+- MCP 资源页的 JSON 识别不再只认 `mcpServers`：同时支持 VS Code 的 `servers`、裸名称映射、单个/多个服务配置和数组；`type: sse` 不再被当成 HTTP 处理。自定义认证 Header（如 `X-Service-Token`）会转成 Host 凭证引用（`server.envRefs`），字面量密钥只写入本机凭证服务、不落资源目录；本地 MCP 存储现在也拒绝非 `env://` 的凭证引用，避免明文密钥被写进记录文件。新增识别摘要、多服务选择和按 Header 的凭证输入行，可配置和轮换非 Authorization 认证 Header。
 
 ## Desktop 0.2.0-rc.2.20261016.2 - 2026-10-16
 
