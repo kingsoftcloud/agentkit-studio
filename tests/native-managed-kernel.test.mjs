@@ -11,6 +11,7 @@ import { streamA2aInboundKernelFacts } from '../src/providers/native-a2a-inbound
 import { permitIssuer, command, target, scope, binding, response, tool } from './fixtures/native-managed-kernel.mjs';
 import { assertManagedRuntimeFacts } from './fixtures/native-managed-runtime-schema.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
+import { invariant } from '@kingsoftcloud/agentkit-harness-core';
 
 function fixture(t, options = {}) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'managed-native-'))), issuer = permitIssuer();
@@ -594,6 +595,25 @@ test('managed idle receipt observation keeps one owner and never replays the ori
   assert.equal(original.commands.filter(row => row.command.kind === 'reconcile_tool').length, 1);
   await f.reopen(); await f.runtime.drain(cmd.session_id);
   assert.deepEqual(f.runtime.inspectSession(query).record, original);
+  assert.deepEqual(f.counts(), { models: 2, writes: 1, reads: 1 });
+});
+
+test('managed idle authority lost to a concurrent command re-derives instead of failing the Run', { timeout: 5000 }, async t => {
+  let attempts = 0;
+  const f = receiptWaitFixture(t, (snapshot, context) => {
+    attempts++;
+    // A durable answer or command retires the attempt after its own authority
+    // check, so the re-check can already see unchanged state again. The Run has
+    // to re-derive and read the original receipt once, not fail with the
+    // transient NATIVE_KERNEL_IDLE_AUTHORITY_LOST.
+    if (attempts === 1) invariant(false, 'NATIVE_KERNEL_IDLE_AUTHORITY_LOST');
+    assert.equal(context.assertCurrent(), true);
+    return receiptCommand(snapshot);
+  });
+  const cmd = command(), receipt = await f.receive(cmd); await f.runtime.drain(cmd.session_id);
+  const run = f.runtime.inspectSession({ scope, sessionId: cmd.session_id, runId: receipt.run_id }).record;
+  assert.equal(run.snapshot.phase, 'completed');
+  assert.equal(attempts, 2);
   assert.deepEqual(f.counts(), { models: 2, writes: 1, reads: 1 });
 });
 
