@@ -18,7 +18,7 @@ import { nativeLiveStream } from '@kingsoftcloud/agentkit-harness-node/native/as
 import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
 import { NATIVE_EXECUTION_CONTEXT_OWNERSHIP, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../../providers/native-context-ownership.mjs';
 import { bindNativeModelSurface, nativeChildInputMediaSources } from '../../providers/native-model-surface.mjs';
-import { NATIVE_INSTRUCTION_ASSEMBLY, nativeInstructionAssembly } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
+import { NATIVE_INSTRUCTION_ASSEMBLY, NATIVE_ENGINE_INSTRUCTION_ASSEMBLY, nativeInstructionAssembly, renderEngineInstructions, sameHostInstructions } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
 import { admitNativeWorkspaceContext, ensureNativeWorkspaceContext } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
 import { createNativeWorkspaceInstructions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-instructions';
 import { nativeConversationForkSeed } from '../../providers/native-conversation-fork.mjs';
@@ -265,7 +265,16 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       // Memory task fails closed when the owner is not installed.
       const promptAssembly = assembly => nativeInstructionAssembly(nativePlanAssembly(assembly, planModePolicy), {
         policy: instructionAssemblyPolicy, toolNames: baseTools.map(tool => tool.name) });
-      const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(promptAssembly(input.assembly));
+      // Under engine-rendered instructions the engine owns the base prompt and
+      // Studio contributes only its rendered sections into the Host slot. The
+      // engine base may change between releases, so recovery compares the Host
+      // contribution alone; older policies keep the exact whole-prompt check.
+      const engineInstructions = instructionAssemblyPolicy === NATIVE_ENGINE_INSTRUCTION_ASSEMBLY;
+      const hostInstructions = assembly => renderPrompt(promptAssembly(assembly));
+      const instructionsUnchanged = (assembly, admitted) => engineInstructions
+        ? sameHostInstructions(admitted, hostInstructions(assembly)) : hostInstructions(assembly) === admitted;
+      const systemPrompt = original ? original.capsule.systemPrompt
+        : engineInstructions ? renderEngineInstructions({ hostInstructions: hostInstructions(input.assembly) }) : hostInstructions(input.assembly);
       // New Native Runs take recovery policy versions from the engine preset:
       // Studio names the preset and never spells an engine policy version. A
       // cold restore retains the exact older optional configuration and digest.
@@ -283,7 +292,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
             : { toolErrorRecoveryModelCalls: record.spec.execution.toolErrorRecoveryModelCalls }),
           ...(record.spec.execution?.deliveryReviewPolicy === undefined ? {} : { deliveryReviewPolicy: record.spec.execution.deliveryReviewPolicy === null
             ? null : normalizeDeliveryReviewPolicy(record.spec.execution.deliveryReviewPolicy) }) };
-      if (original) invariant(renderPrompt(promptAssembly(recoveredPromptAssembly(input.assembly, source))) === systemPrompt,
+      if (original) invariant(instructionsUnchanged(recoveredPromptAssembly(input.assembly, source), systemPrompt),
         'studio_native_recovery_prompt_changed');
       // Seal the Host recovery capsule once per Build. The Memory owner guard
       // compares the CURRENT configuration's capsule to THIS sealed identity
@@ -613,7 +622,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
           const nextSelection = admittedModelSelection({ options: inputSelection }, next.assembly);
           invariant(nextSelection.provider === inputSelection.provider && nextSelection.model === inputSelection.model,
             'studio_native_input_model_binding_changed');
-          invariant(renderPrompt(promptAssembly(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly)) === systemPrompt,
+          invariant(instructionsUnchanged(original ? recoveredPromptAssembly(next.assembly, source) : next.assembly, systemPrompt),
             'studio_native_input_prompt_binding_changed');
           invariant(canonical(binding.nativeTools.definitions(agent, next.assembly.tools, toolOptions)) === canonical(boundToolDefinitions),
             'studio_native_input_tool_binding_changed');

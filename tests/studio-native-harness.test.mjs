@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { NATIVE_INSTRUCTION_ASSEMBLY, renderEngineInstructions, engineBaseInstructions, engineHostInstructions } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
 import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -193,8 +194,12 @@ test('Native Host uses admitted tool sources for counting/model/recovery and pre
   f.payload.binding.nativeTools.definitions = () => [tool({ name: 'read_workspace_file' })];
   await f.host.executeTurn(f.payload);
   const head = f.head(), original = f.ledger.load(head.scope, head.runId);
-  const expected = [persona, 'ADMITTED_FILE_GUIDANCE', 'Preserve enterprise instructions.'].join('\n\n');
-  assert.equal(original.configuration.hostRecoveryBinding.instructionAssemblyPolicy, 'native-owned-sections/v3');
+  // The engine owns the base prompt; Studio's sections arrive verbatim in the Host slot.
+  const hostText = [persona, 'ADMITTED_FILE_GUIDANCE', 'Preserve enterprise instructions.'].join('\n\n');
+  const expected = renderEngineInstructions({ hostInstructions: hostText });
+  assert.equal(original.configuration.hostRecoveryBinding.instructionAssemblyPolicy, NATIVE_INSTRUCTION_ASSEMBLY);
+  assert.ok(expected.startsWith(engineBaseInstructions().text) && expected !== hostText);
+  assert.equal(engineHostInstructions(original.configuration.hostRecoveryBinding.systemPrompt), hostText);
   assert.equal(original.configuration.hostRecoveryBinding.systemPrompt, expected);
   assert.equal(original.snapshot.messages[0].content, expected);
   const body = JSON.parse(f.requests[0].options.body);
