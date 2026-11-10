@@ -48,6 +48,11 @@ try {
   await settle();
   const baseline = counts(ctx);
   report.baseline = baseline;
+  // Index injection renders for one Peer. DSH's remote-access snapshot subscriber
+  // reads `peer.principal`, so collecting without a Peer throws on rc1+; the
+  // browser Peer is the owner scope a rendered index page speaks for.
+  assert.ok(ctx.connection?.browserPeer, 'lifecycle verification requires the web Connection browser Peer');
+  const pagePeer = ctx.connection.browserPeer;
   asyncHook.enable();
   for (let index = 0; index < 20; index++) {
     const fiber = await ctx.plugin(Studio);
@@ -57,7 +62,7 @@ try {
     assert.equal(bridge.diagnostics().adapters, 1);
     assert.equal(bridge.diagnostics().executors, 1);
     assert.ok(ctx.webServer.prefixes.has('/agentkit'), 'complete Studio HTTP control-plane must be mounted');
-    const boot = ctx.webServer.collectIndexInjections().filter(item => item.kind === 'global' && item.name === '__AGENTKIT_STUDIO__');
+    const boot = ctx.webServer.collectIndexInjections(pagePeer).filter(item => item.kind === 'global' && item.name === '__AGENTKIT_STUDIO__');
     assert.equal(boot.length, 1, 'desktop index collection must receive one Studio bootstrap value');
     assert.equal(boot[0].value.hostCompatibility.baseline.compatible, true);
     assert.equal(boot[0].value.hostCompatibility.contract.compatible, true);
@@ -66,12 +71,15 @@ try {
     assert.deepEqual(bridge.diagnostics(), { closed: true, adapters: 0, executors: 0, routes: 0, requests: 0 });
     const actual = counts(ctx);
     assert.deepEqual(actual, baseline, `full Studio cycle ${index} leaked owned listeners, routes or timers`);
-    assert.equal(ctx.webServer.collectIndexInjections().some(item => item.name === '__AGENTKIT_STUDIO__'), false, 'unloaded Studio must not inject stale bootstrap state');
+    assert.equal(ctx.webServer.collectIndexInjections(pagePeer).some(item => item.name === '__AGENTKIT_STUDIO__'), false, 'unloaded Studio must not inject stale bootstrap state');
     report.cycles.push({ cycle: index + 1, passed: true, resourcesReturnedToBaseline: true, desktopBootstrapCollectedAndRemoved: true });
   }
   report.passed = true;
   report.observedOwnedAsyncResources = observedResources;
 } catch (error) {
+  // The evidence file retains the message only; keep the stack in the job log so
+  // a host-internal TypeError can be traced to its frame without a rerun.
+  console.error(error.stack ?? error);
   report.failure = { code: String(error.code || 'ASSERTION_FAILED'), message: String(error.message).split(/\n/)[0].slice(0, 240) };
   process.exitCode = 1;
 } finally {
