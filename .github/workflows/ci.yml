@@ -5,6 +5,10 @@ on:
     branches: [main, 'codex/native-*']
   pull_request:
     branches: [main]
+  # Merge queue entries run the same required checks on a
+  # `gh-readonly-queue/main/pr-*` ref. Without this event the queued entry can
+  # never satisfy `public-gate`/`patched-dsh-host` and never merges.
+  merge_group:
 
 permissions:
   contents: read

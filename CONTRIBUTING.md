@@ -52,3 +52,13 @@ build's source synchronization gate.
 ## Commit and pull request guidance
 
 Use a single-purpose conventional commit message, add regression coverage for behavior changes, and describe the validation that was actually run. Do not push a release or publish an artifact until review and repository gates have passed.
+
+## Merge queue
+
+`main` moves through the merge queue. Queue entries run the same required checks
+(`public-gate`, `patched-dsh-host (ubuntu-24.04)`) as pull requests; `.github/workflows/ci.yml`
+listens to `merge_group` for that. Prefer **Merge when ready** over updating a branch
+by hand: the queue rebuilds the entry against the latest `main` and merges the batch only
+after every required check passes, so merging one pull request no longer invalidates the
+checks of every other open pull request. If an entry fails, fix the pull request and
+re-enqueue it; do not bypass the queue with a direct push.
