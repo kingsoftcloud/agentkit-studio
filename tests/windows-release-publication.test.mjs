@@ -81,7 +81,11 @@ test('the default Windows publication lane is nightly and rejects unknown lanes 
   const f = await fixture(t, 'nightly');
   const { channel, ...defaults } = f.options;
   await publishWindowsCandidate(defaults);
-  assert.deepEqual(f.uploads.slice(-2), ['studio/feeds/win-x64/nightly.yml', 'dsh-desk/feeds/win-x64/nightly.yml']);
+  // Canonical and bridge feed advance first; every historical lane follows them
+  // in both layouts so an old install still reaches this build in one update.
+  assert.ok(f.uploads.includes('studio/feeds/win-x64/nightly.yml'));
+  assert.ok(f.uploads.includes('dsh-desk/feeds/win-x64/nightly.yml'));
+  assert.deepEqual(f.uploads.slice(-2), ['studio/feeds/win-x64/preview.yml', 'dsh-desk/feeds/win-x64/preview.yml']);
   const g = await fixture(t, 'nightly');
   await assert.rejects(publishWindowsCandidate({ ...g.options, channel: 'beta' }), /channel must be one of nightly, latest, preview, stable/);
   assert.equal(g.uploads.length, 0);

@@ -26,8 +26,10 @@ test('mirroring rejects a feed that changed version or left the Studio storage',
     /does not equal/)
   assert.throws(() => verifyMirroredFeed(feed({ files: [{ url: 'https://elsewhere.example.com/studio/x.zip', sha512: 's', size: 1 }] }),
     { expectedVersion: version, storageOrigin: storage }), /escapes the release storage/)
+  // The Studio layout only serves its own versioned directory; the legacy
+  // dsh-desk prefix belongs to the legacy feed object layout.
   assert.throws(() => verifyMirroredFeed(feed({ files: [{ url: `${storage}/dsh-desk/bin/x.zip`, sha512: 's', size: 1 }] }),
-    { expectedVersion: version, storageOrigin: storage }), /escapes the release storage/)
+    { expectedVersion: version, storageOrigin: storage }), /outside the studio feed binary prefixes/)
   assert.throws(() => verifyMirroredFeed(feed({ files: [{ url: `http://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${version}/x.zip`, sha512: 's', size: 1 }] }),
     { expectedVersion: version, storageOrigin: storage }), /escapes the release storage/)
 })
@@ -40,12 +42,18 @@ test('mirroring rejects incomplete digests, relative URLs and unknown layouts', 
     assert.throws(() => verifyMirroredFeed(feed({ files }), { expectedVersion: version, storageOrigin: storage }),
       /does not describe one immutable binary|not absolute/)
   }
-  assert.throws(() => verifyMirroredFeed(feed(), { expectedVersion: version, storageOrigin: storage, layout: 'other' }), /studio or legacy/)
+  assert.throws(() => verifyMirroredFeed(feed(), { expectedVersion: version, storageOrigin: storage, layout: 'other' }), /must be one of studio, legacy/)
   assert.throws(() => verifyMirroredFeed('not: [valid', { expectedVersion: version, storageOrigin: storage }), /source feed is invalid/)
 })
 
-test('the legacy layout only accepts the dsh-desk binary prefix', () => {
+test('the legacy layout accepts the dsh-desk and the canonical studio binary', () => {
   const legacy = YAML.stringify({ version, files: [{ url: `${storage}/dsh-desk/bin/mac-arm64/deepseek-harness-${version}-mac-arm64.zip`, sha512: 's', size: 9 }] })
   assert.equal(verifyMirroredFeed(legacy, { expectedVersion: version, storageOrigin: storage, layout: 'legacy' }).size, 9)
-  assert.throws(() => verifyMirroredFeed(feed(), { expectedVersion: version, storageOrigin: storage, layout: 'legacy' }), /escapes the release storage/)
+  // A live dsh-desk/feeds object legitimately names the canonical studio/<version>/
+  // binary, so the feed object layout must not decide the binary prefix alone.
+  assert.equal(verifyMirroredFeed(feed(), { expectedVersion: version, storageOrigin: storage, layout: 'legacy' }).size, 123)
+  assert.throws(() => verifyMirroredFeed(feed({ files: [{ url: `${storage}/elsewhere/x.zip`, sha512: 's', size: 1 }] }),
+    { expectedVersion: version, storageOrigin: storage, layout: 'legacy' }), /outside the legacy feed binary prefixes/)
+  assert.equal(verifyMirroredFeed(feed(), { expectedVersion: version, storageOrigin: storage })
+    .binaryUrl, `${storage}/studio/${version}/AgentKit-Studio-mac-arm64.zip`)
 })

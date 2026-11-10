@@ -45,6 +45,15 @@ test('the product default lane and every accepted DSH lane reach the packaged ma
   assert.equal(resolveProductInputs({ target: 'mac-arm64' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, 'nightly');
 });
 
+test('a lane that cannot serve the release version fails before packaging', () => {
+  for (const updateChannel of ['latest', 'stable']) {
+    assert.throws(() => resolveProductInputs({ target: 'mac-arm64', updateChannel, buildVersion: '0.2.2-rc.1.20261109.1' }),
+      /requires a stable three-segment version/);
+    assert.equal(resolveProductInputs({ target: 'mac-arm64', updateChannel, buildVersion: '0.2.2' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, updateChannel);
+  }
+  assert.equal(resolveProductInputs({ target: 'mac-arm64', updateChannel: 'nightly', buildVersion: '0.2.2-rc.1.20261109.1' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, 'nightly');
+});
+
 test('product assets stay inside the source and bundle defaults remain unambiguous', () => {
   for (const change of [
     p => { p.desktop.platforms['win-x64'].icon = '../outside.png'; },

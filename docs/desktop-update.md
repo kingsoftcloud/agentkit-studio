@@ -45,10 +45,13 @@ node scripts/desktop-release.mjs mirror-feed \
 The mirror copies the exact feed bytes (same version, digest and absolute ZIP
 URL) onto `preview-mac.yml`, so preview clients download the `nightly` build and
 their next check reads `nightly-mac.yml`. The same command restores a saved feed
-with `--from-file` during a rollback. Keep the preview object frozen afterwards;
-do not publish new preview builds once the migration window closes. Moving
-installed clients from `nightly` to a future GA uses the same one-hop trick with
-`--channel nightly --from-channel latest`.
+with `--from-file` during a rollback. `publish` performs this mirror on every
+release (see [Compatibility feeds follow every
+release](#compatibility-feeds-follow-every-release)), so the preview object
+tracks the newest build instead of freezing and every preview install stays one
+update away from the newest release. Moving installed clients from `nightly` to a
+future GA uses the same one-hop trick with `--channel nightly --from-channel
+latest`.
 
 Each release uses a strictly increasing semantic App version. Older installers
 that embed another origin need one manual installation of the new signed DMG;
@@ -58,6 +61,98 @@ The updater checks the configured channel and offers a new version when its App
 version is higher than the installed build. It downloads from the feed's HTTPS
 URLs. A fresh DMG installation without a cached previous ZIP can require a full
 download before subsequent updates can reuse bytes.
+
+## Compatibility feeds follow every release
+
+Installed clients keep requesting the channel and feed object sealed into their
+own `app-update.yml`; no server-side rename can move them. A lane that stops
+being written therefore strands its installs on that lane's last version — which
+is how a `preview` client had to install an intermediate build before reaching
+the newest release. `desktop-release.mjs publish` mirrors the verified feed onto
+the compatibility lane objects right after the canonical feed is verified:
+
+- macOS: `studio/feeds/mac-arm64/preview-mac.yml` automatically, plus
+  `dsh-desk/feeds/mac-arm64/preview-mac.yml` where the credential may write the
+  legacy prefix.
+- Windows: `studio/feeds/win-x64/preview.yml` and
+  `dsh-desk/feeds/win-x64/preview.yml` automatically.
+
+The bytes are copied unchanged (same version, digest and absolute binary URL), so
+nothing is rebuilt or re-uploaded. A legacy feed legitimately points at the
+canonical `studio/<version>/` binary; the feed object layout and the binary
+location are validated separately.
+
+The publish command accepts:
+
+```sh
+--compat-channels preview               # comma-separated compatibility lanes
+--compat-layouts studio,legacy          # default: the publication layout only
+--no-compat-mirror                      # skip mirroring for this publish
+```
+
+The default layout is the publication's own, because the Studio release
+credential is scoped to `studio/*`: a `dsh-desk` write from every publish returns
+403 and would block the release. Use `--compat-layouts studio,legacy` once that
+credential covers the legacy prefix, or refresh the old object by hand with
+`mirror-feed --layout legacy` (below). The Windows publishers write both
+`studio/feeds/win-x64/preview.yml` and `dsh-desk/feeds/win-x64/preview.yml`,
+matching their existing bridge feed.
+
+`--compatibility-origin` is not required for mirroring. Mirroring is idempotent:
+a target that already carries the published bytes is left untouched and recorded
+as `status: "unchanged"`; only changed targets are uploaded. `publication.json`
+records every mirror under `compatMirrors` with `version`, `targetChannel`,
+`targetLayout`, `feedUrl`, `feedSha512`, `status` and `uploaded`.
+
+If the canonical feed is verified but a mirror fails, the command exits non-zero
+with the failing object key. Repair that target without republishing:
+
+```sh
+node scripts/desktop-release.mjs mirror-feed \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com \
+  --layout studio --channel preview --from-channel nightly --version <version>
+```
+
+The legacy `dsh-desk` surface must be mirrored with `--from-file`, because that
+layout serves the canonical `studio/<version>/` binary URL while
+`dsh-desk/feeds/.../nightly-mac.yml` does not exist:
+
+```sh
+curl -fsS https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/mac-arm64/nightly-mac.yml -o /tmp/nightly-mac.yml
+node scripts/desktop-release.mjs mirror-feed \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --layout legacy \
+  --channel preview --from-file /tmp/nightly-mac.yml --version <version>
+```
+
+## One-hop upgrades from any historical install
+
+One publish is enough for every historical installation that reads one of the
+mirrored feed objects: the client finds the newest version in its next check and
+downloads it directly. No intermediate version must be installed first, because
+the mirrored feed already names the current immutable binary and digest.
+
+- An install sealed with `preview` reads the refreshed `preview-mac.yml`, downloads
+  the `nightly` build and — because the downloaded build's own manifest names
+  `nightly` — reads `nightly-mac.yml` from then on.
+- An install that embeds the old `dsh-desk/feeds/...` entry gets the same bytes
+  under the old path once that object is refreshed, either by
+  `--compat-layouts studio,legacy` or by `mirror-feed --layout legacy`.
+- Windows behaves the same through `preview.yml` in either layout; its publisher
+  writes both objects.
+
+Guarantees and exceptions:
+
+- The embedded origin must be reachable and must serve both the feed and the
+  absolute binary URL. An install that embeds another origin or bucket needs one
+  manual signed DMG/EXE installation; changing signed resources inside an
+  existing App is not a migration mechanism.
+- A channel outside `--compat-channels` (for example an old `stable` install)
+  does not follow the release; keep that list aligned with the installs that
+  still exist.
+- An install whose downloaded update source predates `app-update.yml`, or whose
+  lane object was deleted, cannot be reached automatically.
+- Only `mac-arm64` and `win-x64` feeds are published; an Intel-Mac install has no
+  matching feed.
 
 ## Signing workflow
 
@@ -97,7 +192,8 @@ feed version. Both feeds refresh `studio/latest` through
 A macOS-only batch is incomplete: the download page and Windows automatic updates
 would stay on the previous version, so do not report a release as shipped until
 `studio/feeds/<target>/nightly-mac.yml` and `studio/feeds/win-x64/nightly.yml`
-report the same version and `studio/latest/latest.json` carries both platforms.
+report the same version, the `preview` compatibility mirrors report that version
+too, and `studio/latest/latest.json` carries both platforms.
 
 ## Publish incremental or full updates
 
@@ -114,6 +210,11 @@ node scripts/desktop-release.mjs publish \
   --layout studio --channel nightly \
   --update-mode incremental --expected-previous-version <current-version>
 ```
+
+The command refuses a channel that cannot serve the candidate version (for
+example a prerelease on `latest`) before it uploads anything, then mirrors the
+verified feed onto the compatibility lanes unless `--no-compat-mirror` is passed.
+`publication.json` records the mirrors under `compatMirrors`.
 
 Upload credentials are resolved from the Host or trusted CI environment, never
 from renderer requests or checked-in configuration. Select `--update-mode full`

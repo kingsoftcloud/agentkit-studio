@@ -34,6 +34,7 @@
 
 ## Unreleased
 
+- 桌面更新不再让历史安装“每次只前进一版”：`desktop-release.mjs publish` 在 feed 校验通过后自动把同一份 feed 字节镜像到兼容 `preview` 车道（macOS 默认只写发布布局本身，Windows 两个发布脚本同时写 `studio` 与 `dsh-desk` 旧入口），幂等、不重复上传、不改动任何签名二进制；`latest`/`stable` 车道改为在版本带 prerelease 时于打包前直接拒绝，产品默认车道保持 `nightly`。
 - macOS 桌面端的总览、资源库、运行中心三页补一条统一的顶部拖拽条：只在 Electron + `data-platform='darwin'` 的文档上，把透明 `-webkit-app-region: drag` 条（左 80px 避开红绿灯、右 0、高 40px）插到 React 根之前，DSH 侧栏开关等后续 `no-drag` 控件自动从拖拽面中扣除；仅 Studio chrome 页挂载，DSH 原生会话页和「智能体」页不受影响，全屏时随原生标题带一起隐藏。
 - 托管运行时的模型上下文窗口改为从模型网关 `/v1/models` 的 `context_length` 读取，不再固定为 128000：模型实际声明 1024k 时，长会话不会再在远低于真实上限处触发上下文压缩，减少压缩时的工具结果裁剪及其引发的会话投影读取失败（输出预算仍保留 8192，目录不可达时回退原默认值）。
 - Register the plugin market's `plugins/dsh-discover` bridge endpoint (and the previously missing `plugins/dsh-index-refresh`) in the Studio operation allowlist so the Host accepts them instead of rejecting them as unknown control endpoints.
