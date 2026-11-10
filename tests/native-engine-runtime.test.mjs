@@ -135,3 +135,18 @@ test('the engine view is fetched once per build, cached by hash, and each engine
   assert.equal(await ok.text(), html);
   for (const bad of ['', 'abc', '0'.repeat(64)]) assert.equal(nativeEngineViewResponse(new Request(`http://studio/x?sha256=${bad}`), f.runtime).status, 404);
 });
+
+test('the Session permission mode decides writes when no approval seat exists, and history reaches the engine', async t => {
+  const { engineConversation } = await import('../src/providers/native-engine-runtime.mjs');
+  assert.deepEqual(engineConversation([{ role: 'user', content: 'Fix calc.py' }, { role: 'assistant', content: [{ type: 'text', text: 'Failed.' }] },
+    { role: 'user', source: { kind: 'notice' }, content: 'background done' }, { role: 'tool', content: 'x' }, { role: 'user', content: 'retry' }], 'retry'),
+  [{ role: 'user', text: 'Fix calc.py' }, { role: 'assistant', text: 'Failed.' }]);
+  for (const [sandbox, written] of [['workspace-write', true], ['danger-full-access', true], ['read-only', false], [undefined, false]]) {
+    const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Done.')]);
+    await collect(f.runtime.stream({ ...f.options, ...(sandbox ? { sandbox } : {}), input: 'retry',
+      messages: [{ role: 'user', content: 'Create out.txt.' }, { role: 'assistant', content: 'Failed earlier.' }, { role: 'user', content: 'retry' }] }));
+    assert.equal(existsSync(join(f.cwd, 'out.txt')), written, String(sandbox));
+    const sent = JSON.stringify(f.model.requests[0].messages);
+    assert.ok(sent.includes('User: Create out.txt.') && sent.includes('Assistant: Failed earlier.'));
+  }
+});

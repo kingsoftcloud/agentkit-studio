@@ -55,7 +55,7 @@ test('the renderer embeds the engine view in a sandboxed iframe and relays the r
     `);
     const bundle = await build({ entryPoints: [join(dir, 'entry.mjs')], bundle: true, write: false, format: 'iife', platform: 'browser',
       define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' });
-    const page = `<!doctype html><html><body><div id="root"></div><script>${bundle.outputFiles[0].text}</script></body></html>`;
+    const page = `<!doctype html><html style="color-scheme: dark"><body style="background:#151517;color:#eee"><div id="root"></div><script>${bundle.outputFiles[0].text}</script></body></html>`;
     const server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(req.url === '/view' ? engineView : page); });
     await new Promise(done => server.listen(0, '127.0.0.1', done));
     t.after(() => new Promise(done => { server.closeAllConnections(); server.close(done); }));
@@ -74,5 +74,14 @@ test('the renderer embeds the engine view in a sandboxed iframe and relays the r
     await frame.getByText('Refunds are accepted within 30 days.').waitFor({ timeout: 15000 });
     assert.equal(await frame.getByText('Checking the refund policy.').count(), 1, 'events already sent are not resent');
     await tab.waitForFunction(() => document.querySelector('iframe').getBoundingClientRect().height !== 160);
+    // The host's dark scheme reaches the view: light text on a transparent background.
+    assert.equal(await iframe.evaluate(node => node.style.colorScheme), 'dark');
+    const inner = tab.frames().find(frame => frame !== tab.mainFrame());
+    const colors = await inner.evaluate(() => ({ text: getComputedStyle(document.body).color, scheme: getComputedStyle(document.documentElement).colorScheme,
+      bg: getComputedStyle(document.body).backgroundColor }));
+    assert.equal(colors.scheme, 'dark');
+    const [r, g, b] = colors.text.match(/\d+/g).map(Number);
+    assert.ok(r > 180 && g > 180 && b > 180, `text should be light in dark mode, got ${colors.text}`);
+    assert.match(colors.bg, /rgba\(0, 0, 0, 0\)|transparent/);
     assert.deepEqual(errors, []);
   });

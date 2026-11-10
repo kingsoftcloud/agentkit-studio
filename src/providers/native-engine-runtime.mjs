@@ -70,7 +70,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
   if (!text(stateRoot)) throw failure('NATIVE_ENGINE_CONFIG_INVALID', 'Native 引擎缺少状态目录。');
   const views = createEngineViewStore(stateRoot);
   return {
-    async *stream({ input, signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, requestApproval, dynamicTools = [], toolHandler } = {}) {
+    async *stream({ input, messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, dynamicTools = [], toolHandler } = {}) {
       if (!text(input)) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字后发送');
       if (!text(cwd)) throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '会话未提供工作目录，请重新选择工作区');
       if (!text(model) || !text(modelProvider?.baseUrl)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
@@ -80,8 +80,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const { command, args } = resolveCommand(env);
       const allowed = Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'SHELL', 'SystemRoot', 'TEMP', 'TMP']
         .filter(name => env[name] !== undefined).map(name => [name, env[name]]));
-      // A host approval seat exists only for interactive runs; otherwise the engine denies writes and commands.
+      // An interactive approval seat decides each call. Without one, the Session's
+      // permission mode decides: workspace-write and full access allow, anything else denies.
       const interactive = typeof requestApproval === 'function';
+      const standing = ['workspace-write', 'danger-full-access'].includes(sandbox) ? 'allow' : 'deny';
       const onApproveTool = !interactive ? undefined : async request => {
         const outcome = await requestApproval({ toolName: `native/${request.tool ?? 'tool'}`, callId: '', reason: approvalReason(request), signal });
         return outcome === 'allowed-once' ? 'allow' : 'deny';
@@ -95,7 +97,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         } catch (error) { return { status: 'error', content: { message: String(error?.message || error).slice(0, 2000) } }; }
       };
       let diagnostics = '';
-      const engine = spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', 'deny'],
+      const engine = spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
         env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
           AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
           ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
@@ -117,7 +119,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           else { try { view = views.save(await engine.view()); } catch { view = null; } }
         }
         yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion }, view };
-        await engine.startRun({ runId, objective: input, hostInstructions: systemPrompt, ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
+        await engine.startRun({ runId, objective: input, conversation: engineConversation(messages, input), hostInstructions: systemPrompt, ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
         signal?.addEventListener('abort', abort, { once: true });
         let finalText = null;
         for (let cursor = 0; ;) {
@@ -174,6 +176,17 @@ export function engineHostTools(specs = [], { reserved = [], pattern = '^[A-Za-z
     tools.push({ name, description: String(spec.description || '').slice(0, 4000), parameters: schema });
   }
   return { tools, originalName: name => originals.get(name) ?? name };
+}
+/** Earlier user and assistant text turns; the engine decides how they reach the model. */
+export function engineConversation(messages = [], input = '') {
+  const textOf = message => typeof message?.content === 'string' ? message.content
+    : Array.isArray(message?.content) ? message.content.map(part => typeof part === 'string' ? part : part?.type === 'text' ? part.text ?? '' : '').join('') : '';
+  const turns = (Array.isArray(messages) ? messages : [])
+    .filter(message => message?.role === 'assistant' || message?.role === 'user' && (!message.source || message.source.kind === 'user'))
+    .map(message => ({ role: message.role, text: textOf(message).trim() })).filter(turn => turn.text);
+  const last = turns.at(-1);
+  if (last?.role === 'user' && last.text === String(input).trim()) turns.pop();
+  return turns;
 }
 function toolContent(output) {
   if (output == null) return null;

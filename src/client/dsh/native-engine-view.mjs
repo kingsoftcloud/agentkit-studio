@@ -65,7 +65,10 @@ export function createNativeEngineView({ React, fetchView = defaultFetchView }) 
         if (!frame.current || message.source !== frame.current.contentWindow) return;
         const value = message.data;
         if (!value || value.contract !== ENGINE_VIEW_CONTRACT) return;
-        if (value.type === 'ready') { sent.current = 0; setReady(true); }
+        if (value.type === 'ready') {
+          sent.current = 0; setReady(true);
+          frame.current.contentWindow.postMessage({ contract: ENGINE_VIEW_CONTRACT, type: 'theme', theme: hostTheme() }, '*');
+        }
         else if (value.type === 'height' && Number.isFinite(value.height)) setHeight(Math.max(48, Math.min(4000, Math.ceil(value.height))));
       };
       window.addEventListener('message', onMessage);
@@ -82,8 +85,18 @@ export function createNativeEngineView({ React, fetchView = defaultFetchView }) 
       failed ? '引擎任务视图加载失败，任务本身不受影响。' : '此引擎版本未提供任务视图。');
     if (!html) return null;
     return h('iframe', { ref: frame, title: '任务过程', sandbox: 'allow-scripts', srcDoc: html, referrerPolicy: 'no-referrer',
-      style: { width: '100%', height, border: 0, display: 'block', background: 'transparent' } });
+      style: { width: '100%', height, border: 0, display: 'block', background: 'transparent', colorScheme: hostTheme() } });
   };
+}
+
+/** The Studio shell's resolved color scheme; a matching iframe scheme keeps its background transparent. */
+function hostTheme() {
+  try {
+    const scheme = getComputedStyle(document.documentElement).colorScheme || '';
+    if (/\bdark\b/.test(scheme) && !/\blight\b/.test(scheme)) return 'dark';
+    if (/\blight\b/.test(scheme) && !/\bdark\b/.test(scheme)) return 'light';
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch { return 'light'; }
 }
 
 const viewCache = new Map();

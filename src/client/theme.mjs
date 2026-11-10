@@ -29,4 +29,6 @@ export const RUNTIME_LABELS = {
   'dsh-native': 'DSH Native Harness',
   harness: 'Star Harness',
   codex: 'Codex Agent',
+  // Experimental: not in ALLOWED_RUNTIME_TYPES, so the Agent form does not offer it.
+  'native-engine': 'Native 引擎（独立进程）',
 };
