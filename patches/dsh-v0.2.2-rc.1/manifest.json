@@ -2435,12 +2435,47 @@
         ]
       },
       "sequence": 49
+    },
+    {
+      "id": "081",
+      "file": "081-credentials-ignore-unaddressable-refs.patch",
+      "category": "general-fix",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "ba70c51d3a1bf9fb06dd9c4bc1b571995d8949f0cf2e68b10f690f0ca2246800",
+      "dependsOn": [],
+      "affectedFiles": [
+        "packages/credentials/credentials-local/src/index.ts",
+        "packages/credentials/credentials-local/tests/local.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-credentials-local"
+      ],
+      "contracts": [
+        "A `refs` key outside the POSIX reference grammar is skipped and reported by name: it resolves nothing and stays on disk, instead of rejecting the document and failing the required credentials plugin.",
+        "Every other `refs`/`records` defect keeps the loud rejection: a wrong-typed value, an unknown record field, or an unversioned root."
+      ],
+      "risk": "low",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Implemented and tested in the local DSH 0.2.2-rc.1 maintenance checkout; no upstream or production submission made."
+      },
+      "removeWhen": "Upstream DSH skips unaddressable `refs` keys with a diagnostic instead of rejecting the whole credentials document.",
+      "verification": {
+        "hostTests": [
+          "packages/credentials/credentials-local/tests/local.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 50
     }
   ],
-  "patchedTree": "acb9025f30640ab4ec7398d885a20d6d632c2d37",
-  "patchedSourceSha256": "88af4d935519156635dc02678db26de4a6c2357174a19eaa59704a5f772b12a0",
+  "patchedTree": "1cee9bcb60cab49a7b6a1a16d40221074b089662",
+  "patchedSourceSha256": "03e495b38e7a5e77abd5749f86a4d8a2b63a27940568567e7d30b97e2ef54b1c",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "b86d93c17d83cffa23f6324934c5519c4725b6df93ebdd5046c9af66cd652a51"
+    "sha256": "76197f0071225def4f9becc8a68944fa4e3e7f4213403795952649bc54e31af5"
   }
 }
