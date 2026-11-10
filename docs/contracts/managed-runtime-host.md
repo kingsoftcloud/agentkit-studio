@@ -38,11 +38,21 @@ may exceed that interval; caller cancellation and the outer turn limit still
 apply. Native account model selection retains its existing path.
 
 The dedicated state root is bound to one Agent. Each platform VersionId selects
-`versions/<SHA256 of VersionId>` and pins its runtime name/version and manifest
-digest. A changed manifest under the same VersionId fails. Reusing the same
-version restores DSH state; another version uses another directory, while
-rollback can return to the original directory. This does not implement routing
-old sessions to concurrently running versions.
+`versions/<SHA256 of VersionId>` for Studio's immutable receipt and model
+config, and pins its runtime name/version and manifest digest. A changed
+manifest under the same VersionId fails. DSH's own state lives once per Agent at
+`<state>/dsh`: session logs, storages, credentials and Settings survive every
+accepted update, while the DSH profile and its code are rebuilt only when the
+running image changes (the profile ownership marker binds the Agent; user
+Settings are carried across rebuilds). The first boot after an older
+version-scoped layout adopts the `versions/<hash>/dsh` with the most recent
+session/storage writes — hard links, the legacy directory stays intact — records
+the source in `<state>/.dsh-adopted.json`, and seeds the adopted Settings into
+the new profile. This does not implement routing old sessions to concurrently
+running versions, and Studio's managed session registry under
+`versions/<hash>/agentkit/managed-sessions` stays version-scoped: the hosted-UI
+mapping for pre-update conversations is a separate platform contract, not part
+of this state-continuity change.
 
 Configuration files contain credential references, not credential values. The
 child inherits an explicit environment allowlist and isolated HOME, DSH_HOME,

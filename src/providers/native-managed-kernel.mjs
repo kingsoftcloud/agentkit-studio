@@ -556,7 +556,15 @@ export function createManagedNativeKernel({ directory, target, permitVerifier, r
                     const answer = Promise.resolve().then(() => { scoped.throwIfAborted();
                       return onIdle(copy(snapshot), { signal: scoped, assertCurrent() {
                         guard(); scoped.throwIfAborted(); invariant(!changed(), 'NATIVE_KERNEL_IDLE_AUTHORITY_LOST'); return true;
-                      } }); }).then(command => ({ command }));
+                      } }); }).then(command => ({ command }), error => {
+                      // A durable answer or command retires this idle attempt.
+                      // It can settle between the presenter's own authority
+                      // check and this loop's re-check, so losing idle authority
+                      // must re-derive from durable state instead of failing
+                      // the Run with a transient NATIVE_KERNEL_IDLE_AUTHORITY_LOST.
+                      if (error?.code === 'NATIVE_KERNEL_IDLE_AUTHORITY_LOST') return { woken: true };
+                      throw error;
+                    });
                     const result = await Promise.race([answer, waiting.then(() => ({ woken: true }))]);
                     guard();
                     if (result.woken || changed()) continue;
