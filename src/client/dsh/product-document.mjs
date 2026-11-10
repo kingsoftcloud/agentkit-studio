@@ -1,6 +1,7 @@
 import responsiveStyles from '../styles/responsive.css.mjs';
 import formsStyles from '../styles/forms.css.mjs';
 import agentFormStyles from '../styles/agent-form.css.mjs';
+import deliveryStyles from '../styles/delivery.css.mjs';
 import dragRegionStyles from '../styles/drag-region.css.mjs';
 import { leaseDocumentResource } from './document-resource.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_SVG as STUDIO_MARK_SVG } from '../../brand.js';
@@ -126,7 +127,7 @@ export function createProductDocumentEffects({ window = globalThis.window, docum
       if (ownerDocument.querySelector('style[data-agentkit-studio-forms]')) return () => {};
       const style = ownerDocument.createElement('style');
       style.setAttribute('data-agentkit-studio-forms', 'true');
-      style.textContent = formsStyles + agentFormStyles;
+      style.textContent = formsStyles + agentFormStyles + deliveryStyles;
       ownerDocument.head.append(style);
       return () => style.remove();
     });
