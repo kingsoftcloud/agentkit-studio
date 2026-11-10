@@ -34,7 +34,7 @@
     "platforms": {
       "mac-arm64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"},
       "mac-x64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"},
-      "win-x64": {"icon": "assets/agentkit-studio-macos.png", "trayIcon": "assets/agentkit-studio-tray.ico"}
+      "win-x64": {"icon": "assets/agentkit-studio-windows.png", "trayIcon": "assets/agentkit-studio-tray.ico"}
     }
   }
 }
