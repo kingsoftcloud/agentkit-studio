@@ -1,3 +1,4 @@
+import { normalizeMcpCredentialBindings } from '../../credential-ref.mjs';
 import { buildSkillFileTree, formatResourceSize } from '../state/skill-files.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
@@ -61,15 +62,31 @@ export function createResourceDialogs({
       if (!name || !form.displayName.trim()) { setError('请填写 MCP 名称和显示名称。'); return; }
       if ((form.transport === 'http' || form.transport === 'sse') && !form.endpointUrl.trim()) { setError('HTTP/SSE MCP 需要填写服务地址。'); return; }
       if (form.transport === 'stdio' && !form.command.trim()) { setError('stdio MCP 需要填写启动命令。'); return; }
-      const envRefs = {};
-      form.envRefs.split(',').map(item => item.trim()).filter(Boolean).forEach(item => { const [key, ref] = item.split('=').map(part => part.trim()); if (key && ref) envRefs[key] = ref; });
-      const credentialName = form.apiKeyName.trim();
+      // DSH credential references are POSIX identifiers, while MCP secrets are
+      // named after headers (`X-KIP-Token`) and referenced as `env://<name>`.
+      // The reference is derived once here and written on both sides of the
+      // binding in the same save, so the MCP config never points at a name the
+      // credential store cannot hold. Derivation is deterministic, so an
+      // existing binding keeps matching the same secret.
+      const typedEnvRefs = {};
+      form.envRefs.split(',').map(item => item.trim()).filter(Boolean).forEach(item => {
+        const [key, ref] = item.split('=').map(part => part.trim());
+        if (key && ref) typedEnvRefs[key] = ref;
+      });
+      const bindings = normalizeMcpCredentialBindings({
+        envRefs: typedEnvRefs, credentialName: form.apiKeyName, credentialValues,
+        requiredCredentials: resource?.requiredCredentials || [],
+      });
+      const envRefs = bindings.envRefs;
+      const credentialName = bindings.credentialName;
       let args;
       try { args = form.args.trim().startsWith('[') ? JSON.parse(form.args) : form.args.split(/\s+/).filter(Boolean); if (!Array.isArray(args) || args.some(value => typeof value !== 'string')) throw new Error(); }
       catch { setError('命令参数请填写字符串 JSON 数组，例如 ["-y", "@acme/server"]'); return; }
       setSaving(true);
       try {
-        for (const [name, value] of Object.entries(credentialValues)) if (value.trim()) await hostRemote.putCredential(name, value.trim());
+        // Secrets are stored under the same derived references the binding above
+        // declares, so the server resolves exactly what was just saved.
+        for (const [reference, value] of bindings.writes) await hostRemote.putCredential(reference, value);
         if (credentialName && form.apiKeyValue.trim()) await hostRemote.putCredential(credentialName, form.apiKeyValue.trim());
         if (credentialName) envRefs[form.transport === 'stdio' ? credentialName : 'Authorization'] = `env://${credentialName}`;
         const payload = {

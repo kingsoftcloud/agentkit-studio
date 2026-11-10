@@ -1,7 +1,14 @@
 export default String.raw`
-[data-studio-agent-form] { color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 22px; container-type: inline-size; min-width: 0; }
+[data-studio-agent-form] { color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 22px; container-type: inline-size; container-name: studio-agent-form; min-width: 0; }
 [data-studio-agent-form] [data-studio-heading] { margin-bottom: 24px; align-items: center; }
 .af-layout { display: grid; grid-template-columns: 168px minmax(0,1fr); gap: 32px; align-items: start; }
+/* A settings-style surface keeps a readable column even on a full-screen
+   window: the rail (168px) + gap (32px) + body (820px) add up to 1020px, so
+   centre that block instead of pinning it to the left edge and leaving a dead
+   column on the right. The page header is centred with it, so its action lines
+   up with the form's right edge instead of the window's. */
+[data-studio-agent-form] > [data-studio-heading],
+[data-studio-agent-form] > .af-layout { max-width: 1020px; margin-inline: auto; }
 .af-steps { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
 .af-step { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-md,12px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 14px; line-height: 22px; text-align: left; cursor: pointer; }
 .af-step:disabled { cursor: default; color: var(--dsw-alias-label-tertiary); }
@@ -82,7 +89,12 @@ export default String.raw`
 .af-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: not-allowed; }
 .af-btn[data-variant="primary"] { border-color: transparent; background: var(--dsw-alias-button-primary-fill,#0b0b0d); color: var(--dsw-alias-label-primary-foreground,#fff); }
 .af-btn[data-variant="primary"]:not(:disabled):hover { background: var(--dsw-alias-button-primary-hover, var(--dsw-alias-button-primary-fill)); }
-.af-btn[data-variant="primary"]:disabled { background: var(--dsw-alias-button-primary-dimmed, var(--dsw-alias-bg-layer-3)); color: var(--dsw-alias-label-primary-foreground,#fff); opacity: .55; }
+/* A disabled primary keeps the dimmed fill but must stay readable: the dimmed
+   token is a pale surface in light mode, so white-on-white made the label
+   disappear (the form footer and the deploy check button both hit this). Use
+   the secondary label color instead of the foreground one, and never fade the
+   whole control on top of it. */
+.af-btn[data-variant="primary"]:disabled { border-color: transparent; background: var(--dsw-alias-button-primary-dimmed, var(--dsw-alias-bg-layer-3)); color: var(--dsw-alias-label-secondary,#61666b); opacity: 1; }
 .af-btn[data-size="sm"] { height: 30px; padding: 0 10px; font-size: 13px; font-weight: 400; border-radius: var(--dsw-radius-sm,8px); }
 .af-fieldset { margin: 0 0 12px; padding: 4px 16px 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); }
 .af-fieldset > legend { padding: 0 6px; font-size: 13px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
@@ -107,14 +119,27 @@ export default String.raw`
 .ak-agent-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); cursor: pointer; }
 .ak-agent-card:hover { border-color: var(--dsw-alias-border-l4); }
 .ak-agent-card:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
-@container (max-width: 640px) {
+/* The rail needs 168px next to an 820px body (~1020px together), so the
+   two-column layout only makes sense while the form itself is wide enough.
+   640px was too late: every window between roughly 900px and 1200px kept the
+   rail and squeezed the body instead of reflowing. Collapse the rail first and
+   keep a second tier for phones. */
+@container studio-agent-form (max-width: 1000px) {
   .af-layout { grid-template-columns: minmax(0,1fr); gap: 16px; }
-  .af-steps { position: static; flex-direction: row; flex-wrap: wrap; }
-  .af-step { width: auto; }
+  .af-steps { position: static; flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .af-step { width: auto; height: 32px; padding: 0 10px; }
   .af-grid-2, .af-grid-3 { grid-template-columns: minmax(0,1fr); }
-  .af-row { flex-wrap: wrap; gap: 8px; }
+  .af-row { flex-wrap: wrap; gap: 6px; padding: 10px 0; }
   .af-row-control { width: 100%; max-width: 100%; justify-content: flex-start; }
-  .af-row-control .af-select, .af-row-control .af-input { width: 100%; }
+  .af-row-control .af-select, .af-row-control .af-input { width: 100%; min-width: 0; }
   .af-section-head { flex-wrap: wrap; }
+  .af-footer { flex-wrap: wrap; }
+}
+@container studio-agent-form (max-width: 640px) {
+  .af-body { max-width: none; }
+  .af-section { padding: 16px 0; }
+  .af-field { margin-bottom: 12px; }
+  .af-step { height: 30px; padding: 0 8px; font-size: 13px; }
+  .af-btn { padding: 0 12px; }
 }
 `;

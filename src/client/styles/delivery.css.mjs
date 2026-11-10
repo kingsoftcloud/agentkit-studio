@@ -2,7 +2,7 @@ export default String.raw`
 /* Build & deployment surfaces: layout classes that delivery.mjs needs on top of
    the shared af-* form primitives. Every color is a DSH alias token so the page
    follows the host theme instead of Studio's own brand values. */
-[data-studio-delivery] { container-type: inline-size; max-width: 980px; margin: 0 auto; color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 22px; min-width: 0; }
+[data-studio-delivery] { container-type: inline-size; container-name: studio-delivery; max-width: 980px; margin: 0 auto; color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 22px; min-width: 0; }
 [data-studio-delivery] [data-studio-heading] { margin-bottom: 20px; align-items: center; }
 [data-studio-delivery] :is(.af-input,.af-select,.af-btn,.af-switch):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
 
@@ -46,10 +46,21 @@ export default String.raw`
 .ad-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-top: .5px solid var(--dsw-alias-border-l2); font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .ad-pager-actions { display: flex; align-items: center; gap: 8px; }
 
-@container (max-width: 640px) {
+@container studio-delivery (max-width: 820px) {
+  [data-studio-delivery] .af-row { flex-wrap: wrap; gap: 6px; }
+  [data-studio-delivery] .af-row-control { width: 100%; max-width: 100%; justify-content: flex-start; }
+  [data-studio-delivery] .af-row-control .af-select,
+  [data-studio-delivery] .af-row-control .af-input { width: 100%; min-width: 0; }
+  [data-studio-delivery] .af-value { text-align: left; }
+  [data-studio-delivery] .af-section-head { flex-wrap: wrap; }
+  [data-studio-delivery] .ad-actions { justify-content: flex-start; }
+  [data-studio-delivery] .ad-head-actions { width: 100%; justify-content: space-between; }
+}
+@container studio-delivery (max-width: 640px) {
   .ad-detail { grid-template-columns: minmax(0,1fr); }
-  .ad-value { text-align: left; }
   .ad-table { font-size: 12px; }
   .ad-table th, .ad-table td { padding: 8px; }
+  .ad-record-actions .af-select { width: 100%; min-width: 0; }
+  .ad-pager { flex-direction: column; align-items: flex-start; }
 }
 `;
