@@ -1,4 +1,4 @@
-import { invariant } from '@kingsoftcloud/agentkit-harness-core';
+import { invariant, resolveEnginePreset } from '@kingsoftcloud/agentkit-harness-core';
 
 export const STUDIO_NATIVE_TASK_POLICY_CONTRACT = 'agentkit.studio-native-task-policy/v1';
 const WEB_SUFFIXES = ['.html', '.htm', '.js', '.jsx', '.css', '.ts', '.tsx'];
@@ -56,7 +56,8 @@ export function bindNativeTaskPolicy({ tools, nativeLimits, vision = false, exec
       browserObservationIntervalToolCalls: browser ? 12 : 0,
       verificationIdleToolCalls: browser ? 4 : 0,
       finalizationReserveModelCalls: maxModelCalls === null ? vision ? 2 : 1 : Math.min(vision ? 2 : 1, maxModelCalls),
-      maxOutputRestarts: maxModelCalls === null || maxModelCalls >= 20 ? 1 : 0,
+      // Engine-owned: the preset decides whether a Run may restart its output budget.
+      ...resolveEnginePreset({ maxModelCalls }).limits,
     },
   };
 }

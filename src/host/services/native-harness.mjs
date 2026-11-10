@@ -8,7 +8,7 @@ import { createNativeTraceProjection } from '../../providers/native-trace-projec
 import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
-import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions, deliveryToolDefinitions, RESULT_DELIVERY_POLICY } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, copy, invariant, resolveEnginePreset, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions, deliveryToolDefinitions, RESULT_DELIVERY_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { selectedNativeBuildContract } from '../../build-engine.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
@@ -266,11 +266,13 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       const promptAssembly = assembly => nativeInstructionAssembly(nativePlanAssembly(assembly, planModePolicy), {
         policy: instructionAssemblyPolicy, toolNames: baseTools.map(tool => tool.name) });
       const systemPrompt = original ? original.capsule.systemPrompt : renderPrompt(promptAssembly(input.assembly));
-      // New Native runs use the original Studio recovery policies. A cold
-      // restore retains the exact older optional configuration and digest.
-      const recoveryPolicies = original ? Object.fromEntries(['workspaceCapturePolicy', 'deliveryScopePolicy', 'outputRecoveryPolicy', 'toolExecutionPolicy', 'childCapabilityPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'inputPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy', 'childPlanPolicy', 'providerRecoveryPolicy']
+      // New Native Runs take recovery policy versions from the engine preset:
+      // Studio names the preset and never spells an engine policy version. A
+      // cold restore retains the exact older optional configuration and digest.
+      const enginePreset = resolveEnginePreset({ maxModelCalls: record.spec.execution?.nativeLimits?.maxModelCalls ?? null });
+      const recoveryPolicies = original ? Object.fromEntries(['workspaceCapturePolicy', 'deliveryScopePolicy', 'outputRecoveryPolicy', 'outputRestartPolicy', 'toolExecutionPolicy', 'childCapabilityPolicy', 'toolErrorRecoveryPolicy', 'toolErrorRecoveryModelCalls', 'deliveryReviewPolicy', 'wallDeliveryPolicy', 'artifactPolicy', 'inputPolicy', 'sourceReadPolicy', 'toolDiscoveryPolicy', 'todoPolicy', 'planModePolicy', 'planModeInitialActive', 'childTaskPolicy', 'childPlanPolicy', 'providerRecoveryPolicy']
         .filter(key => Object.hasOwn(original.configuration, key)).map(key => [key, original.configuration[key]]))
-        : { providerRecoveryPolicy: 'provider-recovery/v2', workspaceCapturePolicy: 'declared-subjects/v1', deliveryScopePolicy: RESULT_DELIVERY_POLICY, outputRecoveryPolicy: 'response-boundary/v2', toolExecutionPolicy: 'owner-execution/v1', toolErrorRecoveryPolicy: 'diagnose-before-repeat/v1', artifactPolicy: 'runtime-artifacts/v1', sourceReadPolicy: 'studio-source-read/v1',
+        : { ...enginePreset.policies, sourceReadPolicy: 'studio-source-read/v1',
           ...(workspaceContext && (!capabilityCapsule || [NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP].includes(capabilityCapsule.inputContextPolicy))
             ? { inputPolicy: 'before-first-model/v1' } : {}),
           ...(nativeChildRoles(record.spec).length ? { childTaskPolicy: 'session-controls/v1', childCapabilityPolicy: 'required-tools/v1' } : {}),
@@ -318,9 +320,9 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         ...(original ? { approvalDefinitions: original.configuration.tools }
           : binding.nativeTools.durableApprovalContract ? { approvalPolicy: binding.nativeTools.durableApprovalContract } : {}),
         ...(original ? { workspaceCheckpointDefinitions: original.configuration.tools,
-          executionTimeoutDefinitions: original.configuration.tools } : { executionTimeoutPolicy: 'dispatch/v2' }),
+          executionTimeoutDefinitions: original.configuration.tools } : { executionTimeoutPolicy: enginePreset.toolOptions.executionTimeoutPolicy }),
         ...((original ? original.configuration.tools.some(tool => tool.workspaceEditPolicy) : true)
-          ? { workspaceEditPolicy: original ? original.configuration.tools.find(tool => tool.workspaceEditPolicy).workspaceEditPolicy : 'zcode-match/v2' } : {}),
+          ? { workspaceEditPolicy: original ? original.configuration.tools.find(tool => tool.workspaceEditPolicy).workspaceEditPolicy : enginePreset.toolOptions.workspaceEditPolicy } : {}),
         // Old Runs retain the exact absence/selection of Plan exceptions.
         planModeMcpAccess: original ? original.configuration.tools.filter(tool => tool.planModeAccess).map(tool => tool.name) : !!planModePolicy,
         ...((original ? original.configuration.tools.some(tool => tool.planModeCommandPolicy) : !!planModePolicy)

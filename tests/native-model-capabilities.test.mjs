@@ -39,9 +39,17 @@ test('request budget is separate from catalog capacity and historical v1 binding
   const descriptions = createNativeModelDescriptions({ signal: new AbortController().signal,
     models: { capabilities: async () => admitModelCapabilities(profile, { contextWindow: 1048576, maxOutputTokens: 134144 }) } });
   const fresh = await descriptions.describe(profile);
-  assert.equal(fresh.maxOutputTokens, 134144); assert.equal(fresh.requestOutputTokens, 8192);
-  const manifest = descriptions.manifest(); assert.equal(manifest.contract, 'agentkit.model-bindings/v2');
+  // New Runs take the request budget from the engine preset, not a Studio literal.
+  assert.equal(fresh.maxOutputTokens, 134144); assert.equal(fresh.requestOutputTokens, 32000);
+  const manifest = descriptions.manifest(); assert.equal(manifest.contract, 'agentkit.model-bindings/v3');
   assert.deepEqual(frozenNativeModelDescription(profile, manifest), fresh);
+  // A Run admitted under v2 keeps the 8192 budget it was frozen with.
+  assert.equal(frozenNativeModelDescription(profile, { ...manifest, contract: 'agentkit.model-bindings/v2' }).requestOutputTokens, 8192);
+  // An explicit profile choice still wins, bounded by the model.
+  const chosen = { ...profile, maxOutputTokens: 4096 };
+  const explicit = createNativeModelDescriptions({ signal: new AbortController().signal,
+    models: { capabilities: async () => admitModelCapabilities(chosen, { contextWindow: 1048576, maxOutputTokens: 134144 }) } });
+  assert.equal((await explicit.describe(chosen)).requestOutputTokens, 4096);
   const old = { ...manifest, contract: 'agentkit.model-bindings/v1' };
   const legacy = frozenNativeModelDescription(profile, old);
   assert.equal(legacy.maxOutputTokens, 134144); assert.equal(legacy.requestOutputTokens, undefined);

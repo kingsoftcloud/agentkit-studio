@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { SqliteNativeMemoryProvider } from '@kingsoftcloud/agentkit-harness-node/native/memory-store';
 import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } from '@kingsoftcloud/agentkit-harness-node/native/memory-candidate';
-import { canonical, MemoryRunStore, NativeKernel, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '@kingsoftcloud/agentkit-harness-core';
+import { resolveEnginePreset, presetRequestOutputTokens, canonical, MemoryRunStore, NativeKernel, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '@kingsoftcloud/agentkit-harness-core';
 import { digest, tool } from './fixtures/native-core.mjs';
 import { nativeDshBackgroundOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-background-ownership';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
@@ -519,7 +519,7 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (
   const args = { store, admission: null, runId, target, principal };
   const bound = await f.host.resolveManagedBinding(f.payload, args);
   const scope = bound.scope;
-  assert.equal(bound.configuration.outputRecoveryPolicy, 'response-boundary/v2');
+  assert.equal(bound.configuration.outputRecoveryPolicy, resolveEnginePreset().policies.outputRecoveryPolicy);
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v2', rule: 'auto' });
   assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v4', rule: 'auto' });
   assert.equal(bound.configuration.profile.maxProviderRetries, 10);
@@ -529,8 +529,8 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (
   assert.equal(bound.configuration.profile.providerThinkingDisplay, display ?? true);
   assert.equal(bound.configuration.profile.providerThinkingDisplayPolicy, 'provider-visible/v1');
   assert.equal(bound.configuration.profile.controllerReasoningPolicy, 'disclosed-delegate/v1');
-  assert.equal(bound.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
-  assert.equal(Object.hasOwn(bound.configuration, 'toolErrorRecoveryModelCalls'), false);
+  assert.equal(bound.configuration.toolErrorRecoveryPolicy, resolveEnginePreset().policies.toolErrorRecoveryPolicy);
+  assert.equal(bound.configuration.toolErrorRecoveryModelCalls, resolveEnginePreset().policies.toolErrorRecoveryModelCalls);
   if (deliveryReviewPolicy) assert.deepEqual(bound.configuration.deliveryReviewPolicy,
     { pathSuffixes: ['.ts'], maxRounds: 2, maxReadRounds: 2, reviewUnknownPaths: true });
   assert.equal(scope.tenantId, target.tenantId); assert.equal(scope.userId, principal.userId);
@@ -576,18 +576,19 @@ test('Studio Anthropic policy admission freezes journal and replay configuration
   await restored.releaseResources?.({ scope: bound.scope, runId, sessionId: f.payload.agent.session.id });
 });
 
-for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} retains a text response when continuation is exhausted`, async t => {
+for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen Build' : 'Revision'} restarts an exhausted text response and delivers the complete answer`, async t => {
   const f = await setup(t, { sqlite: true, respond: count => ({ choices: [{ index: 0,
     delta: { content: count <= 4 ? '{"unfinished":' : 'Complete delivered answer.' }, finish_reason: count <= 4 ? 'length' : 'stop' }] }) });
   if (frozen) f.payload.binding.buildId = 'output-recovery-build';
   await f.host.executeTurn(f.payload);
   const record = f.ledger.load(f.head().scope, f.head().runId);
-  assert.equal(record.configuration.outputRecoveryPolicy, 'response-boundary/v2');
-  assert.equal(record.snapshot.phase, 'failed'); assert.equal(record.snapshot.finalText, '');
-  assert.equal(record.snapshot.outcome, 'unverified'); assert.equal(record.snapshot.reason, 'continuation_budget_exhausted');
-  assert.equal(record.snapshot.outputRestarts, 0); assert.equal(f.requests.length, 4);
-  assert.equal(record.events.filter(event => event.kind === 'output.restarted').length, 0);
-  assert.ok(record.snapshot.messages.some(message => message.kind === 'continuation_fragment' && message.content === '{"unfinished":'));
+  assert.equal(record.configuration.outputRecoveryPolicy, resolveEnginePreset().policies.outputRecoveryPolicy);
+  // The engine preset restarts the exhausted response once instead of failing the Run.
+  assert.equal(record.snapshot.phase, 'completed'); assert.equal(record.snapshot.finalText, 'Complete delivered answer.');
+  assert.notEqual(record.snapshot.reason, 'continuation_budget_exhausted');
+  assert.equal(record.snapshot.outputRestarts, 1); assert.equal(f.requests.length, 5);
+  assert.equal(record.events.filter(event => event.kind === 'output.restarted').length, 1);
+  assert.ok(!record.snapshot.finalText.includes('{"unfinished":'));
   if (frozen) assert.ok(f.resolutions.some(value => value.buildId === 'output-recovery-build'));
 });
 
@@ -597,9 +598,11 @@ for (const requested of [undefined, 12288]) test(`Studio capability admission se
   await f.host.executeTurn(f.payload);
   const head=f.head(), original=f.ledger.load(head.scope,head.runId);
   assert.equal(original.configuration.profile.contextWindow,1048576);
-  assert.equal(original.configuration.profile.maxOutputTokens,requested ?? 8192);
-  assert.equal(JSON.parse(f.requests[0].options.body).max_tokens,requested ?? 8192);
-  assert.equal(original.configuration.hostRecoveryBinding.modelBindings.contract,'agentkit.model-bindings/v2');
+  // The engine preset owns the default request budget; an explicit profile value still wins.
+  const budget = presetRequestOutputTokens({ configured: requested ?? null, modelMaxOutputTokens: 16384, contextWindow: original.configuration.profile.contextWindow });
+  assert.equal(original.configuration.profile.maxOutputTokens,budget); assert.equal(budget,requested ?? 16384);
+  assert.equal(JSON.parse(f.requests[0].options.body).max_tokens,budget);
+  assert.equal(original.configuration.hostRecoveryBinding.modelBindings.contract,'agentkit.model-bindings/v3');
   assert.equal(original.configuration.hostRecoveryBinding.modelBindings.items[0].capabilities.maxOutputTokens,16384);
   assert.equal(original.configuration.hostRecoveryBinding.modelBindings.items[0].capabilities.contextSource,'catalog');
   f.models.capabilities=async()=>assert.fail('Redelivery must retain capability facts');
@@ -625,7 +628,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
   if (frozen) f.payload.binding.buildId = 'diagnostic-recovery-build';
   await f.host.executeTurn(f.payload);
   const record = f.ledger.load(f.head().scope, f.head().runId);
-  assert.equal(record.configuration.toolErrorRecoveryPolicy, 'diagnose-before-repeat/v1');
+  assert.equal(record.configuration.toolErrorRecoveryPolicy, resolveEnginePreset().policies.toolErrorRecoveryPolicy);
   assert.equal(record.configuration.toolErrorRecoveryModelCalls, 3); assert.equal(record.snapshot.toolErrorRecovery, null);
   assert.equal(record.snapshot.finalText, 'Corrected result delivered.'); assert.equal(await readFile(file, 'utf8'), 'correct');
   assert.deepEqual(executed, [...Array(6).fill('write'), 'read', 'write']); assert.equal(f.requests.length, 10);
