@@ -22,7 +22,7 @@ export function createAgentForm({
   const kit = createFormKit({ React });
   const { Section, Row, Field, Input, TextArea, Select, Switch, Choice, CheckCard, Button, Note, Collapsible, Summary, HelpTip } = kit;
   const nativeRoleFields = createNativeRoleFields({ React, kit });
-  function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload }) {
+  function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload, allowHarnessRuntime = false }) {
     const editing = Boolean(initialAgent);
     const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
     const originalSpec = initialAgent?.spec || creationSeed?.spec || {};
@@ -54,8 +54,11 @@ export function createAgentForm({
       id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || creationSeed?.name || '我的第一个 Agent', runtime: initialRuntime,
       description: originalSpec.description || creationSeed?.description || '', prompt: originalSpec.instructions?.system || '', template: 'blank',
     });
+    // Star Harness is paused for new Agents: keep it visible only when editing an
+    // existing harness Agent or when a caller explicitly re-enables creation.
+    const creatableRuntime = type => type !== 'harness' || editing || allowHarnessRuntime;
     const runtimeOptions = [
-      ...ALLOWED_RUNTIME_TYPES.filter(type => !creationSeed?.runtimes || creationSeed.runtimes.includes(type)).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
+      ...ALLOWED_RUNTIME_TYPES.filter(type => creatableRuntime(type) && (!creationSeed?.runtimes || creationSeed.runtimes.includes(type))).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
       // A cloud Agent's server-owned framework is not a local authoring
       // runtime option, but it must remain visible while editing. Without
       // this option a disabled native <select> silently displays its first

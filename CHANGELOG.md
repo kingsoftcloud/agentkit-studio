@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- MCP 资源页的「认证 Header / 环境变量凭证」改为常驻区块：不必先粘贴 JSON，填 Header 名称与凭证名称即可添加凭证行；JSON 输入框随内容自动增高，多服务配置不再挤在 5 行里。
+- 新建 Agent 默认运行时改为 DSH Native，并在创建流程中暂时隐藏 Star Harness（编辑既有 Star Harness Agent 不受影响），待该运行时稳定后再开放创建。
+
 ## 0.0.14 - 2026-11-10
 
 - 将 Host 云端配置与 AgentEngine client 以通用 `agentkitHostCloud` 能力提供给独立 DSH 插件；Studio 不再包含个人助理运行时、Host 路由或产品私有服务。
