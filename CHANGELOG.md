@@ -34,6 +34,7 @@
 
 ## Unreleased
 
+- 修复托管 DSH 实例“更新后会话消失”：每次被接受的 UpdateAgent 都会生成新的平台 VersionId，而 Host 曾把 `DSH_HOME` 放在 `versions/<sha256(VersionId)>/dsh`，新版本因此从空会话目录启动，旧日志仍留在旧版本目录。托管运行时的 `DSH_HOME` 改为每个 Agent 一份 `<state>/dsh`（DSH 原生会话、storages、凭证与 Settings 跨版本延续），Studio 的不可变 receipt 与模型配置仍按版本隔离；升级到该布局后的首次启动会用硬链接接管**最近写入**的一份旧版本目录（旧目录原样保留，供旧镜像回滚），记录 `.dsh-adopted.json`，并把旧 profile 的用户 Settings 种子到新 profile。范围仅限 DSH 原生会话历史；平台侧 managed session 注册表仍按版本隔离，跨版本复用需另行评审。
 - macOS 桌面端的总览、资源库、运行中心三页补一条统一的顶部拖拽条：只在 Electron + `data-platform='darwin'` 的文档上，把透明 `-webkit-app-region: drag` 条（左 80px 避开红绿灯、右 0、高 40px）插到 React 根之前，DSH 侧栏开关等后续 `no-drag` 控件自动从拖拽面中扣除；仅 Studio chrome 页挂载，DSH 原生会话页和「智能体」页不受影响，全屏时随原生标题带一起隐藏。
 - 托管运行时的模型上下文窗口改为从模型网关 `/v1/models` 的 `context_length` 读取，不再固定为 128000：模型实际声明 1024k 时，长会话不会再在远低于真实上限处触发上下文压缩，减少压缩时的工具结果裁剪及其引发的会话投影读取失败（输出预算仍保留 8192，目录不可达时回退原默认值）。
 - Register the plugin market's `plugins/dsh-discover` bridge endpoint (and the previously missing `plugins/dsh-index-refresh`) in the Studio operation allowlist so the Host accepts them instead of rejecting them as unknown control endpoints.
