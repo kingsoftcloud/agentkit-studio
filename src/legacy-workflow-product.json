@@ -6,6 +6,6 @@
   "updateEnvironment": "production",
   "pluginRoots": ["@kingsoftcloud/agentkit-studio"],
   "defaultBundles": ["@kingsoftcloud/agentkit-studio"],
-  "windowsIcon": "assets/agentkit-studio-macos.png",
+  "windowsIcon": "assets/agentkit-studio-windows.png",
   "windowsTrayIcon": "assets/agentkit-studio-tray.ico"
 }
