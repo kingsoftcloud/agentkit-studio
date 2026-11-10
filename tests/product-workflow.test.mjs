@@ -77,6 +77,29 @@ test('workflow output CLI emits only normalized public values and its consumers 
   assert.equal(workflow.on.workflow_dispatch.inputs.publish_feed.default, false);
 });
 
+test('release workflow separates the candidate builds from hosted publication', () => {
+  const workflow = parse(readFileSync('.github/workflows/release-desktop.yml', 'utf8'));
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  // The hosted runner cannot reach KS3, so runner publication is an explicit
+  // emergency escape and the candidate build no longer implies it.
+  assert.equal(inputs.publish_feed.default, false);
+  assert.equal(inputs.publish_from_runner.default, false);
+  assert.equal(inputs.queue_windows.default, false);
+  assert.equal(inputs.create_github_release.default, false);
+  // The Windows candidate is dispatched from source admission, not from the
+  // signed macOS result, so one fully serialized build leaves the batch.
+  assert.deepEqual(workflow.jobs['queue-windows'].needs, ['source-gate']);
+  assert.match(workflow.jobs['queue-windows'].if, /inputs\.publish_feed \|\| inputs\.queue_windows/);
+  // A reused candidate accepted its exact source in the build run.
+  assert.match(workflow.jobs['web-and-host'].if, /inputs\.candidate_run_id == ''/);
+  // Duplicate dispatches for one source serialize instead of racing.
+  assert.equal(workflow.concurrency.group, 'agentkit-studio-${{ inputs.studio_ref }}');
+  assert.match(workflow.jobs['publish-mac-arm64'].if, /inputs\.publish_feed \|\| inputs\.publish_from_runner/);
+  assert.match(workflow.jobs['github-release'].if, /inputs\.create_github_release/);
+  // Publication follow-ups may reuse the signed candidate instead of rebuilding.
+  assert.match(workflow.jobs['qualify-installed-update'].if, /needs\.macos-arm64\.result == 'skipped' && inputs\.candidate_run_id != ''/);
+});
+
 test('candidate archive extraction expands the configured product name in Bash', { skip: process.platform === 'win32' && 'The owning macOS publication step runs Bash.' }, t => {
   const directory = mkdtempSync(join(tmpdir(), 'studio-workflow-archive-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
