@@ -58,6 +58,25 @@ export function createCredentialOnboarding({
         window.removeEventListener('agentkit-studio:credential-recheck', refresh);
       };
     }, []);
+    // The welcome dialog is a full-screen modal that starts below the traffic
+    // lights, so the blank macOS title band above it has no drag surface: DSH's
+    // chrome drag rows and product-document's Studio strip both only exist for
+    // mounted chrome pages, and the shell is not mounted yet on a first run.
+    // Mount the same transparent strip while the dialog is open, and take it
+    // away with the dialog.
+    useEffect(() => {
+      if (!open) return () => {};
+      const doc = document;
+      if (!doc?.body || doc.documentElement?.dataset?.platform !== 'darwin') return () => {};
+      const strip = doc.createElement('div');
+      strip.setAttribute('data-studio-onboarding-drag', 'true');
+      strip.setAttribute('aria-hidden', 'true');
+      strip.style.cssText = 'position:fixed;top:0;left:80px;right:0;height:var(--dsh-frame-chrome-top,40px);'
+        + 'margin:0;padding:0;border:0;background:transparent;pointer-events:none;z-index:2147483000;'
+        + '-webkit-app-region:drag;app-region:drag';
+      doc.body.appendChild(strip);
+      return () => strip.remove();
+    }, [open]);
     if (!open) return null;
     const close = () => { lifetime.current.dismissed = true; setOpen(false); complete(); };
     const configure = () => setStage('model');
