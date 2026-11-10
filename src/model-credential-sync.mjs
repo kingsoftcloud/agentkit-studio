@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isCredentialRefName } from './credential-ref.mjs';
 
 /**
  * Copy the Studio model key from the Host-owned global configuration into the
@@ -12,7 +13,14 @@ export async function syncGlobalModelCredential({ configuration, credentials, re
   if (!credentials || typeof credentials.resolve !== 'function' || typeof credentials.set !== 'function') throw new TypeError('credentials.resolve/set are required');
   const resolved = await configuration.resolve();
   const profiles = Array.isArray(resolved?.values?.modelProfiles) ? resolved.values.modelProfiles : [];
-  const entries = profiles.filter(profile => profile?.apiKey && profile?.credentialName).map(profile => [String(profile.credentialName), String(profile.apiKey)]);
+  // Copy only names DSH can address. The name is never rewritten: an MCP
+  // reference such as env://X-KIP-Token is stored next to the secret, and
+  // changing one side would orphan the other. Names that cannot be stored are
+  // reported instead of silently disappearing from the summary.
+  const candidates = profiles.filter(profile => profile?.apiKey && profile?.credentialName)
+    .map(profile => [String(profile.credentialName).trim(), String(profile.apiKey)]);
+  const entries = candidates.filter(([name]) => isCredentialRefName(name));
+  const skipped = candidates.filter(([name]) => !isCredentialRefName(name)).map(([name]) => name);
   const legacy = String(resolved?.values?.modelApiKey || '').trim();
   if (legacy && !entries.some(([name]) => name === reference)) entries.push([reference, legacy]);
   const results = [];
@@ -28,7 +36,7 @@ export async function syncGlobalModelCredential({ configuration, credentials, re
   }
   if (!results.length) return { configured: false, source: resolved?.sources?.modelApiKey || 'missing' };
   const selected = results.find(item => item.name === reference) || results[0];
-  const summary = { configured: true, source: selected.source, synchronized: results.every(item => item.synchronized) };
+  const summary = { configured: true, source: selected.source, synchronized: results.every(item => item.synchronized), ...(skipped.length ? { skipped } : {}) };
   // Keep the original compact response for the legacy single-key contract.
   // The per-profile detail is only needed when more than one model credential
   // is configured and is still fully redacted.

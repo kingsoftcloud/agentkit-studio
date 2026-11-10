@@ -60,7 +60,9 @@ export default String.raw`
   gap: var(--ms-space-5);
   width: 100%;
   max-width: 1040px;
-  margin: 0;
+  /* Centre the column: a capped width pinned to the left edge left a dead
+     column on the right of a full-screen window. */
+  margin-inline: auto;
 }
 
 [data-studio-model-settings] .ms-intro {
