@@ -53,6 +53,17 @@ test('paired specifications default to 2 cores / 4 GB and checking never submits
   assert.equal(ui.button('确认创建云端实例'), undefined, 'changed configuration needs a fresh check');
 });
 
+test('deployments always use the default persistent volume and never offer a storage choice', async () => {
+  const ui = harness(); await ui.settle();
+  assert.equal(ui.field('对话存储'), undefined, 'storage is stated, not selected');
+  const content = ui.nodes().map(ui.text).join(' ');
+  assert.match(content, /20 GiB 持久化云盘/);
+  assert.match(content, /挂载 \/home\/node/);
+  await ui.button('检查部署').props.onClick(); await ui.settle();
+  assert.deepEqual(ui.calls[0][1].resources, { cpu: 2, memoryGiB: 4, storageGiB: 20 });
+  assert.equal(ui.calls.some(([kind]) => kind === 'create'), false);
+});
+
 test('a late deployment check cannot confirm an obsolete build', async () => {
   const ui = harness(); await ui.settle();
   const pending = deferred(); ui.api.prepareDeployment = () => pending.promise;
