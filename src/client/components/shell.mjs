@@ -2,7 +2,7 @@ import { BRAND as DEFAULT_BRAND, PANELS as DEFAULT_PANELS } from '../theme.mjs';
 
 export function createStudioShell({
   ui: { React: { createElement: h, useEffect, useState }, Pill, AgentWorkspace, StudioAgentHub, DomainPage, OperationsWorkspace, OverviewPage, ResourceWorkspace, BRAND = DEFAULT_BRAND, PANELS = DEFAULT_PANELS },
-  hostRemote
+  hostRemote, documentEffects
 }) {
   function HostStatusPill() {
     const [status, setStatus] = useState('loading');
@@ -27,6 +27,12 @@ export function createStudioShell({
   }
 
   function StudioShell({ scheduleRemote, page = 'overview', onNavigate }) {
+    // The macOS title-band strip belongs to the Studio chrome pages only. The
+    // agents hub already drags through its own subnav row (`data-window-drag`),
+    // and DSH's native session page owns its conversation header. The hook runs
+    // for every panel so the hook order stays stable; only chrome pages mount.
+    const macDragStrip = page !== 'agents';
+    useEffect(() => (macDragStrip ? documentEffects?.installMacWindowDragStrip?.() : undefined), [macDragStrip]);
     if (page === 'agents') return h(StudioAgentHub, { onNavigate });
     const activeNav = PANELS.find(item => item.page === page) || PANELS[0];
     return h('div', {

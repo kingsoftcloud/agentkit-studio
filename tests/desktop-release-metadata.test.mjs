@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { publishedDesktopMetadata, studioDesktopPublication, studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
+import { DEFAULT_RELEASE_CHANNEL } from '../src/desktop-release-channels.mjs';
+
+const ORIGIN = 'https://agentkit.ks3-cn-beijing.ksyuncs.com';
+const prereleaseVersion = '0.2.2-rc.1.20261109.1';
 
 test('generated ZIP links resolve to public binary objects without changing signed byte metadata', () => {
   const version = '0.2.0-rc.2.20261013.2';
@@ -18,11 +22,12 @@ test('generated ZIP links resolve to public binary objects without changing sign
 test('Studio version directories preserve signed bytes and the official old blockmap lookup', () => {
   const version = '0.2.0-rc.2.20261013.13', old = '0.2.0-rc.2.20261013.12';
   const metadata = { version, files: [{ url: `deepseek-harness-${version}-mac-arm64.zip`, sha512: 'signed', size: 123 }] };
-  const plan = studioDesktopPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' });
+  const plan = studioDesktopPublication(metadata, { origin: ORIGIN });
+  assert.equal(plan.feedKey, `studio/feeds/mac-arm64/${DEFAULT_RELEASE_CHANNEL}-mac.yml`);
   assert.equal(plan.assets.dmg, `studio/${version}/AgentKit-Studio-mac-arm64.dmg`);
   assert.equal(plan.metadata.files[0].url.replace(version, old) + '.blockmap', `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${old}/AgentKit-Studio-mac-arm64.zip.blockmap`);
   assert.equal(plan.metadata.files[0].sha512, 'signed');
-  const full = studioDesktopPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com', mode: 'full' });
+  const full = studioDesktopPublication(metadata, { origin: ORIGIN, mode: 'full' });
   assert.equal(full.metadata.agentkitUpdateMode, 'full');
   assert.notEqual(new URL(full.metadata.files[0].url).pathname.slice(1) + '.blockmap', full.assets.blockmap, 'full-only ZIP has no blockmap; normal blockmap remains available for the next incremental release');
 });
@@ -35,11 +40,41 @@ test('Windows feed preserves signed installer metadata and gives the installed l
   const version = '0.2.0-rc.2.20261014.8', sha512 = Buffer.alloc(64, 42).toString('base64');
   const metadata = { version, path: `deepseek-harness-${version}-win-x64.exe`, sha512,
     files: [{ url: `deepseek-harness-${version}-win-x64.exe`, size: 400000000, sha512 }] };
-  const plan = studioWindowsPublication(metadata, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' });
+  const plan = studioWindowsPublication(metadata, { origin: ORIGIN, channel: 'preview' });
   assert.equal(plan.feedKey, 'studio/feeds/win-x64/preview.yml');
   assert.equal(plan.bridgeFeedKey, 'dsh-desk/feeds/win-x64/preview.yml');
   assert.equal(plan.metadata.files[0].sha512, sha512);
   assert.equal(plan.metadata.files[0].size, metadata.files[0].size);
   assert.equal(plan.metadata.files[0].url, `https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/${version}/AgentKit-Studio-win-x64.exe`);
-  assert.throws(() => studioWindowsPublication({ ...metadata, version: '1.0.0' }, { origin: 'https://agentkit.ks3-cn-beijing.ksyuncs.com' }), /signed installer/);
+  assert.throws(() => studioWindowsPublication({ ...metadata, version: '1.0.0' }, { origin: ORIGIN }), /signed installer/);
+});
+
+test('every accepted lane publishes its own macOS and Windows feed object', () => {
+  const macMetadata = { version: prereleaseVersion, files: [{ url: `deepseek-harness-${prereleaseVersion}-mac-arm64.zip`, sha512: 'signed', size: 123 }] };
+  const sha512 = Buffer.alloc(64, 42).toString('base64');
+  const windowsMetadata = { version: prereleaseVersion, sha512, files: [{ url: `deepseek-harness-${prereleaseVersion}-win-x64.exe`, size: 4000, sha512 }] };
+  for (const channel of ['latest', 'nightly', 'preview', 'stable']) {
+    // `latest`/`stable` only accept a stable version, so their plans use a GA version.
+    const version = ['latest', 'stable'].includes(channel) ? '1.2.3' : prereleaseVersion;
+    const mac = { ...macMetadata, version, files: [{ ...macMetadata.files[0], url: `deepseek-harness-${version}-mac-arm64.zip` }] };
+    const win = { ...windowsMetadata, version, files: [{ ...windowsMetadata.files[0], url: `deepseek-harness-${version}-win-x64.exe` }] };
+    assert.equal(studioDesktopPublication(mac, { origin: ORIGIN, channel }).feedKey, `studio/feeds/mac-arm64/${channel}-mac.yml`);
+    assert.equal(studioWindowsPublication(win, { origin: ORIGIN, channel }).feedKey, `studio/feeds/win-x64/${channel}.yml`);
+    assert.equal(studioWindowsPublication(win, { origin: ORIGIN, channel }).bridgeFeedKey, `dsh-desk/feeds/win-x64/${channel}.yml`);
+  }
+  assert.throws(() => studioDesktopPublication(macMetadata, { origin: ORIGIN, channel: 'beta' }), /channel must be one of nightly, latest, preview, stable/);
+  assert.throws(() => studioWindowsPublication(windowsMetadata, { origin: ORIGIN, channel: 'beta' }), /channel must be one of nightly, latest, preview, stable/);
+});
+
+test('a prerelease build cannot be planned onto the latest or stable lane', () => {
+  const macMetadata = { version: prereleaseVersion, files: [{ url: `deepseek-harness-${prereleaseVersion}-mac-arm64.zip`, sha512: 'signed', size: 123 }] };
+  const sha512 = Buffer.alloc(64, 42).toString('base64');
+  const windowsMetadata = { version: prereleaseVersion, sha512, files: [{ url: `deepseek-harness-${prereleaseVersion}-win-x64.exe`, size: 4000, sha512 }] };
+  for (const channel of ['latest', 'stable']) {
+    assert.throws(() => studioDesktopPublication(macMetadata, { origin: ORIGIN, channel }), /requires a stable three-segment version/);
+    assert.throws(() => studioWindowsPublication(windowsMetadata, { origin: ORIGIN, channel }), /requires a stable three-segment version/);
+  }
+  // The same builds are valid on the prerelease lanes.
+  assert.equal(studioDesktopPublication(macMetadata, { origin: ORIGIN, channel: 'nightly' }).feedKey, 'studio/feeds/mac-arm64/nightly-mac.yml');
+  assert.equal(studioWindowsPublication(windowsMetadata, { origin: ORIGIN, channel: 'preview' }).feedKey, 'studio/feeds/win-x64/preview.yml');
 });

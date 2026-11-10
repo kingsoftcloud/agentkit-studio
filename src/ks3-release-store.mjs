@@ -3,9 +3,18 @@ import { createHash, createHmac } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { uploadKs3Multipart } from './ks3-release-multipart.mjs';
+import { RELEASE_CHANNELS } from './desktop-release-channels.mjs';
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const BUCKET_FROM_ORIGIN = /^([a-z0-9][a-z0-9-]{1,61}[a-z0-9])\.ks3-[a-z0-9-]+\.ksyuncs\.com$/u;
+// Feed object names follow the selected channel, so `studio/feeds/<target>/`
+// carries `<channel>-mac.yml` and `studio/feeds/win-x64/` carries `<channel>.yml`.
+const FEED_CHANNELS = RELEASE_CHANNELS.join('|');
+const STUDIO_OBJECT_KEY = new RegExp('^studio/(?:'
+  + `feeds/mac-arm64/(?:(?:${FEED_CHANNELS})-mac\\.yml|mac-arm64-release\\.json)`
+  + `|feeds/win-x64/(?:(?:${FEED_CHANNELS})\\.yml|win-x64-release\\.json)`
+  + '|[0-9]+\\.[0-9]+\\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?/(?:(?:full/)?AgentKit-Studio-mac-arm64\\.(?:dmg|zip|zip\\.blockmap)|AgentKit-Studio-win-x64\\.exe(?:\\.blockmap)?)'
+  + ')$', 'u');
 
 function required(value, name) {
   const trimmed = typeof value === 'string' ? value.trim() : '';
@@ -27,8 +36,7 @@ function releaseUrl(origin, objectKey) {
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
     throw new Error('KS3 release origin must be an HTTPS origin without a path or credentials');
   }
-  if (!/^dsh-desk\/(?:bin|feeds)\/[a-z0-9-]+\/[a-z0-9._-]+$/u.test(objectKey)
-    && !/^studio\/(?:(?:feeds\/mac-arm64\/(?:preview-mac\.yml|stable-mac\.yml|mac-arm64-release\.json)|feeds\/win-x64\/(?:preview\.yml|stable\.yml|win-x64-release\.json))|[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?\/(?:(?:full\/)?AgentKit-Studio-mac-arm64\.(?:dmg|zip|zip\.blockmap)|AgentKit-Studio-win-x64\.exe(?:\.blockmap)?))$/u.test(objectKey)) {
+  if (!/^dsh-desk\/(?:bin|feeds)\/[a-z0-9-]+\/[a-z0-9._-]+$/u.test(objectKey) && !STUDIO_OBJECT_KEY.test(objectKey)) {
     throw new Error(`invalid KS3 release object key: ${objectKey}`);
   }
   return new URL(objectKey, base);

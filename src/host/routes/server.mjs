@@ -11,6 +11,8 @@ export function createServerActionRoutes({ serverClientPromise, models, syncMode
                 return { ok: true, value: await models.save(body) };
             if (action === 'models/catalog')
                 return { ok: true, value: await models.catalog(String(body.profileId || '')) };
+            if (action === 'models/probe')
+                return { ok: true, value: await models.probe(body) };
             if (action === 'models/sync-credential')
                 return { ok: true, value: await syncModelCredential() };
             if (action === 'models/credential-status')

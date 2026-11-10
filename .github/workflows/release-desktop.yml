@@ -23,7 +23,7 @@ on:
         default: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
         type: string
       channel:
-        description: "Production update lane; empty uses product configuration"
+        description: "Production update lane: nightly, latest (stable GA only), preview or stable; empty uses the product configuration (nightly)"
         required: false
         default: ""
         type: string
@@ -110,6 +110,20 @@ jobs:
       plugin_roots: ${{ steps.product.outputs.plugin_roots }}
       plugin_bundles: ${{ steps.product.outputs.plugin_bundles }}
     steps:
+      # The packaged DSH 0.2.2-rc.1 Host accepts nightly/latest; nightly is the
+      # default because latest rejects prerelease versions. Preview and stable
+      # stay selectable so an in-flight or emergency release can still be rebuilt
+      # until every installed client has moved to a native lane.
+      - name: Validate the update lane
+        shell: bash
+        env:
+          STUDIO_CHANNEL_INPUT: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          case "$STUDIO_CHANNEL_INPUT" in
+            ''|latest|nightly|preview|stable) ;;
+            *) echo "::error::channel must be nightly, latest, preview, stable, or empty" >&2; exit 1 ;;
+          esac
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.studio_checkout_ref }}
@@ -157,7 +171,7 @@ jobs:
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     needs: [source-gate]
     if: ${{ inputs.candidate_run_id == '' }}
-    runs-on: macos-14
+    runs-on: macos-latest
     environment: studio-signing
     timeout-minutes: 60
     steps:
@@ -188,6 +202,31 @@ jobs:
         with:
           version: 11.28.5
           package_json_file: dsh-source/package.json
+
+      - name: Select the Electron download mirror
+        # The GitHub release CDN intermittently answers 504 for the Electron
+        # inputs. The checksum manifest and the platform archive fail
+        # independently - on 2026-11-09 the manifest was healthy while
+        # electron-v44.7.0-win32-x64.zip returned 504 for every attempt, which
+        # aborted packaging after the probe had already passed. Probe both with
+        # a HEAD request and only redirect Electron downloads to the npmmirror
+        # copy when the official source is unusable, so a healthy runner keeps
+        # using GitHub.
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://github.com/electron/electron/releases/download/v44.7.0'
+          unreachable=''
+          for probe in "$base/SHASUMS256.txt" "$base/electron-v44.7.0-darwin-arm64.zip"; do
+            curl -fsSLI --retry 3 --retry-delay 2 --max-time 60 -o /dev/null "$probe" || unreachable="$unreachable $probe"
+          done
+          if [[ -z "$unreachable" ]]; then
+            echo 'electron mirror fallback: disabled'
+          else
+            echo "official Electron probe failed for:$unreachable"
+            echo 'electron mirror fallback: enabled'
+            echo 'ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/' >> "$GITHUB_ENV"
+          fi
 
       - name: Verify immutable source inputs
         shell: bash
@@ -613,7 +652,7 @@ jobs:
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
     if: ${{ always() && inputs.qualify_installed_update && needs.macos-arm64.result == 'success' && (needs.publish-mac-arm64.result == 'success' || needs.publish-mac-arm64.result == 'skipped') }}
     needs: [source-gate, macos-arm64, publish-mac-arm64]
-    runs-on: macos-14
+    runs-on: macos-latest
     environment: studio-signing
     timeout-minutes: 30
     steps:

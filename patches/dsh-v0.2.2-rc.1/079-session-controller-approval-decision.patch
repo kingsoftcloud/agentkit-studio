@@ -1,0 +1,470 @@
+diff --git a/packages/api/session-controller/package.json b/packages/api/session-controller/package.json
+index d69f6937e64cf67e248fad39a7268594ad4cc781..93c29cb4547b547df97036fa0c1a58d3b11fa5b2 100644
+--- a/packages/api/session-controller/package.json
++++ b/packages/api/session-controller/package.json
+@@ -109,6 +109,7 @@
+     "@deepseek-ai/dsh-util-values": "workspace:*",
+     "@deepseek-ai/dsh-util-workspace-path": "workspace:*",
+     "@deepseek-ai/dsh-workspace": "workspace:*",
++    "@deepseek-ai/dsh-user-approval": "workspace:*",
+     "@deepseek-ai/dsh-working-directory": "workspace:*"
+   },
+   "peerDependenciesMeta": {
+@@ -167,6 +168,7 @@
+     "@deepseek-ai/dsh-util-values": "workspace:*",
+     "@deepseek-ai/dsh-util-workspace-path": "workspace:*",
+     "@deepseek-ai/dsh-workspace": "workspace:*",
++    "@deepseek-ai/dsh-user-approval": "workspace:*",
+     "@types/mime-types": "^3.0.1",
+     "@deepseek-ai/dsh-working-directory": "workspace:*"
+   }
+diff --git a/packages/api/session-controller/src/index.ts b/packages/api/session-controller/src/index.ts
+index ba4bfb1ef19e621b0e4b794b96be5091641da40a..57da762f5383dadd3bf1d0e648ec3f398bd95459 100644
+--- a/packages/api/session-controller/src/index.ts
++++ b/packages/api/session-controller/src/index.ts
+@@ -16,6 +16,7 @@ import { Remote, RemoteError, TypertRemoteService, principalOf, type TypertResou
+ import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
+ import { assertNever } from '@deepseek-ai/dsh-util-values'
+ import type {} from '@deepseek-ai/dsh-api-remote-access'
++import type {} from '@deepseek-ai/dsh-user-approval'
+ import {
+   ApiSessionAgentController,
+   type ApiSessionAgentResult,
+@@ -37,6 +38,8 @@ import type {
+   SessionAddress,
+   SessionAttachmentRequest,
+   SessionAttachmentValue,
++  SessionApprovalDecisionRequest,
++  SessionApprovalDecisionValue,
+   SessionCancelRequest,
+   SessionCancelValue,
+   SessionControlFrame,
+@@ -524,6 +527,30 @@ export class SessionController extends TypertRemoteService {
+   }
+ 
+   /**
++   * Submit a decision for one live approval request owned by this Session.
++   * The approval service retains request identity, validates that the request
++   * is still pending for the resolved Agent, and appends the paired audit
++   * outcome before the waiting tool call continues.
++   * @param request - Session identity, service-issued approval request id, and decision.
++   * @returns whether the live request accepted the decision, or a stale/unavailable result.
++   * @throws RemoteError when the Session cannot be resolved or approval is not composed.
++   */
++  @Remote({ name: 'approvalDecision', resources: { session: request => request.sessionId } })
++  async approvalDecision(request: SessionApprovalDecisionRequest): Promise<SessionApprovalDecisionValue> {
++    const found = await this.agents.resolveAgent(request.sessionId)
++    if ('error' in found) throw found.error
++    const approval = this.ctx.get('approval')
++    if (approval === undefined) {
++      throw new RemoteError(
++        'session/approval-unavailable',
++        'approval decision service is not available in this deployment',
++        {},
++      )
++    }
++    return await approval.decide(found.agent, request)
++  }
++
++  /**
+    * Read one cold-safe, message-aligned Session history page.
+    * @deprecated Use `events`; this entry point remains for existing Web callers.
+    * @param request - durable address, optional fixed cut, backward cursor, and page budget.
+diff --git a/packages/api/session-controller/src/types.ts b/packages/api/session-controller/src/types.ts
+index 64d355bd825e1baa746c9d814761716b4fceeae3..9c2c157abac97ec3470aecbc62ba077c622fc0b1 100644
+--- a/packages/api/session-controller/src/types.ts
++++ b/packages/api/session-controller/src/types.ts
+@@ -13,6 +13,7 @@ import type { SessionProjectionMap, SessionProjectionSummaryExcluded, SessionPro
+ import type { Principal } from '@deepseek-ai/dsh-typert-protocol'
+ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
++import type { ApprovalDecision, ApprovalDecisionResult, ApprovalRequestId } from '@deepseek-ai/dsh-user-approval/types'
+ 
+ declare module '@deepseek-ai/dsh-session-projection/types' {
+   interface SessionProjectionMap {
+@@ -201,6 +202,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
+       readonly requestedPreset: string
+     }
+     'session/attachment-invalid': { readonly reason: string }
++    'session/approval-unavailable': Record<string, never>
+     'session/queue-item-not-found': { readonly itemId: MessageId }
+     'session/steer-unavailable': { readonly itemId: MessageId }
+     'session/title-invalid': { readonly sessionId: SessionId }
+@@ -375,6 +377,16 @@ export interface SessionCancelValue {
+   readonly accepted: true
+ }
+ 
++/** Decision submitted for one live approval request in a Session turn. */
++export interface SessionApprovalDecisionRequest {
++  readonly sessionId: SessionId
++  readonly requestId: ApprovalRequestId
++  readonly decision: ApprovalDecision
++}
++
++/** Result after the approval service accepts or rejects the submitted decision. */
++export type SessionApprovalDecisionValue = ApprovalDecisionResult
++
+ /** Request to open one path prepared by a Session-aware caller on the Host desktop. */
+ export interface SessionOpenWorkspacePathRequest {
+   /** File-manager navigation when requested; omission uses the default application. */
+diff --git a/packages/api/session-controller/tests/approval-decision.host.spec.ts b/packages/api/session-controller/tests/approval-decision.host.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1fb29a3c18bde8831573e9daa4040e1dda7f02c9
+--- /dev/null
++++ b/packages/api/session-controller/tests/approval-decision.host.spec.ts
+@@ -0,0 +1,72 @@
++import { Context } from '@deepseek-ai/cordis'
++import type { Agent } from '@deepseek-ai/dsh-agent'
++import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@deepseek-ai/dsh-agent-loop-testkit'
++import { SessionId } from '@deepseek-ai/dsh-session'
++import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
++import ApprovalService from '@deepseek-ai/dsh-user-approval'
++import { describe, expect, it, onTestFinished, vi } from 'vitest'
++import SessionController from '../src/index.ts'
++import { createSessionTestController } from './test-remote.ts'
++
++const defaults = {
++  defaultModelSelection: () => ({ provider: 'fixture', model: 'fixture-model' }),
++  cwd: '/tmp',
++}
++
++async function fixture(withApproval = true): Promise<{
++  ctx: Context
++  controller: SessionController
++  agent: Agent
++  sessionId: SessionId
++}> {
++  const ctx = new Context()
++  onTestFinished(() => ctx.fiber.dispose())
++  await mountAgentLoopTestDependencies(ctx)
++  await mountAgentLoopTestHarness(ctx)
++  if (withApproval) await ctx.plugin(ApprovalService)
++  const sessionId = SessionId(`approval-rpc-${Math.random().toString(16).slice(2)}`)
++  const session = ctx.sessions.create(sessionId, { meta: { cwd: '/tmp' } })
++  session.append('turn/start', { turn: 1 })
++  const agent = { id: sessionId, session, status: 'running', ctx } as Agent
++  await ctx.agents.register(agent)
++  const controller = await createSessionTestController(ctx, defaults)
++  return { ctx, controller, agent, sessionId }
++}
++
++describe('SessionController.approvalDecision', () => {
++  it('routes the public Session RPC to the live approval service and completes the request', async () => {
++    const { ctx, controller, agent, sessionId } = await fixture()
++    let received: ApprovalRequest | undefined
++    let answer!: (outcome: ApprovalOutcome) => void
++    ctx.on('approval/request', (request) => {
++      received = request
++      return new Promise<ApprovalOutcome>((resolve) => { answer = resolve })
++    })
++
++    const waiting = ctx.approval.request({ agent, toolName: 'write_workspace_file' })
++    await vi.waitFor(() => expect(received?.requestId).toBeDefined())
++    const requestId = received?.requestId
++    expect(requestId).toBeDefined()
++    if (requestId === undefined) throw new Error('approval request id was not published')
++    const result = await controller.approvalDecision({
++      sessionId,
++      requestId,
++      decision: 'allowed-once',
++    })
++
++    expect(result).toEqual({ accepted: true, outcome: 'allowed-once' })
++    await expect(waiting).resolves.toBe('allowed-once')
++    answer('rejected')
++  })
++
++  it('returns a typed unavailable error when the Host does not compose approval', async () => {
++    const { controller, sessionId } = await fixture(false)
++    await expect(controller.approvalDecision({
++      sessionId,
++      requestId: 'missing' as never,
++      decision: 'rejected',
++    })).rejects.toMatchObject({
++      code: 'session/approval-unavailable',
++    })
++  })
++})
+diff --git a/packages/api/session-controller/tests/test-remote.ts b/packages/api/session-controller/tests/test-remote.ts
+index 04ed6788cfb9094c03a7f6ef9321ba3d9b7b9293..75928adfe3f126b9d01c2765023b3e68f595fc55 100644
+--- a/packages/api/session-controller/tests/test-remote.ts
++++ b/packages/api/session-controller/tests/test-remote.ts
+@@ -37,6 +37,8 @@ import type {
+   ModelCatalog,
+   SessionAttachmentRequest,
+   SessionAttachmentValue,
++  SessionApprovalDecisionRequest,
++  SessionApprovalDecisionValue,
+   SessionCancelRequest,
+   SessionCancelValue,
+   SessionControlFrame,
+@@ -84,6 +86,7 @@ export interface TestSessionRemote {
+   attachment(request: SessionAttachmentRequest): Promise<RemoteResult<SessionAttachmentValue>>
+   updateQueue(request: SessionUpdateQueueRequest): Promise<RemoteResult<SessionUpdateQueueValue>>
+   cancel(request: SessionCancelRequest): Promise<RemoteResult<SessionCancelValue>>
++  approvalDecision(request: SessionApprovalDecisionRequest): Promise<RemoteResult<SessionApprovalDecisionValue>>
+   openWorkspacePath(
+     request: SessionOpenWorkspacePathRequest,
+     signal?: AbortSignal,
+@@ -385,12 +388,12 @@ export async function createSessionTestRemote(
+     attachment: request => remoteResult(() => direct.attachment(request)),
+     updateQueue: request => remoteResult(() => direct.updateQueue(request)),
+     cancel: request => remoteResult(() => direct.cancel(request)),
++    approvalDecision: request => remoteResult(() => direct.approvalDecision(request)),
+     openWorkspacePath: (request, signal = new AbortController().signal) => remoteResult(
+       () => direct.openWorkspacePath(request, signal),
+       signal,
+     ),
+     page: (request, signal = new AbortController().signal) => remoteResult(
+-      // oxlint-disable-next-line typescript/no-deprecated -- Test face keeps the legacy page entry covered.
+       () => direct.page(request, signal),
+       signal,
+     ),
+diff --git a/packages/experimental/liveshare/src/endpoint-classification.ts b/packages/experimental/liveshare/src/endpoint-classification.ts
+index 07fcb6655677b15c64ec33d3c522ef63e74ebca4..7ae85bdba03e5f1fca62dd7df9b5f319b0dc6ba8 100644
+--- a/packages/experimental/liveshare/src/endpoint-classification.ts
++++ b/packages/experimental/liveshare/src/endpoint-classification.ts
+@@ -102,6 +102,7 @@ export const VIEWER_ENDPOINT_CLASSES = {
+   'session/openWorkspacePath': 'owner-only', // owner opens a Workspace path
+   'session/search': 'owner-only', // owner searches across Sessions
+   'session/selectModel': 'owner-only', // owner selects a Session model
++  'session/approvalDecision': 'owner-only', // owner resolves a pending approval
+   'session/updateQueue': 'owner-only', // owner edits queued input
+   'session/workspacePathApplications': 'owner-only', // owner applies a Workspace path
+   'credentials/describe': 'owner-only', // owner credentials; secrets never reach a reader
+diff --git a/packages/interaction/user-approval/src/index.ts b/packages/interaction/user-approval/src/index.ts
+index df48aca514cbf47509a3a499dbe866a6e9015b89..e91731c0d43ad95c2d668866dc5f0a0ed96926bc 100644
+--- a/packages/interaction/user-approval/src/index.ts
++++ b/packages/interaction/user-approval/src/index.ts
+@@ -47,10 +47,16 @@ declare module '@deepseek-ai/dsh-session/types' {
+ }
+ 
+ import { ApprovalRequestId } from './types.ts'
+-import type { ApprovalOutcome, ApprovalRequestEvent } from './types.ts'
++import type {
++  ApprovalDecision,
++  ApprovalDecisionResult,
++  ApprovalOutcome,
++  ApprovalRequestEvent,
++} from './types.ts'
+ 
+ export { ApprovalRequestId } from './types.ts'
+ export type { ApprovalOutcome } from './types.ts'
++export type { ApprovalDecision, ApprovalDecisionResult } from './types.ts'
+ 
+ /** Every {@link ApprovalOutcome}, for runtime normalization of answerer returns. */
+ const OUTCOMES: readonly ApprovalOutcome[] = ['allowed-once', 'rejected', 'cancelled', 'unavailable']
+@@ -165,6 +171,12 @@ export interface Config {
+  * changes to the model through the runtime-context snapshot and switch notices.
+  */
+ export class ApprovalService extends Service {
++  private readonly pending = new Map<ApprovalRequestId, {
++    readonly agent: Agent
++    readonly resolve: (outcome: ApprovalDecision) => void
++    done: boolean
++  }>()
++
+   static inject = ['sessionProjections']
+ 
+   static Config: z<Config> = z.object({
+@@ -255,9 +267,68 @@ export class ApprovalService extends Service {
+       ...req.callId !== undefined ? { callId: req.callId } : {},
+       ...req.reason !== undefined ? { reason: req.reason } : {},
+     })
+-    const outcome = await this.decide(req, session)
+-    session.append('approval/decided', { id, outcome })
+-    return outcome
++    let entry!: {
++      readonly agent: Agent
++      readonly resolve: (outcome: ApprovalDecision) => void
++      done: boolean
++    }
++    const external = new Promise<ApprovalDecision>((resolve) => {
++      entry = { agent: req.agent, resolve, done: false }
++      this.pending.set(id, entry)
++    })
++    // Preserve the exact request object for existing answerers whenever it is
++    // extensible, while exposing the service-issued live identity to a public
++    // decision bridge. Frozen callers receive a shallow request copy.
++    let dispatchRequest: ApprovalRequest
++    try {
++      Object.defineProperty(req, 'requestId', { value: id, enumerable: true, configurable: true })
++      dispatchRequest = req
++    } catch {
++      dispatchRequest = { ...req, requestId: id }
++    }
++    try {
++      const outcome = await Promise.race([this.dispatch(dispatchRequest, session), external])
++      entry.done = true
++      this.pending.delete(id)
++      session.append('approval/decided', { id, outcome })
++      return outcome
++    } finally {
++      entry.done = true
++      this.pending.delete(id)
++    }
++  }
++
++  /**
++   * Resolve one live request for the exact Agent that owns it. A Session
++   * Controller uses this method after its resource admission; the approval
++   * service still owns the pending map and the final audit outcome.
++   */
++  async decide(
++    agent: Agent,
++    request: { readonly requestId: ApprovalRequestId; readonly decision: ApprovalDecision },
++  ): Promise<ApprovalDecisionResult> {
++    const entry = this.pending.get(request.requestId)
++    if (!entry || entry.done || entry.agent !== agent) return { accepted: false, reason: 'request-stale' }
++    let result: ApprovalDecisionResult | undefined
++    try {
++      result = await this.ctx.waterfall(
++        scopeTarget(agent, agent), 'approval/decision', request,
++        () => Promise.resolve<ApprovalDecisionResult | undefined>(undefined),
++      )
++    } catch {
++      return { accepted: false, reason: 'unavailable' }
++    }
++    if (result?.accepted === false) return result
++    if (result?.accepted === true && result.outcome !== request.decision) {
++      return { accepted: false, reason: 'unavailable' }
++    }
++    if (entry.done || this.pending.get(request.requestId) !== entry) {
++      return { accepted: false, reason: 'request-stale' }
++    }
++    entry.done = true
++    this.pending.delete(request.requestId)
++    entry.resolve(request.decision)
++    return result ?? { accepted: true, outcome: request.decision }
+   }
+ 
+   /**
+@@ -290,7 +361,7 @@ export class ApprovalService extends Service {
+    * @param session - the request agent's session used for policy lookup.
+    * @returns the normalized closed outcome.
+    */
+-  private async decide(req: ApprovalRequest, session: Session): Promise<ApprovalOutcome> {
++  private async dispatch(req: ApprovalRequest, session: Session): Promise<ApprovalOutcome> {
+     const signal = req.signal
+     if (signal?.aborted) return 'cancelled'
+     // The 'never' policy is decided HERE, before any dispatch: a listener
+diff --git a/packages/interaction/user-approval/src/types.ts b/packages/interaction/user-approval/src/types.ts
+index 12b8106d3460c80f952a754b4420c6dcbfb217c2..2ad56d0bc237be6a7b80bd629b4e2c4a1ccf21fa 100644
+--- a/packages/interaction/user-approval/src/types.ts
++++ b/packages/interaction/user-approval/src/types.ts
+@@ -31,6 +31,14 @@ export function ApprovalRequestId(id: string): ApprovalRequestId {
+  */
+ export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+ 
++/** Decisions that an authenticated SessionController caller may submit. */
++export type ApprovalDecision = Extract<ApprovalOutcome, 'allowed-once' | 'rejected'>
++
++/** Result returned by a live approval decision attempt. */
++export type ApprovalDecisionResult =
++  | { readonly accepted: true; readonly outcome: ApprovalDecision }
++  | { readonly accepted: false; readonly reason: 'request-stale' | 'unavailable' }
++
+ declare module '@deepseek-ai/dsh-session/types' {
+   interface SessionEventMap {
+     /**
+@@ -73,6 +81,8 @@ export interface ApprovalRequestEvent {
+   readonly displayReason?: { readonly en: string; readonly [locale: string]: string }
+   /** Cancellation lifetime of the pending request. */
+   readonly signal?: AbortSignal
++  /** Service-issued live identity; absent from historical audit events. */
++  readonly requestId?: ApprovalRequestId
+ }
+ 
+ declare module '@deepseek-ai/cordis' {
+@@ -89,5 +99,11 @@ declare module '@deepseek-ai/cordis' {
+       req: ApprovalRequestEvent,
+       next: () => Promise<ApprovalOutcome>,
+     ): Promise<ApprovalOutcome>
++    /** Resolve one live request owned by this scoped Agent. */
++    'approval/decision'(
++      this: Scoped<Agent>,
++      request: { readonly requestId: ApprovalRequestId; readonly decision: ApprovalDecision },
++      next: () => Promise<ApprovalDecisionResult | undefined>,
++    ): Promise<ApprovalDecisionResult | undefined>
+   }
+ }
+diff --git a/packages/interaction/user-approval/tests/approval.spec.ts b/packages/interaction/user-approval/tests/approval.spec.ts
+index 03886992f32ce58001763686f306a3f6f4eb4946..d57a81be5e4abbd940df5fa2eb28d563b3930941 100644
+--- a/packages/interaction/user-approval/tests/approval.spec.ts
++++ b/packages/interaction/user-approval/tests/approval.spec.ts
+@@ -351,6 +351,61 @@ describe('ApprovalService.request', () => {
+   })
+ })
+ 
++describe('ApprovalService.decide', () => {
++  it('accepts one live decision for its owning Agent and completes the audit pair', async () => {
++    const ctx = await mounted()
++    const { agent, appended } = fakeAgent(ctx)
++    let received: ApprovalRequest | undefined
++    let answer!: (outcome: ApprovalOutcome) => void
++    ctx.on('approval/request', (req) => {
++      received = req
++      return new Promise<ApprovalOutcome>((resolve) => { answer = resolve })
++    })
++
++    const waiting = ctx.approval.request(requestOf(agent, { toolName: 'write_workspace_file' }))
++    await vi.waitFor(() => expect(received?.requestId).toBeDefined())
++    const requestId = received?.requestId
++    expect(requestId).toBeDefined()
++    if (requestId === undefined) throw new Error('approval request id was not published')
++    expect(Object.keys(received ?? {})).toContain('requestId')
++    const result = await ctx.approval.decide(agent, { requestId, decision: 'allowed-once' })
++
++    expect(result).toEqual({ accepted: true, outcome: 'allowed-once' })
++    await expect(waiting).resolves.toBe('allowed-once')
++    expect(appended.map(event => event.type)).toEqual(['approval/asked', 'approval/decided'])
++    expect(appended[1]?.data).toMatchObject({ outcome: 'allowed-once', id: appended[0]?.data['id'] })
++
++    // The answerer promise may finish after the public decision; it cannot
++    // overwrite the already accepted one-shot outcome.
++    answer('rejected')
++  })
++
++  it('rejects foreign and duplicate decisions as stale while allowing a decision waterfall handler', async () => {
++    const ctx = await mounted()
++    const { agent: owner } = fakeAgent(ctx)
++    const { agent: foreign } = fakeAgent(ctx)
++    let received: ApprovalRequest | undefined
++    ctx.on('approval/request', (req) => {
++      received = req
++      return new Promise<ApprovalOutcome>(() => {})
++    })
++    ctx.on('approval/decision', async request => ({ accepted: true, outcome: request.decision }))
++
++    const waiting = ctx.approval.request(requestOf(owner))
++    await vi.waitFor(() => expect(received?.requestId).toBeDefined())
++    const requestId = received?.requestId
++    expect(requestId).toBeDefined()
++    if (requestId === undefined) throw new Error('approval request id was not published')
++    await expect(ctx.approval.decide(foreign, { requestId, decision: 'rejected' }))
++      .resolves.toEqual({ accepted: false, reason: 'request-stale' })
++    await expect(ctx.approval.decide(owner, { requestId, decision: 'rejected' }))
++      .resolves.toEqual({ accepted: true, outcome: 'rejected' })
++    await expect(waiting).resolves.toBe('rejected')
++    await expect(ctx.approval.decide(owner, { requestId, decision: 'allowed-once' }))
++      .resolves.toEqual({ accepted: false, reason: 'request-stale' })
++  })
++})
++
+ describe('approval policy (the approval/policy fold)', () => {
+   const NEVER_SENTENCE = 'Approval prompts are disabled in this session: actions that require approval are rejected automatically — do not request sandbox escalation (do not set `sandbox_permissions`).'
+   const ASK_SENTENCE = 'Approval prompts are enabled in this session: operations that require approval may ask through the configured answerers; without an available answerer, the request fails closed.'
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 89f0173b55a4ec915dc4809d09caa42dfd017662..4c632a3050aef5a73567572afe87c51ab93d686f 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1739,6 +1739,9 @@ importers:
+       '@deepseek-ai/dsh-typert-registry':
+         specifier: workspace:*
+         version: link:../../typert/registry
++      '@deepseek-ai/dsh-user-approval':
++        specifier: workspace:*
++        version: link:../../interaction/user-approval
+       '@deepseek-ai/dsh-util-crypto':
+         specifier: workspace:*
+         version: link:../../util/crypto

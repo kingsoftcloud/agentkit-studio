@@ -1,3 +1,5 @@
+import { channelMetadataFilename } from './desktop-release-channels.mjs'
+
 /** Immutable upload list for one desktop release publication.
  *
  * The Studio layout publishes only canonical `studio/` objects. The legacy
@@ -5,7 +7,9 @@
  * older releases and for the explicit compatibility origin; writing them from
  * every publish kept failing on release credentials scoped to `studio/*`.
  */
+
 export function desktopReleaseUploads({ expectedBase, plan, selectedChannel, target = 'mac-arm64', storageOrigin, feedOrigin, compatibilityOrigin }) {
+  const feedName = channelMetadataFilename(selectedChannel)
   const uploadRoot = `dsh-desk/bin/${target}`
   const feedRoot = `dsh-desk/feeds/${target}`
   const uploads = [
@@ -15,14 +19,14 @@ export function desktopReleaseUploads({ expectedBase, plan, selectedChannel, tar
     ['mac-arm64-release.json', plan?.releaseKey || `${feedRoot}/mac-arm64-release.json`, 'application/json', storageOrigin],
   ]
   if (plan) {
-    uploads.push([`${selectedChannel}-mac.yml`, plan.feedKey, 'application/yaml', storageOrigin])
-    if (storageOrigin !== feedOrigin) uploads.push([`${selectedChannel}-mac.yml`, plan.feedKey, 'application/yaml', feedOrigin])
+    uploads.push([feedName, plan.feedKey, 'application/yaml', storageOrigin])
+    if (storageOrigin !== feedOrigin) uploads.push([feedName, plan.feedKey, 'application/yaml', feedOrigin])
   } else {
-    uploads.push([`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', feedOrigin])
+    uploads.push([feedName, `${feedRoot}/${feedName}`, 'application/yaml', feedOrigin])
   }
   if (compatibilityOrigin) {
     for (const origin of new Set([feedOrigin, storageOrigin, compatibilityOrigin])) {
-      uploads.push([`${selectedChannel}-mac.yml`, `${feedRoot}/${selectedChannel}-mac.yml`, 'application/yaml', origin])
+      uploads.push([feedName, `${feedRoot}/${feedName}`, 'application/yaml', origin])
     }
   }
   return uploads

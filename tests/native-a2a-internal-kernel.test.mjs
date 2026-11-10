@@ -9,12 +9,13 @@ import { fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { internalPeer, spec, scope, taskId } from './fixtures/native-a2a-internal-peer.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 for (const lost of [false, true]) test(`actual Native turn ${lost ? 'retains unknown effect after lost Bind' : 'completes through the internal managed A2A transport'}`, async t => {
   const f = await internalPeer({ streaming: true, mode: lost ? 'bind-lost' : 'complete' }), stateDir = join(f.root, 'state');
   f.setRecordDirectory(join(stateDir, 'a2a-calls'));
   const store = new SqliteRunStore(join(f.root, 'runs.sqlite')), registry = new Map(); let models = 0, approvals = 0;
   const ctx = { effect: work => work(), sandboxPolicy: { resolve: () => ({ mode: 'read-only' }) },
-    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: {
+    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: nativeDshBatchPeer({
       register(value) { registry.set(value.name, value); return () => registry.delete(value.name); },
       async execute(input) {
         const tool = registry.get(input.name);
@@ -22,7 +23,7 @@ for (const lost of [false, true]) test(`actual Native turn ${lost ? 'retains unk
           return { isError: false, value, content: tool.output.render(input.arguments, value) }; }
         catch (error) { return { isError: true, content: [{ type: 'text', text: error.code ?? error.message }] }; }
       },
-    } };
+    }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, a2aBindings: [spec] },
     workspaceRoot: f.workspaceRoot, stateDir, commandEnvironment: f.env });
   t.after(async () => { await gateway.close(); store.close(); await f.close(); });

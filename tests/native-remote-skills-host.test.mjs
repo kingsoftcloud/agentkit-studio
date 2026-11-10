@@ -18,6 +18,7 @@ import { createZip } from '../src/zip.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';
 import { loadConfiguredNativeSkills } from '../src/providers/native-skill-source.mjs';
 import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 const instructions = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\nRead the supplied JSON.';
 const zip = createZip([{ name: 'SKILL.md', data: instructions }, { name: 'scripts/run.mjs', data: 'console.log(42)' }]);
@@ -84,7 +85,7 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
   // same mutable object when a later model tool call eventually arrives.
   values.cloudAccessKey = 'changed-key'; values.cloudAccountId = 'changed-account'; values.cloudServerUrl = 'https://foreign.example';
   const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'read-only' }) },
-    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: {
+    approval: { request: async () => { approvals++; return 'allowed-once'; } }, tools: nativeDshBatchPeer({
       register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
       async execute(input) {
         if (denied) return { isError: true, content: [{ type: 'text', text: 'Policy denied' }] };
@@ -93,7 +94,7 @@ async function setup(t, { wrongHash = false, denied = false, rest = false, workf
           return { isError: false, value, content: tool.output.render(input.arguments, value) }; }
         catch (error) { return { isError: true, content: [{ type: 'text', text: error.code ?? error.message }] }; }
       },
-    } };
+    }) };
   const config = { agentId: scope.agentId, agentRevision: 1, skillSpaceIds: localOnly ? [] : ['space'] };
   const peer = e2b ? skillE2BSdk(t, { root: join(root, 'e2b-peer'), before(method) {
     if (!['create', 'run', 'write', 'kill'].includes(method)) return;

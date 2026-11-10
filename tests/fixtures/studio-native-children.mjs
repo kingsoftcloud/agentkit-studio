@@ -30,7 +30,7 @@ export async function apply(ctx, options) {
       subAgents: [a2aProof
         ? { name: 'reader', instructions: 'CHILD_A2A_RESEARCHER: ask the bound remote agent and report its exact reply.',
           tools: ['call_a2a_agent'], modelProfileId: 'child-profile', maxTurns: 3, maxToolCalls: 2 }
-        : options.writingRecovery
+        : options.writingRecovery || options.approvalRestartUrl
         ? { name: 'writer', instructions: 'CHILD_WORKSPACE_WRITER: write child.txt in the isolated child workspace and report completion.',
           tools: ['read_workspace_file', 'write_workspace_file'], modelProfileId: 'child-profile',
           inheritMcp: Boolean(options.mcpUrl), maxTurns: options.mcpUrl ? 5 : 4, maxToolCalls: options.mcpUrl ? 3 : 2 }
@@ -39,11 +39,13 @@ export async function apply(ctx, options) {
             ...(options.editMatching ? ['edit_workspace_file', 'multi_edit_workspace_file'] : []),
             ...(options.structuredPatch ? ['apply_workspace_patch'] : []),
             ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : [])], modelProfileId: 'child-profile', maxTurns: options.taskControls || options.workspaceRewind ? 5 : 3, maxToolCalls: options.taskControls || options.workspaceRewind ? 4 : 2 }],
-      bindings: { nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1', mode: 'loose', rules: {} },
+      bindings: { nativeAgentPolicy: { contract: 'agentkit.native-agent-policy/v1',
+        ...(options.approvalRestartUrl ? { mode: 'custom', rules: { native_delegate: 'inherit', write_workspace_file: 'ask' } }
+          : { mode: 'loose', rules: {} }) },
         tools: a2aProof ? ['call_a2a_agent'] : options.structuredPatch ? ['read_workspace_file', 'apply_workspace_patch',
         ...(options.workspaceRewind ? ['list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files'] : [])]
         : options.editMatching ? ['read_workspace_file', 'edit_workspace_file', 'multi_edit_workspace_file']
-        : options.writingRecovery || options.childPlanMode ? ['read_workspace_file', 'write_workspace_file']
+        : options.writingRecovery || options.childPlanMode || options.approvalRestartUrl ? ['read_workspace_file', 'write_workspace_file']
           : options.commandWorkspace ? ['read_workspace_file', 'run_command'] : ['read_workspace_file'],
         ...(a2aProof ? { a2a: a2aProof.bindings } : {}),
         ...(options.mcpUrl ? { mcpServers: ['child-proof-mcp'] } : {}),
@@ -129,6 +131,26 @@ export async function apply(ctx, options) {
       return (await response.json()).outcome;
     }, { prepend: true });
   }
+  if (options.approvalRestartUrl) {
+    ctx.on('approval/request', async request => {
+      if (request.agent.session.id !== 'native-child-parent' || request.toolName !== 'write_workspace_file') return;
+      if (await ctx.sessions.flush(request.agent.session) !== true) throw Error('Approval Session was not durable');
+      const response = await fetch(options.approvalRestartUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pid: process.pid, callId: request.callId }), signal: request.signal });
+      if (!response.ok) throw Error('Approval test peer failed');
+      return (await response.json()).outcome;
+    }, { prepend: true });
+    ctx.on('tools/execute', async (request, next) => {
+      if (['read_workspace_file', 'write_workspace_file'].includes(request.name)) {
+        await appendFile(join(home, 'approval-tool-dispatches.jsonl'),
+          JSON.stringify({ pid: process.pid, name: request.name, callId: request.callId }) + '\n');
+      }
+      return next();
+    });
+    ctx.effect(() => async () => {
+      await appendFile(join(home, 'approval-host-disposals.jsonl'), JSON.stringify({ pid: process.pid }) + '\n');
+    }, 'approval Host disposal proof');
+  }
   let catalogBuildId = '';
   let activeAgent;
   const authenticate = async () => {
@@ -180,7 +202,7 @@ export async function apply(ctx, options) {
   }
   const presetId = dshPresetId(record.metadata.id, record.metadata.revision, catalogBuildId);
   // The real SessionController must be callable before reconstructing an agent.
-  if (options.writingRecovery) await authenticate();
+  if (options.writingRecovery || options.approvalRestartUrl) await authenticate();
   ctx.on('agent/created', async ({ agent, source }) => {
     if (agent.session.id !== 'native-child-parent') return;
     activeAgent = agent;

@@ -8,6 +8,7 @@ import { fixture, scope, digest } from './native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { sessionKeyFor } from '@kingsoftcloud/agentkit-harness-node/native/workspace-state';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
+import { nativeDshBatchPeer } from './native-dsh-batch-peer.mjs';
 
 const [root, phase, policy] = process.argv.slice(2), workspaceRoot = join(root, 'workspace'), stateDir = join(root, 'tool-state');
 mkdirSync(workspaceRoot, { recursive: true });
@@ -29,7 +30,7 @@ if (policy === 'mid' && phase === 'repair') {
   };
 }
 let dispatches = 0, models = 0;
-const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: policy === 'denied' && phase !== 'write' ? 'read-only' : 'workspace-write' }) }, tools: {
+const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: policy === 'denied' && phase !== 'write' ? 'read-only' : 'workspace-write' }) }, tools: nativeDshBatchPeer({
   register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
   execute: async input => {
     dispatches++;
@@ -38,7 +39,7 @@ const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ m
     const output = await registry.get(input.name).execute(input.arguments, input);
     return { isError: false, content: [{ type: 'text', text: phase === 'repair' && policy === 'rejected' ? 'Post-policy rejected compensation' : output.result }] };
   },
-} };
+}) };
 const bound = createNativeDshTools({ ctx, config: { toolBindings: ['apply_workspace_patch'] }, workspaceRoot, stateDir });
 const admitted = phase === 'write' ? fixture({ tools: bound.definitions(agent, [...registry.values()]), limits: { leaseMs: 1000 } }) : null;
 const ports = bound.forAgent(agent, { scope, store });

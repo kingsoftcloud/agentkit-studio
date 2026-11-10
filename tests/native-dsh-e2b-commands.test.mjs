@@ -10,6 +10,7 @@ import { NativeKernel, emptyUsage, canonical, BACKGROUND_NOTIFICATION_ADMISSION 
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 const names = ['sandbox_status', 'run_command', 'read_command_output', 'stop_command'];
 const environment = () => ({ KSADK_SANDBOX_BACKEND: 'e2b', KSADK_SANDBOX_TEMPLATE_ID: 'fixed-template',
@@ -91,6 +92,7 @@ function setup(t, { hold = false, env = environment(), denied = false } = {}) {
       } catch (error) { return { isError: true, content: [{ type: 'text', text: error.code ?? error.message }] }; }
     },
   } };
+  ctx.tools = nativeDshBatchPeer(ctx.tools);
   function bind(changedEnv = env) {
     gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: names }, workspaceRoot, stateDir,
       commandEnvironment: changedEnv, e2bLoadSdk: async () => { loads++; return sdk; } });

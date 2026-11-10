@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createModelService } from '../src/model-service.mjs';
 import { createModelSettingsSection } from '../src/client/pages/model-settings.mjs';
 
-function ui(metadata, input, runtimeOptions = {}) {
+function ui(metadata, input, runtimeOptions = {}, hostOverrides = {}) {
   const values = { modelProfiles: [{ id: 'configured', provider: 'custom', modelName: 'vision', baseUrl: 'https://gateway.test/v1', credentialName: 'KEY', enabled: true, default: true, input, ...runtimeOptions }] };
   const config = {
     resolve: async () => ({ values }), describe: async () => ({ modelProfiles: values.modelProfiles }),
@@ -20,7 +20,7 @@ function ui(metadata, input, runtimeOptions = {}) {
     return [states[index], next => { states[index] = typeof next === 'function' ? next(states[index]) : next; dirty = true; }];
   };
   const useEffect = callback => { const index = cursor++; if (!(index in states)) { states[index] = true; effects.push(callback); } };
-  const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync };
+  const host = { settings: service.settings, updateSettings: service.save, modelCatalog: service.catalog, syncModelCredential: service.sync, ...hostOverrides };
   const dshModel = { describe: async () => ({ namespaces: [] }), credentialStatus: async () => ({ configured: true }), applyProfiles: async payload => { applied = payload; } };
   const Component = createModelSettingsSection({
     ui: { React: { createElement: h, useState, useEffect }, BRAND: {}, Pill: 'pill', inputStyle: () => ({}), buttonStyle: () => ({}), SecretInput: 'SecretInput' },
@@ -87,4 +87,107 @@ test('the Native thinking control changes only its declared option and preserves
   view.nodes().find(node => node.type === 'select' && node.props.value === 'enabled').props.onChange({ target: { value: 'default' } });
   await view.settle(); await view.save(); await view.settle();
   assert.deepEqual(view.values.modelProfiles[0].parameters, { stream: true, temperature: 0.2 });
+});
+
+test('model settings keeps at least one enabled profile', async () => {
+  const view = ui({ id: 'vision', input: ['text'] }, ['text']);
+  await view.settle();
+  const toggle = view.nodes().find(node => node.type === 'button' && node.children.includes('停用'));
+  assert.ok(toggle);
+  toggle.props.onClick();
+  await view.settle();
+  assert.match(view.text(), /至少保留一个启用的模型/);
+  assert.match(view.text(), /已配置/);
+});
+
+test('model settings reads an unsaved key before selecting a model and keeps it out of save payloads', async () => {
+  let probed;
+  const view = ui({ id: 'vision', input: ['text'] }, ['text'], {}, {
+    probeModelEndpoint: async payload => {
+      probed = payload;
+      return { items: [{ id: 'catalog-model', name: 'Catalog model', input: ['text'] }] };
+    },
+  });
+  await view.settle();
+  const keyField = view.nodes().find(node => node.props?.label === 'API Key');
+  assert.ok(keyField);
+  keyField.props.onChange({ target: { value: 'unsaved-key' } });
+  await view.settle();
+  const readButton = view.nodes().find(node => node.type === 'button' && node.children.includes('读取模型'));
+  assert.ok(readButton);
+  readButton.props.onClick();
+  await view.settle();
+  assert.equal(probed.apiKey, 'unsaved-key');
+  assert.equal(view.values.modelProfiles[0].apiKey, undefined);
+  assert.match(view.text(), /Catalog model/);
+  assert.match(view.text(), /已读取 1 个模型/);
+  const testButton = view.nodes().find(node => node.type === 'button' && node.children.includes('测试连接'));
+  assert.ok(testButton);
+  testButton.props.onClick();
+  await view.settle();
+  assert.match(view.text(), /连接成功/);
+});
+
+const reasoningSelect = view => view.nodes().find(node => node.type === 'select' && node.props['aria-label'] === '思考等级');
+const providerSelect = view => view.nodes().find(node => node.type === 'select' && node.props['aria-label'] === '提供商');
+const optionValues = select => select.children.filter(node => node.type === 'option').map(node => node.props.value);
+
+test('the reasoning selector lists only the levels the provider accepts and shows the wire value', async () => {
+  const view = ui({ id: 'gpt', input: ['text'] }, ['text'], { provider: 'openai', reasoningEfforts: true, defaultReasoningEffort: 'medium' });
+  await view.settle();
+  const select = reasoningSelect(view);
+  assert.ok(select);
+  assert.equal(select.props.value, 'medium');
+  assert.equal(select.props['data-model-reasoning'], 'medium');
+  assert.deepEqual(optionValues(select), ['', 'low', 'medium', 'high']);
+  const labels = Object.fromEntries(select.children.filter(node => node.type === 'option').map(node => [node.props.value, node.children.join('')]));
+  assert.equal(labels.high, '高 → high');
+  assert.equal(labels.medium, '中 → medium');
+  assert.equal('max' in labels, false);
+  assert.match(view.text(), /实际发送 reasoning_effort=medium/);
+});
+
+test('a Codex profile shows that its top level is sent as high', async () => {
+  const view = ui({ id: 'gpt', input: ['text'] }, ['text'], { provider: 'codex', reasoningEfforts: true, defaultReasoningEffort: 'max' });
+  await view.settle();
+  const select = reasoningSelect(view);
+  assert.equal(select.props.value, 'max');
+  assert.equal(select.props['data-model-reasoning'], 'high');
+  const top = select.children.find(node => node.type === 'option' && node.props.value === 'max');
+  assert.equal(top.children.join(''), '最高 → high');
+  assert.match(view.text(), /实际发送 reasoning_effort=high/);
+});
+
+test('an unknown provider exposes only the two safe, same-named levels', async () => {
+  const view = ui({ id: 'custom', input: ['text'] }, ['text'], { provider: 'custom', reasoningEfforts: true });
+  await view.settle();
+  const select = reasoningSelect(view);
+  assert.deepEqual(optionValues(select), ['', 'low', 'high']);
+  assert.match(view.text(), /未识别的提供商/);
+});
+
+test('switching provider falls back to its default level instead of keeping an illegal one', async () => {
+  const view = ui({ id: 'deepseek', input: ['text'] }, ['text'], { provider: 'ksyun', reasoningEfforts: true, defaultReasoningEffort: 'max' });
+  await view.settle();
+  assert.equal(reasoningSelect(view).props.value, 'max');
+  providerSelect(view).props.onChange({ target: { value: 'openai' } });
+  await view.settle();
+  assert.equal(reasoningSelect(view).props.value, 'medium');
+  assert.match(view.text(), /思考等级「最高」不受支持，已改为「中」/);
+  assert.match(view.text(), /发送 medium/);
+  await view.save();
+  await view.settle();
+  assert.equal(view.values.modelProfiles[0].provider, 'openai');
+  assert.equal(view.values.modelProfiles[0].reasoningEfforts, true);
+  assert.equal(view.values.modelProfiles[0].defaultReasoningEffort, 'medium');
+});
+
+test('a model without reasoning keeps「不启用」and writes no effort into the profile', async () => {
+  const view = ui({ id: 'vision', input: ['text'] }, ['text']);
+  await view.settle();
+  assert.equal(reasoningSelect(view).props.value, '');
+  await view.save();
+  await view.settle();
+  assert.equal('reasoningEfforts' in view.values.modelProfiles[0], false);
+  assert.equal('defaultReasoningEffort' in view.values.modelProfiles[0], false);
 });

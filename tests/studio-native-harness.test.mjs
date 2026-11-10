@@ -36,6 +36,7 @@ import { nativeLocalExecutionMethods } from '../src/providers/native-local-execu
 import { createNativeWorkspaceTools } from '@kingsoftcloud/agentkit-harness-node/native/workspace-tools';
 import { nativeWorkspaceContextBinding } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
 import { bindNativeSessionWorkspace } from '../src/providers/native-session-workspace.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 async function setup(t, { spec = {}, profile = {}, respond, renderPrompt, catalog = [], contextSources, sqlite = false, recovery = true, storeAlias = false, trace = false, resources, inspection = false } = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'studio-native-host-unit-'));
@@ -116,12 +117,12 @@ for (const content of ['42\n', ' \t42\r\n\n']) test(`selected Session workspace 
   let directory = selected;
   f.services.workingDirectory = { get: () => directory, set: async (_agent, path) => { directory = path; }, ensure: async () => directory };
   f.services.sandboxPolicy = { resolve: () => ({ mode: 'workspace-write' }) };
-  const registry = new Map(), ctx = { get: key => f.services[key], effect: install => install(), tools: {
+  const registry = new Map(), ctx = { get: key => f.services[key], effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'],
     register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(exec) { const definition = registry.get(exec.name), value = await definition.execute(exec.arguments, exec);
       return { isError: false, value, content: definition.output.render(exec.arguments, value) }; },
-  } };
+  }) };
   const workspace = bindNativeSessionWorkspace({ ctx, agent: f.payload.agent, fallbackRoot: join(f.root, 'workspace') });
   const gateway = createNativeDshTools({ ctx, config: { agentId: f.record.metadata.id,
     toolBindings: ['write_workspace_file', 'read_workspace_file'] }, ...workspace, stateDir: join(f.root, 'tools') });
@@ -159,11 +160,11 @@ test('changing Session directory while approval waits prevents the pending write
   f.services.workingDirectory = { get: () => directory, set: async (_agent, path) => { directory = path; }, ensure: async () => directory };
   f.services.sandboxPolicy = { resolve: () => ({ mode: 'read-only' }) };
   f.services.approval = { request: async () => { directory = join(f.root, 'workspace'); return 'allowed-once'; } };
-  const registry = new Map(), ctx = { get: key => f.services[key], effect: install => install(), tools: {
+  const registry = new Map(), ctx = { get: key => f.services[key], effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'], register(definition) { registry.set(definition.name, definition); return () => registry.delete(definition.name); },
     async execute(exec) { const definition = registry.get(exec.name), value = await definition.execute(exec.arguments, exec);
       return { isError: false, content: definition.output.render(exec.arguments, value) }; },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { agentId: f.record.metadata.id, toolBindings: ['write_workspace_file'] },
     ...bindNativeSessionWorkspace({ ctx, agent: f.payload.agent, fallbackRoot: join(f.root, 'workspace') }), stateDir: join(f.root, 'tools') });
   t.after(() => gateway.close()); f.payload.binding.nativeTools = gateway; f.payload.input.assembly.tools = [...registry.values()];
@@ -520,7 +521,7 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (
   const scope = bound.scope;
   assert.equal(bound.configuration.outputRecoveryPolicy, 'response-boundary/v2');
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v2', rule: 'auto' });
-  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v3', rule: 'auto' });
+  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v4', rule: 'auto' });
   assert.equal(bound.configuration.profile.maxProviderRetries, 10);
   assert.equal(bound.configuration.providerRecoveryPolicy, 'provider-recovery/v2');
   assert.equal(bound.configuration.profile.streamTimeoutPolicy, 'idle/v1');
@@ -1569,11 +1570,11 @@ for (const submission of ['early declaration', 'atomic result', 'ordinary prose'
       function:{name:call.name,arguments:JSON.stringify(call.arguments)}}]}:{content:'Source notes are in report.md; independent semantic acceptance remains unverified.'},
       finish_reason:call?'tool_calls':'stop'}]};
   }});
-  const gateway=createNativeDshTools({ctx:{effect:install=>install(),sandboxPolicy:{resolve:()=>({mode:'workspace-write'})},tools:{
+  const gateway=createNativeDshTools({ctx:{effect:install=>install(),sandboxPolicy:{resolve:()=>({mode:'workspace-write'})},tools:nativeDshBatchPeer({
     resultRetentions:['caller/v1'],register(tool){registry.set(tool.name,tool);return()=>registry.delete(tool.name);},
     async execute(input){effects.push(input.name);const tool=registry.get(input.name),value=await tool.execute(input.arguments,input);
       return {isError:false,value,content:tool.output.render(input.arguments,value)};}
-  }},config:{agentId:f.record.metadata.id,toolBindings:['write_workspace_file','read_workspace_file']},
+  })},config:{agentId:f.record.metadata.id,toolBindings:['write_workspace_file','read_workspace_file']},
     workspaceRoot:join(f.root,'workspace'),stateDir:join(f.root,'delivery-state')});
   t.after(()=>gateway.close());f.payload.binding.nativeTools=gateway;f.payload.input.assembly.tools=[...registry.values()];
   await f.host.executeTurn(f.payload);
@@ -1597,7 +1598,7 @@ test('Studio Native executes Web through its ledger, replays its result and reje
     return { choices: [{ index: 0, delta: { content: 'Search completed.' }, finish_reason: 'stop' }] };
   } });
   const registry = new Map(), calls = [];
-  const gateway = createNativeDshTools({ ctx: { effect: install => install(), tools: {
+  const gateway = createNativeDshTools({ ctx: { effect: install => install(), tools: nativeDshBatchPeer({
     resultRetentions: ['caller/v1'],
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(input) {
@@ -1605,7 +1606,7 @@ test('Studio Native executes Web through its ledger, replays its result and reje
       const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
       return { isError: false, value, content: tool.output.render(input.arguments, value) };
     },
-  } }, config: { toolBindings: ['web_search'] }, workspaceRoot: join(fixture.root, 'workspace'),
+  }) }, config: { toolBindings: ['web_search'] }, workspaceRoot: join(fixture.root, 'workspace'),
   stateDir: join(fixture.root, 'web-state'), webEnvironment: { KSADK_WEB_SEARCH_PROVIDER: 'fake' } });
   t.after(() => gateway.close());
   fixture.payload.binding.nativeTools = gateway;
@@ -1660,7 +1661,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
     return { choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] };
   } catch (error) { modelFailure ??= error; throw error; } } });
   const gateway = createNativeDshTools({ ctx: { effect: install => install(),
-    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
       resultRetentions: ['caller/v1'],
       register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
       async execute(input) {
@@ -1668,7 +1669,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
         const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
         return { isError: false, value, content: tool.output.render(input.arguments, value) };
       },
-    } }, config: { toolBindings: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'] },
+    }) }, config: { toolBindings: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'] },
     workspaceRoot: join(f.root, 'workspace'), stateDir: join(f.root, 'deadline-state') });
   t.after(() => gateway.close()); f.payload.binding.nativeTools = gateway;
   f.payload.input.assembly.tools = [...registry.values()];
@@ -1714,7 +1715,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
     return { choices: [{ index: 0, delta: { content: text }, finish_reason: 'stop' }] };
   } catch (error) { modelFailure ??= error; throw error; } } });
   const gateway = createNativeDshTools({ ctx: { effect: install => install(),
-    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: {
+    sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
       resultRetentions: ['caller/v1'],
       register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
       async execute(input) {
@@ -1722,7 +1723,7 @@ for (const frozen of [false, true]) test(`shared Native Host ${frozen ? 'Frozen 
         const tool = registry.get(input.name), value = await tool.execute(input.arguments, input);
         return { isError: false, value, content: tool.output.render(input.arguments, value) };
       },
-    } }, config: { agentId: f.record.metadata.id,
+    }) }, config: { agentId: f.record.metadata.id,
       toolBindings: ['read_workspace_file', 'write_workspace_file', 'edit_workspace_file', 'search_workspace_files'] },
     workspaceRoot: join(f.root, 'workspace'), stateDir: join(f.root, 'deadline-product-state') });
   t.after(() => gateway.close()); f.payload.binding.nativeTools = gateway;

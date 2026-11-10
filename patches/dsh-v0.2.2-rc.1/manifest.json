@@ -638,7 +638,7 @@
       "file": "019-studio-product-update-feed.patch",
       "category": "updater",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "5cf6c3e899b38c9b6cc55f67f3c682c660206f9a1761dada153e2fb7c8678bf0",
+      "sha256": "087e4df1724683311f93728355ebf7039b54087653916fead8a49fee3c4576d6",
       "dependsOn": [
         "009",
         "014"
@@ -1113,7 +1113,7 @@
       "file": "032-windows-studio-product.patch",
       "category": "packaging",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "7f815d3f3aa234a710d37e73c2107d0ddd30f9301f30c0db5e8f69d692a4c847",
+      "sha256": "988176c2421c995903ef4e7b6718d7a9a709186d3750c50faf3404ca626e760e",
       "dependsOn": [
         "009",
         "019",
@@ -2047,7 +2047,7 @@
       "file": "075-rc1-host-test-contracts.patch",
       "category": "general-fix",
       "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-      "sha256": "a981c13f9005820aea596dd88542436e52cc2bf40d747f274f945a77b6ac81d9",
+      "sha256": "9d29608a7903fa533825932ed7a0cd7f3294571ee60501669baca85399bf8bf4",
       "dependsOn": [
         "009",
         "010",
@@ -2061,7 +2061,6 @@
       ],
       "affectedFiles": [
         "apps/desktop/scripts/desktop-upload-plan.ts",
-        "apps/desktop/tests/desktop-auto-update-environment.spec.ts",
         "apps/desktop/tests/desktop-upload-plan.spec.ts",
         "apps/desktop/tests/expected/application-menu-en-US.json",
         "apps/desktop/tests/expected/application-menu-zh-CN.json",
@@ -2109,12 +2108,339 @@
         ]
       },
       "sequence": 44
+    },
+    {
+      "id": "076",
+      "file": "076-studio-feed-prefix-all-platforms.patch",
+      "category": "updater",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "370cc4609d0c5dc735cb61c51e0ad55e68a92e94b48cfec341fe90cfee4fb678",
+      "dependsOn": [
+        "032",
+        "075"
+      ],
+      "affectedFiles": [
+        "apps/desktop/scripts/desktop-auto-update-environment.mjs",
+        "apps/desktop/tests/desktop-auto-update-environment.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Production Studio packaging resolves `<origin>/studio/feeds/<target>/` on macOS and Windows alike: the feed prefix keeps the Studio app-id condition and no longer requires the Windows platform gate.",
+        "The focused updater test pins the Studio public feed directory for darwin/arm64, darwin/x64 and win32/x64."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Backport of the rc2 041 integration feed-prefix change to the DSH 0.2.2-rc.1 maintenance source; the rc1 target has no direct upstream merge."
+      },
+      "removeWhen": "The pinned upstream DSH derives the Studio product feed prefix on every target platform without a Windows-only gate.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/desktop-auto-update-environment.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "electron"
+        ]
+      },
+      "sequence": 45
+    },
+    {
+      "id": "077",
+      "file": "077-certificate-store-signing-parity.patch",
+      "category": "signing",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "4a42adf2ccbbb34e29900eef8e551302a37b82805c827b9466dbe601db6badb3",
+      "dependsOn": [
+        "019",
+        "025"
+      ],
+      "affectedFiles": [
+        "apps/desktop/.env.macos.example",
+        "apps/desktop/scripts/desktop-package-environment.mjs",
+        "apps/desktop/scripts/macos-signing-keychain.mjs",
+        "apps/desktop/scripts/test-windows-installer.mjs",
+        "apps/desktop/scripts/windows-signing-preflight.ts",
+        "apps/desktop/tests/macos-signing-keychain.spec.ts",
+        "apps/desktop/tests/windows-signing-preflight.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Certificate-store Windows packaging compiles and signs the probe without a SafeNet key container or PIN; the token path still verifies the public container identity before signing.",
+        "The Windows signing preflight records the certificate-store thumbprint, rejects an unknown signing mode before compiling or signing, and keeps the configured certificate and timestamp verification.",
+        "An existing macOS signing keychain can be selected with DSH_DESKTOP_MACOS_SIGNING_KEYCHAIN instead of CSC_LINK and CSC_KEY_PASSWORD; the keychain is never unlocked, modified or deleted by the packaging invocation.",
+        "The manual Windows installer signing harness passes the selected signing mode so certificate-store signing works there too."
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Desktop release maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Backport of the rc2 041 integration signing configuration to the DSH 0.2.2-rc.1 maintenance source; the rc2 patch set does not adapt the 0.2.2 certificate-store preflight."
+      },
+      "removeWhen": "The pinned upstream DSH preflight understands certificate-store signing and its packaging scripts accept an existing macOS signing keychain.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/macos-signing-keychain.spec.ts",
+          "apps/desktop/tests/windows-signing-preflight.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 46
+    },
+    {
+      "id": "078",
+      "file": "078-plugin-alignment-migration-diagnostics.patch",
+      "category": "packaging",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "1d08be52d0d21b47f0b39a9896d2f091fa8304f700d410fed45853aa74117dd7",
+      "dependsOn": [
+        "024",
+        "074"
+      ],
+      "affectedFiles": [
+        "apps/desktop/src/bundled-plugin-alignment.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/plugin-alignment-log.ts",
+        "apps/desktop/src/project-manager.ts",
+        "apps/desktop/src/window-diagnostic.ts",
+        "apps/desktop/tests/bundled-plugin-alignment.spec.ts",
+        "apps/desktop/tests/plugin-alignment-log.spec.ts",
+        "apps/desktop/tests/window-diagnostic.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop"
+      ],
+      "contracts": [
+        "Alignment retires a profile copy of a product bundle whenever its version differs from the bundled copy; a recorded earlier failure never suppresses the retry, so a profile a previous launch could not repair heals on the next launch.",
+        "An equal version performs no work, a profile copy without a readable manifest is quarantined, and a profile copy newer than the shipped one is replaced with the shipped copy and reported as a downgrade with the newer copy backed up.",
+        "The sealed runtime copy is located under Windows path rules (drive-letter case and separator differences) and through the explicit runtime node_modules chain before a profile copy is retired.",
+        "Every launch writes a bounded startup record (bundled version, profile copies, action, loaded version, platform, timestamp) and one post-load window sample (URL, html/body computed app region, drag-strip presence, legacy marker count); no record contains a credential and an unwritable log directory never blocks startup."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Local rc1 reconciliation: the alignment, log and window-diagnostic suites pass on the maintained rc1 source (24 focused cases); no upstream submission or remote CI receipt."
+      },
+      "removeWhen": "Pinned upstream DSH aligns profile product-bundle copies by version without a persisted attempt budget and ships equivalent startup diagnostics.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/bundled-plugin-alignment.spec.ts",
+          "apps/desktop/tests/plugin-alignment-log.spec.ts",
+          "apps/desktop/tests/window-diagnostic.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 47
+    },
+    {
+      "id": "079",
+      "file": "079-session-controller-approval-decision.patch",
+      "category": "session-contract",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "3cf07780e6e6bbf9380c1be423d823a98c769bb4414e097a94285a34f1733c6c",
+      "dependsOn": [
+        "078"
+      ],
+      "affectedFiles": [
+        "packages/api/session-controller/package.json",
+        "packages/api/session-controller/src/index.ts",
+        "packages/api/session-controller/src/types.ts",
+        "packages/api/session-controller/tests/approval-decision.host.spec.ts",
+        "packages/api/session-controller/tests/test-remote.ts",
+        "packages/experimental/liveshare/src/endpoint-classification.ts",
+        "packages/interaction/user-approval/src/index.ts",
+        "packages/interaction/user-approval/src/types.ts",
+        "packages/interaction/user-approval/tests/approval.spec.ts",
+        "pnpm-lock.yaml"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-experimental-liveshare",
+        "@deepseek-ai/dsh-user-approval"
+      ],
+      "contracts": [
+        "The public SessionController approvalDecision RPC accepts only an authenticated Session-owned live approval request id and an allowed-once or rejected decision; the approval service owns stale checks and the paired audit outcome.",
+        "Studio Native answerers consume the DSH approval/decision waterfall while the existing compatibility bridge remains available for older Host routes.",
+        "The public approval decision endpoint is owner-only in LiveShare endpoint classification and is never exposed to a viewer."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio DSH integration maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Implemented and tested in the local DSH 0.2.2-rc.1 maintenance checkout; no upstream or production submission made."
+      },
+      "removeWhen": "Upstream DSH exposes the same SessionController approval decision contract and live approval-service decision seam.",
+      "verification": {
+        "hostTests": [
+          "packages/api/session-controller/tests/approval-decision.host.spec.ts",
+          "packages/interaction/user-approval/tests/approval.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 48
+    },
+    {
+      "id": "080",
+      "file": "080-native-owned-turn-recovery-and-dispatch.patch",
+      "category": "session-contract",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "sha256": "bb15f9f58ec16a2fca7148cb3039d548b56b4403f290db8b40c3fd7ea1995ed7",
+      "dependsOn": [
+        "016",
+        "038",
+        "054",
+        "072",
+        "079"
+      ],
+      "affectedFiles": [
+        "docs/architecture.md",
+        "docs/persistence-catalog.i18n.yaml",
+        "docs/persistence-catalog.md",
+        "docs/persistence-catalog.zh.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.md",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.schema.json",
+        "docs/persistence-changes/2026-10-15-prompt-request-fingerprint.zh.md",
+        "docs/persistence-changes/2026-11-09-external-turn-ownership.i18n.yaml",
+        "docs/persistence-changes/2026-11-09-external-turn-ownership.md",
+        "docs/persistence-changes/2026-11-09-external-turn-ownership.schema.json",
+        "docs/persistence-changes/2026-11-09-external-turn-ownership.zh.md",
+        "docs/persistence-changes/historical-formats/README.i18n.yaml",
+        "docs/persistence-changes/historical-formats/README.md",
+        "docs/persistence-changes/historical-formats/README.zh.md",
+        "docs/persistence-schema.json",
+        "docs/subsystems/core.i18n.yaml",
+        "docs/subsystems/core.md",
+        "docs/subsystems/core.zh.md",
+        "docs/subsystems/session.md",
+        "docs/subsystems/session.zh.md",
+        "docs/subsystems/tools.md",
+        "docs/subsystems/tools.zh.md",
+        "docs/upgrade-guide/v0.2.2-rc.1/external-turn-ownership/guide.i18n.yaml",
+        "docs/upgrade-guide/v0.2.2-rc.1/external-turn-ownership/guide.md",
+        "docs/upgrade-guide/v0.2.2-rc.1/external-turn-ownership/guide.zh.md",
+        "packages/core/agent-loop/README.i18n.yaml",
+        "packages/core/agent-loop/README.md",
+        "packages/core/agent-loop/README.zh.md",
+        "packages/core/agent-loop/package.json",
+        "packages/core/agent-loop/src/agent.ts",
+        "packages/core/agent-loop/src/index.ts",
+        "packages/core/agent-loop/tests/execute-turn-loader.spec.ts",
+        "packages/core/agent-loop/tests/execute-turn.spec.ts",
+        "packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts",
+        "packages/core/agent-loop/tests/external-turn-idle-start.spec.ts",
+        "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/cordis.yml",
+        "packages/core/agent-loop/tests/fixtures/external-turn/driver.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/engine.ts",
+        "packages/core/agent-loop/tests/fixtures/external-turn/idle-driver.ts",
+        "packages/core/agent/README.i18n.yaml",
+        "packages/core/agent/README.md",
+        "packages/core/agent/README.zh.md",
+        "packages/core/agent/src/projection.ts",
+        "packages/core/agent/src/runtime-types.ts",
+        "packages/core/agent/src/types.ts",
+        "packages/core/session/README.i18n.yaml",
+        "packages/core/session/README.md",
+        "packages/core/session/README.zh.md",
+        "packages/core/session/src/external-turn.ts",
+        "packages/core/session/src/index.ts",
+        "packages/core/session/src/known-event-types.ts",
+        "packages/core/session/src/repair.ts",
+        "packages/core/session/src/types.ts",
+        "packages/core/tool-executor-native/src/index.ts",
+        "packages/core/tool-executor-ptc/src/index.ts",
+        "packages/core/tools/README.i18n.yaml",
+        "packages/core/tools/README.md",
+        "packages/core/tools/README.zh.md",
+        "packages/core/tools/src/batch.ts",
+        "packages/core/tools/src/contracts.ts",
+        "packages/core/tools/src/events.ts",
+        "packages/core/tools/src/executor.ts",
+        "packages/core/tools/src/index.ts",
+        "packages/core/tools/src/pipeline.ts",
+        "packages/core/tools/tests/caller-options.spec.ts",
+        "packages/core/tools/tests/scoped.spec.ts",
+        "packages/extensions/cordis-client-runner/src/client/api-catalog.ts",
+        "packages/extensions/tool-cordis/src/api-catalog.ts",
+        "packages/spill/spill-policy/README.i18n.yaml",
+        "packages/spill/spill-policy/README.md",
+        "packages/spill/spill-policy/README.zh.md",
+        "packages/spill/spill-policy/src/index.ts",
+        "packages/spill/spill-policy/tests/spill-policy.spec.ts",
+        "packages/util/values/README.i18n.yaml",
+        "packages/util/values/README.md",
+        "packages/util/values/README.zh.md",
+        "packages/util/values/src/index.ts",
+        "packages/util/values/tests/raw-number.spec.ts",
+        "pnpm-lock.yaml",
+        "scripts/gen-cordis-catalog.ts",
+        "scripts/type-equiv.manifest.json"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-agent",
+        "@deepseek-ai/dsh-agent-loop",
+        "@deepseek-ai/dsh-cordis-client-runner",
+        "@deepseek-ai/dsh-session",
+        "@deepseek-ai/dsh-spill-policy",
+        "@deepseek-ai/dsh-tool-cordis",
+        "@deepseek-ai/dsh-tool-executor-native",
+        "@deepseek-ai/dsh-tool-executor-ptc",
+        "@deepseek-ai/dsh-tools",
+        "@deepseek-ai/dsh-util-values"
+      ],
+      "contracts": [
+        "A session-owned external turn persists ownership and resume identity before execution and can restart from its authoritative terminal or pending state.",
+        "Scoped tool dispatch preserves caller options through the actual executor and does not reuse approval input across unrelated requests.",
+        "The Native caller preserves exact numeric arguments and exposes a replayable, validated tool result for the owning session."
+      ],
+      "risk": "high",
+      "maintainerRole": "Studio Native runtime maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Maintained rc1 source port with local owned-turn and tool dispatch tests."
+      },
+      "removeWhen": "Pinned DSH exposes equivalent session-owned recovery, dispatch options and numeric argument contracts.",
+      "verification": {
+        "hostTests": [
+          "packages/core/agent-loop/tests/execute-turn-loader.spec.ts",
+          "packages/core/agent-loop/tests/execute-turn.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-idle-loader.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-idle-start.spec.ts",
+          "packages/core/agent-loop/tests/external-turn-recovery.spec.ts",
+          "packages/core/tools/tests/caller-options.spec.ts",
+          "packages/core/tools/tests/scoped.spec.ts",
+          "packages/spill/spill-policy/tests/spill-policy.spec.ts",
+          "packages/util/values/tests/raw-number.spec.ts"
+        ],
+        "integrations": [
+          "source"
+        ]
+      },
+      "sequence": 49
     }
   ],
-  "patchedTree": "ecc943386a62d1c22a87aa87f9e186a11ae600f1",
-  "patchedSourceSha256": "0e55020e69beac7fe9f80331a46ea47025a4faec3f210cff85d273b7b4da3dd2",
+  "patchedTree": "acb9025f30640ab4ec7398d885a20d6d632c2d37",
+  "patchedSourceSha256": "88af4d935519156635dc02678db26de4a6c2357174a19eaa59704a5f772b12a0",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "6a86616ce1fde7a4e294bdcd326130e5835b207e87afd18216806804d777e083"
+    "sha256": "b86d93c17d83cffa23f6324934c5519c4725b6df93ebdd5046c9af66cd652a51"
   }
 }

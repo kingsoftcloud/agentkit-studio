@@ -9,6 +9,7 @@ import { NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 import { studioNativeComponentStatus } from '../src/providers/native-component-status.mjs';
 import { skillE2BSdk } from './fixtures/native-skill-e2b-sdk.mjs';
 
@@ -29,6 +30,7 @@ function setup(t, { backend = 'e2b', deny = false } = {}) {
       const definition = registry.get(exec.name), value = await definition.execute(exec.arguments, exec);
       return { isError: false, value, content: definition.output.render(exec.arguments, value) }; },
   } };
+  ctx.tools = nativeDshBatchPeer(ctx.tools);
   const env = { KSADK_SANDBOX_BACKEND: backend, KSADK_SANDBOX_TIMEOUT: '15', KSADK_SANDBOX_TEMPLATE_ID: 'fixed',
     E2B_API_URL: 'https://fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'never-persist-key' };
   const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: ['run_code'] }, workspaceRoot, stateDir,

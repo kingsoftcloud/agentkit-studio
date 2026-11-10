@@ -66,7 +66,9 @@ test('instruction-only Skills execute the Node runtime without inventing a scrip
 });
 
 test('real Skill sidecar facts are bound, redacted and restored with the original workflow receipt', async t => {
-  const script = `${JSON.stringify(process.execPath)} <<'JS'
+  // Avoid V8 code-range reservation inside the capped workflow command.
+  const script = `set -e
+${JSON.stringify(process.execPath)} --jitless <<'JS'
 const fs = require('fs');
 const event = {schema_version: 1, event_id: 'script-one', event_type: 'skill.manifest.parsed', status: 'completed',
  started_at: 10, skill_invocation_id: process.env.KSADK_SKILL_INVOCATION_ID,

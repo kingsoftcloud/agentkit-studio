@@ -29,6 +29,7 @@ import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATIO
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
 import { prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
+import { createNativeApprovalBridge } from '../../providers/native-approval-bridge.mjs';
 import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
 import { createStudioNativeChildWorkspaces } from '../../providers/native-child-workspace-host.mjs';
 import { childCommandResource } from '@kingsoftcloud/agentkit-harness-node/native/child-command-resource';
@@ -67,6 +68,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
   try { unregister = projections.register(nativeDeliveryProjection()); }
   catch (error) { if (!ledger) store.close(); throw error; }
   const lifetime = new AbortController(), active = new Set(), childOwners = new Set(), controls = new Map();
+  const nativeApproval = createNativeApprovalBridge({ ctx });
   const bindingLeases = new Map(), streamRevisions = new WeakMap();
   async function acquireBinding(sessionId, signal) {
     const scoped = AbortSignal.any([signal, lifetime.signal]);
@@ -514,7 +516,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
               let phase;
               try { phase = (store.authority ? store.authority(scope, request.runId) : store.load(scope, request.runId)).snapshot.phase; }
               catch (error) { if (error.code !== 'run_not_found') throw error; }
-              if (!phase || signal.aborted || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
+              if (!phase || (signal.aborted && signal.reason?.kind !== 'disposed')
+                || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
                 await children.owner.releaseRun(request); childOwners.delete(ownedChildren);
               }
             }
@@ -837,6 +840,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     return starting;
   };
   return {
+    nativeApprovalStatus: nativeApproval.snapshot,
+    nativeApprovalDecision: nativeApproval.decide,
     injectSession: sessionInjection.inject,
     resolveInjectionScope: sessionInjection.resolveScope,
     async resolveManagedBinding(payload, { store: managedStore, admission, runId, target, principal }) {
@@ -970,16 +975,17 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     },
     close() {
       if (closing) return closing;
-      closed = true; lifetime.abort(new Error('Studio Native host closed'));
+      closed = true; lifetime.abort(Object.assign(new Error('Studio Native host closed'), { kind: 'disposed' }));
       return closing = (async () => {
         await Promise.all([backgroundStart, waitRecoveryStart]);
         const background = await Promise.allSettled([backgroundOwner?.close(), waitRecoveryOwner?.close(), memoryExtraction.close()]);
         await Promise.allSettled([...active]);
         const children = await Promise.allSettled([...childOwners].flatMap(item => [...item.runIds]
-          .map(runId => item.owner.releaseRun({ scope: item.scope, runId }))));
+          .map(runId => item.owner.closeRun({ scope: item.scope, runId }))));
         childOwners.clear();
         childObservations.clear();
         commandProgress.close();
+        nativeApproval.dispose();
         try { backgroundRegistry?.close(); }
         finally { try { unregister(); } finally { if (!ledger) store.close(); } }
         const failures = [...background, ...children].filter(result => result.status === 'rejected').map(result => result.reason);

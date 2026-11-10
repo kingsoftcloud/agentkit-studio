@@ -1,7 +1,11 @@
+import { createFormKit } from '../components/form-kit.mjs';
+
 export function createPlatformResourcePicker({
-  ui: { React: { createElement: h, useState, useEffect }, BRAND, buttonStyle, inputStyle },
+  ui: { React },
   window = globalThis.window, hostRemote
 }) {
+  const { createElement: h, useState, useEffect } = React;
+  const { Section, Field, Select, Button, Note } = createFormKit({ React });
   const PLATFORM_RESOURCE_META = [
     { kind: 'knowledge-base', label: '知识库', description: '绑定云端知识库，Agent 通过只读检索使用。' },
     { kind: 'memory-instance', label: '记忆库', description: '绑定长期记忆实例，用于跨会话召回与写入。' },
@@ -57,26 +61,23 @@ export function createPlatformResourcePicker({
       setError('配置云端凭证后，点击刷新资源。');
     };
     const hasConnection = Object.values(catalogs).some(catalog => Boolean(catalog?.connectionRef));
-    return h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface, marginTop: '10px' } },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '6px' } },
-        h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, '平台资源'), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '3px' } }, '创建时绑定知识库、记忆库和 Skill Center，引用会写入 Agent Revision。')),
-        h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } },
-          !hasConnection ? h('button', { type: 'button', onClick: connect, style: buttonStyle() }, '配置云端连接') : null,
-          h('button', { type: 'button', onClick: load, disabled: status === 'loading', style: buttonStyle() }, '刷新资源'))),
-      status === 'loading' ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', padding: '8px 0' } }, '正在读取平台资源…') : null,
-      h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginTop: '8px' } }, PLATFORM_RESOURCE_META.map(meta => {
+    return Section({ title: '平台资源', help: '绑定知识库、记忆库和 Skill Center；引用会随 Agent 配置版本保存。',
+      action: h('div', { style: { display: 'flex', gap: '8px' } },
+        !hasConnection ? Button({ size: 'sm', onClick: connect }, '配置云端连接') : null,
+        Button({ size: 'sm', onClick: load, disabled: status === 'loading' }, '刷新资源')) },
+      status === 'loading' ? Note(null, '正在读取平台资源…') : null,
+      h('div', { className: 'af-grid-3' }, PLATFORM_RESOURCE_META.map(meta => {
         const catalog = catalogs[meta.kind];
-        return h('label', { key: meta.kind, style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 700 } }, meta.label,
-          h('select', { value: selectedId(meta.kind), onChange: event => select(meta.kind, event.target.value), style: inputStyle() },
+        return Field({ key: meta.kind, label: meta.label, help: meta.description },
+          Select({ value: selectedId(meta.kind), onChange: event => select(meta.kind, event.target.value) },
             h('option', { value: '' }, catalog?.connectionRef ? `不绑定${meta.label}` : '请先连接云端'),
             selectedId(meta.kind) && !(catalog?.items || []).some(item => item.id === selectedId(meta.kind))
               ? h('option', { value: selectedId(meta.kind), disabled: true }, `${selectedId(meta.kind)}（当前不可用，请重新选择）`)
               : null,
-            (catalog?.items || []).map(item => h('option', { key: item.id, value: item.id, disabled: item.disabled }, item.disabled ? `${item.name}（不可绑定）` : `${item.name} · ${item.region}`))),
-          h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px', fontWeight: 400, lineHeight: 1.4 } }, meta.description));
+            (catalog?.items || []).map(item => h('option', { key: item.id, value: item.id, disabled: item.disabled }, item.disabled ? `${item.name}（不可绑定）` : `${item.name} · ${item.region}`))));
       })),
-      missingBindings.length ? h('div', { role: 'alert', style: { marginTop: '8px', color: BRAND.danger, fontSize: '11px', lineHeight: 1.5 } }, `检测到已失效的平台资源：${missingBindings.map(item => `${item.label}（${item.id}）`).join('、')}。请重新选择后再保存。`) : null,
-      error ? h('div', { role: 'alert', style: { marginTop: '8px', color: BRAND.danger, fontSize: '11px' } }, error) : null);
+      missingBindings.length ? Note({ role: 'alert', tone: 'danger' }, `检测到已失效的平台资源：${missingBindings.map(item => `${item.label}（${item.id}）`).join('、')}。请重新选择后再保存。`) : null,
+      error ? Note({ role: 'alert', tone: 'danger' }, error) : null);
   }
   return PlatformResourcePicker;
 }

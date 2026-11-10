@@ -13,7 +13,6 @@ export default String.raw`
 .agentkit-credential-guide { display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 40px; background: var(--studio-theme-canvas); border-left: .5px solid var(--studio-theme-border); }
 .agentkit-onboarding-form { display: flex; flex-direction: column; justify-content: center; padding: clamp(28px, 5vw, 80px); background: var(--studio-theme-canvas); border-left: .5px solid var(--studio-theme-border); }
 .agentkit-onboarding-form [data-studio-model-settings] { width: 100%; max-width: 640px; margin-inline: auto; }
-.agentkit-onboarding-form [data-onboarding-mode=cloud] form > section { border: 0 !important; padding: 0 !important; background: transparent !important; }
 .agentkit-credential-guide ol { display: flex; gap: 16px; list-style: none; padding: 0; margin: 0; }
 .agentkit-credential-guide li { flex: 1; }
 .agentkit-guide-step { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--studio-theme-inkMuted); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }

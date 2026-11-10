@@ -26,6 +26,11 @@ on:
         description: Actual signed product version
         type: string
         required: true
+      candidate_channel:
+        description: Update lane sealed into the signed artifact name; older candidates used preview or stable
+        type: string
+        default: latest
+        required: false
 permissions:
   contents: read
   actions: read
@@ -63,8 +68,9 @@ jobs:
           CANDIDATE_RUN: ${{ inputs.candidate_run }}
           CANDIDATE_SOURCE: ${{ inputs.candidate_source }}
           CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_CHANNEL: ${{ inputs.candidate_channel }}
         run: |
-          node scripts/prepare-macos-candidate.mjs --repository "$CANDIDATE_REPOSITORY" --run "$CANDIDATE_RUN" --source "$CANDIDATE_SOURCE" --version "$CANDIDATE_VERSION" --output .artifacts/mac-candidate
+          node scripts/prepare-macos-candidate.mjs --repository "$CANDIDATE_REPOSITORY" --run "$CANDIDATE_RUN" --source "$CANDIDATE_SOURCE" --version "$CANDIDATE_VERSION" --channel "$CANDIDATE_CHANNEL" --output .artifacts/mac-candidate
           unzip -q .artifacts/mac-candidate/candidate.zip -d .artifacts/mac-candidate/files
           (cd .artifacts/mac-candidate/files && shasum -a 256 -c SHA256SUMS)
           unzip -q ".artifacts/mac-candidate/files/deepseek-harness-$CANDIDATE_VERSION-mac-arm64.zip" -d "$RUNNER_TEMP/studio-onboarding-app"

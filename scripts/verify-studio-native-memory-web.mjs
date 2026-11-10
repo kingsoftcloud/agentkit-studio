@@ -132,7 +132,6 @@ try {
   await page.getByLabel('启用模型记忆提炼', { exact: true }).check();
   await page.getByLabel('记忆提炼累计字符数', { exact: true }).fill('64');
   await page.getByLabel('记忆写入开关', { exact: true }).selectOption('enabled');
-  await page.getByRole('button', { name: '下一步', exact: true }).click();
   await page.getByRole('button', { name: '创建 Agent', exact: true }).click();
   const row = page.getByRole('row').filter({ hasText: 'Memory Web proof' }); await row.waitFor({ state: 'visible' });
   const list = await rpc('agents/list', { query: 'Memory Web proof', source: 'local', page: 1, limit: 10 });

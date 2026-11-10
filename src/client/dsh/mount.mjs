@@ -13,7 +13,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND } from '../../brand.js';
 
 export function mountStudio(ctx, app) {
   const { ui, authoring, connectionOwner, hostRemote, actions, documentEffects, createDshModelBridge, writeConversationAgent, window, CustomEvent } = app;
-  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, CodexPluginMarketItem, DshPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
+  const { React, BRAND, PANELS, StudioMark, StudioWordmark, AgentContextSelector, CloudPermissionPresentation, CloudSessionStatus, NativeApprovalPanel, CodexPluginMarketItem, DshPluginMarketItem, CredentialOnboarding, ModelSettingsSection, StudioShell, StudioPanelIcon, StudioSettingsLauncher, StudioSettingsSection } = ui;
   const { createElement: h } = React;
   installNativeToolViews(ctx, React);
   installTaskTimeline(ctx, { ui, hostRemote });
@@ -152,6 +152,29 @@ export function mountStudio(ctx, app) {
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
     { name: 'conversation.session.header.actions', id: 'agentkit-studio-native-children', order: -9 },
     props => h(ui.NativeChildPanel, { ...props, requestSessionStop: requestNativeSessionStop }),
+  ));
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+    { name: 'conversation.session.header.actions', id: 'agentkit-studio-native-approval', order: -8 },
+    props => NativeApprovalPanel ? h(NativeApprovalPanel, {
+      ...props,
+      requestApprovalDecision: async request => {
+        let approvalDecision;
+        try {
+          const sessionRemote = ctx.remote?.session;
+          approvalDecision = sessionRemote?.approvalDecision;
+        } catch {
+          // A pre-RPC DSH host keeps the compatibility Studio route alive.
+          return null;
+        }
+        if (typeof approvalDecision !== 'function') return null;
+        const result = await approvalDecision(request);
+        if (result && typeof result === 'object' && 'ok' in result) {
+          if (!result.ok) throw result.error;
+          return result.value;
+        }
+        return result;
+      },
+    }) : null,
   ));
 
   // Authoring entry: only the hero selector keeps the "创建 Agent" button.

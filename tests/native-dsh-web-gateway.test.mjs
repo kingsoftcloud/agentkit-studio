@@ -9,6 +9,7 @@ import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
 import { MemoryRunStore, NativeKernel, emptyUsage } from '@kingsoftcloud/agentkit-harness-core';
 import { scope, fixture, digest } from './fixtures/native-core.mjs';
+import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'], contracts = [], fetch } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'native-web-gateway-'));
@@ -16,7 +17,7 @@ async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'],
   await mkdir(workspaceRoot);
   const registry = new Map(), pipeline = [];
   let denied = false, postFailed = false;
-  const ctx = { effect: install => install(), tools: {
+  const ctx = { effect: install => install(), tools: nativeDshBatchPeer({
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
     async execute(input) {
       pipeline.push({ phase: 'pre', name: input.name, callId: input.callId });
@@ -27,7 +28,7 @@ async function setup(t, { environment = {}, names = ['web_fetch', 'web_search'],
       pipeline.push({ phase: 'post', name: input.name });
       return { isError: postFailed, value, content: tool.output.render(input.arguments, value) };
     },
-  } };
+  }) };
   const gateway = createNativeDshTools({ ctx, config: { toolBindings: names, toolContracts: contracts },
     workspaceRoot, stateDir, webEnvironment: environment, ...(fetch ? { webFetch: fetch } : {}) });
   t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
@@ -130,9 +131,9 @@ test('Native Web is absent unless selected and an MCP tool with the same name re
   // MCP schema. Its real execution is covered by the existing gateway tests.
   const root = await mkdtemp(join(tmpdir(), 'native-web-mcp-')); await mkdir(join(root, 'workspace'));
   const registry = new Map();
-  const gateway = createNativeDshTools({ ctx: { effect: install => install(), tools: {
+  const gateway = createNativeDshTools({ ctx: { effect: install => install(), tools: nativeDshBatchPeer({
     register(tool) { registry.set(tool.name, tool); return () => registry.delete(tool.name); }, execute() {},
-  } }, config: { toolBindings: ['web_fetch'], toolContracts: [{ name: 'web_fetch', executor: 'mcp', resourceId: 'remote' }] },
+  }) }, config: { toolBindings: ['web_fetch'], toolContracts: [{ name: 'web_fetch', executor: 'mcp', resourceId: 'remote' }] },
   workspaceRoot: join(root, 'workspace'), stateDir: join(root, 'state'), executeMcpTool: async () => ({ content: [] }) });
   t.after(async () => { await gateway.close(); await rm(root, { recursive: true, force: true }); });
   assert.equal(gateway.webBinding, null); assert.equal(gateway.definitions({ session: { id: 's' } },

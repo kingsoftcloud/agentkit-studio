@@ -33,7 +33,25 @@ test('explicit release feed inputs preserve origin and lane through platform set
 test('invalid feed or version inputs fail before packaging', () => {
   const credentialUrl = new URL('https://releases.example.org'); credentialUrl.username = 'fixture'; credentialUrl.password = 'fixture';
   for (const updateOrigin of ['http://releases.example.org', credentialUrl.href, 'https://releases.example.org/?token=fixture']) assert.throws(() => resolveProductInputs({ updateOrigin }), /invalid public/);
-  for (const values of [{ target: '__proto__' }, { updateChannel: 'nightly' }, { buildVersion: 'invalid' }, { pluginVersion: '9.0.0' }]) assert.throws(() => resolveProductInputs(values), /invalid public/);
+  for (const values of [{ target: '__proto__' }, { updateChannel: 'beta' }, { buildVersion: 'invalid' }, { pluginVersion: '9.0.0' }]) assert.throws(() => resolveProductInputs(values), /invalid public/);
+});
+
+test('the product default lane and every accepted DSH lane reach the packaged manifest input', () => {
+  assert.equal(product.desktop.updates.channel, 'nightly');
+  for (const updateChannel of ['latest', 'nightly', 'preview', 'stable']) {
+    const inputs = resolveProductInputs({ target: 'mac-arm64', updateChannel });
+    assert.equal(inputs.settings.DSH_DESKTOP_UPDATE_CHANNEL, updateChannel);
+  }
+  assert.equal(resolveProductInputs({ target: 'mac-arm64' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, 'nightly');
+});
+
+test('a lane that cannot serve the release version fails before packaging', () => {
+  for (const updateChannel of ['latest', 'stable']) {
+    assert.throws(() => resolveProductInputs({ target: 'mac-arm64', updateChannel, buildVersion: '0.2.2-rc.1.20261109.1' }),
+      /requires a stable three-segment version/);
+    assert.equal(resolveProductInputs({ target: 'mac-arm64', updateChannel, buildVersion: '0.2.2' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, updateChannel);
+  }
+  assert.equal(resolveProductInputs({ target: 'mac-arm64', updateChannel: 'nightly', buildVersion: '0.2.2-rc.1.20261109.1' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, 'nightly');
 });
 
 test('product assets stay inside the source and bundle defaults remain unambiguous', () => {

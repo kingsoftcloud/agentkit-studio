@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { studioWindowsPublication } from '../src/desktop-release-metadata.mjs';
 import { resolveKs3OriginCredentials, uploadKs3ReleaseArtifact } from '../src/ks3-release-store.mjs';
+import { assertChannelSupportsVersion, assertReleaseChannel, COMPATIBILITY_RELEASE_CHANNELS, DEFAULT_RELEASE_CHANNEL } from '../src/desktop-release-channels.mjs';
+import { compatMirrorEvidence, compatMirrorIsCurrent, compatMirrorPlan } from '../src/desktop-release-feed.mjs';
 
 async function digest(body, algorithm = 'sha512', encoding = 'base64') {
   const hash = createHash(algorithm); let size = 0;
@@ -15,9 +17,21 @@ async function digest(body, algorithm = 'sha512', encoding = 'base64') {
   return { size, hash: hash.digest(encoding) };
 }
 
-export async function publishWindowsCandidate({ candidate, proof, origin, source, version, previous, channel = 'preview',
+/** Read a compatibility feed that may not exist yet; undefined means "create it". */
+async function readCompatFeed(request, objectKey) {
+  const response = await request(objectKey);
+  if (response.status === 404) { await response.body?.cancel(); return undefined; }
+  if (!response.ok) { await response.body?.cancel(); throw Error(`Compatibility feed could not be read: ${response.status} ${objectKey}`); }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+export async function publishWindowsCandidate({ candidate, proof, origin, source, version, previous, channel = DEFAULT_RELEASE_CHANNEL,
   environment = process.env, fetchImpl = fetch, upload = uploadKs3ReleaseArtifact }) {
   if (!/^[0-9a-f]{40}$/.test(source || '') || !previous) throw Error('Source and previous feed state are required');
+  assertReleaseChannel(channel, 'channel');
+  // A prerelease feed on the latest lane leaves every packaged client unable to
+  // check for updates; refuse to publish it before reading or uploading anything.
+  assertChannelSupportsVersion(channel, version, 'candidate version');
   const root = resolve(candidate), output = join(root, '.publication');
   const metadata = YAML.parse(await readFile(join(root, `${channel}.yml`), 'utf8'));
   if (metadata.version !== version) throw Error('Candidate version differs');
@@ -70,7 +84,24 @@ export async function publishWindowsCandidate({ candidate, proof, origin, source
     const response = await request(key);
     if (!response.ok || YAML.stringify(YAML.parse(await response.text())) !== YAML.stringify(plan.metadata)) throw Error('Published Windows feed differs');
   }
-  const result = { ...release, feedUrl: new URL(plan.feedKey, origin).href, rangeVerified: true, bridgeVerified: true };
+  // Every historical Windows install reads the channel sealed into its own
+  // app-update.yml. Mirror the exact published bytes onto the compatibility
+  // lanes and both feed layouts so one update reaches the newest build.
+  const compatMirrors = [];
+  const feedBytes = await readFile(feedPath);
+  for (const mirror of compatMirrorPlan({ version, sourceChannel: channel, target: 'win-x64', channels: COMPATIBILITY_RELEASE_CHANNELS }).mirrors) {
+    const feedUrl = new URL(mirror.objectKey, origin).href;
+    let status = 'unchanged';
+    const uploaded = [];
+    if (!compatMirrorIsCurrent(await readCompatFeed(request, mirror.objectKey), feedBytes)) {
+      uploaded.push(await send(mirror.objectKey, feedPath, mirror.contentType));
+      const published = await readCompatFeed(request, mirror.objectKey);
+      if (!compatMirrorIsCurrent(published, feedBytes)) throw Error(`Published compatibility feed differs: ${mirror.objectKey}`);
+      status = 'updated';
+    }
+    compatMirrors.push(compatMirrorEvidence({ mirror, feedUrl, bytes: feedBytes, status, uploaded }));
+  }
+  const result = { ...release, feedUrl: new URL(plan.feedKey, origin).href, rangeVerified: true, bridgeVerified: true, compatMirrors };
   await writeFile(join(output, 'publication.json'), JSON.stringify(result, null, 2));
   return result;
 }

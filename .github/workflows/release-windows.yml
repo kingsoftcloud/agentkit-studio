@@ -30,7 +30,7 @@ on:
         required: false
         default: ''
       channel:
-        description: Empty uses the qualified product definition; otherwise stable or preview
+        description: Empty uses the qualified product definition; otherwise nightly, latest, preview or stable
         type: string
         default: ''
       update_origin:
@@ -108,6 +108,31 @@ jobs:
         with:
           version: 10.33.2
           package_json_file: package.json
+      - name: Select the Electron download mirror
+        # The GitHub release CDN intermittently answers 504 for the Electron
+        # inputs. The checksum manifest and the platform archive fail
+        # independently - on 2026-11-09 the manifest was healthy while
+        # electron-v44.7.0-win32-x64.zip returned 504 for every attempt, which
+        # aborted packaging after the probe had already passed. Probe both with
+        # a HEAD request and only redirect Electron downloads to the npmmirror
+        # copy when the official source is unusable, so a healthy runner keeps
+        # using GitHub.
+        shell: pwsh
+        run: |
+          $base = 'https://github.com/electron/electron/releases/download/v44.7.0'
+          $probes = @("$base/SHASUMS256.txt", "$base/electron-v44.7.0-win32-x64.zip")
+          $unreachable = @()
+          foreach ($probe in $probes) {
+            curl.exe -fsSLI --retry 3 --retry-delay 2 --max-time 60 --output NUL $probe
+            if ($LASTEXITCODE -ne 0) { $unreachable += $probe }
+          }
+          if ($unreachable.Count -eq 0) {
+            Write-Host 'electron mirror fallback: disabled'
+          } else {
+            Write-Host "official Electron probe failed for: $($unreachable -join ', ')"
+            'ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/' | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Host 'electron mirror fallback: enabled'
+          }
       - name: Resolve qualified public product inputs
         id: product
         shell: pwsh
@@ -227,6 +252,28 @@ jobs:
           $env:DSH_DESKTOP_PRODUCT_TRAY_ICON = Join-Path $PWD $env:STUDIO_PRODUCT_TRAY_ICON
           pnpm exec node scripts/package-desktop.mjs @packageArguments
           if ($LASTEXITCODE) { throw 'Signed Windows packaging failed' }
+      - name: Verify the packaged drag-region contract
+        # The previous Windows package shipped the old whole-viewport caption rule
+        # even though the repair existed on a branch. Inspect the final archive
+        # before the installer is retained; a mismatch fails the build.
+        if: ${{ inputs.candidate_run_id == '' }}
+        id: packaged-drag-region
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .artifacts/windows-proof | Out-Null
+          $targetRoot = "$env:RUNNER_TEMP/studio-build/desktop-checkouts/*/source/apps/desktop/.desktop-build/targets/win-x64"
+          $outputs = @(Get-Item "$targetRoot/artifacts", "$targetRoot/unsigned-artifacts" -ErrorAction SilentlyContinue)
+          $archives = @($outputs | ForEach-Object { Join-Path $_.FullName 'win-unpacked/resources/app.asar' } |
+            Where-Object { Test-Path -LiteralPath $_ })
+          Write-Host "Packaged output directories: $($outputs.FullName -join ', ')"
+          Write-Host "Packaged app.asar candidates: $($archives -join ', ')"
+          if ($archives.Count -ne 1) { throw "Expected exactly one packaged app.asar, found $($archives.Count)" }
+          $archive = $archives[0]
+          node .qualification-tools/scripts/verify-packaged-drag-region.mjs $archive --json .artifacts/windows-proof/drag-region.json
+          if ($LASTEXITCODE) { throw 'Packaged drag-region contract failed' }
+          Copy-Item -LiteralPath $archive -Destination .artifacts/windows-proof/app.asar
+          (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content .artifacts/windows-proof/app.asar.sha256
       - name: Verify timestamped installer and actual installation
         if: ${{ ! inputs.diagnostic_only }}
         shell: pwsh
@@ -277,7 +324,8 @@ jobs:
             }
           }
       - name: Retain signed installer and acceptance evidence
-        if: always()
+        # A failed packaged drag-region check must not leave an installer behind.
+        if: ${{ always() && (inputs.candidate_run_id != '' || steps.packaged-drag-region.outcome == 'success') }}
         uses: actions/upload-artifact@v4
         with:
           name: agentkit-studio-${{ steps.product.outputs.build_version }}-win-x64

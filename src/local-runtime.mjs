@@ -8,6 +8,7 @@ import { checkedResource } from './resource-checks.mjs';
 import { boundSkillResources, loadBoundSkills } from './skill-bindings.mjs';
 import { dshModelRoute } from './model-route.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
+import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
 export class LocalRuntimeError extends Error {
   constructor(code, message, details = {}) {
@@ -256,11 +257,11 @@ export async function prepareLocalResourceContext({ record, input, resourceAdapt
 }
 
 /** OpenAI-compatible chat-completions stream adapter over the model profile. */
-function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signal, modelIdleTimeoutMs }) {
+function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signal, modelIdleTimeoutMs, onReasoningFallback = logReasoningFallback }) {
   if (!profile?.baseUrl || !profile?.apiKey) throw new LocalRuntimeError('MODEL_PROFILE_INVALID', '模型配置缺少 baseUrl 或 API Key');
   // Only a level this profile declared reaches the wire; an undeclared level
   // would be an unknown parameter to the gateway.
-  const reasoningWire = reasoningEffort && profile.reasoningEfforts?.[reasoningEffort];
+  let reasoningWire = reasoningEffort && profile.reasoningEfforts?.[reasoningEffort];
   return {
     async *stream({ messages, tools = [] }) {
       if (signal?.aborted) throw runtimeCancelledError();
@@ -270,15 +271,37 @@ function createGatewayModel({ profile, reasoningEffort, fetchImpl = fetch, signa
       const deadline = createModelIdleDeadline({ signal, timeoutMs: modelIdleTimeoutMs });
       const requestSignal = deadline.signal;
       try {
-      let response;
-      try { response = await fetchImpl(`${profile.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
-        body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(reasoningWire ? { reasoning_effort: reasoningWire } : {}) }),
-        signal: requestSignal,
-      }); } catch {
-        if (signal?.aborted) throw runtimeCancelledError();
-        throw new LocalRuntimeError(requestSignal.aborted ? 'MODEL_TIMEOUT' : 'MODEL_TRANSPORT_FAILED', requestSignal.aborted ? '模型请求超时' : '模型服务连接失败');
+      const requestModel = async wire => {
+        try {
+          return await fetchImpl(`${profile.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${profile.apiKey}` },
+            body: JSON.stringify({ model: profile.modelName || profile.id, messages, stream: true, stream_options: { include_usage: true }, ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(wire ? { reasoning_effort: wire } : {}) }),
+            signal: requestSignal,
+          });
+        } catch {
+          if (signal?.aborted) throw runtimeCancelledError();
+          throw new LocalRuntimeError(requestSignal.aborted ? 'MODEL_TIMEOUT' : 'MODEL_TRANSPORT_FAILED', requestSignal.aborted ? '模型请求超时' : '模型服务连接失败');
+        }
+      };
+      let response = await requestModel(reasoningWire);
+      // A gateway that rejects the reasoning value answers 400 naming it. Drop
+      // once to the provider's highest legal level instead of failing the turn
+      // outright; the retry is skipped when no legal lower value exists.
+      if (response.status === 400 && reasoningWire) {
+        const detail = (await response.text().catch(() => '')).slice(0, 4096);
+        const fallback = studioReasoningFallbackWire(profile);
+        if (isReasoningEffortRejection(response.status, detail) && fallback && fallback !== reasoningWire) {
+          try {
+            onReasoningFallback({ provider: String(profile.provider || ''), model: String(profile.modelName || profile.id || ''),
+              from: reasoningWire, to: fallback, status: response.status });
+          } catch { /* logging is best-effort */ }
+          reasoningWire = fallback;
+          response = await requestModel(reasoningWire);
+        } else {
+          // Preserve the original error detail for modelFailureDetails below.
+          response = new Response(detail, { status: response.status, headers: response.headers });
+        }
       }
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
@@ -339,7 +362,7 @@ function envelope(runId, sessionId, item) {
   return `data: ${JSON.stringify({ conversationItem: item, runId })}\n\n`;
 }
 
-export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch, modelIdleTimeoutMs = 180000 } = {}) {
+export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch, modelIdleTimeoutMs = 180000, onReasoningFallback = logReasoningFallback } = {}) {
 
   return async function handle(request, response, { signal, toolAdapter, agent } = {}) {
     let body = '';
@@ -468,7 +491,7 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
     send({ kind: 'assistant_text', lifecycle: 'running', payload: { text: '' } });
 
     try {
-      const model = createGatewayModel({ profile, reasoningEffort: parsed.reasoningEffort, fetchImpl, signal, modelIdleTimeoutMs });
+      const model = createGatewayModel({ profile, reasoningEffort: parsed.reasoningEffort, fetchImpl, signal, modelIdleTimeoutMs, onReasoningFallback });
       // One model response for the DSH Host. Agent/tool loops are not implemented here.
       let text = '', reasoning = '', calls = [];
       for await (const chunk of model.stream({ messages, tools: nativeTools ? tools : tools.map(toolDefinition) })) {

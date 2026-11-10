@@ -159,7 +159,7 @@ try {
     await target.getByRole('button', { name: '我的智能体', exact: true }).click();
     await rowFor(target).waitFor({ state: 'visible' });
   }
-  async function review(target) { for (let i = 0; i < 3; i++) await target.getByRole('button', { name: '下一步', exact: true }).click(); }
+  async function review(target) { for (let i = 0; i < 2; i++) await target.getByRole('button', { name: '下一步', exact: true }).click(); }
   async function delivery(target) {
     await target.getByText('运行中心', { exact: true }).first().click();
     await target.getByRole('button', { name: '构建与部署', exact: true }).click();
@@ -180,7 +180,7 @@ try {
   await page.getByRole('button', { name: '下一步', exact: true }).click();
   const model = page.getByLabel('默认模型');
   await model.locator('option[value="fixture"]').waitFor({ state: 'attached' }); await model.selectOption('fixture');
-  for (let i = 0; i < 2; i++) await page.getByRole('button', { name: '下一步', exact: true }).click();
+  await page.getByRole('button', { name: '下一步', exact: true }).click();
   await page.getByRole('button', { name: '创建 Agent', exact: true }).click();
   await rowFor(page).waitFor({ state: 'visible' });
   await page.getByLabel('搜索 Agent', { exact: true }).fill('Management Web proof');
@@ -216,7 +216,7 @@ try {
   await review(second); await second.getByRole('button', { name: '保存 Agent', exact: true }).click();
   await second.getByText(/Agent 已被其他窗口更新/).waitFor({ state: 'visible' });
   assert.equal((await rpc('agents/local-get', { agentId })).metadata.revision, 2, 'Conflict must not publish a revision');
-  await second.getByRole('button', { name: /1\. 定义 Agent/ }).click();
+  await second.getByRole('button', { name: /基本信息/ }).click();
   assert.equal(await prompt(second).inputValue(), 'UNSAVED_SECOND_EDITOR_DRAFT');
   await second.screenshot({ path: join(root, 'conflict.png'), fullPage: true });
   report.checks.push('stale-editor-cannot-overwrite-and-unsaved-draft-is-preserved');

@@ -7,13 +7,14 @@ import { writeReviewedPatchFixture } from './helpers/reviewed-patch-series.mjs';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { prepareDesktopCheckout, withDesktopCheckout } from '../scripts/desktop-checkout.mjs';
+import product from '../src/product.json' with { type: 'json' };
 
 // The fake compiler still emits the release metadata checked at the delivery boundary.
 const sealedUpdateFixture = `if (process.argv.includes('package')) {
   const target = process.argv.includes('win-x64') ? 'win-x64' : 'mac-arm64';
   const resources = process.cwd() + '/apps/desktop/.desktop-build/targets/' + target + '/artifacts/' + (target === 'win-x64' ? 'win-unpacked/resources' : 'mac-arm64/AgentKit Studio.app/Contents/Resources');
   fs.mkdirSync(resources, {recursive:true});
-  fs.writeFileSync(resources + '/app-update.yml', JSON.stringify({provider:'generic',url:'https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/' + target + '/',channel:'preview',updaterCacheDirName:'studio-updater'}));
+  fs.writeFileSync(resources + '/app-update.yml', JSON.stringify({provider:'generic',url:'https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/' + target + '/',channel:${JSON.stringify(product.desktop.updates.channel)},updaterCacheDirName:'studio-updater'}));
 }`;
 
 async function fixture(t) {
@@ -158,7 +159,7 @@ test('Windows target reads its own settings and delegates NSIS packaging to DSH'
   assert.deepEqual(recorded[1].args,['--dir','apps/desktop','run','package','win-x64','--build-version','0.2.0-rc.2.20261013.20']);
   assert.match(recorded[1].settings,/SIGNING_MODE='certificate-store'/);
   assert.match(recorded[1].settings,/DSH_DESKTOP_APP_ID='com.kingsoftcloud.agentkit-studio'/);
-  assert.match(recorded[1].settings,/DSH_DESKTOP_UPDATE_CHANNEL='preview'/);
+  assert.match(recorded[1].settings,new RegExp("DSH_DESKTOP_UPDATE_CHANNEL='" + product.desktop.updates.channel + "'"));
   const checkout=await prepareDesktopCheckout(input);
   await assert.rejects(access(join(checkout,'apps/desktop/.env.windows')),'release identity must be removed after packaging');
 });

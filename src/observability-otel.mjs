@@ -8,6 +8,12 @@
  * forwards it (see `managed-runtime-host.mjs`). Without an endpoint the plugin
  * registers nothing and the Host behaves exactly as before.
  *
+ * When the primary route uses a private CA, the standard OTel
+ * `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` (or `OTEL_EXPORTER_OTLP_CERTIFICATE`)
+ * path points at a PEM bundle. Its certificates are appended to the platform
+ * trust roots, never substituted for them, so the CloudMonitor secondary route
+ * keeps validating against the public store.
+ *
  * Spans are generated from the public DSH session event stream:
  *   - one `dsh.turn` span per turn,
  *   - one Langfuse generation span per model step (`step/start`..`step/end`),
@@ -18,9 +24,11 @@
  * provider, token usage, tool names and error identity, so enabling
  * observability cannot leak conversation content.
  */
+import { readFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { randomBytes } from 'node:crypto'
+import * as tls from 'node:tls'
 
 export const name = 'agentkit-studio-observability-otel'
 
@@ -70,6 +78,20 @@ function resolveTracesEndpoint(env) {
   return ''
 }
 
+/** Platform trust roots. `ca` options replace this store, so callers append. */
+function defaultCaCertificates() {
+  if (typeof tls.getCACertificates === 'function') {
+    try { return tls.getCACertificates('default') } catch { /* fall back to the bundled roots */ }
+  }
+  return tls.rootCertificates
+}
+
+/** One HTTPS target's CA chain: platform roots plus the pinned certificates. */
+export function caCertificateChain(caPem) {
+  const pinned = typeof caPem === 'string' ? caPem.trim() : ''
+  return pinned ? [...defaultCaCertificates(), pinned] : undefined
+}
+
 /**
  * Resolves the managed exporter configuration from the process environment.
  * Returns null when the platform did not enable managed tracing, which keeps
@@ -97,16 +119,31 @@ export function resolveObservabilityConfig(env = process.env) {
   const serviceName = (typeof env.OTEL_SERVICE_NAME === 'string' && env.OTEL_SERVICE_NAME.trim())
     ? env.OTEL_SERVICE_NAME.trim()
     : SCOPE_NAME
-  // A private/self-signed Langfuse endpoint trusts exactly one pinned anchor
-  // instead of disabling verification. This env is only meaningful when a
-  // deployment cannot publish a publicly trusted certificate.
+  // A private Langfuse endpoint pins its CA instead of disabling verification.
+  // The OTel-standard certificate path is what the runtime service mounts for
+  // the pre-production ingress; DSH_OTEL_CA_PEM_BASE64 remains a legacy escape
+  // hatch. Both are appended to the platform roots when a target is contacted.
   const caPemBase64 = typeof env.DSH_OTEL_CA_PEM_BASE64 === 'string' ? env.DSH_OTEL_CA_PEM_BASE64.trim() : ''
+  const certificatePath = (
+    (typeof env.OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE === 'string' && env.OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE.trim())
+    || (typeof env.OTEL_EXPORTER_OTLP_CERTIFICATE === 'string' && env.OTEL_EXPORTER_OTLP_CERTIFICATE.trim())
+    || ''
+  )
+  const pinnedPem = []
+  if (caPemBase64) {
+    try { pinnedPem.push(Buffer.from(caPemBase64, 'base64').toString('utf8')) } catch { /* ignore an undecodable bundle */ }
+  }
+  if (certificatePath) {
+    try { pinnedPem.push(readFileSync(certificatePath, 'utf8')) } catch { /* fall back to the platform store */ }
+  }
   return {
     primary,
     secondary,
     serviceName,
     resourceAttributes: parseResourceAttributes(env.OTEL_RESOURCE_ATTRIBUTES),
     caPemBase64,
+    certificatePath,
+    caPem: pinnedPem.map(pem => pem.trim()).filter(Boolean).join('\n'),
     captureContent: ['1', 'true', 'yes', 'on'].includes(String(env.DSH_OBSERVABILITY_CAPTURE_CONTENT || '').toLowerCase()),
   }
 }
@@ -156,7 +193,7 @@ export function buildOtlpPayload(spans, { serviceName, resourceAttributes = {} }
   }
 }
 
-function postJson(url, headers, body, caPemBase64) {
+function postJson(url, headers, body, caPem) {
   return new Promise(resolve => {
     let parsed
     try { parsed = new URL(url) } catch { resolve({ ok: false, error: 'invalid endpoint url' }); return }
@@ -168,8 +205,11 @@ function postJson(url, headers, body, caPemBase64) {
       headers: { 'content-type': 'application/json', 'content-length': payload.length, ...headers },
       timeout: REQUEST_TIMEOUT_MILLIS,
     }
-    if (parsed.protocol === 'https:' && caPemBase64) {
-      try { options.ca = Buffer.from(caPemBase64, 'base64') } catch { /* fall back to the system store */ }
+    if (parsed.protocol === 'https:') {
+      // Never replace the default store: append the pinned certificates so the
+      // publicly trusted CloudMonitor route keeps working.
+      const chain = caCertificateChain(caPem)
+      if (chain) options.ca = chain
     }
     const req = transport(parsed, options, res => {
       const chunks = []
@@ -223,7 +263,7 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
     const payload = buildOtlpPayload(spans, config)
     await Promise.all(targets.map(async target => {
       try {
-        const result = await send(target.url, target.headers, payload, config.caPemBase64)
+        const result = await send(target.url, target.headers, payload, config.caPem)
         if (!result.ok) warn(`trace export rejected by ${target.url}`, result.status ? `status ${result.status} ${result.body || ''}` : result.error)
       } catch (error) {
         warn(`trace export failed for ${target.url}`, error)
