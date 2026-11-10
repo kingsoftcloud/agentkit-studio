@@ -31,7 +31,7 @@ function readRequestedExecutionMode(value) {
   return mode;
 }
 
-export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
+export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity, platformActions, withResourceContext, bundleSha256 = '', deploymentVersion = 'initial', token, runner, executionPolicy, executionPolicyMax, validatePrevious, hosted, approval, responseProjection, model = '', models = [model], host = '127.0.0.1', port = 8080, maxActive = 16, observability, runLog = entry => console.info(JSON.stringify(entry)) } = {}) {
   const managed = !buildId && managedIdentity?.agentId === agentId && identity(managedIdentity?.versionId || '') && /^[a-f0-9]{64}$/.test(managedIdentity?.manifestSha256 || '');
   if (!agentId || (managedIdentity ? !managed : !/^build_[0-9a-f]{20}$/.test(buildId || '')) || String(token || '').length < 24 || typeof runner !== 'function') throw fail('RUNTIME_CONFIG_INVALID');
   const declaredPolicy = readExecutionPolicy(executionPolicy);
@@ -51,7 +51,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
   let closing = false;
   const json = (res, status, value) => { if (!res.destroyed) { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)); } };
   const server = createServer(async (req, res) => {
-    let runId, abort, heartbeat, projection, approvalRun, action, input, runStartedAt, logIdentity, terminalLogged = false;
+    let runId, abort, heartbeat, projection, approvalRun, action, input, runStartedAt, logIdentity, observationSessionId, terminalLogged = false;
     // Stdout is the existing cloud collector's input. Log only correlation and
     // outcomes: never prompts, model output, tool arguments or upstream errors.
     const logRun = (event, code, extra = {}) => {
@@ -65,6 +65,8 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         ...extraFields };
       try { runLog(entry)?.catch?.(() => {}); } catch { /* Logging cannot change a run's outcome. */ }
     };
+    // Trace identity is best-effort: a broken exporter never changes a run's outcome.
+    const observe = (method, ...args) => { try { observability?.[method]?.(...args); } catch { /* keep the run unaffected */ } };
     try {
       const url = new URL(req.url, 'http://runtime');
       if (req.method === 'GET' && url.pathname === '/health') { json(res, closing ? 503 : 200, { status: closing ? 'stopping' : 'ready' }); return; }
@@ -173,6 +175,13 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         runtimeName: managedIdentity.runtimeName } : { buildId, deploymentVersion }),
         sessionId: input.platformSession?.sessionId || input.sessionLabel || input.sessionId || sessionId,
         invocationId: input.requestId, runId };
+      // The exporter keys spans by the DSH native session id the runner receives
+      // and uses the platform session/invocation for Langfuse correlation.
+      observationSessionId = sessionId;
+      observe('setRunIdentity', { nativeSessionId: sessionId,
+        platformSessionId: input.platformSession?.sessionId || input.publicSessionId,
+        invocationId: input.requestId, runId, agentId,
+        versionId: managedIdentity?.versionId, runtimeName: managedIdentity?.runtimeName });
       logRun('runtime.run.started');
       // A managed runtime is identified by VersionId + manifest digest and has
       // no Build id, so never fabricate an absent identity field here.
@@ -244,18 +253,27 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         catch (settlement) { settlementFailure = settlement; }
       }
       const code = error?.code || 'RUNTIME_RUN_FAILED';
+      // Client-facing codes stay inside the documented families, so an upstream
+      // family such as CODEX_TURN_FAILED would collapse to RUNTIME_RUN_FAILED.
+      // Keep the inert diagnostic token in the run log; it carries no message.
+      const diagnosticCode = code === safeClientCode(code) ? '' : safeDiagnosticCode(code);
       // Only the managed Responses stream carries detail; the internal build
       // endpoints keep the code-only contract (see the credential test).
       const detail = safeClientMessage(error?.message) === code ? '' : safeClientMessage(error?.message);
       logRun(['RUNTIME_CANCELLED', 'RUNTIME_CLIENT_DISCONNECTED'].includes(code) ? 'runtime.run.cancelled' : 'runtime.run.failed', code,
-        settlementFailure ? { settlementCode: settlementFailure?.code || 'RUNTIME_SETTLEMENT_FAILED' } : {});
+        { ...(settlementFailure ? { settlementCode: settlementFailure?.code || 'RUNTIME_SETTLEMENT_FAILED' } : {}),
+          ...(diagnosticCode ? { diagnosticCode } : {}) });
       if (res.headersSent && !res.destroyed) {
         if (projection) { projection.fail(code, detail); res.end('data: [DONE]\n\n'); }
         else res.end(`event: run.failed\ndata: ${JSON.stringify({ runId, error: { code } })}\n\n`);
       }
       else if (!res.destroyed) json(res, error?.status || 500, action ? { Code: error?.status || 500, ReasonCode: code, Message: code, Action: action,
         RequestId: String(req.headers['x-ksc-request-id'] || ''), Data: { ReasonCode: code, Error: { Code: code } } } : { error: { code } });
-    } finally { clearInterval(heartbeat); approvalRun?.close(); if (abort && active.get(runId)?.abort === abort) active.delete(runId); }
+    } finally {
+      clearInterval(heartbeat); approvalRun?.close();
+      if (observationSessionId) observe('clearRunIdentity', observationSessionId);
+      if (abort && active.get(runId)?.abort === abort) active.delete(runId);
+    }
   });
   server.requestTimeout = 30000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(); }); });

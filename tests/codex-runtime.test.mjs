@@ -298,6 +298,29 @@ test('a custom provider uses Responses and a per-child credential without alteri
   assert.ok(!invocations[1].args.some(arg => arg.includes('agentkit_gateway')));
 });
 
+test('raises the Codex SSE idle budget above the 300s default and keeps it tunable', async () => {
+  const invocations = [];
+  const spawnImpl = (_executable, args, options) => { invocations.push({ args, env: options.env }); return fakeSpawn(); };
+  const stream = runtime => runtime.stream({ input: 'hi', modelProvider: { baseUrl: 'https://gateway.example/v1', apiKey: 'key' } });
+  const idleArg = args => args.find(arg => arg.startsWith('model_providers.agentkit_gateway.stream_idle_timeout_ms='));
+
+  const defaults = createCodexRuntime({ spawnImpl, env: {} });
+  for await (const _chunk of stream(defaults)) {}
+  assert.equal(idleArg(invocations[0].args), 'model_providers.agentkit_gateway.stream_idle_timeout_ms=900000');
+
+  const configured = createCodexRuntime({ spawnImpl, streamIdleTimeoutMs: 12_000 });
+  for await (const _chunk of stream(configured)) {}
+  assert.equal(idleArg(invocations[1].args), 'model_providers.agentkit_gateway.stream_idle_timeout_ms=12000');
+
+  const fromEnv = createCodexRuntime({ spawnImpl, env: { AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS: '30000' } });
+  for await (const _chunk of stream(fromEnv)) {}
+  assert.equal(idleArg(invocations[2].args), 'model_providers.agentkit_gateway.stream_idle_timeout_ms=30000');
+
+  // Native Codex turns keep their own provider defaults: no gateway arg is invented.
+  for await (const _chunk of defaults.stream({ input: 'hi' })) {}
+  assert.ok(!invocations[3].args.some(arg => arg.includes('stream_idle_timeout_ms')));
+});
+
 test('Codex runtime classifies an asynchronous missing executable as provider unavailable', async () => {
   const runtime = createCodexRuntime({
     spawnImpl: () => {

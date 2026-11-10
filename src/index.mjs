@@ -18,13 +18,15 @@ export const inject = ['connection', 'webServer', 'credentials'];
 const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {};
 
 export async function apply(ctx) {
-  const { mountStudioHost } = await import('./host/bootstrap.mjs');
-  await mountStudioHost(ctx, { env: runtimeEnv });
   // Managed runtimes receive a platform observability bundle (Langfuse OTLP
   // traces + CloudMonitor secondary). The plugin self-gates on that bundle, so
-  // desktop and interactive sessions are unaffected.
+  // desktop and interactive sessions are unaffected. Publish the exporter
+  // before the Host mounts: the frozen runtime resolves it while starting.
   const { installManagedObservability } = await import('./observability-otel.mjs');
-  installManagedObservability(ctx);
+  const observability = installManagedObservability(ctx);
+  if (observability) ctx.provide('studioManagedObservability', observability);
+  const { mountStudioHost } = await import('./host/bootstrap.mjs');
+  await mountStudioHost(ctx, { env: runtimeEnv });
   const versions = await import('./studio-version.mjs').then(({ studioVersions }) => studioVersions(runtimeEnv));
   ctx.on('webserver/index-inject', table => table.push({
     kind: 'global',

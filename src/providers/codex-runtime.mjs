@@ -107,7 +107,7 @@ function dynamicToolContent(value) {
 }
 
 /**
- * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number, shutdownTimeoutMs?: number }} options
+ * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number, shutdownTimeoutMs?: number, streamIdleTimeoutMs?: number, modelIdleTimeoutMs?: number }} options
  */
 export function createCodexRuntime(options = {}) {
   const baseEnv = { ...(options.inheritEnv === false ? {} : process.env), ...(options.env || {}) };
@@ -124,6 +124,17 @@ export function createCodexRuntime(options = {}) {
   const idleTimeoutMs = Math.max(10_000, Number(options.idleTimeoutMs ?? baseEnv.AGENTKIT_CODEX_IDLE_TIMEOUT_MS) || 600_000);
   const startupTimeoutMs = Math.max(10_000, Number(options.startupTimeoutMs) || 60_000);
   const shutdownTimeoutMs = Math.max(1, Number(options.shutdownTimeoutMs) || 5000);
+  // Codex aborts one model response once its SSE stream stays silent for
+  // `stream_idle_timeout_ms` (Codex default: 300s). Business turns on managed
+  // runtimes can stream reasoning/report output for longer than that while the
+  // upstream is still alive, so pin a larger per-round budget and keep it
+  // deployment-tunable instead of inheriting Codex's 5-minute default.
+  const streamIdleTimeoutMs = Math.max(1_000, Number(options.streamIdleTimeoutMs ?? baseEnv.AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS) || 900_000);
+  // The loopback model proxy must never cut a silent-but-alive upstream before
+  // Codex's own idle budget decides the round; it stays slightly larger unless
+  // a deployment deliberately sets its own value.
+  const modelIdleTimeoutMs = Math.max(streamIdleTimeoutMs,
+    Number(options.modelIdleTimeoutMs ?? baseEnv.AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS) || streamIdleTimeoutMs + 60_000);
 
   const runtime = {
     executable,
@@ -158,6 +169,7 @@ export function createCodexRuntime(options = {}) {
         [`model_providers.${providerId}.wire_api`]: 'responses',
         [`model_providers.${providerId}.requires_openai_auth`]: false,
         [`model_providers.${providerId}.supports_websockets`]: false,
+        [`model_providers.${providerId}.stream_idle_timeout_ms`]: streamIdleTimeoutMs,
       }).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]) : [];
       // Codex resolves the effort from config.toml; passing it as a CLI
       // override keeps it scoped to this ephemeral thread and out of user
@@ -547,7 +559,7 @@ export function createCodexRuntime(options = {}) {
       if (!['chat-completions', 'responses'].includes(input.modelProvider?.api)) { yield* runtime.stream(input); return; }
       if (input.signal?.aborted) throw new CodexRuntimeError('CODEX_CANCELED', 'Codex 运行已取消');
       const metrics = [];
-      const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model }, onRequestMetrics: value => metrics.push({ type: 'request-metrics', metrics: value }) });
+      const proxy = await createCodexModelProxy({ profile: { ...input.modelProvider, modelName: input.model || model }, onRequestMetrics: value => metrics.push({ type: 'request-metrics', metrics: value }), idleTimeoutMs: modelIdleTimeoutMs });
       try {
         for await (const chunk of runtime.stream({ ...input, modelProvider: { api: input.modelProvider.api, baseUrl: proxy.baseUrl, apiKey: proxy.apiKey } })) {
           while (metrics.length) yield metrics.shift();

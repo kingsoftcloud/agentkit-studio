@@ -91,6 +91,8 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
         definitionId: undefined, versionId: undefined }) });
   }
   return startBuildRuntimeHttp({ hosted, agentId, buildId, managedIdentity: managedRuntime?.identity, platformActions,
+    // Absent on Hosts without a managed observability bundle; undefined keeps the old behavior.
+    observability: ctx.get('studioManagedObservability'),
     withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
     validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
