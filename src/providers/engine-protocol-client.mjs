@@ -15,7 +15,7 @@ import * as readline from 'node:readline';
 export const ENGINE_PROTOCOL = 'agentkit.engine/v1';
 
 /** Connect to an engine over a pair of streams (a spawned process, a socket, or an in-memory pair in tests). */
-export function connectEngine({ input, output, onApproveTool, hostName = 'host' }) {
+export function connectEngine({ input, output, onApproveTool, onCallTool, hostName = 'host' }) {
   let next = 1, closed = false;
   const pending = new Map();
   const send = frame => output.write(`${JSON.stringify(frame)}\n`);
@@ -31,6 +31,10 @@ export function connectEngine({ input, output, onApproveTool, hostName = 'host' 
           Promise.resolve().then(() => onApproveTool(frame.params ?? {}))
             .then(decision => send({ jsonrpc: '2.0', id: frame.id, result: { decision: decision === 'allow' ? 'allow' : 'deny' } }),
               () => send({ jsonrpc: '2.0', id: frame.id, result: { decision: 'deny' } }));
+        } else if (frame.method === 'host/callTool' && typeof onCallTool === 'function') {
+          Promise.resolve().then(() => onCallTool(frame.params ?? {}))
+            .then(reply => send({ jsonrpc: '2.0', id: frame.id, result: { status: reply?.status === 'error' ? 'error' : 'ok', content: reply?.content ?? null } }),
+              error => send({ jsonrpc: '2.0', id: frame.id, result: { status: 'error', content: { code: 'host_tool_failed', message: String(error?.message ?? error).slice(0, 2000) } } }));
         } else if (frame.id !== undefined) send({ jsonrpc: '2.0', id: frame.id, error: { code: -32601, message: 'Method not found' } });
         continue;
       }
@@ -53,7 +57,7 @@ export function connectEngine({ input, output, onApproveTool, hostName = 'host' 
   return {
     call, finished,
     initialize: () => call('initialize', { protocolVersions: [ENGINE_PROTOCOL], host: { name: hostName },
-      services: { approvals: typeof onApproveTool === 'function' } }),
+      services: { approvals: typeof onApproveTool === 'function', tools: typeof onCallTool === 'function' } }),
     startRun: params => call('run/start', params),
     status: runId => call('run/status', { runId }),
     events: (runId, cursor = 0, waitMs = 0) => call('run/events', { runId, cursor, waitMs }),
@@ -73,10 +77,10 @@ export function connectEngine({ input, output, onApproveTool, hostName = 'host' 
 }
 
 /** Start an engine executable and connect to it. `command` is host configuration, not host code. */
-export function spawnEngine({ command, args = [], env, onApproveTool, hostName, onLog = () => {} }) {
+export function spawnEngine({ command, args = [], env, onApproveTool, onCallTool, hostName, onLog = () => {} }) {
   const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.setEncoding('utf8').on('data', chunk => onLog(chunk));
-  const client = connectEngine({ input: child.stdout, output: child.stdin, onApproveTool, hostName });
+  const client = connectEngine({ input: child.stdout, output: child.stdin, onApproveTool, onCallTool, hostName });
   const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
   return { ...client, child, exited,
     async close() { try { await client.shutdown(); } catch { /* already gone */ } child.stdin.end(); return exited; } };

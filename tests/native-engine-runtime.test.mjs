@@ -20,14 +20,16 @@ function fixture(script) {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
-      requests.push(JSON.parse(body));
+      const parsed = JSON.parse(body);
+      requests.push(parsed);
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      for (const frame of script[Math.min(requests.length - 1, script.length - 1)]) res.write(`data: ${JSON.stringify(frame)}\n\n`);
+      const frames = handle.respond ? handle.respond(parsed) : script[Math.min(requests.length - 1, script.length - 1)];
+      for (const frame of frames) res.write(`data: ${JSON.stringify(frame)}\n\n`);
       res.end('data: [DONE]\n\n');
     });
   });
-  return new Promise(done => server.listen(0, '127.0.0.1', () => done({ url: `http://127.0.0.1:${server.address().port}/v1`, requests,
-    close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) })));
+  const handle = { requests, respond: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
+  return new Promise(done => server.listen(0, '127.0.0.1', () => done(Object.assign(handle, { url: `http://127.0.0.1:${server.address().port}/v1` }))));
 }
 async function setup(t, script) {
   const dir = mkdtempSync(join(tmpdir(), 'studio-engine-')), cwd = join(dir, 'workspace');
@@ -81,4 +83,36 @@ test('configuration decides which engine runs; missing prerequisites fail with t
     resolveCommand: () => ({ command: process.execPath, args: ['-e', 'process.exit(3)'] }) });
   await assert.rejects(collect(broken.stream(f.options)), { code: 'NATIVE_ENGINE_UNAVAILABLE' });
   assert.equal(f.model.requests.length, 0);
+});
+
+test('Studio resource tools run through Studio\'s own handler, with engine-refused names aliased and mapped back', async t => {
+  const longName = 'mcp__knowledge-base.prod__search_documents_by_semantic_similarity_v2';
+  const f = await setup(t, []);
+  const handled = [];
+  // The model calls whatever name the engine advertised; read it back from the first request.
+  let advertised = [];
+  const runtime = f.runtime;
+  const original = f.model;
+  const chunks = [];
+  const stream = runtime.stream({ ...f.options, input: 'Find the refund policy.',
+    dynamicTools: [
+      { type: 'function', name: longName, description: 'Semantic search.', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
+      { type: 'function', name: 'run_command', description: 'A Studio tool that clashes with an engine tool.', inputSchema: { type: 'object', properties: {} } },
+    ],
+    toolHandler: async call => { handled.push(call); if (call.name === 'run_command') throw new Error('should not be reached'); return [{ type: 'inputText', text: 'Refunds within 30 days.' }]; } });
+  // Drive the fixture by name once the engine has advertised its tools.
+  original.respond = body => {
+    advertised = body.tools.map(tool => tool.function.name);
+    const alias = advertised.find(name => name.startsWith('host_mcp__knowledge-base_prod__'));
+    return original.requests.length === 1 ? toolCall('call_kb', alias, { query: 'refund' }) : final('Refunds are accepted within 30 days.');
+  };
+  for await (const chunk of stream) chunks.push(chunk);
+  const alias = advertised.find(name => name.startsWith('host_mcp__knowledge-base_prod__'));
+  assert.ok(alias && alias.length <= 64, advertised.join(','));
+  assert.ok(advertised.includes('run_command') && advertised.filter(name => name.startsWith('host_run_command_')).length === 1);
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].name, longName);
+  assert.deepEqual(handled[0].arguments, { query: 'refund' });
+  assert.ok(JSON.stringify(original.requests[1].messages).includes('Refunds within 30 days.'));
+  assert.deepEqual(chunks.filter(chunk => chunk.type === 'text'), [{ type: 'text', text: 'Refunds are accepted within 30 days.' }]);
 });
