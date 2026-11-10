@@ -14,7 +14,7 @@ import { dshPin } from './dsh-pin.mjs';
 
 const OFFICIAL_VERSION = dshPin.version;
 const OFFICIAL_URL = `https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-${OFFICIAL_VERSION}-win-x64.exe`;
-const OFFICIAL_SHA256 = '72e4a8579f11b5428dd0a1506532777924adba7ecaacc710a7e429085796537f';
+const OFFICIAL_SHA256 = '830947f8996dc05d991ca9133fff4d3400073e47b9cfa6507754867e79482b23';
 
 export async function verifyOfficialDshCoexistence(executablePath, environment, root, evidence) {
   const installer = join(root, `official-dsh-${OFFICIAL_VERSION}.exe`), destination = join(root, 'official-dsh-installed');
