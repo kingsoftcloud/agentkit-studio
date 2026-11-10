@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { CREDENTIAL_REF_PATTERN, deriveCredentialRefName, deriveCredentialReference, isCredentialRefName, normalizeMcpCredentialBindings } from '../src/credential-ref.mjs';
 import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 import { syncGlobalModelCredential } from '../src/model-credential-sync.mjs';
+import { resolveMcpConnection } from '../src/local-resource-adapters.mjs';
 
 test('an MCP header name yields a reference the DSH store can address', () => {
   // MCP secrets are named after headers (`X-KIP-Token`) and referenced as
@@ -61,4 +62,20 @@ test('an MCP header credential is bound to a derived reference and stored under 
   assert.deepEqual(bindings.envRefs, { 'X-KIP-Token': 'env://X_KIP_Token', 'X-Trace': 'plain-value' });
   assert.deepEqual(bindings.writes, [['X_KIP_Token', 'token-value']]);
   for (const key of Object.keys(bindings.envRefs)) assert.ok(key === 'X-Trace' || CREDENTIAL_REF_PATTERN.test(bindings.envRefs[key].slice(6)));
+});
+
+test('the header the MCP server validates keeps its exact name on the wire', async () => {
+  // The server authenticates on `X-KIP-Token`, so that header name must survive
+  // the save verbatim; only the credential reference behind it is derived.
+  const bindings = normalizeMcpCredentialBindings({
+    envRefs: { 'X-KIP-Token': 'env://X-KIP-Token' },
+    credentialValues: { 'X-KIP-Token': 'plain-token' },
+    requiredCredentials: [{ name: 'X-KIP-Token', header: 'X-KIP-Token' }],
+  });
+  assert.deepEqual(bindings.envRefs, { 'X-KIP-Token': 'env://X_KIP_Token' }, 'the header keeps its spelling, the reference is derived');
+  const credentials = {
+    resolve: async name => (name === 'X_KIP_Token' ? { value: 'plain-token' } : undefined),
+  };
+  const { headers } = await resolveMcpConnection({ resourceId: 'kip', endpoint: 'https://kip.example.test/mcp', envRefs: bindings.envRefs }, credentials, {});
+  assert.deepEqual(headers, { 'X-KIP-Token': 'plain-token' }, 'the outbound request still carries X-KIP-Token');
 });
