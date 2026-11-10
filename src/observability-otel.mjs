@@ -17,11 +17,14 @@
  * Spans are generated from the public DSH session event stream:
  *   - one `dsh.turn` span per turn,
  *   - one Langfuse generation span per model step (`step/start`..`step/end`),
- *   - one tool span per `tool/call`..`tool/result`.
+ *   - one tool span per `tool/call`..`tool/result`,
+ *   - one tool span per `agentkit/codex-tool` lifecycle (Codex runtimes).
  *
- * The exporter speaks OTLP/HTTP JSON directly (no OpenTelemetry SDK
- * dependency). Prompt and completion text is never exported: only model,
- * provider, token usage, tool names and error identity, so enabling
+ * The transport also owns the run identity: the managed runtime calls
+ * `setRunIdentity` when a run starts and `clearRunIdentity` when it settles, so
+ * one InvocationId maps to exactly one trace. Prompt, completion, tool
+ * arguments and tool results are never exported: only model, provider, token
+ * usage, tool names, run identity and error identity, so enabling
  * observability cannot leak conversation content.
  */
 import { readFileSync } from 'node:fs'
@@ -29,6 +32,7 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { randomBytes } from 'node:crypto'
 import * as tls from 'node:tls'
+import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs'
 
 export const name = 'agentkit-studio-observability-otel'
 
@@ -38,6 +42,11 @@ const FLUSH_INTERVAL_MILLIS = 3000
 const REQUEST_TIMEOUT_MILLIS = 5000
 const MAX_BUFFERED_SPANS = 512
 const FAILURE_LOG_INTERVAL_MILLIS = 60000
+const MAX_RUN_IDENTITIES = 256
+// A platform InvocationId is `hh-<32 hex>` in production; that hex doubles as
+// the trace id so an invocation can be looked up directly in Langfuse.
+const INVOCATION_TRACE_ID = /^(?:[a-z][a-z0-9]*-)?([0-9a-f]{32})$/
+const traceIdForInvocation = value => (typeof value === 'string' ? INVOCATION_TRACE_ID.exec(value)?.[1] || '' : '')
 
 /** Parses an OTel header list ("k=v,k2=v2", values percent-encoded). */
 export function parseOtelHeaders(value) {
@@ -229,12 +238,45 @@ function postJson(url, headers, body, caPem) {
 class SessionTraceState {
   constructor(sessionId) {
     this.sessionId = sessionId
+    // Per-session fallback trace id; a run identity may override it.
     this.traceId = randomBytes(16).toString('hex')
+    this.identity = null
     this.turn = null
     this.step = null
     this.tools = new Map()
     this.model = ''
     this.provider = ''
+  }
+}
+
+/** Run identity attributes attached to every span of an identified run. */
+function identityAttributes(identity) {
+  if (!identity) return {}
+  return {
+    'agentengine.invocation_id': identity.invocationId,
+    'agentengine.run_id': identity.runId,
+    'agentengine.platform_session_id': identity.platformSessionId,
+    'agentengine.agent_id': identity.agentId,
+    'agentengine.version_id': identity.versionId,
+    'agentengine.runtime_name': identity.runtimeName,
+  }
+}
+
+function normalizeRunIdentity(value) {
+  if (!value || typeof value !== 'object') return null
+  const field = key => (typeof value[key] === 'string' && value[key] ? value[key] : '')
+  const nativeSessionId = field('nativeSessionId')
+  if (!nativeSessionId) return null
+  const invocationId = field('invocationId')
+  return {
+    nativeSessionId,
+    platformSessionId: field('platformSessionId'),
+    invocationId,
+    runId: field('runId'),
+    agentId: field('agentId'),
+    versionId: field('versionId'),
+    runtimeName: field('runtimeName'),
+    traceId: traceIdForInvocation(invocationId),
   }
 }
 
@@ -247,6 +289,7 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
   let timer = null
   let lastFailureAt = 0
   const sessions = new Map()
+  const runIdentities = new Map()
   const targets = [config.primary, config.secondary].filter(Boolean)
 
   const warn = (message, error) => {
@@ -286,13 +329,13 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
   const nanos = milliseconds => milliseconds * 1e6
 
   const startSpan = (state, spanName, startMs, parentSpanId, attributes) => ({
-    traceId: state.traceId,
+    traceId: state.identity?.traceId || state.traceId,
     spanId: randomBytes(8).toString('hex'),
     parentSpanId,
     name: spanName,
     startTimeUnixNano: nanos(startMs),
     endTimeUnixNano: 0,
-    attributes,
+    attributes: { ...identityAttributes(state.identity), ...attributes },
   })
 
   const finishSpan = (span, endMs, extraAttributes = {}, error = false) => {
@@ -306,11 +349,30 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
     let state = sessions.get(sessionId)
     if (!state) {
       state = new SessionTraceState(sessionId)
+      state.identity = runIdentities.get(sessionId) || null
       sessions.set(sessionId, state)
       // A long-lived Host must not accumulate one entry per session forever.
       if (sessions.size > 256) sessions.delete(sessions.keys().next().value)
     }
     return state
+  }
+
+  /** Binds the next spans of one native DSH session to a platform run. */
+  const setRunIdentity = value => {
+    const identity = normalizeRunIdentity(value)
+    if (!identity) return
+    runIdentities.set(identity.nativeSessionId, identity)
+    if (runIdentities.size > MAX_RUN_IDENTITIES) runIdentities.delete(runIdentities.keys().next().value)
+    const state = sessions.get(identity.nativeSessionId)
+    if (state) state.identity = identity
+  }
+
+  /** Drops the run identity; later spans fall back to the session trace id. */
+  const clearRunIdentity = sessionId => {
+    if (typeof sessionId !== 'string' || !sessionId) return
+    runIdentities.delete(sessionId)
+    const state = sessions.get(sessionId)
+    if (state) state.identity = null
   }
 
   const onSessionEvent = (session, event) => {
@@ -326,7 +388,15 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
         return
       case 'turn/start': {
         if (state.turn) finishSpan(state.turn.span, eventTime)
-        state.turn = { span: startSpan(state, 'dsh.turn', eventTime, '', { 'langfuse.observation.type': 'span', 'langfuse.session.id': sessionId, 'dsh.turn.number': data.turn }), startMs: eventTime }
+        const identity = state.identity
+        state.turn = { span: startSpan(state, 'dsh.turn', eventTime, '', {
+          'langfuse.observation.type': 'span',
+          // Langfuse groups the run under the platform session when the run
+          // identity knows it; the DSH-native id remains the fallback.
+          'langfuse.session.id': identity?.platformSessionId || sessionId,
+          'dsh.turn.number': data.turn,
+          ...(identity?.invocationId ? { 'langfuse.trace.name': `run ${identity.invocationId}` } : {}),
+        }), startMs: eventTime }
         return
       }
       case 'step/start': {
@@ -369,6 +439,37 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
         finishSpan(call.span, eventTime, failed && data.error?.code ? { 'error.type': data.error.code } : {}, failed)
         return
       }
+      case CODEX_TOOL_EVENT: {
+        // Codex owns its tool loop, so its tool lifecycle arrives as extension
+        // events. Arguments, content and error reasons stay out of the export.
+        const callId = data.callId
+        if (typeof callId !== 'string' || !callId) return
+        if (data.phase === 'started') {
+          const parentSpanId = state.step?.span.spanId || state.turn?.span.spanId || ''
+          state.tools.set(callId, {
+            span: startSpan(state, `execute_tool ${data.name || 'tool'}`, eventTime, parentSpanId, {
+              'langfuse.observation.type': 'tool',
+              'gen_ai.operation.name': 'execute_tool',
+              'gen_ai.tool.name': data.name || '',
+              'dsh.tool.call_id': callId,
+              'dsh.tool.phase': 'started',
+            }),
+            startMs: eventTime,
+          })
+          return
+        }
+        if (data.phase !== 'completed' && data.phase !== 'failed') return
+        const call = state.tools.get(callId)
+        if (!call) return
+        state.tools.delete(callId)
+        const failed = data.phase === 'failed'
+        const errorType = failed ? data.error?.code || data.error?.name : ''
+        finishSpan(call.span, eventTime, {
+          'dsh.tool.phase': data.phase,
+          ...(errorType ? { 'error.type': errorType } : {}),
+        }, failed)
+        return
+      }
       case 'step/end': {
         if (!state.step) return
         const step = state.step
@@ -405,6 +506,8 @@ export function createOtelExporter(config, { now = () => Date.now(), send = post
 
   return {
     onSessionEvent,
+    setRunIdentity,
+    clearRunIdentity,
     flush,
     stop() { if (timer) { clearTimeout(timer); timer = null } },
     get pendingCount() { return pending.length },

@@ -33,7 +33,11 @@ export async function isolatedRuntimeCodexOptions({ home, scopeId, env = process
   const codexHome = await directory(isolatedHome, '.codex');
   const cwd = await directory(scope, 'workspace');
   const childEnv = {};
-  for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'SYSTEMROOT', 'WINDIR']) {
+  // Only explicit, non-credential Codex transport knobs cross the confinement
+  // boundary; the surrounding deployment may raise the model stream budgets
+  // without rebuilding the runtime image.
+  for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'SYSTEMROOT', 'WINDIR',
+    'AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS', 'AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS']) {
     if (env[key]) childEnv[key] = env[key];
   }
   Object.assign(childEnv, {
