@@ -1,5 +1,5 @@
 /** Studio-owned Agents only. Historical cloud catalogs belong to their native products. */
-const SUPPORTED_RUNTIMES = new Set(['dsh-native', 'harness', 'codex']);
+const SUPPORTED_RUNTIMES = new Set(['dsh-native', 'harness', 'codex', 'native-engine']);
 function createdAt(item) {
   return Date.parse(String(item.metadata?.createdAt || item.createdAt || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1')) || 0;
 }

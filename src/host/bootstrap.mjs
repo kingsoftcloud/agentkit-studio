@@ -126,6 +126,13 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     : managedRuntime ? await import('../portable-codex.mjs').then(({ isolatedRuntimeCodexOptions }) => isolatedRuntimeCodexOptions({ home: runtimeEnv.AGENTKIT_HOME, scopeId: `manifest_${managedRuntime.sha256}`, env: runtimeEnv })) : {};
   const codexModels = createCodexModelCatalog(codexOptions);
   const codexRuntime = createCodexRuntime(codexOptions);
+  // The Native engine as its own process. Lazy like Codex: hosts without an
+  // engine executable still load and report NATIVE_ENGINE_UNAVAILABLE on use.
+  const { createNativeEngineRuntime } = await import('../providers/native-engine-runtime.mjs');
+  const { join: joinPath } = await import('node:path');
+  const { homedir } = await import('node:os');
+  const nativeEngineRuntime = createNativeEngineRuntime({ env: runtimeEnv,
+    stateRoot: joinPath(runtimeEnv.AGENTKIT_HOME || joinPath(homedir(), '.agentkit'), 'studio', 'native-engine') });
   let localRuntimeHandlerPromise;
   const localRuntimeHandler = async () => {
     if (!localRuntimeHandlerPromise) {
@@ -188,6 +195,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
     localHandler: localRuntimeHandler,
     codexRuntime,
+    nativeEngineRuntime,
     // The permission picker (local, Studio cloud and Hosted UI) converges on the
     // Session preset; read it here so Codex's own sandbox follows the picker.
     permissionModeForSession: session => {
