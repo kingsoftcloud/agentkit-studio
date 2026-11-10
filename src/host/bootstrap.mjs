@@ -96,19 +96,6 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     studioChannelsPromise, cloudSchedulesPromise, authoringRemoteFactory, deployments,
   } = services;
 
-  // Productized personal-assistant desktop proxy. The standalone plugin asks
-  // this Host service for its cloud binding and for one-shot desktop tickets,
-  // so the gateway API key never reaches the plugin, its page or its logs.
-  const { createAssistantDesktop, assistantDesktopService } = await import('../assistant-desktop.mjs');
-  const assistantDesktop = createAssistantDesktop({
-    storeDir: studioStoreDir, fetchImpl: services.runtimeFetch,
-    configuration: configurationPromise,
-    getClient: async () => serverClientPromise,
-    // Closing the assistant needs DeleteAgent, which the general client
-    // intentionally excludes; the deployment client owns that mutation.
-    getDeploymentClient: async () => deploymentClientPromise,
-  });
-  ctx.provide('studioPersonalAssistantDesktop', assistantDesktopService(assistantDesktop));
   // Studio-owned revisions still enter through DSH's native Session/Loop.
   // The provider is selected by the preset-scoped listener and delegates the
   // assembled turn to the local Harness or AgentEngine cloud stream.
@@ -503,7 +490,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     onError: error => console.error('[agentkit-studio] Native background startup failed:', error?.code || 'NATIVE_BACKGROUND_STARTUP_FAILED'),
   });
   const routes = createStudioRoutes(ctx, {
-    ...services, ...templateServices, assistantStoreDir: join(studioStoreDir, 'assistant-deletions'), studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
+    ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission, getNativeHost: nativeHost,
     getDshA2aControls: dshA2aControls,

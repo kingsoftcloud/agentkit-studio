@@ -12,16 +12,12 @@
  * DSH owns the Session and renderer for all three.
  */
 import { AGENTKIT_STUDIO_MARK_SVG } from './brand.js';
-import { installAssistantStartupGuard } from './assistant-permission-model.mjs';
 
 export const name = 'agentkit-studio';
 export const inject = ['connection', 'webServer', 'credentials'];
 const runtimeEnv = typeof process === 'object' && process?.env ? process.env : {};
 
 export async function apply(ctx) {
-  // Deny-only gate must precede preset registration and every asynchronous boot step.
-  // Receipt verification later replaces this guard without a permission gap.
-  installAssistantStartupGuard(ctx, runtimeEnv);
   const { mountStudioHost } = await import('./host/bootstrap.mjs');
   await mountStudioHost(ctx, { env: runtimeEnv });
   // Managed runtimes receive a platform observability bundle (Langfuse OTLP

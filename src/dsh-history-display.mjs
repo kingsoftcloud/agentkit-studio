@@ -3,7 +3,7 @@ const record = value => value && typeof value === 'object' && !Array.isArray(val
 const list = value => Array.isArray(value) ? value : [];
 const number = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(value) ? value : '';
-export const assistantFailure = () => ({ code: 'ASSISTANT_TURN_FAILED', message: '助理本次任务未完成，请重试；若仍失败，请检查模型和工具连接。' });
+export const runtimeFailure = () => ({ code: 'DSH_TURN_FAILED', message: '运行时本次任务未完成，请重试；若仍失败，请检查模型和工具连接。' });
 
 /** Remove common credential representations; diagnostic payloads are omitted altogether. */
 export function displayText(value) {
@@ -80,7 +80,7 @@ export function displayEvents(events) {
       const kind = data.reason?.kind;
       const reason = kind === 'aborted' ? { kind, reason: { kind: 'legacy' } }
         : ['completed', 'interrupted', 'blocked', 'max-tokens'].includes(kind) ? { kind }
-        : { kind: 'error', error: assistantFailure() };
+        : { kind: 'error', error: runtimeFailure() };
       return [envelope(event, { turn: boundary.turn, reason })];
     }
     if (event.type === 'user/message') {
@@ -126,7 +126,7 @@ export function displayEvents(events) {
       if (identifier(data.goal?.id) && ['active', 'paused', 'blocked', 'complete'].includes(data.goal.phase)) return [envelope(event, {
         kind: 'goal/change', version: 1, operation: ['create', 'edit', 'pause', 'resume', 'complete', 'block'].includes(data.operation) ? data.operation : 'edit',
         goal: { id: identifier(data.goal.id), revision: number(data.goal.revision), objective: displayText(data.goal.objective), phase: data.goal.phase,
-          maxGoalRounds: number(data.goal.maxGoalRounds), ...(data.goal.phase === 'blocked' ? { blockedReason: { code: 'assistant-action-required', message: '云端任务需要处理，请检查连接和权限。' } } : {}) },
+          maxGoalRounds: number(data.goal.maxGoalRounds), ...(data.goal.phase === 'blocked' ? { blockedReason: { code: 'runtime-action-required', message: '云端任务需要处理，请检查连接和权限。' } } : {}) },
         roundsStarted: number(data.roundsStarted), createdAt: number(data.createdAt), updatedAt: number(data.updatedAt),
       })];
       return [];

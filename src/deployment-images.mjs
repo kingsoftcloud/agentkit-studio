@@ -1,6 +1,5 @@
 /** Resolve Studio's own immutable image releases from the existing Server metadata API. */
 import { createHash } from 'node:crypto';
-import { ASSISTANT_IMAGE_CAPABILITIES } from './contracts/assistant-capabilities.mjs';
 import { containerStorageCapability } from './deployment-storage.mjs';
 import { studioVersions } from './studio-version.mjs';
 
@@ -58,11 +57,8 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
     if (item.enabled && item.channel === 'preview' && raw.environment !== 'pre-online') {
       retired.set(item.id, 'preview-outside-pre-online'); continue;
     }
-    // A newer image may advertise capabilities that this Studio build does not
-    // implement yet. Retire that release for this client and keep the rest of
-    // the catalog usable; the default below only resolves to a usable release.
-    const unknownCapabilities = (item.capabilities || []).filter(value => !ASSISTANT_IMAGE_CAPABILITIES.includes(value));
-    if (unknownCapabilities.length) { incompatible.set(item.id, unknownCapabilities); continue; }
+    // Capability labels are opaque to Studio. Product plugins interpret their
+    // own optional capabilities after selecting a DSH-compatible runtime image.
     if (!item.enabled || !item.runtimes.includes(runtime)) continue;
     // Keep the reason a release was filtered so a stored default can report
     // "update Studio" instead of the unactionable "no image available".

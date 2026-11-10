@@ -124,7 +124,7 @@ Logging failures do not change model execution, streaming or persistence.
 The existing cloud collector exposes these through `GetAgentLogs` with
 `LogType=Stdout`; this does not produce an application log file for `LogType=Log`.
 These lifecycle records cover the public RunAgent/Responses transport. The
-separate personal-assistant native submit carrier is outside this logging path.
+separate product-plugin native submit carrier is outside this logging path.
 
 The installed-image proof also covers these Actions, public/native invocation
 mapping, source/epoch/snapshot paging, subject isolation, cancellation history and
