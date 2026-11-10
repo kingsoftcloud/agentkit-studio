@@ -185,6 +185,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const portableBundles = createPortableBundles({ storeDir: studioStoreDir, build: (await studioBuildPromise).build, models,
     adapters: await resourceAdaptersPromise, configuration: await configurationPromise, credentials });
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
+  const { registerNativeEngineView } = await import('./routes/native-engine-view.mjs');
+  registerNativeEngineView(ctx, nativeEngineRuntime);
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
   const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({

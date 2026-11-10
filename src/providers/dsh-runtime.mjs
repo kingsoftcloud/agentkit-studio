@@ -12,6 +12,7 @@ import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.
 import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
+import { NATIVE_ENGINE_EVENT } from './native-engine-runtime.mjs';
 
 /** Runtimes that run in their own process behind the stream seam. */
 const PROCESS_RUNTIMES = new Set(['codex', 'native-engine']);
@@ -253,7 +254,7 @@ function appendNativeToolCall(state, call) {
   ];
 }
 
-async function* codexFrames(codexRuntime, options, onChunk, toolRecorder) {
+async function* codexFrames(codexRuntime, options, onChunk, toolRecorder, recordEngineEvent) {
   const state = createChunkState();
   const usage = { inputTokens: 0, outputTokens: 0 };
   for await (const chunk of codexRuntime.stream(options)) {
@@ -262,6 +263,7 @@ async function* codexFrames(codexRuntime, options, onChunk, toolRecorder) {
       for (const [key, value] of Object.entries(chunk.usage)) usage[key] = (usage[key] || 0) + value;
       yield { type: 'usage', usage: nativeCodexUsage(usage) };
     }
+    else if (chunk?.type === 'engine-event') { recordEngineEvent?.(chunk); continue; }
     else if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
     else if (chunk?.type === 'tool') {
       if (toolRecorder?.record(chunk)) continue;
@@ -688,7 +690,11 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
                   sessionId: managedApprovalSessionId,
                 }),
               } : {}),
-            }, recordChunk, toolRecorder);
+            }, recordChunk, toolRecorder, chunk => {
+              // The engine's own view renders these; Studio only keeps them in the Session.
+              try { toolAgent?.session?.append?.(NATIVE_ENGINE_EVENT, { runId: chunk.runId, view: chunk.view ?? null, event: chunk.event }, { ignorable: true }); }
+              catch { /* presentation evidence only */ }
+            });
             if (typeof resources.writeMemory === 'function') {
               try {
                 const result = await resources.writeMemory(responseText);

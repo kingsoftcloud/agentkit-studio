@@ -63,6 +63,7 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
     events: (runId, cursor = 0, waitMs = 0) => call('run/events', { runId, cursor, waitMs }),
     resume: runId => call('run/resume', { runId }),
     cancel: runId => call('run/cancel', { runId }),
+    view: () => call('ui/view'),
     shutdown: () => call('shutdown'),
     /** Follow a Run to rest, handing each projected event to `onEvent`. */
     async follow(runId, onEvent = () => {}, { waitMs = 5000 } = {}) {

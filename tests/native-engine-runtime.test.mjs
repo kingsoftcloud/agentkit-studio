@@ -116,3 +116,22 @@ test('Studio resource tools run through Studio\'s own handler, with engine-refus
   assert.ok(JSON.stringify(original.requests[1].messages).includes('Refunds within 30 days.'));
   assert.deepEqual(chunks.filter(chunk => chunk.type === 'text'), [{ type: 'text', text: 'Refunds are accepted within 30 days.' }]);
 });
+
+test('the engine view is fetched once per build, cached by hash, and each engine event is surfaced for the Session', async t => {
+  const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Created out.txt.')]);
+  const chunks = await collect(f.runtime.stream({ ...f.options, requestApproval: async () => 'allowed-once' }));
+  const engine = chunks.find(chunk => chunk.type === 'engine');
+  assert.match(engine.view, /^[a-f0-9]{64}$/);
+  const html = f.runtime.view(engine.view);
+  assert.ok(html.startsWith('<!doctype html>'));
+  assert.equal(f.runtime.view('0'.repeat(64)), null); assert.equal(f.runtime.view('../etc'), null);
+  const events = chunks.filter(chunk => chunk.type === 'engine-event');
+  assert.ok(events.length > 3 && events.every(chunk => chunk.view === engine.view && chunk.runId === events[0].runId));
+  assert.deepEqual(events.map(chunk => chunk.event.seq), [...events.map(chunk => chunk.event.seq)].sort((a, b) => a - b));
+  assert.ok(events.some(chunk => chunk.event.kind === 'tool.completed' && chunk.event.callId === 'call_1'));
+  const { nativeEngineViewResponse } = await import('../src/host/routes/native-engine-view.mjs');
+  const ok = nativeEngineViewResponse(new Request(`http://studio/api/agentkit.native-engine.view?sha256=${engine.view}`), f.runtime);
+  assert.equal(ok.status, 200); assert.match(ok.headers.get('content-security-policy'), /sandbox allow-scripts/);
+  assert.equal(await ok.text(), html);
+  for (const bad of ['', 'abc', '0'.repeat(64)]) assert.equal(nativeEngineViewResponse(new Request(`http://studio/x?sha256=${bad}`), f.runtime).status, 404);
+});

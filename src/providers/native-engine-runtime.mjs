@@ -15,13 +15,34 @@
  * host/callTool, where Studio's own handler executes and authorizes it.
  * Memory recall and write-back stay host-side around the turn, as on the
  * Codex path. A2A is not carried over this path yet. */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
+export const NATIVE_ENGINE_EVENT = 'agentkit/native-engine-event';
+export const ENGINE_VIEW_CONTRACT = 'agentkit.engine-view/v1';
+const SHA256 = /^[a-f0-9]{64}$/;
+
+/** Engine-delivered task views, cached by content hash. Studio stores and serves
+ * the bytes; it never builds or edits them. */
+export function createEngineViewStore(stateRoot) {
+  const dir = join(stateRoot, 'views');
+  const path = sha256 => join(dir, `${sha256}.html`);
+  return {
+    has: sha256 => SHA256.test(String(sha256)) && existsSync(path(sha256)),
+    save(view) {
+      if (view?.contract !== ENGINE_VIEW_CONTRACT || typeof view.html !== 'string' || !SHA256.test(String(view.sha256))) return null;
+      if (createHash('sha256').update(view.html).digest('hex') !== view.sha256) return null;
+      mkdirSync(dir, { recursive: true });
+      if (!existsSync(path(view.sha256))) { const temp = `${path(view.sha256)}.${process.pid}.tmp`; writeFileSync(temp, view.html); renameSync(temp, path(view.sha256)); }
+      return view.sha256;
+    },
+    read: sha256 => SHA256.test(String(sha256)) && existsSync(path(sha256)) ? readFileSync(path(sha256), 'utf8') : null,
+  };
+}
 const MODEL_ENV = 'AGENTKIT_ENGINE_MODEL_API_KEY';
 const failure = (code, message) => Object.assign(new Error(message), { code });
 const text = value => typeof value === 'string' && value.trim().length > 0;
@@ -47,6 +68,7 @@ export function resolveEngineCommand(env = process.env) {
 
 export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnEngine = defaultSpawnEngine, resolveCommand = resolveEngineCommand } = {}) {
   if (!text(stateRoot)) throw failure('NATIVE_ENGINE_CONFIG_INVALID', 'Native 引擎缺少状态目录。');
+  const views = createEngineViewStore(stateRoot);
   return {
     async *stream({ input, signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, requestApproval, dynamicTools = [], toolHandler } = {}) {
       if (!text(input)) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字后发送');
@@ -87,13 +109,21 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         catch (error) { throw failure('NATIVE_ENGINE_UNAVAILABLE', `Native 引擎启动失败：${error.message}`); }
         if (onCallTool) hostTools = engineHostTools(dynamicTools, { reserved: hello.engine?.reservedToolNames ?? [],
           ...(hello.engine?.hostToolNamePattern ? { pattern: hello.engine.hostToolNamePattern } : {}) });
-        yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion } };
+        // Fetch the engine's own view once per build; a view failure never fails the turn.
+        let view = null;
+        const offered = hello.capabilities?.ui;
+        if (offered?.contract === ENGINE_VIEW_CONTRACT && SHA256.test(String(offered.sha256))) {
+          if (views.has(offered.sha256)) view = offered.sha256;
+          else { try { view = views.save(await engine.view()); } catch { view = null; } }
+        }
+        yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion }, view };
         await engine.startRun({ runId, objective: input, hostInstructions: systemPrompt, ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
         signal?.addEventListener('abort', abort, { once: true });
         let finalText = null;
         for (let cursor = 0; ;) {
           const page = await engine.events(runId, cursor, 5000);
           for (const event of page.events) {
+            yield { type: 'engine-event', runId, view, event };
             for (const chunk of chunksOf(event)) yield chunk;
             if (event.kind === 'run.terminal' && text(event.detail)) finalText = event.detail;
           }
@@ -110,6 +140,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         await engine.close().catch(() => {});
       }
     },
+    view: sha256 => views.read(sha256),
   };
 }
 
