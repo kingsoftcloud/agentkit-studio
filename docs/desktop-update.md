@@ -177,17 +177,38 @@ candidate can be reused by its `candidate_run_id`; identity and asset digests mu
 match. `release_tools_ref` may update publication tools without replacing signed
 App bytes. It must never relabel a newer source commit as the signed candidate.
 
+A normal release therefore never asks the hosted runner to reach KS3:
+
+- `publish_feed` stays `false`. Setting it (or `publish_from_runner`) attempts the
+  publication from the hosted runner, which cannot reach the KS3 origin; both
+  inputs remain emergency escapes only.
+- `queue_windows=true` builds the matching Windows candidate in the same batch as
+  soon as source admission passes, instead of after the signed macOS build.
+- After both candidates are accepted, publish from a maintainer machine with
+  `scripts/publish-locally.mjs` (see [Publishing from a local
+  machine](#publishing-from-a-local-machine)).
+- `create_github_release=true` with the accepted `candidate_run_id` records the
+  same signed bytes as a GitHub Release once the feed exists.
+- A candidate-reuse dispatch skips the Web and Host acceptance because that exact
+  source already passed it in the build run.
+
+Duplicate dispatches for the same `studio_ref` now serialize instead of running in
+parallel: the workflow concurrency group no longer splits on `build_version` or
+`channel`.
+
 ## Ship macOS and Windows together
 
-Every desktop release covers both platforms in one batch. Publish the macOS feed
-with `release-desktop.yml`; after the signed macOS build succeeds and
-`publish_feed=true`, the workflow's `queue-windows` job dispatches
-`release-windows.yml` automatically with the same immutable `studio_ref`,
-`build_version`, channel and origin. Windows is then published explicitly with
-`publish-windows.yml` (or `scripts/publish-windows-candidate.mjs` from the
-retained artifacts) using the accepted candidate run id and the previous Windows
-feed version. Both feeds refresh `studio/latest` through
-`publish-download-alias.mjs`.
+Every desktop release covers both platforms in one batch. Dispatch
+`release-desktop.yml` with `publish_feed=false` and `queue_windows=true`: the
+workflow's `queue-windows` job dispatches `release-windows.yml` as soon as source
+admission passes, so the Windows candidate is built in parallel with the signed
+macOS candidate instead of after it. The Windows run only builds a signed
+candidate; publication stays an explicit accepted-candidate step. After both
+candidates are accepted, publish the macOS feed with
+`scripts/publish-locally.mjs mac` and the Windows feed with
+`scripts/publish-locally.mjs win` (or `publish-windows.yml`), using the accepted
+candidate run id and the previous feed versions. Both publications refresh
+`studio/latest` through `publish-download-alias.mjs`.
 
 A macOS-only batch is incomplete: the download page and Windows automatic updates
 would stay on the previous version, so do not report a release as shipped until
@@ -268,7 +289,9 @@ publication impossible: the 11 MB pre-publish probe alone takes about 9.5 minute
 and the 480 MB ZIP/DMG upload then stalls until KS3 aborts it with `403` (the
 multipart layer reports `retryable: false`). The candidate build is still produced
 by `release-desktop.yml` with `publish_feed=false`, so the signed bytes come from
-CI and the publication step runs from a maintainer machine inside the network:
+CI and the publication step runs from a maintainer machine inside the network.
+`publish_from_runner`/`publish_feed` are emergency escapes for a network that does
+reach KS3; the normal release path does not set them:
 
 ```sh
 # macOS: download the signed candidate, verify SHA-256 sums, publish the feed,
@@ -294,6 +317,13 @@ the signed candidate and the original Windows build logs are read with the GitHu
 CLI, so run `gh auth login` once first (the wrapper falls back to `gh auth token`
 when `GH_TOKEN` is not exported).
 
+Once the feed is published, record the same signed bytes as a GitHub Release by
+dispatching `release-desktop.yml` again with the accepted `candidate_run_id`,
+`publish_feed=false`, `create_github_release=true` and the accepted
+`build_version`/`channel`. That run re-runs source admission and the GitHub upload
+only; the macOS build, the Web and Host acceptance and the KS3 publication are
+skipped because the candidate already carries the signing evidence.
+
 ## Public download alias
 
 The public site links to fixed `studio/latest/` URLs instead of a versioned folder;
@@ -309,12 +339,13 @@ inside KS3 (no release bytes cross the operator machine) and rewrites `latest.js
 with `no-cache`. Existing alias objects are deleted before the copy because KS3
 answers `ObjectAlreayExists` instead of overwriting a server-side copy.
 
-Both publish paths run it automatically once the feed advance is verified:
-`release-desktop.yml` publishes the macOS feed and `publish-windows.yml` publishes
-the Windows feed, so the site follows a release without any manual step. The
-workflows pass `STUDIO_DOWNLOAD_PROD_KS3_BUCKET/ACCESS_KEY/SECRET_KEY`, while a
-local run keeps reading the Host configuration. The command stays runnable by hand
-to repair the alias:
+The publisher refreshes it automatically once the feed advance is verified:
+`release-desktop.yml` (emergency runner publication), `publish-windows.yml` and
+`scripts/publish-locally.mjs` all refresh the alias, so the site follows a release
+without another manual step. The workflows pass
+`STUDIO_DOWNLOAD_PROD_KS3_BUCKET/ACCESS_KEY/SECRET_KEY`, while a local run keeps
+reading the Host configuration. The command stays runnable by hand to repair the
+alias:
 
 
 `studio/latest/` only serves the public download page. Update checks keep reading
