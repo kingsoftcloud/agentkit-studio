@@ -516,7 +516,8 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
               let phase;
               try { phase = (store.authority ? store.authority(scope, request.runId) : store.load(scope, request.runId)).snapshot.phase; }
               catch (error) { if (error.code !== 'run_not_found') throw error; }
-              if (!phase || signal.aborted || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
+              if (!phase || (signal.aborted && signal.reason?.kind !== 'disposed')
+                || ['completed', 'failed', 'canceled', 'interrupted'].includes(phase)) {
                 await children.owner.releaseRun(request); childOwners.delete(ownedChildren);
               }
             }
@@ -980,7 +981,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
         const background = await Promise.allSettled([backgroundOwner?.close(), waitRecoveryOwner?.close(), memoryExtraction.close()]);
         await Promise.allSettled([...active]);
         const children = await Promise.allSettled([...childOwners].flatMap(item => [...item.runIds]
-          .map(runId => item.owner.releaseRun({ scope: item.scope, runId }))));
+          .map(runId => item.owner.closeRun({ scope: item.scope, runId }))));
         childOwners.clear();
         childObservations.clear();
         commandProgress.close();
