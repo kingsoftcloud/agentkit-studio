@@ -229,3 +229,59 @@ test('editing a legacy record with a bare credential reference normalizes it to 
   await harness.submit();
   assert.deepEqual(host.saved[0].server.envRefs, { 'X-Service-Token': 'env://LEGACY_TOKEN' });
 });
+
+test('MCP JSON textarea grows with the pasted document instead of staying five rows', () => {
+  const harness = createDialogHarness({ host: createRecordingHost() });
+  const textarea = () => harness.find(node => node.type === 'textarea' && node.props['aria-label'] === 'MCP JSON');
+  assert.ok(textarea().props.rows >= 6);
+  textarea().props.onChange({ target: { value: JSON.stringify({ mcpServers: {
+    one: { type: 'http', url: 'https://one.example/mcp', headers: { 'X-One': '${ONE}' } },
+    two: { type: 'http', url: 'https://two.example/mcp', headers: { 'X-Two': '${TWO}' } },
+  } }, null, 2) } });
+  const rows = textarea().props.rows;
+  assert.ok(rows > 6 && rows <= 20, `expected the textarea to grow, got ${rows} rows`);
+  textarea().props.onChange({ target: { value: '{"mcpServers":{}}' } });
+  assert.equal(textarea().props.rows, 6, 'short input falls back to the minimum height');
+});
+
+test('Header credential section is always visible and manual add creates the credential row', async () => {
+  const host = createRecordingHost();
+  const harness = createDialogHarness({ host });
+  assert.match(JSON.stringify(harness.render()), /认证 Header \/ 环境变量凭证/);
+  assert.match(JSON.stringify(harness.render()), /还没有认证 Header 凭证/);
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 名称').props.onChange({ target: { value: 'X-KIP-Token' } });
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 凭证名称').props.onChange({ target: { value: 'KIP_TOKEN' } });
+  harness.find(node => node.type === 'button' && node.children.includes('添加')).props.onClick();
+  const tree = harness.render();
+  assert.match(JSON.stringify(tree), /X-KIP-Token=env:\/\/KIP_TOKEN/);
+  assert.match(JSON.stringify(tree), /X-KIP-Token · KIP_TOKEN/);
+  harness.byPlaceholder('例如：企业搜索').props.onChange({ target: { value: 'KIP MCP' } });
+  harness.byPlaceholder('例如：enterprise-search').props.onChange({ target: { value: 'kip-mcp' } });
+  harness.byPlaceholder('例如：https://mcp.example.com').props.onChange({ target: { value: 'https://kip.example.test/mcp' } });
+  await harness.submit();
+  assert.deepEqual(host.saved[0].server.envRefs, { 'X-KIP-Token': 'env://KIP_TOKEN' });
+  assert.equal(host.saved[0].server.headers, undefined);
+  assert.deepEqual(host.calls.filter(call => Array.isArray(call) && call[0] === 'credential'), []);
+});
+
+test('manual Authorization entry reuses the dedicated credential fields instead of a duplicate envRef', () => {
+  const harness = createDialogHarness({ host: createRecordingHost() });
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 名称').props.onChange({ target: { value: 'Authorization' } });
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 凭证名称').props.onChange({ target: { value: 'AUTH_TOKEN' } });
+  harness.find(node => node.type === 'button' && node.children.includes('添加')).props.onClick();
+  const tree = harness.render();
+  assert.equal(harness.byPlaceholder('例如：SEARCH_API_KEY').props.value, 'AUTH_TOKEN');
+  assert.doesNotMatch(JSON.stringify(tree), /Authorization=env:\/\//);
+});
+
+test('manual credential entry rejects malformed names with an actionable message', () => {
+  const harness = createDialogHarness({ host: createRecordingHost() });
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 名称').props.onChange({ target: { value: 'X Bad Header' } });
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 凭证名称').props.onChange({ target: { value: 'KIP_TOKEN' } });
+  harness.find(node => node.type === 'button' && node.children.includes('添加')).props.onClick();
+  assert.match(JSON.stringify(harness.render()), /Header 名称格式无效/);
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 名称').props.onChange({ target: { value: 'X-KIP-Token' } });
+  harness.find(node => node.type === 'input' && node.props['aria-label'] === '新增 Header 凭证名称').props.onChange({ target: { value: 'bad name' } });
+  harness.find(node => node.type === 'button' && node.children.includes('添加')).props.onClick();
+  assert.match(JSON.stringify(harness.render()), /凭证名称需要以字母或下划线开头/);
+});
