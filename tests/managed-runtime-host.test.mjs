@@ -47,7 +47,8 @@ async function fixture(t) {
     OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Basic%20cGs6c2s=', OTEL_SERVICE_NAME: 'fixture-service',
     OTEL_RESOURCE_ATTRIBUTES: 'agentengine.agent_id=ar-managed-fixture',
     CLOUD_MONITOR_OTLP_TRACES_ENDPOINT: 'https://cloudmonitor.example/v1/traces', CLOUD_MONITOR_OTLP_HEADERS: 'Ksc-Appkey=app-1',
-    DSH_OTEL_CA_PEM_BASE64: 'cGVt', UNRELATED_SECRET: 'must-not-leak' };
+    DSH_OTEL_CA_PEM_BASE64: 'cGVt', OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE: '/etc/langfuse-trust/ca-bundle.pem',
+    OTEL_EXPORTER_OTLP_CERTIFICATE: '/etc/langfuse-trust/ca-bundle.pem', UNRELATED_SECRET: 'must-not-leak' };
   return { root, installation, state, manifest, env, raw };
 }
 
@@ -62,7 +63,8 @@ test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or pers
   for (const name of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'KSYUN_SECRET_KEY', 'UNRELATED_SECRET']) assert.equal(plan.env[name], undefined);
   // Platform-managed observability reaches the Host child so the OTel plugin can export.
   for (const name of ['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
-    'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'DSH_OTEL_CA_PEM_BASE64']) assert.equal(plan.env[name], f.env[name]);
+    'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'DSH_OTEL_CA_PEM_BASE64',
+    'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE', 'OTEL_EXPORTER_OTLP_CERTIFICATE']) assert.equal(plan.env[name], f.env[name]);
   const config = await readFile(join(plan.env.AGENTKIT_HOME, 'config.yaml'), 'utf8');
   assert.ok(!config.includes('fixture-only-key') && !JSON.stringify(plan.identity).includes('fixture-only-key'));
   assert.deepEqual(await readdir(plan.env.AGENTKIT_HOME), ['config.yaml']);
