@@ -81,3 +81,23 @@ test('reserves a disabled official tool entry for re-enable', async () => {
   const { ctx } = fixture({ entries: [{ options: { name: TOOL_MODULE }, disabled: true }] })
   assert.equal(await usesOfficialTeamTools(ctx), true)
 })
+
+test('reserves official tool ownership from an enabled profile bundle before rows activate', async () => {
+  const { ctx } = fixture()
+  ctx.get = name => name === 'pluginManager' ? {
+    async listBundles() {
+      return [{ name: '@deepseek-ai/dsh-experimental-agent-team-profile', installed: true, enabled: true,
+        rows: [{ rowId: 'tool-agent-team', fiberPhase: 'selected' }] }]
+    },
+    async listPlugins() { return [] },
+  } : undefined
+  assert.equal(await usesOfficialTeamTools(ctx), true)
+})
+
+test('recognizes the official tool entry by its composed row id', async () => {
+  const { ctx } = fixture()
+  ctx.get = name => name === 'pluginManager' ? {
+    async listPlugins() { return [{ entryId: 'tool-agent-team', fiberPhase: 'active' }] },
+  } : undefined
+  assert.equal(await usesOfficialTeamTools(ctx), true)
+})
