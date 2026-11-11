@@ -437,3 +437,25 @@ test('a fresh Agent gets an empty Agent-scoped session registry', async t => {
   // not copy a previous Agent's ownership rows into a fresh Agent.
   assert.equal((await lstat(plan.env.AGENTKIT_MANAGED_SESSIONS)).isDirectory(), true);
 });
+
+test('Codex tuning knobs reach the Host child so a long turn stays deployment-tunable', async t => {
+  const f = await fixture(t);
+  const overrides = {
+    AGENTKIT_CODEX_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_IDLE_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS: '1860000',
+    AGENTKIT_CODEX_REASONING_SUMMARY: 'concise',
+    AGENTKIT_CODEX_SANDBOX: 'workspace-write',
+    AGENTKIT_CODEX_APPROVAL_POLICY: 'never',
+    AGENTKIT_CODEX_MODEL: 'fixture-model',
+  };
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, ...overrides } });
+
+  // The runtime reads these names; without them in the child env the documented
+  // knobs are unreachable and a long turn can only be tuned by a new image.
+  for (const [name, value] of Object.entries(overrides)) assert.equal(plan.env[name], value, name);
+  // An unset knob stays absent instead of being materialized as an empty value.
+  const bare = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v-other' } });
+  assert.equal(bare.env.AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS, undefined);
+});
