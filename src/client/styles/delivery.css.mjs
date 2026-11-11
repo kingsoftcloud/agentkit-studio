@@ -4,6 +4,20 @@ export default String.raw`
    follows the host theme instead of Studio's own brand values. */
 [data-studio-delivery] { container-type: inline-size; container-name: studio-delivery; max-width: 980px; margin: 0 auto; color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 22px; min-width: 0; }
 [data-studio-delivery] [data-studio-heading] { margin-bottom: 20px; align-items: center; }
+[data-studio-delivery] .af-section { padding: 0; margin-bottom: 24px; border: 0; }
+[data-studio-delivery] .af-section-title { font-size: 13px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
+[data-studio-delivery] .af-section-head { margin-bottom: 8px; }
+.ad-panel { padding: 0 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-xl,16px); }
+.ad-panel > .af-row { box-sizing: border-box; min-height: 56px; padding: 12px 0; }
+.ad-panel > .af-row:last-child { border-bottom: 0; }
+[data-studio-delivery] .af-row-title { font-size: 14px; line-height: 22px; }
+[data-studio-delivery] .af-row-desc { font-size: 12px; line-height: 18px; }
+[data-studio-delivery] .af-row-control { min-width: 0; max-width: min(55%,360px); }
+[data-studio-delivery] .af-row-control :is(.af-select,.af-input) { height: 32px; max-width: 360px; min-width: 0; width: 100%; text-overflow: ellipsis; }
+[data-studio-delivery] .af-btn { height: 32px; padding: 0 12px; border-radius: 16px; font-size: 13px; }
+[data-studio-delivery] .af-btn.ad-build-primary[data-variant="primary"]:disabled { background: var(--dsw-alias-button-primary-fill,#0b0b0d) !important; color: var(--dsw-alias-label-primary-foreground,#fff) !important; }
+[data-studio-delivery] .af-btn:not([data-variant="primary"]) { border-color: transparent; background: transparent; }
+.ad-panel > :is(.af-details,.ad-actions,.af-note) { margin-block: 12px; }
 [data-studio-delivery] :is(.af-input,.af-select,.af-btn,.af-switch):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
 
 /* static, non-editable values (fixed storage, runtime of the selected agent) */

@@ -6,17 +6,17 @@ export function createFormStyles(BRAND = DEFAULT_BRAND) {
   }
 
   function buttonStyle() {
-    return { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', minHeight: '36px', boxSizing: 'border-box', border: '0.5px solid ' + BRAND.border, borderRadius: 'var(--dsw-radius-md, 12px)', padding: '0 14px', color: BRAND.ink, background: 'transparent', fontFamily: 'inherit', fontSize: '14px', lineHeight: '22px', fontWeight: 500, cursor: 'pointer' };
+    return { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', minHeight: '32px', boxSizing: 'border-box', border: '0.5px solid ' + BRAND.border, borderRadius: '16px', padding: '0 12px', color: BRAND.ink, background: 'transparent', fontFamily: 'inherit', fontSize: '13px', lineHeight: '20px', fontWeight: 500, cursor: 'pointer' };
   }
 
   function pagerButtonStyle(disabled = false) {
     return {
       ...buttonStyle(), display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      minWidth: '68px', minHeight: '30px', padding: '6px 10px', flex: '0 0 auto',
+      minWidth: '28px', minHeight: '28px', padding: '0 8px', flex: '0 0 auto',
       color: disabled ? 'var(--dsw-alias-label-secondary, #676767)' : BRAND.ink,
-      background: disabled ? 'var(--dsw-alias-bg-layer-2, #f4f4f4)' : BRAND.surface,
-      border: '1px solid ' + BRAND.border,
-      opacity: 1,
+      background: 'transparent',
+      border: '0.5px solid ' + BRAND.border,
+      opacity: disabled ? 0.4 : 1,
     };
   }
   return { inputStyle, buttonStyle, pagerButtonStyle };

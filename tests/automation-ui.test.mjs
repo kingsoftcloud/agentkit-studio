@@ -122,7 +122,7 @@ test('background reads do not overlap or query future tasks on every timer tick'
   await ui.tick();
   assert.equal(ui.calls.length, previous, 'future tasks do not require repeated occurrence queries');
   ui.rows[0].nextRunAt = new Date(Date.now() - 1000).toISOString();
-  ui.buttons('刷新')[0].props.onClick(); await ui.settle();
+  ui.nodes().find(node => node.type === 'button' && node.props['aria-label'] === '刷新').props.onClick(); await ui.settle();
   const pending = deferred(); let reads = 0;
   ui.api.schedules = () => { reads++; return pending.promise; };
   await ui.tick(); await ui.tick();
@@ -168,7 +168,7 @@ test('an entirely failed history shows an unavailable state and a retry can reco
   assert.ok(ui.nodes().some(node => node.type === 'EmptyState' && node.props.title === '执行记录暂时无法读取'));
   assert.equal(ui.nodes().some(node => node.type === 'EmptyState' && node.props.title === '暂无执行记录'), false);
   ui.api.scheduleOccurrences = async id => ({ items: [{ occurrenceId: `recovered-${id}`, state: 'succeeded' }] });
-  ui.buttons('刷新')[0].props.onClick(); await ui.settle();
+  ui.nodes().find(node => node.type === 'button' && node.props['aria-label'] === '刷新').props.onClick(); await ui.settle();
   assert.match(ui.nodes().map(ui.text).join(' '), /recovered-a/);
   assert.equal(ui.nodes().some(node => node.props.role === 'alert'), false);
 });
