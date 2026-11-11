@@ -17,7 +17,7 @@ export function createScheduleDelivery({
     }, [agentId, mode, supported]);
     const key = value => value ? `${value.channelConfigId}/${value.bindingId}` : '';
     const selected = key(target);
-    return h('fieldset', { style: { margin: 0, padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px', display: 'grid', gap: '10px' } },
+    return h('fieldset', { style: { margin: 0, padding: '16px', border: '.5px solid ' + BRAND.border, borderRadius: 'var(--dsw-radius-xl,16px)', display: 'grid', gap: '10px' } },
       h('legend', { style: { color: BRAND.inkMuted, fontSize: '12px' } }, '结果去向'),
       h('div', { style: { display: 'flex', gap: '16px', flexWrap: 'wrap', color: BRAND.ink, fontSize: '12px' } },
         h('label', null, h('input', { type: 'radio', name: 'schedule-delivery', checked: mode !== 'channel', onChange: () => onChange('record', null) }), ' 仅保存执行记录'),

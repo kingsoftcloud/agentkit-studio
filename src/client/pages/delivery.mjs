@@ -25,7 +25,8 @@ export function createDeliveryPages({
   ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, Pill, StudioPageTabs, SectionHeading, EmptyState, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
   hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
 }) {
-  const { Section, Row, Select, Input, Button, Note, Collapsible, Summary, Switch } = createFormKit({ React: { createElement: h } });
+  const { Section: FormSection, Row, Select, Input, Button, Note, Collapsible, Summary, Switch } = createFormKit({ React: { createElement: h } });
+  const Section = (props, ...children) => FormSection(props, h('div', { className: 'ad-panel' }, ...children));
 
   function CloudDeploymentPanel({ agentId, selectedBuild, onBusyChange }) {
     const [preview, setPreview] = useState(null);
@@ -394,18 +395,17 @@ export function createDeliveryPages({
       })
       : h('tr', null, h('td', { colSpan: 4 }, Note(null, '当前 Agent 还没有 Build。')));
     return h('div', { 'data-studio-delivery': 'true' },
-      h(SectionHeading, { title: '构建与部署', detail: '选择 Agent 与冻结版本，检查配置后发布到云端。' }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: Button({ onClick: () => load() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
-        Section({ title: '目标 Agent', meta: agents.length ? `${agents.length} 个本地 Agent` : null, help: '仅展示本地创建的 Agent。' },
+        Section({ title: '目标 Agent', meta: agents.length ? `${agents.length} 个本地 Agent` : null, help: '选择 Agent 与冻结版本，检查配置后发布到云端。仅展示本地创建的 Agent。' },
           Row({ title: 'Agent' },
             Select({ 'aria-label': '目标 Agent', value: selectedAgent, onChange: chooseAgent, disabled: deliveryBusy },
               agents.length ? agents.map(item => { const id = item?.metadata?.id || item?.id; return h('option', { key: id, value: id }, item?.metadata?.name || item?.name || id); }) : h('option', { value: '' }, '暂无本地 Agent'))),
           currentAgent ? Row({ title: '运行时', desc: `当前版本 ${currentAgent.metadata?.revision || '—'}` },
             h('span', { className: 'ad-value' }, RUNTIME_LABELS[currentAgent.spec?.runtime?.type] || 'Agent')) : null),
         Section({ title: '构建版本', meta: builds.length ? `${builds.length} 个构建` : '尚未构建', help: '构建保存当前提示词、模型和资源绑定；部署使用这个冻结版本。',
-            action: Button({ onClick: createBuild, disabled: deliveryBusy || agentLoading || !selectedAgent }, saving ? '构建中…' : '构建当前版本') },
+            action: Button({ variant: 'primary', className: 'ad-build-primary', onClick: createBuild, disabled: deliveryBusy || agentLoading || !selectedAgent }, saving ? '构建中…' : '构建当前版本') },
           Row({ title: '冻结版本', desc: agentLoading ? '正在读取版本…' : readyBuilds.length ? '只列出构建成功的版本' : '尚无成功的构建' },
             Select({ 'aria-label': '构建版本', value: selectedBuild, disabled: deliveryBusy || agentLoading || !readyBuilds.length, onChange: event => setSelectedBuild(event.target.value) },
               h('option', { value: '' }, agentLoading ? '正在读取版本…' : readyBuilds.length ? '选择成功的版本' : '尚无构建版本'),
