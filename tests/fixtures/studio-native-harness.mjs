@@ -294,17 +294,39 @@ async function applyProof(ctx, options) {
     const originalFlush = ctx.sessions.flush.bind(ctx.sessions);
     const { SqliteRunStore } = await import('@kingsoftcloud/agentkit-harness-node/native/sqlite-store');
     const { parseNativeJson } = await import('@kingsoftcloud/agentkit-harness-core');
+    // Crash deterministically from the whole-turn boundary instead of a flush
+    // wrapper. Patch 080 appends the required `turn/owner` admission before it
+    // dispatches `agent/execute-turn`, so the ownership record is already
+    // durable here and no effect has run yet. The previous flush-based hook
+    // raced that ordering: when the claim lost the race the turn ran natively,
+    // no `turn/owner` was ever written and the crash silently never fired.
+    const crashAfterOwnerAdmission = async () => {
+      if (existsSync(marker)) return;
+      const session = ctx.sessions.get?.('native-studio-session');
+      // `externalTurns.claim()` appends `turn/owner` without persisting it; the
+      // engine owns that flush and must complete it before any effect. Flush
+      // here, then crash instead of running the effect.
+      if (session) await originalFlush(session);   // never the overridden wrapper
+      const snapshot = session?.snapshotEvents?.();
+      const owner = snapshot?.findLast?.(event => event.type === 'turn/owner');
+      if (!owner) {
+        // Never mask a contract violation as "the run simply succeeded".
+        throw Object.assign(new Error('外部整轮派发前没有落盘的 turn/owner 归属记录'), { code: 'RECOVERY_PROOF_OWNER_MISSING' });
+      }
+      const admission = parseNativeJson(owner.data.binding);
+      const ledger = new SqliteRunStore(join(options.directory, 'studio/native-harness/runs.sqlite'));
+      const runs = ledger.list(admission.identity.scope); ledger.close();
+      writeFileSync(marker, JSON.stringify({ pid: process.pid, owner: owner.data, events: snapshot, runs }));
+      const fd = openSync(marker, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
+      process.exit(37); // No turn/end, Host cleanup or Native Run creation.
+    };
+    ctx.on('agent/execute-turn', () => crashAfterOwnerAdmission(), { prepend: true });
+    // Retain the flush hook as a fallback for the path where the turn owner is
+    // already durable but the whole-turn event is not dispatched in this scope.
     ctx.sessions.flush = async session => {
       const durable = await originalFlush(session);
-      const events = session.snapshotEvents(), owner = events.findLast(event => event.type === 'turn/owner');
-      if (durable === true && session.id === 'native-studio-session' && owner && !existsSync(marker)) {
-        const admission = parseNativeJson(owner.data.binding);
-        const ledger = new SqliteRunStore(join(options.directory, 'studio/native-harness/runs.sqlite'));
-        const runs = ledger.list(admission.identity.scope); ledger.close();
-        writeFileSync(marker, JSON.stringify({ pid: process.pid, owner: owner.data, events, runs }));
-        const fd = openSync(marker, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
-        process.exit(37); // No turn/end, Host cleanup or Native Run creation.
-      }
+      const owner = session.snapshotEvents().findLast(event => event.type === 'turn/owner');
+      if (durable === true && session.id === 'native-studio-session' && owner) await crashAfterOwnerAdmission();
       return durable;
     };
     ctx.effect(() => () => { ctx.sessions.flush = originalFlush; }, 'Recovery proof flush injection');
