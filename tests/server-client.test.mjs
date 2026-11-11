@@ -313,6 +313,13 @@ test('cloud Agent updates translate Studio platform bindings to ComponentConfig'
   });
 });
 
+test('cloud ManagedRuntime updates include the editable system Prompt', () => {
+  const payload = buildCloudAgentUpdate('ar-managed-1', {
+    spec: { instructions: { system: '请用中文回答，并标注不确定信息。' }, bindings: { plugins: [] } },
+  });
+  assert.equal(payload.SystemPrompt, '请用中文回答，并标注不确定信息。');
+});
+
 test('cloud Agent updates reject local-only bindings instead of dropping them', () => {
   assert.throws(() => buildCloudAgentUpdate('ar-cloud-1', { spec: { bindings: { mcpServers: ['mcp-1'] } } }), error => error instanceof AgentEngineError && error.code === 'CLOUD_BINDING_UNSUPPORTED');
 });
@@ -380,6 +387,20 @@ test('GetAgent uses the deployed framework when Basic omits it', async () => {
   });
   const agent = await client.getAgent('cloud-langgraph');
   assert.equal(agent.spec.runtime.type, 'langgraph');
+});
+
+test('GetAgent projects the server-owned SystemPrompt into the Studio edit spec', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    fetchImpl: async () => new Response(JSON.stringify({ Code: 0, Data: {
+      Basic: { AgentId: 'ar-managed', Name: '托管 Agent', Framework: 'dsh-native' },
+      Deployment: { DeploymentType: 'ManagedRuntime', Framework: 'dsh-native' },
+      SystemPrompt: '只回答已确认的信息。',
+    } }), { status: 200 }),
+  });
+  const agent = await client.getAgent('ar-managed');
+  assert.equal(agent.source, 'agentengine-managed-runtime');
+  assert.equal(agent.spec.instructions.system, '只回答已确认的信息。');
 });
 
 test('ListAgents marks flat ManagedRuntime rows for the Studio cloud catalog', async () => {

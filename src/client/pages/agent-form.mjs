@@ -24,7 +24,7 @@ export function createAgentForm({
   const nativeRoleFields = createNativeRoleFields({ React, kit });
   function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload, allowHarnessRuntime = false }) {
     const editing = Boolean(initialAgent);
-    const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
+    const cloudEditing = editing && ['agentengine-server', 'agentengine-managed-runtime'].includes(initialAgent?.source);
     const originalSpec = initialAgent?.spec || creationSeed?.spec || {};
     const requirements = creationSeed?.requirements || [];
     const templateSource = creationSeed?.templateSource || initialAgent?.metadata?.templateSource;
@@ -82,10 +82,15 @@ export function createAgentForm({
 
     useEffect(() => {
       if (form.runtime === 'dsh-native' && !editing) setSelectedTools([]);
-    }, [form.runtime]);
+    }, [form.runtime, cloudEditing]);
 
     useEffect(() => {
       let alive = true;
+      if (cloudEditing) {
+        setCatalogStatus('ready');
+        setCatalog({ model: [], tool: [], mcp: [], skill: [] });
+        return () => { alive = false; };
+      }
       setCatalogStatus('loading');
       Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind === 'tool' ? { kind, runtimeType: form.runtime } : kind)))
         .then(results => {
@@ -192,7 +197,7 @@ export function createAgentForm({
           description: form.description.trim() || '由 AgentKit Studio 本地创建', spec,
         });
         const metadata = created?.metadata || {};
-        onCreated({ id: metadata.id || id, name: metadata.name || form.name.trim(), revision: metadata.revision || 1 });
+        onCreated({ id: metadata.id || id, name: metadata.name || form.name.trim(), revision: metadata.revision || 1, ...(initialAgent?.source ? { source: initialAgent.source } : {}) });
       } catch (reason) {
         setConflict(reason?.code === 'AGENT_EXPECTED_REVISION_CONFLICT');
         setError(reason?.code === 'AGENT_EXPECTED_REVISION_CONFLICT'
@@ -255,8 +260,8 @@ export function createAgentForm({
         Field({ label: '名称' }, Input({ value: form.name, onChange: e => update('name', e.target.value), placeholder: '我的 Agent' }))),
       Field({ label: '运行时', help: RUNTIME_HELP }, Select({ value: form.runtime, disabled: editing, onChange: e => update('runtime', e.target.value) }, runtimeOptions.map(item => h('option', { key: item.runtimeType, value: item.runtimeType }, item.displayName)))),
       Field({ label: '用途描述' }, TextArea({ value: form.description, onChange: e => update('description', e.target.value), placeholder: '例如：企业知识库问答与资料检索', rows: 3 })),
-      Field({ label: '角色与系统 Prompt' }, TextArea({ value: form.prompt, disabled: cloudEditing, onChange: e => update('prompt', e.target.value), placeholder: cloudEditing ? '云端 Agent 的 Prompt 由 AgentEngine Server 管理' : '描述 Agent 的身份、边界和回答方式', rows: 6 })),
-      Field({ label: '任务说明（可选）' }, TextArea({ value: taskPrompt, disabled: cloudEditing, onChange: event => setTaskPrompt(event.target.value), rows: 3 })),
+      Field({ label: cloudEditing ? '云端系统 Prompt' : '角色与系统 Prompt' }, TextArea({ value: form.prompt, onChange: e => update('prompt', e.target.value), placeholder: '描述 Agent 的身份、边界和回答方式', rows: 6 })),
+      !cloudEditing ? Field({ label: '任务说明（可选）' }, TextArea({ value: taskPrompt, onChange: event => setTaskPrompt(event.target.value), rows: 3 })) : null,
     ) : step === 1 ? h(Fragment, null,
       cloudEditing ? Note({ role: 'status' }, '当前是云端 Agent。模型、MCP、本地 Skill 和 Tool 由 AgentEngine Runtime 自身管理；本页只保存知识库、记忆库和 Skill Center 这三类云端 ComponentConfig。') : null,
       !cloudEditing && form.runtime === 'codex' ? Note({ role: 'status' }, '可选 Codex 账户模型或已配置的网关模型；网关模型使用对应提供商的凭证和 API 设置。导出运行包时只支持网关模型。') : null,
