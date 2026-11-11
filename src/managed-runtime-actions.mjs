@@ -30,7 +30,11 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
   }
   async function requireSession(id, owner, { deleting = false } = {}) {
     const record = await registry.read(id);
-    if (!record || record.owner !== owner.digest || record.versionId !== runtime.identity.versionId) throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
+    // Session identity is Agent-scoped, not Version-scoped: an accepted
+    // UpdateAgent mints a new VersionId while the DSH transcript and this
+    // registry stay on the same Agent state root. The Hosted UI must keep
+    // listing and opening sessions recorded by an earlier version.
+    if (!record || record.owner !== owner.digest) throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
     if (record.phase === 'deleted') throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
     if (!deleting && (retiring.has(record.nativeSessionId) || record.phase !== 'ready')) throw runtimeError('RUNTIME_SESSION_UNAVAILABLE', 409);
     return record;
@@ -53,8 +57,14 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
     return registry.serial(id, async () => {
       let record = await registry.read(id);
       if (record) {
-        if (record.owner !== owner.digest || record.nativeSessionId !== nativeId || record.versionId !== runtime.identity.versionId) throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
+        if (record.owner !== owner.digest || record.nativeSessionId !== nativeId) throw runtimeError('RUNTIME_SESSION_NOT_FOUND', 404);
         if (record.phase === 'deleted' || record.phase === 'deleting' || retiring.has(nativeId)) throw runtimeError('RUNTIME_SESSION_UNAVAILABLE', 409);
+        if (record.versionId !== runtime.identity.versionId) {
+          // Keep the immutable session identity, refresh only the version that
+          // currently serves it so later payloads describe the running Host.
+          record = { ...record, versionId: runtime.identity.versionId };
+          await registry.write(record);
+        }
       } else {
         if (await controller.projections({ sessionId: nativeId }, signal)) throw runtimeError('RUNTIME_SESSION_METADATA_UNAVAILABLE', 503);
         record = { format: 'agentengine.dsh-session/v1', sessionId: id, nativeSessionId: nativeId,
@@ -85,7 +95,7 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
     const title = projection.values?.title;
     const updatedAt = projection.values?.sessionListMetadata?.lastPromptAt ?? record.createdAt;
     return { SessionId: record.sessionId, AgentId: runtime.identity.agentId, UserId: record.userId,
-      VersionId: record.versionId, Version: 1, CreatedAt: record.createdAt, UpdatedAt: new Date(updatedAt).toISOString(),
+      VersionId: runtime.identity.versionId, Version: 1, CreatedAt: record.createdAt, UpdatedAt: new Date(updatedAt).toISOString(),
       Title: typeof title === 'string' ? title : '', TitleSource: title ? 'runtime' : '', RuntimeSync: 'synced',
       State: {}, Continuity: { Level: 'runtime', Path: 'native-session', Runtime: runtime.identity.runtimeName } };
   }

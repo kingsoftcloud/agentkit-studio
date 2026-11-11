@@ -12,3 +12,17 @@ test('Host initializes portable bundle services before registering consumers', (
   assert.ok(download > portable, 'download routes must be registered after portable bundles exist');
   assert.ok(adapter > portable, 'DSH adapters must be registered after portable bundles exist');
 });
+
+test('Host exposes only a generic cloud capability for independent DSH plugins', () => {
+  assert.match(bootstrap, /ctx\.provide\('agentkitHostCloud'/u);
+  assert.match(bootstrap, /storeDir: studioStoreDir/u);
+  assert.match(bootstrap, /configuration: configurationPromise/u);
+  assert.match(bootstrap, /getClient: async \(\) => serverClientPromise/u);
+  assert.match(bootstrap, /getDeploymentClient: async \(\) => deploymentClientPromise/u);
+  const productSpecific = new RegExp([
+    ['personal', 'assistant'].join('-'),
+    ['Personal', 'Assistant'].join(' '),
+    ['assistant', 'Desktop'].join(''),
+  ].join('|'), 'u');
+  assert.doesNotMatch(bootstrap, productSpecific);
+});

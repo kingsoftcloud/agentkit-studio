@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,7 +13,8 @@ import { createChildRewindProof } from './native-child-rewind-proof.mjs';
 
 const { values } = parseArgs({ options: { source: { type: 'string' }, archive: { type: 'string' }, keep: { type: 'boolean' },
   promote: { type: 'boolean' }, 'continue-child': { type: 'boolean' }, history: { type: 'boolean' }, 'child-controls': { type: 'boolean' }, 'conversation-rewind': { type: 'boolean' },
-  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' }, 'structured-patch': { type: 'boolean' }, 'workspace-rewind': { type: 'boolean' }, 'command-workspace': { type: 'boolean' } } });
+  'guidance-fifo': { type: 'boolean' }, 'task-controls': { type: 'boolean' }, 'child-plan': { type: 'boolean' }, 'edit-matching': { type: 'boolean' }, 'structured-patch': { type: 'boolean' }, 'workspace-rewind': { type: 'boolean' }, 'command-workspace': { type: 'boolean' },
+  'approval-restart': { type: 'boolean' } } });
 assert.ok(values.source && values.archive, 'Use --source <built maintained DSH> --archive <Studio.tgz>');
 if (values['conversation-rewind']) assert.ok(!Object.entries(values).some(([key, value]) => value === true
   && !['conversation-rewind', 'keep'].includes(key)), '--conversation-rewind is a separate child lifecycle proof');
@@ -35,6 +36,7 @@ const root = await realpath(await mkdtemp(join(tmpdir(), 'studio-native-children
 console.log(`Studio child evidence: ${root}`);
 let harness, turn = 1, parentStep = 0, childStep = 0, firstChildId, firstCheckpoint;
 const requests = [], failures = [], httpMetadata = [];
+const approvals = [];
 let releaseChild, promotion = null;
 const parentContinued = new Promise(resolve => { releaseChild = resolve; });
 async function control(method, payload) {
@@ -56,6 +58,10 @@ const server = createServer(async (request, response) => {
       return;
     }
     const body = JSON.parse(raw); requests.push(body);
+    if (values['approval-restart'] && request.url === '/approval') {
+      requests.pop(); approvals.push({ ...body, response });
+      return;
+    }
     assert.equal(request.url, '/v1/chat/completions');
     if (conversationRewindProof) return conversationRewindProof.respond({ body, response });
     const child = body.model === 'child-proof';
@@ -63,7 +69,24 @@ const server = createServer(async (request, response) => {
     if (values['command-workspace'] && !child) assert.doesNotMatch(body.messages[0].content,
       /Use the read tool —|Use the glob tool —|Track every background job id|create_goal may infer|Start independent delegations with/);
     let call, calls, text;
-    if (child) {
+    if (values['approval-restart']) {
+      if (child) {
+        const step = childStep++;
+        if (step === 0) call = { name: 'read_workspace_file', arguments: { path: 'proof.txt' } };
+        else if (step === 1) {
+          assert.match(JSON.stringify(body.messages), /Evidence from the actual child workspace/);
+          call = { name: 'write_workspace_file', arguments: { path: 'approved.txt', content: 'Approved exactly once.\n' } };
+        } else {
+          assert.equal(step, 2, 'the original committed child calls are not replayed');
+          assert.match(JSON.stringify(body.messages.filter(row => row.role === 'tool').at(-1)), /approved\.txt/);
+          text = 'Child wrote approved.txt';
+        }
+      } else if (parentStep++ === 0) call = { name: 'native_delegate', arguments: { role: 'writer', task: 'Read proof.txt and then write approved.txt.' } };
+      else {
+        assert.match(JSON.stringify(body.messages), /Child wrote approved\.txt/);
+        text = 'Parent completed original approval run';
+      }
+    } else if (child) {
       const finalOnly = values['guidance-fifo'] && turn === 1 && childStep === 2 || values['task-controls'] && childStep === 3
         || editedChild && (values['workspace-rewind'] ? turn === 2 && childStep === 3 : childStep === 2);
       assert.deepEqual((body.tools ?? []).map(tool => tool.function.name).filter(name => name !== 'submit_final_output'), finalOnly ? []
@@ -242,6 +265,13 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const graph = join(root, 'host'), installed = join(graph, 'package'), dependencies = join(graph, 'node_modules');
   await mkdir(graph); execFileSync('tar', ['-xzf', resolve(values.archive), '-C', graph]);
+  if (values['approval-restart']) {
+    // Keep the test adapter out of the published package while loading its
+    // imports from the actual installed Studio archive.
+    const fixture = 'tests/fixtures/studio-native-children.mjs';
+    await mkdir(join(installed, 'tests/fixtures'), { recursive: true });
+    await copyFile(join(repository, fixture), join(installed, fixture));
+  }
   await mkdir(join(dependencies, '@deepseek-ai'), { recursive: true });
   for (const name of await readdir(join(repository, 'node_modules'))) {
     if (name.startsWith('.') || name === '@deepseek-ai') continue;
@@ -258,7 +288,7 @@ try {
     '- insert:', '    - id: child-proof-webserver', "      name: '@deepseek-ai/dsh-host-webserver'", '      config:', "        host: '127.0.0.1'", '        port: 0',
     '    - id: child-proof-connection', "      name: '@deepseek-ai/dsh-client-connection'",
     '    - id: child-proof-model-selection', "      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'",
-    ...(values['conversation-rewind'] ? ['    - id: child-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
+    ...(values['conversation-rewind'] || values['approval-restart'] ? ['    - id: child-proof-workspace', "      name: '@deepseek-ai/dsh-workspace'",
       '    - id: child-proof-file-upload', "      name: '@deepseek-ai/dsh-client-file-upload'",
       '    - id: child-proof-session-controller', "      name: '@deepseek-ai/dsh-api-session-controller'"] : []),
     '    - id: child-proof-presets', "      name: '@deepseek-ai/dsh-agent-preset-registry'", '      config:', '        default: standard',
@@ -271,15 +301,23 @@ try {
     ...(values['structured-patch'] ? ['        structuredPatch: true'] : []),
     ...(values['workspace-rewind'] ? ['        workspaceRewind: true'] : []),
     ...(values['command-workspace'] ? ['        commandWorkspace: true'] : []),
+    ...(values['approval-restart'] ? [`        approvalRestartUrl: "http://127.0.0.1:${server.address().port}/approval"`] : []),
   ].join('\n'));
   const { DeepSeekHarness } = await import(pathToFileURL(join(source, 'packages/sdk/client/lib/index.js')).href);
+  const cwd = values['approval-restart'] ? join(root, 'workspace') : root;
+  await mkdir(cwd, { recursive: true });
   const options = { dshBin: join(source, 'apps/cli/lib/bin.js'), profile: 'sdk',
     patches: [join(source, 'packages/bundle/web-app/presets/standard.patch.yml'), patch], dshHome: join(root, 'home'),
-    cwd: root, processCwd: root, provider: 'agentkit-studio-parent-profile', model: 'parent-proof', initializeTimeoutMs: 30000, requestTimeoutMs: 30000,
+    cwd, processCwd: root, provider: 'agentkit-studio-parent-profile', model: 'parent-proof', initializeTimeoutMs: 30000, requestTimeoutMs: 30000,
     env: { ...process.env, PATH: nodeBin, DSH_TELEMETRY_DISABLED: '1', DSH_AGENTS_HOME: join(root, 'agents'),
       AGENTKIT_PYTHON: '/unavailable/python', AGENTKIT_PYTHON_ROOT: '/unavailable/ksadk' } };
   harness = new DeepSeekHarness(options);
-  if (conversationRewindProof) {
+  if (values['approval-restart']) {
+    const { verifyMountedChildApprovalRestart } = await import('./native-child-approval-restart-proof.mjs');
+    await verifyMountedChildApprovalRestart({ root, installed, makeHarness: () => new DeepSeekHarness(options),
+      initial: harness, approvals, failures, requests, control });
+    harness = null;
+  } else if (conversationRewindProof) {
     await conversationRewindProof.run({ harness, DeepSeekHarness, options, root, installed, control, failures, requests });
     harness = null;
   } else {

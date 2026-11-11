@@ -49,6 +49,79 @@ test('Codex runtime uses app-server protocol and streams reasoning before final 
   ]);
 });
 
+test('Codex runtime requests readable reasoning summaries for expandable DSH thinking rows', async () => {
+  let turnParams;
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn();
+    const write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'turn/start') turnParams = request.params;
+      return write(data, ...args);
+    };
+    return child;
+  }, cwd: '/tmp' });
+  for await (const _chunk of runtime.stream({ input: '展示可展开的思考摘要' })) {}
+  assert.equal(turnParams.summary, 'detailed');
+});
+
+test('Codex runtime keeps an explicit reasoning-summary override and accepts reasoning text deltas', async () => {
+  let turnParams;
+  const runtime = createCodexRuntime({ reasoningSummary: 'concise', spawnImpl: () => {
+    const child = fakeSpawn();
+    const write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'turn/start') {
+        turnParams = request.params;
+        setTimeout(() => {
+          const common = { threadId: 'thread-fake', turnId: 'turn-fake' };
+          const emit = value => child.stdout.write(`${JSON.stringify(value)}\n`);
+          emit({ method: 'item/started', params: { ...common, item: { id: 'item-reasoning', type: 'reasoning' } } });
+          emit({ method: 'item/reasoning/textDelta', params: { ...common, itemId: 'item-reasoning', delta: '公开摘要' } });
+          emit({ method: 'item/started', params: { ...common, item: { id: 'item-final', type: 'agentMessage', phase: 'final_answer' } } });
+          emit({ method: 'item/agentMessage/delta', params: { ...common, itemId: 'item-final', delta: '答案' } });
+          emit({ method: 'turn/completed', params: { ...common, turn: { id: 'turn-fake', status: 'completed' } } });
+        }, 1);
+      }
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  const chunks = [];
+  for await (const chunk of runtime.stream({ input: '显示摘要' })) chunks.push(chunk);
+  assert.equal(turnParams.summary, 'concise');
+  assert.deepEqual(chunks.filter(chunk => chunk.type === 'reasoning' || chunk.type === 'text'), [
+    { type: 'reasoning', text: '公开摘要' }, { type: 'text', text: '答案' },
+  ]);
+});
+
+test('Codex runtime recovers a reasoning summary from a completed item when no delta was streamed', async () => {
+  const runtime = createCodexRuntime({ spawnImpl: () => {
+    const child = fakeSpawn();
+    const write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (data, ...args) => {
+      const request = JSON.parse(String(data));
+      if (request.method === 'turn/start') setTimeout(() => {
+        const common = { threadId: 'thread-fake', turnId: 'turn-fake' };
+        const emit = value => child.stdout.write(`${JSON.stringify(value)}\n`);
+        emit({ method: 'item/completed', params: { ...common, item: {
+          id: 'item-reasoning', type: 'reasoning', summary: [{ type: 'summary_text', text: '完成态摘要' }], content: [],
+        } } });
+        emit({ method: 'item/completed', params: { ...common, item: { id: 'item-final', type: 'agentMessage', phase: 'final_answer', text: '答案' } } });
+        emit({ method: 'turn/completed', params: { ...common, turn: { id: 'turn-fake', status: 'completed' } } });
+      }, 1);
+      return write(data, ...args);
+    };
+    return child;
+  } });
+  const chunks = [];
+  for await (const chunk of runtime.stream({ input: '恢复完成态摘要' })) chunks.push(chunk);
+  assert.deepEqual(chunks.filter(chunk => chunk.type === 'reasoning' || chunk.type === 'text'), [
+    { type: 'reasoning', text: '完成态摘要' }, { type: 'text', text: '答案' },
+  ]);
+});
+
 test('a turn selects its own Codex sandbox without leaking into the next turn', async () => {
   const starts = [];
   const runtime = createCodexRuntime({ spawnImpl: () => {
@@ -296,6 +369,29 @@ test('a custom provider uses Responses and a per-child credential without alteri
   assert.equal(threads[1].modelProvider, undefined);
   assert.equal(invocations[1].env.AGENTKIT_CODEX_MODEL_API_KEY, process.env.AGENTKIT_CODEX_MODEL_API_KEY);
   assert.ok(!invocations[1].args.some(arg => arg.includes('agentkit_gateway')));
+});
+
+test('raises the Codex SSE idle budget above the 300s default and keeps it tunable', async () => {
+  const invocations = [];
+  const spawnImpl = (_executable, args, options) => { invocations.push({ args, env: options.env }); return fakeSpawn(); };
+  const stream = runtime => runtime.stream({ input: 'hi', modelProvider: { baseUrl: 'https://gateway.example/v1', apiKey: 'key' } });
+  const idleArg = args => args.find(arg => arg.startsWith('model_providers.agentkit_gateway.stream_idle_timeout_ms='));
+
+  const defaults = createCodexRuntime({ spawnImpl, env: {} });
+  for await (const _chunk of stream(defaults)) {}
+  assert.equal(idleArg(invocations[0].args), 'model_providers.agentkit_gateway.stream_idle_timeout_ms=900000');
+
+  const configured = createCodexRuntime({ spawnImpl, streamIdleTimeoutMs: 12_000 });
+  for await (const _chunk of stream(configured)) {}
+  assert.equal(idleArg(invocations[1].args), 'model_providers.agentkit_gateway.stream_idle_timeout_ms=12000');
+
+  const fromEnv = createCodexRuntime({ spawnImpl, env: { AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS: '30000' } });
+  for await (const _chunk of stream(fromEnv)) {}
+  assert.equal(idleArg(invocations[2].args), 'model_providers.agentkit_gateway.stream_idle_timeout_ms=30000');
+
+  // Native Codex turns keep their own provider defaults: no gateway arg is invented.
+  for await (const _chunk of defaults.stream({ input: 'hi' })) {}
+  assert.ok(!invocations[3].args.some(arg => arg.includes('stream_idle_timeout_ms')));
 });
 
 test('Codex runtime classifies an asynchronous missing executable as provider unavailable', async () => {

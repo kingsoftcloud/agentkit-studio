@@ -142,6 +142,7 @@ export function createStudioHostRemote(options = {}) {
     authoringConversationStatus: requestId => request(`/api/v1/authoring/conversations:status/${encodeURIComponent(requestId)}`),
     updateAgent: (id, payload) => request(`/api/v1/agents/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }),
     deleteAgent: id => request(`/api/v1/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    deleteManagedAgent: id => nativeChildOperation('agents/managed-delete', { agentId: id }),
     models: () => request('/api/v1/catalog/models'),
     resources: (query = '') => request(`/api/v1/catalog/resources${query ? `?${query}` : ''}`),
     createMcpResource: payload => request('/api/v1/catalog/mcp-servers', { method: 'POST', body: JSON.stringify(payload) }),

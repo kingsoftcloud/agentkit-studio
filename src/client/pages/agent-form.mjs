@@ -22,9 +22,9 @@ export function createAgentForm({
   const kit = createFormKit({ React });
   const { Section, Row, Field, Input, TextArea, Select, Switch, Choice, CheckCard, Button, Note, Collapsible, Summary, HelpTip } = kit;
   const nativeRoleFields = createNativeRoleFields({ React, kit });
-  function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload }) {
+  function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload, allowHarnessRuntime = false }) {
     const editing = Boolean(initialAgent);
-    const cloudEditing = editing && initialAgent?.source === 'agentengine-server';
+    const cloudEditing = editing && ['agentengine-server', 'agentengine-managed-runtime'].includes(initialAgent?.source);
     const originalSpec = initialAgent?.spec || creationSeed?.spec || {};
     const requirements = creationSeed?.requirements || [];
     const templateSource = creationSeed?.templateSource || initialAgent?.metadata?.templateSource;
@@ -54,8 +54,11 @@ export function createAgentForm({
       id: initialAgent?.metadata?.id || 'local-agent', name: initialAgent?.metadata?.name || creationSeed?.name || '我的第一个 Agent', runtime: initialRuntime,
       description: originalSpec.description || creationSeed?.description || '', prompt: originalSpec.instructions?.system || '', template: 'blank',
     });
+    // Star Harness is paused for new Agents: keep it visible only when editing an
+    // existing harness Agent or when a caller explicitly re-enables creation.
+    const creatableRuntime = type => type !== 'harness' || editing || allowHarnessRuntime;
     const runtimeOptions = [
-      ...ALLOWED_RUNTIME_TYPES.filter(type => !creationSeed?.runtimes || creationSeed.runtimes.includes(type)).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
+      ...ALLOWED_RUNTIME_TYPES.filter(type => creatableRuntime(type) && (!creationSeed?.runtimes || creationSeed.runtimes.includes(type))).map(runtimeType => ({ runtimeType, displayName: RUNTIME_LABELS[runtimeType] })),
       // A cloud Agent's server-owned framework is not a local authoring
       // runtime option, but it must remain visible while editing. Without
       // this option a disabled native <select> silently displays its first
@@ -79,10 +82,15 @@ export function createAgentForm({
 
     useEffect(() => {
       if (form.runtime === 'dsh-native' && !editing) setSelectedTools([]);
-    }, [form.runtime]);
+    }, [form.runtime, cloudEditing]);
 
     useEffect(() => {
       let alive = true;
+      if (cloudEditing) {
+        setCatalogStatus('ready');
+        setCatalog({ model: [], tool: [], mcp: [], skill: [] });
+        return () => { alive = false; };
+      }
       setCatalogStatus('loading');
       Promise.allSettled(['model', 'tool', 'mcp', 'skill'].map(kind => kind === 'model' && form.runtime === 'codex' && !cloudEditing ? hostRemote.codexModels() : hostRemote.resources(kind === 'tool' ? { kind, runtimeType: form.runtime } : kind)))
         .then(results => {
@@ -189,7 +197,7 @@ export function createAgentForm({
           description: form.description.trim() || '由 AgentKit Studio 本地创建', spec,
         });
         const metadata = created?.metadata || {};
-        onCreated({ id: metadata.id || id, name: metadata.name || form.name.trim(), revision: metadata.revision || 1 });
+        onCreated({ id: metadata.id || id, name: metadata.name || form.name.trim(), revision: metadata.revision || 1, ...(initialAgent?.source ? { source: initialAgent.source } : {}) });
       } catch (reason) {
         setConflict(reason?.code === 'AGENT_EXPECTED_REVISION_CONFLICT');
         setError(reason?.code === 'AGENT_EXPECTED_REVISION_CONFLICT'
@@ -252,8 +260,8 @@ export function createAgentForm({
         Field({ label: '名称' }, Input({ value: form.name, onChange: e => update('name', e.target.value), placeholder: '我的 Agent' }))),
       Field({ label: '运行时', help: RUNTIME_HELP }, Select({ value: form.runtime, disabled: editing, onChange: e => update('runtime', e.target.value) }, runtimeOptions.map(item => h('option', { key: item.runtimeType, value: item.runtimeType }, item.displayName)))),
       Field({ label: '用途描述' }, TextArea({ value: form.description, onChange: e => update('description', e.target.value), placeholder: '例如：企业知识库问答与资料检索', rows: 3 })),
-      Field({ label: '角色与系统 Prompt' }, TextArea({ value: form.prompt, disabled: cloudEditing, onChange: e => update('prompt', e.target.value), placeholder: cloudEditing ? '云端 Agent 的 Prompt 由 AgentEngine Server 管理' : '描述 Agent 的身份、边界和回答方式', rows: 6 })),
-      Field({ label: '任务说明（可选）' }, TextArea({ value: taskPrompt, disabled: cloudEditing, onChange: event => setTaskPrompt(event.target.value), rows: 3 })),
+      Field({ label: cloudEditing ? '云端系统 Prompt' : '角色与系统 Prompt' }, TextArea({ value: form.prompt, onChange: e => update('prompt', e.target.value), placeholder: '描述 Agent 的身份、边界和回答方式', rows: 6 })),
+      !cloudEditing ? Field({ label: '任务说明（可选）' }, TextArea({ value: taskPrompt, onChange: event => setTaskPrompt(event.target.value), rows: 3 })) : null,
     ) : step === 1 ? h(Fragment, null,
       cloudEditing ? Note({ role: 'status' }, '当前是云端 Agent。模型、MCP、本地 Skill 和 Tool 由 AgentEngine Runtime 自身管理；本页只保存知识库、记忆库和 Skill Center 这三类云端 ComponentConfig。') : null,
       !cloudEditing && form.runtime === 'codex' ? Note({ role: 'status' }, '可选 Codex 账户模型或已配置的网关模型；网关模型使用对应提供商的凭证和 API 设置。导出运行包时只支持网关模型。') : null,
@@ -299,7 +307,10 @@ export function createAgentForm({
         editing ? Note({ style: { marginTop: '12px' } }, cloudEditing ? '保存后调用 AgentEngine UpdateAgent；云端已有会话继续使用旧快照，新运行使用更新后的组件绑定。' : `保存后创建新的配置版本（当前 r${initialAgent.metadata.revision}）；已有会话和构建不会被自动切换。`) : null),
     );
     return h('div', { 'data-studio-agent-form': true },
-      h(SectionHeading, { compact: true, title: editing ? '编辑 Agent' : creationSeed ? '配置你的专家' : '手动配置 Agent', action: Button({ onClick: onBack }, creationSeed ? '返回模板' : '返回 Agents') }),
+      h('header', { 'data-studio-heading': 'true', className: 'af-page-heading' },
+        Button({ onClick: onBack, className: 'af-back', 'aria-label': creationSeed ? '返回模板' : '返回 Agents', title: creationSeed ? '返回模板' : '返回 Agents' },
+          h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'm14 6-6 6 6 6', strokeLinecap: 'round', strokeLinejoin: 'round' }))),
+        h(SectionHeading, { compact: true, title: editing ? '编辑 Agent' : creationSeed ? '配置你的专家' : '手动配置 Agent' })),
       h('section', { className: 'af-layout' },
         h('nav', { className: 'af-steps', 'aria-label': '创建流程' }, steps.map((label, index) => h('button', {
           key: label, type: 'button', className: 'af-step', 'aria-current': index === step ? 'step' : undefined, 'data-done': index < step ? 'true' : undefined,

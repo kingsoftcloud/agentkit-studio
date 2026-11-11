@@ -3,6 +3,8 @@ export function createStudioSettingsSection({
   hostRemote, versions, window = globalThis.window
 }) {
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
+  const SettingsGroup = (title, ...rows) => h('section', { 'data-studio-settings-group': true },
+    h('h3', null, title), h('div', { className: 'studio-settings-panel' }, ...rows));
   function StudioSettingsSection() {
     const [host, setHost] = useState({ status: 'loading', error: '' });
     const [promptPrediction, setPromptPrediction] = useState(() => {
@@ -61,8 +63,8 @@ export function createStudioSettingsSection({
     return h('div', {
       'data-studio-settings': true, style: { color: BRAND.ink, fontFamily: 'inherit' },
     },
-    h('div', { className: 'agentkit-form-heading' }, h('div', null, h('h3', null, 'AgentKit Studio'), h('p', null, '管理本机运行和桌面更新。'))),
-    h('section', { 'data-studio-settings-group': true }, h('h3', null, '本机运行'),
+    h('div', { className: 'agentkit-form-heading' }, h('div', null, h('h3', null, 'AgentKit Studio'), h('i', { className: 'studio-help', role: 'img', 'aria-label': '管理本机运行和桌面更新。', title: '管理本机运行和桌面更新。' }, 'i'))),
+    SettingsGroup('本机运行',
       h(SettingsRow, { label: '会话绑定策略', value: '可选 Agent', detail: '不选择 Agent 时直接使用 DSH 原生会话；选择后在新会话创建时固定主 Agent', tone: 'accent' }),
       h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
       h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
@@ -72,7 +74,7 @@ export function createStudioSettingsSection({
           h('div', { role: 'note', className: 'agentkit-form-note' }, '仅在输入框为空且上一轮完成后请求短文本预测；预测不会写入会话历史。')),
         h('button', { type: 'button', onClick: togglePromptPrediction, style: buttonStyle() }, promptPrediction ? '已开启' : '已关闭')),
     ),
-    h('section', { 'data-studio-settings-group': true }, h('h3', null, '版本与更新'),
+    SettingsGroup('版本与更新',
       h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '当前安装的桌面应用版本' }),
       h(SettingsRow, { label: 'Studio 插件版本', value: STUDIO_PLUGIN_VERSION, detail: '产品功能与运行适配层版本' }),
       h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' }),

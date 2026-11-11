@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "a974b89994bf1dfa6c38ec749d8a8259339af9fb",
+  "headCommit": "ba630379855bd9fba6f1d62c9dd93ec4bfe5f70a",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "acb9025f30640ab4ec7398d885a20d6d632c2d37",
-  "sourceSha256": "88af4d935519156635dc02678db26de4a6c2357174a19eaa59704a5f772b12a0",
+  "tree": "528711c889fd7041f3caf55c9c114bdf7e5de89d",
+  "sourceSha256": "5ed309d1cff802a585331425bbd2c2ad8ee2011de149ee0416347c89245ae43b",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "851e40f8e687eb2666a90bee0719d771d76d78323f7df23b2aad3c5eae66dc79"
+    "sha256": "eb62e85cfe0181efb49a4ff8869cdc718308b348f7e51678af9bec0cb48fab96"
   },
   "commits": [
     {
@@ -304,6 +304,24 @@
       "file": "080-native-owned-turn-recovery-and-dispatch.patch",
       "commit": "a974b89994bf1dfa6c38ec749d8a8259339af9fb",
       "sha256": "bb15f9f58ec16a2fca7148cb3039d548b56b4403f290db8b40c3fd7ea1995ed7"
+    },
+    {
+      "id": "081",
+      "file": "081-credentials-ignore-unaddressable-refs.patch",
+      "commit": "ea0b2b83dc3c51341fa2fdf13e2e1df2c7464aee",
+      "sha256": "ba70c51d3a1bf9fb06dd9c4bc1b571995d8949f0cf2e68b10f690f0ca2246800"
+    },
+    {
+      "id": "082",
+      "file": "082-desktop-profile-pnpm-recovery.patch",
+      "commit": "496691ba26225a05304d30dc72e31b6fef09fba8",
+      "sha256": "bb0b87526bc0994f7ea649c632130977736d6dce9c2b1eb863b246833830b204"
+    },
+    {
+      "id": "083",
+      "file": "083-desktop-host-cookie-isolation.patch",
+      "commit": "ba630379855bd9fba6f1d62c9dd93ec4bfe5f70a",
+      "sha256": "e903a00d71a7019eac161651f77087b2839c371bf99a64016309fe36e64d29b6"
     }
   ]
 }

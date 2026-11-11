@@ -20,6 +20,31 @@ function responseSink() {
   return { headersSent: false, writableEnded: false, chunks: [], writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, write(chunk) { this.chunks.push(String(chunk)); }, end(chunk = '') { if (chunk) this.chunks.push(String(chunk)); this.writableEnded = true; } };
 }
 
+test('a DSH Team template role runs from its frozen runtime record without an AgentStore row', async () => {
+  const requests = [];
+  const handler = createLocalConversationHandler({
+    agentStore: async () => ({ get: async () => assert.fail('template Team roles must not read AgentStore') }),
+    modelService: { profile: async id => ({ id, modelName: 'team-model', baseUrl: 'https://model.test/v1', apiKey: 'test' }) },
+    fetchImpl: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return new Response('data: {"choices":[{"delta":{"content":"team reply"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  const response = responseSink();
+  await handler(Readable.from([JSON.stringify({
+    agentId: 'team-role-0123456789abcdef01234567',
+    input: 'run the Team role',
+  })]), response, {
+    runtimeRecord: {
+      metadata: { id: 'team-role-0123456789abcdef01234567', name: 'Team reviewer', local: true },
+      spec: { instructions: { system: 'review blueprint' }, bindings: { modelProfileId: 'team-model' } },
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(requests[0].model, 'team-model');
+  assert.match(response.chunks.join(''), /team reply/);
+});
+
 test('single-model Host bridge retains DSH tool-mode and deliverable guidance in the assembled system prompt', async () => {
   let messages;
   const handler = createLocalConversationHandler({

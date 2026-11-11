@@ -171,31 +171,3 @@ test('DSH discovery decorates ecosystem rows with local install state and never 
   assert.equal(mnemon.installedVersion, '');
   assert.equal(result.items.find(item => item.id === 'github:acme/dsh-tool').installed, false);
 });
-
-test('curated plugins install from npm but stay disabled until the user enables them', async () => {
-  const calls = [];
-  const plugins = adapter({
-    listBundles: async () => [],
-    inspect: async () => ({ status: 'accepted', name: '@kingsoftcloud/agentkit-personal-assistant', registry: 'https://registry.npmjs.org/' }),
-    installBundle: async (spec, options) => { calls.push([spec, options]); return { application: 'applied', changed: true }; },
-  });
-  const result = await plugins.installDsh('@kingsoftcloud/agentkit-personal-assistant@0.1.0');
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], '@kingsoftcloud/agentkit-personal-assistant@0.1.0');
-  assert.equal(calls[0][1].enabled, false);
-  assert.equal(calls[0][1].registry, 'https://registry.npmjs.org/');
-  assert.equal(result.enabled, false);
-  assert.equal(result.verification.state, 'disabled');
-});
-
-test('reinstalling a disabled curated plugin never silently enables it', async () => {
-  const calls = [];
-  const plugins = adapter({
-    listBundles: async () => [{ name: '@kingsoftcloud/agentkit-personal-assistant', availability: 'installed', enabled: false }],
-    setBundleEnabled: async (...args) => { calls.push(args); return { application: 'applied', changed: false }; },
-  });
-  const result = await plugins.installDsh('@kingsoftcloud/agentkit-personal-assistant');
-  assert.deepEqual(calls, [['@kingsoftcloud/agentkit-personal-assistant', false]]);
-  assert.equal(result.enabled, false);
-  assert.equal(result.verification.state, 'disabled');
-});

@@ -13,13 +13,12 @@ export function createNavigation({
       // DSH only honours its own `[data-window-drag]` hook; the Studio marker
       // alone does not survive the shell's no-drag rules.
       'data-window-drag': 'true',
-      style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '20px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
+      className: 'studio-tabs',
     }, items.map(item => h('button', {
       key: item.id,
       type: 'button',
       onClick: () => onChange(item.id),
       'aria-current': value === item.id ? 'page' : undefined,
-      style: { minHeight: '32px', border: 0, borderBottom: '2px solid ' + (value === item.id ? BRAND.accentStrong : 'transparent'), borderRadius: 0, padding: '0 16px', color: value === item.id ? BRAND.accentStrong : BRAND.inkMuted, background: 'transparent', fontSize: '12px', fontWeight: value === item.id ? 800 : 650, cursor: 'pointer' },
     }, item.label)));
   }
 
@@ -32,14 +31,13 @@ export function createNavigation({
       // alone does not survive the shell's no-drag rules.
       'data-window-drag': 'true',
       role: 'tablist',
-      style: { display: 'flex', flexWrap: 'wrap', gap: 0, padding: 0, marginBottom: '14px', border: 0, borderBottom: '1px solid ' + BRAND.border, borderRadius: 0, background: 'transparent' },
+      className: 'studio-tabs',
     }, items.map(item => h('button', {
       key: item.id,
       type: 'button',
       role: 'tab',
       'aria-selected': value === item.id,
       onClick: () => onChange(item.id),
-      style: { minHeight: '32px', border: 0, borderBottom: '2px solid ' + (value === item.id ? BRAND.accentStrong : 'transparent'), borderRadius: 0, padding: '0 16px', color: value === item.id ? BRAND.accentStrong : BRAND.inkMuted, background: 'transparent', fontSize: '12px', fontWeight: value === item.id ? 800 : 650, cursor: 'pointer' },
     }, item.label)));
   }
   return { StudioSubnav, StudioPageTabs };

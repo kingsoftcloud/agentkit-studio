@@ -3,7 +3,7 @@ import product from '../src/product.json' with { type: 'json' };
 import legacyWorkflowProduct from '../src/legacy-workflow-product.json' with { type: 'json' };
 import { resolveProductCopy } from '../src/product-copy.mjs';
 import { AGENTKIT_STUDIO_MARK_SVG } from '../src/brand.js';
-import { isReleaseChannel } from '../src/desktop-release-channels.mjs';
+import { isReleaseChannel, assertChannelSupportsVersion } from '../src/desktop-release-channels.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -24,6 +24,11 @@ function assetPath(value, directory) {
   if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) invalid();
   return path;
 }
+/** Fail before packaging: a prerelease build sealed onto `latest` can never update. */
+function assertVersionChannelPair(channel, version) {
+  try { assertChannelSupportsVersion(channel, version, 'desktop version'); }
+  catch (error) { throw new Error(`product configuration: ${error instanceof Error ? error.message : String(error)}`); }
+}
 
 export function resolveProductInputs({ target, dshVersion, buildVersion, pluginVersion: requestedPluginVersion, updateOrigin, updateChannel, updateEnvironment, configuration = product, directory = root } = {}) {
   const { brand, desktop, versionSources } = configuration;
@@ -40,6 +45,7 @@ export function resolveProductInputs({ target, dshVersion, buildVersion, pluginV
   const channel = updateChannel ?? desktop.updates?.channel;
   const environment = updateEnvironment ?? desktop.updates?.environment;
   if (!isReleaseChannel(channel) || !['production', 'test'].includes(environment)) invalid();
+  if (desktopVersion !== undefined) assertVersionChannelPair(channel, desktopVersion);
   const platforms = {};
   for (const platform of ['mac-arm64', 'mac-x64', 'win-x64']) {
     const inputs = desktop.platforms?.[platform];
@@ -99,6 +105,7 @@ export function resolveWorkflowSourceOutputs(directory, values = {}) {
     throw new Error('Legacy App sources require a supported plugin version and explicit build version, channel and update origin');
   }
   if (!semver.test(values.buildVersion) || !isReleaseChannel(values.channel)) invalid();
+  assertVersionChannelPair(values.channel, values.buildVersion);
   const origin = publicOrigin(values.updateOrigin);
   return {
     name: legacyWorkflowProduct.name, app_id: legacyWorkflowProduct.appId, plugin_version: metadata.version,
@@ -120,8 +127,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   } else {
   const inputs = resolveProductInputs();
   const key = process.argv[2];
-  const values = { name: inputs.name, 'app-id': inputs.appId, 'update-env': inputs.settings.DSH_DESKTOP_AUTO_UPDATE_ENV, roots: inputs.environment.DSH_DESKTOP_PLUGIN_ROOTS, bundles: inputs.environment.DSH_DESKTOP_PLUGIN_BUNDLES, icon: inputs.platforms['mac-arm64'].icon, tray: inputs.platforms['mac-arm64'].trayIcon };
-  if (!Object.hasOwn(values, key)) throw new Error('usage: product-config.mjs <name|roots|bundles|icon|tray>');
+  const values = { name: inputs.name, 'app-id': inputs.appId, 'update-env': inputs.settings.DSH_DESKTOP_AUTO_UPDATE_ENV,
+    channel: inputs.settings.DSH_DESKTOP_UPDATE_CHANNEL, roots: inputs.environment.DSH_DESKTOP_PLUGIN_ROOTS,
+    bundles: inputs.environment.DSH_DESKTOP_PLUGIN_BUNDLES, icon: inputs.platforms['mac-arm64'].icon, tray: inputs.platforms['mac-arm64'].trayIcon };
+  if (!Object.hasOwn(values, key)) throw new Error('usage: product-config.mjs <name|app-id|update-env|channel|roots|bundles|icon|tray>');
   console.log(values[key]);
   }
 }

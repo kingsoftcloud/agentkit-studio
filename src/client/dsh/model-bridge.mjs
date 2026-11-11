@@ -1,3 +1,4 @@
+import { isCredentialRefName } from '../../credential-ref.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
 import { admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
 import { studioReasoning } from '../../model-reasoning.mjs';
@@ -22,6 +23,9 @@ export function modelProfileId(profile, index = 0) {
 }
 
 export function modelCredentialName(profile, index = 0) {
+  // Returned verbatim: this name is already referenced by the stored model
+  // profile, so renaming it here would orphan that reference. A name outside
+  // the DSH grammar is caught at the write path instead of rewritten silently.
   return String(profile?.credentialName || `AGENTKIT_MODEL_API_KEY_${modelProfileId(profile, index).toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`).trim();
 }
 
@@ -91,6 +95,10 @@ export function createModelBridge({ hostRemote }) {
       for (const item of operations) {
         const key = String(keys[item.credentialName] || '').trim();
         if (!key) continue;
+        // modelCredentialName already repairs the name, so this only fires when
+        // a caller reached the write path another way. Failing the save beats
+        // persisting a reference the Host cannot load on the next boot.
+        if (!isCredentialRefName(item.credentialName)) throw new Error(`模型 ${item.modelName} 的凭证引用不合法（只允许字母、数字和下划线，且不能以数字开头）：${item.credentialName}`);
         checkActive();
         const stored = await ctx.remote.credentials.set(item.credentialName, key);
         checkActive();

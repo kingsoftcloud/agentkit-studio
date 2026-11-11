@@ -39,7 +39,10 @@ const server=createServer(async(req,res)=>{
  res.end('data: '+JSON.stringify({id:'team_'+modelCalls,choices:[{index:0,delta,finish_reason:tool?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
 });
 server.listen(0,'127.0.0.1');await once(server,'listening');
-const profiles=[{id:'rc2-team-model',modelName:'team-model',provider:'openai-compatible',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,credentialName:'TEAM_FIXTURE_KEY',enabled:true,default:true}];
+// Keep the local Team proof on the same default model name as the product
+// configuration.  The endpoint is still a loopback fixture, so this exercises
+// model selection and routing without depending on a live model credential.
+const profiles=[{id:'default',modelName:'deepseek-v4.1-flash-1017',provider:'openai-compatible',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,credentialName:'TEAM_FIXTURE_KEY',enabled:true,default:true}];
 await writeFile(join(home,'config.yaml'),JSON.stringify({modelProfiles:profiles,modelProfileKeys:{TEAM_FIXTURE_KEY:'synthetic-fixture'}}),{mode:0o600});
 const overlay=join(home,'overlay.yml');await writeFile(overlay,'- id: agentkit-studio\n  disabled: true\n');
 const stdout=process.stdout.write.bind(process.stdout);let launch='';

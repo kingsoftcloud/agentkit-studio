@@ -1,5 +1,4 @@
 /** DSH Connection owns admission; these adapters preserve the HTTP/SSE surface. */
-import { ASSISTANT_UPLOAD_CHANNEL, ASSISTANT_UPLOAD_RPC_PATH, ASSISTANT_UPLOAD_RPC_BODY_BYTES } from '../../contracts/assistant-attachments.mjs';
 const CONTROL_CHANNEL = '/agentkit';
 export async function registerControlPlaneRoutes(ctx, { models, dispatch, serverClientPromise }) {
   // HostConnectionService's dedicated-RPC helper owns its registration fiber;
@@ -39,10 +38,9 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, server
         const chunks = [];
         let size = 0;
         try {
-          // DSH RPC posts to channel/endpoint. Only this exact upload path gets
-          // the larger bound; all other control operations retain one MiB.
-          const uploadChannel = request.url === ASSISTANT_UPLOAD_RPC_PATH;
-          const limit = uploadChannel ? ASSISTANT_UPLOAD_RPC_BODY_BYTES : 1024 * 1024;
+          // DSH RPC posts to channel/endpoint. Keep a bounded request body for
+          // all generic control operations.
+          const limit = 1024 * 1024;
           const declared = Number(request.headers?.['content-length']);
           if (Number.isFinite(declared) && declared > limit) {
             response.writeHead(413); response.end('request too large'); return;
@@ -59,9 +57,6 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, server
           }
           const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const endpoint = String(message?.method || '');
-          if (uploadChannel && (endpoint !== 'assistant/execute' || message?.payload?.operation !== 'attachment-upload')) {
-            throw new Error('This channel only accepts assistant attachment uploads');
-          }
           signal.throwIfAborted();
           const result = await dispatch(endpoint, message?.payload, signal);
           if (response.destroyed) return;
@@ -79,7 +74,6 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, server
         }
       };
     const registration = webCtx.webServer.register({ kind: 'prefix', path: CONTROL_CHANNEL, handler: controlHandler });
-    const uploadRegistration = webCtx.webServer.register({ kind: 'prefix', path: ASSISTANT_UPLOAD_CHANNEL, handler: controlHandler });
     const cloudConversationRoute = webCtx.webServer.register({
       kind: 'prefix',
       path: '/agentkit/cloud-conversation',
@@ -124,6 +118,5 @@ export async function registerControlPlaneRoutes(ctx, { models, dispatch, server
     });
     webCtx.effect(() => cloudConversationRoute, 'agentkit-studio: cloud conversation route');
     webCtx.effect(() => registration, 'agentkit-studio: control-plane route');
-    webCtx.effect(() => uploadRegistration, 'agentkit-studio: assistant upload route');
   });
 }

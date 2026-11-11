@@ -33,6 +33,14 @@ export function createTemplateSummon({ catalog, authoring, store, dependencies, 
       bindings: selected, catalogs, missing, requirements: item.requirements,
       dependencies: { skills: (item.dependencies?.skills?.length || 0) + (item.dependencies?.additional || []).reduce((sum, group) => sum + (group.skills?.length || 0), 0), mcp: item.dependencies?.mcp?.length || 0 } };
   }
+  async function prepareDependencies(ref, options = {}) {
+    await catalog.ensure?.(ref, 'agent', { signal: options.signal });
+    const item = catalog.get(ref);
+    const skills = await dependencies.materialize(item, options);
+    const mcp = await dependencies.resolveMcp(item, { install: true });
+    if (mcp.missing.length) fail('TEMPLATE_MCP_UNAVAILABLE', '此专家的 MCP 尚未连接成功，请在资源库中配置并探测后重试');
+    return { skills, mcp };
+  }
   async function execute(payload) {
     const key = String(payload.requestId || '');
     if (!/^[a-zA-Z0-9-]{16,80}$/.test(key)) fail('SUMMON_REQUEST_INVALID', '召唤请求缺少有效标识');
@@ -88,7 +96,7 @@ export function createTemplateSummon({ catalog, authoring, store, dependencies, 
       await save({ fingerprint, state: 'failed' }); throw error;
     }
   }
-  return { plan, async list() {
+  return { plan, prepareDependencies, async list() {
     const mine = (await store.list()).filter(row => row.metadata.creationKey), directory = await catalog.list();
     return { ...directory, items: directory.items.map(item => {
       const instance = mine.find(row => row.metadata.templateSource?.id === item.id && row.metadata.templateSource?.digest === item.digest);

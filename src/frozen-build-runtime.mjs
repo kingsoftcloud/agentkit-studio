@@ -6,14 +6,10 @@ import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { frozenModels } from './frozen-models.mjs';
 import { RESOURCE_CHECK_EVENT } from './resource-checks.mjs';
 import { createHash } from 'node:crypto';
-import { createPersonalAssistantRuntime } from './personal-assistant-runtime.mjs';
-import { createAssistantIdentity } from './assistant-identity.mjs';
 import { createManagedRuntimeActions } from './managed-runtime-actions.mjs';
 import { join } from 'node:path';
-import { createAssistantNativeCarrierService } from './assistant-native-carrier.mjs';
 import { createFrozenHostedActions } from './frozen-hosted-actions.mjs';
 import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
-import { createAssistantPermissionModel } from './assistant-permission-model.mjs';
 import { createFrozenResponseProjection } from './frozen-response-projection.mjs';
 import { createManagedApprovalRegistry } from './managed-runtime-approval.mjs';
 import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, executionModesUpTo, readExecutionMode } from './execution-policy.mjs';
@@ -86,33 +82,24 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   // validates a requested mode against the same list.
   const allowedPermissionModes = executionModesUpTo(executionModeMax);
   const platformActions = managedRuntime ? await createManagedRuntimeActions({ ctx, runtime: managedRuntime, admit, model, models,
-    directory: join(env.AGENTKIT_HOME, 'managed-sessions'), approval, executionPolicy: declaredPolicy, allowedPermissionModes }) : undefined;
-  let assistant, hosted;
+    // Session ownership is Agent state, not deployment-version state: the Host
+    // exports AGENTKIT_MANAGED_SESSIONS outside the version directory so an
+    // accepted UpdateAgent keeps listing the Sessions it already recorded.
+    directory: env.AGENTKIT_MANAGED_SESSIONS || join(env.AGENTKIT_HOME, 'managed-sessions'),
+    approval, executionPolicy: declaredPolicy, allowedPermissionModes }) : undefined;
+  let hosted;
   if (!managedRuntime) {
-    const retirement = await (await import('./assistant-retirement.mjs')).createAssistantRetirement({ ctx, env });
-    const identity = await createAssistantIdentity({ directory: env.AGENTKIT_HOME, defaultName: frozen.metadata?.name || '个人助理' });
-    // Optional on older Hosts: use only the public non-owner Peer factory. The
-    // build credential remains at this HTTP boundary, never a Host owner role.
-    const permissionModel = await createAssistantPermissionModel({ ctx, env, agentId,
-      profile: frozen.spec?.security?.assistantPermissions?.profile,
-      grants: frozen.spec?.security?.assistantPermissions?.grants });
-    const connection = ctx.get('connection');
-    const nativeCarrier = typeof connection?.createPeer === 'function'
-      && typeof ctx.get('typertGateway')?.invoke === 'function'
-      && typeof ctx.get('typertGateway')?.wireStream?.open === 'function'
-      && typeof ctx.get('remoteAccess')?.registerPolicy === 'function'
-      ? createAssistantNativeCarrierService({ ctx, createPeer: options => connection.createPeer(options),
-        onSessionDisconnect: sessionId => assistant?.disconnectInteractions(sessionId) }) : undefined;
-    assistant = createPersonalAssistantRuntime({ ctx, agentId, buildId, frozen, admit, resources, retirement, identity, nativeCarrier, permissionModel });
     hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,
       models, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
       responses: createRuntimeResponsesContract({ agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, model, models,
         definitionId: undefined, versionId: undefined }) });
   }
   return startBuildRuntimeHttp({ hosted, agentId, buildId, managedIdentity: managedRuntime?.identity, platformActions,
+    // Absent on Hosts without a managed observability bundle; undefined keeps the old behavior.
+    observability: ctx.get('studioManagedObservability'),
     withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
-    validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), assistant, approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
+    validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 

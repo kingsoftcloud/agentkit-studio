@@ -45,10 +45,13 @@ node scripts/desktop-release.mjs mirror-feed \
 The mirror copies the exact feed bytes (same version, digest and absolute ZIP
 URL) onto `preview-mac.yml`, so preview clients download the `nightly` build and
 their next check reads `nightly-mac.yml`. The same command restores a saved feed
-with `--from-file` during a rollback. Keep the preview object frozen afterwards;
-do not publish new preview builds once the migration window closes. Moving
-installed clients from `nightly` to a future GA uses the same one-hop trick with
-`--channel nightly --from-channel latest`.
+with `--from-file` during a rollback. `publish` performs this mirror on every
+release (see [Compatibility feeds follow every
+release](#compatibility-feeds-follow-every-release)), so the preview object
+tracks the newest build instead of freezing and every preview install stays one
+update away from the newest release. Moving installed clients from `nightly` to a
+future GA uses the same one-hop trick with `--channel nightly --from-channel
+latest`.
 
 Each release uses a strictly increasing semantic App version. Older installers
 that embed another origin need one manual installation of the new signed DMG;
@@ -58,6 +61,98 @@ The updater checks the configured channel and offers a new version when its App
 version is higher than the installed build. It downloads from the feed's HTTPS
 URLs. A fresh DMG installation without a cached previous ZIP can require a full
 download before subsequent updates can reuse bytes.
+
+## Compatibility feeds follow every release
+
+Installed clients keep requesting the channel and feed object sealed into their
+own `app-update.yml`; no server-side rename can move them. A lane that stops
+being written therefore strands its installs on that lane's last version — which
+is how a `preview` client had to install an intermediate build before reaching
+the newest release. `desktop-release.mjs publish` mirrors the verified feed onto
+the compatibility lane objects right after the canonical feed is verified:
+
+- macOS: `studio/feeds/mac-arm64/preview-mac.yml` automatically, plus
+  `dsh-desk/feeds/mac-arm64/preview-mac.yml` where the credential may write the
+  legacy prefix.
+- Windows: `studio/feeds/win-x64/preview.yml` and
+  `dsh-desk/feeds/win-x64/preview.yml` automatically.
+
+The bytes are copied unchanged (same version, digest and absolute binary URL), so
+nothing is rebuilt or re-uploaded. A legacy feed legitimately points at the
+canonical `studio/<version>/` binary; the feed object layout and the binary
+location are validated separately.
+
+The publish command accepts:
+
+```sh
+--compat-channels preview               # comma-separated compatibility lanes
+--compat-layouts studio,legacy          # default: the publication layout only
+--no-compat-mirror                      # skip mirroring for this publish
+```
+
+The default layout is the publication's own, because the Studio release
+credential is scoped to `studio/*`: a `dsh-desk` write from every publish returns
+403 and would block the release. Use `--compat-layouts studio,legacy` once that
+credential covers the legacy prefix, or refresh the old object by hand with
+`mirror-feed --layout legacy` (below). The Windows publishers write both
+`studio/feeds/win-x64/preview.yml` and `dsh-desk/feeds/win-x64/preview.yml`,
+matching their existing bridge feed.
+
+`--compatibility-origin` is not required for mirroring. Mirroring is idempotent:
+a target that already carries the published bytes is left untouched and recorded
+as `status: "unchanged"`; only changed targets are uploaded. `publication.json`
+records every mirror under `compatMirrors` with `version`, `targetChannel`,
+`targetLayout`, `feedUrl`, `feedSha512`, `status` and `uploaded`.
+
+If the canonical feed is verified but a mirror fails, the command exits non-zero
+with the failing object key. Repair that target without republishing:
+
+```sh
+node scripts/desktop-release.mjs mirror-feed \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com \
+  --layout studio --channel preview --from-channel nightly --version <version>
+```
+
+The legacy `dsh-desk` surface must be mirrored with `--from-file`, because that
+layout serves the canonical `studio/<version>/` binary URL while
+`dsh-desk/feeds/.../nightly-mac.yml` does not exist:
+
+```sh
+curl -fsS https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/mac-arm64/nightly-mac.yml -o /tmp/nightly-mac.yml
+node scripts/desktop-release.mjs mirror-feed \
+  --origin https://agentkit.ks3-cn-beijing.ksyuncs.com --layout legacy \
+  --channel preview --from-file /tmp/nightly-mac.yml --version <version>
+```
+
+## One-hop upgrades from any historical install
+
+One publish is enough for every historical installation that reads one of the
+mirrored feed objects: the client finds the newest version in its next check and
+downloads it directly. No intermediate version must be installed first, because
+the mirrored feed already names the current immutable binary and digest.
+
+- An install sealed with `preview` reads the refreshed `preview-mac.yml`, downloads
+  the `nightly` build and — because the downloaded build's own manifest names
+  `nightly` — reads `nightly-mac.yml` from then on.
+- An install that embeds the old `dsh-desk/feeds/...` entry gets the same bytes
+  under the old path once that object is refreshed, either by
+  `--compat-layouts studio,legacy` or by `mirror-feed --layout legacy`.
+- Windows behaves the same through `preview.yml` in either layout; its publisher
+  writes both objects.
+
+Guarantees and exceptions:
+
+- The embedded origin must be reachable and must serve both the feed and the
+  absolute binary URL. An install that embeds another origin or bucket needs one
+  manual signed DMG/EXE installation; changing signed resources inside an
+  existing App is not a migration mechanism.
+- A channel outside `--compat-channels` (for example an old `stable` install)
+  does not follow the release; keep that list aligned with the installs that
+  still exist.
+- An install whose downloaded update source predates `app-update.yml`, or whose
+  lane object was deleted, cannot be reached automatically.
+- Only `mac-arm64` and `win-x64` feeds are published; an Intel-Mac install has no
+  matching feed.
 
 ## Signing workflow
 
@@ -82,22 +177,44 @@ candidate can be reused by its `candidate_run_id`; identity and asset digests mu
 match. `release_tools_ref` may update publication tools without replacing signed
 App bytes. It must never relabel a newer source commit as the signed candidate.
 
+A normal release therefore never asks the hosted runner to reach KS3:
+
+- `publish_feed` stays `false`. Setting it (or `publish_from_runner`) attempts the
+  publication from the hosted runner, which cannot reach the KS3 origin; both
+  inputs remain emergency escapes only.
+- `queue_windows=true` builds the matching Windows candidate in the same batch as
+  soon as source admission passes, instead of after the signed macOS build.
+- After both candidates are accepted, publish from a maintainer machine with
+  `scripts/publish-locally.mjs` (see [Publishing from a local
+  machine](#publishing-from-a-local-machine)).
+- `create_github_release=true` with the accepted `candidate_run_id` records the
+  same signed bytes as a GitHub Release once the feed exists.
+- A candidate-reuse dispatch skips the Web and Host acceptance because that exact
+  source already passed it in the build run.
+
+Duplicate dispatches for the same `studio_ref` now serialize instead of running in
+parallel: the workflow concurrency group no longer splits on `build_version` or
+`channel`.
+
 ## Ship macOS and Windows together
 
-Every desktop release covers both platforms in one batch. Publish the macOS feed
-with `release-desktop.yml`; after the signed macOS build succeeds and
-`publish_feed=true`, the workflow's `queue-windows` job dispatches
-`release-windows.yml` automatically with the same immutable `studio_ref`,
-`build_version`, channel and origin. Windows is then published explicitly with
-`publish-windows.yml` (or `scripts/publish-windows-candidate.mjs` from the
-retained artifacts) using the accepted candidate run id and the previous Windows
-feed version. Both feeds refresh `studio/latest` through
-`publish-download-alias.mjs`.
+Every desktop release covers both platforms in one batch. Dispatch
+`release-desktop.yml` with `publish_feed=false` and `queue_windows=true`: the
+workflow's `queue-windows` job dispatches `release-windows.yml` as soon as source
+admission passes, so the Windows candidate is built in parallel with the signed
+macOS candidate instead of after it. The Windows run only builds a signed
+candidate; publication stays an explicit accepted-candidate step. After both
+candidates are accepted, publish the macOS feed with
+`scripts/publish-locally.mjs mac` and the Windows feed with
+`scripts/publish-locally.mjs win` (or `publish-windows.yml`), using the accepted
+candidate run id and the previous feed versions. Both publications refresh
+`studio/latest` through `publish-download-alias.mjs`.
 
 A macOS-only batch is incomplete: the download page and Windows automatic updates
 would stay on the previous version, so do not report a release as shipped until
 `studio/feeds/<target>/nightly-mac.yml` and `studio/feeds/win-x64/nightly.yml`
-report the same version and `studio/latest/latest.json` carries both platforms.
+report the same version, the `preview` compatibility mirrors report that version
+too, and `studio/latest/latest.json` carries both platforms.
 
 ## Publish incremental or full updates
 
@@ -114,6 +231,11 @@ node scripts/desktop-release.mjs publish \
   --layout studio --channel nightly \
   --update-mode incremental --expected-previous-version <current-version>
 ```
+
+The command refuses a channel that cannot serve the candidate version (for
+example a prerelease on `latest`) before it uploads anything, then mirrors the
+verified feed onto the compatibility lanes unless `--no-compat-mirror` is passed.
+`publication.json` records the mirrors under `compatMirrors`.
 
 Upload credentials are resolved from the Host or trusted CI environment, never
 from renderer requests or checked-in configuration. Select `--update-mode full`
@@ -167,7 +289,9 @@ publication impossible: the 11 MB pre-publish probe alone takes about 9.5 minute
 and the 480 MB ZIP/DMG upload then stalls until KS3 aborts it with `403` (the
 multipart layer reports `retryable: false`). The candidate build is still produced
 by `release-desktop.yml` with `publish_feed=false`, so the signed bytes come from
-CI and the publication step runs from a maintainer machine inside the network:
+CI and the publication step runs from a maintainer machine inside the network.
+`publish_from_runner`/`publish_feed` are emergency escapes for a network that does
+reach KS3; the normal release path does not set them:
 
 ```sh
 # macOS: download the signed candidate, verify SHA-256 sums, publish the feed,
@@ -193,6 +317,13 @@ the signed candidate and the original Windows build logs are read with the GitHu
 CLI, so run `gh auth login` once first (the wrapper falls back to `gh auth token`
 when `GH_TOKEN` is not exported).
 
+Once the feed is published, record the same signed bytes as a GitHub Release by
+dispatching `release-desktop.yml` again with the accepted `candidate_run_id`,
+`publish_feed=false`, `create_github_release=true` and the accepted
+`build_version`/`channel`. That run re-runs source admission and the GitHub upload
+only; the macOS build, the Web and Host acceptance and the KS3 publication are
+skipped because the candidate already carries the signing evidence.
+
 ## Public download alias
 
 The public site links to fixed `studio/latest/` URLs instead of a versioned folder;
@@ -208,12 +339,13 @@ inside KS3 (no release bytes cross the operator machine) and rewrites `latest.js
 with `no-cache`. Existing alias objects are deleted before the copy because KS3
 answers `ObjectAlreayExists` instead of overwriting a server-side copy.
 
-Both publish paths run it automatically once the feed advance is verified:
-`release-desktop.yml` publishes the macOS feed and `publish-windows.yml` publishes
-the Windows feed, so the site follows a release without any manual step. The
-workflows pass `STUDIO_DOWNLOAD_PROD_KS3_BUCKET/ACCESS_KEY/SECRET_KEY`, while a
-local run keeps reading the Host configuration. The command stays runnable by hand
-to repair the alias:
+The publisher refreshes it automatically once the feed advance is verified:
+`release-desktop.yml` (emergency runner publication), `publish-windows.yml` and
+`scripts/publish-locally.mjs` all refresh the alias, so the site follows a release
+without another manual step. The workflows pass
+`STUDIO_DOWNLOAD_PROD_KS3_BUCKET/ACCESS_KEY/SECRET_KEY`, while a local run keeps
+reading the Host configuration. The command stays runnable by hand to repair the
+alias:
 
 
 `studio/latest/` only serves the public download page. Update checks keep reading

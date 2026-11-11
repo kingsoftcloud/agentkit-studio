@@ -14,9 +14,15 @@ export class LocalMcpStoreError extends Error {
 
 function idOf(value) { return String(value?.resourceId || value?.id || value || '').trim(); }
 function safeId(value) { return /^mcp-local-[a-f0-9]{16}$/.test(value); }
+const CREDENTIAL_REFERENCE = /^env:\/\/[A-Za-z_][A-Za-z0-9_./:-]{0,127}$/;
 function validatePublicConfiguration(server) {
   for (const [name, value] of Object.entries(server.headers || {})) if (!/^(?:x-request-source|x-skill-version|x-.*-client|x-.*-surface|accept|content-type)$/i.test(name) || /\$\{/.test(String(value))) throw new LocalMcpStoreError('MCP_HEADER_REQUIRES_REFERENCE', `Header ${name} 请使用凭证引用配置`);
   for (const name of Object.keys(server.env || {})) if (/TOKEN|SECRET|PASSWORD|API_KEY/i.test(name)) throw new LocalMcpStoreError('MCP_ENV_REQUIRES_REFERENCE', `环境变量 ${name} 请使用凭证引用配置`);
+  for (const [name, reference] of Object.entries(server.envRefs || {})) {
+    // Credential values must stay in the Host credentials service. Accepting a
+    // bare literal here would write the secret into the public record on disk.
+    if (typeof reference !== 'string' || !CREDENTIAL_REFERENCE.test(reference)) throw new LocalMcpStoreError('MCP_ENV_REF_INVALID', `${name} 的凭证引用无效，请使用 env://凭证名称 格式`);
+  }
 }
 function normalize(record) {
   if (!record || typeof record !== 'object') return null;

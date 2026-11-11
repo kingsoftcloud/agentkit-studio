@@ -2,7 +2,7 @@ import { selectCloudPermissionPresentation } from './cloud-permission.mjs';
 import { codexToolDefinition } from './codex-tool.mjs';
 import { mountA2aObservation } from './a2a-observation.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
-import { createNativeSessionBinding } from './session-entry.mjs';
+import { createNativeSessionBinding, selectSessionModel } from './session-entry.mjs';
 import { registerPanelNavigation } from './panel-navigation.mjs';
 import { installBridgeStartupNotice } from './startup-notice.mjs';
 import { installProductCopy } from '../../product-copy.mjs';
@@ -40,8 +40,7 @@ export function mountStudio(ctx, app) {
   // an official plugin item through the public plugin-manager slot, so the
   // existing Codex catalog stays available without a second DSH market.
   // Studio contributes the DSH plugin market (curated bundles plus an optional
-  // remote index) as a row inside the official 插件 page, so the bundled
-  // personal assistant stays discoverable and default-off after installation.
+  // remote index) as a row inside the official 插件 page.
   ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agentkit-dsh-plugin-market', order: 50, label: '插件市场',
   }, props => h(DshPluginMarketItem, props)));
@@ -85,7 +84,7 @@ export function mountStudio(ctx, app) {
       const admission = await hostRemote.ensureDshPreset(agentId);
       if (app.closed()) return;
       if (admission.modelSelection) {
-        const selected = await ctx.remote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
+        const selected = await selectSessionModel(ctx.remote, { sessionId, ...admission.modelSelection, saveDefault: false });
         if (app.closed()) return;
         if (!selected?.ok) console.warn('[agentkit-studio] Agent model selection failed:', selected.error?.message || selected.error);
       }

@@ -1,6 +1,6 @@
 {
   "name": "@kingsoftcloud/agentkit-studio",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "private": false,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
@@ -126,9 +126,9 @@
   "dependencies": {
     "@astral-sh/ruff-wasm-nodejs": "0.16.8",
     "@deepseek-ai/dsh-experimental-agent-team": "0.2.2-rc.1",
-    "@kingsoftcloud/agentkit-harness-core": "0.0.15",
-    "@kingsoftcloud/agentkit-harness-node": "0.0.15",
-    "@kingsoftcloud/agentkit-harness-ui": "0.0.15",
+    "@kingsoftcloud/agentkit-harness-core": "0.0.16",
+    "@kingsoftcloud/agentkit-harness-node": "0.0.16",
+    "@kingsoftcloud/agentkit-harness-ui": "0.0.16",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@openai/codex": "0.159.2",
     "ajv": "8.17.1",
@@ -180,7 +180,6 @@
     "dsh-plugin",
     "agentkit",
     "studio",
-    "cloud-assistant",
-    "personal-assistant"
+    "cloud-assistant"
   ]
 }

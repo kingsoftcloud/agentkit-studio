@@ -495,3 +495,25 @@ test('CancelRun validates the subject and invocation, and waits for native durab
     assert.equal(calls, 0);
   } finally { bridge.close(); }
 });
+
+test('managed sessions stay visible and readable after an accepted version update', async t => {
+  const api = await setup(t);
+  await api.run('hello', 'update-run');
+  const before = await (await api.action('ListSessions', {})).json();
+  assert.equal(before.Data.Total, 1);
+  const previousVersion = runtime.identity.versionId;
+  runtime.identity.versionId = 'version-2';
+  t.after(() => { runtime.identity.versionId = previousVersion; });
+  const listed = await (await api.action('ListSessions', {})).json();
+  assert.equal(listed.Data.Total, 1);
+  assert.equal(listed.Data.Sessions[0].VersionId, 'version-2');
+  const opened = await api.action('GetSession', { SessionId: 'public-session' });
+  assert.equal(opened.status, 200);
+  const session = (await opened.json()).Data.Session;
+  assert.equal(session.SessionId, 'public-session');
+  assert.equal(session.VersionId, 'version-2');
+  const messages = await api.action('ListSessionMessages', { SessionId: 'public-session' });
+  assert.equal(messages.status, 200);
+  const history = (await messages.json()).Data;
+  assert(history.Messages.some(message => message.Content.text === 'hello'));
+});

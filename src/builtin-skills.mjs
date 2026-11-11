@@ -8,6 +8,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import { runtimeSkill } from './skill-files.mjs';
 import { boundSkillResources } from './local-runtime.mjs';
 import { PLATFORM_KINDS } from './platform-resource-bindings.mjs';
@@ -59,7 +60,11 @@ export function builtinSkillDefinitions() {
   // cached definition observed by another.
   return cachedDefinitions.map(definition => ({
     ...definition,
-    resourceBase: { ...definition.resourceBase },
+    // Electron ships this package inside app.asar. The manifest is readable
+    // through the module loader, but its asar path is not a real directory
+    // that the Native source can opendir/stat. This builtin guide has no
+    // auxiliary files, so keep it inline and hash only its manifest bytes.
+    resourceBase: undefined,
     invocation: { ...definition.invocation },
   }));
 }
@@ -120,7 +125,7 @@ export function formatBuiltinSkillContext({ limit = BUILTIN_SKILL_CONTEXT_LIMIT 
   const sections = builtinSkillDefinitions().map(skill => [
     `- ${skill.name}: ${skill.description}`,
     `  SKILL.md: ${JSON.stringify(skill.path)}`,
-    `  资源目录: ${JSON.stringify(skill.resourceBase.path)}`,
+    `  资源目录: ${JSON.stringify(skill.resourceBase?.path || dirname(skill.path))}`,
     '  任务匹配时先读取对应 SKILL.md（若正文已内联，则以内联正文为准），再按其中说明使用平台资源。',
     String(skill.content || '').slice(0, max),
   ].join('\n'));

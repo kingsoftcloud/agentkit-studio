@@ -148,15 +148,6 @@ export async function capturePortableResources({ record, models, adapters, confi
     requireEnv('KSYUN_SECRET_KEY', 'cloud', 'cloud secret key');
     if (values.cloudSessionToken) requireEnv('KSYUN_SESSION_TOKEN', 'cloud', 'cloud session token');
   }
-  // Managed personal assistants mount DSH's DeepSeek search provider, which
-  // reads DEEPSEEK_API_KEY for every search. Freeze the credential only when
-  // the Host can resolve one: provisioning must still work for users without a
-  // DeepSeek account (they keep public web_fetch, and the runtime advertises
-  // only the web tools it can actually execute).
-  if (record.spec?.security?.assistantPermissions?.profile === 'workspace-managed/v1' && typeof credentials?.resolve === 'function') {
-    const search = await credentials.resolve('DEEPSEEK_API_KEY').catch(() => null);
-    if (typeof search?.value === 'string' && search.value.trim()) requireEnv('DEEPSEEK_API_KEY', 'web-search', 'personal assistant web search');
-  }
   return { resources: { profiles, mcps, skills, cloud, remote }, requirements, files,
     nativeBuiltin: nativeBuiltins.kind === 'native' ? nativeBuiltins.manifest : undefined };
 }

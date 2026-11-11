@@ -12,12 +12,12 @@ export function createOperationalComponents({
 
   function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick }) {
     const header = h('thead', null,
-      h('tr', { style: { position: 'sticky', top: 0, zIndex: 1, textAlign: 'left', color: BRAND.inkMuted, background: BRAND.canvas } },
-        columns.map(column => h('th', { key: column.id, style: { padding: '11px 12px', fontWeight: 750, whiteSpace: 'nowrap', borderBottom: '1px solid ' + BRAND.border } }, column.label))));
+      h('tr', { style: { position: 'sticky', top: 0, zIndex: 1, textAlign: 'left', color: BRAND.inkMuted, background: BRAND.surface } },
+        columns.map(column => h('th', { key: column.id, style: { padding: '12px', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '.5px solid ' + BRAND.border } }, column.label))));
     const body = rows.length
       ? rows.map((row, index) => h('tr', { key: operationalId(row, String(index)), onClick: onRowClick ? () => onRowClick(row) : undefined, style: { cursor: onRowClick ? 'pointer' : 'default', borderBottom: '1px solid ' + BRAND.border } }, columns.map(column => h('td', { key: column.id, style: { padding: '11px 12px', color: BRAND.ink, verticalAlign: 'top', maxWidth: column.maxWidth || undefined } }, column.cell ? column.cell(row) : String(row?.[column.id] ?? '—')))))
       : h('tr', null, h('td', { colSpan: columns.length, style: { padding: '28px 14px', color: BRAND.inkMuted, textAlign: 'center' } }, empty));
-    return h('div', { style: { overflow: 'auto', maxHeight: 'min(58vh, 560px)', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface } },
+    return h('div', { className: 'studio-operational-table', style: { overflow: 'auto', maxHeight: 'min(58vh, 560px)', border: '.5px solid ' + BRAND.border, borderRadius: 'var(--dsw-radius-xl,16px)', background: BRAND.surface } },
       h('table', { style: { width: '100%', minWidth: Math.max(680, columns.length * 140) + 'px', borderCollapse: 'collapse', fontSize: '12px' } }, header, h('tbody', null, body)));
   }
 
@@ -33,7 +33,8 @@ export function createOperationalComponents({
   function OperationalToolbar({ children, onRefresh, busy }) {
     return h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, children),
-      h('button', { type: 'button', onClick: onRefresh, disabled: busy, style: { ...buttonStyle(), background: BRAND.surface } }, busy ? '读取中…' : '刷新'));
+      h('button', { type: 'button', onClick: onRefresh, disabled: busy, 'aria-label': busy ? '读取中…' : '刷新', title: busy ? '读取中…' : '刷新', style: { ...buttonStyle(), width: '32px', padding: 0, border: 0, background: 'transparent' } },
+        h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1', strokeLinecap: 'round', strokeLinejoin: 'round' }))));
   }
 
   function OperationalBars({ buckets = [] }) {

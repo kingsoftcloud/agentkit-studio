@@ -1,7 +1,7 @@
 /** Existing AgentEngine Actions projected over the frozen Host's native DSH sessions. */
 import { createHash, createHmac } from 'node:crypto';
 import { runtimeError } from './runtime-responses-contract.mjs';
-import { displayEvents } from './assistant-history.mjs';
+import { displayEvents } from './dsh-history-display.mjs';
 import { readFrozenSessionMessages, readFrozenSessionEvents } from './frozen-session-history.mjs';
 
 const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);

@@ -272,7 +272,7 @@ async function prepareProfile(options) {
   finally { await release(); }
 }
 
-async function prepareLockedProfile({ profiles, profile, modules, studioDigest, expected, identity, dshVersion }) {
+async function prepareLockedProfile({ profiles, profile, modules, studioDigest, expected, identity, dshVersion, patchContent = PROFILE_PATCH }) {
   await recoverProfile(profiles, profile, expected, identity);
   let legacy = false;
   if (await exists(profile)) {
@@ -309,7 +309,7 @@ async function prepareLockedProfile({ profiles, profile, modules, studioDigest, 
     } else {
       await directory(staging);
       await writeFile(join(staging, 'package.json'), JSON.stringify(expected, null, 2), { flag: 'wx', mode: 0o600 });
-      await writeFile(join(staging, 'cordis.patch.yml'), PROFILE_PATCH, { flag: 'wx', mode: 0o600 });
+      await writeFile(join(staging, 'cordis.patch.yml'), patchContent, { flag: 'wx', mode: 0o600 });
     }
     if (legacy) await addLegacyScheduleReadiness(staging);
     await materializeProfileModules(modules, join(staging, 'node_modules'));
@@ -355,13 +355,28 @@ export async function inspectRuntimeInstallation(installation, prefix = 'BUNDLE_
 
 const directory = path => privateRuntimeDirectory(path);
 
-export async function prepareRuntimeProfile({ dshHome, modules, identity, dshVersion, prefix = 'BUNDLE_HOST' }) {
+/**
+ * Prepare the installed runtime profile.
+ *
+ * `profileIdentity` is the ownership record written into the profile marker;
+ * it defaults to the full deployment identity. A managed runtime passes only
+ * the Agent identity because one Agent-scoped DSH home is reused across
+ * platform versions: the profile code is still pinned by `dshVersion` and the
+ * Studio code digest, so an unchanged image reuses the profile and its user
+ * Settings instead of rebuilding them on every accepted update.
+ *
+ * `patchContent` seeds the user patch file when the profile is created. The
+ * managed runtime adopts the previous profile's Settings when it migrates an
+ * older version-scoped DSH home.
+ */
+export async function prepareRuntimeProfile({ dshHome, modules, identity, profileIdentity = identity, dshVersion,
+  patchContent = PROFILE_PATCH, prefix = 'BUNDLE_HOST' }) {
   try {
-    if (!identity || typeof identity !== 'object' || !dshVersion) fail('BUNDLE_HOST_IDENTITY_INVALID', '运行 Profile 需要不可变部署身份');
+    if (!profileIdentity || typeof profileIdentity !== 'object' || !dshVersion) fail('BUNDLE_HOST_IDENTITY_INVALID', '运行 Profile 需要不可变部署身份');
     const profiles = await directory(join(dshHome, 'profiles')), profile = join(profiles, PROFILE);
     const expected = { name: `dsh-profile-${PROFILE}`, private: true, dsh: { profile: { bundles: BUNDLES } } };
     const studioDigest = await packageDigest(await realpath(join(modules, '@kingsoftcloud/agentkit-studio')));
-    await prepareProfile({ profiles, profile, modules, studioDigest, expected, dshVersion, identity });
+    await prepareProfile({ profiles, profile, modules, studioDigest, expected, dshVersion, identity: profileIdentity, patchContent });
   } catch (error) {
     if (prefix !== 'BUNDLE_HOST' && error.code?.startsWith('BUNDLE_HOST_')) error.code = prefix + error.code.slice('BUNDLE_HOST'.length);
     throw error;

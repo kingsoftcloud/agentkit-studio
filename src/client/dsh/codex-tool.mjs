@@ -16,13 +16,19 @@ export const codexToolDefinition = {
     const interrupted = data.phase === 'started' && closed;
     const current = context.current.get('chat');
     if (current?.data?.source === latest.event && current?.location === location && current?.data?.interrupted === Boolean(interrupted)) return current;
+    // Codex's native commandExecution is semantically a shell call. Reusing
+    // DSH's shipped `bash` keyed view gives it the same running shimmer,
+    // terminal output, exit-code treatment and disclosure behavior as a
+    // DSH-native command. The persisted event keeps its original wire name
+    // (`codex/command`) for observability and model history.
+    const displayName = data.name === 'codex/command' ? 'bash' : data.name;
     const root = data.phase === 'started' && !interrupted ? {
-      phase: 'start', callId: data.callId, name: data.name, argsRaw: data.arguments,
+      phase: 'start', callId: data.callId, name: displayName, argsRaw: data.arguments,
       turn: location.kind === 'step' || location.kind === 'turn' ? location.turn.turn : 0,
       step: location.kind === 'step' ? location.step.step : 0, time: first.event.time, subCalls: [],
     } : {
       kind: 'tool-result', seq: latest.event.seq, time: latest.event.time,
-      callId: data.callId, call: { name: data.name, argsRaw: data.arguments }, callTime: first.event.time,
+      callId: data.callId, call: { name: displayName, argsRaw: data.arguments }, callTime: first.event.time,
       content: data.content || [], isError: data.phase === 'failed' || Boolean(interrupted),
       ...(interrupted ? { error: { name: 'Interrupted', code: 'CODEX_TOOL_OUTCOME_UNKNOWN', reason: '未收到工具完成结果' } } : data.error ? { error: data.error } : {}),
       subCalls: [],

@@ -6,6 +6,8 @@ export function createResourcePages({
   hostRemote, actions, window = globalThis.window
 }) {
   const { React: { createElement: h, useEffect, useRef, useState, Fragment }, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, Pill, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND } = ui;
+  const ghostButtonStyle = () => ({ ...buttonStyle(), border: 0, minHeight: '28px', padding: '0 8px', fontSize: '12px' });
+  const primaryButtonStyle = () => ({ ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' });
   function ResourcesPage() {
     const [resourceKind, setResourceKind] = useState(() => { try { const kind = window.localStorage.getItem('agentkit-studio:resource-kind'); window.localStorage.removeItem('agentkit-studio:resource-kind'); if (['skill', 'mcp'].includes(kind)) return kind; } catch {} return 'model'; });
     const [libraryView, setLibraryView] = useState(() => { try { const value = window.localStorage.getItem('agentkit-studio:resource-library-view'); window.localStorage.removeItem('agentkit-studio:resource-library-view'); return value === 'catalog' ? 'catalog' : 'installed'; } catch { return 'installed'; } });
@@ -131,48 +133,65 @@ export function createResourcePages({
       const localMcp = resourceKind === 'mcp' && resource.source === 'local';
       const canDelete = localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
       const displayStatus = resourceStatusPresentation(resource, resourceKind);
-      return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, style: { display: 'flex', flexDirection: 'column', gap: '13px', minWidth: 0, padding: '18px', border: '1px solid ' + BRAND.border, borderRadius: '16px', background: BRAND.surface, boxShadow: '0 8px 24px rgba(11,18,32,0.04)' } },
-        h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 } },
-          h('div', { 'aria-hidden': 'true', style: { display: 'grid', placeItems: 'center', width: '42px', height: '42px', flex: '0 0 auto', borderRadius: '12px', color: BRAND.accentStrong, background: BRAND.accentSoft, fontSize: '18px', fontWeight: 800 } }, resourceKind === 'mcp' ? '⌘' : resourceKind === 'skill' ? '✦' : resourceKind === 'model' ? '◌' : '◈'),
-          h('div', { style: { minWidth: 0, flex: 1 } }, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '14px', lineHeight: 1.45, overflowWrap: 'anywhere' } }, name), h('div', { style: { marginTop: '4px', color: BRAND.inkMuted, fontSize: '10px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' } }, id))),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px 14px', padding: '12px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border } },
-          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '来源'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45 } }, sourceLabel(resource))),
-          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '版本 / 类型'), h('strong', { style: { display: 'block', marginTop: '4px', color: BRAND.ink, fontSize: '12px', lineHeight: 1.45, overflowWrap: 'anywhere' } }, kindDetail(resource))),
-          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '状态'), h('div', { style: { marginTop: '4px' } }, h(Pill, { tone: displayStatus.tone }, displayStatus.label))),
-          h('div', null, h('span', { style: { display: 'block', color: BRAND.inkMuted, fontSize: '11px' } }, '说明'), h('span', { style: { display: 'block', marginTop: '4px', color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.45, overflowWrap: 'anywhere' } }, resource.health?.errorCode || displayStatus.detail || '已返回目录信息'))),
-        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: 'auto' } },
-          h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '查看'),
-          localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '编辑凭证') : null,
-          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '重新探测') : null,
-          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '查看工具') : null,
-          resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px' } }, '查看文件') : null,
-          canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...buttonStyle(), padding: '6px 9px', fontSize: '11px', color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null));
+      return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, className: 'resource-row' },
+        h('div', { 'aria-hidden': 'true', className: 'resource-row-icon' }, resourceKind === 'mcp' ? '⌘' : resourceKind === 'skill' ? '✦' : resourceKind === 'model' ? '◌' : '◈'),
+        h('div', { className: 'resource-row-main' },
+          h('strong', { className: 'resource-row-title' }, name),
+          h('div', { className: 'resource-row-meta' }, [sourceLabel(resource), kindDetail(resource), id].filter(Boolean).join(' · '))),
+        h('span', { className: 'resource-row-status' }, h('span', { 'aria-hidden': 'true', className: 'studio-status-dot', style: { background: displayStatus.tone === 'signal' ? 'var(--dsw-alias-state-warn-primary, #946200)' : displayStatus.tone === 'accent' ? 'var(--dsw-alias-state-success-primary, #36865a)' : 'var(--dsw-alias-label-tertiary, #999)' } }), displayStatus.label),
+        h('div', { className: 'resource-row-actions' },
+          h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: ghostButtonStyle() }, '查看'),
+          localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: ghostButtonStyle() }, '编辑凭证') : null,
+          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: ghostButtonStyle() }, '重新探测') : null,
+          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: ghostButtonStyle() }, '查看工具') : null,
+          resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: ghostButtonStyle() }, '查看文件') : null,
+          canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...ghostButtonStyle(), color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null));
     });
-    const table = rows.length ? h('div', { 'data-studio-resource-grid': resourceKind, style: { maxHeight: 'min(64vh, 680px)', overflow: 'auto', border: '1px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.canvas, padding: '14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'stretch' } }, tableRows) : null;
+    const table = rows.length ? h('div', { 'data-studio-resource-grid': resourceKind, className: 'resource-list', style: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 } }, tableRows) : null;
     const platformTable = platformCatalog ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', marginBottom: '10px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, label), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '4px' } }, platformCatalog.connectionRef ? '云端目录资源只在这里做发现、查看和刷新；每类默认只允许绑定一个资源。绑定动作在 Agent 创建或编辑页完成。' : '当前没有可用云端凭证，先到设置页配置后再读取目录。')), h(Pill, { tone: platformCatalog.connectionRef ? 'accent' : 'signal' }, platformCatalog.connectionRef ? '目录已连接' : '待连接')),
       platformCatalog.items?.length ? table : h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: platformCatalog.connectionRef ? '云端目录没有返回可用资源。' : '连接云端后刷新此目录。' })) : null;
-    return h('div', null,
-      h(ContentIntro, { detail: '资源库只负责资源目录生命周期：发现、导入、探测、查看、删除和状态刷新。新增或变更 Agent 绑定关系请在 Agent 创建页或编辑页完成。模型、Tool、MCP、Skill 可绑定多个；知识库、记忆库和 Skill Center 每类默认绑定一个。', action: h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-        resourceKind === 'model' ? h('button', { type: 'button', onClick: () => setModelDialogOpen(true), style: buttonStyle() }, '添加模型') : null,
-        resourceKind === 'mcp' ? h('button', { type: 'button', onClick: openMcpCreate, style: buttonStyle() }, '添加 MCP') : null,
-        resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: buttonStyle() }, '扫描本地 Skill') : null,
-        h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '刷新'),
-        libraryView === 'catalog' && ['mcp', 'skill'].includes(resourceKind) ? null : h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Host 已连接' : 'Host 待接入')) }),
+    return h('div', { className: 'resource-library' },
+      h('style', null, `
+        .resource-library .resource-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 8px; margin: 0 -8px; border-radius: var(--dsw-radius-xl, 16px); }
+        .resource-library .resource-row:hover { background: var(--dsw-alias-interactive-bg-hover, #f0f0f0); }
+        .resource-library .resource-row-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border: .5px solid var(--dsw-alias-border-l3, #d4d4d4); border-radius: var(--dsw-radius-lg, 12px); color: var(--dsw-alias-label-secondary, #676767); font-size: 18px; }
+        .resource-library .resource-row-main { min-width: 0; flex: 1; }
+        .resource-library .resource-row-title { display: block; font-size: 14px; line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
+        .resource-library .resource-row-meta { margin-top: 4px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, #676767); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .resource-library .resource-row-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, #676767); white-space: nowrap; }
+        .resource-library .resource-row-actions { display: flex; justify-content: flex-end; align-items: center; gap: 2px; flex-wrap: wrap; }
+        .resource-library > .studio-tabs > button { height: 24px; font-size: 13px; padding: 0 8px; }
+        .resource-library > .studio-tabs { margin-bottom: 12px; }
+        .resource-library .resource-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+        .resource-library .resource-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+        .resource-library .resource-toolbar [data-studio-content-intro] { margin: 0 !important; }
+        @media (max-width: 760px) { .resource-library .resource-row { flex-wrap: wrap; gap: 8px; } .resource-library .resource-row-main { flex-basis: calc(100% - 56px); } .resource-library .resource-row-actions { margin-left: auto; } }
+      `),
       h(StudioPageTabs, { ariaLabel: '资源类型', value: resourceKind, onChange: kind => { setResourceKind(kind); setLibraryView(['mcp','skill'].includes(kind) ? 'catalog' : 'installed'); }, items: resourceKinds.map(([id, value]) => ({ id, label: value })) }),
       ['mcp','skill'].includes(resourceKind) ? h(StudioSubnav, { value: libraryView, onChange: setLibraryView, items: [{ id: 'catalog', label: '资源广场' }, { id: 'installed', label: '已安装 / 已连接' }] }) : null,
+      h('div', { className: 'resource-toolbar' },
+        !isPlatform && (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) && status === 'ready' ? h(Fragment, null,
+          h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, height: '36px', borderRadius: '10px', maxWidth: '360px', flex: '1 1 180px' } }),
+          resourceKind === 'skill' ? h('select', { value: sourceFilter, 'aria-label': 'Skill 来源', onChange: event => setSourceFilter(event.target.value), style: {...inputStyle(), width: '100px', marginTop:0} }, h('option',{value:'all'},'全部来源'),h('option',{value:'local'},'本地'),h('option',{value:'cloud'},'云端')) : null,
+          h('div', { 'data-studio-pager': 'true', style: { display: 'flex', alignItems: 'center', gap: '6px', color: BRAND.inkMuted, fontSize: '11px' } },
+            h('span', { title: `当前页 ${resources.length} 项` }, `${total || resources.length} 项 · 第 ${page + 1}/${pageCount} 页`),
+            h('select', { className: 'af-select', value: String(pageSize), onChange: event => setPageSize(Number(event.target.value)), 'aria-label': '每页显示数量', style: { ...inputStyle(), width: '100px', marginTop: 0, padding: '0 28px 0 10px', background: undefined, fontSize: '13px' } }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')),
+            h('button', { type: 'button', 'aria-label': '资源上一页', disabled: page <= 0 || status === 'loading', onClick: () => void previousPage(), style: pagerButtonStyle(page <= 0 || status === 'loading') }, '上一页'),
+            h('button', { type: 'button', 'aria-label': '资源下一页', disabled: !nextCursor || status === 'loading', onClick: () => void nextPage(), style: pagerButtonStyle(!nextCursor || status === 'loading') }, '下一页'))) : null,
+        h('div', { className: 'resource-toolbar-actions' },
+          h(ContentIntro, { detail: '资源库只负责资源目录生命周期：发现、导入、探测、查看、删除和状态刷新。新增或变更 Agent 绑定关系请在 Agent 创建页或编辑页完成。模型、Tool、MCP、Skill 可绑定多个；知识库、记忆库和 Skill Center 每类默认绑定一个。' }),
+          h('button', { type: 'button', 'aria-label': '刷新', title: '刷新', onClick: () => void reloadCatalog(), style: { ...ghostButtonStyle(), width: '32px', minHeight: '32px', borderRadius: '50%' } }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1', strokeLinecap: 'round', strokeLinejoin: 'round' }))),
+          resourceKind === 'model' ? h('button', { type: 'button', onClick: () => setModelDialogOpen(true), style: primaryButtonStyle() }, '添加模型') : null,
+          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: openMcpCreate, style: primaryButtonStyle() }, '添加 MCP') : null,
+          resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: primaryButtonStyle() }, '扫描本地 Skill') : null)),
       libraryView === 'catalog' && ['mcp','skill'].includes(resourceKind) ? h(ui.TemplateResourceLibrary, { key: resourceKind, kind: resourceKind, refreshKey: libraryRevision, onConfigureMcp: value => { setMcpEditing(value); setMcpDialogOpen(true); } }) : null,
-      ['skill', 'skill-space', 'mcp'].includes(resourceKind) ? h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。') : null,
+      ['skill', 'skill-space', 'mcp'].includes(resourceKind) ? h(ContentIntro, { detail: resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。' }) : null,
       libraryView !== 'catalog' && status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取资源目录', detail: '读取 Host 的资源清单和云端平台目录。' }) : null,
       libraryView !== 'catalog' && status === 'error' ? h(EmptyState, { icon: '!', title: '资源目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '重新读取') }) : null,
       (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) && status === 'ready' ? h(Fragment, null,
         !isPlatform ? h('section', { style: { display: 'grid', gap: '10px' } },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
-            h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, maxWidth: '460px', flex: '1 1 280px' } }),
-            resourceKind === 'skill' ? h('select', { value: sourceFilter, 'aria-label': 'Skill 来源', onChange: event => setSourceFilter(event.target.value), style: {...inputStyle(), width: '140px', marginTop:0} }, h('option',{value:'all'},'全部来源'),h('option',{value:'local'},'本地'),h('option',{value:'cloud'},'云端')) : null,
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', color: BRAND.inkMuted, fontSize: '11px' } }, h('span', null, `${total || resources.length} 项 · 第 ${page + 1}/${pageCount} 页`), h('select', { value: String(pageSize), onChange: event => setPageSize(Number(event.target.value)), 'aria-label': '每页显示数量', style: { ...inputStyle(), width: '112px', marginTop: 0, padding: '0 7px' } }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')))),
-          table || h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: '可以从右上角添加、发现或刷新资源。' }),
-      h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', color: BRAND.inkMuted, fontSize: '11px', paddingTop: '4px' } }, h('span', null, `当前页 ${resources.length} 项`), h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } }, h('button', { type: 'button', 'aria-label': '资源上一页', disabled: page <= 0 || status === 'loading', onClick: () => void previousPage(), style: pagerButtonStyle(page <= 0 || status === 'loading') }, '上一页'), h('button', { type: 'button', 'aria-label': '资源下一页', disabled: !nextCursor || status === 'loading', onClick: () => void nextPage(), style: pagerButtonStyle(!nextCursor || status === 'loading') }, '下一页')))
+          table || h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: '可以从右上角添加、发现或刷新资源。' })
         ) : platformTable,
         message ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
         error ? h('div', { role: 'alert', style: { marginTop: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,

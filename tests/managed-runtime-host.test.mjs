@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath, rm, symlink, lstat, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath, rm, symlink, lstat, cp, utimes } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse, stringify } from 'yaml';
+import { FROZEN_RUNTIME_READY } from '../src/host/frozen-runtime-lifecycle.mjs';
 import { prepareManagedRuntimeHost } from '../src/managed-runtime-host.mjs';
 import { loadManagedRuntimeDefinition, createManagedAgentStore } from '../src/managed-runtime-definition.mjs';
 import { createRuntimeResponsesContract } from '../src/runtime-responses-contract.mjs';
@@ -46,7 +47,8 @@ async function fixture(t) {
     OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Basic%20cGs6c2s=', OTEL_SERVICE_NAME: 'fixture-service',
     OTEL_RESOURCE_ATTRIBUTES: 'agentengine.agent_id=ar-managed-fixture',
     CLOUD_MONITOR_OTLP_TRACES_ENDPOINT: 'https://cloudmonitor.example/v1/traces', CLOUD_MONITOR_OTLP_HEADERS: 'Ksc-Appkey=app-1',
-    DSH_OTEL_CA_PEM_BASE64: 'cGVt', UNRELATED_SECRET: 'must-not-leak' };
+    DSH_OTEL_CA_PEM_BASE64: 'cGVt', OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE: '/etc/langfuse-trust/ca-bundle.pem',
+    OTEL_EXPORTER_OTLP_CERTIFICATE: '/etc/langfuse-trust/ca-bundle.pem', UNRELATED_SECRET: 'must-not-leak' };
   return { root, installation, state, manifest, env, raw };
 }
 
@@ -61,7 +63,8 @@ test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or pers
   for (const name of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'KSYUN_SECRET_KEY', 'UNRELATED_SECRET']) assert.equal(plan.env[name], undefined);
   // Platform-managed observability reaches the Host child so the OTel plugin can export.
   for (const name of ['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
-    'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'DSH_OTEL_CA_PEM_BASE64']) assert.equal(plan.env[name], f.env[name]);
+    'CLOUD_MONITOR_OTLP_TRACES_ENDPOINT', 'CLOUD_MONITOR_OTLP_HEADERS', 'DSH_OTEL_CA_PEM_BASE64',
+    'OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE', 'OTEL_EXPORTER_OTLP_CERTIFICATE']) assert.equal(plan.env[name], f.env[name]);
   const config = await readFile(join(plan.env.AGENTKIT_HOME, 'config.yaml'), 'utf8');
   assert.ok(!config.includes('fixture-only-key') && !JSON.stringify(plan.identity).includes('fixture-only-key'));
   assert.deepEqual(await readdir(plan.env.AGENTKIT_HOME), ['config.yaml']);
@@ -70,10 +73,10 @@ test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or pers
   assert.equal((await lstat(join(profile, 'node_modules'))).isDirectory(), true,
     'manifest and ZIP inputs must use the same profile-owned code layout');
   const marker = JSON.parse(await readFile(join(profile, '.agentkit-runtime-profile.json'), 'utf8'));
-  assert.equal(marker.identity.agentId, plan.identity.agentId);
-  assert.equal(marker.identity.versionId, plan.identity.versionId);
-  assert.equal(marker.identity.manifestSha256, plan.identity.manifestSha256);
-  assert.equal(marker.identity.bundleSha256, undefined);
+  // One Agent-scoped DSH home reuses this profile across platform versions, so
+  // ownership binds the Agent; the code stays pinned by dshVersion + image digest.
+  assert.deepEqual(marker.identity, { agentId: plan.identity.agentId });
+  assert.equal(typeof marker.dshVersion, 'string');
 });
 
 test('managed launch preserves an explicit command backend across the child Host boundary', async t => {
@@ -132,18 +135,188 @@ for (const value of [undefined, '', 'masked****value', 'bad\r\nheader']) test(`u
   await assert.rejects(readFile(join(f.state, '.managed-runtime.json')), { code: 'ENOENT' });
 });
 
-test('a restart reuses native state; versions isolate state and rollback retains the previous history', async t => {
+test('an accepted update keeps DSH history while Studio receipts stay version-scoped', async t => {
   const f = await fixture(t), first = await prepareManagedRuntimeHost(f);
+  // A fresh deployment adopts nothing and must not leave an adoption receipt.
+  await assert.rejects(readFile(join(f.state, '.dsh-adopted.json')), { code: 'ENOENT' });
   const history = join(first.env.DSH_HOME, 'native-history'); await writeFile(history, 'persisted-conversation');
+  // A same-version restart reuses the Agent-scoped DSH home.
   assert.equal((await prepareManagedRuntimeHost(f)).env.DSH_HOME, first.env.DSH_HOME);
+  // Every accepted update mints a new platform VersionId. It must keep reading
+  // the conversations recorded before the update instead of starting empty.
   const second = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v2' } });
-  assert.notEqual(second.env.DSH_HOME, first.env.DSH_HOME);
+  assert.equal(second.env.DSH_HOME, first.env.DSH_HOME, 'DSH history is Agent state, not deployment-version state');
+  assert.equal(await readFile(join(second.env.DSH_HOME, 'native-history'), 'utf8'), 'persisted-conversation');
+  assert.notEqual(second.env.AGENTKIT_HOME, first.env.AGENTKIT_HOME, 'Studio receipts and model config stay version-scoped');
+  // Rollback reads the same continuous history, and the immutability guards hold.
   const restored = await prepareManagedRuntimeHost(f);
   assert.equal(await readFile(join(restored.env.DSH_HOME, 'native-history'), 'utf8'), 'persisted-conversation');
   await assert.rejects(prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_ID: 'other-agent' } }), { code: 'MANAGED_HOST_STATE_CONFLICT' });
   const changed = f.raw.replace('原生声明提示词。', '改后的提示词。'); await writeFile(f.manifest, changed);
   await assert.rejects(prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_MANIFEST_SHA256: hash(changed) } }), { code: 'MANAGED_HOST_STATE_CONFLICT' });
   assert.equal(await readFile(history, 'utf8'), 'persisted-conversation');
+});
+
+test('a platform version change reuses the profile and its user Settings instead of rebuilding image code', async t => {
+  const f = await fixture(t), first = await prepareManagedRuntimeHost(f);
+  const profile = join(first.env.DSH_HOME, 'profiles/agentkit-runtime');
+  const patch = await readFile(join(profile, 'cordis.patch.yml'), 'utf8');
+  await writeFile(join(profile, 'cordis.patch.yml'), `${patch}- id: user-settings\n  config:\n    theme: kept\n`);
+  const second = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v2' } });
+  assert.equal(second.env.DSH_HOME, first.env.DSH_HOME);
+  assert.match(await readFile(join(second.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml'), 'utf8'), /theme: kept/);
+  assert.deepEqual((await readdir(join(second.env.DSH_HOME, 'profiles'))).filter(name => name.startsWith('.previous-')), [],
+    'unchanged image code must not churn the profile on every accepted update');
+});
+
+test('the first boot after the layout change adopts the newest legacy version-scoped DSH state', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.state, 'versions'), { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  const legacyVersion = async (versionId, stamp, seed) => {
+    const revision = hash(versionId), root = join(f.state, 'versions', revision);
+    await mkdir(join(root, 'agentkit'), { recursive: true });
+    await writeFile(join(root, '.managed-version.json'), JSON.stringify({ format: 'agentengine.managed-version/v1',
+      agentId: f.env.AGENTENGINE_AGENT_ID, versionId, manifestSha256: hash(f.raw),
+      runtimeName: 'dsh-native', runtimeVersion: 'studio-test.1' }));
+    await utimes(join(root, '.managed-version.json'), stamp, stamp);
+    await seed(root);
+    return { revision, root };
+  };
+  const sessionAt = root => join(root, 'dsh', 'sessions', '--home-node-workspace--', 'session-one', 'session.v4.jsonl.zstd');
+  const older = await legacyVersion('v1', 1_700_000_000, async root => {
+    await mkdir(dirname(sessionAt(root)), { recursive: true });
+    await writeFile(sessionAt(root), 'pre-update-conversation');
+    await mkdir(join(root, 'dsh', 'storages'), { recursive: true });
+    await writeFile(join(root, 'dsh', 'storages', 'workspace.json'), '{"workspaces":[]}\n');
+    await writeFile(join(root, 'dsh', '.credentials.yaml'), 'deepseek: legacy-key\n');
+    const profile = join(root, 'dsh', 'profiles', 'agentkit-runtime');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'cordis.patch.yml'),
+      `- id: schedule\n  inject: [${FROZEN_RUNTIME_READY}]\n- id: legacy-settings\n  config:\n    theme: legacy\n`);
+  });
+  // The buggy update created a newer empty version directory (Settings only);
+  // the directory that actually holds the Agent's history must win.
+  await legacyVersion('v2', 1_800_000_000, async root => {
+    const profile = join(root, 'dsh', 'profiles', 'agentkit-runtime');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'cordis.patch.yml'), `- id: schedule\n  inject: [${FROZEN_RUNTIME_READY}]\n`);
+  });
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v3' } });
+  assert.equal(plan.env.DSH_HOME, join(f.state, 'dsh'));
+  assert.equal(await readFile(join(plan.env.DSH_HOME, 'sessions', '--home-node-workspace--', 'session-one', 'session.v4.jsonl.zstd'), 'utf8'),
+    'pre-update-conversation');
+  assert.equal(await readFile(join(plan.env.DSH_HOME, 'storages', 'workspace.json'), 'utf8'), '{"workspaces":[]}\n');
+  assert.equal(await readFile(join(plan.env.DSH_HOME, '.credentials.yaml'), 'utf8'), 'deepseek: legacy-key\n');
+  if (process.platform !== 'win32') {
+    const adopted = await lstat(join(plan.env.DSH_HOME, 'sessions', '--home-node-workspace--', 'session-one', 'session.v4.jsonl.zstd'));
+    const original = await lstat(sessionAt(older.root));
+    assert.equal(adopted.ino, original.ino, 'adoption shares the inode instead of copying the log');
+    assert.equal(adopted.nlink, 2);
+  }
+  assert.equal((await lstat(sessionAt(older.root))).isFile(), true,
+    'the root of the adopted legacy directory is left intact for a pre-fix image rollback');
+  assert.match(await readFile(join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml'), 'utf8'), /theme: legacy/);
+  const adoption = JSON.parse(await readFile(join(f.state, '.dsh-adopted.json'), 'utf8'));
+  assert.equal(adoption.format, 'agentengine.dsh-state-adoption/v1');
+  assert.equal(adoption.adoptedFrom, `versions/${older.revision}/dsh`);
+  assert.equal(typeof adoption.adoptedAt, 'string');
+  // Restarts reuse the adopted home without duplicating or re-adopting it.
+  const again = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v3' } });
+  assert.equal(again.env.DSH_HOME, plan.env.DSH_HOME);
+  assert.equal(await readFile(join(again.env.DSH_HOME, 'storages', 'workspace.json'), 'utf8'), '{"workspaces":[]}\n');
+});
+
+
+test('adoption follows the most recently written legacy directory after a version rollback', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.state, 'versions'), { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  const seedVersion = async (versionId, receiptStamp, conversation) => {
+    const revision = hash(versionId), root = join(f.state, 'versions', revision), session =
+      join(root, 'dsh', 'sessions', '--home-node-workspace--', 'session-one', 'session.v4.jsonl.zstd');
+    await mkdir(join(root, 'agentkit'), { recursive: true });
+    await writeFile(join(root, '.managed-version.json'), JSON.stringify({ format: 'agentengine.managed-version/v1',
+      agentId: f.env.AGENTENGINE_AGENT_ID, versionId, manifestSha256: hash(f.raw),
+      runtimeName: 'dsh-native', runtimeVersion: 'studio-test.1' }));
+    await utimes(join(root, '.managed-version.json'), receiptStamp, receiptStamp);
+    await mkdir(dirname(session), { recursive: true });
+    await writeFile(session, conversation);
+    return { revision, session };
+  };
+  // v2 was created after v1, but the platform rolled back to v1 and the user
+  // kept talking there: real write times must outweigh the receipt order.
+  const rolledBack = await seedVersion('v1', 1_700_000_000, 'conversation-after-rollback');
+  const newer = await seedVersion('v2', 1_800_000_000, 'older-conversation');
+  await utimes(rolledBack.session, 1_900_000_000, 1_900_000_000);
+  await utimes(newer.session, 1_750_000_000, 1_750_000_000);
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v3' } });
+  assert.equal(await readFile(join(plan.env.DSH_HOME, 'sessions', '--home-node-workspace--', 'session-one', 'session.v4.jsonl.zstd'), 'utf8'),
+    'conversation-after-rollback');
+  assert.equal(JSON.parse(await readFile(join(f.state, '.dsh-adopted.json'), 'utf8')).adoptedFrom, `versions/${rolledBack.revision}/dsh`);
+});
+
+test('an adopted Settings patch survives a boot that died before profile preparation', async t => {
+  const f = await fixture(t), legacyPatch =
+    `- id: schedule\n  inject: [${FROZEN_RUNTIME_READY}]\n- id: legacy-settings\n  config:\n    theme: adopted\n`;
+  await mkdir(join(f.state, 'versions'), { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  const revision = hash('v1'), root = join(f.state, 'versions', revision);
+  await mkdir(join(root, 'agentkit'), { recursive: true });
+  await writeFile(join(root, '.managed-version.json'), JSON.stringify({ format: 'agentengine.managed-version/v1',
+    agentId: f.env.AGENTENGINE_AGENT_ID, versionId: 'v1', manifestSha256: hash(f.raw),
+    runtimeName: 'dsh-native', runtimeVersion: 'studio-test.1' }));
+  const legacyProfile = join(root, 'dsh', 'profiles', 'agentkit-runtime');
+  await mkdir(legacyProfile, { recursive: true });
+  await writeFile(join(legacyProfile, 'cordis.patch.yml'), legacyPatch);
+  const first = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v2' } });
+  assert.match(await readFile(join(first.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml'), 'utf8'), /theme: adopted/);
+  // Simulate the process dying between publishing the adopted home and
+  // preparing the profile: the receipt must still seed the user Settings.
+  await rm(join(first.env.DSH_HOME, 'profiles'), { recursive: true });
+  const retry = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v2' } });
+  assert.match(await readFile(join(retry.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml'), 'utf8'), /theme: adopted/,
+    'the adoption receipt must keep the user Settings recoverable');
+});
+
+test('a stale adoption receipt is corrected by the directory actually adopted', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.state, 'versions'), { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  const seed = async (versionId, { session, patch }) => {
+    const root = join(f.state, 'versions', hash(versionId));
+    await mkdir(join(root, 'agentkit'), { recursive: true });
+    await writeFile(join(root, '.managed-version.json'), JSON.stringify({ format: 'agentengine.managed-version/v1',
+      agentId: f.env.AGENTENGINE_AGENT_ID, versionId, manifestSha256: hash(f.raw),
+      runtimeName: 'dsh-native', runtimeVersion: 'studio-test.1' }));
+    const profile = join(root, 'dsh', 'profiles', 'agentkit-runtime');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'cordis.patch.yml'),
+      `- id: schedule\n  inject: [${FROZEN_RUNTIME_READY}]\n- id: settings\n  config:\n    theme: ${patch}\n`);
+    if (session !== undefined) {
+      const log = join(root, 'dsh', 'sessions', '--home-node-workspace--', 'session-one', 'session.v4.jsonl.zstd');
+      await mkdir(dirname(log), { recursive: true });
+      await writeFile(log, session);
+    }
+  };
+  await seed('v1', { session: 'conversation', patch: 'from-v1' });
+  // A previous boot died after recording a settings-only v2 candidate.
+  await seed('v2', { patch: 'from-v2' });
+  await writeFile(join(f.state, '.dsh-adopted.json'), JSON.stringify({ format: 'agentengine.dsh-state-adoption/v1',
+    adoptedFrom: `versions/${hash('v2')}/dsh`, adoptedAt: new Date().toISOString() }));
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v3' } });
+  const receipt = JSON.parse(await readFile(join(f.state, '.dsh-adopted.json'), 'utf8'));
+  assert.equal(receipt.adoptedFrom, `versions/${hash('v1')}/dsh`, 'the published home must own the final provenance');
+  assert.match(await readFile(join(plan.env.DSH_HOME, 'profiles/agentkit-runtime/cordis.patch.yml'), 'utf8'), /from-v1/);
+});
+
+test('a symlinked Agent DSH home is refused instead of adopted', async t => {
+  const f = await fixture(t);
+  await mkdir(f.state, { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  await mkdir(join(f.root, 'linked-dsh'), { recursive: true });
+  await symlink(join(f.root, 'linked-dsh'), join(f.state, 'dsh'));
+  await assert.rejects(prepareManagedRuntimeHost(f), { code: 'MANAGED_HOST_STATE_INVALID' });
 });
 
 test('a cloud resource binding requires its private Server root before creating native state', async t => {
@@ -214,4 +387,75 @@ test('managed requests are fenced to the target version and digest before native
   assert.equal((await fetch(`${origin}/agentengine/api/v1/CreateSession`, { method: 'POST', headers, body: '{}' })).status, 200);
   assert.equal(writes, 1);
   assert.equal((await fetch(`${origin}/v1/agentkit/runtime`, { headers: { authorization: headers.authorization } })).status, 200);
+});
+
+test('the managed session registry is Agent-scoped and adopts the newest legacy version', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.state, 'versions'), { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  const seedRegistry = async (versionId, stamp, sessionIds) => {
+    const revision = hash(versionId), root = join(f.state, 'versions', revision);
+    const sessions = join(root, 'agentkit', 'managed-sessions', 'sessions');
+    await mkdir(sessions, { recursive: true });
+    await writeFile(join(root, '.managed-version.json'), JSON.stringify({ format: 'agentengine.managed-version/v1',
+      agentId: f.env.AGENTENGINE_AGENT_ID, versionId, manifestSha256: hash(f.raw),
+      runtimeName: 'dsh-native', runtimeVersion: 'studio-test.1' }));
+    for (const id of sessionIds) {
+      const path = join(sessions, `${id}.json`);
+      await writeFile(path, JSON.stringify({ format: 'agentengine.dsh-session/v1', sessionId: id,
+        nativeSessionId: `native-${id}`, versionId, owner: 'a'.repeat(64), userId: 'u',
+        epoch: '00000000-0000-4000-8000-000000000000', phase: 'ready',
+        createdAt: '2026-11-11T00:00:00.000Z' }));
+      await utimes(path, stamp, stamp);
+    }
+    return { revision, sessions };
+  };
+  const older = await seedRegistry('v1', 1_700_000_000, ['old-session']);
+  await seedRegistry('v2', 1_800_000_000, ['newer-session']);
+
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v3' } });
+  // The registry leaves the version directory so an accepted UpdateAgent keeps
+  // the Hosted UI able to list and open every earlier Session.
+  assert.equal(plan.env.AGENTKIT_MANAGED_SESSIONS, join(f.state, 'managed-sessions'));
+  assert.notEqual(plan.env.AGENTKIT_MANAGED_SESSIONS, join(plan.env.AGENTKIT_HOME, 'managed-sessions'));
+  const adopted = await readdir(join(plan.env.AGENTKIT_MANAGED_SESSIONS, 'sessions'));
+  assert.deepEqual(adopted.sort(), ['newer-session.json']);
+  // The legacy directory stays readable so a pre-fix image can still roll back.
+  assert.deepEqual((await readdir(older.sessions)).sort(), ['old-session.json']);
+
+  // A restart reuses the Agent-scoped registry without re-adopting.
+  const again = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v4' } });
+  assert.equal(again.env.AGENTKIT_MANAGED_SESSIONS, plan.env.AGENTKIT_MANAGED_SESSIONS);
+  assert.deepEqual((await readdir(join(again.env.AGENTKIT_MANAGED_SESSIONS, 'sessions'))).sort(), ['newer-session.json']);
+});
+
+test('a fresh Agent gets an empty Agent-scoped session registry', async t => {
+  const f = await fixture(t);
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v1' } });
+  assert.equal(plan.env.AGENTKIT_MANAGED_SESSIONS, join(f.state, 'managed-sessions'));
+  // The registry creates its own `sessions` lane on first write; adoption must
+  // not copy a previous Agent's ownership rows into a fresh Agent.
+  assert.equal((await lstat(plan.env.AGENTKIT_MANAGED_SESSIONS)).isDirectory(), true);
+});
+
+test('Codex tuning knobs reach the Host child so a long turn stays deployment-tunable', async t => {
+  const f = await fixture(t);
+  const overrides = {
+    AGENTKIT_CODEX_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_IDLE_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS: '1860000',
+    AGENTKIT_CODEX_REASONING_SUMMARY: 'concise',
+    AGENTKIT_CODEX_SANDBOX: 'workspace-write',
+    AGENTKIT_CODEX_APPROVAL_POLICY: 'never',
+    AGENTKIT_CODEX_MODEL: 'fixture-model',
+  };
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, ...overrides } });
+
+  // The runtime reads these names; without them in the child env the documented
+  // knobs are unreachable and a long turn can only be tuned by a new image.
+  for (const [name, value] of Object.entries(overrides)) assert.equal(plan.env[name], value, name);
+  // An unset knob stays absent instead of being materialized as an empty value.
+  const bare = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v-other' } });
+  assert.equal(bare.env.AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS, undefined);
 });

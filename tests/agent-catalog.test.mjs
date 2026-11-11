@@ -53,16 +53,14 @@ test('cloud rows come only from deployment receipts, share sorting and never loa
   assert.deepEqual((await catalog.list({ source: 'local' })).warnings, []);
 });
 
-test('assistant identity comes from the current setup receipt, without hiding editable local configuration', async () => {
-  const local = row('local-assistant'), expert = row('ordinary-expert');
-  const cloud = { ...row('cloud-assistant'), source: 'studio-deployment', metadata: { id: 'cloud-assistant', local: false }, deployment: { id: 'dep-assistant' } };
-  const catalog = createAgentCatalog({ store: store([local, expert]), deployments: async () => ({ items: [cloud] }),
-    assistant: async () => ({ agentId: 'local-assistant', cloudAgentId: 'cloud-assistant', deploymentId: 'dep-assistant' }) });
-  const result = await catalog.list();
-  const config = result.items.find(item => item.metadata.id === 'local-assistant');
-  assert.equal(config.metadata.purpose, 'personal-assistant');
-  assert.equal(config.assistant.configuration, true);
-  assert.equal(config.assistant.cloudAgentId, 'cloud-assistant');
-  assert.equal(result.items.find(item => item.metadata.id === 'cloud-assistant').assistant.configuration, false);
-  assert.equal(result.items.find(item => item.metadata.id === 'ordinary-expert').assistant, undefined);
+test('cloud catalog admits API-created Codex and DSH ManagedRuntime rows without treating them as Studio deployments', async () => {
+  const managed = id => ({ id, metadata: { id, name: id, createdAt: '2026-10-09T00:00:00Z', local: false },
+    spec: { runtime: { type: id === 'managed-codex' ? 'codex' : 'dsh-native' } },
+    source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime', state: 'RUNNING', available: true } });
+  const catalog = createAgentCatalog({ store: unexpectedCloud, deployments: async () => ({ items: [], warnings: [] }),
+    managedAgents: async () => ({ items: [managed('managed-codex'), managed('managed-dsh'), { ...managed('managed-harness'), spec: { runtime: { type: 'harness' } } }], warnings: [] }) });
+  const result = await catalog.list({ source: 'cloud' });
+  assert.deepEqual(result.items.map(item => item.metadata.id), ['managed-codex', 'managed-dsh']);
+  assert.equal(result.items.every(item => item.source === 'agentengine-managed-runtime'), true);
 });

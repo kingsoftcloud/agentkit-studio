@@ -110,7 +110,7 @@ export function createObservabilityPage({
     const requestMetrics = (selected?.events || []).filter(event => event.event_type === 'model.request').map(event => event.payload);
     const requestDetail = h('div', { style: { display: 'grid', gap: '10px', maxHeight: '36vh', overflow: 'auto' } },
       h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', margin: 0 } }, '字符数反映请求体大小，不等于 Token 用量；这里只保存统计，不保存提示词正文。'),
-      requestMetrics.length ? requestMetrics.map((item, index) => h('div', { key: item.requestId || index, style: { padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '10px' } },
+      requestMetrics.length ? requestMetrics.map((item, index) => h('div', { key: item.requestId || index, style: { padding: '12px', border: '.5px solid ' + BRAND.border, borderRadius: '10px' } },
         h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, `请求 ${index + 1} · ${item.model || '—'}`),
         h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '8px', lineHeight: 1.8 } },
           `总计 ${Number(item.requestChars || 0).toLocaleString()} 字符 · ${Number(item.requestBytes || 0).toLocaleString()} 字节`,
@@ -138,7 +138,7 @@ export function createObservabilityPage({
                       key: operationalId(span, String(index)),
                       type: 'button',
                       onClick: () => setSelectedSpan(span),
-                      style: { border: '1px solid ' + BRAND.border, borderRadius: '9px', padding: '9px 10px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '10px', textAlign: 'left', color: BRAND.ink, background: selectedSpan === span ? BRAND.accentSoft : BRAND.surface, cursor: 'pointer' },
+                      style: { border: '.5px solid ' + BRAND.border, borderRadius: '9px', padding: '9px 10px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '10px', textAlign: 'left', color: BRAND.ink, background: selectedSpan === span ? BRAND.accentSoft : BRAND.surface, cursor: 'pointer' },
                     },
                     h('div', null,
                       h('strong', { style: { color: BRAND.ink, fontSize: '12px' } }, span?.name || span?.spanName || 'Span'),
@@ -167,7 +167,7 @@ export function createObservabilityPage({
       { id: 'startedAt', label: '开始时间', cell: row => operationalDate(row?.startedAt || row?.startTime || row?.createdAt) },
     ];
 
-    return h('div', null,
+    return h('div', { className: 'studio-operational-surface' },
       h(OperationalPageHeading, { title: '观测', detail: '按时间、Agent、Run 和 Session 查看 Trace，打开详情查看 Span、事件、用量和原始 OTLP。', action: h(Pill, { tone: status === 'ready' ? 'accent' : 'signal' }, status === 'ready' ? 'Trace Store 已连接' : '读取中') }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取观测数据', detail: '读取聚合指标和 Trace 列表。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '观测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,

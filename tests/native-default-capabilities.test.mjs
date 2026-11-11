@@ -19,7 +19,12 @@ test('default authoring admits available built-ins, never external namesakes or 
 test('new Native agents freeze automatic capabilities; explicit restrictions, old revisions and other runtimes retain their scope', async t => {
  const directory=await mkdtemp(join(tmpdir(),'native-auto-capabilities-')); t.after(()=>rm(directory,{recursive:true,force:true}));
  const store=createAgentStore({storeDir:directory});
- const auto=await store.create({name:'Automatic Native'});
+ // New local Agents default to DSH Native and never bind KsADK native tools.
+ const defaulted=await store.create({name:'Default Native'});
+ assert.equal(defaulted.spec.runtime.type,'dsh-native');
+ assert.equal((defaulted.bindings.tools||[]).length,0);
+ // Automatic capability freezing still applies to explicitly created Star Harness Agents.
+ const auto=await store.create({name:'Automatic Native',runtimeType:'harness'});
  assert.ok(auto.bindings.tools.some(ref=>ref.resourceId==='edit_workspace_file'));
  const before=structuredClone(auto.bindings.tools);
  await store.update(auto.metadata.id,{name:'Renamed',expectedRevision:1});

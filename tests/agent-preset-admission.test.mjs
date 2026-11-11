@@ -42,6 +42,22 @@ test('local presets pin public component bindings for DSH Native, Codex and Harn
   }
 });
 
+test('team role presets carry a frozen record for the local runtime without an AgentStore row', async () => {
+  let registered;
+  const record = agent({
+    metadata: { id: 'team-role-0123456789abcdef01234567', teamRole: { sourceAgentId: 'ar-local-0123456789abcdef' }, name: 'Team role', revision: 1, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: {} },
+  });
+  const admission = new DshPresetAdmission({
+    getAgent: async () => record,
+    registry: { register: async value => { registered = value; return () => {}; } },
+  });
+  await admission.ensure(record.metadata.id);
+  const runtime = registered.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
+  assert.equal(runtime.agentId, record.metadata.id);
+  assert.deepEqual(runtime.runtimeRecord, { metadata: record.metadata, spec: record.spec });
+});
+
 test('an unreachable bound resource degrades by default and fails only in strict mode', async () => {
   const record = agent({ spec: { runtime: { type: 'codex' }, instructions: { system: '测试带有MCP的agent' },
     bindings: { mcpServers: [{ id: 'jinshan-sap', endpoint: 'https://example.invalid/mcp', transport: 'http' }] } } });
@@ -161,6 +177,27 @@ test('Studio deployments use the frozen cloud bridge through the native session'
   assert.equal(dshPresetEligibility({ ...cloud, source: 'agentengine-server' }).code, 'STUDIO_DEPLOYMENT_REQUIRED');
 });
 
+test('API-created Codex ManagedRuntime is admitted through the AgentEngine cloud bridge', async () => {
+  const managed = agent({
+    source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime', state: 'RUNNING', available: true },
+    metadata: { id: 'ar-managed', name: 'Managed Codex', revision: 1, local: false },
+    spec: { runtime: { type: 'codex' }, bindings: {} },
+  });
+  const eligibility = dshPresetEligibility(managed);
+  assert.equal(eligibility.ok, true);
+  assert.equal(eligibility.source, 'agentengine-managed-runtime');
+  let definition;
+  const admission = new DshPresetAdmission({
+    registry: { async register(value) { definition = value; return async () => {}; } },
+    getAgent: async () => managed,
+  });
+  await admission.ensure('ar-managed');
+  const runtime = definition.plugins.find(item => item.name.endsWith('/dsh-runtime-plugin'));
+  assert.equal(runtime.config.source, 'agentengine-managed-runtime');
+  assert.equal(runtime.config.local, false);
+});
+
 test('the active DSH model route and official persona row make a real native preset', async () => {
   const registered = [];
   const revision = agent({
@@ -199,6 +236,28 @@ test('local runtime presets reuse the official composition including delivery to
     assert.ok(rows.some(row=>row.name==='@deepseek-ai/dsh-tool-fs'));
     assert.equal(base[0].config.prefix,undefined,'official base must remain unchanged');
   }
+});
+
+test('derived presets collapse duplicate persona rows from a stale or reloaded base composition', async () => {
+  let definition;
+  const base = [
+    { id: 'reloaded-persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'stale' } },
+    { id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'official' } },
+    { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
+  ];
+  const revision = agent({ spec: { runtime: { type: 'dsh-native' }, instructions: { system: 'selected' }, bindings: {} } });
+  const admission = new DshPresetAdmission({
+    getAgent: async () => revision,
+    getBasePlugins: async () => structuredClone(base),
+    registry: { async register(value) { definition = value; return async () => {}; } },
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(definition.plugins.filter(row => row.name === '@deepseek-ai/dsh-persona').length, 1);
+  assert.deepEqual(definition.plugins.find(row => row.name === '@deepseek-ai/dsh-persona'), {
+    id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'selected', includeRuntimeContext: false },
+  });
+  assert.equal(base[0].config.prefix, 'stale');
+  assert.equal(base[1].config.prefix, 'official');
 });
 
 test('whole-turn Native owns Web; ordinary legacy presets retain their base Web plugin', async () => {
@@ -360,6 +419,27 @@ test('recovery keeps the preset registered when bound resources are temporarily 
   assert.equal(registered.length, 2);
   assert.equal(runtime(registered[1]).config.resourcesUnavailable, undefined);
   bridge.close();
+});
+
+test('a packaged or stale Skill source degrades the Agent instead of rejecting Session creation', async () => {
+  const registered = [];
+  const revision = agent({
+    metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 7, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { skills: ['skill:platform'] } },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return () => {}; } },
+    getAgent: async () => revision,
+    getSkillDefinitions: async () => {
+      throw Object.assign(new Error('opendir failed'), { name: 'SkillSourceError', code: 'skill_source_unavailable' });
+    },
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(registered.length, 1);
+  const runtime = registered[0].plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
+  assert.equal(runtime.resourcesUnavailable, true);
+  assert.deepEqual(runtime.unavailableResources, [{ kind: 'skill', code: 'skill_source_unavailable', message: 'opendir failed' }]);
+  await admission.dispose();
 });
 
 test('frozen runtime admission keeps its model route when resources are unavailable', async () => {
