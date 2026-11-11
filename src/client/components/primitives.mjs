@@ -3,6 +3,7 @@ import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_BODY as ST
 
 export function createStudioPrimitives({ React }) {
   const { createElement: h, useEffect, useState } = React;
+  const HelpTip = text => text ? h('i', { className: 'studio-help', role: 'img', 'aria-label': text, title: text, tabIndex: 0 }, 'i') : null;
   function SecretInput({ label = 'API Key', value = '', style = {}, ...props }) {
     const [visible, setVisible] = useState(false);
     useEffect(() => { if (!value) setVisible(false); }, [value]);
@@ -54,18 +55,17 @@ export function createStudioPrimitives({ React }) {
     }[tone];
     return h('span', {
       style: {
-        display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '5px 9px',
-        borderRadius: '999px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap', ...styles,
+        display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '0 8px',
+        borderRadius: '999px', fontSize: '12px', lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', ...styles,
       },
     }, children);
   }
 
-  function SectionHeading({ eyebrow, title, detail, action, compact = false }) {
-    return h('div', { 'data-studio-heading': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: compact ? 'center' : 'flex-end', gap: '20px', marginBottom: '18px' } },
-      h('div', null,
-        eyebrow ? h('div', { style: { color: BRAND.accentStrong, fontSize: '11px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '7px' } }, eyebrow) : null,
-        h('h2', { style: compact ? { margin: 0, color: BRAND.ink, fontSize: '18px', fontWeight: 500, lineHeight: '26px' } : { margin: 0, color: BRAND.ink, fontSize: '22px', letterSpacing: '-0.02em' } }, title),
-        detail ? h('p', { style: { color: BRAND.inkMuted, margin: '7px 0 0', lineHeight: 1.55, fontSize: '13px' } }, detail) : null),
+  function SectionHeading({ title, detail, action }) {
+    return h('div', { 'data-studio-heading': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
+        h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '16px', fontWeight: 500, lineHeight: '24px' } }, title),
+        HelpTip(detail)),
       action || null);
   }
 
@@ -74,22 +74,21 @@ export function createStudioPrimitives({ React }) {
       'data-studio-heading': 'true',
       style: {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        gap: '16px', flexWrap: 'wrap', marginBottom: '14px', paddingBottom: '12px',
-        borderBottom: '1px solid ' + BRAND.border,
+        gap: '16px', flexWrap: 'wrap', marginBottom: '16px',
       },
     },
-    h('div', { style: { minWidth: 0 } },
-      h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '19px', letterSpacing: '-0.02em' } }, title),
-      detail ? h('p', { style: { color: BRAND.inkMuted, margin: '5px 0 0', lineHeight: 1.45, fontSize: '12px', maxWidth: '760px' } }, detail) : null),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
+      h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '16px', lineHeight: '24px', fontWeight: 500 } }, title),
+      HelpTip(detail)),
     action || null);
   }
 
   function OperationalPanel({ title, detail, action, children }) {
     return h('section', {
-      style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', overflow: 'hidden', background: BRAND.surface },
+      style: { border: '0.5px solid var(--dsw-alias-border-l2, #e5e5e5)', borderRadius: 'var(--dsw-radius-xl, 16px)', padding: '16px', overflow: 'hidden', background: BRAND.surface },
     },
     (title || action) ? h('div', {
-      style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '11px 14px', borderBottom: '1px solid ' + BRAND.border },
+      style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' },
     }, h('div', null,
       title ? h('strong', { style: { color: BRAND.ink, fontSize: '13px' } }, title) : null,
       detail ? h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '3px' } }, detail) : null), action || null) : null,
@@ -100,32 +99,32 @@ export function createStudioPrimitives({ React }) {
     return h('div', {
       'data-studio-content-intro': 'true',
       style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' },
-    }, h('p', { style: { color: BRAND.inkMuted, margin: 0, lineHeight: 1.55, fontSize: '12px' } }, detail), action || null);
+    }, HelpTip(detail), action || null);
   }
 
   function Metric({ label, value, detail, tone = 'neutral' }) {
     return h('article', {
       style: {
-        border: '1px solid ' + BRAND.border, borderRadius: '14px', padding: '16px',
-        background: BRAND.surface, minHeight: '106px', boxShadow: '0 8px 24px rgba(11,18,32,0.04)',
+        border: '0.5px solid var(--dsw-alias-border-l2, #e5e5e5)', borderRadius: 'var(--dsw-radius-xl, 16px)', padding: '16px',
+        background: BRAND.surface, minHeight: '106px',
       },
     },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' } },
-      h('span', { style: { color: BRAND.inkMuted, fontSize: '12px', fontWeight: 700 } }, label),
+      h('span', { style: { color: BRAND.inkMuted, fontSize: '12px', fontWeight: 500 } }, label),
       tone === 'signal' ? h(Pill, { tone: 'signal' }, '待接入') : null),
-    h('div', { style: { color: BRAND.ink, fontSize: '24px', fontWeight: 750, marginTop: '14px', letterSpacing: '-0.03em' } }, value),
-    h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '4px' } }, detail));
+    h('div', { style: { color: BRAND.ink, fontSize: '20px', fontWeight: 500, marginTop: '14px' } }, value),
+    h('div', { title: detail, style: { color: BRAND.inkMuted, fontSize: '12px', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, detail));
   }
 
   function EmptyState({ icon, title, detail, action }) {
     return h('div', {
       style: {
         minHeight: '220px', display: 'grid', placeItems: 'center', textAlign: 'center', padding: '28px',
-        border: '1px dashed ' + BRAND.border, borderRadius: '16px', background: 'var(--dsw-alias-bg-layer-1, rgba(255,255,255,0.66))',
+        border: 0, background: 'transparent',
       },
     },
     h('div', null,
-      h('div', { style: { margin: '0 auto 14px', display: 'grid', placeItems: 'center', width: '44px', height: '44px', borderRadius: '13px', color: BRAND.accentStrong, background: BRAND.accentSoft, fontSize: '22px', fontWeight: 800 } }, icon),
+      h('div', { style: { margin: '0 auto 14px', display: 'grid', placeItems: 'center', width: '40px', height: '40px', border: '0.5px solid var(--dsw-alias-border-l2, #e5e5e5)', borderRadius: '12px', color: BRAND.inkMuted, fontSize: '20px', fontWeight: 500 } }, icon),
       h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '16px' } }, title),
       h('p', { style: { maxWidth: '420px', color: BRAND.inkMuted, lineHeight: 1.6, margin: '8px auto 16px', fontSize: '13px' } }, detail),
       action || null));

@@ -62,7 +62,6 @@ export default String.raw`
   [data-studio-model-settings] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
 }
 @media (max-width: 960px) {
-  [data-agentkit-studio="product-application"] > main { padding: 18px 16px 28px !important; }
   [data-agentkit-studio="product-application"] [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
   [data-agentkit-studio="product-application"] [data-studio-agent-grid],
   [data-agentkit-studio="product-application"] [data-studio-resource-grid] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
@@ -72,7 +71,7 @@ export default String.raw`
   [data-agentkit-studio="product-application"] [data-studio-pager] { flex-wrap: wrap !important; }
 }
 @media (max-width: 760px) {
-  [data-agentkit-studio="product-application"] > main { padding: 16px 12px 28px !important; }
+  [data-agentkit-studio="product-application"] > main { padding-inline: 20px !important; }
   [data-agentkit-studio="product-application"] [data-studio-header] { flex-wrap: wrap !important; gap: 12px !important; margin-bottom: 16px !important; }
   [data-agentkit-studio="product-application"] [data-studio-header] > div:last-child { width: 100%; justify-content: flex-start; }
   [data-agentkit-studio="product-application"] [style*="display: flex"] { flex-wrap: wrap !important; }
