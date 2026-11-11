@@ -157,6 +157,63 @@ async function linkStateEntry(source, target, entry) {
   // state guard refuses a linked runtime directory.
 }
 
+const MANAGED_SESSIONS_DIRECTORY = 'managed-sessions';
+
+/**
+ * Newest version-scoped managed-session registry that still holds records.
+ *
+ * Studio kept `AGENTKIT_HOME` version-scoped, so every accepted UpdateAgent
+ * opened an empty registry while the previous ownership rows stayed stranded
+ * in the old version directory. The Hosted UI lists and opens Sessions
+ * through this registry, so an update silently hid every earlier Session even
+ * though DSH still owned the transcript.
+ */
+async function newestLegacyManagedSessions(versions) {
+  const candidates = [];
+  for (const name of await readdir(versions)) {
+    if (!/^[a-f0-9]{64}$/.test(name)) continue;
+    const sessions = join(versions, name, 'agentkit', MANAGED_SESSIONS_DIRECTORY, 'sessions');
+    let entries;
+    try { entries = await readdir(sessions); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    if (!entries.length) continue;
+    let newest = 0;
+    for (const entry of entries) {
+      const info = await lstat(join(sessions, entry)).catch(() => null);
+      if (info?.isFile() && info.mtimeMs > newest) newest = info.mtimeMs;
+    }
+    candidates.push({ directory: join(versions, name, 'agentkit', MANAGED_SESSIONS_DIRECTORY), stamp: newest });
+  }
+  return candidates.sort((left, right) => right.stamp - left.stamp)[0] ?? null;
+}
+
+async function adoptManagedSessions({ root, versions }) {
+  const target = join(root, MANAGED_SESSIONS_DIRECTORY), current = await exists(target);
+  if (current) {
+    if (!current.isDirectory()) fail('STATE_INVALID', 'Session 注册表必须是独立目录，不能是符号链接');
+    return privateRuntimeDirectory(target, 'MANAGED_HOST');
+  }
+  const legacy = await newestLegacyManagedSessions(versions);
+  const directory = await privateRuntimeDirectory(target, 'MANAGED_HOST');
+  if (!legacy) return directory;
+  // Ownership rows are small JSON files, so a real copy is lossless and keeps
+  // the previous version directory readable for a pre-fix image rollback.
+  await mkdir(join(directory, 'sessions'), { recursive: true, mode: 0o700 });
+  for (const name of ['sessions', 'requests']) {
+    const source = join(legacy.directory, name);
+    let entries;
+    try { entries = await readdir(source, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const from = join(source, entry.name), to = join(directory, name, entry.name);
+      try { await copyFile(from, to); }
+      catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
+  }
+  return directory;
+}
+
 async function adoptDshHome({ root, versions }) {
   const target = join(root, DSH_HOME_DIRECTORY), current = await exists(target);
   if (current) {
@@ -225,6 +282,9 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   // the Agent's own record, so an accepted update must keep reading them.
   const userHome = await directory(resolve(env.AGENTKIT_USER_HOME || '/home/node'));
   const { home: dshHome, settings: dshSettings } = await adoptDshHome({ root, versions });
+  // Session ownership is Agent state like DSH_HOME: the Hosted UI must keep
+  // listing Sessions recorded by an earlier deployment version.
+  const managedSessions = await adoptManagedSessions({ root, versions });
   const codexHome = await directory(join(userHome, '.codex'));
   const cwd = await directory(resolve(env.AGENTKIT_WORKSPACE_ROOT || join(userHome, 'workspace')));
   await immutableJson(join(home, 'config.yaml'), { settings: { modelProfiles: runtime.modelProfiles,
@@ -241,7 +301,8 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   const childEnv = Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: codexHome,
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
-    AGENTKIT_HOME: home, OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible',
+    AGENTKIT_HOME: home, AGENTKIT_MANAGED_SESSIONS: managedSessions,
+    OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible',
     AGENTENGINE_MANIFEST_PATH: resolve(manifest) });
   return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion } };
 }

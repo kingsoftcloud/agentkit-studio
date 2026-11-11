@@ -82,7 +82,11 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   // validates a requested mode against the same list.
   const allowedPermissionModes = executionModesUpTo(executionModeMax);
   const platformActions = managedRuntime ? await createManagedRuntimeActions({ ctx, runtime: managedRuntime, admit, model, models,
-    directory: join(env.AGENTKIT_HOME, 'managed-sessions'), approval, executionPolicy: declaredPolicy, allowedPermissionModes }) : undefined;
+    // Session ownership is Agent state, not deployment-version state: the Host
+    // exports AGENTKIT_MANAGED_SESSIONS outside the version directory so an
+    // accepted UpdateAgent keeps listing the Sessions it already recorded.
+    directory: env.AGENTKIT_MANAGED_SESSIONS || join(env.AGENTKIT_HOME, 'managed-sessions'),
+    approval, executionPolicy: declaredPolicy, allowedPermissionModes }) : undefined;
   let hosted;
   if (!managedRuntime) {
     hosted = createFrozenHostedActions({ ctx, agentId, buildId, token: env.AGENTKIT_RUNTIME_TOKEN, frozen, admit, model,
