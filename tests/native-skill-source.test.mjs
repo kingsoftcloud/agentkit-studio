@@ -28,6 +28,7 @@ test('platform builtin, bound and configured local Skills remain readable in the
   const definitions = loadConfiguredNativeSkills({ directory: root,
     definitions: skillDefinitionsForBindings({ skills: ['bound-guide'] }, bound) });
   assert.deepEqual(definitions.map(item => item.name), ['agentengine-platform-resources', 'bound-guide', 'local-guide']);
+  assert.equal(definitions[0].resourceBase, undefined, 'the packaged builtin manifest stays inline instead of scanning app.asar');
   const { source, binding } = createStudioNativeSkillSource({ definitions });
   assert.equal(binding.skills.length, 3);
   assert.match(await source.fullText('skill://agentengine-platform-resources@1.0.0'), /平台资源使用指南/);
