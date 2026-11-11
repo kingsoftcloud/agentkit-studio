@@ -18,7 +18,7 @@ export function dshModelFailure(error) {
   const codes = [details.upstreamCode, details.upstreamType].map(value => String(value || '').toLowerCase());
   const has = (...values) => values.some(value => codes.includes(value));
   let code;
-  if (error?.code === 'MODEL_STREAM_FAILED') {
+  if (error?.code === 'MODEL_STREAM_FAILED' || error?.code === 'MODEL_UPSTREAM_ERROR') {
     if (status === 401 || status === 403 || has('authentication_error', 'invalid_api_key')) code = 'AUTH';
     else if (status === 402 || has('insufficient_quota', 'quota_exceeded', 'insufficient_balance', 'billing_hard_limit_reached')) code = 'QUOTA';
     else if (has('context_length_exceeded', 'context_window_exceeded')) code = 'CONTEXT_WINDOW_EXCEEDED';
