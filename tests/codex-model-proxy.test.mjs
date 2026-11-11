@@ -311,3 +311,25 @@ test('a reasoning 400 is not retried when no lower legal value exists or the err
     } finally { await proxy.close(); }
   }
 });
+
+test('native Responses forward drops replayed reasoning items the gateway rejects', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return Response.json({ id: 'resp-native', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'reasoning', id: 'rs-opaque', summary: [], content: [], encrypted_content: 'opaque' },
+        { type: 'reasoning', id: 'rs-text', summary: [{ type: 'summary_text', text: 'Inspect before patching.' }], content: null },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.deepEqual(bodies[0].input.map(item => item.id || item.type), ['message']);
+  } finally { await proxy.close(); }
+});

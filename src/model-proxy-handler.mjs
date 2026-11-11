@@ -55,15 +55,14 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       if (convert && input.previous_response_id) throw Object.assign(new Error('请传入完整对话历史；此兼容端点不保存远端 Response ID'), { status: 400, code: 'STATELESS_INPUT_REQUIRED' });
       const toolContext = convert && codexTools ? prepareCodexProxyRequest(input) : undefined;
       const body = convert ? responsesToChat(toolContext?.request || input) : input;
-      // Codex serializes an absent reasoning body as null. Some Responses
-      // providers reject that optional field instead of treating it as absent.
-      // Preserve summaries, encrypted content, message phases and tool items.
+      // Kspmas validates every assistant turn as content-or-tool_calls, so a
+      // replayed reasoning item is rejected with 400 whether it carries public
+      // summary text or only opaque encrypted content. Reasoning is
+      // provider-internal context; the assistant message and tool calls it
+      // describes are separate items, so drop reasoning items from the
+      // forwarded request instead of failing the turn.
       if (nativeResponses && Array.isArray(body.input)) {
-        body.input = body.input.map(item => {
-          if (item?.type !== 'reasoning' || item.content !== null) return item;
-          const { content: _absent, ...reasoning } = item;
-          return reasoning;
-        });
+        body.input = body.input.filter(item => item?.type !== 'reasoning');
       }
       // A route represents exactly one configured model. Callers choose a
       // different profile route to use a different model/credential pair.
