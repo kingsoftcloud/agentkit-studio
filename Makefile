@@ -61,7 +61,7 @@ doctor:
 cloud-identity:
 	node scripts/check-cloud-identity.mjs
 
-.PHONY: check dsh-pin-check test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
+.PHONY: check dsh-pin-check client-module-gate test pack public-surface-audit secret-scan public-gate ref-parity release-check patch-format-check dsh-bootstrap profile-install profile-check patch-check patch-apply verify-dsh verify-desktop-update verify-desktop-differential verify-desktop-artifact verify-dsh-sdk web-build web-dev web-start \
         desktop-build desktop-dev desktop-start desktop-package-mac-arm64 \
         desktop-package-mac-arm64-dir desktop-package-mac-x64 \
         desktop-package-mac-x64-dir desktop-package-preflight desktop-check-package desktop-package-mac-arm64-unsigned ci clean
@@ -73,6 +73,11 @@ check:
 
 dsh-pin-check:
 	node scripts/check-dsh-pin.mjs
+
+# The browser bundle budget is committed so the gate can fail in CI. See
+# docs/refactor-client-budget.json for the approved allowance and its history.
+client-module-gate:
+	node scripts/verify-client-modules.mjs
 
 .PHONY: client-build
 client-build:
