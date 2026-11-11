@@ -449,6 +449,7 @@ export class DshPresetAdmission {
             },
           } : {}),
           runtime: eligibility.runtime,
+          ...(eligibility.runtime === 'native-engine' ? { scopedPresetId: eligibility.presetId } : {}),
           local: eligibility.local,
           ...(agent.source ? { source: agent.source } : {}),
           ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),

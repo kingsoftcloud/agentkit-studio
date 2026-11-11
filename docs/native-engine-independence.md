@@ -38,10 +38,11 @@
 | 独立服务 | 本地或托管 Studio 配置 `AGENTKIT_ENGINE_SERVICE_URL`、`AGENTKIT_ENGINE_SERVICE_TOKEN` 和 `AGENTKIT_ENGINE_SERVICE_WORKSPACE` 后，Studio 通过协议连接。模型凭据只配置到 Harness。 |
 | 本地会话切换 | 配置服务后，普通新建 Harness 会话登记独立预设并绑定服务工作区。已有会话按原预设恢复。 |
 | 审批与恢复 | 通过原 Run 的 `run/status` 和 `run/approve` 恢复工具及子任务审批。引擎替换后继续使用原账本。 |
+| 本地 A2A | 独立服务将已绑定的 A2A 工具交回当前 Studio 会话的 ToolRegistry。发送沿用原有的 A2A 授权与持久账本。发送结果未知时暂停 Run，原远端任务仍可通过 Studio A2A 控制查询。 |
 | 展示 | 引擎交付带内容哈希的 `agentkit.engine-view/v1`。Studio 和 Hosted UI 在沙箱 iframe 中展示，历史使用原 Run 的视图版本。 |
 | 历史兼容 | 未配置独立服务的旧 `harness` 仍使用已有的 0.0.17 SDK。旧路径保留原策略与状态格式。独立服务的预设、提示词和自适应输出额度由引擎维护。 |
 
 ### 仍需验收
 
-- 旧运行路径迁移、A2A 等宿主工具的独立协议覆盖。
+- 托管 A2A、远端任务完成后接续原 Harness Run，以及 Studio Team 会话的独立协议覆盖。
 - 云端 Runtime 自动绑定以及在真实集群中只升级或回滚 Harness 镜像。

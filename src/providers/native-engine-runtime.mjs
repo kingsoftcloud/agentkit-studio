@@ -14,7 +14,7 @@
  * host tools: the engine advertises them and sends each call back over
  * host/callTool, where Studio's own handler executes and authorizes it.
  * Memory recall and write-back stay host-side around the turn, as on the
- * Codex path. A2A is not carried over this path yet. */
+ * Codex path. Bound A2A calls retain the Host's existing A2A authority. */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -92,7 +92,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
     : engineServiceFetch(viewService.endpoint, viewService.caFile));
   return {
     usesService: Boolean(serviceEndpoint),
-    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler } = {}) {
+    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
       if (!text(cwd)) throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '会话未提供工作目录，请重新选择工作区');
@@ -121,16 +121,22 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         return outcome === 'allowed-once' ? 'allow' : 'deny';
       };
       const onCallTool = !dynamicTools.length || typeof toolHandler !== 'function' ? undefined : async request => {
+        const call = { name: hostTools.originalName(String(request.name || '')), namespace: null, arguments: request.arguments ?? {},
+          callId: String(request.callId || ''), threadId: session, turnId: String(turnId ?? ''), signal: signal ?? new AbortController().signal };
+        if (nativeHostToolHandler && request.runId !== runId)
+          return { status: 'error', content: { code: 'HOST_TOOL_RUN_MISMATCH', executed: false } };
+        const native = await nativeHostToolHandler?.({ ...call, runId: request.runId, effect: request.effect });
+        if (native !== undefined) return { status: native.status, content: toolContent(native.content) };
         try {
-          const output = await toolHandler({ name: hostTools.originalName(String(request.name || '')), namespace: null, arguments: request.arguments ?? {},
-            callId: String(request.callId || ''), threadId: session, turnId: String(turnId ?? ''), signal });
+          const output = await toolHandler(call);
           return { status: 'ok', content: toolContent(output) };
         } catch (error) { return { status: 'error', content: { message: String(error?.message || error).slice(0, 2000) } }; }
       };
       let diagnostics = '';
       const engine = serviceEndpoint ? connectEngineService({ endpoint: serviceEndpoint,
         token: env.AGENTKIT_ENGINE_SERVICE_TOKEN, sessionId: createHash('sha256').update(session).digest('hex'),
-        onApproveTool, onCallTool, requiredToolPolicy: policy?.contract, fetchImpl: serviceFetch }) : spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
+        onApproveTool, onCallTool, requiredToolPolicy: policy?.contract,
+        requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: serviceFetch }) : spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
         env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
           AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
           ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
@@ -142,7 +148,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let hello;
         try { hello = await engine.initialize(); }
         catch (error) {
-          if (error.code === 'NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE') throw error;
+          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE'].includes(error.code)) throw error;
           throw failure('NATIVE_ENGINE_UNAVAILABLE', `Native 引擎启动失败：${error.message}`);
         }
         if (onCallTool) hostTools = engineHostTools(dynamicTools, { reserved: hello.engine?.reservedToolNames ?? [],
@@ -248,7 +254,10 @@ export function engineHostTools(specs = [], { reserved = [], pattern = '^[A-Za-z
     if (taken.has(name) || !valid.test(name)) continue;
     taken.add(name); originals.set(name, original);
     const schema = spec.inputSchema && typeof spec.inputSchema === 'object' && spec.inputSchema.type === 'object' ? spec.inputSchema : { type: 'object', properties: {} };
-    tools.push({ name, description: String(spec.description || '').slice(0, 4000), parameters: schema });
+    tools.push({ name, description: String(spec.description || '').slice(0, 4000), parameters: schema,
+      ...(typeof spec.readOnly === 'boolean' ? { readOnly: spec.readOnly } : {}),
+      ...(Number.isSafeInteger(spec.timeoutMs) ? { timeoutMs: spec.timeoutMs } : {}),
+      ...(spec.effectProtocol ? { effectProtocol: spec.effectProtocol } : {}) });
   }
   return { tools, originalName: name => originals.get(name) ?? name };
 }

@@ -1,11 +1,12 @@
 /** Materialize Codex-bound resources while keeping DSH delivery execution authoritative. */
+import { createHash } from 'node:crypto';
 import { prepareLocalResourceContext, codexToolBindings, writeBoundMemory } from '../local-runtime.mjs';
 import { codexPresentationBindings } from './dsh-presentation-tools.mjs';
 import { harnessServiceHostBindings } from './dsh-node-builtin-catalog.mjs';
 import { nativeAgentPolicyFromSpec } from '../native-agent-policy.mjs';
 
 export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise }) {
-  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime } = {}) => {
+  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
     let record;
     try { record = buildId ? await buildState.build.resolve(agentId, buildId) : agentRevision ? await store.getRevision(agentId,Number(agentRevision)) : await store.get(agentId); }
@@ -45,7 +46,15 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
     const presentation = codexPresentationBindings(toolAdapter, agent);
     if (declaredMemory && !prepared.memory) reportMemoryGap('MEMORY_BINDING_SKIPPED');
     else if (prepared.memory && prepared.memoryHitCount === null) reportMemoryGap('MEMORY_RECALL_SKIPPED');
-    const toolBindings = codexToolBindings([...prepared.tools.filter(tool => !presentation.length || tool.name !== 'present'), ...presentation]);
+    const nativeA2a = nativeService === true && runtime === 'native-engine' && resourceRecord.spec.bindings?.a2a?.length
+      ? toolAdapter?.listNativeA2aTools?.() ?? [] : [];
+    const nativeA2aByName = new Map(nativeA2a.map(tool => [tool.name, tool]));
+    const toolBindings = codexToolBindings([
+      ...nativeA2a.map(tool => ({ ...tool, _source: 'native-a2a' })),
+      ...prepared.tools.filter(tool => (!presentation.length || tool.name !== 'present')
+        && !(tool._source === 'dsh' && nativeA2aByName.has(tool.name))),
+      ...presentation,
+    ]);
     const systemPrompt = [
       record.spec?.instructions?.system || record.spec?.description || '',
       record.spec?.instructions?.task || '',
@@ -58,7 +67,24 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
       memoryHitCount: prepared.memoryHitCount,
       ...(runtime === 'native-engine' ? { nativeAgentPolicy: nativeAgentPolicyFromSpec(record.spec) } : {}),
       systemPrompt,
-      dynamicTools: toolBindings.map(item => item.spec),
+      dynamicTools: toolBindings.map(({ spec, tool }) => tool._source === 'native-a2a' ? {
+        ...spec, readOnly: tool.readOnly, timeoutMs: tool.timeoutMs,
+        ...(tool.readOnly ? {} : { effectProtocol: 'agentkit.engine-host-tool-effect/v1' }),
+      } : spec),
+      ...(nativeA2a.length ? {
+        async nativeHostToolHandler({ name, arguments: args, runId, callId, effect, signal }) {
+          const definition = nativeA2aByName.get(name);
+          if (!definition) return undefined;
+          if (!runId || !callId || !definition.readOnly && (effect?.contract !== 'agentkit.engine-host-tool-effect/v1'
+            || typeof effect.operationKey !== 'string' || !effect.operationKey))
+            return { status: 'error', content: { code: 'A2A_EFFECT_UNBOUND', executed: false } };
+          // Provider call IDs can repeat in different Runs. The DSH A2A ledger
+          // scopes the external SendMessage to this engine's actual invocation.
+          const identity = effect?.operationKey ?? callId;
+          const ownedCallId = 'harness-' + createHash('sha256').update(JSON.stringify([runId, identity])).digest('hex');
+          return toolAdapter.callNativeA2aTool(name, args, { agent, callId: ownedCallId, signal });
+        },
+      } : {}),
       writeMemory: prepared.memoryWrite
         ? async assistantText => writeBoundMemory({
           agent,

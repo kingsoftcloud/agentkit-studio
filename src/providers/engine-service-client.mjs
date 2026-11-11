@@ -50,13 +50,14 @@ export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl 
 }
 
 /** Host-side network transport for agentkit.engine/v1. */
-export function connectEngineService({ endpoint, token, sessionId, onApproveTool, onCallTool, requiredToolPolicy, fetchImpl = fetch }) {
+export function connectEngineService({ endpoint, token, sessionId, onApproveTool, onCallTool, requiredToolPolicy, requiredToolEffects, fetchImpl = fetch }) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('engine_service_binding_invalid');
   const root = engineServiceEndpoint(endpoint, token) + '/v1/sessions/' + sessionId + '/';
   const lifetime = new AbortController();
   let poll, initializing;
   const initialization = { protocolVersions: [ENGINE_PROTOCOL], host: { name: 'agentkit-studio' },
-    services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool) } };
+    services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
+      ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}) } };
 
   async function request(path, body) {
     const headers = { authorization: 'Bearer ' + token };
@@ -107,6 +108,9 @@ export function connectEngineService({ endpoint, token, sessionId, onApproveTool
         || result.capabilities?.approvals !== 'durable'))
         throw Object.assign(new Error('当前 Harness 服务不支持该 Agent 的工具审批规则。'),
           { code: 'NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE' });
+      if (requiredToolEffects && result.capabilities?.hostToolEffects !== initialization.services.toolEffects)
+        throw Object.assign(new Error('当前 Harness 服务不支持已绑定工具的持久执行回执。'),
+          { code: 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE' });
       if ((onCallTool || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
         poll = pollHost().catch(() => { poll = undefined; });
       return result;

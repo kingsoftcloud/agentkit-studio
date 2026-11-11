@@ -51,7 +51,7 @@ export function createStudioDshA2aControls({ ctx, agentEvents, signal: hostSigna
       if (!binding && !control) return { contract: 'agentkit.studio-dsh-a2a-inventory/v1', applicable: false,
         agentId: original.agentId, sessionId: original.sessionId, items: [], complete: true, offset: 0, total: 0 };
       invariant(binding?.contract === 'agentkit.studio-dsh-a2a-binding/v1' && binding.local === true
-        && ['dsh-native', 'harness', 'codex'].includes(binding.runtime) && binding.agentId === original.agentId
+        && ['dsh-native', 'harness', 'codex', 'native-engine'].includes(binding.runtime) && binding.agentId === original.agentId
         && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0
         && (binding.buildId === null || id(binding.buildId)), 'STUDIO_DSH_A2A_BINDING_CHANGED');
       const tools = binding.tools;

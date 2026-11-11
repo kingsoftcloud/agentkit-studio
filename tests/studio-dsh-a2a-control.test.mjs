@@ -52,7 +52,7 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${server.address().port}`;
   const binding = { local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote', expected_version_id: 'version' };
   const bridge = createRuntimeBridge(), effects = [], listeners = new Map(), registered = new Map(), ports = [];
-  const agent = { session: { id: 'session' } };
+  const agent = { id: 'session', session: { id: 'session' } };
   const services = { studioRuntimeBridge: bridge, sessions: { flush: async () => true },
     sessionProjections: { stateOf: (_session, name) => name === 'turnBoundary' ? { lastTurn: 1, openTurnStartSeq: 0 } : preset },
     sessionController: { resolveAgent: id => lookup ? lookup(id) : Promise.resolve({ agent }) },
@@ -60,7 +60,14 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
     approval: { request: async input => { counts.approval++; approvals.push(input); return approve(input); } } };
   const ctx = { get: name => services[name], on: (name, handler) => { listeners.set(name, handler); },
     effect: install => { const result = install(); if (result) effects.push(result); },
-    tools: { register: tool => { registered.set(tool.name, tool); return () => {}; } } };
+    tools: {
+      register: tool => { registered.set(tool.name, tool); return () => {}; },
+      async execute({ calls: [call], agent: owner, signal }) {
+        const args = JSON.parse(call.arguments);
+        const value = await registered.get(call.name).execute(args, { agent: owner, name: call.name, arguments: args, callId: call.id, signal });
+        return { results: [{ callId: call.id, result: { isError: false, value, content: [] } }], additionalContexts: [], concluded: false };
+      },
+    } };
   bridge.setBuiltinToolsFactory(({ config, isClosed, signal }) => {
     const port = createDshNodeBuiltins({ ctx, workspaceRoot, stateDir: join(root, 'state'), agentId: config.agentId,
       agentRevision: config.agentRevision, buildId: config.buildId, toolBindings: [], a2aBindings: config.a2aBindings,
@@ -86,7 +93,7 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
     } }; walk(join(root, 'state')); return rows.sort(); };
   t.after(async () => { bridge.close(); await service.close(); for (const dispose of effects) await dispose(); await Promise.all(ports.map(port => port.close()));
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); assert.deepEqual(errors, []); });
-  return { request, invoke, remote, launch, counts, receipts, approvals, bodies, service, services, listeners, agent,
+  return { request, invoke, remote, launch, counts, receipts, approvals, bodies, service, services, listeners, agent, bridge,
     approve: value => { approve = value; }, preset: value => { preset = value; }, lookup: value => { lookup = value; },
     finish: () => finishStream?.(), ready: async () => { const end = Date.now() + 5000; while (!finishStream) { assert.ok(Date.now() < end); await delay(); } },
     reopen: async () => { for (const port of ports) await port.close(); applyPreset(ctx, config); } };
@@ -181,4 +188,25 @@ test('leaving DSH inventory aborts the actual request and ignores late results',
   release({ contract: 'agentkit.studio-dsh-a2a-inventory/v1', agentId: 'agent', sessionId: 'session', applicable: false,
     offset: 0, total: 0, complete: true, items: [] });
   await pending; assert.equal(state.getSnapshot().page, null);
+});
+
+test('Native service callbacks dispatch through the bound A2A registry and expose the original remote task', async t => {
+  const f = await setup(t, { runtime: 'native-engine' });
+  await f.listeners.get('agent/request')({ agent: f.agent }, async () => ({}));
+  const adapter = f.bridge.getRoute('session').toolAdapter;
+  const definitions = adapter.listNativeA2aTools();
+  assert.deepEqual(definitions.map(tool => tool.name), ['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent']);
+  const signal = new AbortController().signal;
+  assert.equal((await adapter.callNativeA2aTool('run_command', {}, { agent: f.agent, callId: 'unknown', signal })).status, 'error');
+  const args = { agent: 'remote', message: 'original' };
+  const options = { agent: f.agent, callId: 'engine-owned-call', signal };
+  const outcome = await adapter.callNativeA2aTool('call_a2a_agent', args, options);
+  assert.equal(outcome.status, 'uncertain');
+  assert.deepEqual(await adapter.callNativeA2aTool('call_a2a_agent', args, options), outcome);
+  assert.equal(f.counts.send, 1);
+  const page = await f.remote.dshA2aTaskHistory({ agentId: 'agent', sessionId: 'session' });
+  assert.equal(page.items[0].callId, options.callId);
+  const result = await f.remote.controlDshA2aTask({ ...f.request, callId: options.callId,
+    operationKey: 'dsh-a2a:' + options.callId, kind: 'get', commandId: 'original-observation' }, signal);
+  assert.ok(JSON.stringify(result).includes('remote-1'));
 });

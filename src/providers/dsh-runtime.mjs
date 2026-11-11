@@ -610,6 +610,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               toolAdapter,
               agent: toolAgent,
               runtime,
+              nativeService: serviceOwnsModel,
             })
             : {};
           // Durable recall evidence: an empty memory library and a skipped
@@ -693,6 +694,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               systemPrompt: resources.systemPrompt || '',
               dynamicTools,
               toolHandler,
+              ...(runtime === 'native-engine' && resources.nativeHostToolHandler
+                ? { nativeHostToolHandler: resources.nativeHostToolHandler } : {}),
               ...(serviceOwnsModel ? { agentToolPolicy: resources.nativeAgentPolicy,
                 requestPolicyApproval: typeof requestNativeApproval === 'function' && toolAgent
                   ? info => requestNativeApproval(toolAgent, info) : undefined } : {}),

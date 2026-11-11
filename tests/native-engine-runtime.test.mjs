@@ -192,3 +192,34 @@ test('reconnecting an active Run refuses a replacement service that lacks its to
     assert.deepEqual(calls, ['initialize', 'run/events', 'initialize']);
   } finally { await engine.close(); }
 });
+
+test('an uncertain bound A2A Send pauses the independent Run without a model retry', externalEngine, async t => {
+  const f = await setup(t, [toolCall('reused-model-id', 'call_a2a_agent', { agent: 'research', message: 'check' })]);
+  const { createEngineService } = await import(new URL('engine-service.mjs',
+    import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
+  const token = 'fixture-studio-engine-effects-token';
+  const service = createEngineService({ startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
+    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY' },
+    scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, token, env: { MODEL_KEY: 'fixture-key' } });
+  await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => service.close());
+  const runtime = createNativeEngineRuntime({ stateRoot: join(f.cwd, '..', 'host-state'), env: {
+    AGENTKIT_ENGINE_SERVICE_URL: 'http://127.0.0.1:' + service.server.address().port,
+    AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd,
+  } });
+  const effectProtocol = 'agentkit.engine-host-tool-effect/v1';
+  const requests = [];
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write', signal: AbortSignal.timeout(10000),
+    dynamicTools: [{ name: 'call_a2a_agent', inputSchema: { type: 'object' }, effectProtocol }],
+    toolHandler: async () => assert.fail('bound A2A must use its owned handler'),
+    nativeHostToolHandler: async request => {
+      requests.push(request);
+      assert.equal(request.effect.contract, effectProtocol);
+      return { status: 'uncertain', content: { code: 'remote_reply_unknown' } };
+    },
+  }));
+  assert.equal(requests.length, 1);
+  assert.equal(f.model.requests.length, 1);
+  assert.ok(chunks.some(chunk => chunk.type === 'engine-event' && chunk.event?.status === 'uncertain')
+    || chunks.some(chunk => chunk.type === 'text' && /effect_outcome_unknown|任务已暂停/.test(chunk.text)));
+});

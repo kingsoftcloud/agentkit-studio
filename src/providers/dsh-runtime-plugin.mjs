@@ -15,6 +15,7 @@ import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/n
 import { nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
 import { assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
+import { executeNativeDshToolCall } from './native-dsh-tool-call.mjs';
 import { installNativeBoundPolicy } from './native-bound-policy.mjs';
 import { normalizeNativeAgentPolicy } from '../native-agent-policy.mjs';
 
@@ -266,8 +267,35 @@ export function apply(ctx, config = {}) {
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
     ...(!wholeNativeTurn && config.a2aBindings?.length ? nativeA2aToolDefinitions().map(tool => tool.name) : [])]);
+  const a2aNames = new Set(nativeA2aToolDefinitions().map(tool => tool.name));
+  const a2aHostTools = config.runtime === 'native-engine' && config.a2aBindings?.length
+    ? builtinToolBindings?.definitions.filter(tool => a2aNames.has(tool.name)) ?? [] : [];
   const toolAdapter = config.runtime === 'codex'
-    ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
+    ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) }
+    : a2aHostTools.length ? {
+      ...boundToolAdapter,
+      listNativeA2aTools: () => a2aHostTools,
+      async callNativeA2aTool(name, args, { agent, callId, signal }) {
+        const definition = a2aHostTools.find(tool => tool.name === name);
+        if (!definition || !agent?.session?.id)
+          return { status: 'error', content: { code: 'BOUND_TOOL_NOT_FOUND', executed: false } };
+        const preflightDefer = ctx.tools.callerOptionsContract === 'dsh.tool-batch-caller-options/v1'
+          ? 'dsh.tool-preflight-defer/v2' : undefined;
+        try {
+          const result = await executeNativeDshToolCall(ctx.tools, { name, arguments: args, agent, callId, signal, preflightDefer });
+          if (result.isError && (definition.readOnly || result.preflightRejected === preflightDefer && preflightDefer))
+            return { status: 'error', content: { code: 'A2A_TOOL_REJECTED', executed: false } };
+          if (!result.isError && typeof result.value?.result === 'string') {
+            const content = JSON.parse(result.value.result);
+            return { status: content?.status === 'uncertain' ? 'uncertain' : content?.ok === false ? 'error' : 'ok', content };
+          }
+        } catch {
+          // Without a settled ToolRegistry result a Send may already have
+          // reached the A2A service. Leave the owned call available for control.
+        }
+        return { status: definition.readOnly ? 'error' : 'uncertain', content: { code: 'A2A_TOOL_OUTCOME_UNAVAILABLE' } };
+      },
+    } : boundToolAdapter;
   // Legacy resource adapters retain their existing per-model-step ownership.
   // Local AgentKit Harness is claimed above at the whole-turn boundary.
   const nativeTools = config.local === true && config.runtime !== 'codex';
