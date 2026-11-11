@@ -17,7 +17,11 @@ const a2aSpec = { local_name: 'research', binding_id: 'fixture-binding', space_i
   target_agent_id: 'a2a-agent-research', expected_version_id: 'fixture-version', exposure: 'tool' };
 const a2aInput = { agent: 'research', message: 'Find the evidence.' };
 
-for (const useA2a of [false, true]) test(`signed managed Runs use bound Studio ${useA2a ? 'A2A' : 'MCP and Skill'} across a service restart`, async t => {
+for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'unknown-remote-task']) test(`signed managed Run across restart: ${scenario}`, async t => {
+  const useA2a = scenario !== 'mcp';
+  const interrupted = scenario !== 'mcp' && scenario !== 'a2a';
+  let receiptAvailable = !interrupted, receiptReads = 0, droppedHostReply = false;
+  let recoveredPeerReads = 0;
   const root = await mkdtemp(join(await realpath(tmpdir()), 'managed-host-resources-'));
   const workspace = join(root, 'workspace');
   await mkdir(workspace);
@@ -53,6 +57,16 @@ for (const useA2a of [false, true]) test(`signed managed Runs use bound Studio $
         assert.equal(body.params.id, task.id);
       }
       requestsToPeer.push(body.method);
+      if (scenario === 'unknown-remote-task' && body.method === 'SendMessage') return response.destroy();
+      if (scenario === 'known-remote-task' && !receiptAvailable) {
+        if (body.method === 'GetTask') { response.writeHead(503); return response.end('{}'); }
+        task.status.state = 'TASK_STATE_WORKING';
+        delete task.artifacts;
+      }
+      if (scenario === 'known-remote-task' && receiptAvailable && body.method === 'GetTask' && ++recoveredPeerReads === 1) {
+        task.status.state = 'TASK_STATE_WORKING';
+        delete task.artifacts;
+      }
       response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: body.method === 'SendMessage' ? { task } : task }));
     });
     peerOrigin = await listen(peer);
@@ -102,7 +116,23 @@ for (const useA2a of [false, true]) test(`signed managed Runs use bound Studio $
     for (const retire of dispose.splice(0).reverse()) await retire();
   };
   let resources = mountResources();
-  const host = createServer((request, response) => route.handler(request, response));
+  const host = createServer((request, response) => {
+    if (request.url.endsWith('/receipt')) {
+      receiptReads++;
+      if (!receiptAvailable) { response.writeHead(503); response.end(); return; }
+    }
+    if (scenario === 'lost-host-reply' && !droppedHostReply && request.url.endsWith('/tool')) {
+      const end = response.end;
+      response.end = function (body, ...rest) {
+        if (body && JSON.parse(body).content?.reply === 'verified managed A2A result') {
+          droppedHostReply = true;
+          return response.destroy();
+        }
+        return end.call(this, body, ...rest);
+      };
+    }
+    void route.handler(request, response);
+  });
   let engine;
   t.after(async () => {
     await engine?.close();
@@ -211,12 +241,37 @@ for (const useA2a of [false, true]) test(`signed managed Runs use bound Studio $
   const decision = await send(command({ session_id: sessionId, command_type: 'submit_interaction',
     payload: { run_id: receipt.run_id, interaction_id: approval.payload.interaction_id, token_ref: 'fixture-consent', response: 'approve' } }));
   assert.equal(decision.status, 202);
+  if (interrupted) {
+    await waitForPhase('awaiting_reconciliation');
+    assert.equal(sends.length, 1);
+    assert.equal(requests, 2);
+    assert.equal(droppedHostReply, scenario === 'lost-host-reply');
+    await engine.close();
+    engine = null;
+    await closeResources();
+    resources = mountResources();
+    receiptAvailable = true;
+    await start();
+    assert.equal((await (await send(input)).json()).run_id, receipt.run_id);
+    if (scenario === 'unknown-remote-task') {
+      const before = receiptReads, deadline = Date.now() + 5000;
+      while (receiptReads < before + 2 && Date.now() < deadline) await delay(30);
+      assert(receiptReads >= before + 2);
+      await waitForPhase('awaiting_reconciliation');
+      assert.equal(sends.length, 1);
+      assert.equal(requests, 2);
+      assert(!requestsToPeer.includes('GetTask'));
+      return;
+    }
+  }
   await waitForPhase('completed');
   assert.deepEqual(calls, useA2a ? [] : [{ id: 'bound-mcp', name: 'bound_lookup', args: { query: 'managed evidence' } }]);
   assert.equal(skillLoads, 1);
   assert.equal(requests, useA2a ? 3 : 2);
   if (useA2a) {
     assert.deepEqual(sends, [[{ text: a2aInput.message }]]);
+    if (scenario === 'lost-host-reply') assert(!requestsToPeer.includes('GetTask'));
+    if (scenario === 'known-remote-task') assert.equal(requestsToPeer.filter(method => method === 'GetTask').length, 3);
     const services = { sessionController: { resolveAgent: async () => ({ agent }) },
       sessionProjections: { stateOf: () => 'studio-preset' } };
     const controls = createStudioDshA2aControls({ ctx: { get: name => services[name] },

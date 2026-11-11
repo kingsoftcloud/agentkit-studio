@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { canonical, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { canonical, invariant, parseNativeJson, TOOL_RECEIPT_OBSERVATION_CONTRACT } from '@kingsoftcloud/agentkit-harness-core';
 import { codexToolBindings, prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { nativeAgentPolicyDecision, nativeAgentPolicyFromSpec } from '../../native-agent-policy.mjs';
 import { engineHostTools, nativeHostToolCallId } from '../../providers/native-engine-runtime.mjs';
@@ -91,6 +91,8 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     const pairs = codexToolBindings([...a2aTools, ...prepared.tools.filter(tool => tool._source === 'mcp')])
       .filter(({ tool }) => nativeAgentPolicyDecision(policy, tool.name, tool._source === 'a2a' && tool.readOnly === true) !== 'deny');
     const wire = engineHostTools(pairs.map(({ spec, tool }) => tool._source === 'a2a' ? { ...spec, timeoutMs: tool.timeoutMs,
+      ...(tool.name === 'call_a2a_agent' && toolCatalog.receiptObservation === TOOL_RECEIPT_OBSERVATION_CONTRACT
+        ? { receiptObservation: true } : {}),
       readOnly: tool.readOnly && nativeAgentPolicyDecision(policy, tool.name, true) !== 'ask' } : spec), toolCatalog);
     const tools = wire.tools;
     const routes = new Map(pairs.map(pair => [pair.name, pair.tool]));
@@ -106,12 +108,29 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     const binding = await bindingFor(sessionId, signal);
     const resources = await catalog(binding, toolCatalog, { skills: true, a2a: true, signal });
     invariant(buildMatches(await bindingFor(sessionId, signal), binding), 'MANAGED_HOST_BUILD_CHANGED');
+    const receiptTool = resources.tools.find(tool => tool.receiptObservation === true);
     const ref = seal({ sessionId, runId, agentRevision: binding.agentRevision, buildId: binding.buildId ?? null,
-      catalog: resources.digest, toolCatalog, ...(resources.port ? { a2a: true } : {}) });
+      catalog: resources.digest, toolCatalog, ...(resources.port ? { a2a: true } : {}),
+      ...(receiptTool ? { a2aReceipt: { name: receiptTool.name, binding: resources.port.binding.digest } } : {}) });
     invariant(ref.length <= 8192, 'MANAGED_HOST_BINDING_INVALID');
     const hostInstructions = [binding.record.spec?.instructions?.system, binding.record.spec?.instructions?.task,
       resources.context].filter(Boolean).join('\n\n');
     return { ref, hostInstructions, hostTools: resources.tools, ...(sessionDelivery ? { sessionDelivery: true } : {}) };
+  }
+
+  async function receipt(body, signal) {
+    const { sessionId, runId, callId, name, arguments: args, originalOperationKey, observationId } = body;
+    const claims = open(body.ref);
+    invariant(claims.sessionId === sessionId && claims.runId === runId && claims.a2aReceipt?.name === name
+      && text(callId) && text(originalOperationKey) && object(args)
+      && (observationId === undefined || text(observationId)), 'MANAGED_HOST_RECEIPT_INVALID');
+    const binding = await bindingFor(sessionId, signal), session = binding.agent.session;
+    invariant(buildMatches(binding, claims), 'MANAGED_HOST_BUILD_CHANGED');
+    const port = a2aPort(binding)?.port;
+    invariant(port && port.binding.digest === claims.a2aReceipt.binding, 'MANAGED_HOST_RECEIPT_INVALID');
+    return port.managedReceipt({ sessionId, callId: nativeHostToolCallId(runId, originalOperationKey), args, signal,
+      readinessOnly: observationId === undefined, observationId, assertCurrent: () => binding.agent.session === session
+        && session.id === sessionId });
   }
 
   async function call(body, signal) {
@@ -179,7 +198,7 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     try {
       signal.throwIfAborted();
       if (!equal(request.headers.authorization ?? '', 'Bearer ' + token)) return json(401, { error: 'unauthorized' });
-      const paths = sessionDelivery ? ['admit', 'tool', 'claim', 'finish'] : ['admit', 'tool'];
+      const paths = sessionDelivery ? ['admit', 'tool', 'receipt', 'claim', 'finish'] : ['admit', 'tool', 'receipt'];
       const action = request.url?.slice(PATH.length + 1);
       if (request.method !== 'POST' || !paths.includes(action) || request.url !== PATH + '/' + action)
         return json(404, { error: 'unsupported' });
@@ -199,7 +218,7 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
       invariant(body?.contract === CONTRACT && canonical(body.scope) === scopeBytes
         && text(body.sessionId) && text(body.runId), 'MANAGED_HOST_SCOPE_INVALID');
       const result = await (action === 'admit' ? admit(body, signal)
-        : action === 'tool' ? call(body, signal) : deliver(action, body, signal));
+        : action === 'tool' ? call(body, signal) : action === 'receipt' ? receipt(body, signal) : deliver(action, body, signal));
       signal.throwIfAborted();
       json(200, result);
     } catch {

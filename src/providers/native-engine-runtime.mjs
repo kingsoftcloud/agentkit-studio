@@ -257,6 +257,7 @@ export function engineHostTools(specs = [], { reserved = [], pattern = '^[A-Za-z
     tools.push({ name, description: String(spec.description || '').slice(0, 4000), parameters: schema,
       ...(typeof spec.readOnly === 'boolean' ? { readOnly: spec.readOnly } : {}),
       ...(Number.isSafeInteger(spec.timeoutMs) ? { timeoutMs: spec.timeoutMs } : {}),
+      ...(spec.receiptObservation === true ? { receiptObservation: true } : {}),
       ...(spec.effectProtocol ? { effectProtocol: spec.effectProtocol } : {}) });
   }
   return { tools, originalName: name => originals.get(name) ?? name };
