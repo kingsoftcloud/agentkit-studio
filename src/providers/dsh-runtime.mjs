@@ -39,6 +39,7 @@ export function bindDshAgentRoute(sessionId, binding = {}, owner, scope) {
   }
   const route = {
     agentId: String(binding.agentId || '').trim(),
+    source: String(binding.source || '').trim(),
     agent: binding.agent,
     runtime,
     local,
@@ -261,7 +262,17 @@ async function* codexFrames(codexRuntime, options, onChunk, toolRecorder) {
     }
     else if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
     else if (chunk?.type === 'tool') {
-      if (toolRecorder?.record(chunk)) continue;
+      // Codex tool calls are already recorded as an ignorable, native Chat
+      // tool-card event by the recorder. Keep that card out of the Assistant
+      // reasoning stream: the DSH Chat assembler can then render the model's
+      // reasoning before and after the card as separate collapsible blocks,
+      // instead of showing a synthetic "工具 … 正在调用/已完成" sentence in
+      // the thinking text. A recorder is present only for a real DSH Session;
+      // the fallback text remains useful for transport-only callers/tests.
+      if (toolRecorder?.record(chunk)) {
+        yield* closeCurrentBlock(state);
+        continue;
+      }
       const name = String(chunk.name || 'bound tool');
       const phase = chunk.phase === 'started' ? '正在调用' : chunk.phase === 'completed' ? '已完成' : '失败';
       yield* appendBlock(state, 'reasoning', `工具 ${name} ${phase}。`);
@@ -739,7 +750,10 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         return;
       }
       if (hasImage) throw Object.assign(new Error('当前云端 Agent 镜像尚不支持图片输入，请使用本地 Agent'), { code: 'CLOUD_IMAGE_INPUT_UNAVAILABLE' });
-      if (cloudRuntime) {
+      // Studio deployment receipts have a separate endpoint/provenance
+      // contract. API-created ManagedRuntime agents use the authenticated
+      // AgentEngine RunAgent Action through `cloudClient` below.
+      if (cloudRuntime && (!routed || !routed?.source || routed?.source === 'studio-deployment')) {
         yield* cloudRuntime({ ...options, agentId, cloudVersionId: routed?.cloudVersionId || options.cloudVersionId, userMessage: user, input, session: toolAgent?.session });
         return;
       }

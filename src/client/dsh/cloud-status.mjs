@@ -38,7 +38,7 @@ export function createCloudSessionStatus({
       void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000);
       return () => { active = false; clearInterval(timer); };
     }, [open, agent, sessionId]);
-    if (!agent?.deployment) return null;
+    if (agent?.source !== 'studio-deployment' || !agent?.deployment) return null;
     const deployment = agent.deployment, bindings = agent.spec?.bindings || {}, plugins = bindings.plugins || [];
     const pairs = [['云端实例', agent.metadata.id], ['环境', `${deployment.environment === 'pre-online' ? '预发' : deployment.environment} · ${deployment.region}`],
       ['当前部署版本', `r${agent.metadata.revision} · ${deployment.buildId}`], ['当前绑定模型', (deployment.models || [deployment.model]).join('、')],

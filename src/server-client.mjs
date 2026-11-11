@@ -52,8 +52,24 @@ function normalizeAgent(item = {}) {
     };
   }
   const basic = item.Basic || item.basic || item;
-  const deployment = item.Deployment || item.deployment || {};
-  const component = item.ComponentConfig || item.componentConfig || item.Advanced?.ComponentConfig || {};
+  // ListAgents returns a flat projection while GetAgent returns the nested
+  // Deployment envelope. Keep one normalized shape for both so the Host can
+  // identify API-created ManagedRuntime rows without a detail request per card.
+  const deployment = item.Deployment || item.deployment || (
+    item.DeploymentType || item.ArtifactType || item.Framework || item.framework
+      ? {
+        DeploymentType: item.DeploymentType || item.deploymentType || item.ArtifactType,
+        Framework: item.Framework || item.framework,
+        Region: item.Region || item.region,
+        Status: item.Status || item.status,
+        Phase: item.Phase || item.phase,
+        ReadyReplicas: item.ReadyReplicas || item.readyReplicas || 0,
+        Replicas: item.Replicas || item.replicas || 0,
+        ComponentConfig: item.ComponentConfig || item.componentConfig,
+      }
+      : {}
+  );
+  const component = item.ComponentConfig || item.componentConfig || item.Advanced?.ComponentConfig || deployment.ComponentConfig || deployment.componentConfig || {};
   const id = basic.AgentId || basic.agentId || basic.id || item.AgentId || item.agentId || item.id;
   const name = basic.Name || basic.name || item.Name || item.name || id;
   const metadata = {
@@ -68,7 +84,7 @@ function normalizeAgent(item = {}) {
   // usually exposes it on Basic.Framework. Preserve that server-owned
   // runtime when opening the edit page; otherwise every cloud Agent falls
   // back to the misleading DSH Native label.
-  const runtimeType = String(item.HarnessRuntimeKind || item.harnessRuntimeKind || basic.Framework || basic.framework || item.Framework || item.framework || deployment.Framework || deployment.framework || 'dsh-native').toLowerCase();
+  const runtimeType = String(item.HarnessRuntimeKind || item.harnessRuntimeKind || basic.Framework || basic.framework || item.Framework || item.framework || deployment.Framework || deployment.framework || deployment.RuntimeConfig?.Name || deployment.ManagedRuntimeConfig?.RuntimeName || 'dsh-native').toLowerCase();
   const knowledge = component.KnowledgeBase || component.knowledge_base || component.knowledgeBase;
   const memory = component.Memory || component.memory;
   const skill = component.SkillWorkspace || component.skill_workspace || component.skillWorkspace;
@@ -76,13 +92,17 @@ function normalizeAgent(item = {}) {
   if (knowledge?.Id || knowledge?.id) plugins.push({ config: { binding: { resource: { kind: 'knowledge-base', id: knowledge.Id || knowledge.id, name: knowledge.Name || knowledge.name, region: knowledge.Region || knowledge.region } } } });
   if (memory?.Id || memory?.id) plugins.push({ config: { binding: { resource: { kind: 'memory-instance', id: memory.Id || memory.id, name: memory.Name || memory.name, region: memory.Region || memory.region } } } });
   if (skill?.Id || skill?.id) plugins.push({ config: { binding: { resource: { kind: 'skill-space', id: skill.Id || skill.id, name: skill.Name || skill.name, region: skill.Region || skill.region } } } });
+  const managedRuntime = String(deployment.DeploymentType || deployment.deploymentType || item.DeploymentType || item.deploymentType || '').toLowerCase() === 'managedruntime';
+  const status = String(metadata.status || '').toUpperCase();
+  const available = ['RUNNING', 'UPDATING', 'READY', 'AVAILABLE'].includes(status);
   return {
     id, name, description: metadata.description, status: metadata.status, phase: metadata.phase,
     framework: basic.Framework || basic.framework || item.Framework || item.framework,
     region: basic.Region || basic.region || item.Region || item.region,
-    metadata, spec: { runtime: { type: runtimeType }, bindings: { plugins } },
-    deployment: { ...deployment }, builds: Array.isArray(item.Builds || item.builds) ? (item.Builds || item.builds) : [],
-    source: 'agentengine-server',
+    metadata: { ...metadata, local: false }, spec: { runtime: { type: runtimeType }, bindings: { plugins } },
+    deployment: { ...deployment, ...(managedRuntime ? { state: status, available } : {}) }, builds: Array.isArray(item.Builds || item.builds) ? (item.Builds || item.builds) : [],
+    managedRuntime,
+    source: managedRuntime ? 'agentengine-managed-runtime' : 'agentengine-server',
   };
 }
 
@@ -540,18 +560,20 @@ function createClient({ configuration, fetchImpl = hostFetch, timeoutMs = 15000,
     return result.data || {};
   }
 
-  async function listAgents({ page = 1, pageSize = 20, query = '' } = {}, options) {
-    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100 || typeof query !== 'string') {
+  async function listAgents({ page = 1, pageSize = 20, query = '', remoteOnly = false } = {}, options) {
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100 || typeof query !== 'string' || typeof remoteOnly !== 'boolean') {
       throw new AgentEngineError('INVALID_QUERY', '分页参数无效');
     }
     // A packaged/local Studio Host is the owner of its on-disk AgentDraft
     // registry. Read that complete local catalog first so a local Agent row
     // does not depend on AgentEngine Server capabilities or N detail calls.
-    try {
-      const local = await listLocalAgents({ page, pageSize, query }, options);
-      return local;
-    } catch (error) {
-      if (!(error?.status === 404 || error?.code === 'SERVER_ACTION_FAILED')) throw error;
+    if (!remoteOnly) {
+      try {
+        const local = await listLocalAgents({ page, pageSize, query }, options);
+        return local;
+      } catch (error) {
+        if (!(error?.status === 404 || error?.code === 'SERVER_ACTION_FAILED')) throw error;
+      }
     }
     const result = await action('ListAgents', { Page: page, PageSize: pageSize, ...(query.trim() ? { Name: query.trim() } : {}) }, options);
     if (!Array.isArray(result.data?.Agents)) throw new AgentEngineError('SERVER_INVALID_RESPONSE', 'Server Agent 列表格式不兼容');

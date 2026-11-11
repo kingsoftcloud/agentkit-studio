@@ -161,6 +161,27 @@ test('Studio deployments use the frozen cloud bridge through the native session'
   assert.equal(dshPresetEligibility({ ...cloud, source: 'agentengine-server' }).code, 'STUDIO_DEPLOYMENT_REQUIRED');
 });
 
+test('API-created Codex ManagedRuntime is admitted through the AgentEngine cloud bridge', async () => {
+  const managed = agent({
+    source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime', state: 'RUNNING', available: true },
+    metadata: { id: 'ar-managed', name: 'Managed Codex', revision: 1, local: false },
+    spec: { runtime: { type: 'codex' }, bindings: {} },
+  });
+  const eligibility = dshPresetEligibility(managed);
+  assert.equal(eligibility.ok, true);
+  assert.equal(eligibility.source, 'agentengine-managed-runtime');
+  let definition;
+  const admission = new DshPresetAdmission({
+    registry: { async register(value) { definition = value; return async () => {}; } },
+    getAgent: async () => managed,
+  });
+  await admission.ensure('ar-managed');
+  const runtime = definition.plugins.find(item => item.name.endsWith('/dsh-runtime-plugin'));
+  assert.equal(runtime.config.source, 'agentengine-managed-runtime');
+  assert.equal(runtime.config.local, false);
+});
+
 test('the active DSH model route and official persona row make a real native preset', async () => {
   const registered = [];
   const revision = agent({

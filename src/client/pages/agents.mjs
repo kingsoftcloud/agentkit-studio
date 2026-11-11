@@ -120,8 +120,9 @@ export function createAgentPages({
           ['Skill Center', platformCount('skill-space')],
         ].filter(([, count]) => count);
         const built = hasCurrentBuild(agent);
-        const statusLabel = agent.deployment ? (DEPLOYMENT_LABELS[agent.deployment.state] || agent.deployment.state) : built ? '已构建' : successfulBuilds(agent).length ? '有历史构建' : agent.source === 'local-studio' ? '本地配置' : '草稿';
-        const openCard = () => { if (agent.deployment) onNavigate?.('studio-operations'); else onEdit?.(agent); };
+        const studioDeployment = agent.source === 'studio-deployment';
+        const statusLabel = studioDeployment ? (DEPLOYMENT_LABELS[agent.deployment?.state] || agent.deployment?.state) : agent.managedRuntime ? (agent.deployment?.available ? '托管可用' : (agent.metadata?.status || '托管不可用')) : built ? '已构建' : successfulBuilds(agent).length ? '有历史构建' : agent.source === 'local-studio' ? '本地配置' : '草稿';
+        const openCard = () => { if (studioDeployment) onNavigate?.('studio-operations'); else if (!agent.managedRuntime) onEdit?.(agent); };
         const stop = event => event?.stopPropagation?.();
         return h('article', { key: id, 'data-studio-agent-card': id, tabIndex: 0, role: 'article', onClick: openCard, onKeyDown: event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); openCard(); } }, className: 'ak-agent-card', style: { background: BRAND.surface } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' } },
@@ -136,7 +137,7 @@ export function createAgentPages({
             h('span', null),
             h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
               h('button', { type: 'button', disabled: Boolean(bindingAgent) || agent.deployment?.available === false, onClick: event => { stop(event); void bindAgent(agent); }, className: 'af-btn', 'data-size': 'sm', 'data-variant': 'primary' }, bindingAgent === (agent?.metadata?.id || agent?.id) ? '正在绑定…' : agent.assistant?.configuration ? '绑定云端助理' : '绑定到新会话'),
-              h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, agent.deployment ? '管理部署' : '编辑 Agent'),
+              studioDeployment ? h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, '管理部署') : agent.managedRuntime ? null : h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, '编辑 Agent'),
               agent?.metadata?.local ? h('button', { type: 'button', onClick: async event => { stop(event); if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); }, className: 'af-btn', 'data-size': 'sm', style: { color: BRAND.danger } }, '删除') : null)));
       })),
       h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '.5px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-tertiary)', fontSize: '12px' } },
@@ -159,7 +160,7 @@ export function createAgentPages({
       status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 Host', detail: directServerMode ? '从 AgentEngine Server 读取 Agent Catalog 和运行时能力。' : '从 DSH Host 读取 Agent Catalog 和运行时能力。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'Host 尚未连接', detail: error || (directServerMode ? '请检查全局 ~/.agentkit 配置、云端凭证和网络；当前不会回退到本地 DSH Host。' : '启动本地 DSH Host 后点击刷新。'), action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : null,
       catalogWarnings.length ? h('p', { role: 'status', style: { color: BRAND.inkMuted, fontSize: '12px' } }, catalogWarnings.map(item => item.message || item).join(' ')) : null,
-      status === 'ready' && agents.length === 0 && !query.trim() ? h(EmptyState, { icon: '✦', title: tab === 'cloud' ? '暂无 Studio 云端部署' : '还没有 Agent', detail: tab === 'cloud' ? '在运行中心将本地构建部署到云端；这里只展示当前账号下的 Studio 部署。' : '描述你希望 Agent 完成的任务，或手动填写配置。' }) : null,
+      status === 'ready' && agents.length === 0 && !query.trim() ? h(EmptyState, { icon: '✦', title: tab === 'cloud' ? '暂无云端 Agent' : '还没有 Agent', detail: tab === 'cloud' ? '这里展示 Studio 部署和通过 AgentEngine API 创建的 Codex / DSH ManagedRuntime。' : '描述你希望 Agent 完成的任务，或手动填写配置。' }) : null,
       status === 'ready' && (agents.length > 0 || query.trim()) && filteredAgents.length === 0 ? h(EmptyState, { icon: '⌕', title: '没有匹配的 Agent', detail: '调整搜索词或状态筛选。' }) : null,
       agentTable));
   }

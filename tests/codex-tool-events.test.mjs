@@ -66,6 +66,24 @@ test('native Chat payload restores failures and standalone result windows; close
   assert.equal(definition.buildViewNode(context).data.root.error.code, 'CODEX_TOOL_OUTCOME_UNKNOWN');
 });
 
+test('Codex command cards reuse the native shell presentation without changing the wire event', () => {
+  const { instance, events } = recorder();
+  instance.record({ type: 'tool', id: 'cmd-1', name: 'codex/command', phase: 'started', arguments: { command: 'printf hello', cwd: '/tmp' } });
+  instance.record({ type: 'tool', id: 'cmd-1', name: 'codex/command', phase: 'completed', arguments: { command: 'printf hello', cwd: '/tmp' }, result: {
+    content: [{ type: 'text', text: 'hello' }], structuredContent: { status: 'completed', exitCode: 0 },
+  } });
+  const location = { kind: 'step', turn: { turn: 1, status: 'open' }, step: { step: 1, status: 'open' } };
+  const match = event => ({ event, location });
+  const context = { key: 'command-card', id: 'call', current: new Map() };
+  context.start = match(events[0]);
+  context.state = definition.start(context, context.start);
+  context.state = definition.update(context, match(events[1]));
+  const node = definition.buildViewNode(context);
+  assert.equal(node.data.root.call.name, 'bash');
+  assert.equal(events[0].data.name, 'codex/command');
+  assert.equal(events[1].data.name, 'codex/command');
+});
+
 test('raw fallback ignores messages and other tools, and never duplicates native completions', () => {
   const fallback = createCodexCommandFallback();
   for (const item of [

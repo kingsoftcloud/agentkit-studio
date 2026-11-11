@@ -52,3 +52,15 @@ test('cloud rows come only from deployment receipts, share sorting and never loa
   assert.equal((await catalog.list({ source: 'cloud', query: 'legacy' })).total, 0);
   assert.deepEqual((await catalog.list({ source: 'local' })).warnings, []);
 });
+
+test('cloud catalog admits API-created Codex and DSH ManagedRuntime rows without treating them as Studio deployments', async () => {
+  const managed = id => ({ id, metadata: { id, name: id, createdAt: '2026-10-09T00:00:00Z', local: false },
+    spec: { runtime: { type: id === 'managed-codex' ? 'codex' : 'dsh-native' } },
+    source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime', state: 'RUNNING', available: true } });
+  const catalog = createAgentCatalog({ store: unexpectedCloud, deployments: async () => ({ items: [], warnings: [] }),
+    managedAgents: async () => ({ items: [managed('managed-codex'), managed('managed-dsh'), { ...managed('managed-harness'), spec: { runtime: { type: 'harness' } } }], warnings: [] }) });
+  const result = await catalog.list({ source: 'cloud' });
+  assert.deepEqual(result.items.map(item => item.metadata.id), ['managed-codex', 'managed-dsh']);
+  assert.equal(result.items.every(item => item.source === 'agentengine-managed-runtime'), true);
+});
