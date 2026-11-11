@@ -157,3 +157,51 @@ test('model-facing truncation is recorded while the card retains its display con
   assert.ok(text.length < 64_000);
   assert.equal(events[0].data.content[0].text.length, 90_000);
 });
+
+test('a command that outlives its yield budget stays running instead of failing', () => {
+  const fallback = createCodexCommandFallback();
+  fallback.observeRaw({ type: 'function_call', call_id: 'long', name: 'exec_command', arguments: '{"cmd":"sleep 320"}' });
+  fallback.observeRaw({ type: 'function_call_output', call_id: 'long', output:
+    'Chunk ID: 056202\nWall time: 30.0002 seconds\nProcess running with session ID 26624\nOriginal token count: 0\nOutput:\n' });
+  const [started, settled] = [...fallback.flush()];
+  assert.equal(started.phase, 'started');
+  // Codex yields the session so the model can continue it; that is a running
+  // command, not an unknown outcome that aborts the turn.
+  assert.equal(settled.phase, 'completed');
+  assert.equal(settled.result.structuredContent.status, 'running');
+  assert.equal(settled.result.structuredContent.sessionId, 26624);
+  assert.equal(settled.error, undefined);
+});
+
+test('write_stdin continuations are observed like exec_command', () => {
+  const fallback = createCodexCommandFallback();
+  fallback.observeRaw({ type: 'function_call', call_id: 'cont', name: 'write_stdin', arguments: '{"session_id":26624,"chars":""}' });
+  fallback.observeRaw({ type: 'function_call_output', call_id: 'cont', output:
+    'Chunk ID: 9f1c\nWall time: 0.4 seconds\nProcess exited with code 0\nFinal output:\nDONE_320\n' });
+  const settled = [...fallback.flush()].at(-1);
+  assert.equal(settled.name, 'codex/write_stdin');
+  assert.equal(settled.phase, 'completed');
+  assert.equal(settled.result.structuredContent.exitCode, 0);
+});
+
+test('a yielded write_stdin keeps its session id', () => {
+  const fallback = createCodexCommandFallback();
+  fallback.observeRaw({ type: 'function_call', call_id: 'cont2', name: 'write_stdin', arguments: '{"session_id":26624}' });
+  fallback.observeRaw({ type: 'function_call_output', call_id: 'cont2', output:
+    'Chunk ID: 9f1c\nWall time: 30.0 seconds\nProcess running with session ID 26624\nOutput:\nstill going\n' });
+  const settled = [...fallback.flush()].at(-1);
+  assert.equal(settled.phase, 'completed');
+  assert.equal(settled.result.structuredContent.status, 'running');
+  assert.equal(settled.result.structuredContent.sessionId, 26624);
+});
+
+test('a failing exit still fails even beside a running session line', () => {
+  const fallback = createCodexCommandFallback();
+  fallback.observeRaw({ type: 'function_call', call_id: 'bad', name: 'exec_command', arguments: '{}' });
+  fallback.observeRaw({ type: 'function_call_output', call_id: 'bad', output:
+    'Chunk ID: ff\nWall time: 0.2 seconds\nProcess exited with code 2\nOutput:\nboom\n' });
+  const settled = [...fallback.flush()].at(-1);
+  assert.equal(settled.phase, 'failed');
+  assert.equal(settled.result.structuredContent.exitCode, 2);
+  assert.equal(settled.error.code, 'CODEX_TOOL_FAILED');
+});
