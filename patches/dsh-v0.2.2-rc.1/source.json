@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "ea0b2b83dc3c51341fa2fdf13e2e1df2c7464aee",
+  "headCommit": "496691ba26225a05304d30dc72e31b6fef09fba8",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "1cee9bcb60cab49a7b6a1a16d40221074b089662",
-  "sourceSha256": "03e495b38e7a5e77abd5749f86a4d8a2b63a27940568567e7d30b97e2ef54b1c",
+  "tree": "b1c10cd833f455f3709e1cd5be77f44747877abe",
+  "sourceSha256": "a8ae7d30953228c1724a6b025f11ad2703aa1c883757be3cdd5726d78c29d16e",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "aa614aab92534fa00b482bf1fcc0122943a59e8c810d874d429c85aea72e20c6"
+    "sha256": "a743cd75ac01042eb81ae080592bbab9f35914354f9346bc5a9d507fa20e7a33"
   },
   "commits": [
     {
@@ -310,6 +310,12 @@
       "file": "081-credentials-ignore-unaddressable-refs.patch",
       "commit": "ea0b2b83dc3c51341fa2fdf13e2e1df2c7464aee",
       "sha256": "ba70c51d3a1bf9fb06dd9c4bc1b571995d8949f0cf2e68b10f690f0ca2246800"
+    },
+    {
+      "id": "082",
+      "file": "082-desktop-profile-pnpm-recovery.patch",
+      "commit": "496691ba26225a05304d30dc72e31b6fef09fba8",
+      "sha256": "bb0b87526bc0994f7ea649c632130977736d6dce9c2b1eb863b246833830b204"
     }
   ]
 }

@@ -128,6 +128,7 @@ DSH_HOME=$DSH_HOME ELECTRON_RUN_AS_NODE=1 "$DSH_BIN" --expose-internals "$CLI" -
 
 ## 信任与回滚
 
+- 含桌面 profile 修复的 Studio 构建在启动和修改插件包前检查内置 pnpm 的主版本、store 和 DSH 包入口。发现版本冲突或文件缺失时，用原锁文件重建依赖；保留原目录，验证失败则恢复。启动诊断在桌面 profile 的 `.plugin-manager/profile-recovery.log`，插件操作诊断在同目录下的 `logs/`。手工修复也应使用 Studio 自带的 pnpm，避免系统 pnpm 改写这个 profile。
 - 远程索引由运维配置，安装动作永远由用户点击触发；市场不自动安装插件。
 - 安装失败或能力探针失败不会把插件标记为可用；`restart-required` 时明确提示重启。
 - 卸载/停用走 Host 原生变更结果，失败原样上报，不谎报成功。

@@ -2470,12 +2470,72 @@
         ]
       },
       "sequence": 50
+    },
+    {
+      "id": "082",
+      "file": "082-desktop-profile-pnpm-recovery.patch",
+      "category": "lifecycle",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "dependsOn": [
+        "040",
+        "074"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/cli.ts",
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop-host/src/package-manager.ts",
+        "apps/desktop-host/tests/package-manager.spec.ts",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "packages/boot/app-boot/src/profile-context.ts",
+        "packages/boot/plugin-manager/src/index.ts",
+        "packages/boot/plugin-manager/src/operations.ts",
+        "packages/boot/plugin-manager/src/profile-package-recovery.ts",
+        "packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-app-boot",
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host",
+        "@deepseek-ai/dsh-plugin-manager"
+      ],
+      "contracts": [
+        "The managed Desktop Host and its installed CLI use the bundled pnpm even when the profile pins another version. The Host checks the recorded pnpm major, store, and local package entries before boot, and package mutations perform the same check under the profile writer lock.",
+        "Recovery reinstalls from the existing lockfile without running install scripts. It keeps the old dependency directory until the new one verifies, restores it if the rebuild fails, and resumes a pending directory swap only after its package process stops.",
+        "When the locked rebuild cannot run at startup, only empty and undeclared core directories with a bundled replacement can be moved out of the resolver path. If a plugin mutation leaves an invalid dependency tree, the operation fails and attempts to restore the previous dependency set."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Source regression tests with real pnpm and isolated macOS Desktop Host smoke using the installed Electron and pnpm with rebuilt Host modules."
+      },
+      "removeWhen": "The pinned Desktop Host verifies and recovers incompatible or incomplete plugin dependency trees with equivalent rollback and restart coverage.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/package-manager.spec.ts",
+          "apps/desktop/tests/project-manager.spec.ts",
+          "packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts",
+          "packages/boot/plugin-manager/tests/manager.spec.ts",
+          "packages/boot/plugin-manager/tests/operations-process.spec.ts",
+          "packages/boot/plugin-manager/tests/operations.spec.ts",
+          "packages/boot/plugin-manager/tests/package-reload.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      },
+      "sequence": 51,
+      "sha256": "bb0b87526bc0994f7ea649c632130977736d6dce9c2b1eb863b246833830b204"
     }
   ],
-  "patchedTree": "1cee9bcb60cab49a7b6a1a16d40221074b089662",
-  "patchedSourceSha256": "03e495b38e7a5e77abd5749f86a4d8a2b63a27940568567e7d30b97e2ef54b1c",
+  "patchedTree": "b1c10cd833f455f3709e1cd5be77f44747877abe",
+  "patchedSourceSha256": "a8ae7d30953228c1724a6b025f11ad2703aa1c883757be3cdd5726d78c29d16e",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "76197f0071225def4f9becc8a68944fa4e3e7f4213403795952649bc54e31af5"
+    "sha256": "b39a2efcaaf7f7cff5daeb63314721febd20acebfa91ebf47cafb1eb8b0ac72c"
   }
 }
