@@ -11,13 +11,14 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
     try {
       const admission = value ? await hostRemote.ensureDshPreset(value, buildId) : null;
       if (!active()) return;
-      const sessionId = await navCtx.sessions.create({});
+      // Pass the admitted preset into session creation. Creating a blank
+      // Session with the standard preset and then recomposing it through
+      // `agentPresets.select` leaves the standard persona mounted while the
+      // scoped persona is being installed; DSH correctly rejects that second
+      // registration. The public Session API accepts the preset at creation
+      // time and mounts only the selected composition.
+      const sessionId = await navCtx.sessions.create(admission ? { agentPreset: admission.presetId } : {});
       if (!active()) return;
-      if (admission) {
-        const selected = await remote?.agentPresets?.select?.(sessionId, admission.presetId);
-        if (!active()) return;
-        if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
-      }
       const modelSelection = options.modelSelection || admission?.modelSelection;
       if (modelSelection) {
         const result = await remote.session.selectModel({ sessionId, ...modelSelection, saveDefault: false });

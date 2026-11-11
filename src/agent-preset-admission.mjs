@@ -90,6 +90,27 @@ function toolBindingRefs(agent = {}) {
   }).filter(Boolean).map(String);
 }
 
+/**
+ * Keep the scope-only persona plugin singular in a derived preset.
+ *
+ * The standard preset owns one persona row, but older live profile layers and
+ * hot-reloaded compositions can contribute a second row under a different id.
+ * Both rows register the same prompt section names and the second activation
+ * then rejects the whole Agent before a Session can be created. Persona is a
+ * scope-only override, so retaining the first declared row is the safe
+ * normalization; other plugins are allowed to appear more than once with
+ * different configuration and must not be deduplicated here.
+ */
+function normalizePersonaRows(rows) {
+  let seen = false;
+  return rows.filter(row => {
+    if (row?.name !== '@deepseek-ai/dsh-persona') return true;
+    if (seen) return false;
+    seen = true;
+    return true;
+  });
+}
+
 function modelProfileMatchesActiveRoute(profileId, activeModel) {
   const configured = String(activeModel?.values?.modelName || activeModel?.values?.model || '').trim().toLowerCase();
   if (!configured) return false;
@@ -334,11 +355,11 @@ export class DshPresetAdmission {
     // preset without that binding retains its existing DSH Web environment.
     const ownsWeb = eligibility.local && (eligibility.runtime === 'harness' && nativeEngineContract
       || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
-    const plugins = basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web');
+    const plugins = normalizePersonaRows(basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web'));
     let resourcesUnavailable = false;
     const unavailableResources = [];
     if (prefix) {
-      const persona = plugins.find(row => row.id === 'persona');
+      const persona = plugins.find(row => row.name === '@deepseek-ai/dsh-persona');
       const row = {
       id: 'persona',
       name: '@deepseek-ai/dsh-persona',
