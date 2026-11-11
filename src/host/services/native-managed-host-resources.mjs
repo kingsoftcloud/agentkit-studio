@@ -2,7 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { canonical, invariant, parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
 import { codexToolBindings, prepareLocalResourceContext } from '../../local-runtime.mjs';
 import { nativeAgentPolicyDecision, nativeAgentPolicyFromSpec } from '../../native-agent-policy.mjs';
-import { engineHostTools } from '../../providers/native-engine-runtime.mjs';
+import { engineHostTools, nativeHostToolCallId } from '../../providers/native-engine-runtime.mjs';
 import { MANAGED_SESSION_DELIVERY_LIMIT } from './native-managed-session-delivery.mjs';
 
 const PATH = '/_agentkit/managed-host/v1';
@@ -17,12 +17,12 @@ const buildMatches = (binding, revision) => binding.agentRevision === revision.a
 
 /** Serve the resources of the exact persisted Session/Build admitted by the
  * independent engine. The ticket carries identity, not resource credentials. */
-export function registerStudioManagedHostResources(ctx, { scope, token, resolveBinding, resourceAdapters, sessionDelivery } = {}) {
+export function registerStudioManagedHostResources(ctx, { scope, token, resolveBinding, resourceAdapters, sessionDelivery, createA2aPort } = {}) {
   invariant(object(scope) && Object.keys(scope).sort().join(',') === 'agentId,tenantId,userId,workspaceId'
     && Object.values(scope).every(text) && typeof token === 'string' && token.length >= 32
     && typeof resolveBinding === 'function' && resourceAdapters, 'MANAGED_HOST_RESOURCE_CONFIG_INVALID');
   scope = Object.freeze({ ...scope });
-  const scopeBytes = canonical(scope), lifetime = new AbortController();
+  const scopeBytes = canonical(scope), lifetime = new AbortController(), a2aPorts = new Map();
   const sign = value => createHmac('sha256', token).update(value).digest('base64url');
   const seal = claims => {
     const encoded = Buffer.from(canonical(claims)).toString('base64url');
@@ -34,23 +34,42 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     invariant(equal(sign(encoded), proof), 'MANAGED_HOST_BINDING_INVALID');
     return parseNativeJson(Buffer.from(encoded, 'base64url').toString('utf8'));
   };
-  ctx.effect(() => () => lifetime.abort(), 'agentkit-studio: managed Harness resource callbacks');
+  ctx.effect(() => async () => {
+    lifetime.abort();
+    const closing = [...a2aPorts.values()].map(({ port }) => port.close());
+    a2aPorts.clear();
+    await Promise.allSettled(closing);
+  }, 'agentkit-studio: managed Harness resource callbacks');
   ctx.inject(['webServer'], webCtx => {
     const release = webCtx.webServer.register({ kind: 'prefix', path: PATH, handler });
     webCtx.effect(() => release, 'agentkit-studio: managed Harness resource transport');
   });
 
-  async function bindingFor(sessionId, signal) {
+  async function bindingFor(sessionId, signal, allowAbsent = false) {
     signal.throwIfAborted();
     const binding = await resolveBinding(sessionId);
     signal.throwIfAborted();
+    if (allowAbsent && binding == null) return null;
     invariant(binding?.agent?.session?.id === sessionId && binding?.record?.metadata?.id === scope.agentId
       && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0,
     'MANAGED_HOST_SESSION_UNAVAILABLE');
     return binding;
   }
 
-  async function catalog(binding, toolCatalog, { skills, signal }) {
+  function a2aPort(binding) {
+    const bindings = binding.record.spec?.bindings?.a2a;
+    if (!createA2aPort || !Array.isArray(bindings) || !bindings.length) return null;
+    const key = canonical([binding.agentRevision, binding.buildId ?? null, binding.scopedPresetId ?? null, bindings]);
+    if (!a2aPorts.has(key)) {
+      const port = createA2aPort({ agentId: scope.agentId, agentRevision: binding.agentRevision,
+        buildId: binding.buildId ?? null, scopedPresetId: binding.scopedPresetId, bindings, signal: lifetime.signal,
+        assertManagedAuthority: exec => exec.assertManagedAuthority() });
+      a2aPorts.set(key, { port, controls: { a2aTaskHistory: port.taskHistory, controlA2aTask: port.controlTask } });
+    }
+    return a2aPorts.get(key);
+  }
+
+  async function catalog(binding, toolCatalog, { skills, a2a = false, signal }) {
     invariant(object(toolCatalog) && Array.isArray(toolCatalog.reserved) && toolCatalog.reserved.length <= 512
       && toolCatalog.reserved.every(text) && toolCatalog.pattern === '^[A-Za-z][A-Za-z0-9_-]{0,63}$',
     'MANAGED_HOST_TOOL_CATALOG_INVALID');
@@ -67,25 +86,28 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     });
     signal.throwIfAborted();
     const policy = nativeAgentPolicyFromSpec(record.spec);
-    const pairs = codexToolBindings(prepared.tools).filter(({ tool }) => tool._source === 'mcp'
-      && nativeAgentPolicyDecision(policy, tool.name, false) !== 'deny');
-    const wire = engineHostTools(pairs.map(pair => pair.spec), toolCatalog);
+    const port = a2a ? a2aPort(binding)?.port : null;
+    const a2aTools = port?.definitions.map(tool => ({ ...tool, _source: 'a2a', _resourceId: port.binding.digest })) ?? [];
+    const pairs = codexToolBindings([...a2aTools, ...prepared.tools.filter(tool => tool._source === 'mcp')])
+      .filter(({ tool }) => nativeAgentPolicyDecision(policy, tool.name, tool._source === 'a2a' && tool.readOnly === true) !== 'deny');
+    const wire = engineHostTools(pairs.map(({ spec, tool }) => tool._source === 'a2a' ? { ...spec, timeoutMs: tool.timeoutMs,
+      readOnly: tool.readOnly && nativeAgentPolicyDecision(policy, tool.name, true) !== 'ask' } : spec), toolCatalog);
     const tools = wire.tools;
     const routes = new Map(pairs.map(pair => [pair.name, pair.tool]));
     const identity = tools.map(tool => {
       const route = routes.get(wire.originalName(tool.name));
       return { definition: tool, name: route.name, resource: route._resourceId };
     });
-    return { adapter, policy, tools, routes, wire, digest: digest(canonical(identity)), context: prepared.resourceContext };
+    return { adapter, policy, tools, routes, wire, port, digest: digest(canonical(identity)), context: prepared.resourceContext };
   }
 
   async function admit(body, signal) {
     const { sessionId, runId, toolCatalog } = body;
     const binding = await bindingFor(sessionId, signal);
-    const resources = await catalog(binding, toolCatalog, { skills: true, signal });
+    const resources = await catalog(binding, toolCatalog, { skills: true, a2a: true, signal });
     invariant(buildMatches(await bindingFor(sessionId, signal), binding), 'MANAGED_HOST_BUILD_CHANGED');
     const ref = seal({ sessionId, runId, agentRevision: binding.agentRevision, buildId: binding.buildId ?? null,
-      catalog: resources.digest, toolCatalog });
+      catalog: resources.digest, toolCatalog, ...(resources.port ? { a2a: true } : {}) });
     invariant(ref.length <= 8192, 'MANAGED_HOST_BINDING_INVALID');
     const hostInstructions = [binding.record.spec?.instructions?.system, binding.record.spec?.instructions?.task,
       resources.context].filter(Boolean).join('\n\n');
@@ -95,24 +117,36 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
   async function call(body, signal) {
     const { sessionId, runId, callId, name, arguments: args, effect } = body;
     const claims = open(body.ref);
-    invariant(claims.sessionId === sessionId && claims.runId === runId && text(callId) && text(name)
-      && object(args) && object(effect) && text(effect.operationKey)
-      && typeof effect.approved === 'boolean' && typeof effect.canRequestApproval === 'boolean', 'MANAGED_HOST_TOOL_INVALID');
+    invariant(claims.sessionId === sessionId && claims.runId === runId && text(callId) && text(name) && object(args)
+      && (effect === undefined || object(effect) && text(effect.operationKey)
+        && typeof effect.approved === 'boolean' && typeof effect.canRequestApproval === 'boolean'), 'MANAGED_HOST_TOOL_INVALID');
     const binding = await bindingFor(sessionId, signal);
     if (!buildMatches(binding, claims)) return { status: 'error', content: { code: 'managed_host_build_changed', executed: false } };
-    const resources = await catalog(binding, claims.toolCatalog, { signal });
+    const resources = await catalog(binding, claims.toolCatalog, { a2a: claims.a2a === true, signal });
     if (resources.digest !== claims.catalog)
       return { status: 'error', content: { code: 'managed_host_tool_catalog_changed', executed: false } };
     const definition = resources.tools.find(tool => tool.name === name);
     const route = definition && resources.routes.get(resources.wire.originalName(name));
-    invariant(route, 'MANAGED_HOST_TOOL_INVALID');
+    invariant(route && (definition.readOnly === true || effect), 'MANAGED_HOST_TOOL_INVALID');
     const current = await bindingFor(sessionId, signal);
     if (!buildMatches(current, claims)) return { status: 'error', content: { code: 'managed_host_build_changed', executed: false } };
-    const policy = nativeAgentPolicyDecision(resources.policy, route.name, false);
-    const standing = ['workspace-write', 'danger-full-access'].includes(current.permissionMode?.());
-    if (policy === 'deny' || !effect.approved && !effect.canRequestApproval && (policy === 'ask' || !standing))
+    const readOnly = route._source === 'a2a' && route.readOnly === true;
+    const policy = nativeAgentPolicyDecision(resources.policy, route.name, readOnly);
+    const session = current.agent.session;
+    const needsApproval = () => policy === 'ask' || !readOnly
+      && !['workspace-write', 'danger-full-access'].includes(current.permissionMode?.());
+    if (policy === 'deny' || !effect?.approved && !effect?.canRequestApproval && needsApproval())
       return { status: 'error', content: { code: 'policy_denied', executed: false } };
-    if (!effect.approved && (policy === 'ask' || !standing)) return { status: 'approval_required' };
+    if (!effect?.approved && needsApproval()) return { status: 'approval_required' };
+    if (route._source === 'a2a') {
+      return resources.port.execute(route.name, args, { name: route.name, arguments: args,
+        agent: current.agent, callId: nativeHostToolCallId(runId, effect?.operationKey ?? callId), signal,
+        assertManagedAuthority() {
+          signal.throwIfAborted();
+          invariant(current.agent.session === session && session.id === sessionId && (effect?.approved || !needsApproval()),
+            'MANAGED_HOST_TOOL_AUTHORITY_CHANGED');
+        } });
+    }
     try {
       signal.throwIfAborted();
       const content = await resources.adapter.callMcpTool(route._resourceId, route.name, args, { signal });
@@ -176,4 +210,12 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
       lifetime.signal.removeEventListener('abort', abort);
     }
   }
+
+  return { async resolveA2aBinding(sessionId, signal) {
+    const binding = await bindingFor(sessionId, signal, true);
+    const tools = binding && a2aPort(binding)?.controls;
+    if (!tools) return null;
+    return { contract: 'agentkit.studio-dsh-a2a-binding/v1', agentId: scope.agentId,
+      runtime: 'native-engine', local: true, agentRevision: binding.agentRevision, buildId: binding.buildId ?? null, tools };
+  } };
 }

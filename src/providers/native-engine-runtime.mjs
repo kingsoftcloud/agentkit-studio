@@ -261,6 +261,11 @@ export function engineHostTools(specs = [], { reserved = [], pattern = '^[A-Za-z
   }
   return { tools, originalName: name => originals.get(name) ?? name };
 }
+/** A model call ID can repeat across Runs. Preserve the identity of the
+ * original effect across approval, transport retries, and host restarts. */
+export function nativeHostToolCallId(runId, identity) {
+  return 'harness-' + createHash('sha256').update(JSON.stringify([runId, identity])).digest('hex');
+}
 /** Earlier user and assistant text turns; the engine decides how they reach the model. */
 export function engineConversation(messages = [], input = '') {
   const textOf = message => typeof message?.content === 'string' ? message.content

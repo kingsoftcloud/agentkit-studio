@@ -292,9 +292,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   }
   let nativeHostPromise;
   let dshA2aPromise;
+  let managedHostResources;
   const dshA2aControls = () => dshA2aPromise ||= ownAsyncResource(ctx,
     Promise.all([import('./services/dsh-a2a-control.mjs'), import('@deepseek-ai/dsh-agent')])
-      .then(([{ createStudioDshA2aControls }, { agentEvents }]) => createStudioDshA2aControls({ ctx, agentEvents, signal: bridge.signal })),
+      .then(([{ createStudioDshA2aControls }, { agentEvents }]) => createStudioDshA2aControls({ ctx, agentEvents, signal: bridge.signal,
+        resolveManagedBinding: managedHostResources?.resolveA2aBinding })),
     'agentkit-studio: DSH A2A controls');
   const nativeHost = () => nativeHostPromise ||= ownAsyncResource(ctx,
     Promise.all([import('./services/native-harness.mjs'), import('@deepseek-ai/dsh-system-prompt'), agentStorePromise, studioBuildPromise, resourceAdaptersPromise,
@@ -314,9 +316,13 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       if (callback.token === remote.token) throw Error('Managed Harness credentials must be distinct');
       const { registerStudioManagedHostResources } = await import('./services/native-managed-host-resources.mjs');
       const { createStudioManagedSessionDelivery } = await import('./services/native-managed-session-delivery.mjs');
+      const { createDshNodeA2aTools } = await import('../providers/dsh-node-a2a-tools.mjs');
       const { agentEvents } = await import('@deepseek-ai/dsh-agent');
-      registerStudioManagedHostResources(ctx, { ...callback, resourceAdapters: resourceAdaptersPromise,
+      managedHostResources = registerStudioManagedHostResources(ctx, { ...callback, resourceAdapters: resourceAdaptersPromise,
         sessionDelivery: createStudioManagedSessionDelivery({ ctx, remote }),
+        createA2aPort: config => createDshNodeA2aTools({ ...config, ctx, workspaceRoot,
+          stateDir: join(studioStoreDir, 'builtin-workspace'), env: runtimeEnv, fetchImpl: hostFetch,
+          sessionEvents: a2aSessionSink.forPreset(config) }),
         async resolveBinding(sessionId) {
           const found = await ctx.get('sessionController')?.resolveAgent(sessionId);
           if (found?.error) throw found.error;

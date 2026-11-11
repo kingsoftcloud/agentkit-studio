@@ -23,10 +23,11 @@ function abortable(work, signal) {
 }
 
 export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  env = {}, bindings = [], fetchImpl, sessionEvents, isClosed = () => false, signal: hostSignal } = {}) {
+  env = {}, bindings = [], fetchImpl, sessionEvents, isClosed = () => false, signal: hostSignal, assertManagedAuthority } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision >= 1
     && (buildId === null || typeof buildId === 'string' && buildId.trim()) && typeof isClosed === 'function'
-    && (hostSignal === undefined || hostSignal instanceof AbortSignal), 'dsh_a2a_binding_invalid');
+    && (hostSignal === undefined || hostSignal instanceof AbortSignal)
+    && (assertManagedAuthority === undefined || typeof assertManagedAuthority === 'function'), 'dsh_a2a_binding_invalid');
   const prepared = prepareDshA2AHost({ env: { ...env }, bindings: copy(bindings), ...(fetchImpl ? { fetchImpl } : {}),
     ...(sessionEvents ? { sessionEvents } : {}) });
   const definitions = nativeA2aToolDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
@@ -119,9 +120,12 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
             && exec.callId === original.callId && exec.signal === original.signal && exec.name === name && canonical(args) === original.args
             && canonical(exec.arguments) === original.args, 'dsh_a2a_request_drifted');
         };
-        assertCurrent = () => { stable(); assertOpen(); stable(); return true; };
+        assertCurrent = () => { stable(); assertOpen(); assertManagedAuthority?.(exec); stable(); return true; };
         assertCurrent();
-        await abortable(() => authorizeNativeBuiltin(ctx, { ...exec, signal: request.signal }, definition), request.signal); assertCurrent();
+        if (!assertManagedAuthority) {
+          await abortable(() => authorizeNativeBuiltin(ctx, { ...exec, signal: request.signal }, definition), request.signal);
+          assertCurrent();
+        }
         if (!prepared) return errorResult('A2A_SPACE_NOT_CONFIGURED');
         const ledger = sessionFor(original.sessionId);
         const dispatch = async () => {

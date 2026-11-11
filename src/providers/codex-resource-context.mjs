@@ -1,9 +1,9 @@
 /** Materialize Codex-bound resources while keeping DSH delivery execution authoritative. */
-import { createHash } from 'node:crypto';
 import { prepareLocalResourceContext, codexToolBindings, writeBoundMemory } from '../local-runtime.mjs';
 import { codexPresentationBindings } from './dsh-presentation-tools.mjs';
 import { harnessServiceHostBindings } from './dsh-node-builtin-catalog.mjs';
 import { nativeAgentPolicyFromSpec } from '../native-agent-policy.mjs';
+import { nativeHostToolCallId } from './native-engine-runtime.mjs';
 
 export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise, augmentContext }) {
   return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService, runtimeRecord } = {}) => {
@@ -98,7 +98,7 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
           // Model call IDs can repeat across Runs. Tie host effects to their
           // durable engine operation, including calls admitted after approval.
           const identity = effect?.operationKey ?? callId;
-          const ownedCallId = 'harness-' + createHash('sha256').update(JSON.stringify([runId, identity])).digest('hex');
+          const ownedCallId = nativeHostToolCallId(runId, identity);
           const execute = definition._source === 'native-a2a' ? toolAdapter.callNativeA2aTool : toolAdapter.callNativeTeamTool;
           return execute(name, args, { agent, callId: ownedCallId, signal });
         },

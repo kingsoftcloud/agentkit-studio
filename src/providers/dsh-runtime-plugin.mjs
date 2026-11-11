@@ -326,7 +326,7 @@ export function apply(ctx, config = {}) {
   if (wholeNativeTurn || config.runtime === 'native-engine') ctx.on('agentkit/harness-resource-binding', () => {
     assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
     if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
-    return { agentId, agentRevision: config.agentRevision, buildId: config.buildId };
+    return { agentId, agentRevision: config.agentRevision, buildId: config.buildId, scopedPresetId: config.scopedPresetId };
   });
   // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
   // Durable ownership grants no tools or permissions by itself.
