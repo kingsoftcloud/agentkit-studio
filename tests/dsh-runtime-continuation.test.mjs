@@ -196,6 +196,48 @@ test('Codex intermediate text does not suppress later tools, reasoning or final 
   ]);
 });
 
+test('Codex Session tool cards do not become synthetic reasoning text', async () => {
+  let sequence = 0;
+  const surface = { nodes: [] };
+  const events = [];
+  const session = {
+    id: '',
+    header: { cwd: '/tmp/codex-session' },
+    surface,
+    append(type, data, options = {}) {
+      const event = { type, data: structuredClone(data), seq: ++sequence, time: sequence, ...options };
+      events.push(event);
+      if (options.surfaceOp === 'append') surface.nodes.push(event.seq);
+      else if (options.surfaceOp?.op === 'replace') {
+        const index = surface.nodes.indexOf(options.surfaceOp.startSeq);
+        if (index >= 0) surface.nodes.splice(index, 1, event.seq);
+      }
+      return event;
+    },
+  };
+  const adapter = createDshRuntimeAdapter({
+    codexRuntime: { async *stream() {
+      yield { type: 'reasoning', text: '先检查工作区' };
+      yield { type: 'text', text: '我开始执行命令。' };
+      yield { type: 'tool', phase: 'started', id: 'cmd-1', name: 'codex/command', arguments: { command: 'printf hello', cwd: '/tmp/codex-session' } };
+      yield { type: 'tool', phase: 'completed', id: 'cmd-1', name: 'codex/command', arguments: { command: 'printf hello', cwd: '/tmp/codex-session' }, result: { content: [{ type: 'text', text: 'hello' }], structuredContent: { status: 'completed', exitCode: 0 } } };
+      yield { type: 'reasoning', text: '已核对输出' };
+      yield { type: 'text', text: '命令执行完成。' };
+    } },
+  });
+  const chunks = [];
+  for await (const chunk of adapter.stream({ ...prompt, model: 'local:codex-session-agent', studioRuntime: 'codex', agent: { session } })) chunks.push(chunk);
+  assertContinuousBlocks(chunks, [
+    [0, 'reasoning', '先检查工作区'],
+    [1, 'text', '我开始执行命令。'],
+    [2, 'reasoning', '已核对输出'],
+    [3, 'text', '命令执行完成。'],
+  ]);
+  const cards = events.filter(event => event.type === 'agentkit/codex-tool');
+  assert.deepEqual(cards.map(event => event.data.phase), ['started', 'completed']);
+  assert.equal(chunks.some(chunk => chunk.type === 'block-end' && /工具 codex\/command/.test(chunk.block.text)), false);
+});
+
 test('Codex completed text is persisted through the bound memory adapter', async () => {
   let written;
   const adapter = createDshRuntimeAdapter({

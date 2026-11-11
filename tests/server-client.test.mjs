@@ -382,6 +382,38 @@ test('GetAgent uses the deployed framework when Basic omits it', async () => {
   assert.equal(agent.spec.runtime.type, 'langgraph');
 });
 
+test('ListAgents marks flat ManagedRuntime rows for the Studio cloud catalog', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    fetchImpl: async () => new Response(JSON.stringify({ Code: 0, Data: {
+      Agents: [{ AgentId: 'ar-managed', Name: '托管 Codex', Framework: 'codex', ArtifactType: 'ManagedRuntime', DeploymentType: 'ManagedRuntime', Status: 'RUNNING', CreatedAt: '2026-10-10T00:00:00Z' }],
+      Total: 1, Page: 1, PageSize: 20,
+    } }), { status: 200 }),
+  });
+  const result = await client.listAgents();
+  assert.equal(result.items[0].source, 'agentengine-managed-runtime');
+  assert.equal(result.items[0].managedRuntime, true);
+  assert.equal(result.items[0].spec.runtime.type, 'codex');
+  assert.equal(result.items[0].deployment.available, true);
+});
+
+test('remoteOnly ListAgents bypasses the localhost Studio draft catalog', async () => {
+  const calls = [];
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    sessionToken: 'studio-session',
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), method: init.method });
+      if (String(url).includes('/api/v1/agents')) return Response.json({ items: [{ id: 'local-only' }], total: 1 });
+      return Response.json({ Code: 0, Data: { Agents: [{ AgentId: 'ar-managed', Name: '托管 DSH', Framework: 'dsh-native', DeploymentType: 'ManagedRuntime', Status: 'RUNNING' }], Total: 1, Page: 1, PageSize: 100 } });
+    },
+  });
+  const result = await client.listAgents({ pageSize: 100, remoteOnly: true });
+  assert.deepEqual(result.items.map(item => item.id), ['ar-managed']);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /ListAgents/);
+});
+
 test('knowledge retrieval can select the AICP action version without changing the default API', async () => {
   let url;
   const client = createAgentEngineClient({

@@ -84,11 +84,16 @@ function writeJson(stdin, message) {
 }
 
 function isFinalPhase(phase) {
-  return phase === 'final_answer' || phase === null || phase === undefined;
+  return phase === 'final_answer' || phase === 'partial_answer' || phase === null || phase === undefined;
 }
 
 function isReasoningPhase(phase) {
   return phase === 'commentary' || phase === 'analysis' || phase === 'reasoning';
+}
+
+function normalizeReasoningSummary(value) {
+  const candidate = String(value ?? '').trim().toLowerCase();
+  return ['auto', 'concise', 'detailed', 'none'].includes(candidate) ? candidate : 'detailed';
 }
 
 function dynamicToolContent(value) {
@@ -106,8 +111,18 @@ function dynamicToolContent(value) {
   return contentItems.length ? contentItems : [{ type: 'inputText', text: '' }];
 }
 
+function completedReasoningText(item) {
+  const summary = Array.isArray(item?.summary) ? item.summary : [];
+  const content = Array.isArray(item?.content) ? item.content : [];
+  const read = values => values.map(value => typeof value === 'string' ? value : value?.text).filter(Boolean).join('\n\n');
+  // Public summaries are preferred. Raw content is only a fallback for
+  // App Server providers (for example open-source models) that expose no
+  // summary item at all.
+  return read(summary) || read(content);
+}
+
 /**
- * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number, shutdownTimeoutMs?: number, streamIdleTimeoutMs?: number, modelIdleTimeoutMs?: number }} options
+ * @param {{ executable?: string, spawnImpl?: Function, cwd?: string, model?: string, approvalPolicy?: string, sandbox?: string, reasoningSummary?: string, env?: object, inheritEnv?: boolean, timeoutMs?: number, idleTimeoutMs?: number, startupTimeoutMs?: number, shutdownTimeoutMs?: number, streamIdleTimeoutMs?: number, modelIdleTimeoutMs?: number }} options
  */
 export function createCodexRuntime(options = {}) {
   const baseEnv = { ...(options.inheritEnv === false ? {} : process.env), ...(options.env || {}) };
@@ -118,6 +133,12 @@ export function createCodexRuntime(options = {}) {
   const model = String(options.model || baseEnv.AGENTKIT_CODEX_MODEL || '').trim() || undefined;
   const approvalPolicy = String(options.approvalPolicy || baseEnv.AGENTKIT_CODEX_APPROVAL_POLICY || 'never');
   const sandbox = String(options.sandbox || baseEnv.AGENTKIT_CODEX_SANDBOX || '').trim() || undefined;
+  // App Server defaults `turn/start.summary` to the model/provider setting,
+  // which is commonly `none` for a minimal stdio client. Studio's DSH row can
+  // only become a real disclosure when the public reasoning summary is present,
+  // so request a readable summary by default while retaining an explicit
+  // deployment override for providers that do not expose one.
+  const reasoningSummary = normalizeReasoningSummary(options.reasoningSummary ?? baseEnv.AGENTKIT_CODEX_REASONING_SUMMARY);
   // A healthy agent may need many model/tool rounds. Only explicit caller
   // budgets impose a total deadline; stalled transports still time out.
   const timeoutMs = Math.max(0, Number(options.timeoutMs ?? baseEnv.AGENTKIT_CODEX_TIMEOUT_MS) || 0);
@@ -207,6 +228,7 @@ export function createCodexRuntime(options = {}) {
       const countUsage = createCodexUsageCounter();
       const phases = new Map();
       const deltaItems = new Set();
+      const reasoningItems = new Set();
       const commandFallback = createCodexCommandFallback();
       const finish = error => {
         if (closed) return;
@@ -467,7 +489,7 @@ export function createCodexRuntime(options = {}) {
         };
         threadId = idOf(await request('thread/start', threadParams), 'thread id');
         const context = codexConversationPrompt({ input: prompt, messages });
-        const turn = await request('turn/start', { threadId, input: [
+        const turn = await request('turn/start', { threadId, summary: reasoningSummary, input: [
           ...(context ? [{ type: 'text', text: context, text_elements: [] }] : []),
           ...imageInputs.map(url => ({ type: 'image', url })),
         ] });
@@ -514,7 +536,10 @@ export function createCodexRuntime(options = {}) {
             yield { type: isReasoningPhase(phase) ? 'reasoning' : 'text', text: delta };
             continue;
           }
-          if (method === 'item/reasoning/summaryTextDelta' || method === 'item/plan/delta') {
+          if (method === 'item/reasoning/summaryTextDelta'
+            || method === 'item/reasoning/textDelta'
+            || method === 'item/plan/delta') {
+            if (params.itemId) reasoningItems.add(String(params.itemId));
             const delta = String(params.delta || params.text || '');
             if (delta) yield { type: 'reasoning', text: delta };
             continue;
@@ -525,6 +550,10 @@ export function createCodexRuntime(options = {}) {
             const tool = codexItemToolChunk(item, 'completed');
             commandFallback.observeNative(tool);
             if (tool) yield tool;
+            if (item.type === 'reasoning' && !reasoningItems.has(String(item.id || ''))) {
+              const text = completedReasoningText(item);
+              if (text) yield { type: 'reasoning', text };
+            }
             if (item.type === 'agentMessage' && !deltaItems.has(String(item.id || '')) && typeof item.text === 'string' && item.text) {
               yield { type: isFinalPhase(item.phase) ? 'text' : 'reasoning', text: item.text };
             }

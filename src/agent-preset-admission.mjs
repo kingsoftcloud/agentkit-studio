@@ -137,8 +137,11 @@ export function dshPresetEligibility(agent = {}, options = {}) {
   if (!['dsh-native', 'harness', 'codex'].includes(runtime)) {
     return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '当前 Agent runtime 没有 DSH 原生会话适配器', runtime };
   }
-  if (!local && (agent.source !== 'studio-deployment' || !/^dep_[a-f0-9]{32}$/.test(agent.deployment?.id || ''))) {
-    return { ok: false, code: 'STUDIO_DEPLOYMENT_REQUIRED', message: '仅支持从 Studio 本地构建部署的云端 Agent', runtime };
+  const studioDeployment = agent.source === 'studio-deployment' && /^dep_[a-f0-9]{32}$/.test(agent.deployment?.id || '');
+  const managedRuntime = agent.source === 'agentengine-managed-runtime' && agent.managedRuntime === true
+    && String(agent.deployment?.DeploymentType || agent.deployment?.deploymentType || '').toLowerCase() === 'managedruntime';
+  if (!local && !studioDeployment && !managedRuntime) {
+    return { ok: false, code: 'STUDIO_DEPLOYMENT_REQUIRED', message: '仅支持从 Studio 部署或 AgentEngine ManagedRuntime 进入云端会话', runtime };
   }
   const unsupported = unsupportedDshBindings(agent, options);
   const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
@@ -153,6 +156,7 @@ export function dshPresetEligibility(agent = {}, options = {}) {
     runtime,
     local,
     mode: bridge ? 'studio-bridge' : 'dsh-native',
+    ...(managedRuntime ? { source: 'agentengine-managed-runtime' } : {}),
     ...(unsupported.length ? { unsupported } : {}),
   };
 }
@@ -408,6 +412,7 @@ export class DshPresetAdmission {
           } : {}),
           runtime: eligibility.runtime,
           local: eligibility.local,
+          ...(agent.source ? { source: agent.source } : {}),
           ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),
             legacyMemoryBindings: legacyMemoryBindings(agent.spec) } : {}),
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),

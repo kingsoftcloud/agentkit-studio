@@ -182,6 +182,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const dshRuntimeAdapter = createDshRuntimeAdapter({
     bridge,
     AdapterBase: LlmAdapter,
+    cloudClient: await serverClientPromise,
     attachments: () => ctx.get('attachments'),
     cloudRuntime: createDeploymentConversation({ agents: async () => (await deployments()).agents, observability: await studioObservabilityPromise, fetchImpl: services.runtimeFetch,
       permissionModeFor: agentId => cloudExecutionModes.get(agentId) }),
@@ -328,6 +329,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // every dynamic agentkit-studio-agent-* preset; apply() waits for it below.
   const reconciler = createStartupReconciler({
     store: agentStorePromise, build: studioBuildPromise, deployments,
+    managedAgents: async () => (await serverClientPromise).listAgents({ page: 1, pageSize: 100, remoteOnly: true }),
     getAdmission: () => presetAdmission,
   });
   const createPresetAdmission = registry => new DshPresetAdmission({
@@ -340,7 +342,19 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       const plugins = await registry.pluginsFor('standard');
       return agent.metadata?.teamRole ? (await import('../studio-team-composition.mjs')).teamBasePlugins(plugins) : plugins;
     },
-    getAgent: async agentId => managedRuntime && agentId === managedRuntime.agent.metadata.id ? structuredClone(managedRuntime.agent) : (await deployments()).agents.get(agentId),
+    getAgent: async agentId => {
+      if (managedRuntime && agentId === managedRuntime.agent.metadata.id) return structuredClone(managedRuntime.agent);
+      try {
+        return await (await deployments()).agents.get(agentId);
+      } catch (error) {
+        // Studio deployment receipts are the preferred provenance. A
+        // read-only Server lookup is the explicit fallback for Agents created
+        // through the public API as ManagedRuntime (there is no local receipt
+        // for those rows).
+        if (error?.code !== 'DEPLOYMENT_AGENT_NOT_FOUND') throw error;
+        return (await serverClientPromise).getAgent(agentId);
+      }
+    },
     getActiveModel: async () => (await configurationPromise).resolve(),
     getModelSelection: createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }),
     getSkillDefinitions: async agent => {
