@@ -364,7 +364,7 @@ function envelope(runId, sessionId, item) {
 
 export function createLocalConversationHandler({ agentStore, buildStore, modelService, resourceAdapter, observability, fetchImpl = fetch, modelIdleTimeoutMs = 180000, onReasoningFallback = logReasoningFallback } = {}) {
 
-  return async function handle(request, response, { signal, toolAdapter, agent } = {}) {
+  return async function handle(request, response, { signal, toolAdapter, agent, runtimeRecord } = {}) {
     let body = '';
     for await (const chunk of request) body += chunk;
     if (Buffer.byteLength(body) > 32 * 1024 * 1024) { response.writeHead(413); response.end('request too large'); return; }
@@ -388,11 +388,15 @@ export function createLocalConversationHandler({ agentStore, buildStore, modelSe
       } catch (error) {
         response.writeHead(409); response.end(JSON.stringify({ error: { code: error.code || 'BUILD_EXECUTION_FAILED', message: error.message } })); return;
       }
+    } else if (runtimeRecord?.metadata?.id === agentId) {
+      // The local runtime adapter supplies the frozen Team role via its trusted
+      // invocation context; an incoming request body cannot override a record.
+      record = runtimeRecord;
     } else {
-    try {
-      const store = await agentStore();
-      record = parsed.agentRevision ? await store.getRevision(agentId,Number(parsed.agentRevision)) : await store.get(agentId);
-    } catch { record = null; }
+      try {
+        const store = await agentStore();
+        record = parsed.agentRevision ? await store.getRevision(agentId,Number(parsed.agentRevision)) : await store.get(agentId);
+      } catch { record = null; }
     }
     if (!record) { response.writeHead(404); response.end('local agent not found'); return; }
 

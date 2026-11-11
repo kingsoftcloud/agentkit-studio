@@ -11,7 +11,7 @@
 
 `AGENTKIT_TEMPLATE_ENVIRONMENT=pre-online|online` 或用户存储目录下 `template-source.json` 的 `environment` 字段选择环境。模板环境只作用于模板读接口，知识库、记忆库、部署等继续使用原云资源设置。`AGENTKIT_TEMPLATE_SERVER_URL` 和 `template-source.json.origin` 保留为显式本地开发入口；离线自有目录需要显式 `source: local` 或 `AGENTKIT_TEMPLATE_CATALOG_FILE`。
 
-目录列表仅加载摘要。点卡片上的“召唤”仍走现有 Agent 创建服务：按摘要获取完整定义、按需下载资源、核验 ZIP 文件清单、安装 Skill、检查 MCP，再创建普通可编辑 Agent。专家团仍锁定角色模板并通过 agent-teams 创建、编辑成员和运行。知识库和记忆库绑定仍走同一套现有绑定逻辑。
+目录列表仅加载摘要。点卡片上的“召唤”仍走现有 Agent 创建服务：按摘要获取完整定义、按需下载资源、核验 ZIP 文件清单、安装 Skill、检查 MCP，再创建普通可编辑 Agent。召唤专家团时，Studio 锁定角色模板版本和摘要，检查资源依赖并保存团队配置；运行时通过 DSH 原生 Agent Teams 创建成员会话。现有目录中没有单独声明角色版本的条目沿用团队版本，角色摘要仍用于核验内容。知识库和记忆库绑定仍走同一套现有绑定逻辑。
 
 DMG 只内置客户端和少量离线种子；迁移包与图片均留在 KS3。首次浏览需要目录与图片流量；只有安装相关技能或召唤专家时才下载 ZIP。模板缓存按环境和用户身份隔离，下载支持进度、续传、取消和摘要校验。已有 Agent 不随目录更新而被覆盖。
 
