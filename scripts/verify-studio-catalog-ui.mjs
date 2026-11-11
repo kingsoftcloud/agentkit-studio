@@ -28,7 +28,11 @@ export async function verifyStudioCatalogUi(page) {
     checks.push(`${name}-catalog-renders`);
   }
   await page.getByRole('button', { name: '我的智能体', exact: true }).click();
-  await page.getByRole('button', { name: '从专家模板创建', exact: true }).waitFor();
+  // The Agent list keeps 对话创建 as the primary action and groups the secondary
+  // create paths (手动配置 / 从专家模板创建) behind the 更多创建方式 menu, so the
+  // template entry is only rendered once that menu opens.
+  await page.getByRole('button', { name: '更多创建方式', exact: true }).click();
+  await page.getByText('从专家模板创建', { exact: true }).waitFor();
   checks.push('ordinary-agent-list-remains-accessible');
   assert.equal(checks.length, 6);
   return { passed: true, checks };
