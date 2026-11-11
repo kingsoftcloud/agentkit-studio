@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { ENGINE_PROTOCOL } from './engine-protocol-client.mjs';
 
 const RETRYABLE_RPC = new Set(['initialize', 'run/start', 'run/status', 'run/events', 'run/approve', 'ui/view']);
+export const ENGINE_TOOL_RECEIPT = 'agentkit.tool-receipt-observation/v1';
 
 export function engineServiceEndpoint(endpoint, token) {
   const url = new URL(endpoint);
@@ -50,14 +51,17 @@ export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl 
 }
 
 /** Host-side network transport for agentkit.engine/v1. */
-export function connectEngineService({ endpoint, token, sessionId, onApproveTool, onCallTool, requiredToolPolicy, requiredToolEffects, fetchImpl = fetch }) {
+export function connectEngineService({ endpoint, token, sessionId, runId, onApproveTool, onCallTool, onReadToolReceipt,
+  requiredToolPolicy, requiredToolEffects, fetchImpl = fetch }) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('engine_service_binding_invalid');
   const root = engineServiceEndpoint(endpoint, token) + '/v1/sessions/' + sessionId + '/';
   const lifetime = new AbortController();
   let poll, initializing;
   const initialization = { protocolVersions: [ENGINE_PROTOCOL], host: { name: 'agentkit-studio' },
     services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
-      ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}) } };
+      ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}),
+      ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}) } };
+  const requestPath = runId ? 'host-requests?runId=' + encodeURIComponent(runId) : 'host-requests';
 
   async function request(path, body) {
     const headers = { authorization: 'Bearer ' + token };
@@ -69,7 +73,7 @@ export function connectEngineService({ endpoint, token, sessionId, onApproveTool
         ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }) });
     } catch (error) {
       // Fetch can reuse a socket the old worker closed during replacement.
-      const transient = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET'].includes(error?.cause?.code);
+      const transient = error?.name === 'TimeoutError' || ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET'].includes(error?.cause?.code);
       throw Object.assign(new Error('engine_service_transport_unavailable', { cause: error }), { transient });
     }
     if (!response.ok) {
@@ -111,7 +115,7 @@ export function connectEngineService({ endpoint, token, sessionId, onApproveTool
       if (requiredToolEffects && result.capabilities?.hostToolEffects !== initialization.services.toolEffects)
         throw Object.assign(new Error('当前 Harness 服务不支持已绑定工具的持久执行回执。'),
           { code: 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE' });
-      if ((onCallTool || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
+      if ((onCallTool || onReadToolReceipt || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
         poll = pollHost().catch(() => { poll = undefined; });
       return result;
     }).finally(() => { initializing = null; });
@@ -137,14 +141,30 @@ export function connectEngineService({ endpoint, token, sessionId, onApproveTool
       envelope.result = { decision };
     } else if (frame.method === 'host/callTool' && onCallTool) {
       try { envelope.result = await onCallTool(frame.params); }
-      catch { envelope.result = { status: 'error', content: { code: 'host_tool_failed' } }; }
+      catch { envelope.result = { status: frame.params?.effect ? 'uncertain' : 'error', content: { code: 'host_tool_failed' } }; }
+    } else if (frame.method === 'host/readToolReceipt' && onReadToolReceipt) {
+      try {
+        const expiresIn = frame.expiresAt - Date.now();
+        if (!Number.isSafeInteger(expiresIn) || expiresIn <= 0) return;
+        const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(expiresIn)]);
+        envelope.result = await onReadToolReceipt(frame.params, signal);
+      } catch { envelope.error = { code: -32603, message: 'Host receipt unavailable' }; }
     } else envelope.error = { code: -32601, message: 'Unsupported host method' };
     if (!lifetime.signal.aborted) await request('host-reply', envelope);
   }
 
   async function pollHost() {
+    let backoff = 125;
     while (!lifetime.signal.aborted) {
-      const { requests } = await request('host-requests');
+      let requests;
+      try { ({ requests } = await request(requestPath)); }
+      catch (error) {
+        if (!error.transient && error.code !== -32010) throw error;
+        await sleep(backoff, undefined, { signal: lifetime.signal });
+        backoff = Math.min(backoff * 2, 2000);
+        continue;
+      }
+      backoff = 125;
       for (const frame of requests) {
         // These ephemeral callbacks belong to the original worker. A
         // replacement worker will recover them from its Run's effect policy.

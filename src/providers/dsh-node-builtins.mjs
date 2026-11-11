@@ -110,6 +110,9 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
     controlA2aTask(request, authority) {
       invariant(a2a, 'DSH_A2A_UNAVAILABLE'); return a2a.controlTask(request, authority);
     },
+    observeA2aReceipt(request) {
+      invariant(a2a, 'DSH_A2A_UNAVAILABLE'); return a2a.observeOwnedReceipt(request);
+    },
     execute(name, args, exec) {
       invariant(owners.has(name), 'dsh_node_builtin_unbound');
       return owners.get(name).execute(name, args, exec);

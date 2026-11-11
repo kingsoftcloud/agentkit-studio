@@ -63,10 +63,11 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
   let closing;
   return { contract: DSH_NODE_A2A_CONTRACT,
     get binding() { return copy(binding); }, get definitions() { return copy(definitions); }, supports: name => formal.has(name),
-    async managedReceipt({ sessionId, callId, args, signal, assertCurrent, readinessOnly, observationId }) {
+    async observeOwnedReceipt({ sessionId, callId, args, signal, assertCurrent, observationId }) {
+      const readinessOnly = observationId === undefined;
       const check = () => {
         assertOpen(); signal.throwIfAborted();
-        invariant(assertManagedAuthority && assertCurrent() === true, 'DSH_A2A_RECEIPT_AUTHORITY_LOST');
+        invariant(assertCurrent() === true, 'DSH_A2A_RECEIPT_AUTHORITY_LOST');
         return true;
       };
       check();
@@ -78,7 +79,7 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
       }
       if (!prepared) return {};
       const locator = { agentId, agentRevision, buildId, sessionId, operationKey: record.request.operationKey, callId };
-      const authority = { contract: 'agentkit.studio-managed-a2a-receipt/v1', observationId };
+      const authority = { contract: 'agentkit.studio-a2a-receipt/v1', observationId };
       const owner = prepared.forSession({ agentId, agentRevision, buildId, sessionId, workspaceRoot: state.workspace,
         stateRoot: join(ledger.root, 'remote-calls'), assertCurrent: () => false,
         assertControl: input => check() && input.kind === 'get' && canonical(input.operation_locator) === canonical(locator)

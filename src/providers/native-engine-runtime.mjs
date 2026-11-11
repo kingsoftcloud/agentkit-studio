@@ -19,7 +19,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from '
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
-import { connectEngineService, engineServiceFetch, fetchEngineServiceView } from './engine-service-client.mjs';
+import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
 export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
@@ -92,7 +92,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
     : engineServiceFetch(viewService.endpoint, viewService.caFile));
   return {
     usesService: Boolean(serviceEndpoint),
-    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler } = {}) {
+    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
       if (!text(cwd)) throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '会话未提供工作目录，请重新选择工作区');
@@ -133,16 +133,21 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         } catch (error) { return { status: 'error', content: { message: String(error?.message || error).slice(0, 2000) } }; }
       };
       let diagnostics = '';
+      const runId = `studio-${createHash('sha256').update(`${session}\n${turnId ?? Date.now()}\n${objective}`).digest('hex').slice(0, 32)}`;
+      const onReadToolReceipt = nativeHostReceiptHandler && ((request, receiptSignal) => {
+        if (request?.runId !== runId) return {};
+        return nativeHostReceiptHandler({ ...request, name: hostTools.originalName(request.name),
+          signal: signal ? AbortSignal.any([signal, receiptSignal]) : receiptSignal });
+      });
       const engine = serviceEndpoint ? connectEngineService({ endpoint: serviceEndpoint,
         token: env.AGENTKIT_ENGINE_SERVICE_TOKEN, sessionId: createHash('sha256').update(session).digest('hex'),
-        onApproveTool, onCallTool, requiredToolPolicy: policy?.contract,
+        runId, onApproveTool, onCallTool, onReadToolReceipt, requiredToolPolicy: policy?.contract,
         requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: serviceFetch }) : spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
         env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
           AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
           ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
           ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}) },
         onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
-      const runId = `studio-${createHash('sha256').update(`${session}\n${turnId ?? Date.now()}\n${objective}`).digest('hex').slice(0, 32)}`;
       const abort = () => { engine.cancel(runId).catch(() => {}); };
       try {
         let hello;
@@ -151,7 +156,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE'].includes(error.code)) throw error;
           throw failure('NATIVE_ENGINE_UNAVAILABLE', `Native 引擎启动失败：${error.message}`);
         }
-        if (onCallTool) hostTools = engineHostTools(dynamicTools, { reserved: hello.engine?.reservedToolNames ?? [],
+        const offeredTools = hello.capabilities?.hostToolReceipts === ENGINE_TOOL_RECEIPT ? dynamicTools
+          : dynamicTools.map(({ receiptObservation: _receipt, ...tool }) => tool);
+        if (onCallTool) hostTools = engineHostTools(offeredTools, { reserved: hello.engine?.reservedToolNames ?? [],
           ...(hello.engine?.hostToolNamePattern ? { pattern: hello.engine.hostToolNamePattern } : {}) });
         signal?.throwIfAborted();
         if (inputImages.length) {

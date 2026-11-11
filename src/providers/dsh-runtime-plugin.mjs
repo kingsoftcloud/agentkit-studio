@@ -297,6 +297,14 @@ export function apply(ctx, config = {}) {
       ...boundToolAdapter,
       ...(a2aHostTools.length ? {
         listNativeA2aTools: () => a2aHostTools,
+        ...(builtinToolBindings.observeA2aReceipt ? {
+          observeNativeA2aReceipt: ({ agent, ...request }) => {
+            const session = agent?.session;
+            if (!session?.id || stopped) return {};
+            return builtinToolBindings.observeA2aReceipt({ ...request, sessionId: session.id,
+              assertCurrent: () => !stopped && agent.session === session && session.id === request.sessionId });
+          },
+        } : {}),
         callNativeA2aTool: (name, args, options) => executeIndependentHostTool(ctx,
           a2aHostTools.find(tool => tool.name === name), args, options, result => {
             if (typeof result.value?.result !== 'string') throw Error('A2A tool outcome invalid');

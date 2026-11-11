@@ -697,6 +697,8 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               toolHandler,
               ...(runtime === 'native-engine' && resources.nativeHostToolHandler
                 ? { nativeHostToolHandler: resources.nativeHostToolHandler } : {}),
+              ...(runtime === 'native-engine' && resources.nativeHostReceiptHandler
+                ? { nativeHostReceiptHandler: resources.nativeHostReceiptHandler } : {}),
               ...(serviceOwnsModel ? { agentToolPolicy: resources.nativeAgentPolicy,
                 requestPolicyApproval: typeof requestNativeApproval === 'function' && toolAgent
                   ? info => requestNativeApproval(toolAgent, info) : undefined } : {}),

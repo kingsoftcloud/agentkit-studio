@@ -128,8 +128,8 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     invariant(buildMatches(binding, claims), 'MANAGED_HOST_BUILD_CHANGED');
     const port = a2aPort(binding)?.port;
     invariant(port && port.binding.digest === claims.a2aReceipt.binding, 'MANAGED_HOST_RECEIPT_INVALID');
-    return port.managedReceipt({ sessionId, callId: nativeHostToolCallId(runId, originalOperationKey), args, signal,
-      readinessOnly: observationId === undefined, observationId, assertCurrent: () => binding.agent.session === session
+    return port.observeOwnedReceipt({ sessionId, callId: nativeHostToolCallId(runId, originalOperationKey), args, signal,
+      observationId, assertCurrent: () => binding.agent.session === session
         && session.id === sessionId });
   }
 

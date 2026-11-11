@@ -64,6 +64,8 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
     const nativeTools = [...nativeA2a.map(tool => ({ ...tool, _source: 'native-a2a' })),
       ...nativeTeam.map(tool => ({ ...tool, _source: 'native-team' }))];
     const nativeByName = new Map(nativeTools.map(tool => [tool.name, tool]));
+    const a2aReceipts = typeof toolAdapter?.observeNativeA2aReceipt === 'function'
+      && nativeA2a.some(tool => tool.name === 'call_a2a_agent');
     const toolBindings = codexToolBindings([
       ...nativeTools,
       ...prepared.tools.filter(tool => (!presentation.length || tool.name !== 'present')
@@ -86,8 +88,16 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
       systemPrompt,
       dynamicTools: toolBindings.map(({ spec, tool }) => nativeByName.get(spec.name) === tool ? {
         ...spec, readOnly: tool.readOnly, timeoutMs: tool.timeoutMs,
+        ...(a2aReceipts && tool._source === 'native-a2a' && tool.name === 'call_a2a_agent' ? { receiptObservation: true } : {}),
         ...(tool.readOnly ? {} : { effectProtocol: 'agentkit.engine-host-tool-effect/v1' }),
       } : spec),
+      ...(a2aReceipts ? {
+        nativeHostReceiptHandler: ({ name, runId, originalOperationKey, arguments: args, observationId, signal }) => {
+          if (name !== 'call_a2a_agent' || !runId || !originalOperationKey) return {};
+          return toolAdapter.observeNativeA2aReceipt({ agent, sessionId, callId: nativeHostToolCallId(runId, originalOperationKey),
+            args, observationId, signal });
+        },
+      } : {}),
       ...(nativeTools.length ? {
         async nativeHostToolHandler({ name, arguments: args, runId, callId, effect, signal }) {
           const definition = nativeByName.get(name);
