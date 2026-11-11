@@ -78,7 +78,16 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ? await import('../managed-resource-context.mjs').then(({ createManagedResourceContext }) => createManagedResourceContext(managedRuntime)) : undefined;
   const resolveResourceUser = managedRuntime
     ? await import('../managed-resource-identity.mjs').then(({ createManagedResourceIdentityResolver }) => createManagedResourceIdentityResolver({
-      runtime: managedRuntime, directory: join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
+      runtime: managedRuntime,
+      // Session ownership is Agent state, not deployment-version state. AGENTKIT_HOME
+      // is version-scoped (versions/<sha256(VersionId)>/agentkit), so reading the
+      // registry from it opened a fresh, empty directory after every accepted
+      // UpdateAgent: the Hosted UI found the Session, but resource identity
+      // resolution answered MANAGED_RESOURCE_IDENTITY_UNAVAILABLE and the turn
+      // failed with 托管资源缺少可核对的会话归属. Consume the same Agent-scoped
+      // registry the Session actions write, keeping the version directory only as
+      // the fallback for a Host launched without the explicit path.
+      directory: runtimeEnv.AGENTKIT_MANAGED_SESSIONS || join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
     })) : undefined;
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   let managedKernel;
