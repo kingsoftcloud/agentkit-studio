@@ -177,6 +177,27 @@ test('Studio deployments use the frozen cloud bridge through the native session'
   assert.equal(dshPresetEligibility({ ...cloud, source: 'agentengine-server' }).code, 'STUDIO_DEPLOYMENT_REQUIRED');
 });
 
+test('API-created Codex ManagedRuntime is admitted through the AgentEngine cloud bridge', async () => {
+  const managed = agent({
+    source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime', state: 'RUNNING', available: true },
+    metadata: { id: 'ar-managed', name: 'Managed Codex', revision: 1, local: false },
+    spec: { runtime: { type: 'codex' }, bindings: {} },
+  });
+  const eligibility = dshPresetEligibility(managed);
+  assert.equal(eligibility.ok, true);
+  assert.equal(eligibility.source, 'agentengine-managed-runtime');
+  let definition;
+  const admission = new DshPresetAdmission({
+    registry: { async register(value) { definition = value; return async () => {}; } },
+    getAgent: async () => managed,
+  });
+  await admission.ensure('ar-managed');
+  const runtime = definition.plugins.find(item => item.name.endsWith('/dsh-runtime-plugin'));
+  assert.equal(runtime.config.source, 'agentengine-managed-runtime');
+  assert.equal(runtime.config.local, false);
+});
+
 test('the active DSH model route and official persona row make a real native preset', async () => {
   const registered = [];
   const revision = agent({
@@ -215,6 +236,28 @@ test('local runtime presets reuse the official composition including delivery to
     assert.ok(rows.some(row=>row.name==='@deepseek-ai/dsh-tool-fs'));
     assert.equal(base[0].config.prefix,undefined,'official base must remain unchanged');
   }
+});
+
+test('derived presets collapse duplicate persona rows from a stale or reloaded base composition', async () => {
+  let definition;
+  const base = [
+    { id: 'reloaded-persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'stale' } },
+    { id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'official' } },
+    { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
+  ];
+  const revision = agent({ spec: { runtime: { type: 'dsh-native' }, instructions: { system: 'selected' }, bindings: {} } });
+  const admission = new DshPresetAdmission({
+    getAgent: async () => revision,
+    getBasePlugins: async () => structuredClone(base),
+    registry: { async register(value) { definition = value; return async () => {}; } },
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(definition.plugins.filter(row => row.name === '@deepseek-ai/dsh-persona').length, 1);
+  assert.deepEqual(definition.plugins.find(row => row.name === '@deepseek-ai/dsh-persona'), {
+    id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'selected', includeRuntimeContext: false },
+  });
+  assert.equal(base[0].config.prefix, 'stale');
+  assert.equal(base[1].config.prefix, 'official');
 });
 
 test('whole-turn Native owns Web; ordinary legacy presets retain their base Web plugin', async () => {

@@ -25,10 +25,10 @@ test('late command cleanup cannot erase its replacement or another mounted Studi
 function documentFixture() {
   const listeners = new Map();
   const element = () => ({
-    children: [], style: {}, parent: null,
+    children: [], style: {}, attributes: new Map(), parent: null,
     append(...children) { children.forEach(child => { child.parent = this; this.children.push(child); }); },
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); this.parent = null; },
-    setAttribute() {}, addEventListener() {}, focus() {},
+    setAttribute(name, value) { this.attributes.set(name, value); }, addEventListener() {}, focus() {},
   });
   return {
     body: element(), createElement: element, listeners,
@@ -52,6 +52,23 @@ test('closing one scope cancels its dialog and key listener while another remain
   assert.equal(document.body.children.length, 0);
   assert.equal(document.listeners.get('keydown').size, 0);
   assert.equal(await first.confirm({ title: 'late' }), false);
+});
+
+test('information confirmations use the primary action while destructive confirmations stay danger styled', async () => {
+  const document = documentFixture();
+  const confirmation = createConfirmation({ document });
+  const info = confirmation.confirm({ title: 'Agent 绑定失败', confirmLabel: '知道了' });
+  const infoButton = document.body.children[0].children[0].children[1].children[1];
+  assert.equal(infoButton.attributes.get('data-confirmation-variant'), 'primary');
+  confirmation.dispose();
+  await info;
+
+  const destructiveConfirmation = createConfirmation({ document });
+  const destructive = destructiveConfirmation.confirm({ title: '删除 Agent', confirmLabel: '删除', danger: true });
+  const dangerButton = document.body.children[0].children[0].children[1].children[1];
+  assert.equal(dangerButton.attributes.get('data-confirmation-variant'), 'danger');
+  destructiveConfirmation.dispose();
+  await destructive;
 });
 
 test('actual page composition owns independent connections, commands and authoring subscriptions', async () => {

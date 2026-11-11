@@ -11,14 +11,11 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
     try {
       const admission = value ? await hostRemote.ensureDshPreset(value, buildId) : null;
       if (!active()) return;
-      const sessionId = await navCtx.sessions.create(admission?.workspaceRoot
-        ? { cwd: admission.workspaceRoot, agentPreset: admission.presetId } : {});
+      // Mount the admitted persona once, as part of creating the session.
+      const sessionOptions = admission ? { agentPreset: admission.presetId } : {};
+      if (admission?.workspaceRoot) sessionOptions.cwd = admission.workspaceRoot;
+      const sessionId = await navCtx.sessions.create(sessionOptions);
       if (!active()) return;
-      if (admission && !admission.workspaceRoot) {
-        const selected = await remote?.agentPresets?.select?.(sessionId, admission.presetId);
-        if (!active()) return;
-        if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
-      }
       const modelSelection = admission?.workspaceRoot
         ? admission.modelSelection : options.modelSelection || admission?.modelSelection;
       if (modelSelection) {

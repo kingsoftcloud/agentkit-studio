@@ -7,11 +7,30 @@ const semver = /^\d+\.\d+\.\d+$/;
 
 export const TEAM_TEMPLATE_CONTRACT = 'agentkit.studio.team-template/v1';
 export const TEAM_TEMPLATE_RUNTIMES = Object.freeze([...supportedRuntimes]);
+/**
+ * The default model is resolved by the current Studio model profile.  Keeping
+ * the identifier here gives authoring and catalog audit tools one documented
+ * recommendation without baking a provider URL into a public template.
+ */
+export const TEAM_DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
+export const TEAM_PLACEHOLDER_MODELS = Object.freeze(['one-team-model']);
+const placeholderModels = new Set(TEAM_PLACEHOLDER_MODELS);
 
 function requiredText(value, label, max) {
   const text = String(value ?? '').trim();
   if (!text || text.length > max) throw fail('TEAM_TEMPLATE_INVALID', `${label}不能为空且不能超过 ${max} 字`);
   return text;
+}
+
+function optionalText(value, label, max) {
+  if (value == null || String(value).trim() === '') return undefined;
+  return requiredText(value, label, max);
+}
+
+function modelValue(value, label) {
+  const model = optionalText(value, label, 256);
+  if (model && placeholderModels.has(model)) throw fail('TEAM_TEMPLATE_MODEL_INVALID', `${label}不能使用占位模型 ${model}`);
+  return model;
 }
 
 function sourceRef(role, team) {
@@ -41,17 +60,30 @@ export function validateTeamTemplate(input) {
   const normalizedRoles = roles.map((role, index) => {
     const name = requiredText(role?.name, '团队角色标识', 64);
     if ((index > 0 && (name === 'lead' || !roleName.test(name))) || names.has(name)) throw fail('TEAM_TEMPLATE_ROLE_INVALID', `团队角色标识无效或重复：${name}`);
+    if (role?.agentId || role?.source?.kind === 'agent') throw fail('TEAM_TEMPLATE_ROLE_INVALID', `角色「${name}」不能引用普通 Agent，请改用不可变的 template 引用`);
     names.add(name);
     const label = requiredText(role?.label || name, '团队角色名称', 80);
     const instructions = String(role?.instructions || '').trim();
     if (instructions.length > 8000) throw fail('TEAM_TEMPLATE_ROLE_INVALID', `角色「${name}」职责过长`);
-    return { ...role, name, label, instructions, template: sourceRef(role, input) };
+    const agentPreset = optionalText(role?.agentPreset ?? role?.agentPresetId, `${name || '团队'} agent preset`, 256);
+    const model = modelValue(role?.model ?? role?.modelId ?? role?.modelProfileId, `角色「${name}」模型`);
+    return {
+      ...role,
+      name,
+      label,
+      instructions,
+      ...(agentPreset ? { agentPreset } : {}),
+      ...(model ? { model } : {}),
+      template: sourceRef(role, input),
+    };
   });
+  const defaultModel = modelValue(input.defaultModel ?? input.model, '专家团默认模型');
   return {
     ...input,
     contract: input.contract || TEAM_TEMPLATE_CONTRACT,
     id,
     version: String(input.version),
+    ...(defaultModel ? { defaultModel } : {}),
     roles: normalizedRoles,
   };
 }
@@ -65,5 +97,7 @@ export function validateTeamRoleSpec(spec, roleNameValue) {
     throw fail('TEAM_TEMPLATE_ROLE_SPEC_INVALID', `角色「${roleNameValue}」缺少系统指令`);
   }
   if (!spec.bindings || typeof spec.bindings !== 'object' || Array.isArray(spec.bindings)) throw fail('TEAM_TEMPLATE_ROLE_SPEC_INVALID', `角色「${roleNameValue}」资源绑定无效`);
+  const bindingModels = [spec.bindings.modelProfileId, ...(spec.bindings.modelProfileIds || [])].filter(Boolean);
+  for (const model of bindingModels) modelValue(model, `角色「${roleNameValue}」模型`);
   return spec;
 }

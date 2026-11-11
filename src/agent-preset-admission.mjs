@@ -91,6 +91,27 @@ function toolBindingRefs(agent = {}) {
   }).filter(Boolean).map(String);
 }
 
+/**
+ * Keep the scope-only persona plugin singular in a derived preset.
+ *
+ * The standard preset owns one persona row, but older live profile layers and
+ * hot-reloaded compositions can contribute a second row under a different id.
+ * Both rows register the same prompt section names and the second activation
+ * then rejects the whole Agent before a Session can be created. Persona is a
+ * scope-only override, so retaining the first declared row is the safe
+ * normalization; other plugins are allowed to appear more than once with
+ * different configuration and must not be deduplicated here.
+ */
+function normalizePersonaRows(rows) {
+  let seen = false;
+  return rows.filter(row => {
+    if (row?.name !== '@deepseek-ai/dsh-persona') return true;
+    if (seen) return false;
+    seen = true;
+    return true;
+  });
+}
+
 function modelProfileMatchesActiveRoute(profileId, activeModel) {
   const configured = String(activeModel?.values?.modelName || activeModel?.values?.model || '').trim().toLowerCase();
   if (!configured) return false;
@@ -140,8 +161,11 @@ export function dshPresetEligibility(agent = {}, options = {}) {
   if (!['dsh-native', 'harness', 'codex', 'native-engine'].includes(runtime)) {
     return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '当前 Agent runtime 没有 DSH 原生会话适配器', runtime };
   }
-  if (!local && (agent.source !== 'studio-deployment' || !/^dep_[a-f0-9]{32}$/.test(agent.deployment?.id || ''))) {
-    return { ok: false, code: 'STUDIO_DEPLOYMENT_REQUIRED', message: '仅支持从 Studio 本地构建部署的云端 Agent', runtime };
+  const studioDeployment = agent.source === 'studio-deployment' && /^dep_[a-f0-9]{32}$/.test(agent.deployment?.id || '');
+  const managedRuntime = agent.source === 'agentengine-managed-runtime' && agent.managedRuntime === true
+    && String(agent.deployment?.DeploymentType || agent.deployment?.deploymentType || '').toLowerCase() === 'managedruntime';
+  if (!local && !studioDeployment && !managedRuntime) {
+    return { ok: false, code: 'STUDIO_DEPLOYMENT_REQUIRED', message: '仅支持从 Studio 部署或 AgentEngine ManagedRuntime 进入云端会话', runtime };
   }
   const unsupported = unsupportedDshBindings(agent, options);
   const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
@@ -156,6 +180,7 @@ export function dshPresetEligibility(agent = {}, options = {}) {
     runtime,
     local,
     mode: bridge ? 'studio-bridge' : 'dsh-native',
+    ...(managedRuntime ? { source: 'agentengine-managed-runtime' } : {}),
     ...(unsupported.length ? { unsupported } : {}),
   };
 }
@@ -347,11 +372,11 @@ export class DshPresetAdmission {
     // preset without that binding retains its existing DSH Web environment.
     const ownsWeb = eligibility.local && (eligibility.runtime === 'harness' && nativeEngineContract
       || toolBindingRefs(agent).some(name => ['web_fetch', 'web_search'].includes(name)));
-    const plugins = basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web');
+    const plugins = normalizePersonaRows(basePlugins.filter(row => !ownsWeb || row.name !== '@deepseek-ai/dsh-tool-web'));
     let resourcesUnavailable = false;
     const unavailableResources = [];
     if (prefix) {
-      const persona = plugins.find(row => row.id === 'persona');
+      const persona = plugins.find(row => row.name === '@deepseek-ai/dsh-persona');
       const row = {
       id: 'persona',
       name: '@deepseek-ai/dsh-persona',
@@ -425,6 +450,7 @@ export class DshPresetAdmission {
           } : {}),
           runtime: eligibility.runtime,
           local: eligibility.local,
+          ...(agent.source ? { source: agent.source } : {}),
           ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),
             legacyMemoryBindings: legacyMemoryBindings(agent.spec) } : {}),
           ...(resourcesUnavailable ? { resourcesUnavailable: true } : {}),

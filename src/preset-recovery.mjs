@@ -28,7 +28,7 @@ export async function restoreLocalPresets({store,build,admission,warn=console.wa
 }
 
 /** Await local recovery on either registry arrival order; cloud recovery stays independent. */
-export function createStartupReconciler({ store, build, deployments, getAdmission, warn = console.warn }) {
+export function createStartupReconciler({ store, build, deployments, managedAgents, getAdmission, warn = console.warn }) {
   const pending = new WeakMap();
   return {
     run(admission = getAdmission()) {
@@ -45,6 +45,18 @@ export function createStartupReconciler({ store, build, deployments, getAdmissio
             catch (error) { warn('[agentkit-studio] cloud preset restore skipped:', error?.code || 'RECOVERY_FAILED'); }
           }
         }).catch(error => warn('[agentkit-studio] cloud preset recovery unavailable:', error?.code || 'RECOVERY_FAILED'));
+        // API-created ManagedRuntime agents have no Studio deployment receipt,
+        // but their persisted DSH Session still references a dynamic preset.
+        // Re-admit only the exact normalized rows supported by the catalog;
+        // failures remain warnings and never block local startup.
+        if (typeof managedAgents === 'function') void managedAgents().then(async result => {
+          for (const agent of result?.items || []) {
+            if (agent?.source !== 'agentengine-managed-runtime' || agent.managedRuntime !== true
+              || !['codex', 'dsh-native'].includes(String(agent.spec?.runtime?.type || '').toLowerCase())) continue;
+            try { await admission.ensure(agent.metadata.id, { agent }); }
+            catch (error) { warn('[agentkit-studio] ManagedRuntime preset restore skipped:', error?.code || 'RECOVERY_FAILED'); }
+          }
+        }).catch(error => warn('[agentkit-studio] ManagedRuntime preset recovery unavailable:', error?.code || 'RECOVERY_FAILED'));
       })().finally(() => { pending.delete(admission); });
       pending.set(admission, recovery);
       return recovery;

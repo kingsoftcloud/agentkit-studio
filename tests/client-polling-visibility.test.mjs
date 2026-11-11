@@ -91,7 +91,8 @@ test('cloud execution receipt polling skips hidden documents but keeps the first
   const document = { hidden: true };
   let reads = 0, interval;
   const hostRemote = {
-    agents: async () => ({ total: 1, items: [{ metadata: { id: 'ag' }, deployment: { environment: 'prod', region: 'region', buildId: 'build', models: ['model'] } }] }),
+    agents: async () => ({ total: 1, items: [{ metadata: { id: 'ag', status: 'RUNNING' }, source: 'agentengine-managed-runtime', managedRuntime: true,
+      spec: { runtime: { type: 'codex' }, bindings: {} }, deployment: { DeploymentType: 'ManagedRuntime', state: 'RUNNING', available: true } }] }),
     traces: async () => { reads++; return { items: [] }; },
   };
   const CloudSessionStatus = createCloudSessionStatus({
@@ -103,7 +104,8 @@ test('cloud execution receipt polling skips hidden documents but keeps the first
   const props = { sessionId: 'session', useSessions };
   await runtime.settle(CloudSessionStatus, props);
   const button = walk(runtime.tree()).find(node => node.type === 'button');
-  assert.ok(button, 'cloud status opens from the session header');
+  assert.ok(button, 'managed runtime status opens from the session header');
+  assert.equal(button.children[0], '云端 · 托管');
   button.props.onClick();
   await runtime.settle(CloudSessionStatus, props);
   assert.equal(reads, 1, 'opening the dialog reads the latest receipt immediately');

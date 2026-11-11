@@ -32,7 +32,8 @@ export function createConfirmation({ document = globalThis.document } = {}) {
       confirm.type = 'button';
       confirm.textContent = options.confirmLabel || '确定';
       confirm.autofocus = true;
-      const danger = options.danger !== false;
+      const danger = options.danger === true;
+      confirm.setAttribute('data-confirmation-variant', danger ? 'danger' : 'primary');
       confirm.style.cssText = 'font:inherit;cursor:pointer;height:36px;padding:0 14px;border-radius:var(--dsw-radius-md,12px);border:.5px solid transparent;color:' + (danger ? 'var(--dsw-static-neutral-00,#fff)' : 'var(--dsw-alias-label-primary-foreground,#fff)') + ';background:' + (danger ? 'var(--dsw-alias-state-danger-primary,#c2402a)' : 'var(--dsw-alias-button-primary-fill,#0b0b0d)');
       let settled = false;
       const settle = value => { if (settled) return; settled = true; pending.delete(cancelPending); overlay.remove(); document.removeEventListener('keydown', onKey); resolve(value); };

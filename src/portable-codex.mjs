@@ -37,7 +37,8 @@ export async function isolatedRuntimeCodexOptions({ home, scopeId, env = process
   // boundary; the surrounding deployment may raise the model stream budgets
   // without rebuilding the runtime image.
   for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'SYSTEMROOT', 'WINDIR',
-    'AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS', 'AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS']) {
+    'AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS', 'AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS',
+    'AGENTKIT_CODEX_REASONING_SUMMARY']) {
     if (env[key]) childEnv[key] = env[key];
   }
   Object.assign(childEnv, {
