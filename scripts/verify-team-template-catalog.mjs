@@ -58,4 +58,3 @@ else {
   for (const row of [...report.errors, ...report.warnings]) console.log(`${report.errors.includes(row) ? 'ERROR' : 'WARN '} ${row.code}: ${row.message}${row.path ? ` (${row.path})` : ''}`);
 }
 process.exitCode = report.ok ? 0 : 1;
-

@@ -48,4 +48,3 @@ test('Team catalog audit reports missing role definitions separately from hard e
   assert.equal(report.errors.length, 0);
   assert.ok(report.warnings.some(row => row.code === 'TEAM_ROLE_DEFINITION_MISSING'));
 });
-

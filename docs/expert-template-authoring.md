@@ -196,4 +196,3 @@ node scripts/verify-team-template-catalog.mjs \
 - 不要覆盖旧对象；KS3 使用内容寻址路径保存历史版本。
 - 新 catalog 只影响以后召唤的 Team。已经创建的 Agent、TeamDefinition 和 TeamRun 保留原来的冻结快照。
 - 线上出现问题时，重新激活同一环境的历史 `latest.json` 即可回滚，不需要删除用户已经创建的 Team。
-

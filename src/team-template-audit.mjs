@@ -73,4 +73,3 @@ export function auditTeamTemplateCatalog({ items = [], definitions, requireRoleD
   if (!teams.length) warnings.push({ code: 'TEAM_TEMPLATE_NONE', message: '目录中没有 kind=team 的专家团模板' });
   return { ok: errors.length === 0, teamCount: teams.length, errors, warnings };
 }
-
