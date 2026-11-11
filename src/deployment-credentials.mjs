@@ -44,9 +44,9 @@ export async function resolveDeploymentCredentials({ zip, models, adapters, cred
       put(requirement.name, config[requirement.name === 'KSYUN_ACCESS_KEY' ? 'cloudAccessKey' : 'cloudSecretKey']);
     }
     if (requirement.resourceId === 'web-search' && !Object.hasOwn(values, requirement.name)) {
-      // The frozen assistant bundle declares DSH's DeepSeek search credential.
+      // A frozen runtime bundle may declare DSH's model or search credential.
       // Resolve it at deployment time from the same private credential store the
-      // assistant used at build time; an unresolvable requirement fails the
+      // runtime used at build time; an unresolvable requirement fails the
       // deployment with the standard missing-credential error rather than
       // silently shipping a runtime whose advertised web_search cannot execute.
       const search = await credentials?.resolve?.(requirement.name).catch(() => null);

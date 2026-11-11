@@ -38,18 +38,28 @@ export function createCloudSessionStatus({
       void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000);
       return () => { active = false; clearInterval(timer); };
     }, [open, agent, sessionId]);
-    if (!agent?.deployment) return null;
+    const managedRuntime = agent?.source === 'agentengine-managed-runtime' || agent?.managedRuntime === true;
+    // Keep the historical source-omitted shape compatible with older local
+    // deployment records, while admitting the explicit ManagedRuntime row.
+    if (!agent || (!managedRuntime && agent.source && agent.source !== 'studio-deployment') || !agent.deployment) return null;
     const deployment = agent.deployment, bindings = agent.spec?.bindings || {}, plugins = bindings.plugins || [];
-    const pairs = [['云端实例', agent.metadata.id], ['环境', `${deployment.environment === 'pre-online' ? '预发' : deployment.environment} · ${deployment.region}`],
-      ['当前部署版本', `r${agent.metadata.revision} · ${deployment.buildId}`], ['当前绑定模型', (deployment.models || [deployment.model]).join('、')],
-      ['MCP', (bindings.mcpServers || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).join('、') || '未绑定'],
-      ['Skill', (bindings.skills || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).join('、') || '未绑定'],
-      ...[['knowledge-base', '知识库'], ['memory-instance', '记忆库'], ['skill-space', 'Skill Center']].map(([kind, label]) => {
-        const resource = plugins.find(item => item.config?.binding?.resource?.kind === kind)?.config.binding.resource;
-        return [label, resource?.id || resource?.resourceId || '未绑定'];
-      })];
-    return h(Fragment, null, h('button', { type: 'button', onClick: () => setOpen(true), title: agent.metadata.id, style: { ...buttonStyle(), fontSize: '11px', padding: '4px 8px' } }, '云端 · ' + (deployment.environment === 'pre-online' ? '预发' : deployment.environment)),
-      open ? h(ResourceDialog, { title: '云端 Agent 与执行凭据', detail: '绑定清单来自云端冻结版本；每轮响应身份由 Host 核验。', onClose: () => setOpen(false), wide: true },
+    const runtimeLabel = { codex: 'Codex', 'dsh-native': 'DSH Native' }[agent.spec?.runtime?.type] || agent.framework || agent.spec?.runtime?.type || 'ManagedRuntime';
+    const modelNames = (deployment.models || [deployment.model]).filter(Boolean);
+    const environment = deployment.environment ? `${deployment.environment === 'pre-online' ? '预发' : deployment.environment} · ${deployment.region || '—'}` : '托管 Runtime';
+    const pairs = managedRuntime
+      ? [['云端 Agent', agent.metadata.id], ['Runtime', runtimeLabel], ['状态', deployment.state || agent.metadata.status || '未知'], ['当前绑定模型', modelNames.join('、') || '由托管 Runtime 决定']]
+      : [['云端实例', agent.metadata.id], ['环境', environment], ['当前部署版本', `r${agent.metadata.revision} · ${deployment.buildId}`], ['当前绑定模型', modelNames.join('、')],
+        ];
+    pairs.push(['MCP', (bindings.mcpServers || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).join('、') || '未绑定'],
+      ['Skill', (bindings.skills || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id).join('、') || '未绑定']);
+    pairs.push(...[['knowledge-base', '知识库'], ['memory-instance', '记忆库'], ['skill-space', 'Skill Center']].map(([kind, label]) => {
+      const resource = plugins.find(item => item.config?.binding?.resource?.kind === kind)?.config.binding.resource;
+      return [label, resource?.id || resource?.resourceId || '未绑定'];
+    }));
+    const title = managedRuntime ? '托管 Runtime 与执行凭据' : '云端 Agent 与执行凭据';
+    const detail = managedRuntime ? 'AgentEngine ManagedRuntime 由云端控制面维护；每轮响应身份仍由 Host 核验。' : '绑定清单来自云端冻结版本；每轮响应身份由 Host 核验。';
+    return h(Fragment, null, h('button', { type: 'button', onClick: () => setOpen(true), title: agent.metadata.id, style: { ...buttonStyle(), fontSize: '11px', padding: '4px 8px' } }, managedRuntime ? '云端 · 托管' : '云端 · ' + (deployment.environment === 'pre-online' ? '预发' : deployment.environment)),
+      open ? h(ResourceDialog, { title, detail, onClose: () => setOpen(false), wide: true },
         h('dl', { style: { display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '10px 18px', overflowWrap: 'anywhere' } }, pairs.map(([key, value]) => h(Fragment, { key }, h('dt', null, key), h('dd', { style: { margin: 0 } }, value)))),
         receipt ? h('div', null, h('h4', null, '最近一轮 · 云端响应已核验'), h('p', null, `${receipt.status} · ${receipt.provenance.model} · ${operationalDate(receipt.completedAt)}`),
           h('p', { style: { overflowWrap: 'anywhere', fontSize: '12px' } }, `本轮版本：r${receipt.provenance.revision || '—'} · ${receipt.provenance.buildId}`),

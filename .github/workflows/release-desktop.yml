@@ -59,9 +59,28 @@ on:
         required: false
         default: ""
         type: string
+      # Deprecated combined switch. It still uploads and publishes the feed from
+      # the runner and queues Windows after the signed macOS build, but the
+      # GitHub-hosted network cannot reach the KS3 origin (see the release docs),
+      # so new releases use publish_from_runner/queue_windows/create_github_release.
       publish_feed:
-        description: "Upload immutable binaries and publish channel metadata after signing"
+        description: "Legacy combined switch: publish the feed from the runner and queue Windows; prefer publish_from_runner + queue_windows"
         required: true
+        default: false
+        type: boolean
+      publish_from_runner:
+        description: "Emergency only: attempt the KS3 publication from this GitHub-hosted runner; publish with scripts/publish-locally.mjs instead"
+        required: false
+        default: false
+        type: boolean
+      queue_windows:
+        description: "Build the matching Windows candidate as soon as source admission passes; publishing its feed stays a separate accepted-candidate step"
+        required: false
+        default: false
+        type: boolean
+      create_github_release:
+        description: "Create or refresh the GitHub Release for an already-signed candidate; run after the feed is published, normally with candidate_run_id"
+        required: false
         default: false
         type: boolean
       candidate_run_id:
@@ -91,7 +110,12 @@ permissions:
   actions: read
 
 concurrency:
-  group: agentkit-studio-${{ inputs.studio_ref }}-${{ inputs.build_version }}-${{ inputs.channel }}
+  # One release batch per source commit. build_version and channel used to split
+  # this group, so the same source dispatched with empty values in one run and
+  # explicit values in another queued twice in parallel (observed 20-70 minutes
+  # of runner queue). Duplicate dispatches now serialize instead of racing;
+  # cancel-in-progress stays false because a run may be publishing.
+  group: agentkit-studio-${{ inputs.studio_ref }}
   cancel-in-progress: false
 
 jobs:
@@ -265,7 +289,7 @@ jobs:
           }
 
       - name: Verify feed publication credentials
-        if: ${{ inputs.publish_feed }}
+        if: ${{ inputs.publish_feed || inputs.publish_from_runner }}
         shell: bash
         env:
           PROD_BUCKET: ${{ secrets.STUDIO_DOWNLOAD_PROD_KS3_BUCKET }}
@@ -528,12 +552,15 @@ jobs:
           fi
           exit "$cleanup_failed"
 
+  # Emergency path only: a GitHub-hosted runner cannot reach the KS3 origin, so
+  # this job exists for a network that happens to work. Normal releases publish
+  # the same signed candidate with scripts/publish-locally.mjs.
   publish-mac-arm64:
     env:
       STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
       STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
-    if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
+    if: ${{ always() && (inputs.publish_feed || inputs.publish_from_runner) && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) }}
     needs: [source-gate, macos-arm64]
     # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
     runs-on: ubuntu-24.04
@@ -650,7 +677,11 @@ jobs:
       STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
       STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
-    if: ${{ always() && inputs.qualify_installed_update && needs.macos-arm64.result == 'success' && (needs.publish-mac-arm64.result == 'success' || needs.publish-mac-arm64.result == 'skipped') }}
+    # Qualification runs against a feed that already exists. It may target a
+    # reused signed candidate (candidate_run_id, macOS job skipped) after a local
+    # publication advanced the feed, so a skipped macOS job only disqualifies a
+    # dispatch that never built or selected a candidate.
+    if: ${{ always() && inputs.qualify_installed_update && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) && (needs.publish-mac-arm64.result == 'success' || needs.publish-mac-arm64.result == 'skipped') }}
     needs: [source-gate, macos-arm64, publish-mac-arm64]
     runs-on: macos-latest
     environment: studio-signing
@@ -707,7 +738,13 @@ jobs:
       STUDIO_PRODUCT_NAME: ${{ needs.source-gate.outputs.name }}
       STUDIO_PRODUCT_APP_ID: ${{ needs.source-gate.outputs.app_id }}
       STUDIO_PRODUCT_UPDATE_ENV: ${{ needs.source-gate.outputs.update_environment }}
-    if: ${{ always() && inputs.publish_feed && needs.publish-mac-arm64.result == 'success' }}
+    # Either the legacy runner publication completed, or an operator explicitly
+    # records a candidate that was published locally. Re-uploading the
+    # already-signed bytes to GitHub is Azure-internal and stays fast, so this
+    # job can run after a local publication without touching the KS3 path. A
+    # failed publication attempt still blocks the record to avoid announcing
+    # bytes whose feed did not advance.
+    if: ${{ always() && needs.source-gate.result == 'success' && (needs.macos-arm64.result == 'success' || (needs.macos-arm64.result == 'skipped' && inputs.candidate_run_id != '')) && ((inputs.publish_feed && needs.publish-mac-arm64.result == 'success') || (inputs.create_github_release && needs.publish-mac-arm64.result != 'failure')) }}
     needs: [source-gate, macos-arm64, publish-mac-arm64]
     # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
     runs-on: ubuntu-24.04
@@ -759,6 +796,11 @@ jobs:
   web-and-host:
     name: Real Web and DSH Host
     needs: [source-gate]
+    # A candidate-reuse dispatch (publish from a maintainer machine, then record
+    # the GitHub release or qualify an installed update) already accepted this
+    # exact source in the build run; repeating the 15-17 minute acceptance only
+    # burns a runner and turns a publication follow-up red.
+    if: ${{ inputs.candidate_run_id == '' }}
     # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -833,8 +875,15 @@ jobs:
 
   queue-windows:
     name: Queue matching Windows release
-    needs: [source-gate, macos-arm64]
-    if: ${{ always() && inputs.publish_feed && needs.source-gate.result == 'success' && needs.macos-arm64.result == 'success' }}
+    # The Windows build only produces a signed candidate; its feed publication is
+    # a separate accepted-candidate step (publish-windows.yml or
+    # scripts/publish-locally.mjs). Dispatching it alongside the macOS candidate
+    # instead of after it removes one fully serialized build (~30 minutes) from
+    # the batch; a failed macOS candidate at most wastes one Windows runner.
+    needs: [source-gate]
+    # Publication follow-ups reuse an existing candidate, so only a build run
+    # queues the Windows candidate.
+    if: ${{ always() && inputs.candidate_run_id == '' && needs.source-gate.result == 'success' && (inputs.publish_feed || inputs.queue_windows) }}
     # Playwright only ships browser deps for the LTS image; ubuntu-latest is 26.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 10

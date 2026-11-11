@@ -66,6 +66,88 @@ test('failed and cancelled runs log a single safe terminal outcome', async t => 
   }
 });
 
+test('a failed run keeps its collapsed client code and records the diagnostic family', async t => {
+  const logs = [];
+  const { post } = await setup(t, async () => {
+    throw Object.assign(new Error('模型流 300s 无事件'), { code: 'CODEX_TURN_FAILED' });
+  }, { runLog: entry => logs.push(entry) });
+  const response = await post({ input: 'hello', requestId: 'diagnostic-log' });
+  assert.equal(response.status, 500);
+  assert.equal(logs.at(-1).event, 'runtime.run.failed');
+  // The client keeps the documented family; the log keeps the inert token.
+  assert.equal(logs.at(-1).code, 'RUNTIME_RUN_FAILED');
+  assert.equal(logs.at(-1).diagnosticCode, 'CODEX_TURN_FAILED');
+  assert(!JSON.stringify(logs).includes('模型流'));
+});
+
+test('a run publishes its native session identity to the exporter and clears it when it settles', async t => {
+  const calls = [];
+  const observability = {
+    setRunIdentity: value => calls.push({ method: 'setRunIdentity', value }),
+    clearRunIdentity: value => calls.push({ method: 'clearRunIdentity', value }),
+  };
+  let finish;
+  const gate = new Promise(resolve => { finish = resolve; });
+  const { post } = await setup(t, async () => { await gate; return { output: 'ok' }; }, { observability });
+  const response = await post({ input: 'hello', sessionId: 'session-native', requestId: 'invocation-identity', stream: true });
+  const events = readSse(response.body)[Symbol.asyncIterator]();
+  const started = (await events.next()).value;
+  assert.equal(calls.length, 1, 'identity is published before run.started');
+  assert.equal(calls[0].method, 'setRunIdentity');
+  assert.equal(calls[0].value.agentId, 'ar-local-test');
+  assert.equal(calls[0].value.invocationId, 'invocation-identity');
+  assert.equal(calls[0].value.runId, started.runId);
+  assert.match(calls[0].value.nativeSessionId, /^runtime-[0-9a-f]{32}$/);
+  assert.equal(calls[0].value.platformSessionId, undefined);
+  finish();
+  await events.next();
+  assert.equal((await events.next()).done, true);
+  assert.deepEqual(calls.map(call => call.method), ['setRunIdentity', 'clearRunIdentity']);
+  assert.equal(calls[1].value, calls[0].value.nativeSessionId);
+});
+
+test('a failed run still clears the exporter identity', async t => {
+  const calls = [];
+  const observability = {
+    setRunIdentity: value => calls.push({ method: 'setRunIdentity', value }),
+    clearRunIdentity: value => calls.push({ method: 'clearRunIdentity', value }),
+  };
+  const { post } = await setup(t, async () => { throw new Error('private failure'); }, { observability });
+  const response = await post({ input: 'hello', requestId: 'failed-identity' });
+  assert.equal(response.status, 500);
+  assert.deepEqual(calls.map(call => call.method), ['setRunIdentity', 'clearRunIdentity']);
+  assert.equal(calls[1].value, calls[0].value.nativeSessionId);
+});
+
+test('a managed run publishes the platform session identity', async t => {
+  const calls = [];
+  const observability = {
+    setRunIdentity: value => calls.push({ method: 'setRunIdentity', value }),
+    clearRunIdentity: value => calls.push({ method: 'clearRunIdentity', value }),
+  };
+  const platformActions = {
+    setRunControl() {},
+    async checkRun() {},
+    async flushRun() {},
+    async settleRun() {},
+    async parseResponses() {
+      return { input: 'hello', sessionId: 'native-session', requestId: 'req-identity',
+        stream: false, runId: 'run_identity_fixture', model: 'model', responseId: 'resp_identity',
+        createdAt: Date.now(), conversationId: 'conv-identity', publicSessionId: 'public-identity',
+        platformSession: { sessionId: 'public-identity', nativeSessionId: 'native-session' }, metadata: {} };
+    },
+  };
+  const { post } = await setup(t, async () => ({ output: 'managed' }), { platformActions, observability });
+  const response = await post({ input: 'hello' });
+  assert.equal(response.status, 200);
+  const set = calls.find(call => call.method === 'setRunIdentity');
+  assert.equal(set.value.nativeSessionId, 'native-session');
+  assert.equal(set.value.platformSessionId, 'public-identity');
+  assert.equal(set.value.invocationId, 'req-identity');
+  assert.equal(set.value.runId, 'run_identity_fixture');
+  assert.equal(calls.find(call => call.method === 'clearRunIdentity').value, 'native-session');
+});
+
 test('a channel failure keeps its own code in the run log', async t => {
   const logs = [];
   const { post } = await setup(t, async () => {

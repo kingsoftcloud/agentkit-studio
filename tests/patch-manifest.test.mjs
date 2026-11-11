@@ -17,12 +17,13 @@ const invalid = error => error.code === 'PATCH_MANIFEST_INVALID';
 
 test('all shipped patches have exact content, paths, ordered dependencies and verification ownership', async () => {
   const { report } = await checkPatchManifest(fileURLToPath(directory));
-  assert.equal(report.patches, 49); assert.equal(report.paths, 280); assert.ok(report.hostTests.length > 0);
+  assert.equal(report.patches, 52); assert.equal(report.paths, 296); assert.ok(report.hostTests.length > 0);
   assert.ok(report.hostTests.includes('apps/desktop/tests/local-macos-package.spec.ts'));
   assert.ok(report.hostTests.includes('apps/desktop/tests/product-branding.spec.ts'));
   assert.ok(report.hostTests.includes('packages/context/agent-instructions/tests/agent-instructions.spec.ts'));
   assert.ok(report.hostTests.includes('packages/client/ui-workspace/tests/apply.client.spec.ts'));
   assert.ok(report.hostTests.includes('apps/desktop/tests/bundled-plugin-alignment.spec.ts'));
+  assert.ok(report.hostTests.includes('packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts'));
   assert.deepEqual(report.nativeTests, ['native/system/test/flock.test.js']);
 });
 

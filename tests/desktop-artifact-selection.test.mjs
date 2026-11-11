@@ -6,6 +6,10 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
 import { createZip } from '../src/zip.mjs';
+import product from '../src/product.json' with { type: 'json' };
+
+// The packaged feed lane must follow the product definition, not a stale copy.
+const productChannel = product.desktop.updates.channel;
 
 test('artifact verification examines the native ZIP when an Actions transport ZIP coexists', async t => {
   const root = await mkdtemp(join(tmpdir(), 'studio-artifact-selection-'));
@@ -21,12 +25,12 @@ test('artifact verification examines the native ZIP when an Actions transport ZI
   assert.throws(() => execFileSync(process.execPath, [command, root], {stdio:'pipe'}), /app-update.yml/);
   await writeFile(join(root, 'studio.zip'), createZip([
     {name:app+'/app.asar',data:Buffer.from('archive membership fixture')},
-    {name:app+'/app-update.yml',data:Buffer.from(JSON.stringify({provider:'generic', url:'https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/mac-arm64/', channel:'nightly', updaterCacheDirName:'studio-updater'}))},
+    {name:app+'/app-update.yml',data:Buffer.from(JSON.stringify({provider:'generic', url:'https://agentkit.ks3-cn-beijing.ksyuncs.com/studio/feeds/mac-arm64/', channel:productChannel, updaterCacheDirName:'studio-updater'}))},
   ]));
   const result = JSON.parse(execFileSync(process.execPath, [command, root], {encoding:'utf8'}));
   assert.equal(result.zip, 'studio.zip');
   assert.equal(result.appAsar, 'present-in-zip');
-  assert.equal(result.update.channel, 'nightly');
+  assert.equal(result.update.channel, productChannel);
   await writeFile(join(root, 'another.zip'), 'ambiguous native candidate');
   await writeFile(join(root, 'another.zip.blockmap'), gzipSync('{}'));
   assert.throws(() => execFileSync(process.execPath, [command, root], {stdio:'pipe'}), /exactly one ZIP\/blockmap pair/);

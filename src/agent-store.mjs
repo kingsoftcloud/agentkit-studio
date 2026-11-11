@@ -148,7 +148,6 @@ export function createAgentStore({ storeDir } = {}) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         local: true,
-        ...(purpose === 'personal-assistant' ? { purpose } : {}),
         ...(templateSource ? { templateSource: structuredClone(templateSource) } : {}),
         ...(teamRole ? { teamRole: structuredClone(teamRole) } : {}),
         ...(creationKey ? { creationKey: String(creationKey) } : {}),

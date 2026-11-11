@@ -251,9 +251,8 @@ export function createStudioPlugins({
 
   async function installDsh(spec) {
     const manager = service('pluginManager');
-    // The catalog may keep a curated plugin listed but inactive after install
-    // (the personal assistant), so the market never enables cloud capabilities
-    // on the user's behalf. Entries that do not opt out keep the old behavior.
+    // Curated plugins may opt out of automatic activation; the market never
+    // enables a plugin that explicitly requires a restart or manual activation.
     const curated = curatedPluginForSpec(spec);
     const enableOnInstall = curated ? curated.enableOnInstall !== false : true;
     const existing = (await manager.listBundles()).find(bundle => bundle.name === String(spec));

@@ -1,4 +1,6 @@
 const OFFICIAL_TEAM_MODULE='@deepseek-ai/dsh-experimental-agent-team';
+export const OFFICIAL_TEAM_TOOL_MODULE='@deepseek-ai/dsh-experimental-tool-agent-team';
+const OFFICIAL_TEAM_BUNDLE='@deepseek-ai/dsh-experimental-agent-team-profile';
 /** Grace period the declared official entry gets before Studio mounts a fallback. */
 const OFFICIAL_TEAMS_WAIT_MS=20000;
 
@@ -107,6 +109,34 @@ export function ensureStudioTeamRuntime(ctx, { load = () => import('@deepseek-ai
 }
 export async function usesOfficialTeamTools(ctx) {
   const manager=ctx.get('pluginManager');
-  if(!manager?.listPlugins)return false;
-  return (await manager.listPlugins()).some(row=>row.moduleName==='@deepseek-ai/dsh-experimental-tool-agent-team'&&row.fiberPhase==='active');
+  // The profile manager exposes the curated bundle rows before every Loader
+  // entry has reached `active`.  Reserve the official tool names as soon as
+  // that enabled bundle is installed; otherwise Studio mounts its
+  // compatibility `spawn_teammate` into the same Agent scope and the official
+  // tool entry fails with "already registered in this scope" during startup.
+  if(manager?.listBundles){
+    try{
+      const bundles=await manager.listBundles();
+      const bundle=bundles.find(row=>row?.name===OFFICIAL_TEAM_BUNDLE||row?.pluginId===OFFICIAL_TEAM_BUNDLE);
+      if(bundle && (bundle.installed===true || bundle.availability!=='missing') && bundle.enabled!==false)return true;
+    }catch{/* fall through to the exact Loader/plugin rows */}
+  }
+  if(manager?.listPlugins){
+    try{
+      const plugins=await manager.listPlugins();
+      if(plugins.some(row=>{
+        const key=String(row?.moduleName||row?.entryId||row?.rowId||'');
+        return (key===OFFICIAL_TEAM_TOOL_MODULE||key==='tool-agent-team'||key.endsWith(':tool-agent-team')||key.endsWith('#tool-agent-team'))
+          && row?.fiberPhase==='active';
+      }))return true;
+    }catch{/* fall through to the composed Loader tree */}
+  }
+  // A declared entry owns the names before activation and across toggles.
+  // Installing compatibility tools while it is disabled would make a later
+  // enable fail when DSH installs its tools into the existing Agent scopes.
+  try{
+    const loader=ctx.root?.loader;
+    if(typeof loader?.entries!=='function')return false;
+    return loader.entries().some(entry=>entry?.options?.name===OFFICIAL_TEAM_TOOL_MODULE);
+  }catch{return false}
 }

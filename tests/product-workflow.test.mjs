@@ -15,8 +15,8 @@ test('empty workflow fields resolve from the product definition and explicit rel
   assert.equal(defaults.update_origin, product.settings.DSH_DESKTOP_UPDATE_ORIGIN);
   assert.equal(defaults.channel, product.settings.DSH_DESKTOP_UPDATE_CHANNEL);
   assert.equal(defaults.storage_origin, defaults.update_origin);
-  const release = resolveWorkflowProductOutputs({ buildVersion: '0.2.0-rc.2.20261015.3', channel: 'stable', updateOrigin: 'https://updates.example.org', storageOrigin: 'https://binaries.example.org' });
-  assert.equal(release.channel, 'stable');
+  const release = resolveWorkflowProductOutputs({ buildVersion: '0.2.0-rc.2.20261015.3', channel: 'nightly', updateOrigin: 'https://updates.example.org', storageOrigin: 'https://binaries.example.org' });
+  assert.equal(release.channel, 'nightly');
   assert.equal(release.build_version, '0.2.0-rc.2.20261015.3');
   assert.equal(release.update_origin, 'https://updates.example.org');
   assert.equal(release.storage_origin, 'https://binaries.example.org');
@@ -62,11 +62,11 @@ test('historical signed sources keep their frozen identity and require explicit 
 
 test('workflow output CLI emits only normalized public values and its consumers declare the gate dependency', () => {
   const output = execFileSync(process.execPath, ['scripts/product-config.mjs', 'github-outputs'], { encoding: 'utf8', env: { ...process.env,
-    STUDIO_PRODUCT_BUILD_VERSION: '0.2.0-rc.2.20261015.3', STUDIO_PRODUCT_CHANNEL: 'stable',
+    STUDIO_PRODUCT_BUILD_VERSION: '0.2.0-rc.2.20261015.3', STUDIO_PRODUCT_CHANNEL: 'nightly',
     STUDIO_PRODUCT_UPDATE_ORIGIN: 'https://updates.example.org', STUDIO_PRODUCT_STORAGE_ORIGIN: '', PRIVATE_TEST_SIGNING_VALUE: 'synthetic-private-marker',
   } });
   const values = Object.fromEntries(output.trim().split('\n').map(line => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; }));
-  assert.equal(values.channel, 'stable');
+  assert.equal(values.channel, 'nightly');
   assert.equal(values.storage_origin, 'https://updates.example.org');
   assert.ok(!output.includes('synthetic-private-marker'));
   const workflow = parse(readFileSync('.github/workflows/release-desktop.yml', 'utf8'));
@@ -75,6 +75,29 @@ test('workflow output CLI emits only normalized public values and its consumers 
   }
   assert.ok(workflow.jobs['source-gate'].steps.find(step => step.id === 'product'));
   assert.equal(workflow.on.workflow_dispatch.inputs.publish_feed.default, false);
+});
+
+test('release workflow separates the candidate builds from hosted publication', () => {
+  const workflow = parse(readFileSync('.github/workflows/release-desktop.yml', 'utf8'));
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  // The hosted runner cannot reach KS3, so runner publication is an explicit
+  // emergency escape and the candidate build no longer implies it.
+  assert.equal(inputs.publish_feed.default, false);
+  assert.equal(inputs.publish_from_runner.default, false);
+  assert.equal(inputs.queue_windows.default, false);
+  assert.equal(inputs.create_github_release.default, false);
+  // The Windows candidate is dispatched from source admission, not from the
+  // signed macOS result, so one fully serialized build leaves the batch.
+  assert.deepEqual(workflow.jobs['queue-windows'].needs, ['source-gate']);
+  assert.match(workflow.jobs['queue-windows'].if, /inputs\.publish_feed \|\| inputs\.queue_windows/);
+  // A reused candidate accepted its exact source in the build run.
+  assert.match(workflow.jobs['web-and-host'].if, /inputs\.candidate_run_id == ''/);
+  // Duplicate dispatches for one source serialize instead of racing.
+  assert.equal(workflow.concurrency.group, 'agentkit-studio-${{ inputs.studio_ref }}');
+  assert.match(workflow.jobs['publish-mac-arm64'].if, /inputs\.publish_feed \|\| inputs\.publish_from_runner/);
+  assert.match(workflow.jobs['github-release'].if, /inputs\.create_github_release/);
+  // Publication follow-ups may reuse the signed candidate instead of rebuilding.
+  assert.match(workflow.jobs['qualify-installed-update'].if, /needs\.macos-arm64\.result == 'skipped' && inputs\.candidate_run_id != ''/);
 });
 
 test('candidate archive extraction expands the configured product name in Bash', { skip: process.platform === 'win32' && 'The owning macOS publication step runs Bash.' }, t => {

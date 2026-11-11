@@ -23,14 +23,44 @@ test('workspace-free native entry needs no Agent and retains the session model w
   assert.deepEqual(f.calls, [['create', {}], ['model', { sessionId: 'blank', provider: 'gateway', model: 'chosen', saveDefault: false }], ['open', 'blank']]);
 });
 
-test('new Agent binding selects its model through the public Remote before a client scope exists', async () => {
+test('new Agent binding creates the Session with its admitted preset before selecting the model', async () => {
   const events = [];
-  const navCtx = { sessions: { create: async () => 'new-session' }, modelDirectories: { directoryFor() { throw new Error('no client scope yet'); } }, uiWorkspace: { openSession: id => events.push(['open', id]) } };
-  const ctx = { remote: { agentPresets: { select: async () => ({ ok: true }) }, session: { selectModel: async payload => { events.push(['model', payload]); return { ok: true }; } }, commands: { execute: async () => ({ ok: true }) } }, layout: { selectPanel: panel => events.push(['panel', panel]) } };
+  const navCtx = { sessions: { create: async payload => { events.push(['create', payload]); return 'new-session'; } }, modelDirectories: { directoryFor() { throw new Error('no client scope yet'); } }, uiWorkspace: { openSession: id => events.push(['open', id]) } };
+  const ctx = { remote: { agentPresets: { select: async () => { throw new Error('preset must be selected during Session creation'); } }, session: { selectModel: async payload => { events.push(['model', payload]); return { ok: true }; } }, commands: { execute: async () => ({ ok: true }) } }, layout: { selectPanel: panel => events.push(['panel', panel]) } };
   const host = { ensureDshPreset: async () => ({ presetId: 'preset-a', modelSelection: { provider: 'codex', model: 'actual-model' } }) };
   const binding = createNativeSessionBinding({ navCtx, remote: ctx.remote, layout: ctx.layout, hostRemote: host, writeConversationAgent() {}, actions: {} });
   await binding.bindAgent('agent-a');
-  assert.deepEqual(events, [['model', { sessionId: 'new-session', provider: 'codex', model: 'actual-model', saveDefault: false }], ['open', 'new-session'], ['panel', null]]);
+  assert.deepEqual(events, [['create', { agentPreset: 'preset-a' }], ['model', { sessionId: 'new-session', provider: 'codex', model: 'actual-model', saveDefault: false }], ['open', 'new-session'], ['panel', null]]);
+});
+
+test('Agent binding tolerates a legacy DSH host that rejects saveDefault on session model selection', async () => {
+  const events = [];
+  const navCtx = { sessions: { create: async payload => { events.push(['create', payload]); return 'legacy-session'; } }, uiWorkspace: { openSession: id => events.push(['open', id]) } };
+  const remote = {
+    session: {
+      selectModel: async payload => {
+        events.push(['model', payload]);
+        if (Object.hasOwn(payload, 'saveDefault')) {
+          const error = new Error('typert gateway: session/selectModel: wire field "request" failed boundary validation');
+          error.code = 'gateway/input-invalid';
+          error.details = { field: 'request' };
+          throw error;
+        }
+        return { ok: true };
+      },
+    },
+    commands: { execute: async () => ({ ok: true }) },
+  };
+  const binding = createNativeSessionBinding({ navCtx, remote, layout: { selectPanel() {} },
+    hostRemote: { ensureDshPreset: async () => ({ presetId: 'legacy-preset', modelSelection: { provider: 'cloud-route', model: 'cloud-model' } }) },
+    writeConversationAgent() {}, actions: {}, console: { warn() {}, error() {} } });
+  await binding.bindAgent({ agentId: 'ar-legacy', throwOnError: true });
+  assert.deepEqual(events, [
+    ['create', { agentPreset: 'legacy-preset' }],
+    ['model', { sessionId: 'legacy-session', provider: 'cloud-route', model: 'cloud-model', saveDefault: false }],
+    ['model', { sessionId: 'legacy-session', provider: 'cloud-route', model: 'cloud-model' }],
+    ['open', 'legacy-session'],
+  ]);
 });
 
 test('entering the native session clears the old Studio panel restoration', () => {
@@ -60,7 +90,7 @@ test('disposed native admission cannot create or navigate; a later owner still b
   assert.deepEqual(old.calls, []);
   const next = bindingFixture(async () => ({ presetId: 'new-preset' }));
   await next.bind('agent-new');
-  assert.deepEqual(next.calls, [['create', {}], ['open', 'blank']]);
+  assert.deepEqual(next.calls, [['create', { agentPreset: 'new-preset' }], ['open', 'blank']]);
 });
 
 test('a saved panel timer and queued subscription stop when their scope closes', () => {

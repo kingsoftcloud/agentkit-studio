@@ -167,3 +167,15 @@ test('a Host reconnect rechecks readiness instead of treating transport failure 
   await ui.settle();
   assert.ok(ui.modal(), 'reconnect recheck can then show the actual missing state');
 });
+
+test('the first-run dialog carries its own macOS title-band drag strip', () => {
+  // The welcome dialog fills the window below the traffic lights and shows
+  // before any Studio chrome page is mounted, so neither DSH's chrome drag rows
+  // nor product-document's shell strip exist yet. The dialog must supply the
+  // blank band itself, gated to the macOS desktop document.
+  assert.match(onboarding, /data-studio-onboarding-drag/);
+  assert.match(onboarding, /-webkit-app-region:drag/);
+  assert.match(onboarding, /dataset\?\.platform !== 'darwin'/);
+  assert.match(onboarding, /left:80px/, 'the strip must clear the traffic lights');
+  assert.match(onboarding, /pointer-events:none/, 'the strip must not swallow content clicks');
+});

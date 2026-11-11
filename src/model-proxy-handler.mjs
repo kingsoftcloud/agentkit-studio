@@ -8,6 +8,27 @@ import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
 import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
+/**
+ * Bounded provider identifiers from a rejected-request body.
+ *
+ * Never returns message text: an OpenAI-compatible gateway may echo the whole
+ * conversation back inside `error.message`. Only the short machine-readable
+ * `error.code` / `error.type` survive, which is what the DSH failure contract
+ * classifies on.
+ */
+export function upstreamErrorIdentifiers(detail) {
+  const identifiers = {};
+  if (typeof detail !== 'string' || !detail.trim()) return identifiers;
+  let value;
+  try { value = JSON.parse(detail); } catch { return identifiers; }
+  const error = value?.error && typeof value.error === 'object' ? value.error : value;
+  for (const [field, key] of [['upstreamCode', 'code'], ['upstreamType', 'type']]) {
+    const candidate = error?.[key];
+    if (typeof candidate === 'string' && /^[\w.-]{1,80}$/.test(candidate)) identifiers[field] = candidate;
+  }
+  return identifiers;
+}
+
 export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, onReasoningFallback = logReasoningFallback, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
   if (!['chat-completions', 'responses'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');
   return async (request, response) => {
@@ -92,8 +113,16 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         }
       }
       if (!upstream.ok) {
-        if (!upstreamBodyConsumed) await upstream.body?.cancel();
-        throw Object.assign(new Error(`模型服务返回 ${upstream.status}`), { status: upstream.status, code: 'MODEL_UPSTREAM_ERROR' });
+        // A rejected request must stay diagnosable. The provider body can carry
+        // the reason (`context_length_exceeded`, `invalid_request_error`, an
+        // unsupported parameter), but it can also echo prompts and credentials,
+        // so only bounded, credential-free identifiers leave this frame.
+        const detail = upstreamBodyConsumed ? '' : (await upstream.text().catch(() => '')).slice(0, 4096);
+        if (!upstreamBodyConsumed) upstreamBodyConsumed = true;
+        throw Object.assign(new Error(`模型服务返回 ${upstream.status}`), {
+          status: upstream.status, code: 'MODEL_UPSTREAM_ERROR',
+          details: { status: upstream.status, ...upstreamErrorIdentifiers(detail) },
+        });
       }
       if (!body.stream) {
         const value = await upstream.json();

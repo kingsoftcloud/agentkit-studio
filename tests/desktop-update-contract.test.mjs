@@ -6,6 +6,8 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import product from '../src/product.json' with { type: 'json' };
+import { resolveProductInputs, resolveWorkflowProductOutputs } from '../scripts/product-config.mjs';
 
 const run = promisify(execFile);
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -45,4 +47,31 @@ test('desktop update contract rejects the DSH production download fallback', asy
   await assert.rejects(run(process.execPath, ['scripts/verify-desktop-update-inputs.mjs'], {
     cwd: root, env: { ...process.env, AGENTKIT_DSH_ROOT: dsh },
   }), /DSH download origin/);
+});
+
+test('the product definition seals the nightly lane because every Studio build is a prerelease', () => {
+  assert.equal(product.desktop.updates.channel, 'nightly');
+  const outputs = resolveWorkflowProductOutputs({});
+  assert.equal(outputs.channel, 'nightly');
+  assert.equal(outputs.build_version, '0.2.2-rc.1', 'an omitted build version falls back to the pinned DSH version');
+  // The pinned DSH version carries `-rc.1`; sealing it onto `latest` makes the
+  // packaged DSH coordinator throw on every update check.
+  assert.throws(() => resolveWorkflowProductOutputs({ channel: 'latest' }),
+    /product configuration: latest channel requires a stable three-segment version without a prerelease/);
+  assert.throws(() => resolveWorkflowProductOutputs({ channel: 'latest', buildVersion: '0.2.2-rc.1.20261109.1' }),
+    /requires a stable three-segment version without a prerelease/);
+  assert.equal(resolveWorkflowProductOutputs({ channel: 'nightly', buildVersion: '0.2.2-rc.1.20261109.1' }).channel, 'nightly');
+  assert.equal(resolveWorkflowProductOutputs({ channel: 'preview', buildVersion: '0.2.2-rc.1.20261109.1' }).channel, 'preview');
+});
+
+test('only a GA three-segment desktop version may select the latest lane', () => {
+  const latest = resolveProductInputs({ buildVersion: '1.2.3', updateChannel: 'latest' });
+  assert.equal(latest.desktopVersion, '1.2.3');
+  assert.equal(latest.settings.DSH_DESKTOP_UPDATE_CHANNEL, 'latest');
+  assert.throws(() => resolveProductInputs({ buildVersion: '1.2.3-rc.1', updateChannel: 'latest' }),
+    /product configuration: latest channel requires a stable three-segment version without a prerelease/);
+  assert.throws(() => resolveProductInputs({ buildVersion: '1.2.3.20261109.1', updateChannel: 'latest' }),
+    /invalid public product inputs/, 'the dated four-segment Studio suffix is not a stable semver build version');
+  assert.equal(resolveProductInputs({ buildVersion: '1.2.3-rc.1', updateChannel: 'nightly' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, 'nightly');
+  assert.equal(resolveProductInputs({ buildVersion: '1.2.3', updateChannel: 'nightly' }).settings.DSH_DESKTOP_UPDATE_CHANNEL, 'nightly');
 });

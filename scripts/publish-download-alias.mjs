@@ -10,7 +10,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import YAML from 'yaml';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
-import { isReleaseChannel, RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs';
+import { isReleaseChannel, DEFAULT_RELEASE_CHANNEL, RELEASE_CHANNELS } from '../src/desktop-release-channels.mjs';
 
 const { values } = parseArgs({ options: {
   origin: { type: 'string' },
@@ -23,7 +23,9 @@ if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || 
 const fromEnvironment = (...names) => names.map(name => process.env[name]).find(Boolean) ?? '';
 const bucket = values.bucket || fromEnvironment('STUDIO_DOWNLOAD_PROD_KS3_BUCKET') || 'agentkit';
 const region = values.region ?? 'cn-beijing';
-const channel = values.channel ?? 'nightly';
+// The alias follows the product lane; a missing lane feed must not make an
+// operator guess a channel that was never published (`latest` is 404 today).
+const channel = values.channel ?? DEFAULT_RELEASE_CHANNEL;
 if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) || !/^cn-(?:beijing|shanghai|guangzhou|ningbo|qinghai|qingyang)$/.test(region)) throw new Error('invalid bucket or region');
 if (!isReleaseChannel(channel)) throw new Error(`--channel must be one of ${RELEASE_CHANNELS.join(', ')}`);
 

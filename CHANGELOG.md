@@ -1,39 +1,23 @@
 # Changelog
 
-## 0.0.12
-
-- Upgrade Studio's pinned DSH baseline to `dsh-v0.2.2-rc.1`; the maintained series now has 43 active patches and 7 retired entries.
-- Add native prompt prediction with bounded Host context, ghost-text acceptance (Tab/Right Arrow), Escape dismissal, a local Settings toggle, and fail-closed behavior when history or model state is unavailable.
-
-- 去掉覆盖在窗口顶部 30px 的全宽透明拖动条：它把页面顶部的按钮盖在拖拽区下面，点击被吞掉、必须点得非常精准才生效；窗口拖动改由标题行/页头的 `data-studio-drag-region` 承担，交互元素保持 `no-drag`。
-- 桌面端启动对齐改为“物化”而不是“退役”：把运行时内置的产品插件连同其依赖闭包按文件写入 profile（Electron 的 asar 没有目录句柄，`cpSync` 会把 `.6` 直接拷崩），钉住版本，并在原生恢复清空 `dsh.profile.bundles` 后把 `@kingsoftcloud/agentkit-studio` 补回——此前正是这一项缺失导致界面只剩默认 DSH、插件根本不参与加载。
-- 装完必须“可加载”才算成功：每个非安装自带的依赖都要从 profile 锚点解析成功、每个相对导出入口都要存在；校验不过就回滚 `package.json` 与旧副本，绝不删除原本可用的插件。同一版本连续失败两次后停止尝试。
-- Host 侧对齐不再搬迁/删除 profile 副本，只补齐 bundle 选择并校验可加载性；`.alignment-attempt` 预算保留。
-
-## 0.0.11
-
-- 桌面端启动时的插件对齐不再把运行时自带的插件复制到 profile：改为备份并移除旧的 profile 副本，让 DSH 的安装锚点直接解析 `app.asar` 内的插件，避免搬出 asar 后缺失 `@deepseek-ai/*` 依赖；改写前逐一校验 bundled 依赖，失败立即还原 `package.json` 与旧副本，同一版本连续失败两次后停止尝试并降级启动。
-
-## 0.0.8
-
-- 云上实例已被删除时，本机残留的绑定按“过期”处理并清理，不再整体判定为授权失败：页面能正常显示“未开通”并给出开通引导，而不是只剩一条 401/403 错误。
-- 个人助理创建改走产品化的部署动作（`CreateAgentProduct`），不再调用 Studio 通用 client 白名单之外的 `CreateAgent`；平台拒绝时透出真实原因（版本不支持、404 未注册、422 参数不符），不再统一提示“请稍后再试”。
-- 内网账号 IAM 把 API 密钥报为 `Inactive`、且 `ListAllUserAccessKeys` 对子账号返回空列表时，通过有界 `ListUsers` 扫描定位密钥属主；属性缺失或存在多个候选时仍保持未验证，不猜测身份。
-- 新建个人助理时默认运行时版本跟到 `0.1.41`（与平台 catalog 默认版本一致）：该版本修复云桌面浏览器窗口超出屏幕导致的标题栏/输入框被裁，并预置可在插件市场直接启用的 Studio 插件。
-
-## 0.0.7
-
-- 云端平台暂时无法返回个人助理实例详情时，设置页退回本机记录的配置清单并说明原因，不再把平台 5xx 当成用户操作失败。
-- 创建个人助理时记录配置清单，使后续设置修改可以复用同一实例身份；旧实例可在本机补齐清单后继续编辑。
-
-## 0.0.6
-
-- 个人助理设置页支持在线配置：模型、系统提示词、运行时版本与环境变量注入；保存时提交一次平台更新，由云端滚动应用到实例，不需要用户手动重启，也不是每个字段都重启一次。
-- 读取设置时敏感环境变量只回显“已配置”，值不出 Studio Host；旧实例缺少本机配置清单时明确提示无法在线修改，而不是用猜测的默认值覆盖云端实例。
-- 云端平台暂不支持个人助理配置更新时，给出可读的原因与建议，不把原始 400 错误直接抛给用户。
-
 ## Unreleased
 
+- 托管运行时把 `AGENTKIT_CODEX_*` 调整项（`TIMEOUT_MS` / `IDLE_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` / `MODEL_IDLE_TIMEOUT_MS` / `MODEL` / `SANDBOX` / `APPROVAL_POLICY` / `REASONING_SUMMARY`）加入 Host 子进程的 env 白名单：之前 `codex-runtime` 会读这些变量，但白名单没放行，长任务的超时预算实际上是硬编码的，只能靠发新镜像调整。
+- 托管 DSH 的 Hosted UI 会话注册表改为 **Agent 作用域**（`<state>/managed-sessions`），不再放在版本目录下：此前每次被接受的 UpdateAgent 都会换到一个空的注册表目录，Hosted UI 于是列不出、也打不开更新前的会话，尽管 DSH 原生 transcript 一直保留。首次启动会把最近写入的一份旧版本注册表复制过来（旧目录保留供旧镜像回滚），`AGENTKIT_MANAGED_SESSIONS` 由 Host 显式导出，未提供时回退到旧的版本目录。
+- MCP 资源页的「认证 Header / 环境变量凭证」改为可折叠的进阶区块：默认收起，识别到自定义 Header 时自动展开；仍可直接填 Header 名称与凭证名称添加凭证行。JSON 输入框随内容自动增高，多服务配置不再挤在 5 行里。
+- 修复浅色主题下主按钮 hover 时文字不可见：全局 hover 规则不再把白色标签的主按钮改成浅色底，`.sq-btn.primary` 等类样式按钮与凭据引导弹窗一并覆盖；禁用态主按钮的标签改用次要文字色。
+- 新建 Agent 默认运行时改为 DSH Native，并在创建流程中暂时隐藏 Star Harness（编辑既有 Star Harness Agent 不受影响），待该运行时稳定后再开放创建。
+
+## 0.0.14 - 2026-11-10
+
+- 将 Host 云端配置与 AgentEngine client 以通用 `agentkitHostCloud` 能力提供给独立 DSH 插件；Studio 不再包含个人助理运行时、Host 路由或产品私有服务。
+- 修复长时间 Codex 模型调用与 OTLP trace 的稳定性，保留会话、运行时和可观测性状态。
+- 合并自 0.0.13 以来的 MCP 自定义 Header、原生审批恢复、部署存储、更新车道、资源降级与 DSH 0.2.2 兼容性修复，完整门禁与 patched DSH Host 均通过。
+
+
+- 修复托管 DSH 的 OTLP 证书信任：支持 OTel 标准的 `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CERTIFICATE`（PEM 路径），并把证书**追加**到平台默认信任库，而不是替换——旧的 `DSH_OTEL_CA_PEM_BASE64` 直接覆盖 `ca`，会把 CloudMonitor 次路一起打挂。Host 的托管可观测 env 白名单同时转发这两个变量；预发 Langfuse 换成受信任证书后 DSH trace 即可正常上报。
+- 修复托管 DSH 实例“更新后会话消失”：每次被接受的 UpdateAgent 都会生成新的平台 VersionId，而 Host 曾把 `DSH_HOME` 放在 `versions/<sha256(VersionId)>/dsh`，新版本因此从空会话目录启动，旧日志仍留在旧版本目录。托管运行时的 `DSH_HOME` 改为每个 Agent 一份 `<state>/dsh`（DSH 原生会话、storages、凭证与 Settings 跨版本延续），Studio 的不可变 receipt 与模型配置仍按版本隔离；升级到该布局后的首次启动会用硬链接接管**最近写入**的一份旧版本目录（旧目录原样保留，供旧镜像回滚），记录 `.dsh-adopted.json`，并把旧 profile 的用户 Settings 种子到新 profile。范围仅限 DSH 原生会话历史；平台侧 managed session 注册表仍按版本隔离，跨版本复用需另行评审。
+- 桌面更新不再让历史安装“每次只前进一版”：`desktop-release.mjs publish` 在 feed 校验通过后自动把同一份 feed 字节镜像到兼容 `preview` 车道（macOS 默认只写发布布局本身，Windows 两个发布脚本同时写 `studio` 与 `dsh-desk` 旧入口），幂等、不重复上传、不改动任何签名二进制；`latest`/`stable` 车道改为在版本带 prerelease 时于打包前直接拒绝，产品默认车道保持 `nightly`。
 - macOS 桌面端的总览、资源库、运行中心三页补一条统一的顶部拖拽条：只在 Electron + `data-platform='darwin'` 的文档上，把透明 `-webkit-app-region: drag` 条（左 80px 避开红绿灯、右 0、高 40px）插到 React 根之前，DSH 侧栏开关等后续 `no-drag` 控件自动从拖拽面中扣除；仅 Studio chrome 页挂载，DSH 原生会话页和「智能体」页不受影响，全屏时随原生标题带一起隐藏。
 - 托管运行时的模型上下文窗口改为从模型网关 `/v1/models` 的 `context_length` 读取，不再固定为 128000：模型实际声明 1024k 时，长会话不会再在远低于真实上限处触发上下文压缩，减少压缩时的工具结果裁剪及其引发的会话投影读取失败（输出预算仍保留 8192，目录不可达时回退原默认值）。
 - Register the plugin market's `plugins/dsh-discover` bridge endpoint (and the previously missing `plugins/dsh-index-refresh`) in the Studio operation allowlist so the Host accepts them instead of rejecting them as unknown control endpoints.
@@ -95,6 +79,45 @@
 - Adapt team message forwarding to direct Inbox delivery so member reports reach the lead model. Install missing official plugin bundles through their exact Host-provided target, and use the new built-in scheduling service.
 - Require a valid packaged update source before accepting signed desktop artifacts. Support signing with an explicitly selected existing macOS keychain without exporting private keys.
 - Show the environment and region when a cloud runtime image catalog is absent, with an entry to the cloud settings. Preserve the user's selected environment.
+- MCP 资源页的 JSON 识别不再只认 `mcpServers`：同时支持 VS Code 的 `servers`、裸名称映射、单个/多个服务配置和数组；`type: sse` 不再被当成 HTTP 处理。自定义认证 Header（如 `X-Service-Token`）会转成 Host 凭证引用（`server.envRefs`），字面量密钥只写入本机凭证服务、不落资源目录；本地 MCP 存储现在也拒绝非 `env://` 的凭证引用，避免明文密钥被写进记录文件。新增识别摘要、多服务选择和按 Header 的凭证输入行，可配置和轮换非 Authorization 认证 Header。
+
+## 0.0.13
+
+- Remove Personal Assistant runtime, Host routes, contracts, documentation and tests from Studio so the package remains a generic DSH plugin.
+- Keep the Studio surface compatible with DSH 0.2.2 public APIs and add a standalone DSH plugin purity gate.
+- Verify the decoupled package with the complete Studio gate: 5180 tests, 5178 passed, 0 failed, 2 skipped.
+
+## 0.0.12
+
+- Upgrade Studio's pinned DSH baseline to `dsh-v0.2.2-rc.1`; the maintained series now has 43 active patches and 7 retired entries.
+- Add native prompt prediction with bounded Host context, ghost-text acceptance (Tab/Right Arrow), Escape dismissal, a local Settings toggle, and fail-closed behavior when history or model state is unavailable.
+
+- 去掉覆盖在窗口顶部 30px 的全宽透明拖动条：它把页面顶部的按钮盖在拖拽区下面，点击被吞掉、必须点得非常精准才生效；窗口拖动改由标题行/页头的 `data-studio-drag-region` 承担，交互元素保持 `no-drag`。
+- 桌面端启动对齐改为“物化”而不是“退役”：把运行时内置的产品插件连同其依赖闭包按文件写入 profile（Electron 的 asar 没有目录句柄，`cpSync` 会把 `.6` 直接拷崩），钉住版本，并在原生恢复清空 `dsh.profile.bundles` 后把 `@kingsoftcloud/agentkit-studio` 补回——此前正是这一项缺失导致界面只剩默认 DSH、插件根本不参与加载。
+- 装完必须“可加载”才算成功：每个非安装自带的依赖都要从 profile 锚点解析成功、每个相对导出入口都要存在；校验不过就回滚 `package.json` 与旧副本，绝不删除原本可用的插件。同一版本连续失败两次后停止尝试。
+- Host 侧对齐不再搬迁/删除 profile 副本，只补齐 bundle 选择并校验可加载性；`.alignment-attempt` 预算保留。
+
+## 0.0.11
+
+- 桌面端启动时的插件对齐不再把运行时自带的插件复制到 profile：改为备份并移除旧的 profile 副本，让 DSH 的安装锚点直接解析 `app.asar` 内的插件，避免搬出 asar 后缺失 `@deepseek-ai/*` 依赖；改写前逐一校验 bundled 依赖，失败立即还原 `package.json` 与旧副本，同一版本连续失败两次后停止尝试并降级启动。
+
+## 0.0.8
+
+- 云上实例已被删除时，本机残留的绑定按“过期”处理并清理，不再整体判定为授权失败：页面能正常显示“未开通”并给出开通引导，而不是只剩一条 401/403 错误。
+- 个人助理创建改走产品化的部署动作（`CreateAgentProduct`），不再调用 Studio 通用 client 白名单之外的 `CreateAgent`；平台拒绝时透出真实原因（版本不支持、404 未注册、422 参数不符），不再统一提示“请稍后再试”。
+- 内网账号 IAM 把 API 密钥报为 `Inactive`、且 `ListAllUserAccessKeys` 对子账号返回空列表时，通过有界 `ListUsers` 扫描定位密钥属主；属性缺失或存在多个候选时仍保持未验证，不猜测身份。
+- 新建个人助理时默认运行时版本跟到 `0.1.41`（与平台 catalog 默认版本一致）：该版本修复云桌面浏览器窗口超出屏幕导致的标题栏/输入框被裁，并预置可在插件市场直接启用的 Studio 插件。
+
+## 0.0.7
+
+- 云端平台暂时无法返回个人助理实例详情时，设置页退回本机记录的配置清单并说明原因，不再把平台 5xx 当成用户操作失败。
+- 创建个人助理时记录配置清单，使后续设置修改可以复用同一实例身份；旧实例可在本机补齐清单后继续编辑。
+
+## 0.0.6
+
+- 个人助理设置页支持在线配置：模型、系统提示词、运行时版本与环境变量注入；保存时提交一次平台更新，由云端滚动应用到实例，不需要用户手动重启，也不是每个字段都重启一次。
+- 读取设置时敏感环境变量只回显“已配置”，值不出 Studio Host；旧实例缺少本机配置清单时明确提示无法在线修改，而不是用猜测的默认值覆盖云端实例。
+- 云端平台暂不支持个人助理配置更新时，给出可读的原因与建议，不把原始 400 错误直接抛给用户。
 
 ## Desktop 0.2.0-rc.2.20261016.2 - 2026-10-16
 

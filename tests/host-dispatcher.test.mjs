@@ -90,6 +90,40 @@ test('preset routes resolve the current admission after registry replacement', a
   assert.equal((await route('agents/ensure-preset', { agentId: 'fixture' })).value.presetId, 'replacement');
 });
 
+test('ManagedRuntime admission does not require a local Studio deployment receipt', async () => {
+  const managed = { metadata: { id: 'ar-managed', local: false }, source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime' }, spec: { runtime: { type: 'dsh-native' }, bindings: {} } };
+  let connects = 0;
+  const route = createAgentRoutes({
+    agentStorePromise: Promise.resolve({ get: async () => null }),
+    studioBuildPromise: Promise.resolve({ build: { resolve: async () => managed } }),
+    deployments: async () => ({ agents: { connect: async () => { connects++; throw new Error('receipt lookup must not run'); } } }),
+    getAdmission: () => ({ ensure: async agentId => ({ presetId: `preset-${agentId}` }) }),
+    serverClientPromise: Promise.resolve({ getAgent: async () => managed }),
+  });
+  assert.deepEqual((await route('agents/ensure-preset', { agentId: managed.metadata.id })).value, { presetId: 'preset-ar-managed' });
+  assert.equal(connects, 0);
+});
+
+test('ManagedRuntime deletion verifies the cloud identity before calling DeleteAgent', async () => {
+  const managed = { metadata: { id: 'ar-managed', local: false }, source: 'agentengine-managed-runtime', managedRuntime: true,
+    deployment: { DeploymentType: 'ManagedRuntime' }, spec: { runtime: { type: 'dsh-native' }, bindings: {} } };
+  const removed = [];
+  const route = createAgentRoutes({
+    agentStorePromise: Promise.resolve({ get: async () => null }),
+    deploymentClientPromise: Promise.resolve({ forAgent: id => ({ remove: async request => { removed.push({ id, request }); return { data: { Deleted: true } }; } }) }),
+    serverClientPromise: Promise.resolve({ getAgent: async () => managed }),
+  });
+  const signal = new AbortController().signal;
+  assert.deepEqual((await route('agents/managed-delete', { agentId: managed.metadata.id }, signal)).value, { agentId: 'ar-managed', deleted: true, result: { Deleted: true } });
+  assert.deepEqual(removed, [{ id: 'ar-managed', request: { signal } }]);
+
+  const ordinary = { ...managed, managedRuntime: false, source: 'agentengine-server', deployment: { DeploymentType: 'Container' } };
+  const guarded = createAgentRoutes({ serverClientPromise: Promise.resolve({ getAgent: async () => ordinary }), deploymentClientPromise: Promise.resolve({ forAgent: () => ({ remove: async () => { throw new Error('must not delete'); } }) }) });
+  const denied = await guarded('agents/managed-delete', { agentId: ordinary.metadata.id });
+  assert.equal(denied.error.code, 'MANAGED_RUNTIME_REQUIRED');
+});
+
 test('unloading while server initialization is pending cannot start a domain afterwards', async () => {
   let ready, calls = 0;
   const serverClientPromise = new Promise(resolve => { ready = resolve; });
@@ -99,35 +133,4 @@ test('unloading while server initialization is pending cannot start a domain aft
   const result = dispatch('agents/list', {}); owner.abort(); ready({});
   assert.equal((await result).error?.code, 'gateway/cancelled');
   assert.equal(calls, 0);
-});
-
-test('binding the personal assistant configuration admits its verified cloud instance, never its local runtime', async () => {
-  const calls = [];
-  const route = createAgentRoutes({ serverClientPromise: Promise.resolve({}), agentStorePromise: Promise.resolve({ get: async id => { calls.push(['local', id]); return { metadata: { id, local: true } }; } }),
-    assistantSetup: async () => ({ reference: async () => ({ agentId: 'local-assistant', cloudAgentId: 'cloud-assistant' }) }),
-    deployments: async () => ({ agents: { connect: async id => { calls.push(['connect', id]); return {}; } } }),
-    getAdmission: () => ({ ensure: async (id, options) => { calls.push(['admit', id, options]); return { presetId: 'cloud-preset', agentId: id, local: false }; } }) });
-  const result = await route('agents/ensure-preset', { agentId: 'local-assistant' });
-  assert.equal(result.value.agentId, 'cloud-assistant');
-  assert.ok(calls.some(([kind, id]) => kind === 'connect' && id === 'cloud-assistant'));
-  assert.ok(!calls.some(([kind]) => kind === 'local'));
-});
-
-test('an unavailable assistant deployment cannot fall back to the editable local agent', async () => {
-  let admitted = false;
-  const route = createAgentRoutes({ assistantSetup: async () => ({ reference: async () => ({ agentId: 'assistant-config' }) }),
-    getAdmission: () => ({ ensure: async () => { admitted = true; } }) });
-  const result = await route('agents/ensure-preset', { agentId: 'assistant-config' });
-  assert.equal(result.error.code, 'ASSISTANT_DEPLOYMENT_NOT_READY');
-  assert.equal(admitted, false);
-});
-
-test('a personal assistant configuration from another scope never becomes a local execution fallback', async () => {
-  let admitted = false;
-  const route = createAgentRoutes({ assistantSetup: async () => ({ reference: async () => null }),
-    agentStorePromise: Promise.resolve({ get: async () => ({ metadata: { id: 'assistant-config', purpose: 'personal-assistant' } }) }),
-    getAdmission: () => ({ ensure: async () => { admitted = true; } }) });
-  const result = await route('agents/ensure-preset', { agentId: 'assistant-config' });
-  assert.equal(result.error.code, 'ASSISTANT_DEPLOYMENT_NOT_READY');
-  assert.equal(admitted, false);
 });

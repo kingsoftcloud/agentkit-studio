@@ -1,0 +1,911 @@
+diff --git a/apps/desktop-host/src/cli.ts b/apps/desktop-host/src/cli.ts
+index 6c890f8990d3a6a39a5b8df4b4e27d6c59df1623..eea5af8b8e5a0e6f55e7d83e84396fe3d0fd04f6 100644
+--- a/apps/desktop-host/src/cli.ts
++++ b/apps/desktop-host/src/cli.ts
+@@ -1,8 +1,9 @@
+ /** Public dsh commands using the immutable runtime carried by the Desktop installation. */
+ 
+-import { delimiter, dirname, join, resolve } from 'node:path'
++import { dirname, join, resolve } from 'node:path'
+ import { runCli } from '@deepseek-ai/dsh/lib/bin.js'
+ import { installOfficeEngineResolution, runtimeArchivePath } from './office-engine.ts'
++import { desktopPackageManager } from './package-manager.ts'
+ 
+ /**
+  * Run the ordinary CLI with Desktop's bundled package manager and reserved-profile plugin access.
+@@ -14,15 +15,8 @@ export async function runDesktopCli(runtimeDir: string, supportDir: string): Pro
+   installOfficeEngineResolution(runtimeDir)
+   await runCli({
+     manageDesktopProfile: true,
+-    packageManager: {
+-      command: process.execPath,
+-      args: ['--expose-internals', join(supportDir, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')],
+-      env: {
+-        ELECTRON_RUN_AS_NODE: '1',
+-        DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
+-        PATH: `${join(supportDir, 'bin')}${delimiter}${process.env.PATH ?? ''}`,
+-      },
+-    },
++    packageManager: desktopPackageManager(join(supportDir, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs'),
++      join(supportDir, 'bin')),
+   })
+ }
+ 
+diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
+index 48d5dd964488af87b7dcdb56f5a35057be080df4..472daf97bd2c60d29bfd868511e7010622fb3d8b 100644
+--- a/apps/desktop-host/src/index.ts
++++ b/apps/desktop-host/src/index.ts
+@@ -1,8 +1,9 @@
+ /** Launch the Desktop profile through the Web application and report its URL to Electron. */
+ 
+-import { delimiter, join } from 'node:path'
++import { basename, join } from 'node:path'
+ import { randomUUID } from 'node:crypto'
+ import type { PluginOperationRunId } from '@deepseek-ai/dsh-plugin-manager/diagnostic'
++import { prepareDesktopProfilePackages } from '@deepseek-ai/dsh-plugin-manager/operations'
+ import { formatFatalDiagnostic } from './fatal-diagnostic.ts'
+ import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
+ import { runProfile } from '@deepseek-ai/dsh/profile-boot'
+@@ -18,6 +19,7 @@ import { installDesktopQuitInspection } from './quit-inspection.ts'
+ import { installPlatformSessionPublisher } from './platform-session.ts'
+ import { installOfficeEngineResolution } from './office-engine.ts'
+ import { installOperationDiagnostics } from './operation-diagnostics.ts'
++import { desktopPackageManager } from './package-manager.ts'
+ import { resolveDesktopWebPort } from './listen-port.ts'
+ 
+ async function main(): Promise<void> {
+@@ -25,6 +27,13 @@ async function main(): Promise<void> {
+   if (process.connected) process.send?.({ type: 'starting', runId }, (error) => { if (error !== null) console.error(error) })
+   const runtimeDir = process.argv[2] as string
+   const projectDir = process.argv[3] as string
++  const bundledPnpm = process.argv[5]
++  const managed = ['desktop', 'desktop-agentkit-studio'].includes(basename(projectDir))
++  const packageManager = bundledPnpm === undefined ? undefined
++    : { ...desktopPackageManager(bundledPnpm, process.argv[6] ?? ''), repairProfile: managed }
++  if (packageManager?.repairProfile === true) {
++    await prepareDesktopProfilePackages(projectDir, packageManager, join(runtimeDir, 'node_modules'))
++  }
+   installOfficeEngineResolution(runtimeDir)
+   // The sealed runtime declares both DSH and product plugins. Anchoring at
+   // DSH alone hides bundled product dependencies from the profile resolver.
+@@ -37,17 +46,7 @@ async function main(): Promise<void> {
+     resolvedProfile: { profile, installAnchor },
+     patchFiles: [],
+     args: ['--no-open', '--host', '127.0.0.1', '--port', String(resolveDesktopWebPort(projectDir))],
+-    ...(process.argv[5] === undefined ? {} : {
+-      packageManager: {
+-        command: process.execPath,
+-        args: ['--expose-internals', process.argv[5]],
+-        env: {
+-          ELECTRON_RUN_AS_NODE: '1',
+-          DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
+-          PATH: `${process.argv[6] ?? ''}${delimiter}${process.env.PATH ?? ''}`,
+-        },
+-      },
+-    }),
++    ...(packageManager === undefined ? {} : { packageManager }),
+   })
+   let stopping: Promise<void> | undefined
+   const dragReads = new Map<number, AbortController>()
+diff --git a/apps/desktop-host/src/package-manager.ts b/apps/desktop-host/src/package-manager.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..67def814399a4c27571f4da9db7e6cc8953dd08a
+--- /dev/null
++++ b/apps/desktop-host/src/package-manager.ts
+@@ -0,0 +1,22 @@
++/** Select the Desktop installation's own pnpm for all plugin operations. */
++import { delimiter } from 'node:path'
++import type { ProfilePnpmInvocation } from '@deepseek-ai/dsh-app-boot'
++
++/** Construct the invocation shared by the Desktop Host and its installed CLI.
++ * @param pnpm Entry of the bundled pnpm distribution.
++ * @param nodeBin Directory of Desktop's private Node launchers.
++ * @returns An invocation that cannot delegate to a profile-pinned pnpm.
++ */
++export function desktopPackageManager(pnpm: string, nodeBin: string): ProfilePnpmInvocation {
++  return {
++    command: process.execPath,
++    args: ['--expose-internals', pnpm],
++    env: {
++      ELECTRON_RUN_AS_NODE: '1',
++      DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
++      PATH: `${nodeBin}${delimiter}${process.env.PATH ?? ''}`,
++      pnpm_config_pm_on_fail: 'ignore',
++    },
++    repairProfile: true,
++  }
++}
+diff --git a/apps/desktop-host/tests/package-manager.spec.ts b/apps/desktop-host/tests/package-manager.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b472b4624c0c09640b94e79dabeac36a21dde15
+--- /dev/null
++++ b/apps/desktop-host/tests/package-manager.spec.ts
+@@ -0,0 +1,24 @@
++/** The Desktop's pnpm must not delegate to a manager pinned in a plugin profile. */
++import { execFile } from 'node:child_process'
++import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import { promisify } from 'node:util'
++import { expect, it, onTestFinished } from 'vitest'
++import { desktopPackageManager } from '../src/package-manager.ts'
++
++it('runs the bundled pnpm even when the profile pins a different major', async () => {
++  const profile = mkdtempSync(join(tmpdir(), 'desktop-bundled-pnpm-'))
++  onTestFinished(() => { rmSync(profile, { recursive: true, force: true }) })
++  const bundled = fileURLToPath(new URL('../../desktop/node_modules/pnpm/', import.meta.url))
++  const { version } = JSON.parse(readFileSync(join(bundled, 'package.json'), 'utf8')) as { version: string }
++  const manifest = '{"name":"test-profile","private":true,"packageManager":"pnpm@10.33.2"}'
++  writeFileSync(join(profile, 'package.json'), manifest)
++  const invocation = desktopPackageManager(join(bundled, 'bin', 'pnpm.mjs'), bundled)
++  const { stdout } = await promisify(execFile)(invocation.command, [...invocation.args, '--version'], {
++    cwd: profile, env: { ...process.env, pnpm_config_offline: 'true', ...invocation.env }, timeout: 10_000,
++  })
++  expect(stdout.trim()).toBe(version)
++  expect(readFileSync(join(profile, 'package.json'), 'utf8')).toBe(manifest)
++})
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index 5cc53599d5af4b765f6ed3c65c26add06648a490..b8e0f362e6e22ed7d9ea139d1af7f1f6d6d195b5 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -170,12 +170,12 @@ On macOS the custom menu retains Electron's standard Window menu and application
+ The signed `resources/app.asar/dsh/desktop-runtime.json` binds the shell version, Electron's Node version, platform, architecture, shared package versions, and final file inventory. Startup reads the metadata and checks shared package records. Release schema, shell version, target compatibility, and file integrity are verified during packaging. Reintroducing startup release comparisons requires a concrete installation failure that packaging validation and actual Host diagnostics cannot adequately explain. Core packages are never copied into profile storage or installed by pnpm at first launch.
+ 
+ 1. The main window loads the shared Web loading page offscreen from packaged static assets before profile preparation or backend startup. Shared profile initialization creates missing manifest, empty user patch, and pnpm workspace files without overwriting existing files.
+-2. Before Host startup, Desktop validates the runtime descriptor and prepares the profile without modifying installed packages, dependency declarations, or the lockfile. Newly shipped product bundles are added to the activation list once; packaged product bundles are restored after native recovery, while third-party bundle deactivation remains in the profile manifest. Invalid activation history stops startup. Desktop removes only the `.dsh-module-fallback` projections earlier link-backend launches wrote, and startup never runs pnpm. Packages inside the profile keep native precedence, and installation package names resolve through the runtime resolution ([lookup order](../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.md); [cleanup removal](../../.agents/notes/implemented/simplification/2026-09-19-remove-desktop-profile-core-cleanup.md)).
++2. Before Host startup, Desktop validates the runtime descriptor and prepares the profile. Newly shipped product bundles are added to the activation list once; packaged product bundles are restored after native recovery, while third-party bundle deactivation remains in the profile manifest. Invalid activation history stops startup. Desktop removes the `.dsh-module-fallback` projections earlier link-backend launches wrote. Packages inside the profile keep native precedence, and installation package names resolve through the runtime resolution ([lookup order](../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.md)).
+ 3. Changes to Electron's Node version, platform, or architecture preserve installed plugins. Native incompatibilities surface during loading and can be repaired through pnpm.
+-4. The main application’s Plugins page uses the shared [plugin manager](../../packages/boot/plugin-manager/README.md) against the Desktop profile. Package operations use bundled pnpm with normal user and profile configuration.
++4. The main application’s Plugins page uses the shared [plugin manager](../../packages/boot/plugin-manager/README.md) against the Desktop profile. Package operations use the bundled pnpm even if the profile pins another version.
+ 5. The shared manager owns installation errors, activation, and restart requirements. Native recovery can disable third-party bundles even when the Host cannot start.
+ 
+-The [Web plugin UI](../../packages/client/ui-plugin-manager/README.md) owns the management interface. Desktop profile initialization and recovery preserve installed plugin files.
++Before loading a managed Desktop profile with packages, and before plugin package changes, Desktop compares the recorded pnpm major and store with the bundled pnpm. It also checks required package manifests and local DSH runtime entries. If a rebuild is needed, Desktop holds the profile writer lock, retains the old `node_modules`, and uses the existing lockfile to reinstall without running package scripts. It verifies the replacement before keeping it. A failed or interrupted rebuild restores the old tree after the package process stops. A plugin change that leaves an invalid tree is reported as failed; Desktop attempts to restore the prior dependencies. Startup repair diagnostics are in `.plugin-manager/profile-recovery.log` inside the profile. The [Web plugin UI](../../packages/client/ui-plugin-manager/README.md) owns the management interface.
+ 
+ Desktop fatal failures use native recovery with Exit, Restart, Disable third-party plugins, back up profile patch, and restart, and Get diagnostic report. See [recovery and diagnostics](docs/diagnostics/README.md) for triggers, report locations and contents, recent operation records, and shutdown limits.
+ 
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index f35cd4cee9900f1582853bcc3c7b05d3a2c70e09..b5e3b57260b5dc3bd43cb8748538360b1ba1dbfb 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -170,12 +170,12 @@ macOS 上自定义菜单保留 Electron 的标准 Window 菜单及应用隐藏
+ 签名资源中的 `resources/app.asar/dsh/desktop-runtime.json` 绑定 shell 版本、Electron 的 Node 版本、平台、架构、共享包版本和最终文件清单。启动读取元数据，并检查共享包记录。发布 schema、shell 版本、目标兼容性和文件完整性在打包时验证。只有出现打包校验与实际 Host 诊断无法充分解释的具体安装故障，才重新引入启动时的发布信息比较。首次启动不会把核心包复制到 profile 存储或通过 pnpm 安装核心包。
+ 
+ 1. 主窗口在 profile 准备或后端启动前，从打包静态资源于屏幕外加载共享 Web 加载页。共享 profile 初始化创建缺失的 manifest、空用户 patch 与 pnpm workspace 文件，不覆盖现有文件。
+-2. 启动 Host 前，Desktop 校验运行时描述符并准备 profile，不改动已安装的包、依赖声明与锁文件。新随包提供的产品 bundle 只加入激活列表一次；原生恢复后会重新启用随应用提供的产品 bundle，第三方 bundle 的禁用仍保留在 profile 清单中。激活历史无效时停止启动。Desktop 只删除早期 Link 后端启动写下的 `.dsh-module-fallback` 投影，启动从不运行 pnpm。profile 内的包保持原生优先级，本体包名通过 runtime resolution 解析（[查找顺序](../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.zh.md)；[清理移除](../../.agents/notes/implemented/simplification/2026-09-19-remove-desktop-profile-core-cleanup.zh.md)）。
++2. 启动 Host 前，Desktop 校验运行时描述符并准备 profile。新随包提供的产品 bundle 只加入激活列表一次；原生恢复后会重新启用随应用提供的产品 bundle，第三方 bundle 的禁用仍保留在 profile 清单中。激活历史无效时停止启动。Desktop 删除早期 Link 后端启动写下的 `.dsh-module-fallback` 投影。profile 内的包保持原生优先级，本体包名通过 runtime resolution 解析（[查找顺序](../../.agents/notes/implemented/architecture/2026-09-19-profile-resolution-lookup-order.zh.md)）。
+ 3. Electron 的 Node 版本、平台或架构变化时保留已安装插件。原生兼容性问题在加载时报错，可通过 pnpm 修复。
+-4. 主应用的“插件”页面通过共享[插件管理器](../../packages/boot/plugin-manager/README.zh.md)操作 Desktop profile。包操作使用内置 pnpm 及正常的用户和 profile 配置。
++4. 主应用的“插件”页面通过共享[插件管理器](../../packages/boot/plugin-manager/README.zh.md)操作 Desktop profile。即使 profile 指定了其他 pnpm 版本，包操作仍使用内置 pnpm。
+ 5. 共享管理器负责安装错误、激活和重启要求。即使 Host 无法启动，原生恢复仍可禁用第三方 bundle。
+ 
+-[Web 插件 UI](../../packages/client/ui-plugin-manager/README.zh.md)负责管理界面。Desktop profile 初始化和恢复保留已安装插件文件。
++在加载有依赖的桌面 profile 前，以及修改插件包前，Desktop 会比较依赖目录记录的 pnpm 主版本和 store 与内置 pnpm 的实际值，并检查必要的包清单与本地 DSH 运行时入口。需要重建时，Desktop 持有 profile 写锁，保留原 `node_modules`，按现有锁文件重装且不运行包脚本。替换通过检查后才保留。重建失败或中断时，Desktop 在包进程停止后还原旧目录。如果插件操作导致依赖目录损坏，Desktop 会报告操作失败，并尝试恢复原依赖。启动修复诊断位于 profile 内的 `.plugin-manager/profile-recovery.log`。[Web 插件 UI](../../packages/client/ui-plugin-manager/README.zh.md)负责管理界面。
+ 
+ Desktop 的致命故障通过原生恢复对话框提供退出、重启、禁用第三方插件并备份 profile patch 后重启，以及获取诊断报告。触发范围、报告位置与内容、近期操作记录和退出限制见[故障恢复与诊断](docs/diagnostics/README.zh.md)。
+ 
+diff --git a/packages/boot/app-boot/src/profile-context.ts b/packages/boot/app-boot/src/profile-context.ts
+index e2ebfad5ce813370930caae11c7997add252893f..3325c5563978b310ab3ac25548e44fe55a22f9f2 100644
+--- a/packages/boot/app-boot/src/profile-context.ts
++++ b/packages/boot/app-boot/src/profile-context.ts
+@@ -9,6 +9,8 @@ export interface ProfilePnpmInvocation {
+   readonly command: string
+   readonly args: readonly string[]
+   readonly env: Readonly<Record<string, string>>
++  /** Opt the managed Desktop profile into checking and repairing its package tree. */
++  readonly repairProfile?: boolean
+ }
+ 
+ /** Current profile facts; scheduling and mutation belong to their callers. */
+diff --git a/packages/boot/plugin-manager/src/index.ts b/packages/boot/plugin-manager/src/index.ts
+index ceb82aac476df7c7d928f7f111f114c118f2bd81..18de09104e13697b2e5b04ef431351d698198ebf 100644
+--- a/packages/boot/plugin-manager/src/index.ts
++++ b/packages/boot/plugin-manager/src/index.ts
+@@ -1046,7 +1046,7 @@ export class PluginManager extends TypertRemoteService {
+   @Remote
+   removeBundle(name: string): Promise<ChangeResult> {
+     return this.change(async (result) => {
+-      const installed = await this.configure(async () => {
++      const unload = () => this.configure(async () => {
+         const bundle = (await this.listBundles()).find(item => item.name === name)
+         if (bundle === undefined || !bundle.removable) throw new ManagementFailure('not-removable')
+         if (this.ownerContext.get('hmr') === undefined && (this.profile.startedBundles.includes(name)
+@@ -1065,11 +1065,15 @@ export class PluginManager extends TypertRemoteService {
+         }
+         return bundle.installed
+       })
+-      if (!installed) return
++      const guarded = this.profile.packageManager?.repairProfile === true
++      if (guarded) {
++        if (!Object.hasOwn(readProfileManifest('dsh', this.profile.dir).dependencies ?? {}, name)) { await unload(); return }
++      } else if (!await unload()) return
+       // `pnpm remove` takes no `--registry` option; the generic configuration flag sets the same setting. A package
+       // installed before this process started is removed with the registry an installation asks first.
+       const registry = this.installedFrom.has(name) ? this.installedFrom.get(name) : this.configuredRegistries.registry
+-      result.packageResult = await this.runPnpm(['remove', name, ...typeof registry === 'string' ? [`--config.registry=${registry}`] : []])
++      result.packageResult = await this.runPnpm(['remove', name, ...typeof registry === 'string' ? [`--config.registry=${registry}`] : []],
++        undefined, undefined, guarded ? async () => { await unload() } : undefined)
+       if (result.packageResult.exitCode !== 0 || result.packageResult.timedOut === true) {
+         throw new Error(result.packageResult.output)
+       }
+@@ -1114,6 +1118,7 @@ export class PluginManager extends TypertRemoteService {
+   /** Run one pnpm command in the profile, streaming its output as install-log chunks. */
+   private async runPnpm(
+     args: readonly string[], signal?: AbortSignal, requestId?: PluginInstallRequestId,
++    beforeRun?: () => Promise<void>,
+   ): Promise<PackageResult> {
+     const jobId = randomUUID()
+     const argv = ['pnpm', ...args]
+@@ -1124,6 +1129,7 @@ export class PluginManager extends TypertRemoteService {
+       signal: signal === undefined ? this.abort.signal : AbortSignal.any([this.abort.signal, signal]),
+       outputBytes: this.outputBytes, activateNewBundles: false, idleTimeoutMs: this.idleTimeoutMs,
+       lookupTimeoutMs: this.inspectTimeoutMs,
++      ...beforeRun === undefined ? {} : { beforeRun },
+       onOutput: (text, stream) => {
+         this.ownerContext.emit('plugin-manager/install-log', { ...identity, jobId, argv, cwd, stream, text })
+       },
+diff --git a/packages/boot/plugin-manager/src/operations.ts b/packages/boot/plugin-manager/src/operations.ts
+index d0ab1dccab51614d890918b6d72fa5c1c40d3c27..641627cb1afd57a794fab0ff745bcaeea5d323f1 100644
+--- a/packages/boot/plugin-manager/src/operations.ts
++++ b/packages/boot/plugin-manager/src/operations.ts
+@@ -2,14 +2,16 @@
+ import { once } from 'node:events'
+ import { existsSync, readFileSync } from 'node:fs'
+ import { mkdir, mkdtemp, open, rm } from 'node:fs/promises'
+-import { join, resolve } from 'node:path'
++import { isAbsolute, join, resolve } from 'node:path'
+ import { execa } from 'execa'
++import semver from 'semver'
+ import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
+ import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+ import {
+   assertBundlePlatform, UnsupportedBundlePlatformError, bundlePatchPaths, initProfile, readProfileManifest,
+   resolveBundleDir, resolveProfileDir, loadOverlayPatches, composeEntries, readProfileVersionExemptions,
+   evaluatePluginCompatibility, pluginCompatibilityWarning, type ProfileManifest,
++  type ProfileContext,
+ } from '@deepseek-ai/dsh-app-boot'
+ import { PROFILE_TEMPLATES, DEFAULT_PROFILE_BUNDLES } from '@deepseek-ai/dsh-official-bundles'
+ import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+@@ -17,6 +19,10 @@ import { parseInstallSpec } from './install-spec.ts'
+ import { awaitTreeGone, leadsOwnGroup, treeAlive, type RunTree } from './run-tree.ts'
+ import { incompatiblePlugin } from './failure.ts'
+ import type { IncompatiblePlugin, PackageResult, Registry } from './types.ts'
++import {
++  hasProfilePackages, profilePackageIssue, profilePackageRepairPending, quarantineEmptyCoreShadows,
++  replaceProfilePackages, restoreInterruptedProfileRepair, type ProfilePnpmIdentity,
++} from './profile-package-recovery.ts'
+ export { setProfileVersionExemption, readProfileVersionExemptions } from '@deepseek-ai/dsh-app-boot'
+ 
+ /** Profile and invocation locations supplied by the launcher. */
+@@ -37,6 +43,10 @@ export interface PackageOperationOptions {
+   args?: readonly string[]
+   /** Application runtime environment, applied only to this package operation. */
+   env?: Readonly<Record<string, string>>
++  /** Check and recover the managed Desktop package tree before a mutation. */
++  repairProfile?: boolean
++  /** Unload a removed bundle after preflight but before pnpm writes package files. */
++  beforeRun?: () => Promise<void>
+   /** CLI inherits authentication and terminal descriptors; service scrubs secrets and captures output. */
+   execution: 'cli' | 'service'
+   signal?: AbortSignal
+@@ -248,6 +258,155 @@ async function activeRecordedRun(dir: string): Promise<string | undefined> {
+   return undefined
+ }
+ 
++const PNPM_PROBE_TIMEOUT_MS = 5_000
++const PNPM_REPAIR_TIMEOUT_MS = 60_000
++const READ_ONLY_COMMANDS = new Set(['list', 'ls', 'outdated', 'why', 'view', 'info', 'search', 'help'])
++
++interface PnpmRunOptions {
++  command?: string | undefined
++  args?: readonly string[] | undefined
++  signal?: AbortSignal | undefined
++}
++
++async function bundledPnpmIdentity(dir: string, options: PnpmRunOptions, env: NodeJS.ProcessEnv): Promise<ProfilePnpmIdentity> {
++  const probe = async (args: string[]) => {
++    const result = await execa(options.command ?? 'pnpm', [...options.args ?? [], ...args], {
++      cwd: dir, env, extendEnv: false, stdin: 'ignore', reject: false, timeout: PNPM_PROBE_TIMEOUT_MS,
++      ...options.signal === undefined ? {} : { cancelSignal: options.signal },
++    })
++    return result.exitCode === 0 && !result.timedOut ? result.stdout.trim().split(/\r?\n/).at(-1) : undefined
++  }
++  const [version, storeDir] = await Promise.all([probe(['--version']), probe(['store', 'path'])])
++  if (version === undefined || semver.valid(version) === null || storeDir === undefined || !isAbsolute(storeDir)) {
++    throw new Error('could not check the bundled pnpm version and store')
++  }
++  return { version, storeDir }
++}
++
++async function reinstallLockedProfile(dir: string, options: PnpmRunOptions, env: NodeJS.ProcessEnv): Promise<void> {
++  const child = execa(options.command ?? 'pnpm', [
++    ...options.args ?? [], 'install', '--frozen-lockfile', '--ignore-scripts', '--prefer-offline',
++    '--config.ignore-pnpmfile=true', '--config.recursive-install=false', '--config.fetch-retries=0',
++    '--config.modules-dir=node_modules', '--config.virtual-store-dir=node_modules/.pnpm',
++    '--config.lockfile-dir=.', '--config.enable-global-virtual-store=false',
++  ], {
++    cwd: dir, env: { ...env, CI: 'true' }, extendEnv: false, stdin: 'ignore', reject: false,
++    killDescendants: true, timeout: PNPM_REPAIR_TIMEOUT_MS,
++    ...options.signal === undefined ? {} : { cancelSignal: options.signal },
++  })
++  const tree = { pid: child.pid, grouped: leadsOwnGroup('service') }
++  let result
++  try {
++    await recordRun(dir, tree)
++    result = await child
++  } catch (error) {
++    if (treeAlive(tree)) {
++      child.kill()
++      await child.catch(() => { /* The package run's original failure is reported below. */ })
++    }
++    throw error
++  } finally {
++    await awaitTreeGone(tree)
++    if (!treeAlive(tree)) await rm(runRecordPath(dir), { force: true })
++  }
++  if (treeAlive(tree)) throw new Error('a repair process is still active; the previous tree is retained for recovery')
++  if (result.exitCode === 0 && !result.timedOut && !result.isCanceled) return
++  const code = /\bERR_PNPM_[A-Z0-9_]+\b/.exec(result.stderr + result.stdout)?.[0]
++  throw new Error(result.timedOut ? 'the locked reinstall timed out' : result.isCanceled ? 'the locked reinstall was cancelled'
++    : `the locked reinstall failed${code === undefined ? '' : ` (${code})`}`)
++}
++
++async function rebuildProfile(
++  dir: string, expected: ProfilePnpmIdentity, options: PnpmRunOptions, env: NodeJS.ProcessEnv, initiallyEmpty = false,
++): Promise<void> {
++  const files = ['pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml'].map((name) => {
++    const path = join(dir, name)
++    return { path, text: optionalFile(path) }
++  })
++  if (!initiallyEmpty && files[0]?.text === undefined) throw new Error('a pnpm lockfile is required to restore the existing plugin versions')
++  const restoreInputs = async (): Promise<boolean> => {
++    let changed = false
++    for (const { path, text } of files) {
++      if (optionalFile(path) === text) continue
++      changed = true
++      if (text === undefined) await rm(path, { force: true })
++      else await writeFileAtomic(path, text, { mode: 0o600 })
++    }
++    return changed
++  }
++  await replaceProfilePackages(dir, async () => {
++    try {
++      options.signal?.throwIfAborted()
++      if (!initiallyEmpty) await reinstallLockedProfile(dir, options, env)
++    } catch (error) {
++      if (optionalFile(runRecordPath(dir)) === undefined) await restoreInputs()
++      throw error
++    }
++    if (await restoreInputs()) throw new Error('the locked reinstall attempted to change profile configuration')
++    const issue = profilePackageIssue(dir, expected)
++    if (issue !== undefined) throw new Error(issue)
++  }, async () => await activeRecordedRun(dir) === undefined)
++}
++
++async function checkAndRepairProfile(
++  dir: string, options: PnpmRunOptions, env: NodeJS.ProcessEnv, notice: (text: string) => void | Promise<void>,
++): Promise<ProfilePnpmIdentity> {
++  if (await restoreInterruptedProfileRepair(dir)) await notice('restored the tree retained by an interrupted repair')
++  const expected = await bundledPnpmIdentity(dir, options, env)
++  const issue = profilePackageIssue(dir, expected)
++  if (issue !== undefined) {
++    await notice(`rebuilding the profile package tree: ${issue}`)
++    await rebuildProfile(dir, expected, options, env)
++    await notice(`verified the rebuilt tree with pnpm ${expected.version}`)
++  }
++  return expected
++}
++
++/** Verify a managed Desktop profile before it is loaded, using the same write lock as plugin mutations.
++ * A fresh profile starts without invoking pnpm. If repair fails but the previous tree is retained, the
++ * Host can try that tree. A package writer or an unresolved swap prevents the Host from using the tree.
++ * @param dir Initialized Desktop profile directory.
++ * @param packageManager The bundled executable and its package-only environment.
++ * @param runtimeModules Installation's package directory; when omitted, empty shadows are left alone.
++ * @returns When the tree can be read; rejects when its package writer or interrupted swap has not settled.
++ */
++export async function prepareDesktopProfilePackages(
++  dir: string, packageManager: NonNullable<ProfileContext['packageManager']>, runtimeModules?: string,
++): Promise<void> {
++  const notes: string[] = []
++  try {
++    await withFileLock(join(dir, 'package.json'), async () => {
++      const active = await activeRecordedRun(dir)
++      if (active !== undefined) throw new Error('an earlier package operation is still active')
++      if (!hasProfilePackages(dir)) return
++      try {
++        await checkAndRepairProfile(dir, packageManager, { ...scrubbedParentEnv(), ...packageManager.env }, (text) => { notes.push(text) })
++      } catch (error) {
++        if (profilePackageRepairPending(dir)) throw error
++        if (runtimeModules !== undefined) {
++          const moved = await quarantineEmptyCoreShadows(dir, runtimeModules)
++          if (moved.length > 0) notes.push(`isolated empty core package directories: ${moved.join(', ')}`)
++        }
++        const note = `profile dependency repair: ${error instanceof Error ? error.message : String(error)}; starting with the previous tree`
++        notes.push(note)
++        console.warn(`dsh: ${note}`)
++      }
++    })
++  } catch (error) {
++    notes.push(`profile dependency repair: ${error instanceof Error ? error.message : String(error)}`)
++    throw error
++  } finally {
++    if (notes.length > 0) {
++      try {
++        await writeFileAtomic(join(dir, '.plugin-manager', 'profile-recovery.log'),
++          [new Date().toISOString(), ...notes, ''].join('\n'), { mode: 0o600, dirMode: 0o700 })
++      } catch (error) {
++        console.warn('dsh: could not write the profile dependency repair log', error)
++      }
++    }
++  }
++}
++
+ /** pnpm can install plugins through any direct-dependency field. */
+ function directDependencies(manifest: ProfileManifest): Record<string, string> {
+   const extra = manifest as ProfileManifest & { devDependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }
+@@ -311,6 +470,26 @@ export async function runProfilePnpm(
+     const bytes = Buffer.from(active)
+     return { exitCode: 1, output: bytes.subarray(Math.max(0, bytes.length - options.outputBytes)).toString('utf8'), truncated: bytes.length > options.outputBytes, logPath }
+   }
++  const environment = { ...(options.execution === 'cli' ? process.env : scrubbedParentEnv()), ...options.env }
++  const managed = options.repairProfile === true && ['desktop', 'desktop-agentkit-studio'].includes(context.profile)
++    && !READ_ONLY_COMMANDS.has(args.find(argument => !argument.startsWith('-')) ?? '')
++  let expectedPnpm: ProfilePnpmIdentity | undefined
++  let initiallyEmpty = false
++  if (managed) {
++    const note = async (message: string) => {
++      const line = `dsh: ${message}\n`
++      await log.write(line)
++      options.onOutput?.(line, 'stderr')
++    }
++    try {
++      expectedPnpm = await checkAndRepairProfile(dir, options, environment, note)
++      initiallyEmpty = !hasProfilePackages(dir)
++    } catch (error) {
++      const message = `profile dependency repair: ${error instanceof Error ? error.message : String(error)}; plugin change was not started.`
++      await note(message)
++      return { exitCode: 1, output: message.slice(0, options.outputBytes), truncated: message.length > options.outputBytes, logPath }
++    }
++  }
+   const before = readProfileManifest('dsh', dir)
+   const savedFiles = ['package.json', 'pnpm-lock.yaml'].map(name => ({ path: join(dir, name), text: optionalFile(join(dir, name)) }))
+   const beforeDependencies = directDependencies(before)
+@@ -324,7 +503,6 @@ export async function runProfilePnpm(
+       output = output.subarray(output.length - options.outputBytes)
+     }
+   }
+-  const environment = { ...(options.execution === 'cli' ? process.env : scrubbedParentEnv()), ...options.env }
+   const restore = async (): Promise<void> => {
+     for (const file of savedFiles) {
+       if (file.text === undefined) await rm(file.path, { force: true })
+@@ -361,6 +539,7 @@ export async function runProfilePnpm(
+     } catch (error) { void error; continue }
+   }
+   if (preflight.length > 0) return await rejected(preflight, 'nothing was installed')
++  await options.beforeRun?.()
+   const cancellation = new AbortController()
+   // A service run captures output, so execa terminates the tree it leads when the
+   // run is killed: a lifecycle script outlives the pnpm process that started it.
+@@ -425,6 +604,7 @@ export async function runProfilePnpm(
+   // for a silence bound to observe: it would fire on a healthy run.
+   if (collectors.length > 0) armIdle()
+   let exitCode: number
++  let clearRunRecord = true
+   try {
+     await recordRun(dir, { pid: child.pid, grouped })
+     // execa resolves its promise only once the piped stdio has ended, so the
+@@ -475,6 +655,31 @@ export async function runProfilePnpm(
+       truncated = Buffer.byteLength(diagnostic) > options.outputBytes
+       output = Buffer.from(diagnostic).subarray(0, options.outputBytes)
+     }
++    if (expectedPnpm !== undefined && !treeAlive({ pid: child.pid, grouped })) {
++      let issue: string | undefined
++      try { issue = profilePackageIssue(dir, expectedPnpm) } catch (error) {
++        issue = `could not verify the package tree: ${error instanceof Error ? error.message : String(error)}`
++      }
++      if (issue !== undefined) {
++        exitCode = 1
++        let outcome: string
++        try {
++          await restore()
++          // The original writer has settled. A recovery run owns its own record.
++          await rm(runRecordPath(dir), { force: true })
++          clearRunRecord = false
++          // Rollback still has to complete when the caller cancelled the plugin change.
++          await rebuildProfile(dir, expectedPnpm, { command: options.command, args: options.args }, environment, initiallyEmpty)
++          outcome = 'the previous plugin dependencies were restored'
++        } catch (error) {
++          outcome = `could not verify recovery: ${error instanceof Error ? error.message : String(error)}`
++        }
++        const diagnostic = `\ndsh: plugin change left an invalid package tree (${issue}); ${outcome}.\n`
++        await log.write(diagnostic)
++        options.onOutput?.(diagnostic, 'stderr')
++        append(Buffer.from(diagnostic))
++      }
++    }
+     // A terminated run's exit status says nothing about what it wrote, so it never reconciles the selection.
+     if (exitCode === 0 && !control.stalled) {
+       const after = readProfileManifest('dsh', dir)
+@@ -547,7 +752,7 @@ export async function runProfilePnpm(
+     control.settled = true
+     clearTimeout(idleTimer)
+     // This process saw the run end, so no successor has to wait for it.
+-    await rm(runRecordPath(dir), { force: true })
++    if (clearRunRecord) await rm(runRecordPath(dir), { force: true })
+     await log.close()
+   }
+   return {
+diff --git a/packages/boot/plugin-manager/src/profile-package-recovery.ts b/packages/boot/plugin-manager/src/profile-package-recovery.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..638087f0f0a126189f58a825b91e506e124826b6
+--- /dev/null
++++ b/packages/boot/plugin-manager/src/profile-package-recovery.ts
+@@ -0,0 +1,187 @@
++/** Validate Desktop's local package tree and retain the previous tree during a locked rebuild. */
++import { randomUUID } from 'node:crypto'
++import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs'
++import { mkdir, mkdtemp, rename } from 'node:fs/promises'
++import { isAbsolute, join, relative, resolve, sep } from 'node:path'
++import { readProfileManifest, type ProfileManifest } from '@deepseek-ai/dsh-app-boot'
++import semver from 'semver'
++import { parse } from 'yaml'
++
++/** Version and configured store reported by the bundled pnpm in this profile. */
++export interface ProfilePnpmIdentity {
++  readonly version: string
++  readonly storeDir: string
++}
++
++const PACKAGE_NAME = /^(?:@[\da-z][\w.-]*\/)?[\da-z][\w.-]*$/i
++const CORE_NAME = /^(?:dsh-|cordis(?:-|$))/
++const recoveryRoot = (dir: string) => join(dir, '.plugin-manager')
++const pendingPath = (dir: string) => join(recoveryRoot(dir), 'pnpm-recovery-pending')
++
++function missing(error: unknown): boolean {
++  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
++}
++
++function localDirectory(path: string): boolean {
++  let stat
++  try { stat = lstatSync(path) } catch (error) { if (missing(error)) return false; throw error }
++  if (!stat.isDirectory()) throw new Error('profile package path is not an ordinary directory')
++  return true
++}
++
++function record(value: unknown): Record<string, unknown> | undefined {
++  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
++}
++
++function readRecord(file: string, decode: (text: string) => unknown): Record<string, unknown> | undefined {
++  try { return record(decode(readFileSync(file, 'utf8'))) } catch (error) {
++    if (missing(error) || error instanceof SyntaxError || (error instanceof Error && error.name === 'YAMLParseError')) return undefined
++    throw error
++  }
++}
++
++function packageNames(dir: string, includeOptional = false): string[] {
++  const manifest: ProfileManifest & { devDependencies?: object; optionalDependencies?: object } = readProfileManifest('dsh', dir)
++  return Object.keys({ ...manifest.dependencies, ...manifest.devDependencies, ...includeOptional ? manifest.optionalDependencies : {} })
++    .filter(name => PACKAGE_NAME.test(name) && (includeOptional || !Object.hasOwn(manifest.optionalDependencies ?? {}, name)))
++}
++
++function localCoreNames(scope: string): string[] {
++  try { return readdirSync(scope).filter(name => CORE_NAME.test(name) && PACKAGE_NAME.test(name)) }
++  catch (error) { if (missing(error)) return []; throw error }
++}
++
++/** Whether a repair still owns the live package directory.
++ * @param dir Initialized Desktop profile directory.
++ * @returns True until the old or new tree has been selected.
++ */
++export function profilePackageRepairPending(dir: string): boolean {
++  return localDirectory(pendingPath(dir))
++}
++
++/** Whether startup must inspect the package project. A fresh empty profile needs no pnpm process.
++ * @param dir Initialized Desktop profile directory.
++ * @returns True for an installed, declared, or interrupted package tree.
++ */
++export function hasProfilePackages(dir: string): boolean {
++  return profilePackageRepairPending(dir) || localDirectory(join(dir, 'node_modules')) || packageNames(dir).length > 0
++}
++
++/** Check the pnpm layout and the packages whose absence can break boot.
++ * @param dir Initialized Desktop profile directory.
++ * @param expected Identity of its bundled pnpm.
++ * @returns A safe diagnostic for a broken tree, or undefined when usable.
++ */
++export function profilePackageIssue(dir: string, expected: ProfilePnpmIdentity): string | undefined {
++  const modules = join(dir, 'node_modules')
++  const required = packageNames(dir)
++  if (!localDirectory(modules)) return required.length === 0 ? undefined : 'node_modules is missing'
++  const metadata = readRecord(join(modules, '.modules.yaml'), parse)
++  if (metadata === undefined && required.length === 0 && readdirSync(modules).length === 0) return undefined
++  const installed = typeof metadata?.packageManager === 'string' && metadata.packageManager.startsWith('pnpm@')
++    ? semver.valid(metadata.packageManager.slice('pnpm@'.length)) : null
++  if (installed === null) return 'the installed pnpm version is missing or invalid'
++  if (semver.major(installed) !== semver.major(expected.version)) return `pnpm ${installed} → ${expected.version}`
++  if (typeof metadata?.storeDir !== 'string' || !isAbsolute(metadata.storeDir)
++    || relative(expected.storeDir, metadata.storeDir) !== '') return 'the installed pnpm store differs from the configured store'
++
++  const scope = join(modules, '@deepseek-ai')
++  const coreNames = new Set(localCoreNames(scope).map(name => `@deepseek-ai/${name}`))
++  for (const name of new Set([...required, ...coreNames])) {
++    const packageDir = join(modules, name)
++    const manifest = readRecord(join(packageDir, 'package.json'), JSON.parse)
++    if (typeof manifest?.name !== 'string') return `${name} is missing its package manifest`
++    // Check existing core shadows as well as declared packages: Node can resolve an
++    // empty local core directory before the signed runtime copy.
++    if (coreNames.has(name) && typeof manifest.main === 'string' && /\.[cm]?js$/.test(manifest.main)) {
++      const entry = resolve(packageDir, manifest.main)
++      const withinPackage = relative(packageDir, entry)
++      if (isAbsolute(withinPackage) || withinPackage === '..' || withinPackage.startsWith(`..${sep}`)
++        || !statSync(entry, { throwIfNoEntry: false })?.isFile()) return `${name} is missing its runtime entry`
++    }
++  }
++  return undefined
++}
++
++/** Unblock resolution when a frozen reinstall is unavailable. Only empty directories without a
++ * declared dependency and with an installation-owned replacement are eligible.
++ * @param dir Initialized Desktop profile directory, held under its package writer lock.
++ * @param runtimeModules The installation's own node_modules directory.
++ * @returns The names moved out of Node's lookup path.
++ */
++export async function quarantineEmptyCoreShadows(dir: string, runtimeModules: string): Promise<string[]> {
++  const modules = join(dir, 'node_modules')
++  const scope = join(modules, '@deepseek-ai')
++  if (!lstatSync(modules, { throwIfNoEntry: false })?.isDirectory()
++    || !lstatSync(scope, { throwIfNoEntry: false })?.isDirectory()) return []
++  const declared = new Set(packageNames(dir, true))
++  const shadows = localCoreNames(scope).filter((name) => {
++    const fullName = `@deepseek-ai/${name}`
++    const local = join(scope, name)
++    if (declared.has(fullName) || !lstatSync(local, { throwIfNoEntry: false })?.isDirectory()
++      || readdirSync(local).length !== 0) return false
++    const manifest = readRecord(join(runtimeModules, fullName, 'package.json'), JSON.parse)
++    return manifest?.name === fullName
++  })
++  if (shadows.length === 0) return []
++  await mkdir(recoveryRoot(dir), { recursive: true, mode: 0o700 })
++  const backup = await mkdtemp(join(recoveryRoot(dir), 'pnpm-empty-shadows-'))
++  for (const name of shadows) await rename(join(scope, name), join(backup, name))
++  return shadows.map(name => `@deepseek-ai/${name}`)
++}
++
++async function archiveRepair(dir: string): Promise<void> {
++  await rename(pendingPath(dir), join(recoveryRoot(dir), `pnpm-recovery-${randomUUID()}`))
++}
++
++async function restoreTree(dir: string, hadModules: boolean): Promise<void> {
++  const pending = pendingPath(dir)
++  const original = join(pending, 'node_modules')
++  const live = join(dir, 'node_modules')
++  const backedUp = localDirectory(original)
++  if (backedUp || !hadModules) {
++    if (localDirectory(live)) await rename(live, join(pending, `rejected-${randomUUID()}`))
++    if (backedUp) await rename(original, live)
++  }
++  await archiveRepair(dir)
++}
++
++/** Recover a stopped repair before reading its live tree. The caller holds the profile lock
++ * and has checked that the previous package process is no longer writing.
++ * @param dir Initialized Desktop profile directory.
++ * @returns True if an interrupted repair was found.
++ */
++export async function restoreInterruptedProfileRepair(dir: string): Promise<boolean> {
++  if (!profilePackageRepairPending(dir)) return false
++  await restoreTree(dir, true)
++  return true
++}
++
++/** Rebuild at pnpm's canonical install path, since hoisted metadata embeds it.
++ * The caller holds the profile lock and guarantees the lockfile is used without changes.
++ * @param dir Initialized Desktop profile directory.
++ * @param install Executes and validates the locked reinstall.
++ * @param quiescent Whether it is safe to move files after failure.
++ * @returns Once the replacement is verified and the old tree has been archived.
++ */
++export async function replaceProfilePackages(
++  dir: string, install: () => Promise<void>, quiescent: () => Promise<boolean>,
++): Promise<void> {
++  const live = join(dir, 'node_modules')
++  const hadModules = localDirectory(live)
++  await mkdir(recoveryRoot(dir), { recursive: true, mode: 0o700 })
++  const pending = pendingPath(dir)
++  await mkdir(pending, { mode: 0o700 })
++  try {
++    if (hadModules) await rename(live, join(pending, 'node_modules'))
++    await install()
++    await archiveRepair(dir)
++  } catch (error) {
++    if (await quiescent()) {
++      try { await restoreTree(dir, hadModules) } catch (rollback) {
++        throw new AggregateError([error, rollback], 'profile dependency repair could not restore the previous tree; the backup is retained')
++      }
++    }
++    throw error
++  }
++}
+diff --git a/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts b/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..be956409a3052e53cb25093fe55c17022b59c381
+--- /dev/null
++++ b/packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts
+@@ -0,0 +1,173 @@
++/** Exercise Desktop profile recovery and the next package mutation with real pnpm. */
++import { execFile } from 'node:child_process'
++import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { fileURLToPath } from 'node:url'
++import { promisify } from 'node:util'
++import { expect, it, onTestFinished } from 'vitest'
++import { initProfile, readProfileManifest } from '@deepseek-ai/dsh-app-boot'
++import { prepareDesktopProfilePackages, runPluginCommand, type PackageOperationOptions } from '../src/operations.ts'
++
++const execute = promisify(execFile)
++const pnpm = fileURLToPath(new URL('../../../../apps/desktop/node_modules/pnpm/bin/pnpm.mjs', import.meta.url))
++const core = '@deepseek-ai/dsh-llm'
++
++function readModules(path: string): { packageManager: string; storeDir: string } {
++  return JSON.parse(readFileSync(path, 'utf8')) as { packageManager: string; storeDir: string }
++}
++
++async function profile() {
++  const root = mkdtempSync(join(tmpdir(), 'desktop-pnpm-'))
++  onTestFinished(() => { rmSync(root, { recursive: true, force: true }) })
++  const dir = join(root, 'profile with spaces')
++  initProfile(dir, ['studio-bundle'])
++  const installAnchor = join(root, 'package.json')
++  writeFileSync(installAnchor, '{}\n')
++  const env = { pnpm_config_store_dir: join(root, 'store'), pnpm_config_pm_on_fail: 'ignore' }
++  for (const [folder, name] of [['core', core], ['addon', 'studio-test-addon']] as const) {
++    const path = join(dir, folder)
++    mkdirSync(join(path, 'lib'), { recursive: true })
++    writeFileSync(join(path, 'package.json'), JSON.stringify({ name, version: '1.0.0', main: 'lib/index.js' }))
++    writeFileSync(join(path, 'lib', 'index.js'), 'module.exports = {}\n')
++  }
++  const manifestPath = join(dir, 'package.json')
++  const manifest = readProfileManifest('test', dir)
++  writeFileSync(manifestPath, JSON.stringify({ ...manifest, dependencies: { [core]: 'file:./core' } }))
++  await execute(process.execPath, [pnpm, 'install', '--offline', '--ignore-scripts'], { cwd: dir, env: { ...process.env, ...env } })
++  const modules = join(dir, 'node_modules')
++  const metadataPath = join(modules, '.modules.yaml')
++  const metadata = readModules(metadataPath)
++  const coreEntry = join(modules, core, 'lib', 'index.js')
++  const packageManager = { command: process.execPath, args: [pnpm], env, repairProfile: true as const }
++  const mutate = (args: string[], overrides: Partial<PackageOperationOptions> = {}) =>
++    runPluginCommand({ dir, profile: 'desktop', cwd: dir, installAnchor }, args, {
++      ...packageManager, execution: 'service', activateNewBundles: false, outputBytes: 8192, idleTimeoutMs: 10_000, ...overrides,
++    })
++  const mismatch = (version = 'pnpm@10.33.2') => {
++    writeFileSync(metadataPath, JSON.stringify({ ...metadata, packageManager: version, storeDir: join(root, 'old-store') }))
++  }
++  return { dir, modules, manifestPath, metadata, metadataPath, coreEntry, packageManager, mutate, mismatch }
++}
++
++it('repairs a previous pnpm major before installing and removing a plugin', async () => {
++  const p = await profile()
++  const patch = join(p.dir, 'cordis.patch.yml')
++  writeFileSync(patch, '# preserve this setting\n[]\n')
++  p.mismatch()
++
++  const installed = await p.mutate(['add', 'file:./addon', '--offline', '--ignore-scripts'])
++  expect(installed.exitCode, installed.output).toBe(0)
++  expect(readModules(p.metadataPath)).toMatchObject({
++    packageManager: p.metadata.packageManager, storeDir: p.metadata.storeDir,
++  })
++  expect(existsSync(join(p.modules, 'studio-test-addon', 'package.json'))).toBe(true)
++  expect(existsSync(p.coreEntry)).toBe(true)
++  const removed = await p.mutate(['remove', 'studio-test-addon'])
++  expect(removed.exitCode, removed.output).toBe(0)
++  expect(existsSync(join(p.modules, 'studio-test-addon'))).toBe(false)
++  expect(readFileSync(patch, 'utf8')).toBe('# preserve this setting\n[]\n')
++  expect(readProfileManifest('test', p.dir).dsh?.profile?.bundles).toEqual(['studio-bundle'])
++}, 20_000)
++
++it('does not run the requested mutation or lose dependencies when the lockfile is stale', async () => {
++  const p = await profile()
++  p.mismatch()
++  const lockPath = join(p.dir, 'pnpm-lock.yaml')
++  const lock = readFileSync(lockPath)
++  const manifest = readProfileManifest('test', p.dir)
++  const updated = JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, missing: 'file:./missing' } })
++  writeFileSync(p.manifestPath, updated)
++
++  let unloaded = false
++  const removed = await p.mutate(['remove', core], { beforeRun: async () => { unloaded = true } })
++  expect(removed.exitCode).toBe(1)
++  expect(removed.output).toContain('profile dependency repair')
++  expect(readFileSync(p.manifestPath, 'utf8')).toBe(updated)
++  expect(readFileSync(lockPath)).toEqual(lock)
++  expect(readFileSync(p.coreEntry, 'utf8')).toBe('module.exports = {}\n')
++  expect(readModules(p.metadataPath).packageManager).toBe('pnpm@10.33.2')
++  expect(unloaded).toBe(false)
++}, 20_000)
++
++it('recovers an interrupted startup repair and migrates a different store in the same major', async () => {
++  const p = await profile()
++  const lock = readFileSync(join(p.dir, 'pnpm-lock.yaml'))
++  const manifest = readFileSync(p.manifestPath)
++  p.mismatch(p.metadata.packageManager)
++  const pending = join(p.dir, '.plugin-manager', 'pnpm-recovery-pending')
++  mkdirSync(pending, { recursive: true })
++  renameSync(p.modules, join(pending, 'node_modules'))
++  mkdirSync(p.modules) // The prior installer stopped after creating its replacement.
++
++  await prepareDesktopProfilePackages(p.dir, p.packageManager)
++  expect(existsSync(p.coreEntry)).toBe(true)
++  expect(existsSync(pending)).toBe(false)
++  expect(readModules(p.metadataPath).storeDir).toBe(p.metadata.storeDir)
++  expect(readFileSync(join(p.dir, 'pnpm-lock.yaml'))).toEqual(lock)
++  expect(readFileSync(p.manifestPath)).toEqual(manifest)
++  const log = join(p.dir, '.plugin-manager', 'profile-recovery.log')
++  const receipt = readFileSync(log, 'utf8')
++  expect(receipt).toContain('interrupted repair')
++  await prepareDesktopProfilePackages(p.dir, p.packageManager)
++  expect(readFileSync(log, 'utf8')).toBe(receipt)
++}, 20_000)
++
++it('isolates only empty undeclared shadows of bundled core packages if a locked rebuild cannot run', async () => {
++  const p = await profile()
++  const manifest = readProfileManifest('test', p.dir)
++  const updated = JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, missing: 'file:./missing' } })
++  writeFileSync(p.manifestPath, updated)
++  const runtimeModules = join(p.dir, 'bundled', 'node_modules')
++  const shadows = ['dsh-session', 'dsh-tools', 'dsh-subagent']
++  for (const name of shadows) mkdirSync(join(p.modules, '@deepseek-ai', name))
++  for (const name of ['dsh-session', 'dsh-tools']) {
++    const pkg = join(runtimeModules, '@deepseek-ai', name)
++    mkdirSync(pkg, { recursive: true })
++    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: `@deepseek-ai/${name}` }))
++  }
++  writeFileSync(join(p.modules, '@deepseek-ai', 'dsh-tools', 'keep'), 'local files')
++
++  await prepareDesktopProfilePackages(p.dir, p.packageManager, runtimeModules)
++
++  expect(existsSync(join(p.modules, '@deepseek-ai', 'dsh-session'))).toBe(false)
++  expect(existsSync(join(p.modules, '@deepseek-ai', 'dsh-subagent'))).toBe(true)
++  expect(readFileSync(join(p.modules, '@deepseek-ai', 'dsh-tools', 'keep'), 'utf8')).toBe('local files')
++  expect(readFileSync(p.manifestPath, 'utf8')).toBe(updated)
++  expect(existsSync(p.coreEntry)).toBe(true)
++}, 20_000)
++
++it('rejects an install that exits zero after breaking a core package and restores the prior dependencies', async () => {
++  const p = await profile()
++  const manifest = readFileSync(p.manifestPath)
++  const lockPath = join(p.dir, 'pnpm-lock.yaml')
++  const lock = readFileSync(lockPath)
++  const runner = join(p.dir, 'pnpm-with-damage.mjs')
++  writeFileSync(runner, `
++    import { spawnSync } from 'node:child_process'
++    import { unlinkSync } from 'node:fs'
++    const args = process.argv.slice(2)
++    const result = spawnSync(process.execPath, [${JSON.stringify(pnpm)}, ...args], { stdio: 'inherit' })
++    if (args[0] === 'add' && result.status === 0) unlinkSync(${JSON.stringify(p.coreEntry)})
++    process.exitCode = result.status ?? 1
++  `)
++  const installed = await p.mutate(['add', 'file:./addon', '--offline', '--ignore-scripts'], { args: [runner] })
++  expect(installed.exitCode).toBe(1)
++  expect(installed.output).toContain('the previous plugin dependencies were restored')
++  expect(existsSync(p.coreEntry)).toBe(true)
++  expect(existsSync(join(p.modules, 'studio-test-addon'))).toBe(false)
++  expect(readFileSync(p.manifestPath)).toEqual(manifest)
++  expect(readFileSync(lockPath)).toEqual(lock)
++}, 20_000)
++
++it('reinstalls a missing core entry even when the pnpm major and store match', async () => {
++  const p = await profile()
++  unlinkSync(p.coreEntry)
++  const shadow = join(p.modules, '@deepseek-ai', 'dsh-session')
++  mkdirSync(shadow)
++
++  const installed = await p.mutate(['add', 'file:./addon', '--offline', '--ignore-scripts'])
++  expect(installed.exitCode, installed.output).toBe(0)
++  expect(readFileSync(p.coreEntry, 'utf8')).toBe('module.exports = {}\n')
++  expect(existsSync(shadow)).toBe(false)
++}, 20_000)

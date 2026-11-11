@@ -252,16 +252,34 @@ const advance = (harness, tree) => {
   next.props.onClick();
   return harness.render();
 };
-// New local authoring defaults to Native. Keep this assertion in the actual
-// form paths so a UI-only default cannot drift from the creation payload.
+// New local authoring defaults to DSH Native and keeps Star Harness hidden until
+// that runtime stabilizes. Harness-specific tests opt in with
+// `allowHarnessRuntime: true` and select it explicitly here.
 const switchToHarness = (harness, tree) => {
-  const runtimeSelect = findBy(tree, node => node.type === 'select' && node.props.value === 'harness');
-  assert.ok(runtimeSelect, 'new local Agent defaults to Native on step 0');
-  return tree;
+  const runtimeSelect = findBy(tree, node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness'));
+  assert.ok(runtimeSelect, 'harness runtime option is available for this test configuration');
+  assert.equal(runtimeSelect.props.value, 'dsh-native', 'new local Agent defaults to DSH Native on step 0');
+  runtimeSelect.props.onChange({ target: { value: 'harness' } });
+  return harness.render();
 };
 
+test('form: new local authoring defaults to DSH Native and hides Star Harness until it is stable', async () => {
+  const hidden = formHarness({ onBack: () => {}, onCreated: () => {} });
+  let tree = hidden.render(); await hidden.flush(); tree = hidden.render();
+  const runtimeSelect = findBy(tree, node => node.type === 'select' && (node.children || []).some(option => ['dsh-native', 'harness', 'codex'].includes(option?.props?.value)));
+  assert.equal(runtimeSelect.props.value, 'dsh-native');
+  assert.equal((runtimeSelect.children || []).some(option => option?.props?.value === 'harness'), false, 'Star Harness is hidden for new Agents');
+  const enabled = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} });
+  let enabledTree = enabled.render(); await enabled.flush(); enabledTree = enabled.render();
+  assert.ok(findBy(enabledTree, node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness')), 'explicit opt-in restores the Star Harness option');
+  const editing = formHarness({ initialAgent: { metadata: { id: 'harness-agent', name: 'Harness', revision: 1 }, source: 'local', spec: { runtime: { type: 'harness' }, bindings: { modelProfileId: 'model-1', plugins: [] } } }, onBack: () => {}, onCreated: () => {} });
+  let editTree = editing.render(); await editing.flush(); editTree = editing.render();
+  const editSelect = findBy(editTree, node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness'));
+  assert.equal(editSelect.props.value, 'harness', 'editing an existing harness Agent keeps its runtime visible');
+});
+
 test('form: harness blank create offers the local memory source and needs no binding', async () => {
-  const harness = formHarness({ onBack: () => {}, onCreated: () => {} });
+  const harness = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = switchToHarness(harness, tree); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree);   // step 0 -> 1
@@ -329,7 +347,7 @@ test('form: cloudEditing keeps the memory enable checkbox read-only', async () =
 // ---------------------------------------------------------------------------
 test('form create(): harness local memory with recall off, candidate write, enabled rollout produces the right spec', async () => {
   const captured = {};
-  const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });
+  const harness = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} }, { captured });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = switchToHarness(harness, tree); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree);   // -> step 1
@@ -363,8 +381,10 @@ test('form create(): harness local memory with recall off, candidate write, enab
 
 test('form saves exact custom Native rules and refuses malformed rules before creating an Agent', async () => {
   const captured = {};
-  const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });
+  const harness = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} }, { captured });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
+  tree = switchToHarness(harness, tree);
+  await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);
   findBy(tree, node => node.type === 'select' && node.children.some(child => child?.props?.value === 'custom'))
     .props.onChange({ target: { value: 'custom' } });
@@ -401,7 +421,7 @@ test('form create(): disabling memory does not fabricate a rollout or a cloud bi
 
 test('form create persists opt-in model extraction and restores it for editing without cloud bindings', async () => {
   const captured = {};
-  const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });
+  const harness = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} }, { captured });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = switchToHarness(harness, tree); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);
@@ -420,7 +440,7 @@ test('form create persists opt-in model extraction and restores it for editing w
 
 test('form create(): local memory with shadow rollout never claims a write', async () => {
   const captured = {};
-  const harness = formHarness({ onBack: () => {}, onCreated: () => {} }, { captured });
+  const harness = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} }, { captured });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = switchToHarness(harness, tree); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);
@@ -506,7 +526,7 @@ test('form seed roundtrip: a harness memory template seed supports local-default
     quickAuthorAgent: async payload => service.create({ templateSource: payload.templateSource, name: payload.name, runtimeType: payload.runtimeType, description: payload.description, spec: payload.spec, bindings: payload.spec?.bindings || {} }),
     updateAgent: async (id, spec, revision, name) => ({ metadata: { id, name, revision: (revision || 1) + 1 } }),
   };
-  const harness = formHarness({ creationSeed: seed, onBack: () => {}, onCreated: () => {} }, { hostRemote, captured });
+  const harness = formHarness({ allowHarnessRuntime: true, creationSeed: seed, onBack: () => {}, onCreated: () => {} }, { hostRemote, captured });
   let tree = harness.render(); await harness.flush(); tree = harness.render();
   tree = advance(harness, tree); tree = advance(harness, tree);   // -> step 2
   assert.ok(findBy(tree, byAria('记忆来源-本地记忆')), 'harness memory seed offers local source without a binding');

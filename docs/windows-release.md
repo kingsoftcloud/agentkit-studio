@@ -4,6 +4,8 @@
 
 在 GitHub Actions 运行 `Release AgentKit Studio Windows`，传入完整 `studio_ref` 和包含该提交的分支。版本、通道和更新源为空时读取该 App 源码的产品定义；正式更新仍应显式提供递增的 `build_version`。构建在 Windows x64 Runner 上执行，不需要开发者本地安装 Windows 工具链。
 
+`release-desktop.yml` 的 macOS 发布批次可设置 `queue_windows=true`：源码准入通过后立即派发本工作流，与签名 macOS 候选并行构建，Windows 构建不再排在 macOS 构建之后。本工作流只产出签名候选（`agentkit-studio-<version>-win-x64` artifact）；写 feed 仍由 `Publish accepted Windows candidate` 或 `scripts/publish-locally.mjs win` 单独执行。
+
 ## 签名配置
 
 `studio-signing` Environment 使用 `CERTUM_ACCOUNT`（空时用 `CERTUM_EMAIL`）、`CERTUM_TOTP_SECRET`、`CERTUM_THUMBPRINT`。TOTP 配置支持完整 `otpauth://` URI；仅有 Base32 seed 时按 SimplySign 的 SHA256、6 位、30 秒格式生成。账号已设置不同参数时应使用完整 URI。静态一次性验证码不用于自动发布。

@@ -1,3 +1,33 @@
+function modelSelectionBoundaryError(error) {
+  const code = String(error?.code || error?.error?.code || '').trim();
+  const field = String(error?.details?.field || error?.error?.details?.field || '').trim();
+  const message = String(error?.message || error?.error?.message || '');
+  return (code === 'gateway/input-invalid' && (!field || field === 'request'))
+    || /session\/selectModel:\s*wire field ["']request["'] failed boundary validation/i.test(message);
+}
+
+/**
+ * Select a Session model without leaking the global default when the current
+ * DSH profile supports `saveDefault: false`. Older installed profiles expose
+ * the same endpoint but reject that optional field at the Typert boundary;
+ * retry once with the legacy request shape so Agent binding remains usable.
+ */
+export async function selectSessionModel(remote, request = {}) {
+  const select = payload => remote.session.selectModel(payload);
+  try {
+    const result = await select(request);
+    if (request?.saveDefault !== false || result?.ok !== false || !modelSelectionBoundaryError(result)) return result;
+    const legacy = { ...request };
+    delete legacy.saveDefault;
+    return select(legacy);
+  } catch (error) {
+    if (request?.saveDefault !== false || !modelSelectionBoundaryError(error)) throw error;
+    const legacy = { ...request };
+    delete legacy.saveDefault;
+    return select(legacy);
+  }
+}
+
 /** Admit a revision/build through the durable DSH APIs before native navigation. */
 export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote, writeConversationAgent, actions, isActive = () => true, console = globalThis.console }) {
   let disposed = false;
@@ -11,16 +41,17 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
     try {
       const admission = value ? await hostRemote.ensureDshPreset(value, buildId) : null;
       if (!active()) return;
-      const sessionId = await navCtx.sessions.create({});
+      // Pass the admitted preset into session creation. Creating a blank
+      // Session with the standard preset and then recomposing it through
+      // `agentPresets.select` leaves the standard persona mounted while the
+      // scoped persona is being installed; DSH correctly rejects that second
+      // registration. The public Session API accepts the preset at creation
+      // time and mounts only the selected composition.
+      const sessionId = await navCtx.sessions.create(admission ? { agentPreset: admission.presetId } : {});
       if (!active()) return;
-      if (admission) {
-        const selected = await remote?.agentPresets?.select?.(sessionId, admission.presetId);
-        if (!active()) return;
-        if (selected === undefined || selected === null || (typeof selected === 'object' && selected.ok === false)) throw new Error(selected?.error?.message || 'DSH 拒绝绑定该 Agent');
-      }
       const modelSelection = options.modelSelection || admission?.modelSelection;
       if (modelSelection) {
-        const result = await remote.session.selectModel({ sessionId, ...modelSelection, saveDefault: false });
+        const result = await selectSessionModel(remote, { sessionId, ...modelSelection, saveDefault: false });
         if (!active()) return;
         if (!result?.ok) throw new Error(result?.error?.message || 'Agent 绑定的模型不可用');
       }

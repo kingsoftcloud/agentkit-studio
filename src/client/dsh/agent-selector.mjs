@@ -1,5 +1,6 @@
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
+import { selectSessionModel } from './session-entry.mjs';
 
 export function createAgentSelector({
   ui: { React: { createElement: h, useEffect, useState }, IconChevronDownOutlineRegular, Input, Menu, MenuItemButton, NativeAuthoringButton, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
@@ -125,7 +126,7 @@ export function createAgentSelector({
           throw refusal;
         }
         if (admission.modelSelection) {
-          const selectedModel = await studioRemote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
+          const selectedModel = await selectSessionModel(studioRemote, { sessionId, ...admission.modelSelection, saveDefault: false });
           if (!selectedModel?.ok) throw new Error(selectedModel?.error?.message || 'Agent 绑定的模型不可用');
         }
         await setAgentPermission(sessionId);
@@ -139,7 +140,7 @@ export function createAgentSelector({
       }
     };
     const selectedAgent = agents.find(agent => (agent?.metadata?.id || agent?.id) === selected);
-    const filtered = agents.filter(agent => !agent.assistant?.configuration && !(agent.metadata?.purpose === 'personal-assistant' && !agent.deployment)).filter(agent => [agent.metadata?.name, agent.metadata?.id, agent.name, agent.id].filter(Boolean).join(' ').toLowerCase().includes(search.trim().toLowerCase()));
+    const filtered = agents.filter(agent => [agent.metadata?.name, agent.metadata?.id, agent.name, agent.id].filter(Boolean).join(' ').toLowerCase().includes(search.trim().toLowerCase()));
     const name = selectedAgent?.metadata?.name || selectedAgent?.name || (selected ? '已绑定 Agent' : '选择 Agent');
     const runtime = selectedAgent?.spec?.runtime?.type;
     return h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0, color: BRAND.inkMuted, fontSize: '12px' } },
@@ -161,10 +162,9 @@ export function createAgentSelector({
         h('div', { role: 'separator', style: { margin: '6px 0', borderTop: '1px solid ' + BRAND.border } }),
         loading ? h('div', { role: 'status', style: { padding: '12px', color: BRAND.inkMuted } }, '正在加载…') : filtered.length ? filtered.map(agent => {
           const id = agent.metadata?.id || agent.id;
-          return h(MenuItemButton, { key: id, disabled: agent.deployment?.available === false, onSelect: () => select(id) }, h('span', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, agent.metadata?.name || agent.name || id), h('span', { style: { fontSize: '11px', color: BRAND.inkMuted } }, agent.deployment ? (agent.metadata?.purpose === 'personal-assistant' ? '个人助理 · 云端' : '云端') : '本地'), selected === id ? h('span', { 'aria-label': '已选择' }, '✓') : null));
+          return h(MenuItemButton, { key: id, disabled: agent.deployment?.available === false, onSelect: () => select(id) }, h('span', { style: { display: 'flex', alignItems: 'center', gap: '12px' } }, h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, agent.metadata?.name || agent.name || id), h('span', { style: { fontSize: '11px', color: BRAND.inkMuted } }, agent.deployment ? '云端' : '本地'), selected === id ? h('span', { 'aria-label': '已选择' }, '✓') : null));
         }) : h('div', { role: 'status', style: { padding: '12px', color: BRAND.inkMuted } }, search ? '没有匹配的 Agent' : '还没有本地 Agent')),
       selected && runtime ? h('span', { style: { whiteSpace: 'nowrap', fontSize: '11px' } }, `${selectedAgent?.deployment ? '云端 · ' : '本地 · '}${RUNTIME_LABELS[runtime]}`) : null,
-      selectedAgent?.assistant?.configuration ? h('span', { role: 'status', style: { maxWidth: '320px', fontSize: '11px' } }, '此历史会话使用本地配置，请选择云端个人助理开启新会话。') : null,
       notice && !notice.startsWith('已') ? h('span', { role: 'status', style: { maxWidth: '320px', color: BRAND.inkMuted, fontSize: '11px' } }, notice) : null,
       h(NativeAuthoringButton, { inputActions }));
   }
