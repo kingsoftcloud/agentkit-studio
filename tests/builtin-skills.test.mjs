@@ -86,7 +86,10 @@ test('builtin skill definition matches the DSH runtime skill contract', () => {
   assert.equal(skill.path, manifestPath);
   assert.equal(skill.source, 'custom');
   assert.equal(skill.provider, 'agentkit-studio');
-  assert.deepEqual(skill.resourceBase, { kind: 'directory', path: dirname(manifestPath) });
+  // The packaged manifest is loaded through Electron's asar-aware module
+  // loader. It has no auxiliary files, so the runtime definition must stay
+  // inline and must not advertise a directory for Native to scan.
+  assert.equal(skill.resourceBase, undefined);
   assert.deepEqual(skill.invocation, { modelInvocable: true, userInvocable: true });
 });
 
@@ -142,16 +145,17 @@ test('builtin skill path exists, is readable and stays inside the package', () =
   const content = readFileSync(skill.path, 'utf8');
   assert.ok(content.includes('---'));
   assert.ok(content.includes('平台资源使用指南'));
-  assert.equal(dirname(skill.path), skill.resourceBase.path);
+  assert.equal(dirname(skill.path), dirname(manifestPath));
 });
 
 test('builtin skill definitions are fresh per call so presets cannot mutate the cache', () => {
   const first = builtinSkillDefinitions();
   first[0].name = 'mutated';
-  first[0].resourceBase.path = '/mutated';
+  first[0].invocation.modelInvocable = false;
   const second = builtinSkillDefinitions();
   assert.equal(second[0].name, BUILTIN);
-  assert.equal(second[0].resourceBase.path, dirname(manifestPath));
+  assert.equal(second[0].invocation.modelInvocable, true);
+  assert.equal(second[0].resourceBase, undefined);
 });
 
 test('zero-binding preset keeps the previous composition: no builtin skill, no new plugins', async () => {

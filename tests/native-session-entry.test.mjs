@@ -33,6 +33,36 @@ test('new Agent binding creates the Session with its admitted preset before sele
   assert.deepEqual(events, [['create', { agentPreset: 'preset-a' }], ['model', { sessionId: 'new-session', provider: 'codex', model: 'actual-model', saveDefault: false }], ['open', 'new-session'], ['panel', null]]);
 });
 
+test('Agent binding tolerates a legacy DSH host that rejects saveDefault on session model selection', async () => {
+  const events = [];
+  const navCtx = { sessions: { create: async payload => { events.push(['create', payload]); return 'legacy-session'; } }, uiWorkspace: { openSession: id => events.push(['open', id]) } };
+  const remote = {
+    session: {
+      selectModel: async payload => {
+        events.push(['model', payload]);
+        if (Object.hasOwn(payload, 'saveDefault')) {
+          const error = new Error('typert gateway: session/selectModel: wire field "request" failed boundary validation');
+          error.code = 'gateway/input-invalid';
+          error.details = { field: 'request' };
+          throw error;
+        }
+        return { ok: true };
+      },
+    },
+    commands: { execute: async () => ({ ok: true }) },
+  };
+  const binding = createNativeSessionBinding({ navCtx, remote, layout: { selectPanel() {} },
+    hostRemote: { ensureDshPreset: async () => ({ presetId: 'legacy-preset', modelSelection: { provider: 'cloud-route', model: 'cloud-model' } }) },
+    writeConversationAgent() {}, actions: {}, console: { warn() {}, error() {} } });
+  await binding.bindAgent({ agentId: 'ar-legacy', throwOnError: true });
+  assert.deepEqual(events, [
+    ['create', { agentPreset: 'legacy-preset' }],
+    ['model', { sessionId: 'legacy-session', provider: 'cloud-route', model: 'cloud-model', saveDefault: false }],
+    ['model', { sessionId: 'legacy-session', provider: 'cloud-route', model: 'cloud-model' }],
+    ['open', 'legacy-session'],
+  ]);
+});
+
 test('entering the native session clears the old Studio panel restoration', () => {
   const storage = new Map([['active', 'agents']]); let changed;
   const window = { localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) } };

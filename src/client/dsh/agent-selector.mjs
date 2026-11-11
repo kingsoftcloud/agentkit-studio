@@ -1,5 +1,6 @@
 import { agentFromSessionPreset } from '../state/conversation-agent.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
+import { selectSessionModel } from './session-entry.mjs';
 
 export function createAgentSelector({
   ui: { React: { createElement: h, useEffect, useState }, IconChevronDownOutlineRegular, Input, Menu, MenuItemButton, NativeAuthoringButton, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
@@ -125,7 +126,7 @@ export function createAgentSelector({
           throw refusal;
         }
         if (admission.modelSelection) {
-          const selectedModel = await studioRemote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
+          const selectedModel = await selectSessionModel(studioRemote, { sessionId, ...admission.modelSelection, saveDefault: false });
           if (!selectedModel?.ok) throw new Error(selectedModel?.error?.message || 'Agent 绑定的模型不可用');
         }
         await setAgentPermission(sessionId);

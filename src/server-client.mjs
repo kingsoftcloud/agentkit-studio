@@ -95,11 +95,15 @@ function normalizeAgent(item = {}) {
   const managedRuntime = String(deployment.DeploymentType || deployment.deploymentType || item.DeploymentType || item.deploymentType || '').toLowerCase() === 'managedruntime';
   const status = String(metadata.status || '').toUpperCase();
   const available = ['RUNNING', 'UPDATING', 'READY', 'AVAILABLE'].includes(status);
+  const systemPrompt = item.SystemPrompt ?? item.systemPrompt ?? deployment.SystemPrompt ?? deployment.systemPrompt;
+  const spec = { runtime: { type: runtimeType }, bindings: { plugins } };
+  if (typeof systemPrompt === 'string') spec.instructions = { system: systemPrompt };
+  spec.description = metadata.description;
   return {
     id, name, description: metadata.description, status: metadata.status, phase: metadata.phase,
     framework: basic.Framework || basic.framework || item.Framework || item.framework,
     region: basic.Region || basic.region || item.Region || item.region,
-    metadata: { ...metadata, local: false }, spec: { runtime: { type: runtimeType }, bindings: { plugins } },
+    metadata: { ...metadata, local: false }, spec,
     deployment: { ...deployment, ...(managedRuntime ? { state: status, available } : {}) }, builds: Array.isArray(item.Builds || item.builds) ? (item.Builds || item.builds) : [],
     managedRuntime,
     source: managedRuntime ? 'agentengine-managed-runtime' : 'agentengine-server',
@@ -145,6 +149,12 @@ export function buildCloudAgentUpdate(agentId, { spec = {}, name = '', descripti
   const payload = { AgentId: id, Advanced: { ComponentConfig: components } };
   if (name !== undefined && String(name).trim()) payload.Name = String(name).trim();
   if (description !== undefined) payload.Description = String(description || '');
+  const systemPrompt = spec?.instructions?.system;
+  if (systemPrompt !== undefined) {
+    const prompt = String(systemPrompt);
+    if (prompt.length > 100000) throw new AgentEngineError('CLOUD_PROMPT_INVALID', '云端 Agent Prompt 不能超过 100000 个字符', { action: 'UpdateAgent' });
+    payload.SystemPrompt = prompt;
+  }
   return payload;
 }
 
