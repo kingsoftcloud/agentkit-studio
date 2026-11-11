@@ -31,9 +31,10 @@ const fixture = async () => {
     name: '预配审查团',
     version: '1.0.0',
     instructions: '分工与汇总',
+    defaultModel: 'default',
     roles: [
-      { name: 'lead', label: '主理专家', template: { id: lead.id, version: lead.version, digest: lead.digest } },
-      { name: 'reviewer', label: '审查专家', instructions: '审查后回报', template: { id: member.id, version: member.version, digest: member.digest } },
+      { name: 'lead', label: '主理专家', agentPreset: 'preset:lead', template: { id: lead.id, version: lead.version, digest: lead.digest } },
+      { name: 'reviewer', label: '审查专家', instructions: '审查后回报', agentPresetId: 'preset:reviewer', template: { id: member.id, version: member.version, digest: member.digest } },
     ],
   };
   const catalog = {
@@ -78,9 +79,11 @@ test('team template saves one native TeamDefinition without creating ordinary Ag
     assert.equal(value.team.lead.source.id, 'lead-template');
     assert.equal(Object.hasOwn(value.team.lead, 'agentId'), false);
     assert.equal(value.team.lead.spec.instructions.system, '完整主理指令 Ω');
+    assert.equal(value.team.lead.agentPreset, 'preset:lead');
     assert.equal(value.team.members[0].source.id, 'member-template');
     assert.equal(Object.hasOwn(value.team.members[0], 'agentId'), false);
     assert.equal(value.team.members[0].spec.instructions.system, '完整成员指令 中文');
+    assert.equal(value.team.members[0].agentPreset, 'preset:reviewer');
     assert.equal(x.dependencyCalls.materialize >= 2, true);
     assert.equal(x.dependencyCalls.installMcp >= 2, true);
     assert.equal((await x.store.list()).length, 0);

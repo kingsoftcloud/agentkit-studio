@@ -44,6 +44,7 @@ export function createTeamTemplateSummon({ catalog, summon, teams }) {
       version: prepared.templateSource?.version || prepared.version || item.version,
       digest: prepared.templateSource?.digest || sourceRef.digest,
     };
+    const agentPreset = String(role.agentPreset || role.agentPresetId || '').trim();
     return {
       name: role.name,
       label: role.label || role.name,
@@ -51,6 +52,16 @@ export function createTeamTemplateSummon({ catalog, summon, teams }) {
       source,
       spec,
       bindings: { ...(plan?.bindings || {}), ...(plan?.modelId ? { modelId: plan.modelId } : {}) },
+      ...(agentPreset ? { agentPreset } : {}),
+    };
+  }
+
+  function roleBindings(role, bindings, item) {
+    const model = role.model || role.modelId || role.modelProfileId || item.defaultModel || item.model;
+    return {
+      ...(model ? { modelId: model } : {}),
+      ...(bindings || {}),
+      ...(role.bindings && typeof role.bindings === 'object' ? role.bindings : {}),
     };
   }
 
@@ -78,7 +89,7 @@ export function createTeamTemplateSummon({ catalog, summon, teams }) {
       for (const role of item.roles) {
         payload.signal?.throwIfAborted();
         payload.onProgress?.({ phase: 'checking', label: `正在检查${role.label}的模型与依赖` });
-        const plan = await summon.plan({ ref: roleRef(role, payload.ref), bindings });
+        const plan = await summon.plan({ ref: roleRef(role, payload.ref), bindings: roleBindings(role, bindings, item) });
         if (plan.missing.length) return { status: 'needs-input', role: role.label, plan };
         plans.push(plan);
       }
@@ -86,7 +97,13 @@ export function createTeamTemplateSummon({ catalog, summon, teams }) {
       const roles = [];
       for (let index = 0; index < item.roles.length; index++) {
         payload.signal?.throwIfAborted();
-        roles.push(await blueprint(item, item.roles[index], payload.ref, { ...plans[index], bindings, signal: payload.signal, onProgress: payload.onProgress }));
+        const role = item.roles[index];
+        roles.push(await blueprint(item, role, payload.ref, {
+          ...plans[index],
+          bindings: roleBindings(role, bindings, item),
+          signal: payload.signal,
+          onProgress: payload.onProgress,
+        }));
         payload.onProgress?.({ phase: 'blueprint', label: `${index + 1}/${item.roles.length} ${item.roles[index].label} · 已保存角色蓝图` });
       }
 
