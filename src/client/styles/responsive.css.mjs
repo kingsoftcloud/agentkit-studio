@@ -23,6 +23,18 @@ export default String.raw`
   background: var(--dsw-alias-button-primary-hover, #303030) !important;
   color: var(--dsw-alias-label-primary-foreground, #ffffff) !important;
 }
+/* Native confirmation actions opt into an explicit variant so the shared
+   secondary-button hover rule cannot turn white text invisible on a light
+   surface. Informational confirmations use the primary dark action by
+   default; destructive confirmations retain the red action and white text. */
+:where([data-studio-controls]) button[data-confirmation-variant="primary"]:not(:disabled):hover {
+  background: var(--dsw-alias-button-primary-hover, #303030) !important;
+  color: var(--dsw-alias-label-primary-foreground, #ffffff) !important;
+}
+:where([data-studio-controls]) button[data-confirmation-variant="danger"]:not(:disabled):hover {
+  background: var(--dsw-alias-state-danger-hover, var(--dsw-alias-state-danger-primary, #c2402a)) !important;
+  color: var(--dsw-static-neutral-00, #ffffff) !important;
+}
 /* A disabled primary keeps a readable label instead of fading white onto a pale fill. */
 :where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button[data-variant="primary"]:disabled {
   opacity: 1 !important;

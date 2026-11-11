@@ -238,6 +238,28 @@ test('local runtime presets reuse the official composition including delivery to
   }
 });
 
+test('derived presets collapse duplicate persona rows from a stale or reloaded base composition', async () => {
+  let definition;
+  const base = [
+    { id: 'reloaded-persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'stale' } },
+    { id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'official' } },
+    { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
+  ];
+  const revision = agent({ spec: { runtime: { type: 'dsh-native' }, instructions: { system: 'selected' }, bindings: {} } });
+  const admission = new DshPresetAdmission({
+    getAgent: async () => revision,
+    getBasePlugins: async () => structuredClone(base),
+    registry: { async register(value) { definition = value; return async () => {}; } },
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(definition.plugins.filter(row => row.name === '@deepseek-ai/dsh-persona').length, 1);
+  assert.deepEqual(definition.plugins.find(row => row.name === '@deepseek-ai/dsh-persona'), {
+    id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: 'selected', includeRuntimeContext: false },
+  });
+  assert.equal(base[0].config.prefix, 'stale');
+  assert.equal(base[1].config.prefix, 'official');
+});
+
 test('whole-turn Native owns Web; ordinary legacy presets retain their base Web plugin', async () => {
   const base = [{ id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true } },
     { id: 'present', name: '@deepseek-ai/dsh-tool-present' }];
