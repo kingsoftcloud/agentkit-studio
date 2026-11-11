@@ -528,9 +528,8 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
       }
       const teamProjection = projection?.values?.agentTeam;
       const members = root ? teams.listMembers(root).map(copy) : (teamProjection?.members || []).map(member => ({
-        ...member, role: 'teammate', status: member.phase === 'active' ? 'inactive' : member.phase,
+        ...member, status: member.phase === 'active' ? 'inactive' : member.phase,
       }));
-      if (!root && teamProjection) members.unshift({ id: sessionId, name: 'lead', role: 'lead', status: 'inactive' });
       await Promise.all(members.filter(member => member.role === 'teammate' && member.status === 'inactive').map(async member => {
         const memberEnd = (await sessionEvents(childSessionId(member))).findLast(event => event.type === 'turn/end')?.data?.reason;
         if (memberEnd?.kind === 'error') member.lastError = {

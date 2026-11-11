@@ -118,7 +118,15 @@ test('starts one DSH native TeamRun without creating ordinary role snapshots', a
       async resolveAgent(sessionId) { return { agent: roots.get(sessionId) }; },
       async selectModel() {},
       async prompt(payload) { prompted.push(payload); },
-      async projections() { return { asOfSeq: 1, values: { agentTeam: { members: [{ id: 'native-reviewer', name: 'reviewer', role: 'teammate', phase: 'active' }], tasks: [{ id: 'task-1', status: 'in_progress' }] } } }; },
+      async projections({ sessionId }) {
+        return { asOfSeq: 1, values: { agentTeam: {
+          members: [
+            { id: sessionId, name: 'lead', role: 'lead', phase: 'active' },
+            { id: 'native-reviewer', name: 'reviewer', role: 'teammate', phase: 'active' },
+          ],
+          tasks: [{ id: 'task-1', status: 'in_progress' }],
+        } } };
+      },
     };
     const nativeTeams = {
       listMembers(root) {
@@ -206,6 +214,14 @@ test('starts one DSH native TeamRun without creating ordinary role snapshots', a
     });
     const replay = await restarted.start({ id: team.id, revision: team.revision, task: '检查当前变更', requestId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
     assert.equal(replay.id, result.id);
+    const live = roots.get(result.id);
+    roots.delete(result.id);
+    const cold = await restarted.status({ runId: result.id });
+    assert.deepEqual(cold.members.map(({ id, role, status }) => ({ id, role, status })), [
+      { id: result.id, role: 'lead', status: 'inactive' },
+      { id: 'native-reviewer', role: 'teammate', status: 'inactive' },
+    ]);
+    roots.set(result.id, live);
     assert.equal((await sourceAgents.list()).length, 2);
     assert.equal((await api.history({ id: team.id })).items.length, 1);
     const admittedBeforeEdit = admitted.findLast(row => row.agent.metadata.name.endsWith('审查')).agent.spec.instructions.system;
