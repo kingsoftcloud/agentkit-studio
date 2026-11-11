@@ -307,7 +307,10 @@ export function createAgentForm({
         editing ? Note({ style: { marginTop: '12px' } }, cloudEditing ? '保存后调用 AgentEngine UpdateAgent；云端已有会话继续使用旧快照，新运行使用更新后的组件绑定。' : `保存后创建新的配置版本（当前 r${initialAgent.metadata.revision}）；已有会话和构建不会被自动切换。`) : null),
     );
     return h('div', { 'data-studio-agent-form': true },
-      h(SectionHeading, { compact: true, title: editing ? '编辑 Agent' : creationSeed ? '配置你的专家' : '手动配置 Agent', action: Button({ onClick: onBack }, creationSeed ? '返回模板' : '返回 Agents') }),
+      h('header', { 'data-studio-heading': 'true', className: 'af-page-heading' },
+        Button({ onClick: onBack, className: 'af-back', 'aria-label': creationSeed ? '返回模板' : '返回 Agents', title: creationSeed ? '返回模板' : '返回 Agents' },
+          h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'm14 6-6 6 6 6', strokeLinecap: 'round', strokeLinejoin: 'round' }))),
+        h(SectionHeading, { compact: true, title: editing ? '编辑 Agent' : creationSeed ? '配置你的专家' : '手动配置 Agent' })),
       h('section', { className: 'af-layout' },
         h('nav', { className: 'af-steps', 'aria-label': '创建流程' }, steps.map((label, index) => h('button', {
           key: label, type: 'button', className: 'af-step', 'aria-current': index === step ? 'step' : undefined, 'data-done': index < step ? 'true' : undefined,

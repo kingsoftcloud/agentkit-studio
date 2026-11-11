@@ -1,22 +1,21 @@
 export default String.raw`
 [data-studio-agent-form] { color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 22px; container-type: inline-size; container-name: studio-agent-form; min-width: 0; }
 [data-studio-agent-form] [data-studio-heading] { margin-bottom: 24px; align-items: center; }
-.af-layout { display: grid; grid-template-columns: 168px minmax(0,1fr); gap: 32px; align-items: start; }
-/* A settings-style surface keeps a readable column even on a full-screen
-   window: the rail (168px) + gap (32px) + body (820px) add up to 1020px, so
-   centre that block instead of pinning it to the left edge and leaving a dead
-   column on the right. The page header is centred with it, so its action lines
-   up with the form's right edge instead of the window's. */
+.af-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: 24px; align-items: start; }
 [data-studio-agent-form] > [data-studio-heading],
-[data-studio-agent-form] > .af-layout { max-width: 1020px; margin-inline: auto; }
-.af-steps { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
-.af-step { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-md,12px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 14px; line-height: 22px; text-align: left; cursor: pointer; }
+[data-studio-agent-form] > .af-layout { max-width: 720px; margin-inline: auto; }
+.af-page-heading { display: flex; align-items: center; gap: 12px; }
+[data-studio-agent-form] .af-page-heading [data-studio-heading] { margin-bottom: 0; }
+.af-page-heading h2 { font-size: 20px !important; line-height: 28px !important; font-weight: 500; }
+.af-page-heading .af-back { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; }
+.af-steps { display: flex; flex-direction: row; flex-wrap: wrap; gap: 24px; }
+.af-step { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0; border: 0; background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 14px; line-height: 22px; text-align: left; cursor: pointer; }
 .af-step:disabled { cursor: default; color: var(--dsw-alias-label-tertiary); }
-.af-step:not(:disabled):hover, .af-step[aria-current="step"] { background: var(--dsw-alias-interactive-bg-hover); }
+.af-step:not(:disabled):hover { color: var(--dsw-alias-label-primary); }
 .af-step[aria-current="step"] { color: var(--dsw-alias-label-primary); font-weight: 500; }
-.af-step-index { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: 999px; background: var(--dsw-alias-bg-layer-3,#ececec); font-size: 12px; font-weight: 500; line-height: 1; }
-.af-step[aria-current="step"] .af-step-index, .af-step[data-done] .af-step-index { background: var(--dsw-alias-button-primary-fill,#0b0b0d); color: var(--dsw-alias-label-primary-foreground,#fff); }
-.af-body { min-width: 0; max-width: 820px; }
+.af-step-index { display: inline-grid; place-items: center; box-sizing: border-box; flex: none; width: 20px; height: 20px; border: .5px solid var(--dsw-alias-border-l3); border-radius: 999px; background: transparent; font-size: 12px; font-weight: 500; line-height: 1; }
+.af-step[aria-current="step"] .af-step-index { background: var(--dsw-alias-button-primary-fill,#0b0b0d); color: var(--dsw-alias-label-primary-foreground,#fff); }
+.af-body { min-width: 0; max-width: 720px; }
 .af-section { padding: 20px 0; border-top: .5px solid var(--dsw-alias-border-l2); }
 .af-section:first-child, .af-details-body > .af-section:first-child, .af-section-plain { padding-top: 0; border-top: 0; }
 .af-section-plain { padding-bottom: 0; }
@@ -31,12 +30,12 @@ export default String.raw`
 .af-row-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .af-row-control { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex: none; max-width: 60%; }
 .af-row-control .af-select, .af-row-control .af-input { width: auto; min-width: 200px; max-width: 100%; }
-.af-field { display: block; margin: 0 0 16px; min-width: 0; }
-.af-field-label { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 13px; font-weight: 500; line-height: 20px; color: var(--dsw-alias-label-primary); }
+.af-field { display: block; margin: 0 0 20px; min-width: 0; }
+.af-field-label { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 14px; font-weight: 500; line-height: 20px; color: var(--dsw-alias-label-primary); }
 .af-field-hint { display: block; margin-top: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .af-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 0 16px; }
 .af-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 0 16px; }
-.af-input, .af-textarea, .af-select { display: block; box-sizing: border-box; width: 100%; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); border-radius: var(--dsw-radius-md,12px); }
+.af-input, .af-textarea, .af-select { display: block; box-sizing: border-box; width: 100%; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); border-radius: 10px; }
 .af-input, .af-select { height: 36px; padding: 0 12px; }
 .af-input, .af-textarea { border: .5px solid var(--dsw-alias-border-l3); background: var(--dsw-alias-bg-layer-1); }
 .af-input:hover, .af-textarea:hover { border-color: var(--dsw-alias-border-l4); }
@@ -44,6 +43,7 @@ export default String.raw`
 .af-textarea[data-mono] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .af-select { appearance: none; -webkit-appearance: none; padding-right: 36px; border: 0; cursor: pointer; background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2,#f4f5f6)) url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23676767' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 12px center; }
 .af-select:not(:disabled):hover { background-color: var(--dsw-alias-interactive-bg-hover); }
+[data-studio-agent-form] .af-select { border: .5px solid var(--dsw-alias-border-l3); background-color: var(--dsw-alias-bg-layer-1); }
 .af-input:disabled, .af-textarea:disabled, .af-select:disabled { color: var(--dsw-alias-label-tertiary); cursor: not-allowed; }
 .af-input::placeholder, .af-textarea::placeholder { color: var(--dsw-alias-label-tertiary); }
 .af-switch { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); cursor: pointer; }
@@ -100,7 +100,9 @@ export default String.raw`
 .af-fieldset > legend { padding: 0 6px; font-size: 13px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
 .af-fieldset .af-row:last-of-type { border-bottom: 0; }
 .af-empty { padding: 4px 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
-.af-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: .5px solid var(--dsw-alias-border-l2); }
+.af-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 24px; padding-top: 16px; border-top: .5px solid var(--dsw-alias-border-l2); }
+.af-footer .af-btn { height: 32px; border-radius: 16px; padding: 0 12px; }
+.af-footer .af-btn:not([data-variant="primary"]) { border: 0; background: transparent; }
 .af-footer-actions { display: flex; align-items: center; gap: 8px; }
 .af-stack > * + * { margin-top: 12px; }
 [data-studio-agent-form] :is(.af-input,.af-textarea,.af-select,.af-btn,.af-choice,.af-step):focus-visible, [data-studio-agent-form] :is(.af-check,.af-switch) input:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
@@ -113,21 +115,35 @@ export default String.raw`
 .ak-segmented > button[aria-current="page"] { background: var(--dsw-alias-bg-layer-1,#fff); color: var(--dsw-alias-label-primary); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .ak-segmented > button:focus-visible, .ak-agents-toolbar .af-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
 .ak-agents-notice { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
-.ak-agents-list { border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-layer-1); overflow: hidden; }
-.ak-agents-list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.ak-agents-list { min-width: 0; }
+.ak-agents-list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 0 16px; }
 .ak-agents-list-head > strong { font-size: 14px; font-weight: 500; color: var(--dsw-alias-label-primary); }
-.ak-agent-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); cursor: pointer; }
-.ak-agent-card:hover { border-color: var(--dsw-alias-border-l4); }
+.ak-agent-card { display: flex; align-items: center; gap: 14px; min-width: 0; margin: 0 -8px; padding: 8px; border: 0; border-radius: var(--dsw-radius-xl,16px); cursor: pointer; }
+.ak-agent-card:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.ak-agent-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border: .5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-lg,12px); color: var(--dsw-alias-label-secondary); font-size: 18px; }
+.ak-agent-main { min-width: 0; flex: 1; }
+.ak-agent-title { display: block; font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-agent-meta { margin-top: 4px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-agent-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ak-agent-status > span:last-child { background: transparent !important; padding: 0 !important; color: var(--dsw-alias-label-secondary) !important; font-size: 12px !important; font-weight: 400 !important; }
+.ak-agent-actions .af-btn { height: 28px; padding: 0 8px; border: 0; border-radius: 14px; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.ak-agent-actions .af-btn[data-variant="primary"] { background: transparent; color: var(--dsw-alias-label-primary); }
+.ak-agent-actions .af-btn[data-variant="primary"]:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); }
+.ak-agents-actions .af-btn { height: 32px; border-radius: 16px; padding: 0 12px; }
+.ak-agents-actions .af-btn:not([data-variant="primary"]) { border: 0; background: transparent; }
+.ak-agents-actions.ak-create-group { display: inline-flex; gap: 0; }
+.ak-create-group .ak-create-primary { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ak-create-group .ak-create-more { width: 32px; padding: 0; border-radius: 0 16px 16px 0; border-left: .5px solid color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 30%, transparent); }
+@media (max-width: 760px) {
+  .ak-agent-card { flex-wrap: wrap; gap: 8px; }
+  .ak-agent-main { flex-basis: calc(100% - 56px); }
+  .ak-agent-actions { margin-left: auto; }
+}
 .ak-agent-card:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
-/* The rail needs 168px next to an 820px body (~1020px together), so the
-   two-column layout only makes sense while the form itself is wide enough.
-   640px was too late: every window between roughly 900px and 1200px kept the
-   rail and squeezed the body instead of reflowing. Collapse the rail first and
-   keep a second tier for phones. */
 @container studio-agent-form (max-width: 1000px) {
   .af-layout { grid-template-columns: minmax(0,1fr); gap: 16px; }
-  .af-steps { position: static; flex-direction: row; flex-wrap: wrap; gap: 4px; }
-  .af-step { width: auto; height: 32px; padding: 0 10px; }
+  .af-steps { position: static; flex-direction: row; flex-wrap: wrap; gap: 24px; }
+  .af-step { width: auto; height: 32px; padding: 0; }
   .af-grid-2, .af-grid-3 { grid-template-columns: minmax(0,1fr); }
   .af-row { flex-wrap: wrap; gap: 6px; padding: 10px 0; }
   .af-row-control { width: 100%; max-width: 100%; justify-content: flex-start; }
@@ -138,8 +154,7 @@ export default String.raw`
 @container studio-agent-form (max-width: 640px) {
   .af-body { max-width: none; }
   .af-section { padding: 16px 0; }
-  .af-field { margin-bottom: 12px; }
-  .af-step { height: 30px; padding: 0 8px; font-size: 13px; }
+  .af-step { height: 30px; padding: 0; font-size: 14px; }
   .af-btn { padding: 0 12px; }
 }
 `;

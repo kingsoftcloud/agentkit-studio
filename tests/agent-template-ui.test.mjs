@@ -23,6 +23,17 @@ test('manual configuration treats templates as an optional collapsed section', (
   assert.ok(nodes.some(node => node.type === 'heading' && node.props.title === '手动配置 Agent'));
 });
 
+test('manual form places the back icon before the heading without changing navigation', () => {
+  let returned = false;
+  const nodes = formHarness({ onBack: () => { returned = true; } }).render();
+  const header = nodes.find(node => node.props.className === 'af-page-heading');
+  assert.equal(header.children[0].props['aria-label'], '返回 Agents');
+  assert.ok(walk(header.children[0]).some(node => node.type === 'svg'));
+  assert.equal(header.children[1].props.title, '手动配置 Agent');
+  header.children[0].props.onClick();
+  assert.equal(returned, true);
+});
+
 test('research template fills an actual research Prompt', () => {
   const form = formHarness(); form.chooseResearch();
   assert.match(form.prompt().props.value, /研究助手/);
