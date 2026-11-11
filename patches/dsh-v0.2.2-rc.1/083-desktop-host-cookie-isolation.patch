@@ -1,0 +1,446 @@
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index b8e0f362e6e22ed7d9ea139d1af7f1f6d6d195b5..e577e9a2d944efab4113a01935dd070d166e7b7e 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -39,6 +39,8 @@ The desktop application is an Electron shell around the complete dsh Web applica
+ 
+ Desktop binds `127.0.0.1`, the address Electron dials for the ready URL and the WebSocket credential filter. WebSocket streams use `ws:` or `wss:` according to the Host listener; credentials require matching authority and scheme.
+ 
++Desktop exchanges the launch token once per Host start and keeps only that Host’s session cookie in the Electron main process. Native onboarding, account requests, and Web forwarding use that cookie directly. Chromium’s cookie store is not consulted, so cookies left by older builds on previous loopback ports do not prevent startup.
++
+ The first application-menu command, **About DeepSeek Harness**, opens Electron's native About panel with the application icon, product name, and installed release version. The menu follows the Desktop shell locale. On macOS, Hide, Hide Others, Show All, and Quit use localized labels; Hide and Quit include the DeepSeek Harness product name. These commands retain their native actions and shortcuts. macOS reads the icon from its application bundle, so an unpackaged development launch displays Electron's icon; Windows receives the packaged PNG.
+ 
+ Desktop’s local native directory flow opens an Electron folder dialog attached to the application window, restoring, showing, and focusing that window first. Concurrent requests share one dialog; cancellation returns no path and failures remain retryable. Ordinary Web uses the Host chooser. Browse mode lists Host directories. On Linux without zenity or kdialog, automatic selection uses browse instead of the Electron dialog.
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index b5e3b57260b5dc3bd43cb8748538360b1ba1dbfb..d57ad80b6be210dd38a1202ad4dca206e590995a 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -39,6 +39,8 @@ Electron 在 `userData/desktop/locale-cache` 缓存最近确认的界面语言
+ 
+ Desktop 绑定 `127.0.0.1`，即 Electron 为就绪 URL 与 WebSocket 凭据过滤器拨号的地址。WebSocket 流按 Host 监听器使用 `ws:` 或 `wss:`；附加凭据要求 authority 与 scheme 均匹配。
+ 
++每次启动 Host 时，桌面主进程只交换一次启动令牌，并在内存中保留当前 Host 的会话 Cookie。原生欢迎页、账号请求和 Web 转发直接使用这条 Cookie；旧版本在 Chromium 中留下的其他端口 Cookie 不会阻塞启动。
++
+ 应用菜单第一项“**关于 DeepSeek Harness**”打开 Electron 原生关于面板，展示应用图标、产品名称和当前安装的发布版本。菜单文案跟随桌面壳的语言。macOS 的隐藏、隐藏其他、显示全部和退出条目使用本地化文案，隐藏和退出条目包含 DeepSeek Harness 产品名称。这些条目保留原生动作和快捷键。macOS 从应用包读取图标，因此未打包的开发启动会显示 Electron 图标；Windows 使用随包分发的 PNG。
+ 
+ Desktop 的本地原生目录流程打开绑定应用窗口的 Electron 文件夹对话框，并先恢复、显示和聚焦该窗口。并发请求共用一个对话框；取消不返回路径，失败后可以重试。普通 Web 使用 Host 选择器。浏览模式列出 Host 目录。Linux 缺少 zenity 或 kdialog 时，自动选择使用浏览模式，不使用 Electron 对话框。
+diff --git a/apps/desktop/src/account-backend.ts b/apps/desktop/src/account-backend.ts
+index 862b8f81edb9ac3fbc6c75cd757238fd78df7364..727f80eefcd43f811900bc8e342202da116c408b 100644
+--- a/apps/desktop/src/account-backend.ts
++++ b/apps/desktop/src/account-backend.ts
+@@ -80,7 +80,7 @@ export interface DesktopAccountBackend {
+  * Connect native account operations to the standard authenticated Web backend.
+  * @param origin - Host Web origin.
+  * @param invoke - validated unary RPC caller.
+- * @param cookies - Electron session cookie reader.
++ * @param cookies - Provider of the current Host's Cookie header.
+  * @returns account operations; watch callers own their subscriptions.
+  */
+ export function desktopAccountBackend(origin: string, invoke: AccountInvoke, cookies: () => Promise<string>): DesktopAccountBackend {
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 277b7d256120195604c1eca47e37d37c5ccbfc32..22b8498defa791433fc98c56c7520d1cd5874e94 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -17,7 +17,6 @@ import {
+   powerMonitor,
+   nativeImage,
+   nativeTheme,
+-  net,
+   protocol,
+   session,
+   shell,
+@@ -40,7 +39,7 @@ import { desktopUpdateChannel } from './update-channel.ts'
+ import { DesktopUpdateCoordinator } from './update-coordinator.ts'
+ import { prepareDesktopUpdateWindow } from './update-window.ts'
+ import { DesktopCommandManager } from './command-management.ts'
+-import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
++import { serveWebDocument, forwardWebRequest } from './web-document.ts'
+ import { DesktopFatalRecovery } from './fatal-recovery.ts'
+ import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
+ import { OperationJournal } from './operation-journal.ts'
+@@ -542,11 +541,12 @@ async function main(): Promise<void> {
+     return {
+       start: async () => {
+         const ready = await host.start()
+-        hostCookie = await authenticateWebHost(ready.url)
+-        hostUrl = ready.url
+         if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')
++        const connected = await connectDesktopWelcome(ready.url)
++        hostCookie = connected.cookie
++        hostUrl = new URL(ready.url).origin
+         injections = ready.injections
+-        welcomeBackend = await connectDesktopWelcome(ready.url, (input, init) => net.fetch(input, init), async () => (await session.defaultSession.cookies.get({ url: ready.url })).map(cookie => `${cookie.name}=${cookie.value}`).join('; '))
++        welcomeBackend = connected.backend
+         analyticsEnabled = await welcomeBackend.analyticsEnabled().catch(() => false)
+         if (!reportedLaunch) { reportedLaunch = true; void track('desktop_app_launch', {}) }
+         stopAccount?.()
+diff --git a/apps/desktop/src/web-document.ts b/apps/desktop/src/web-document.ts
+index a74ea7c7efd34bd916228bffa2bec782ef562c29..0a6124dcd786eb856461b58ffe84edc600ebadc2 100644
+--- a/apps/desktop/src/web-document.ts
++++ b/apps/desktop/src/web-document.ts
+@@ -38,13 +38,14 @@ export async function serveWebDocument(request: Request, root: string): Promise<
+ /**
+  * Exchange the Host launch URL for an authority-bound browser cookie.
+  * @param url - Authenticated URL reported by the owned Host process.
++ * @param send - Main-process HTTP transport without a browser cookie jar.
+  * @returns Cookie header for requests forwarded to that Host.
+  */
+-export async function authenticateWebHost(url: string): Promise<string> {
+-  const response = await fetch(url, { redirect: 'manual' })
++export async function authenticateWebHost(url: string, send: typeof fetch = fetch): Promise<string> {
++  const response = await send(url, { redirect: 'manual' })
+   const cookie = response.headers.get('set-cookie')
+   await response.body?.cancel()
+-  if (response.status !== 303 || cookie === null) throw new Error('Desktop Host authentication failed')
++  if (response.status !== 303 || cookie === null) throw new Error(`Desktop Host authentication failed (HTTP ${response.status})`)
+   const end = cookie.indexOf(';')
+   return end < 0 ? cookie : cookie.slice(0, end)
+ }
+diff --git a/apps/desktop/src/welcome-backend.ts b/apps/desktop/src/welcome-backend.ts
+index 54ab46d85ef6e81b67c5788ac15dcbc8b8730e4c..0fcbaa5f0fc05cae0052a276c4c38b9ba21aab34 100644
+--- a/apps/desktop/src/welcome-backend.ts
++++ b/apps/desktop/src/welcome-backend.ts
+@@ -3,6 +3,7 @@ import type { ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/typ
+ 
+ import { randomUUID } from 'node:crypto'
+ import { desktopAccountBackend, type DesktopAccountBackend } from './account-backend.ts'
++import { authenticateWebHost } from './web-document.ts'
+ 
+ /** Metadata needed before the native entry or workspace becomes visible. */
+ export interface WelcomeState {
+@@ -35,20 +36,18 @@ function record(value: unknown): value is Record<string, unknown> {
+ }
+ 
+ /**
+- * Authenticate the native HTTP client through the Web application's launch URL.
++ * Exchange the Host launch token once. A browser cookie jar groups loopback
++ * cookies by hostname, so it would send credentials for old Host ports as well.
+  * @param authenticatedUrl - URL supplied by the running Desktop Host.
+- * @param send - Electron session fetch, retaining the Web authentication cookie.
+- * @returns metadata reads and write-only credential operations over standard RPC.
++ * @param send - Main-process HTTP transport without a browser cookie jar.
++ * @returns native RPC operations and the Host cookie for the shell's request forwarding.
+  */
+ export async function connectDesktopWelcome(
+   authenticatedUrl: string,
+-  send: (input: string, init?: RequestInit) => Promise<Response>,
+-  cookies: () => Promise<string> = () => Promise.resolve(''),
+-): Promise<DesktopWelcomeBackend> {
++  send: typeof fetch = fetch,
++): Promise<{ backend: DesktopWelcomeBackend; cookie: string }> {
+   const origin = new URL(authenticatedUrl).origin
+-  const authenticated = await send(authenticatedUrl, { credentials: 'include' })
+-  await authenticated.body?.cancel()
+-  if (!authenticated.ok) throw new Error('desktop welcome: Web authentication failed')
++  const cookie = await authenticateWebHost(authenticatedUrl, send)
+   const invoke = async (
+     request: { namespace: string; method: string; args: Record<string, unknown> },
+     signal?: AbortSignal,
+@@ -56,11 +55,14 @@ export async function connectDesktopWelcome(
+     const rpcId = randomUUID()
+     const method = `${request.namespace}/${request.method}`
+     const response = await send(new URL(`/api/${method}`, origin).href, {
+-      method: 'POST', credentials: 'include', redirect: 'error', ...(signal === undefined ? {} : { signal }),
+-      headers: { 'content-type': 'application/json' },
++      method: 'POST', redirect: 'error', ...(signal === undefined ? {} : { signal }),
++      headers: { 'content-type': 'application/json', cookie },
+       body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args: request.args } }),
+     })
+-    if (!response.ok) throw new Error('desktop welcome: Web request failed')
++    if (!response.ok) {
++      await response.body?.cancel()
++      throw new Error(`desktop welcome: Web request failed (${method}, HTTP ${response.status})`)
++    }
+     const envelope: unknown = await response.json()
+     if (!record(envelope) || envelope.type !== 'server-response' || envelope.rpcId !== rpcId
+       || !record(envelope.result) || envelope.result.ok !== true) {
+@@ -68,7 +70,7 @@ export async function connectDesktopWelcome(
+     }
+     return envelope.result.value
+   }
+-  const account = desktopAccountBackend(origin, invoke, cookies)
++  const account = desktopAccountBackend(origin, invoke, () => Promise.resolve(cookie))
+   const settingsAndReference = async () => {
+     const settings = await invoke({ namespace: 'settings', method: 'describe', args: {} })
+     if (!record(settings) || !Array.isArray(settings.namespaces)) throw new Error('desktop welcome: missing settings namespaces')
+@@ -120,7 +122,7 @@ export async function connectDesktopWelcome(
+       localePreference: localePreference(namespaces),
+     }
+   }
+-  return {
++  const backend: DesktopWelcomeBackend = {
+     account,
+     read,
+     async analyticsEnabled() {
+@@ -147,4 +149,5 @@ export async function connectDesktopWelcome(
+       }
+     },
+   }
++  return { backend, cookie }
+ }
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index df310e8fa28b9f3038e5e593c2d2dec7f115cefd..f0016e2c541de0299989ee1e28bd29fb84a15a1e 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -22,7 +22,7 @@ type InvokeHandler = (event: InvokeEvent, ...args: unknown[]) => unknown
+ const fileDrag = vi.hoisted(() => ({ dispose: vi.fn<() => Promise<void>>(), install: vi.fn() }))
+ vi.mock('../src/file-drag.ts', () => ({ installDesktopFileDrag: () => { fileDrag.install(); return fileDrag.dispose } }))
+ 
+-vi.mock('../src/web-document.ts', () => ({ authenticateWebHost: async () => 'test-cookie', serveWebDocument: vi.fn(), forwardWebRequest: vi.fn() }))
++vi.mock('../src/web-document.ts', () => ({ serveWebDocument: vi.fn(), forwardWebRequest: vi.fn() }))
+ vi.mock('../src/operation-report-job.ts', () => ({ runOperationReportJob: vi.fn(async () => ({ appended: false, timedOut: false, cancelled: false })) }))
+ // Report persistence has its own unit tests; here it resolves within microtasks so the fatal
+ // dialog never outlives the test that triggered it.
+@@ -306,7 +306,6 @@ vi.mock('electron', () => ({
+   dialog: harness.dialog,
+   shell: { openExternal: harness.openExternal },
+   nativeTheme: harness.nativeTheme,
+-  net: { fetch: vi.fn() },
+   ipcMain: {
+     on: harness.ipcOn,
+     handle: (channel: string, handler: InvokeHandler) => {
+@@ -391,12 +390,15 @@ vi.mock('../src/platform-view.ts', async importOriginal => ({
+ }))
+ vi.mock('../src/welcome-backend.ts', () => ({
+   connectDesktopWelcome: async () => ({
+-    analyticsEnabled: async () => harness.analyticsEnabled,
+-    report: harness.analytics,
+-    readLocalePreference: async () => null,
+-    read: async (): Promise<unknown> => (await harness.hosts.at(-1)!.fetch()).json() as Promise<unknown>,
+-    save: async () => ({ ok: true }),
+-    account: { watch: harness.watchAccount, state: async () => ({ status: 'signed-out', attempt: null }) },
++    cookie: 'test-cookie',
++    backend: {
++      analyticsEnabled: async () => harness.analyticsEnabled,
++      report: harness.analytics,
++      readLocalePreference: async () => null,
++      read: async (): Promise<unknown> => (await harness.hosts.at(-1)!.fetch()).json() as Promise<unknown>,
++      save: async () => ({ ok: true }),
++      account: { watch: harness.watchAccount, state: async () => ({ status: 'signed-out', attempt: null }) },
++    },
+   }),
+ }))
+ 
+diff --git a/apps/desktop/tests/welcome-flow.e2e.ts b/apps/desktop/tests/welcome-flow.e2e.ts
+index ce1dc896b2c49a919a0d0fd1a56b2c2343bd0ef2..60275ae1d0f8a043652b5c98e4f6041f9e82ef03 100644
+--- a/apps/desktop/tests/welcome-flow.e2e.ts
++++ b/apps/desktop/tests/welcome-flow.e2e.ts
+@@ -129,17 +129,7 @@ describe.skipIf(!existsSync(builtHost))('built Desktop welcome flow', () => {
+         host = new DesktopHostProcess(process.execPath, project, paths.profile)
+         const { url } = await host.start()
+         hostOrigin = new URL(url).origin
+-        let cookie = ''
+-        const send: typeof fetch = async (input, init) => {
+-          const headers = new Headers(init?.headers)
+-          if (cookie !== '') headers.set('cookie', cookie)
+-          const response = await fetch(input, { ...init, headers, redirect: 'manual' })
+-          if (response.status !== 303) return response
+-          cookie = response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+-          await response.body?.cancel()
+-          return fetch(new URL(response.headers.get('location')!, url), { headers: { cookie } })
+-        }
+-        backend = await connectDesktopWelcome(url, send, () => Promise.resolve(cookie))
++        backend = (await connectDesktopWelcome(url)).backend
+       }
+       const status = async () => backend.read()
+       const fingerprint = (): string => createHash('sha256')
+diff --git a/apps/desktop/tests/welcome-host.spec.ts b/apps/desktop/tests/welcome-host.spec.ts
+index dea29055832a95bd4e2c38b7522659f88a1a5378..01748150d909a06c488ba6ec21626c0e4967e54d 100644
+--- a/apps/desktop/tests/welcome-host.spec.ts
++++ b/apps/desktop/tests/welcome-host.spec.ts
+@@ -2,6 +2,9 @@
+ import { describe, expect, it, vi } from 'vitest'
+ import { connectDesktopWelcome } from '../src/welcome-backend.ts'
+ 
++const launchCookie = 'session=fixture'
++const exchange = () => new Response(null, { status: 303, headers: { 'set-cookie': launchCookie + '; HttpOnly', location: './' } })
++
+ function transport(preference?: string) {
+   const keys = new Map<string, string>()
+   const namespaces = [
+@@ -9,8 +12,9 @@ function transport(preference?: string) {
+     { ns: 'llm-pi-ai', value: { profiles: { example: { apiKeyEnv: 'EXAMPLE_API_KEY' } } } },
+     { ns: 'locale', value: preference === undefined ? {} : { preference } },
+   ]
+-  const send = vi.fn<Parameters<typeof connectDesktopWelcome>[1]>(async (_input, init) => {
+-    if (init?.method !== 'POST') return new Response('index')
++  const send = vi.fn<typeof fetch>(async (_input, init) => {
++    if (init?.method !== 'POST') return exchange()
++    if (new Headers(init.headers).get('cookie') !== launchCookie) return new Response(null, { status: 401 })
+     const { rpcId, method, payload } = JSON.parse(init.body as string) as {
+       rpcId: string
+       method: string
+@@ -32,24 +36,35 @@ function transport(preference?: string) {
+ const url = 'http://127.0.0.1:19387/?token=fixture'
+ 
+ describe('desktop welcome Web operations', () => {
++  it('reads the welcome state without following the token exchange to the browser index', async () => {
++    const host = transport()
++    host.send.mockImplementationOnce(async (_input, init) => init?.redirect === 'manual'
++      ? exchange()
++      : new Response(null, { status: 431 }))
++    const { backend, cookie } = await connectDesktopWelcome(url, host.send)
++    expect(await backend.read()).toMatchObject({ loggedIn: false, hasApiKey: false })
++    expect(cookie).toBe(launchCookie)
++    expect(host.send.mock.calls.slice(1).every(([, init]) => init?.method === 'POST')).toBe(true)
++  })
++
+   it('authenticates through Web and stores only through the configured credential reference', async () => {
+     const host = transport()
+-    const backend = await connectDesktopWelcome(url, host.send)
+-    expect(host.send).toHaveBeenCalledExactlyOnceWith(url, { credentials: 'include' })
++    const { backend } = await connectDesktopWelcome(url, host.send)
++    expect(host.send).toHaveBeenCalledExactlyOnceWith(url, { redirect: 'manual' })
+     expect(await backend.analyticsEnabled()).toBe(true)
+     expect(await backend.save('sk-example')).toEqual({ ok: true })
+     expect(host.keys.get('CUSTOM_DEEPSEEK_KEY')).toBe('sk-example')
+     expect(await backend.read()).toEqual({ loggedIn: false, hasApiKey: true, writable: true, localePreference: null })
+     for (const [input, init] of host.send.mock.calls.slice(1)) {
+       expect(input).toMatch(/^http:\/\/127\.0\.0\.1:19387\/api\//u)
+-      expect(init).toMatchObject({ credentials: 'include', redirect: 'error' })
++      expect(init).toMatchObject({ redirect: 'error', headers: { cookie: launchCookie } })
+     }
+   })
+ 
+   it('reads the explicit language preference and recognizes another provider key', async () => {
+     const host = transport('zh')
+     host.keys.set('EXAMPLE_API_KEY', 'sk-other')
+-    const backend = await connectDesktopWelcome(url, host.send)
++    const { backend } = await connectDesktopWelcome(url, host.send)
+     expect(await backend.read()).toMatchObject({ localePreference: 'zh', hasApiKey: true })
+     host.keys.clear()
+     expect(await backend.read()).toMatchObject({ hasApiKey: false })
+@@ -58,7 +73,7 @@ describe('desktop welcome Web operations', () => {
+ 
+   it('reads language without querying account or model providers', async () => {
+     const host = transport('zh')
+-    const backend = await connectDesktopWelcome(url, host.send)
++    const { backend } = await connectDesktopWelcome(url, host.send)
+     host.send.mockClear()
+     expect(await backend.readLocalePreference()).toBe('zh')
+     expect(host.send).toHaveBeenCalledOnce()
+@@ -68,7 +83,7 @@ describe('desktop welcome Web operations', () => {
+   it('allows profiles without the official provider and retains custom key detection', async () => {
+     const host = transport()
+     host.namespaces.splice(0, 1)
+-    const backend = await connectDesktopWelcome(url, host.send)
++    const { backend } = await connectDesktopWelcome(url, host.send)
+     expect(await backend.read()).toMatchObject({ hasApiKey: false, writable: false })
+     host.keys.set('EXAMPLE_API_KEY', 'custom-key')
+     expect(await backend.read()).toMatchObject({ hasApiKey: true, writable: false })
+@@ -78,7 +93,7 @@ describe('desktop welcome Web operations', () => {
+ 
+   it.each(['', 'bad key', 'key\n'])('rejects malformed keys without contacting a provider: %s', async (value) => {
+     const host = transport()
+-    const backend = await connectDesktopWelcome(url, host.send)
++    const { backend } = await connectDesktopWelcome(url, host.send)
+     host.send.mockClear()
+     expect(await backend.save(value)).toEqual({ ok: false })
+     expect(host.send).not.toHaveBeenCalled()
+@@ -86,7 +101,7 @@ describe('desktop welcome Web operations', () => {
+ 
+   it('keeps provider diagnostics out of failures and rejects unmatched RPC envelopes', async () => {
+     const host = transport()
+-    const backend = await connectDesktopWelcome(url, host.send)
++    const { backend } = await connectDesktopWelcome(url, host.send)
+     host.send.mockRejectedValueOnce(new Error('private credential sk-must-not-leak'))
+     expect(await backend.save('sk-example')).toEqual({ ok: false })
+     host.send.mockResolvedValueOnce(Response.json({ type: 'server-response', rpcId: 'other', result: { ok: true } }))
+@@ -96,18 +111,25 @@ describe('desktop welcome Web operations', () => {
+ 
+   it('submits native analytics through authenticated RPC with a bounded request', async () => {
+     const host = transport()
+-    const backend = await connectDesktopWelcome(url, host.send)
++    const { backend } = await connectDesktopWelcome(url, host.send)
+     const event = { eventName: 'desktop_app_launch' as const, timestamp: 100, attributes: {} }
+     await backend.report(event)
+     const [input, init] = host.send.mock.calls.at(-1)!
+     expect(input).toBe('http://127.0.0.1:19387/api/productAnalytics/report')
+-    expect(init?.credentials).toBe('include')
++    expect(new Headers(init?.headers).get('cookie')).toBe(launchCookie)
+     expect(init?.signal).toBeInstanceOf(AbortSignal)
+     expect(JSON.parse(init!.body as string)).toMatchObject({ payload: { args: { event } } })
+   })
+ 
+   it('refuses an unauthenticated Web launch', async () => {
+-    const send = vi.fn<Parameters<typeof connectDesktopWelcome>[1]>(async () => new Response(null, { status: 401 }))
+-    await expect(connectDesktopWelcome(url, send)).rejects.toThrow('Web authentication failed')
++    const send = vi.fn<typeof fetch>(async () => new Response(null, { status: 401 }))
++    await expect(connectDesktopWelcome(url, send)).rejects.toThrow('Desktop Host authentication failed (HTTP 401)')
++  })
++
++  it('reports the failing RPC and status without including the response body', async () => {
++    const host = transport()
++    const { backend } = await connectDesktopWelcome(url, host.send)
++    host.send.mockResolvedValueOnce(new Response('private server diagnostic', { status: 431 }))
++    await expect(backend.readLocalePreference()).rejects.toThrow(/^desktop welcome: Web request failed \(settings\/describe, HTTP 431\)$/u)
+   })
+ })
+diff --git a/apps/desktop/tests/welcome-startup.spec.ts b/apps/desktop/tests/welcome-startup.spec.ts
+index 2c233fdf591e805692706c45883a8cbfd016eb74..8d29b5fc206eabac985d1d5799b6a83b336cc341 100644
+--- a/apps/desktop/tests/welcome-startup.spec.ts
++++ b/apps/desktop/tests/welcome-startup.spec.ts
+@@ -1,4 +1,4 @@
+-vi.mock('../src/web-document.ts', () => ({ authenticateWebHost: async () => 'test-cookie', serveWebDocument: vi.fn(), forwardWebRequest: vi.fn() }))
++vi.mock('../src/web-document.ts', () => ({ serveWebDocument: vi.fn(), forwardWebRequest: vi.fn() }))
+ /** Welcome startup uses the Host before transitioning to the workspace. */
+ 
+ import { afterEach, expect, it, vi } from 'vitest'
+@@ -84,7 +84,6 @@ vi.mock('electron', () => ({
+     showInactive = state.showInactiveWorkspace
+     async loadURL(url: string) { state.contents = this.webContents; await state.loadWorkspace(url); this.ready?.() }
+   },
+-  net: { fetch: vi.fn() },
+   nativeTheme: state.nativeTheme,
+   session: { defaultSession: {
+     on: vi.fn(),
+@@ -125,20 +124,23 @@ vi.mock('../src/host-process.ts', () => ({
+ }))
+ vi.mock('../src/welcome-backend.ts', () => ({
+   connectDesktopWelcome: async () => ({
+-    analyticsEnabled: async () => false,
+-    readLocalePreference: async () => state.preference,
+-    read: async () => {
+-      await state.beforeRead()
+-      return { loggedIn: false, hasApiKey: state.hasApiKey, writable: true, localePreference: state.preference }
+-    },
+-    save: async () => ({ ok: true }),
+-    account: {
+-      watch: (listener: (value: AccountView) => void, _failed: () => void, expired: () => void) => {
+-        state.accountListener = listener
+-        state.expiryListener = expired
+-        return () => {}
++    cookie: 'test-cookie',
++    backend: {
++      analyticsEnabled: async () => false,
++      readLocalePreference: async () => state.preference,
++      read: async () => {
++        await state.beforeRead()
++        return { loggedIn: false, hasApiKey: state.hasApiKey, writable: true, localePreference: state.preference }
++      },
++      save: async () => ({ ok: true }),
++      account: {
++        watch: (listener: (value: AccountView) => void, _failed: () => void, expired: () => void) => {
++          state.accountListener = listener
++          state.expiryListener = expired
++          return () => {}
++        },
++        state: state.accountState,
+       },
+-      state: state.accountState,
+     },
+   }),
+ }))
+diff --git a/apps/web/tests/desktop-onboarding.e2e.ts b/apps/web/tests/desktop-onboarding.e2e.ts
+index 24c3ada01ee5c0e902086ab1b30dd8068a19431c..a7bc28994869b4b6a8ae4713dbb80f6291491366 100644
+--- a/apps/web/tests/desktop-onboarding.e2e.ts
++++ b/apps/web/tests/desktop-onboarding.e2e.ts
+@@ -107,7 +107,7 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
+ 
+   async function desktopPage(locale = ZH_BROWSER_LOCALE): Promise<Page> {
+     const opened = await browser.newPage({ viewport: { width: 1280, height: 840 }, locale, reducedMotion: 'reduce' })
+-    const welcome = await connectDesktopWelcome(scaffold.authenticatedUrl, (input, init) => scaffold.hostFetch(input, init))
++    const { backend: welcome } = await connectDesktopWelcome(scaffold.authenticatedUrl)
+     await opened.exposeFunction('__onboardingHasApiKey', async () => (await welcome.read()).hasApiKey)
+     await opened.addInitScript(() => {
+       Object.defineProperty(globalThis, 'dshOnboarding', { value: {

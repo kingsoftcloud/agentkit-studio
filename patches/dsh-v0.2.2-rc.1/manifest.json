@@ -2470,12 +2470,127 @@
         ]
       },
       "sequence": 50
+    },
+    {
+      "id": "082",
+      "file": "082-desktop-profile-pnpm-recovery.patch",
+      "category": "lifecycle",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "dependsOn": [
+        "040",
+        "074"
+      ],
+      "affectedFiles": [
+        "apps/desktop-host/src/cli.ts",
+        "apps/desktop-host/src/index.ts",
+        "apps/desktop-host/src/package-manager.ts",
+        "apps/desktop-host/tests/package-manager.spec.ts",
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "packages/boot/app-boot/src/profile-context.ts",
+        "packages/boot/plugin-manager/src/index.ts",
+        "packages/boot/plugin-manager/src/operations.ts",
+        "packages/boot/plugin-manager/src/profile-package-recovery.ts",
+        "packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-app-boot",
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-desktop-host",
+        "@deepseek-ai/dsh-plugin-manager"
+      ],
+      "contracts": [
+        "The managed Desktop Host and its installed CLI use the bundled pnpm even when the profile pins another version. The Host checks the recorded pnpm major, store, and local package entries before boot, and package mutations perform the same check under the profile writer lock.",
+        "Recovery reinstalls from the existing lockfile without running install scripts. It keeps the old dependency directory until the new one verifies, restores it if the rebuild fails, and resumes a pending directory swap only after its package process stops.",
+        "When the locked rebuild cannot run at startup, only empty and undeclared core directories with a bundled replacement can be moved out of the resolver path. If a plugin mutation leaves an invalid dependency tree, the operation fails and attempts to restore the previous dependency set."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Source regression tests with real pnpm and isolated macOS Desktop Host smoke using the installed Electron and pnpm with rebuilt Host modules."
+      },
+      "removeWhen": "The pinned Desktop Host verifies and recovers incompatible or incomplete plugin dependency trees with equivalent rollback and restart coverage.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop-host/tests/package-manager.spec.ts",
+          "apps/desktop/tests/project-manager.spec.ts",
+          "packages/boot/plugin-manager/tests/desktop-package-recovery.spec.ts",
+          "packages/boot/plugin-manager/tests/manager.spec.ts",
+          "packages/boot/plugin-manager/tests/operations-process.spec.ts",
+          "packages/boot/plugin-manager/tests/operations.spec.ts",
+          "packages/boot/plugin-manager/tests/package-reload.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "macos",
+          "windows",
+          "product-profiles"
+        ]
+      },
+      "sequence": 51,
+      "sha256": "bb0b87526bc0994f7ea649c632130977736d6dce9c2b1eb863b246833830b204"
+    },
+    {
+      "id": "083",
+      "file": "083-desktop-host-cookie-isolation.patch",
+      "category": "lifecycle",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "dependsOn": [
+        "078",
+        "082"
+      ],
+      "affectedFiles": [
+        "apps/desktop/README.md",
+        "apps/desktop/README.zh.md",
+        "apps/desktop/src/account-backend.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/web-document.ts",
+        "apps/desktop/src/welcome-backend.ts",
+        "apps/desktop/tests/main-startup.spec.ts",
+        "apps/desktop/tests/welcome-flow.e2e.ts",
+        "apps/desktop/tests/welcome-host.spec.ts",
+        "apps/desktop/tests/welcome-startup.spec.ts",
+        "apps/web/tests/desktop-onboarding.e2e.ts"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-desktop",
+        "@deepseek-ai/dsh-web-frontend"
+      ],
+      "contracts": [
+        "Desktop exchanges the owned Host launch URL once without consulting Chromium. Native welcome and account RPCs, the account stream, and workspace forwarding use only the current Host cookie.",
+        "Cookies left by earlier Host ports cannot block Desktop startup. Authentication and RPC failures report the HTTP status without logging cookie values, launch tokens, or response bodies."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio Desktop maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Reproduced loopback header overflow on macOS and verified native welcome and built Host restart coverage."
+      },
+      "removeWhen": "The pinned Desktop shell uses a Host-scoped credential for onboarding, account and workspace access and starts with an overflowing legacy Chromium cookie store.",
+      "verification": {
+        "hostTests": [
+          "apps/desktop/tests/account-backend.spec.ts",
+          "apps/desktop/tests/main-startup.spec.ts",
+          "apps/desktop/tests/web-document.spec.ts",
+          "apps/desktop/tests/welcome-host.spec.ts",
+          "apps/desktop/tests/welcome-startup.spec.ts"
+        ],
+        "integrations": [
+          "source",
+          "electron",
+          "macos",
+          "windows"
+        ]
+      },
+      "sequence": 52,
+      "sha256": "e903a00d71a7019eac161651f77087b2839c371bf99a64016309fe36e64d29b6"
     }
   ],
-  "patchedTree": "1cee9bcb60cab49a7b6a1a16d40221074b089662",
-  "patchedSourceSha256": "03e495b38e7a5e77abd5749f86a4d8a2b63a27940568567e7d30b97e2ef54b1c",
+  "patchedTree": "528711c889fd7041f3caf55c9c114bdf7e5de89d",
+  "patchedSourceSha256": "5ed309d1cff802a585331425bbd2c2ad8ee2011de149ee0416347c89245ae43b",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "76197f0071225def4f9becc8a68944fa4e3e7f4213403795952649bc54e31af5"
+    "sha256": "162f9bed2d85110d7358575efb07221cdcd346715b0e208b165593204669dbab"
   }
 }
