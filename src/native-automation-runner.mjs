@@ -32,7 +32,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     if (!value) throw Object.assign(new Error(`自动化需要 DSH ${name} 服务`), { code: 'AUTOMATION_SERVICE_UNAVAILABLE' });
     return value;
   };
-  const run = async ({ agentId, sessionId, occurrenceId, input, model, requestFingerprint, requireReplay = false, buildId = '', timeoutSeconds, signal: callerSignal, onFrame, approvalPolicy = UNATTENDED_EXECUTION_POLICY.approvalPolicy, permissionMode }) => service('agents').withoutInitiator(async () => {
+  const run = async ({ agentId, sessionId, occurrenceId, input, images, model, requestFingerprint, requireReplay = false, buildId = '', timeoutSeconds, signal: callerSignal, onFrame, approvalPolicy = UNATTENDED_EXECUTION_POLICY.approvalPolicy, permissionMode }) => service('agents').withoutInitiator(async () => {
     const startedAt = Date.now();
     const controller = service('sessionController');
     const expiry = AbortSignal.timeout(timeoutSeconds ? Math.max(1000, Number(timeoutSeconds) * 1000) : timeoutMs);
@@ -40,7 +40,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
     signal.throwIfAborted();
     const existing = reuseSession && await controller.projections({ sessionId }, signal);
     if (existing && loadReplay) {
-      const replay = await loadReplay({ controller, sessionId, occurrenceId, input, model, requestFingerprint, signal });
+      const replay = await loadReplay({ controller, sessionId, occurrenceId, input, images, model, requestFingerprint, signal });
       signal.throwIfAborted();
       if (replay) {
         if (!requireReplay && onFrame) replayNativeRequestFrames(replay, onFrame);
@@ -91,7 +91,7 @@ export function createNativeAutomationRunner({ getService, admit, observe, selec
         signal.throwIfAborted(); submitted = true;
         await Promise.race([controller.prompt({ sessionId, requestId: occurrenceId,
           ...(requestFingerprint === undefined ? {} : { requestFingerprint }), mode: 'queue',
-          content: [{ type: 'text', text: String(input || '') }], clientTimeZone: 'Asia/Shanghai' }, signal), canceled]);
+          content: [...(input || !images?.length ? [{ type: 'text', text: String(input || '') }] : []), ...(images ?? [])], clientTimeZone: 'Asia/Shanghai' }, signal), canceled]);
         signal.throwIfAborted();
         await Promise.race([agent.whenIdle(), canceled]);
         signal.throwIfAborted();

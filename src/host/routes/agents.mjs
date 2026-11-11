@@ -107,7 +107,8 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
                 // The no-build path remains the original local admission contract:
                 // getAdmission().ensure(agentId, { agent: local }).
                 const value = local
-                    ? await getAdmission().ensure(agentId, { agent: build ? { ...build, metadata: { ...local.metadata, ...build.metadata, local: true } } : local })
+                    ? await getAdmission().ensure(agentId, { preferService: true, requestedPresetId: payload?.presetId,
+                        agent: build ? { ...build, metadata: { ...local.metadata, ...build.metadata, local: true } } : local })
                     : await getAdmission().ensure(agentId);
                 return { ok: true, value };
             }

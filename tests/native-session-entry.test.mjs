@@ -71,3 +71,16 @@ test('a saved panel timer and queued subscription stop when their scope closes',
   close(); ready(); changed();
   assert.deepEqual(selected, []);
 });
+
+test('service sessions are created in the engine workspace with their admitted preset and model', async () => {
+  const modelSelection = { provider: 'harness-service', model: 'Harness' };
+  const workspaceRoot = '/workspace/native-agent';
+  const presetId = 'preset-harness-service';
+  const f = bindingFixture(async () => ({ presetId, workspaceRoot, modelSelection }));
+  await f.bind({ agentId: 'agent-a', modelSelection: { provider: 'legacy', model: 'stale-default' } });
+  assert.deepEqual(f.calls, [
+    ['create', { cwd: workspaceRoot, agentPreset: presetId }],
+    ['model', { sessionId: 'blank', ...modelSelection, saveDefault: false }],
+    ['open', 'blank'],
+  ]);
+});

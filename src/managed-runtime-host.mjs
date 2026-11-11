@@ -197,6 +197,13 @@ async function adoptDshHome({ root, versions }) {
 export async function prepareManagedRuntimeHost({ manifest, state, installation, env = process.env }) {
   if (typeof env.AGENTKIT_RUNTIME_TOKEN !== 'string' || env.AGENTKIT_RUNTIME_TOKEN.length < 24) fail('TOKEN_REQUIRED', '运行入口需要独立访问令牌');
   const runtime = await loadManagedRuntimeDefinition({ manifest: resolve(manifest), env });
+  const homePath = resolve(env.AGENTKIT_USER_HOME || '/home/node');
+  const workspacePath = resolve(env.AGENTKIT_WORKSPACE_ROOT || join(homePath, 'workspace'));
+  const remoteHarness = Boolean(runtime.harnessModelSelection);
+  if (remoteHarness
+    && workspacePath !== resolve(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)) {
+    fail('HARNESS_SERVICE_WORKSPACE_MISMATCH', '托管 Harness 服务绑定的工作区与宿主工作区不一致');
+  }
   if (managedResourcesNeedServer(runtime.declaration.resources)) managedResourceServerRoot(env);
   const credentialNames = managedResourceCredentialNames(runtime.declaration.resources);
   for (const name of credentialNames) {
@@ -223,25 +230,30 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   // Studio's receipt and model config stay version-scoped to keep immutable
   // state, but DSH_HOME is Agent-scoped: sessions, storages and Settings are
   // the Agent's own record, so an accepted update must keep reading them.
-  const userHome = await directory(resolve(env.AGENTKIT_USER_HOME || '/home/node'));
+  const userHome = await directory(homePath);
   const { home: dshHome, settings: dshSettings } = await adoptDshHome({ root, versions });
   const codexHome = await directory(join(userHome, '.codex'));
-  const cwd = await directory(resolve(env.AGENTKIT_WORKSPACE_ROOT || join(userHome, 'workspace')));
-  await immutableJson(join(home, 'config.yaml'), { settings: { modelProfiles: runtime.modelProfiles,
-    modelName: runtime.declaration.model, modelProvider: 'openai-compatible', modelBaseUrl: runtime.modelProfiles[0].baseUrl } });
+  const cwd = await directory(workspacePath);
+  if (!remoteHarness) {
+    await immutableJson(join(home, 'config.yaml'), { settings: { modelProfiles: runtime.modelProfiles,
+      modelName: runtime.declaration.model, modelProvider: 'openai-compatible', modelBaseUrl: runtime.modelProfiles[0].baseUrl } });
+  }
   await prepareRuntimeProfile({ dshHome, modules, identity: runtime.identity,
     profileIdentity: { agentId: runtime.identity.agentId }, dshVersion, prefix: 'MANAGED_HOST',
     patchContent: dshSettings ?? undefined });
   const names = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
     'KSADK_SANDBOX_BACKEND',
-    'AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT',
+    ...(remoteHarness
+      ? ['AGENTKIT_ENGINE_SERVICE_URL', 'AGENTKIT_ENGINE_SERVICE_TOKEN', 'AGENTKIT_ENGINE_SERVICE_WORKSPACE', 'AGENTKIT_ENGINE_SERVICE_CA_FILE']
+      : ['AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API']),
+    'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT',
     'AGENTENGINE_MANAGED_RUNTIME_NAME', 'AGENTENGINE_MANAGED_RUNTIME_VERSION', 'AGENTENGINE_MANIFEST_PROTOCOL', 'AGENTENGINE_MANIFEST_SHA256',
     'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
     ...MANAGED_OBSERVABILITY_ENV_NAMES];
   const childEnv = Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: codexHome,
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
-    AGENTKIT_HOME: home, OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible',
+    AGENTKIT_HOME: home, ...(!remoteHarness ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
     AGENTENGINE_MANIFEST_PATH: resolve(manifest) });
   return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion } };
 }

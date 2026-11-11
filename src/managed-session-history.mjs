@@ -3,11 +3,13 @@
  */
 import { runtimeError } from './runtime-responses-contract.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
+import { hostedHarnessView } from './harness-view-presentation.mjs';
+import { NATIVE_ENGINE_EVENT } from './providers/native-engine-runtime.mjs';
 
 const text = parts => (parts || []).filter(part => part.type === 'text').map(part => part.text || '').join('');
 const content = value => Array.isArray(value) ? value : [];
 const integer = (value, min = 0) => Number.isSafeInteger(value) && value >= min;
-const publicEventTypes = new Set(['turn/start', 'turn/end', 'user/message', 'assistant/message', 'tool/call', 'tool/result', CODEX_TOOL_EVENT]);
+const publicEventTypes = new Set(['turn/start', 'turn/end', 'user/message', 'assistant/message', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, NATIVE_ENGINE_EVENT]);
 const groupRequest = group => group.requestId ?? group.events.find(event => event.type === 'user/message' && event.data?.source?.rpcId)?.data.source.rpcId;
 
 function groupEvents(events, kind, after = -1) {
@@ -37,12 +39,16 @@ async function projectGroup(group, session, invocationId, options) {
   const request = groupRequest(group);
   if (!request) return [];
   const invocation = await invocationId(session.nativeSessionId, request);
-  if (options.kind === 'events') return group.events.filter(event => publicEventTypes.has(event.type)).map(event => {
+  if (options.kind === 'events') return group.events.filter(event => publicEventTypes.has(event.type)).flatMap(event => {
     const data = event.data || {}, message = event.type === 'user/message' ? data : data.message;
     const value = text(content(message?.content));
     const base = { EventId: `${session.sessionId}:${event.seq + 1}`, SessionId: session.sessionId, SeqId: event.seq + 1,
       InvocationId: invocation, Timestamp: new Date(event.time).toISOString(), Author: event.type === 'user/message' ? 'user' : 'assistant',
       Content: { text: value, parts: value ? [{ text: value }] : [] }, Metadata: {} };
+    if (event.type === NATIVE_ENGINE_EVENT) {
+      const view = hostedHarnessView(event);
+      return view ? { ...base, EventType: 'harness_view', Content: { harness_view: view } } : [];
+    }
     if (event.type === 'user/message' || event.type === 'assistant/message') return { ...base, EventType: event.type.replace('/', '_') };
     if (event.type === 'turn/start' || event.type === 'turn/end') {
       const reason = data.reason?.kind;

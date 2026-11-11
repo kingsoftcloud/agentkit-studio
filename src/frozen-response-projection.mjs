@@ -1,19 +1,18 @@
 /** Durable HTTP presentation, owned by the original public DSH Session log.
  * This derivative record cannot admit, resume, or execute a Native turn. */
-import { createHash } from 'node:crypto';
+import { responsesRequestFingerprint as fingerprint } from './runtime-responses-contract.mjs';
+import { HOSTED_HARNESS_VIEW_EVENT } from './harness-view-presentation.mjs';
 
 export const FROZEN_RESPONSE_PROJECTION = 'agentkit.runtime-response-projection/v1';
 export const FROZEN_RESPONSE_PROJECTION_EVENT = 'studio/runtime-response-projection';
 const fail = code => Object.assign(new Error(code), { code, status: 409 });
 const notJson = path => Object.assign(new Error(`RESPONSES_PROJECTION_NOT_JSON: ${path} is not lossless JSON`),
   { code: 'RESPONSES_PROJECTION_NOT_JSON', status: 409 });
-const fingerprint = request => createHash('sha256').update(JSON.stringify({ version: 1,
-  input: request.input, model: request.model ?? null })).digest('hex');
 const presentationTypes = new Set(['response.output_item.added', 'response.output_item.done',
   'response.content_part.added', 'response.content_part.done', 'response.output_text.delta', 'response.output_text.done',
   'response.reasoning_summary_text.delta', 'response.reasoning_summary_text.done',
   'response.function_call_arguments.done', 'response.resource_check', 'response.tool_result',
-  'response.question_resolved']);
+  'response.question_resolved', HOSTED_HARNESS_VIEW_EVENT]);
 
 /** Normalize one derivative record to the only shape the Session log keeps.
  *  DSH persists session events as lossless JSON: the append site detaches a

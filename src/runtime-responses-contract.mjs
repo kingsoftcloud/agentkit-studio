@@ -7,22 +7,43 @@ const digest = value => createHash('sha256').update(value).digest('hex').slice(0
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const identity = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 
-function userText(input) {
-  if (typeof input === 'string' && input.trim()) return input;
+const INLINE_IMAGE = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/;
+const MAX_RESPONSE_IMAGE_BYTES = 6 * 1024 * 1024;
+
+export function responsesRequestFingerprint(request) {
+  return createHash('sha256').update(JSON.stringify({ version: 1, input: request.input, model: request.model ?? null,
+    ...(request.images?.length ? { images: request.images } : {}) })).digest('hex');
+}
+
+function userInput(input, allowImages) {
+  if (typeof input === 'string' && input.trim()) return { input };
   if (!Array.isArray(input) || input.length !== 1) throw runtimeError('RESPONSES_SINGLE_USER_MESSAGE_REQUIRED');
   const message = input[0];
   if (!object(message) || message.role !== 'user' || (message.type && message.type !== 'message')
     || Object.keys(message).some(key => !['role', 'type', 'content'].includes(key))) throw runtimeError('RESPONSES_SINGLE_USER_MESSAGE_REQUIRED');
-  if (typeof message.content === 'string' && message.content.trim()) return message.content;
-  if (!Array.isArray(message.content) || !message.content.length || message.content.some(part => !object(part)
-    || !['text', 'input_text'].includes(part.type) || typeof part.text !== 'string'
-    || Object.keys(part).some(key => !['type', 'text'].includes(key)))) throw runtimeError('RESPONSES_TEXT_INPUT_REQUIRED');
-  const text = message.content.map(part => part.text).join('');
-  if (!text.trim()) throw runtimeError('RESPONSES_TEXT_INPUT_REQUIRED');
-  return text;
+  if (typeof message.content === 'string' && message.content.trim()) return { input: message.content };
+  if (!Array.isArray(message.content) || !message.content.length) throw runtimeError('RESPONSES_TEXT_INPUT_REQUIRED');
+  let text = '', encodedBytes = 0;
+  const images = [];
+  for (const part of message.content) {
+    if (object(part) && ['text', 'input_text'].includes(part.type) && typeof part.text === 'string'
+      && Object.keys(part).every(key => ['type', 'text'].includes(key))) {
+      text += part.text;
+      continue;
+    }
+    if (!allowImages || !object(part) || part.type !== 'input_image') throw runtimeError('RESPONSES_TEXT_INPUT_REQUIRED');
+    const match = typeof part.image_url === 'string' ? INLINE_IMAGE.exec(part.image_url) : null;
+    if (!match || match[2].length % 4 || Object.keys(part).some(key => !['type', 'image_url', 'detail'].includes(key))
+      || (part.detail !== undefined && part.detail !== 'auto')) throw runtimeError('RESPONSES_IMAGE_INPUT_INVALID');
+    encodedBytes += part.image_url.length;
+    if (images.length >= 8 || encodedBytes > MAX_RESPONSE_IMAGE_BYTES) throw runtimeError('RESPONSES_IMAGE_INPUT_TOO_LARGE', 413);
+    images.push({ type: 'image', mediaType: match[1], data: match[2] });
+  }
+  if (!text.trim() && !images.length) throw runtimeError('RESPONSES_TEXT_INPUT_REQUIRED');
+  return { input: text, ...(images.length ? { images } : {}) };
 }
 
-export function createRuntimeResponsesContract({ agentId, buildId, definitionId, versionId, token, model = '', models = [model] }) {
+export function createRuntimeResponsesContract({ agentId, buildId, definitionId, versionId, token, model = '', models = [model], allowImages = false }) {
   // Handles carry only scoped hashes. Their signature binds Agent, Build and
   // principal without a second transcript/response store beside DSH.
   const scope = buildId || JSON.stringify([versionId, definitionId]);
@@ -69,7 +90,7 @@ export function createRuntimeResponsesContract({ agentId, buildId, definitionId,
         previous = { sessionId: `runtime-${session}`, occurrenceId: `run_${priorRun}` };
       }
       const run = digest(JSON.stringify([session, requestId]));
-      return { input: userText(input.input), requestId, stream: input.stream === true, sessionId: `runtime-${session}`, runId: `run_${run}`,
+      return { ...userInput(input.input, allowImages), requestId, stream: input.stream === true, sessionId: `runtime-${session}`, runId: `run_${run}`,
         responseId: responseHandle(session, run, principal), conversationId: sessionHandle(session, principal), previous,
         ...(verifiedPrincipal === undefined ? {} : { sessionLabel: label || requestId }),
         model: input.model ?? model, createdAt: Math.floor(Date.now() / 1000), metadata: { ...(input.metadata || {}), agentkit: metadataIdentity } };

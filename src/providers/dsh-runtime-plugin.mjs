@@ -278,6 +278,13 @@ export function apply(ctx, config = {}) {
       buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract,
       boundToolPolicy, nativeTools: bindNativeTools(payload.agent) } });
   });
+  // The active preset supplies resource identity to the trusted service
+  // transport. The request cannot select a different Agent or Build.
+  if (wholeNativeTurn || config.runtime === 'native-engine') ctx.on('agentkit/harness-resource-binding', () => {
+    assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
+    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    return { agentId, agentRevision: config.agentRevision, buildId: config.buildId };
+  });
   // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
   // Durable ownership grants no tools or permissions by itself.
   if (wholeNativeTurn) ctx.on('agentkit/native-recovery-binding', async ({ agent }) => {

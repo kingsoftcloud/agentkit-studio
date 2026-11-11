@@ -106,3 +106,33 @@ for (const profile of ['dsh-native', 'harness', 'codex']) {
     assert.match(context.resourceContext, /EXCLUSIVE_space-second/);
   });
 }
+
+test('service turns keep resource ownership without re-registering the Harness workspace or command tools', async () => {
+  const { createCodexResourceContext } = await import('../src/providers/codex-resource-context.mjs');
+  const record = { spec: { runtime: { type: 'harness' }, bindings: {
+    tools: [{ resourceId: 'read_workspace_file' }, 'run_command', 'component_status'],
+    skills: ['skill-fixture'],
+    mcpServers: [{ resourceId: 'mcp-fixture' }],
+    plugins: managedResourceBindings({ knowledge_base: { id: 'kb-fixture' }, memory: { id: 'mem-fixture' } }).plugins,
+  } } };
+  const calls = [];
+  const context = createCodexResourceContext({ agentStore: { get: async () => record }, builds: {}, resources: {
+    loadSkill: async id => ({ name: id, content: 'BOUND_SKILL' }),
+    searchKnowledge: async () => [{ content: 'BOUND_KNOWLEDGE' }],
+    searchMemory: async () => [{ content: 'BOUND_MEMORY' }],
+    listMcpTools: async ref => { assert.equal(ref.resourceId, 'mcp-fixture'); return [{ name: 'read_workspace_file' }]; },
+    callMcpTool: async (ref, tool) => { calls.push([ref.resourceId, tool]); return { ok: true }; },
+  } });
+  const prepared = await context({ agentId: 'test', input: 'Read the approved resource.', userId: 'owner', runtime: 'native-engine',
+    toolAdapter: { listTools: async ids => {
+      assert.deepEqual(ids, ['component_status']);
+      return [{ name: 'component_status' }];
+    } } });
+  assert.deepEqual(prepared.dynamicTools.map(tool => tool.name), ['read_workspace_file', 'component_status']);
+  assert.match(prepared.systemPrompt, /BOUND_SKILL/);
+  assert.match(prepared.systemPrompt, /BOUND_KNOWLEDGE/);
+  assert.match(prepared.systemPrompt, /BOUND_MEMORY/);
+  await prepared.toolHandler({ name: 'read_workspace_file' });
+  assert.deepEqual(calls, [['mcp-fixture', 'read_workspace_file']]);
+  assert.equal(record.spec.bindings.tools.length, 3);
+});

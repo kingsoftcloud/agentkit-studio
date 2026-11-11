@@ -253,3 +253,20 @@ test('managed approval runs lift the Codex thread policy and route App Server as
   assert.equal(seen[1].approvalPolicy, undefined);
   assert.equal(seen[1].requestApproval, undefined);
 });
+
+test('a Native engine service owns model selection at the Studio entry point', async () => {
+  const adapter = createDshRuntimeAdapter({
+    resolveCodexModel: () => assert.fail('the host must not resolve service model credentials'),
+    nativeEngineRuntime: {
+      usesService: true,
+      async *stream(options) {
+        assert.equal(options.modelProvider, undefined);
+        assert.equal(options.sessionId, 'native-service-session');
+        yield { type: 'text', text: 'Harness service response' };
+      },
+    },
+  });
+  const chunks = await Array.fromAsync(adapter.stream({ ...prompt, provider: 'studio-gateway',
+    model: 'local:native-agent', studioRuntime: 'native-engine', sessionId: 'native-service-session' }));
+  assertContinuousBlocks(chunks, [[0, 'text', 'Harness service response']]);
+});

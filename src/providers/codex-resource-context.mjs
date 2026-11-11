@@ -1,9 +1,11 @@
 /** Materialize Codex-bound resources while keeping DSH delivery execution authoritative. */
 import { prepareLocalResourceContext, codexToolBindings, writeBoundMemory } from '../local-runtime.mjs';
 import { codexPresentationBindings } from './dsh-presentation-tools.mjs';
+import { harnessServiceHostBindings } from './dsh-node-builtin-catalog.mjs';
+import { nativeAgentPolicyFromSpec } from '../native-agent-policy.mjs';
 
 export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise }) {
-  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent } = {}) => {
+  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
     let record;
     try { record = buildId ? await buildState.build.resolve(agentId, buildId) : agentRevision ? await store.getRevision(agentId,Number(agentRevision)) : await store.get(agentId); }
@@ -12,8 +14,11 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
       throw error;
     }
     if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
+    const resourceRecord = runtime === 'native-engine'
+      ? { ...record, spec: { ...record.spec, bindings: harnessServiceHostBindings(record.spec?.bindings || record.bindings) } }
+      : record;
     const prepared = await prepareLocalResourceContext({
-      record,
+      record: resourceRecord,
       input,
       resourceAdapter,
       toolAdapter,
@@ -51,6 +56,7 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
       agentName: String(record.metadata?.name || record.name || ''),
       memory: prepared.memory || null,
       memoryHitCount: prepared.memoryHitCount,
+      ...(runtime === 'native-engine' ? { nativeAgentPolicy: nativeAgentPolicyFromSpec(record.spec) } : {}),
       systemPrompt,
       dynamicTools: toolBindings.map(item => item.spec),
       writeMemory: prepared.memoryWrite

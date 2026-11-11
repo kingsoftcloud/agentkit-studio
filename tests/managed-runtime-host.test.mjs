@@ -52,6 +52,31 @@ async function fixture(t) {
   return { root, installation, state, manifest, env, raw };
 }
 
+test('managed Harness boots with a service binding and no model credentials in Studio', async t => {
+  const f = await fixture(t);
+  const raw = stringify({ ...parse(f.raw), framework: 'harness', runtime: { name: 'harness', version: 'studio-test.1' } });
+  await writeFile(f.manifest, raw);
+  const env = { ...f.env, AGENTENGINE_MANAGED_RUNTIME_NAME: 'harness', AGENTENGINE_MANIFEST_SHA256: hash(raw),
+    AGENTKIT_ENGINE_SERVICE_URL: 'https://harness.test:8787', AGENTKIT_ENGINE_SERVICE_TOKEN: 'fixture-harness-service-token',
+    AGENTKIT_ENGINE_SERVICE_CA_FILE: '/var/run/agentkit-harness/ca.crt', NODE_EXTRA_CA_CERTS: '/etc/resource/ca.crt',
+    AGENTKIT_ENGINE_SERVICE_WORKSPACE: join(f.env.AGENTKIT_USER_HOME, 'workspace') };
+  delete env.OPENAI_BASE_URL;
+  delete env.AGENTKIT_MODEL_API_KEY;
+  const plan = await prepareManagedRuntimeHost({ ...f, env });
+  const runtime = await loadManagedRuntimeDefinition({ manifest: f.manifest, env: plan.env });
+  assert.equal(runtime.agent.spec.runtime.type, 'native-engine');
+  assert.deepEqual(runtime.modelProfiles, []);
+  assert.deepEqual(runtime.harnessModelSelection, { provider: 'agentkit-studio-harness-service', model: 'fixture-model' });
+  assert.equal(plan.env.OPENAI_MODEL_NAME, undefined);
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_TOKEN, env.AGENTKIT_ENGINE_SERVICE_TOKEN);
+  assert.equal(plan.env.AGENTKIT_ENGINE_SERVICE_CA_FILE, env.AGENTKIT_ENGINE_SERVICE_CA_FILE);
+  assert.equal(plan.env.NODE_EXTRA_CA_CERTS, env.NODE_EXTRA_CA_CERTS);
+  const withUnusedModel = await prepareManagedRuntimeHost({ ...f, env: { ...env,
+    OPENAI_BASE_URL: f.env.OPENAI_BASE_URL, AGENTKIT_MODEL_API_KEY: f.env.AGENTKIT_MODEL_API_KEY } });
+  assert.equal(withUnusedModel.env.AGENTKIT_MODEL_API_KEY, undefined);
+  assert.equal(withUnusedModel.env.OPENAI_BASE_URL, undefined);
+});
+
 test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or persisted model secrets', async t => {
   const f = await fixture(t), plan = await prepareManagedRuntimeHost(f);
   assert.match(plan.entry, /@deepseek-ai\/dsh\/lib\/bin.js$/);
