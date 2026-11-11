@@ -15,6 +15,7 @@ import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/n
 import { nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
 import { assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
+import { STUDIO_TEAM_HOST_TOOLS } from '../studio-team-tools.mjs';
 import { executeNativeDshToolCall } from './native-dsh-tool-call.mjs';
 import { installNativeBoundPolicy } from './native-bound-policy.mjs';
 import { normalizeNativeAgentPolicy } from '../native-agent-policy.mjs';
@@ -148,6 +149,22 @@ function toolNames(values) {
   }).filter(Boolean).map(String);
 }
 
+async function executeIndependentHostTool(ctx, definition, args, { agent, callId, signal }, decode) {
+  if (!definition || !agent?.session?.id)
+    return { status: 'error', content: { code: 'BOUND_TOOL_NOT_FOUND', executed: false } };
+  const preflightDefer = ctx.tools.callerOptionsContract === 'dsh.tool-batch-caller-options/v1'
+    ? 'dsh.tool-preflight-defer/v2' : undefined;
+  try {
+    const result = await executeNativeDshToolCall(ctx.tools, { name: definition.name, arguments: args, agent, callId, signal, preflightDefer });
+    if (!result.isError) return decode(result);
+    if (definition.readOnly || preflightDefer && result.preflightRejected === preflightDefer)
+      return { status: 'error', content: { code: 'HOST_TOOL_REJECTED', executed: false } };
+  } catch {
+    // A mutating call without a settled result may already have executed.
+  }
+  return { status: definition.readOnly ? 'error' : 'uncertain', content: { code: 'HOST_TOOL_OUTCOME_UNAVAILABLE' } };
+}
+
 function createToolAdapter(ctx, bindings) {
   const allowed = new Set(toolNames(bindings).map(sandboxRegistryName));
   if (!allowed.size) return undefined;
@@ -267,34 +284,32 @@ export function apply(ctx, config = {}) {
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
     ...(!wholeNativeTurn && config.a2aBindings?.length ? nativeA2aToolDefinitions().map(tool => tool.name) : [])]);
+  const service = config.runtime === 'native-engine';
   const a2aNames = new Set(nativeA2aToolDefinitions().map(tool => tool.name));
-  const a2aHostTools = config.runtime === 'native-engine' && config.a2aBindings?.length
+  const a2aHostTools = service && config.a2aBindings?.length
     ? builtinToolBindings?.definitions.filter(tool => a2aNames.has(tool.name)) ?? [] : [];
+  const teamRole = service && config.teamRole === true;
+  const teamHostTools = agent => (ctx.tools.schemas?.(agent) ?? []).filter(tool => Object.hasOwn(STUDIO_TEAM_HOST_TOOLS, tool.name))
+    .map(tool => ({ ...tool, readOnly: STUDIO_TEAM_HOST_TOOLS[tool.name] }));
   const toolAdapter = config.runtime === 'codex'
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) }
-    : a2aHostTools.length ? {
+    : a2aHostTools.length || teamRole ? {
       ...boundToolAdapter,
-      listNativeA2aTools: () => a2aHostTools,
-      async callNativeA2aTool(name, args, { agent, callId, signal }) {
-        const definition = a2aHostTools.find(tool => tool.name === name);
-        if (!definition || !agent?.session?.id)
-          return { status: 'error', content: { code: 'BOUND_TOOL_NOT_FOUND', executed: false } };
-        const preflightDefer = ctx.tools.callerOptionsContract === 'dsh.tool-batch-caller-options/v1'
-          ? 'dsh.tool-preflight-defer/v2' : undefined;
-        try {
-          const result = await executeNativeDshToolCall(ctx.tools, { name, arguments: args, agent, callId, signal, preflightDefer });
-          if (result.isError && (definition.readOnly || result.preflightRejected === preflightDefer && preflightDefer))
-            return { status: 'error', content: { code: 'A2A_TOOL_REJECTED', executed: false } };
-          if (!result.isError && typeof result.value?.result === 'string') {
+      ...(a2aHostTools.length ? {
+        listNativeA2aTools: () => a2aHostTools,
+        callNativeA2aTool: (name, args, options) => executeIndependentHostTool(ctx,
+          a2aHostTools.find(tool => tool.name === name), args, options, result => {
+            if (typeof result.value?.result !== 'string') throw Error('A2A tool outcome invalid');
             const content = JSON.parse(result.value.result);
             return { status: content?.status === 'uncertain' ? 'uncertain' : content?.ok === false ? 'error' : 'ok', content };
-          }
-        } catch {
-          // Without a settled ToolRegistry result a Send may already have
-          // reached the A2A service. Leave the owned call available for control.
-        }
-        return { status: definition.readOnly ? 'error' : 'uncertain', content: { code: 'A2A_TOOL_OUTCOME_UNAVAILABLE' } };
-      },
+          }),
+      } : {}),
+      ...(teamRole ? {
+        listNativeTeamTools: teamHostTools,
+        callNativeTeamTool: (name, args, options) => executeIndependentHostTool(ctx,
+          teamHostTools(options.agent).find(tool => tool.name === name), args, options,
+          result => ({ status: 'ok', content: result.content })),
+      } : {}),
     } : boundToolAdapter;
   // Legacy resource adapters retain their existing per-model-step ownership.
   // Local AgentKit Harness is claimed above at the whole-turn boundary.

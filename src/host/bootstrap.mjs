@@ -162,24 +162,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   };
   const { skillDefinitionsForBindings, withBuiltinSkillContextForBindings } = await import('../builtin-skills.mjs');
   const { createCodexResourceContext } = await import('../providers/codex-resource-context.mjs');
-  // Codex App Server turns receive developerInstructions instead of the DSH
-  // skill registry, so the builtin platform guide is inlined there. It is
-  // gated on the same platform bindings as getSkillDefinitions: a Codex Agent
-  // with no platform resource keeps its plain developerInstructions.
-  const resolveCodexBindings = async ({ agentId, buildId, agentRevision } = {}) => {
-    if (!agentId) return {};
-    // Same resolution order as createCodexResourceContext so the gate sees the
-    // exact revision/build bindings the context is built from.
-    const record = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId)
-      : agentRevision ? await (await agentStorePromise).getRevision(agentId, Number(agentRevision))
-      : await (await agentStorePromise).get(agentId);
-    return record?.spec?.bindings || record?.bindings || {};
-  };
-  const codexResourceContextBase = createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise });
-  const codexResourceContext = async request => {
-    const context = await codexResourceContextBase(request);
-    return withBuiltinSkillContextForBindings(context, await resolveCodexBindings(request));
-  };
+  const codexResourceContext = createCodexResourceContext({
+    agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise,
+    augmentContext: withBuiltinSkillContextForBindings,
+  });
   // Materialize resources consumed by DSH adapters before registering those
   // adapters. The Host can service model discovery while this async plugin
   // scope is still activating, so a deployment callback must never observe a

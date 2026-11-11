@@ -611,6 +611,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               agent: toolAgent,
               runtime,
               nativeService: serviceOwnsModel,
+              ...(serviceOwnsModel && routed?.runtimeRecord ? { runtimeRecord: routed.runtimeRecord } : {}),
             })
             : {};
           // Durable recall evidence: an empty memory library and a skipped

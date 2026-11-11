@@ -1027,3 +1027,26 @@ test('Codex request size and reported usage survive failure in the local trace a
   assert.equal(traces[0].events.find(e => e.event_type === 'model.usage')?.payload.usage.inputTokens, 100);
   assert.deepEqual(chunks.find(c => c.type === 'usage')?.usage, { inputTokens: 70, outputTokens: 20, totalTokens: 120, cacheReadTokens: 30, cacheWriteTokens: 0, reasoningTokens: 10 });
 });
+
+test('a new Harness Team role selects the service preset and recovery keeps its admitted route', async () => {
+  const record = agent({
+    metadata: { id: 'team-role-0123456789abcdef01234567', teamRole: { name: 'lead' }, name: 'Team role', revision: 1, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: {} },
+  });
+  const workspaceRoot = '/fixture/team-workspace';
+  const modelSelection = { provider: 'agentkit-studio-harness-service', model: 'Independent' };
+  const registered = new Map();
+  const admission = new DshPresetAdmission({ getAgent: async () => record,
+    localHarnessService: { workspaceRoot, modelSelection },
+    registry: { register: async value => { registered.set(value.id, value); return () => {}; } } });
+  const old = await admission.ensure(record.metadata.id);
+  const fresh = await admission.ensure(record.metadata.id, { preferService: true });
+  assert.equal(old.runtime, 'harness');
+  assert.equal(fresh.runtime, 'native-engine');
+  assert.equal(fresh.workspaceRoot, workspaceRoot);
+  assert.deepEqual(fresh.modelSelection, modelSelection);
+  const config = registered.get(fresh.presetId).plugins.find(plugin => plugin.name.endsWith('/dsh-runtime-plugin')).config;
+  assert.equal(config.runtimeRecord.metadata.id, record.metadata.id);
+  assert.equal((await admission.ensure(record.metadata.id, { requestedPresetId: fresh.presetId })).runtime, 'native-engine');
+  assert.equal((await admission.ensure(record.metadata.id, { requestedPresetId: old.presetId, preferService: true })).runtime, 'harness');
+});

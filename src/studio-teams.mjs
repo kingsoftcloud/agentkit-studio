@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { HARNESS_SERVICE_PRESET_SUFFIX } from './agent-preset-admission.mjs';
 import { OFFICIAL_TEAM_TOOL_MODULE, usesOfficialTeamTools } from './studio-team-runtime.mjs';
 import { installStudioTeamTools, studioTeammateRequest } from './studio-team-tools.mjs';
 
@@ -247,6 +248,8 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
       agent,
       allowUnavailableResources: recovery,
       requireModelSelection,
+      preferService: !recovery,
+      ...(role.agentPreset ? { requestedPresetId: role.agentPreset } : {}),
     });
     if (admission?.presetId) {
       if (role.agentPreset && role.agentPreset !== admission.presetId) {
@@ -258,7 +261,9 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
     return admission;
   }
   async function admitRoles(run, recovery = false) {
-    for (const role of run.roles || []) await admitRole(run, role, recovery);
+    const admissions = [];
+    for (const role of run.roles || []) admissions.push(await admitRole(run, role, recovery));
+    return admissions;
   }
   async function mount(agent) {
     const parent = agent.session?.header?.parentSession;
@@ -287,14 +292,13 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
     // cannot be rejected by the local runtime's binding check.
     const admission = await admitRole(run, role, true, Boolean(parent));
     const registry = ctx.get('agentPresets');
-    if (registry.composedPreset(agent.ctx) !== admission.presetId) await registry.recompose(agent.ctx, admission.presetId);
-    if (parent && admission.modelSelection) {
-      agent.ctx.on('agent/request', async (_payload, next) => ({ ...await next(), ...admission.modelSelection }), { prepend: true });
-      agent.ctx.on('system-prompt/assemble', async (_payload, _context, next) => {
-        const value = await next();
-        return { ...value, variables: { ...value.variables, ...admission.modelSelection } };
-      });
+    if (registry.composedPreset(agent.ctx) !== admission.presetId) {
+      const boundary = parent && ctx.get('agents')?.turnBoundaryOf?.(agent.session);
+      if (boundary?.lastTurn === 0 && boundary.openTurnStartSeq === null && typeof registry.select === 'function')
+        await registry.select(agent, admission.presetId);
+      else await registry.recompose(agent.ctx, admission.presetId);
     }
+    if (parent && admission.modelSelection) agent.model.select(admission.modelSelection);
     mountTools(agent, { teams, run, useOfficialTools });
     if (!parent && run.instructions) {
       if (initializing) {
@@ -455,17 +459,19 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
           }),
         };
         await hydrate(run);
-        await admitRoles(run);
+        const admissions = await admitRoles(run);
         runs.set(run.id, run);
         const lead = run.roles[0];
-        const leadAdmission = await admitRole(run, lead);
+        const leadAdmission = admissions[0];
+        const workspaceRoot = admissions.find(admission => admission?.workspaceRoot)?.workspaceRoot;
         lead.agentPreset ||= leadAdmission.presetId;
         run.dshRootSessionId = run.id;
         await write('runs', run);
         const initializing = { spawning: true, teammates: new Set() };
         startup.set(run.id, initializing);
         try {
-          await controller.create({ sessionId: run.id, agentPreset: leadAdmission.presetId });
+          await controller.create({ sessionId: run.id, agentPreset: leadAdmission.presetId,
+            ...(workspaceRoot ? { cwd: workspaceRoot } : {}) });
           await controller.rename?.({ sessionId: run.id, title: team.name });
           if (leadAdmission.modelSelection) await controller.selectModel({ sessionId: run.id, ...leadAdmission.modelSelection, saveDefault: false });
           const resolved = await controller.resolveAgent(run.id);
@@ -530,6 +536,11 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
       const members = root ? teams.listMembers(root).map(copy) : (teamProjection?.members || []).map(member => ({
         ...member, status: member.phase === 'active' ? 'inactive' : member.phase,
       }));
+      const rolesByName = new Map((run.roles || []).map(role => [role.name, role]));
+      for (const member of members) {
+        const role = rolesByName.get(member.name);
+        if (role?.model && role.agentPreset?.endsWith(HARNESS_SERVICE_PRESET_SUFFIX)) member.model = role.model;
+      }
       await Promise.all(members.filter(member => member.role === 'teammate' && member.status === 'inactive').map(async member => {
         const memberEnd = (await sessionEvents(childSessionId(member))).findLast(event => event.type === 'turn/end')?.data?.reason;
         if (memberEnd?.kind === 'error') member.lastError = {

@@ -69,3 +69,35 @@ test('bound Native A2A tools use the existing authorized port and keep uncertain
   assert.notEqual(calls[0][2].callId, calls[2][2].callId);
   assert.deepEqual((await context({ agentId: 'agent', runtime: 'codex', agent: owner, toolAdapter })).dynamicTools, []);
 });
+
+test('independent Team roles use only the frozen role and the actual Session-scoped Team tools', async () => {
+  const runtimeRecord = { metadata: { id: 'team-role-0123456789abcdef01234567', revision: 4, teamRole: { name: 'lead' } },
+    spec: { instructions: { system: 'frozen role instructions' }, bindings: {} } };
+  const owner = { session: { id: 'lead-session' } };
+  const calls = [];
+  const context = createCodexResourceContext({ agentStore: {
+    get: () => assert.fail('Team roles have no AgentStore row'),
+    getRevision: () => assert.fail('Team roles have no AgentStore revision'),
+  }, builds: {}, resources: {} });
+  const toolAdapter = {
+    listNativeTeamTools(agent) {
+      assert.equal(agent, owner);
+      return [{ name: 'list_agents', readOnly: true }, { name: 'send_message', readOnly: false }];
+    },
+    async callNativeTeamTool(...args) { calls.push(args); return { status: 'ok', content: { accepted: true } }; },
+  };
+  const input = { agentId: runtimeRecord.metadata.id, agentRevision: 4, runtime: 'native-engine', nativeService: true,
+    runtimeRecord, agent: owner, toolAdapter };
+  await assert.rejects(context({ ...input, agentRevision: 5 }), { code: 'TEAM_PRESET_CONFLICT' });
+  const prepared = await context(input);
+  assert.match(prepared.systemPrompt, /frozen role instructions/);
+  const [read, write] = prepared.dynamicTools;
+  assert.equal(read.readOnly, true);
+  assert.ok(write.effectProtocol);
+  const call = { name: write.name, runId: 'lead-run', callId: 'call-1', arguments: { target: 'checker', message: 'task' } };
+  assert.equal((await prepared.nativeHostToolHandler(call)).content.code, 'TEAM_EFFECT_UNBOUND');
+  assert.equal(calls.length, 0);
+  const result = await prepared.nativeHostToolHandler({ ...call, effect: { contract: write.effectProtocol, operationKey: 'write-1' } });
+  assert.equal(result.content.accepted, true);
+  assert.equal(calls[0][2].agent, owner);
+});

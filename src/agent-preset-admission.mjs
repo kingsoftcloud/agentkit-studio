@@ -330,7 +330,7 @@ export class DshPresetAdmission {
       eligibility.mode = 'studio-bridge';
     }
     const servicePresetId = eligibility.presetId + HARNESS_SERVICE_PRESET_SUFFIX;
-    const service = this.localHarnessService && eligibility.local && eligibility.runtime === 'harness' && !agent.metadata?.teamRole
+    const service = this.localHarnessService && eligibility.local && eligibility.runtime === 'harness'
       && (requestedPresetId ? requestedPresetId === servicePresetId : preferService);
     if (service) Object.assign(eligibility, { presetId: servicePresetId, runtime: 'native-engine', workspaceRoot: this.localHarnessService.workspaceRoot });
     if (requestedPresetId && requestedPresetId !== eligibility.presetId)
@@ -449,7 +449,8 @@ export class DshPresetAdmission {
             },
           } : {}),
           runtime: eligibility.runtime,
-          ...(eligibility.runtime === 'native-engine' ? { scopedPresetId: eligibility.presetId } : {}),
+          ...(eligibility.runtime === 'native-engine' ? { scopedPresetId: eligibility.presetId,
+            ...(teamRole ? { teamRole: true } : {}) } : {}),
           local: eligibility.local,
           ...(agent.source ? { source: agent.source } : {}),
           ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),
