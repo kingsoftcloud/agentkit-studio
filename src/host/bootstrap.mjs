@@ -32,6 +32,39 @@ import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-bindings.mjs';
 import { createPromptPredictionHost } from '../prompt-prediction/host.mjs';
 
+/**
+ * Report the composed Agent preset once the registry resolves it.
+ *
+ * Bash background execution is a *composition* property, not a configuration
+ * one: `@deepseek-ai/dsh-tool-bash` exposes `run_in_background` and promotes a
+ * foreground command that reaches its deadline into a background job, while the
+ * PTY `@deepseek-ai/dsh-terminal-bash` only settles a hard `timeout` and kills
+ * the command. The managed runtime therefore cannot tell from its own settings
+ * which of the two it runs with, and a 300s command failure is indistinguishable
+ * from a model or transport timeout. Log the resolved composition so a red run
+ * names the bash tool, the job service, and whether promotion is reachable.
+ * @param ctx - the Host context resolving the composed services.
+ * @param plugins - the plugin list the preset registry returned.
+ */
+export function logPresetComposition(ctx, plugins) {
+  try {
+    const names = (Array.isArray(plugins) ? plugins : [])
+      .map(entry => String(entry?.name || entry?.id || '')).filter(Boolean);
+    let jobs;
+    try { jobs = ctx.get('jobs'); } catch { jobs = undefined; }
+    console.info('[agentkit-studio] preset composition', JSON.stringify({
+      requested: 'standard',
+      pluginCount: names.length,
+      bashTools: names.filter(name => /(?:tool-bash|terminal-bash|bash-persistent)$/.test(name)),
+      jobsService: jobs !== undefined && jobs !== null,
+      backgroundPromotion: names.includes('@deepseek-ai/dsh-tool-bash'),
+    }));
+  } catch (error) {
+    // A diagnostic must never turn a working preset into a failed turn.
+    console.warn('[agentkit-studio] preset composition probe failed:', error?.message || error);
+  }
+}
+
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
@@ -349,6 +382,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getBasePlugins: async agent => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
       const plugins = await registry.pluginsFor('standard');
+      logPresetComposition(ctx, plugins);
       return agent.metadata?.teamRole ? (await import('../studio-team-composition.mjs')).teamBasePlugins(plugins) : plugins;
     },
     getAgent: async agentId => {
