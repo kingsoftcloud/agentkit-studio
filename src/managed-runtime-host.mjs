@@ -22,6 +22,24 @@ const DSH_HOME_DIRECTORY = 'dsh';
 const DSH_ADOPTION_RECEIPT = '.dsh-adopted.json';
 const DSH_SETTINGS_PATCH = join('profiles', RUNTIME_PROFILE, 'cordis.patch.yml');
 
+// Codex tuning knobs. The Codex App Server aborts a model round once its SSE
+// stream stays silent for `stream_idle_timeout_ms` (Codex default: 300s) and the
+// loopback model proxy has its own idle budget. Business turns on managed
+// runtimes legitimately stream reasoning/report output for longer, so the Host
+// reads a larger default and must forward the deployment overrides; without
+// them in the child env the documented knobs never reach the runtime and a long
+// turn can only be tuned by publishing a new image.
+const MANAGED_CODEX_ENV_NAMES = Object.freeze([
+  'AGENTKIT_CODEX_MODEL',
+  'AGENTKIT_CODEX_SANDBOX',
+  'AGENTKIT_CODEX_APPROVAL_POLICY',
+  'AGENTKIT_CODEX_REASONING_SUMMARY',
+  'AGENTKIT_CODEX_TIMEOUT_MS',
+  'AGENTKIT_CODEX_IDLE_TIMEOUT_MS',
+  'AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS',
+  'AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS',
+]);
+
 // Platform-managed observability env. Runtime Service rebuilds the Langfuse
 // primary route and the Server forwards the trusted CloudMonitor bundle; both
 // are already applied to the pod's container env, so the Host only has to stop
@@ -295,6 +313,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   const names = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
     'KSADK_SANDBOX_BACKEND',
     'AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT',
+    ...MANAGED_CODEX_ENV_NAMES,
     'AGENTENGINE_MANAGED_RUNTIME_NAME', 'AGENTENGINE_MANAGED_RUNTIME_VERSION', 'AGENTENGINE_MANIFEST_PROTOCOL', 'AGENTENGINE_MANIFEST_SHA256',
     'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
     ...MANAGED_OBSERVABILITY_ENV_NAMES];
