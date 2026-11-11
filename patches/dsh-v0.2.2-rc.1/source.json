@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "exportFormat": 1,
   "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
-  "headCommit": "496691ba26225a05304d30dc72e31b6fef09fba8",
+  "headCommit": "ba630379855bd9fba6f1d62c9dd93ec4bfe5f70a",
   "branchRef": "refs/heads/codex/studio-dsh-v0.2.2-rc.1",
-  "tree": "b1c10cd833f455f3709e1cd5be77f44747877abe",
-  "sourceSha256": "a8ae7d30953228c1724a6b025f11ad2703aa1c883757be3cdd5726d78c29d16e",
+  "tree": "528711c889fd7041f3caf55c9c114bdf7e5de89d",
+  "sourceSha256": "5ed309d1cff802a585331425bbd2c2ad8ee2011de149ee0416347c89245ae43b",
   "bundle": {
     "file": "../../host-source/dsh-v0.2.2-rc.1/maintenance.bundle",
-    "sha256": "a743cd75ac01042eb81ae080592bbab9f35914354f9346bc5a9d507fa20e7a33"
+    "sha256": "eb62e85cfe0181efb49a4ff8869cdc718308b348f7e51678af9bec0cb48fab96"
   },
   "commits": [
     {
@@ -316,6 +316,12 @@
       "file": "082-desktop-profile-pnpm-recovery.patch",
       "commit": "496691ba26225a05304d30dc72e31b6fef09fba8",
       "sha256": "bb0b87526bc0994f7ea649c632130977736d6dce9c2b1eb863b246833830b204"
+    },
+    {
+      "id": "083",
+      "file": "083-desktop-host-cookie-isolation.patch",
+      "commit": "ba630379855bd9fba6f1d62c9dd93ec4bfe5f70a",
+      "sha256": "e903a00d71a7019eac161651f77087b2839c371bf99a64016309fe36e64d29b6"
     }
   ]
 }
