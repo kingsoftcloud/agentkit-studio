@@ -20,6 +20,41 @@ test('Team template contract requires immutable role sources and stable role nam
   assert.throws(() => validateTeamTemplate({ ...valid, roles: [valid.roles[0], { ...valid.roles[1], name: 'lead' }] }), { code: 'TEAM_TEMPLATE_ROLE_INVALID' });
 });
 
+test('Team templates preserve role preset and default model metadata', () => {
+  const result = validateTeamTemplate({
+    ...valid,
+    defaultModel: 'deepseek-v4.1-flash-1017',
+    roles: [
+      { ...valid.roles[0], agentPreset: 'preset:lead' },
+      { ...valid.roles[1], agentPresetId: 'preset:reviewer', model: 'deepseek-v4.1-flash-1017' },
+    ],
+  });
+  assert.equal(result.defaultModel, 'deepseek-v4.1-flash-1017');
+  assert.equal(result.roles[0].agentPreset, 'preset:lead');
+  assert.equal(result.roles[1].agentPreset, 'preset:reviewer');
+  assert.equal(result.roles[1].model, 'deepseek-v4.1-flash-1017');
+});
+
+test('Team templates reject the old one-team-model placeholder', () => {
+  assert.throws(() => validateTeamTemplate({ ...valid, defaultModel: 'one-team-model' }), { code: 'TEAM_TEMPLATE_MODEL_INVALID' });
+  assert.throws(() => validateTeamTemplate({
+    ...valid,
+    roles: [{ ...valid.roles[0], modelProfileId: 'one-team-model' }, valid.roles[1]],
+  }), { code: 'TEAM_TEMPLATE_MODEL_INVALID' });
+  assert.throws(() => validateTeamRoleSpec({
+    runtime: { type: 'dsh-native' },
+    instructions: { system: '审查' },
+    bindings: { modelProfileId: 'one-team-model' },
+  }, 'reviewer'), { code: 'TEAM_TEMPLATE_MODEL_INVALID' });
+});
+
+test('published Team templates cannot embed ordinary Agent identities', () => {
+  assert.throws(() => validateTeamTemplate({
+    ...valid,
+    roles: [{ ...valid.roles[0], agentId: 'ar-local-123' }, valid.roles[1]],
+  }), { code: 'TEAM_TEMPLATE_ROLE_INVALID' });
+});
+
 test('Team role specs reject Codex and nested ordinary subagents', () => {
   const spec = { runtime: { type: 'harness' }, instructions: { system: '审查' }, bindings: {} };
   assert.equal(validateTeamRoleSpec(spec, 'reviewer'), spec);

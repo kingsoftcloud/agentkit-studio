@@ -3,6 +3,7 @@
 官网与下载：<https://kingsoftcloud.github.io/agentkit-studio/>
 
 - [Expert catalog and local teams](expert-catalog.md): templates, resources and native team sessions.
+- [Expert template authoring](expert-template-authoring.md): how to add or customize ordinary experts and DSH Native Team templates, audit them and publish them safely.
 
 - [Getting started](getting-started.md): installation, models and local development.
 - [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
