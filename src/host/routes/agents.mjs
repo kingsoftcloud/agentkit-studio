@@ -2,7 +2,7 @@
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from '../../authoring-defaults.mjs';
 import { clampExecutionMode, readExecutionMode } from '../../execution-policy.mjs';
 
-export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, getAdmission, serverClientPromise, templateAuthoring, cloudExecutionModes }) {
+export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, studioBuildPromise, deployments, deploymentClientPromise, getAdmission, serverClientPromise, templateAuthoring, cloudExecutionModes }) {
     return async (endpoint, payload, signal) => {
         const serverClient = await serverClientPromise;
         if (endpoint === 'agents/local-delete') {
@@ -64,6 +64,33 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
                 return { ok: true, value: { metadata: { id: agentId, name: update.Name || agentId, revision: Number(payload?.revision || 1) + 1 }, spec: payload?.spec || {} } };
             }
         }
+        if (endpoint === 'agents/managed-delete') {
+            const agentId = String(payload?.agentId || '').trim();
+            if (!/^ar-[A-Za-z0-9-]+$/.test(agentId)) {
+                return { ok: false, error: { code: 'INVALID_AGENT_ID', message: 'AgentId 无效', details: {} } };
+            }
+            try {
+                // API-created Studio Runtime rows have no local deployment
+                // receipt. Read the server-owned identity first, then allow
+                // the destructive deployment client only for ManagedRuntime;
+                // an arbitrary cloud Agent must never become deletable merely
+                // because its ID was pasted into the Studio UI.
+                const agent = await serverClient.getAgent(agentId, { signal });
+                const managed = agent?.managedRuntime === true
+                    || String(agent?.deployment?.DeploymentType || agent?.deployment?.deploymentType || '').toLowerCase() === 'managedruntime';
+                if (!managed) return { ok: false, error: { code: 'MANAGED_RUNTIME_REQUIRED', message: '仅支持删除通过 AgentEngine API 创建的 ManagedRuntime', details: { agentId } } };
+                if (!deploymentClientPromise) return { ok: false, error: { code: 'CLOUD_DELETE_UNAVAILABLE', message: '云端删除客户端不可用', details: { agentId } } };
+                const result = await (await deploymentClientPromise).forAgent(agentId).remove({ signal });
+                const payload = result?.data || result || null;
+                if (payload && (payload.Deleted === false || payload.deleted === false)) {
+                    return { ok: false, error: { code: 'MANAGED_RUNTIME_DELETE_UNCONFIRMED', message: '云端未确认删除托管 Runtime，请刷新云端列表核对', details: { agentId } } };
+                }
+                return { ok: true, value: { agentId, deleted: true, result: payload } };
+            }
+            catch (error) {
+                return { ok: false, error: { code: error?.code || 'MANAGED_RUNTIME_DELETE_FAILED', message: error instanceof Error ? error.message : String(error), details: error?.details || {} } };
+            }
+        }
         if (endpoint === 'agents/list') {
             return { ok: true, value: await (await agentCatalogPromise).list(payload, { signal }) };
         }
@@ -100,8 +127,6 @@ export function createAgentRoutes({ agentStorePromise, agentCatalogPromise, stud
             try {
                 const localStore = await agentStorePromise;
                 const local = await localStore.get(agentId);
-                if (!local)
-                    await (await deployments()).agents.connect(agentId);
                 const buildId = String(payload?.buildId || '').trim();
                 const build = buildId ? await (await studioBuildPromise).build.resolve(agentId, buildId) : null;
                 // The no-build path remains the original local admission contract:

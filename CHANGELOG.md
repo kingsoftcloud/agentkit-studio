@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 托管运行时把 `AGENTKIT_CODEX_*` 调整项（`TIMEOUT_MS` / `IDLE_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` / `MODEL_IDLE_TIMEOUT_MS` / `MODEL` / `SANDBOX` / `APPROVAL_POLICY` / `REASONING_SUMMARY`）加入 Host 子进程的 env 白名单：之前 `codex-runtime` 会读这些变量，但白名单没放行，长任务的超时预算实际上是硬编码的，只能靠发新镜像调整。
+- 托管 DSH 的 Hosted UI 会话注册表改为 **Agent 作用域**（`<state>/managed-sessions`），不再放在版本目录下：此前每次被接受的 UpdateAgent 都会换到一个空的注册表目录，Hosted UI 于是列不出、也打不开更新前的会话，尽管 DSH 原生 transcript 一直保留。首次启动会把最近写入的一份旧版本注册表复制过来（旧目录保留供旧镜像回滚），`AGENTKIT_MANAGED_SESSIONS` 由 Host 显式导出，未提供时回退到旧的版本目录。
 - MCP 资源页的「认证 Header / 环境变量凭证」改为可折叠的进阶区块：默认收起，识别到自定义 Header 时自动展开；仍可直接填 Header 名称与凭证名称添加凭证行。JSON 输入框随内容自动增高，多服务配置不再挤在 5 行里。
 - 修复浅色主题下主按钮 hover 时文字不可见：全局 hover 规则不再把白色标签的主按钮改成浅色底，`.sq-btn.primary` 等类样式按钮与凭据引导弹窗一并覆盖；禁用态主按钮的标签改用次要文字色。
 - 新建 Agent 默认运行时改为 DSH Native，并在创建流程中暂时隐藏 Star Harness（编辑既有 Star Harness Agent 不受影响），待该运行时稳定后再开放创建。

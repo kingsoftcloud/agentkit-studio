@@ -44,3 +44,11 @@ test('Agent creation offers conversation and manual configuration as separate ac
   assert.deepEqual(routes, ['conversation', 'manual']);
   assert.equal(buttons.some(node => node.children.includes('快速创建') || node.children.includes('一键创建')), false);
 });
+
+test('API-created ManagedRuntime cards expose separate management and deletion actions', () => {
+  const nodes = render([{ metadata: { id: 'ar-managed', name: '托管 Agent', local: false }, managedRuntime: true,
+    source: 'agentengine-managed-runtime', deployment: { available: true }, spec: { runtime: { type: 'dsh-native' } } }], '', { tab: 'cloud' });
+  assert.ok(nodes.find(node => node.type === 'button' && node.children.includes('管理')));
+  assert.ok(nodes.find(node => node.type === 'button' && node.children.includes('删除')));
+  assert.equal(nodes.some(node => node.type === 'button' && node.children.includes('管理 / 删除')), false);
+});

@@ -413,3 +413,74 @@ test('managed requests are fenced to the target version and digest before native
   assert.equal(writes, 1);
   assert.equal((await fetch(`${origin}/v1/agentkit/runtime`, { headers: { authorization: headers.authorization } })).status, 200);
 });
+
+test('the managed session registry is Agent-scoped and adopts the newest legacy version', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.state, 'versions'), { recursive: true });
+  await writeFile(join(f.state, '.managed-runtime.json'), JSON.stringify({ format: 'agentengine.managed-state/v1', agentId: f.env.AGENTENGINE_AGENT_ID }));
+  const seedRegistry = async (versionId, stamp, sessionIds) => {
+    const revision = hash(versionId), root = join(f.state, 'versions', revision);
+    const sessions = join(root, 'agentkit', 'managed-sessions', 'sessions');
+    await mkdir(sessions, { recursive: true });
+    await writeFile(join(root, '.managed-version.json'), JSON.stringify({ format: 'agentengine.managed-version/v1',
+      agentId: f.env.AGENTENGINE_AGENT_ID, versionId, manifestSha256: hash(f.raw),
+      runtimeName: 'dsh-native', runtimeVersion: 'studio-test.1' }));
+    for (const id of sessionIds) {
+      const path = join(sessions, `${id}.json`);
+      await writeFile(path, JSON.stringify({ format: 'agentengine.dsh-session/v1', sessionId: id,
+        nativeSessionId: `native-${id}`, versionId, owner: 'a'.repeat(64), userId: 'u',
+        epoch: '00000000-0000-4000-8000-000000000000', phase: 'ready',
+        createdAt: '2026-11-11T00:00:00.000Z' }));
+      await utimes(path, stamp, stamp);
+    }
+    return { revision, sessions };
+  };
+  const older = await seedRegistry('v1', 1_700_000_000, ['old-session']);
+  await seedRegistry('v2', 1_800_000_000, ['newer-session']);
+
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v3' } });
+  // The registry leaves the version directory so an accepted UpdateAgent keeps
+  // the Hosted UI able to list and open every earlier Session.
+  assert.equal(plan.env.AGENTKIT_MANAGED_SESSIONS, join(f.state, 'managed-sessions'));
+  assert.notEqual(plan.env.AGENTKIT_MANAGED_SESSIONS, join(plan.env.AGENTKIT_HOME, 'managed-sessions'));
+  const adopted = await readdir(join(plan.env.AGENTKIT_MANAGED_SESSIONS, 'sessions'));
+  assert.deepEqual(adopted.sort(), ['newer-session.json']);
+  // The legacy directory stays readable so a pre-fix image can still roll back.
+  assert.deepEqual((await readdir(older.sessions)).sort(), ['old-session.json']);
+
+  // A restart reuses the Agent-scoped registry without re-adopting.
+  const again = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v4' } });
+  assert.equal(again.env.AGENTKIT_MANAGED_SESSIONS, plan.env.AGENTKIT_MANAGED_SESSIONS);
+  assert.deepEqual((await readdir(join(again.env.AGENTKIT_MANAGED_SESSIONS, 'sessions'))).sort(), ['newer-session.json']);
+});
+
+test('a fresh Agent gets an empty Agent-scoped session registry', async t => {
+  const f = await fixture(t);
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v1' } });
+  assert.equal(plan.env.AGENTKIT_MANAGED_SESSIONS, join(f.state, 'managed-sessions'));
+  // The registry creates its own `sessions` lane on first write; adoption must
+  // not copy a previous Agent's ownership rows into a fresh Agent.
+  assert.equal((await lstat(plan.env.AGENTKIT_MANAGED_SESSIONS)).isDirectory(), true);
+});
+
+test('Codex tuning knobs reach the Host child so a long turn stays deployment-tunable', async t => {
+  const f = await fixture(t);
+  const overrides = {
+    AGENTKIT_CODEX_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_IDLE_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS: '1800000',
+    AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS: '1860000',
+    AGENTKIT_CODEX_REASONING_SUMMARY: 'concise',
+    AGENTKIT_CODEX_SANDBOX: 'workspace-write',
+    AGENTKIT_CODEX_APPROVAL_POLICY: 'never',
+    AGENTKIT_CODEX_MODEL: 'fixture-model',
+  };
+  const plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, ...overrides } });
+
+  // The runtime reads these names; without them in the child env the documented
+  // knobs are unreachable and a long turn can only be tuned by a new image.
+  for (const [name, value] of Object.entries(overrides)) assert.equal(plan.env[name], value, name);
+  // An unset knob stays absent instead of being materialized as an empty value.
+  const bare = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTENGINE_AGENT_VERSION_ID: 'v-other' } });
+  assert.equal(bare.env.AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS, undefined);
+});

@@ -167,7 +167,8 @@
                 }
               },
               "Name": "Fixture",
-              "Description": ""
+              "Description": "",
+              "SystemPrompt": "fixture"
             },
             {
               "signal": {
@@ -1996,7 +1997,8 @@
                 }
               },
               "Name": "Fixture",
-              "Description": ""
+              "Description": "",
+              "SystemPrompt": "fixture"
             },
             {
               "signal": {

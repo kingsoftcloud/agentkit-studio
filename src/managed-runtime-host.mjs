@@ -22,6 +22,24 @@ const DSH_HOME_DIRECTORY = 'dsh';
 const DSH_ADOPTION_RECEIPT = '.dsh-adopted.json';
 const DSH_SETTINGS_PATCH = join('profiles', RUNTIME_PROFILE, 'cordis.patch.yml');
 
+// Codex tuning knobs. The Codex App Server aborts a model round once its SSE
+// stream stays silent for `stream_idle_timeout_ms` (Codex default: 300s) and the
+// loopback model proxy has its own idle budget. Business turns on managed
+// runtimes legitimately stream reasoning/report output for longer, so the Host
+// reads a larger default and must forward the deployment overrides; without
+// them in the child env the documented knobs never reach the runtime and a long
+// turn can only be tuned by publishing a new image.
+const MANAGED_CODEX_ENV_NAMES = Object.freeze([
+  'AGENTKIT_CODEX_MODEL',
+  'AGENTKIT_CODEX_SANDBOX',
+  'AGENTKIT_CODEX_APPROVAL_POLICY',
+  'AGENTKIT_CODEX_REASONING_SUMMARY',
+  'AGENTKIT_CODEX_TIMEOUT_MS',
+  'AGENTKIT_CODEX_IDLE_TIMEOUT_MS',
+  'AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS',
+  'AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS',
+]);
+
 // Platform-managed observability env. Runtime Service rebuilds the Langfuse
 // primary route and the Server forwards the trusted CloudMonitor bundle; both
 // are already applied to the pod's container env, so the Host only has to stop
@@ -157,6 +175,63 @@ async function linkStateEntry(source, target, entry) {
   // state guard refuses a linked runtime directory.
 }
 
+const MANAGED_SESSIONS_DIRECTORY = 'managed-sessions';
+
+/**
+ * Newest version-scoped managed-session registry that still holds records.
+ *
+ * Studio kept `AGENTKIT_HOME` version-scoped, so every accepted UpdateAgent
+ * opened an empty registry while the previous ownership rows stayed stranded
+ * in the old version directory. The Hosted UI lists and opens Sessions
+ * through this registry, so an update silently hid every earlier Session even
+ * though DSH still owned the transcript.
+ */
+async function newestLegacyManagedSessions(versions) {
+  const candidates = [];
+  for (const name of await readdir(versions)) {
+    if (!/^[a-f0-9]{64}$/.test(name)) continue;
+    const sessions = join(versions, name, 'agentkit', MANAGED_SESSIONS_DIRECTORY, 'sessions');
+    let entries;
+    try { entries = await readdir(sessions); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    if (!entries.length) continue;
+    let newest = 0;
+    for (const entry of entries) {
+      const info = await lstat(join(sessions, entry)).catch(() => null);
+      if (info?.isFile() && info.mtimeMs > newest) newest = info.mtimeMs;
+    }
+    candidates.push({ directory: join(versions, name, 'agentkit', MANAGED_SESSIONS_DIRECTORY), stamp: newest });
+  }
+  return candidates.sort((left, right) => right.stamp - left.stamp)[0] ?? null;
+}
+
+async function adoptManagedSessions({ root, versions }) {
+  const target = join(root, MANAGED_SESSIONS_DIRECTORY), current = await exists(target);
+  if (current) {
+    if (!current.isDirectory()) fail('STATE_INVALID', 'Session 注册表必须是独立目录，不能是符号链接');
+    return privateRuntimeDirectory(target, 'MANAGED_HOST');
+  }
+  const legacy = await newestLegacyManagedSessions(versions);
+  const directory = await privateRuntimeDirectory(target, 'MANAGED_HOST');
+  if (!legacy) return directory;
+  // Ownership rows are small JSON files, so a real copy is lossless and keeps
+  // the previous version directory readable for a pre-fix image rollback.
+  await mkdir(join(directory, 'sessions'), { recursive: true, mode: 0o700 });
+  for (const name of ['sessions', 'requests']) {
+    const source = join(legacy.directory, name);
+    let entries;
+    try { entries = await readdir(source, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const from = join(source, entry.name), to = join(directory, name, entry.name);
+      try { await copyFile(from, to); }
+      catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
+  }
+  return directory;
+}
+
 async function adoptDshHome({ root, versions }) {
   const target = join(root, DSH_HOME_DIRECTORY), current = await exists(target);
   if (current) {
@@ -232,6 +307,9 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   // the Agent's own record, so an accepted update must keep reading them.
   const userHome = await directory(homePath);
   const { home: dshHome, settings: dshSettings } = await adoptDshHome({ root, versions });
+  // Session ownership is Agent state like DSH_HOME: the Hosted UI must keep
+  // listing Sessions recorded by an earlier deployment version.
+  const managedSessions = await adoptManagedSessions({ root, versions });
   const codexHome = await directory(join(userHome, '.codex'));
   const cwd = await directory(workspacePath);
   if (!remoteHarness) {
@@ -245,7 +323,7 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
     'KSADK_SANDBOX_BACKEND',
     ...(remoteHarness
       ? ['AGENTKIT_ENGINE_SERVICE_URL', 'AGENTKIT_ENGINE_SERVICE_TOKEN', 'AGENTKIT_ENGINE_SERVICE_WORKSPACE', 'AGENTKIT_ENGINE_SERVICE_CA_FILE']
-      : ['AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API']),
+      : ['AGENTKIT_MODEL_API_KEY', 'OPENAI_BASE_URL', 'AGENTKIT_MANAGED_CODEX_API', ...MANAGED_CODEX_ENV_NAMES]),
     'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT',
     'AGENTENGINE_MANAGED_RUNTIME_NAME', 'AGENTENGINE_MANAGED_RUNTIME_VERSION', 'AGENTENGINE_MANIFEST_PROTOCOL', 'AGENTENGINE_MANIFEST_SHA256',
     'AGENTENGINE_AGENT_ID', 'AGENTENGINE_AGENT_VERSION_ID', 'AGENTENGINE_RESOURCE_SERVER_URL', ...credentialNames,
@@ -253,7 +331,8 @@ export async function prepareManagedRuntimeHost({ manifest, state, installation,
   const childEnv = Object.fromEntries(names.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: codexHome,
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
-    AGENTKIT_HOME: home, ...(!remoteHarness ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
+    AGENTKIT_HOME: home, AGENTKIT_MANAGED_SESSIONS: managedSessions,
+    ...(!remoteHarness ? { OPENAI_MODEL_NAME: runtime.declaration.model, MODEL_PROVIDER: 'openai-compatible' } : {}),
     AGENTENGINE_MANIFEST_PATH: resolve(manifest) });
   return { entry, args: runtimeProfileArgs(), cwd, env: childEnv, identity: { ...runtime.identity, dshVersion } };
 }

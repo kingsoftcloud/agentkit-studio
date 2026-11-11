@@ -34,3 +34,18 @@ test('unbound Team roles use the configured default model route', async () => {
     spec: { runtime: { type: 'dsh-native' }, bindings: {} },
   }), { provider: 'agentkit-studio-default', model: 'deepseek-v4.1-flash-1017' });
 });
+
+test('API-created ManagedRuntime without a model does not emit an invalid Session selection', async () => {
+  const select = createAgentModelSelection({
+    models: { settings: async () => ({ modelProfiles: [] }) },
+    dshModelSelection,
+    CLOUD_PROVIDER: 'agentkit-studio-cloud',
+    agentStorePromise: Promise.resolve({ captureRevision: async () => {} }),
+  });
+  assert.equal(await select({
+    source: 'agentengine-managed-runtime',
+    metadata: { id: 'ar-managed', local: false },
+    deployment: { DeploymentType: 'ManagedRuntime' },
+    spec: { runtime: { type: 'dsh-native' }, bindings: { plugins: [] } },
+  }), undefined);
+});

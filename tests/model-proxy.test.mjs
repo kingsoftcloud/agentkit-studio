@@ -89,3 +89,47 @@ test('Responses stream announces items before deltas and keeps final output, usa
   assert.equal(final.output[0].content[0].text, 'Hi!');
   assert.equal(final.usage.total_tokens, 6);
 });
+
+test('a rejected upstream request exposes only bounded provider identifiers', async () => {
+  const { upstreamErrorIdentifiers } = await import('../src/model-proxy-handler.mjs');
+
+  // Machine-readable identifiers survive so the DSH failure contract can
+  // classify the turn instead of reporting a bare 400.
+  assert.deepEqual(
+    upstreamErrorIdentifiers(JSON.stringify({
+      error: { code: 'context_length_exceeded', type: 'invalid_request_error', message: 'prompt is too long' },
+    })),
+    { upstreamCode: 'context_length_exceeded', upstreamType: 'invalid_request_error' },
+  );
+
+  // The provider may echo the whole conversation inside `message`; nothing but
+  // the short identifier may leave the proxy.
+  const echoed = JSON.stringify({
+    error: { code: 'invalid_request_error', type: 'invalid_request_error',
+      message: 'Authorization: Bearer sk-secret -- user asked: 我的银行卡号是 6222' },
+  });
+  const identifiers = upstreamErrorIdentifiers(echoed);
+  assert.deepEqual(Object.keys(identifiers).sort(), ['upstreamCode', 'upstreamType']);
+  assert.equal(JSON.stringify(identifiers).includes('sk-secret'), false);
+  assert.equal(JSON.stringify(identifiers).includes('6222'), false);
+
+  // Non-JSON bodies, oversized identifiers and absent codes carry no detail.
+  assert.deepEqual(upstreamErrorIdentifiers('<html>Bad Gateway</html>'), {});
+  assert.deepEqual(upstreamErrorIdentifiers(''), {});
+  assert.deepEqual(upstreamErrorIdentifiers(JSON.stringify({ error: { code: 'x'.repeat(200) } })), {});
+  assert.deepEqual(upstreamErrorIdentifiers(undefined), {});
+});
+
+test('a rejected upstream request is classified by its provider code', async () => {
+  const { dshModelFailure } = await import('../src/model-failure.mjs');
+
+  assert.equal(dshModelFailure({ code: 'MODEL_UPSTREAM_ERROR', message: '模型服务返回 400',
+    details: { status: 400, upstreamCode: 'context_length_exceeded' } }).code, 'CONTEXT_WINDOW_EXCEEDED');
+  assert.equal(dshModelFailure({ code: 'MODEL_UPSTREAM_ERROR', message: '模型服务返回 400',
+    details: { status: 429, upstreamCode: 'rate_limit_exceeded' } }).code, 'RATE_LIMIT');
+  assert.equal(dshModelFailure({ code: 'MODEL_UPSTREAM_ERROR', message: '模型服务返回 401',
+    details: { status: 401 } }).code, 'AUTH');
+  // An unclassified 400 stays an explicit invalid response, never a silent retry.
+  assert.equal(dshModelFailure({ code: 'MODEL_UPSTREAM_ERROR', message: '模型服务返回 400',
+    details: { status: 400 } }).code, 'INVALID_RESPONSE');
+});

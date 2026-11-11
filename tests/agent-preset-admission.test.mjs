@@ -421,6 +421,27 @@ test('recovery keeps the preset registered when bound resources are temporarily 
   bridge.close();
 });
 
+test('a packaged or stale Skill source degrades the Agent instead of rejecting Session creation', async () => {
+  const registered = [];
+  const revision = agent({
+    metadata: { id: 'demo/agent', name: 'Demo Agent', revision: 7, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { skills: ['skill:platform'] } },
+  });
+  const admission = new DshPresetAdmission({
+    registry: { async register(definition) { registered.push(definition); return () => {}; } },
+    getAgent: async () => revision,
+    getSkillDefinitions: async () => {
+      throw Object.assign(new Error('opendir failed'), { name: 'SkillSourceError', code: 'skill_source_unavailable' });
+    },
+  });
+  await admission.ensure('demo/agent');
+  assert.equal(registered.length, 1);
+  const runtime = registered[0].plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
+  assert.equal(runtime.resourcesUnavailable, true);
+  assert.deepEqual(runtime.unavailableResources, [{ kind: 'skill', code: 'skill_source_unavailable', message: 'opendir failed' }]);
+  await admission.dispose();
+});
+
 test('frozen runtime admission keeps its model route when resources are unavailable', async () => {
   const registered = [];
   const selection = { provider: 'agentkit-studio-ksyun-deepseek-v4-flash', model: 'deepseek-v4-flash' };

@@ -2,7 +2,16 @@
 export function createAgentModelSelection({ models, agentStorePromise, codexModels, selectCodexAgentModel, CLOUD_PROVIDER, dshModelSelection }) {
   return async agent => {
       const local = agent?.metadata?.local !== false && agent?.source !== 'agentengine-server';
-      if (!local) return { provider: CLOUD_PROVIDER, model: agent.deployment.model };
+      if (!local) {
+        // API-created ManagedRuntime rows do not always expose the runtime's
+        // model name in the public Agent detail. Never put `undefined` into
+        // the DSH wire request: Typert rejects the whole `request` object at
+        // the boundary before the cloud Agent can be bound. The cloud Studio
+        // bridge owns model routing for this case, so no Session selection is
+        // needed unless the deployment explicitly declares one.
+        const model = String(agent?.deployment?.model || agent?.deployment?.Model || agent?.deployment?.modelName || '').trim();
+        return model ? { provider: CLOUD_PROVIDER, model } : undefined;
+      }
       // Team runtime members use a synthetic `team-role-*` identity while
       // their source Agent remains persisted under `ar-local-*`. They are
       // admitted into a DSH Session, but must not be written back as local

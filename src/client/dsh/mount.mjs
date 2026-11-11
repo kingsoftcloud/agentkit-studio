@@ -3,7 +3,7 @@ import { codexToolDefinition } from './codex-tool.mjs';
 import { mountA2aObservation } from './a2a-observation.mjs';
 import { mountNativeEngineView } from './native-engine-view.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
-import { createNativeSessionBinding } from './session-entry.mjs';
+import { createNativeSessionBinding, selectSessionModel } from './session-entry.mjs';
 import { registerPanelNavigation } from './panel-navigation.mjs';
 import { installBridgeStartupNotice } from './startup-notice.mjs';
 import { installProductCopy } from '../../product-copy.mjs';
@@ -89,7 +89,7 @@ export function mountStudio(ctx, app) {
       const admission = await hostRemote.ensureDshPreset(agentId, '', presetId);
       if (app.closed()) return;
       if (admission.modelSelection) {
-        const selected = await ctx.remote.session.selectModel({ sessionId, ...admission.modelSelection, saveDefault: false });
+        const selected = await selectSessionModel(ctx.remote, { sessionId, ...admission.modelSelection, saveDefault: false });
         if (app.closed()) return;
         if (!selected?.ok) console.warn('[agentkit-studio] Agent model selection failed:', selected.error?.message || selected.error);
       }
