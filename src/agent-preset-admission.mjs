@@ -380,7 +380,15 @@ export class DshPresetAdmission {
       const recoverResources = async (load, kind) => {
         try { return await load(); }
         catch (error) {
-          if (!allowUnavailableResources) throw error;
+          // A packaged Electron build can expose an inline Skill whose
+          // manifest lives inside app.asar. Older builds (and stale profile
+          // snapshots) may still hand the source a virtual/missing directory;
+          // that is an optional Skill-source failure, not a reason to reject
+          // the whole Session. Keep other resource failures fail-closed unless
+          // the caller explicitly requested recovery mode.
+          const code = String(error?.code || '');
+          const skillSourceFailure = error?.name === 'SkillSourceError' || code.startsWith('skill_source_');
+          if (!allowUnavailableResources && !(kind === 'skill' && skillSourceFailure)) throw error;
           resourcesUnavailable = true;
           const details = error && typeof error.details === 'object' && error.details ? error.details : {};
           const id = String(details.resourceId || details.id || '').trim();
