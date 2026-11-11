@@ -90,6 +90,7 @@ test('builtin skill definition matches the DSH runtime skill contract', () => {
   // loader. It has no auxiliary files, so the runtime definition must stay
   // inline and must not advertise a directory for Native to scan.
   assert.equal(skill.resourceBase, undefined);
+  assert.equal(Object.hasOwn(skill, 'resourceBase'), false);
   assert.deepEqual(skill.invocation, { modelInvocable: true, userInvocable: true });
 });
 
@@ -156,6 +157,7 @@ test('builtin skill definitions are fresh per call so presets cannot mutate the 
   assert.equal(second[0].name, BUILTIN);
   assert.equal(second[0].invocation.modelInvocable, true);
   assert.equal(second[0].resourceBase, undefined);
+  assert.equal(Object.hasOwn(second[0], 'resourceBase'), false);
 });
 
 test('zero-binding preset keeps the previous composition: no builtin skill, no new plugins', async () => {

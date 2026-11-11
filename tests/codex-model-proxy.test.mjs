@@ -311,3 +311,84 @@ test('a reasoning 400 is not retried when no lower legal value exists or the err
     } finally { await proxy.close(); }
   }
 });
+
+test('native Responses forward reasoning items exactly as Codex emitted them', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return Response.json({ id: 'resp-native', status: 'completed', output: [] });
+    },
+  });
+  const input = [
+    { type: 'reasoning', id: 'rs-opaque', summary: [], content: [], encrypted_content: 'opaque' },
+    { type: 'reasoning', id: 'rs-null', summary: [{ type: 'summary_text', text: 'Inspect before patching.' }], content: null },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+  ];
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input }) });
+    assert.equal(response.status, 200);
+    // Codex reaches this gateway directly, so the proxy must not rewrite the
+    // reasoning item shape: `content: null` stays exactly as Codex emitted it.
+    assert.equal(bodies.length, 1);
+    assert.deepEqual(bodies[0].input, input);
+  } finally { await proxy.close(); }
+});
+
+test('a reasoning-content rejection retries once with the null content removed', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      if (body.input.some(item => item.type === 'reasoning' && item.content === null)) {
+        return Response.json({ error: { code: 'invalid_request_error', type: 'invalid_request_error',
+          message: 'Invalid assistant message: content or tool_calls must be set' } }, { status: 400 });
+      }
+      return Response.json({ id: 'resp-native', status: 'completed', output: [] });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'reasoning', id: 'rs-opaque', summary: [], content: [], encrypted_content: 'opaque' },
+        { type: 'reasoning', id: 'rs-null', summary: [{ type: 'summary_text', text: 'Inspect.' }], content: null },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ] }) });
+    assert.equal(response.status, 200);
+    assert.equal(bodies.length, 2);
+    // Reasoning items survive; only the explicit null content is dropped.
+    assert.deepEqual(bodies[1].input.map(item => item.id || item.type), ['rs-opaque', 'rs-null', 'message']);
+    assert.equal('content' in bodies[1].input[1], false);
+    assert.deepEqual(bodies[1].input[0].content, [], 'opaque reasoning content is preserved');
+  } finally { await proxy.close(); }
+});
+
+test('an unrelated 400 forwards reasoning unchanged and does not retry', async () => {
+  const bodies = [];
+  const proxy = await createCodexModelProxy({
+    profile: { ...profile, api: 'responses' },
+    fetchImpl: async (_url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return Response.json({ error: { code: 'context_length_exceeded', type: 'invalid_request_error',
+        message: 'prompt is too long' } }, { status: 400 });
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.baseUrl}/responses`, { method: 'POST',
+      headers: { Authorization: `Bearer ${proxy.apiKey}` },
+      body: JSON.stringify({ model: 'gpt-5', input: [
+        { type: 'reasoning', id: 'rs-null', summary: [], content: null },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ] }) });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, 'MODEL_UPSTREAM_ERROR');
+    assert.equal(bodies.length, 1, 'only a reasoning rejection retries');
+    assert.equal('content' in bodies[0].input[0], true, 'reasoning is untouched');
+  } finally { await proxy.close(); }
+});
