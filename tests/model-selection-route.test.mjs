@@ -12,3 +12,12 @@ test('shipped preset hook reads model configuration values, including gateway mo
   assert.deepEqual(await select({ metadata: { local: true }, spec: { runtime: { type: 'harness' }, bindings: { modelProfileId: 'model-b' } } }), { provider: 'agentkit-studio-gateway', model: 'model-b' });
   assert.equal(archived.length,2);
 });
+
+test('team runtime identities select a model without archiving a synthetic local Agent revision', async () => {
+  const settings = { modelProfiles: [{ id: 'gateway', modelName: 'model-a', default: true }] };
+  const models = { settings: async () => settings, profile: async id => ({ id: 'gateway', modelName: id }) };
+  const archived = [];
+  const select = createAgentModelSelection({ models, dshModelSelection, agentStorePromise: Promise.resolve({ captureRevision: async record => archived.push(record) }) });
+  assert.deepEqual(await select({ metadata: { id: 'team-role-0123456789abcdef01234567', local: true }, spec: { runtime: { type: 'dsh-native' }, bindings: { modelProfileId: 'model-a' } } }), { provider: 'agentkit-studio-gateway', model: 'model-a' });
+  assert.equal(archived.length, 0);
+});

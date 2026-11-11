@@ -40,6 +40,7 @@ export function bindDshAgentRoute(sessionId, binding = {}, owner, scope) {
   const route = {
     agentId: String(binding.agentId || '').trim(),
     agent: binding.agent,
+    runtimeRecord: binding.runtimeRecord,
     runtime,
     local,
     buildId,
@@ -348,7 +349,7 @@ function parseLocalRecord(record, state) {
   return [];
 }
 
-async function* localFrames(handler, payload, { signal, toolAdapter, agent } = {}) {
+async function* localFrames(handler, payload, context = {}) {
   const requestBody = Buffer.from(JSON.stringify(payload));
   const queue = createAsyncQueue();
   const responseChunks = [];
@@ -368,7 +369,7 @@ async function* localFrames(handler, payload, { signal, toolAdapter, agent } = {
     },
     end(chunk = '') { if (chunk) this.write(chunk); this.writableEnded = true; queue.close(); },
   };
-  const handlerPromise = Promise.resolve().then(() => handler(request, response, { signal, toolAdapter, agent })).catch(error => {
+  const handlerPromise = Promise.resolve().then(() => handler(request, response, context)).catch(error => {
     queue.fail(error);
     throw error;
   });
@@ -727,7 +728,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
           nativeTools,
           tools: Array.isArray(options.tools) ? options.tools : [],
-        }, { signal: options.signal, toolAdapter, agent: toolAgent }); }
+        }, { signal: options.signal, toolAdapter, agent: toolAgent, runtimeRecord: routed?.runtimeRecord }); }
         catch (error) {
           // In a waterfall, throwing is a plugin failure. A public failure
           // finish lets DSH retry this model step and retain durable history.

@@ -42,6 +42,22 @@ test('local presets pin public component bindings for DSH Native, Codex and Harn
   }
 });
 
+test('team role presets carry a frozen record for the local runtime without an AgentStore row', async () => {
+  let registered;
+  const record = agent({
+    metadata: { id: 'team-role-0123456789abcdef01234567', teamRole: { sourceAgentId: 'ar-local-0123456789abcdef' }, name: 'Team role', revision: 1, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: {} },
+  });
+  const admission = new DshPresetAdmission({
+    getAgent: async () => record,
+    registry: { register: async value => { registered = value; return () => {}; } },
+  });
+  await admission.ensure(record.metadata.id);
+  const runtime = registered.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin')).config;
+  assert.equal(runtime.agentId, record.metadata.id);
+  assert.deepEqual(runtime.runtimeRecord, { metadata: record.metadata, spec: record.spec });
+});
+
 test('an unreachable bound resource degrades by default and fails only in strict mode', async () => {
   const record = agent({ spec: { runtime: { type: 'codex' }, instructions: { system: '测试带有MCP的agent' },
     bindings: { mcpServers: [{ id: 'jinshan-sap', endpoint: 'https://example.invalid/mcp', transport: 'http' }] } } });

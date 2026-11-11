@@ -318,6 +318,9 @@ export class DshPresetAdmission {
 
   async register(agent, eligibility, buildId, { allowUnavailableResources = false } = {}) {
     const nativeEngineContract = eligibility.local ? selectedNativeBuildContract(agent, this.nativeEngineContract) : undefined;
+    // Only Team-owned local presets need an inline record. Ordinary Agent
+    // sessions still resolve their stored revision through AgentStore.
+    const teamRole = eligibility.local && agent.metadata?.teamRole && /^team-role-[a-f0-9]{24}$/.test(eligibility.agentId);
     const instructions = String(agent?.spec?.instructions?.system || agent?.spec?.description || '').trim();
     const task = String(agent?.spec?.instructions?.task || '').trim();
     const prefix = [instructions, task ? `当前任务约束：${task}` : ''].filter(Boolean).join('\n\n');
@@ -397,6 +400,12 @@ export class DshPresetAdmission {
         name: '@kingsoftcloud/agentkit-studio/dsh-runtime-plugin',
         config: {
           agentId: eligibility.agentId,
+          ...(teamRole ? {
+            runtimeRecord: {
+              metadata: structuredClone(agent.metadata),
+              spec: structuredClone(agent.spec || {}),
+            },
+          } : {}),
           runtime: eligibility.runtime,
           local: eligibility.local,
           ...(eligibility.local ? { componentBindings: dshComponentBindings(agent.spec), knowledgeBindings: knowledgeBindings(agent.spec),

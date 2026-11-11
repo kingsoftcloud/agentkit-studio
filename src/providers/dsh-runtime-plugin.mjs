@@ -310,6 +310,7 @@ export function apply(ctx, config = {}) {
       routes.set(sessionId, bindDshAgentRoute(sessionId, {
         agentId,
         agent: payload?.agent,
+        runtimeRecord: config.runtimeRecord,
         runtime: config.runtime,
         local: config.local === true,
         buildId: config.buildId,

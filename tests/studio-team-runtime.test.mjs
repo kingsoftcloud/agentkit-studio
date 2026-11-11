@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ensureStudioTeamRuntime } from '../src/studio-team-runtime.mjs'
+import { ensureStudioTeamRuntime, usesOfficialTeamTools } from '../src/studio-team-runtime.mjs'
 
 const MODULE = '@deepseek-ai/dsh-experimental-agent-team'
+const TOOL_MODULE = '@deepseek-ai/dsh-experimental-tool-agent-team'
 
 /** Minimal Cordis-shaped context for the ownership decision. */
 function fixture({ entries = [], wait = 50 } = {}) {
@@ -69,4 +70,14 @@ test('hands the service over when the market creates the official entry after bo
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.equal(mounted[0].disposed, true)
   assert.equal(services.agentTeams, undefined)
+})
+
+test('treats a declared official tool entry as the owner before plugin manager activation', async () => {
+  const { ctx } = fixture({ entries: [{ options: { name: TOOL_MODULE }, disabled: false }] })
+  assert.equal(await usesOfficialTeamTools(ctx), true)
+})
+
+test('reserves a disabled official tool entry for re-enable', async () => {
+  const { ctx } = fixture({ entries: [{ options: { name: TOOL_MODULE }, disabled: true }] })
+  assert.equal(await usesOfficialTeamTools(ctx), true)
 })
