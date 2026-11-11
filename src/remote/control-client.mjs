@@ -318,6 +318,9 @@ export function createProductClient(connection, { window = globalThis.window } =
                     body: JSON.stringify(spec),
                 }),
         deleteLocalAgent: id => directServer() ? studioBridgeOperation('agents/local-delete', { agentId: id }) : Promise.reject(Object.assign(new Error('本地 Agent 删除需要 Studio Host'), { code: 'HOST_CONNECTION_MISSING' })),
+        deleteManagedAgent: id => bridgeAvailable()
+            ? studioBridgeOperation('agents/managed-delete', { agentId: id })
+            : Promise.reject(Object.assign(new Error('删除托管 Runtime 需要已连接的 Studio Host'), { code: 'HOST_CONNECTION_MISSING' })),
         createBuild: (id, revision, idempotencyKey) => directServer()
             ? studioBridgeOperation('builds/create', { agentId: id, revision, idempotencyKey })
             : request('/api/v1/agents/' + encodeURIComponent(id) + '/builds', {

@@ -24,6 +24,7 @@ export function createAgentPages({
     return h(AgentsPage, {
       created,
       onDeleteLocal: async agentId => { try { await hostRemote.deleteLocalAgent(agentId); window.dispatchEvent(new CustomEvent('agentkit-studio:local-agent-changed', { detail: { agentId } })); } catch (reason) { window.dispatchEvent(new CustomEvent('agentkit-studio:local-agent-error', { detail: reason?.message })); } },
+      onDeleteManaged: async agentId => { try { await hostRemote.deleteManagedAgent(agentId); window.dispatchEvent(new CustomEvent('agentkit-studio:cloud-agent-changed', { detail: { agentId } })); } catch (reason) { await actions.confirm({ title: '删除托管 Runtime 失败', detail: reason?.message || '云端未确认删除，请刷新列表核对。', confirmLabel: '知道了' }); } },
       onNavigate,
       tab,
       onTabChange: setTab,
@@ -33,7 +34,7 @@ export function createAgentPages({
     });
   }
 
-  function AgentsPage({ onCreate, created, onNavigate, onBindAgent, onEdit, tab, onTabChange, onDeleteLocal }) {
+  function AgentsPage({ onCreate, created, onNavigate, onBindAgent, onEdit, tab, onTabChange, onDeleteLocal, onDeleteManaged }) {
     const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
     const [agents, setAgents] = useState([]);
     const [status, setStatus] = useState('loading');
@@ -80,7 +81,8 @@ export function createAgentPages({
     useEffect(() => {
       const changed = () => { if (tab !== 'runtime') void load(); };
       window.addEventListener('agentkit-studio:local-agent-changed', changed);
-      return () => window.removeEventListener('agentkit-studio:local-agent-changed', changed);
+      window.addEventListener('agentkit-studio:cloud-agent-changed', changed);
+      return () => { window.removeEventListener('agentkit-studio:local-agent-changed', changed); window.removeEventListener('agentkit-studio:cloud-agent-changed', changed); };
     }, [page, pageSize, query, tab]);
     useEffect(() => { setPage(1); }, [query, pageSize]);
 
@@ -137,7 +139,7 @@ export function createAgentPages({
             h('span', null),
             h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
               h('button', { type: 'button', disabled: Boolean(bindingAgent) || agent.deployment?.available === false, onClick: event => { stop(event); void bindAgent(agent); }, className: 'af-btn', 'data-size': 'sm', 'data-variant': 'primary' }, bindingAgent === (agent?.metadata?.id || agent?.id) ? '正在绑定…' : agent.assistant?.configuration ? '绑定云端助理' : '绑定到新会话'),
-              studioDeployment ? h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, '管理部署') : agent.managedRuntime ? null : h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, '编辑 Agent'),
+              studioDeployment ? h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, '管理部署') : agent.managedRuntime ? h('button', { type: 'button', onClick: async event => { stop(event); if (!await actions.confirm({ title: '管理托管 Runtime', detail: `确定删除云端托管 Runtime「${metadata.name || id}」吗？删除后云端实例和访问凭据都会失效。`, confirmLabel: '删除 Runtime', danger: true })) return; await onDeleteManaged?.(id); }, className: 'af-btn', 'data-size': 'sm', style: { color: BRAND.danger } }, '管理 / 删除') : h('button', { type: 'button', onClick: event => { stop(event); openCard(); }, className: 'af-btn', 'data-size': 'sm' }, '编辑 Agent'),
               agent?.metadata?.local ? h('button', { type: 'button', onClick: async event => { stop(event); if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); }, className: 'af-btn', 'data-size': 'sm', style: { color: BRAND.danger } }, '删除') : null)));
       })),
       h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '.5px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-tertiary)', fontSize: '12px' } },
