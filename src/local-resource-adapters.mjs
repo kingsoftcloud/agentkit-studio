@@ -83,16 +83,28 @@ function mcpStatus(error) {
     || numericStatus(error?.message) || numericStatus(error?.cause?.message);
 }
 
-function mcpFailure(error, resourceId, phase = 'connect', toolName = '') {
+function mcpText(error) {
+  return String(error?.cause?.message || error?.cause?.code || error?.message || error || '');
+}
+
+function sessionExpired(error, entry) {
+  if (!entry?.transport?.sessionId || mcpStatus(error) !== 404) return false;
+  return /(?:session|mcp-session).*(?:not found|expired|terminated)|(?:not found|expired|terminated).*(?:session|mcp-session)/i.test(mcpText(error));
+}
+
+function mcpFailure(error, resourceId, phase = 'connect', toolName = '', extra = {}) {
   if (error instanceof LocalResourceError && !['MCP_CONNECT_FAILED', 'MCP_TOOL_DISCOVERY_FAILED'].includes(error.code)) return error;
   const status = mcpStatus(error);
-  const tlsFailure = !status && /(?:CERT_|ERR_TLS_|self.signed certificate|certificate (?:has expired|chain|verify)|unable to verify.*certificate)/i.test(String(error?.cause?.code || error?.cause?.message || error?.message || ''));
-  const code = status === 401 ? 'MCP_AUTH_FAILED'
+  const tlsFailure = !status && /(?:CERT_|ERR_TLS_|self.signed certificate|certificate (?:has expired|chain|verify)|unable to verify.*certificate)/i.test(mcpText(error));
+  const code = extra.sessionExpired ? 'MCP_SESSION_EXPIRED'
+    : status === 401 ? 'MCP_AUTH_FAILED'
     : status === 403 ? 'MCP_PERMISSION_DENIED'
       : status === 404 ? 'MCP_ENDPOINT_NOT_FOUND'
         : tlsFailure ? 'MCP_TLS_FAILED' : phase === 'list' ? 'MCP_TOOL_DISCOVERY_FAILED'
           : phase === 'call' ? 'MCP_TOOL_FAILED' : 'MCP_CONNECT_FAILED';
-  const message = status === 401
+  const message = extra.sessionExpired
+    ? 'MCP 会话已过期，已清理连接；请重试原调用'
+    : status === 401
     ? 'MCP Endpoint 鉴权失败（HTTP 401），请更新凭证后重新探测'
     : status === 403
       ? 'MCP Endpoint 拒绝访问（HTTP 403），请检查凭证权限后重新探测'
@@ -104,21 +116,33 @@ function mcpFailure(error, resourceId, phase = 'connect', toolName = '') {
           : phase === 'call'
             ? 'MCP 工具调用失败，请检查工具参数或服务状态'
             : 'MCP Endpoint 连接失败，请检查 Endpoint TLS、网络和认证配置';
-  const cause = String(error?.cause?.message || error?.cause?.code || error?.message || error || '').slice(0, 240);
+  const cause = mcpText(error).slice(0, 240);
   return new LocalResourceError(code, message, {
     resourceId,
     ...(phase === 'call' && toolName ? { name: String(toolName) } : {}),
     ...(status ? { status } : {}),
     ...(cause ? { cause } : {}),
+    ...(extra.attempts ? { attempts: extra.attempts } : {}),
+    ...(extra.retryClass ? { retryClass: extra.retryClass } : {}),
+    ...(extra.sessionExpired ? { sessionState: 'expired' } : {}),
   });
 }
 
 export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = hostFetch, cacheDir = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'cloud-skills') } = {}) {
   const mcpClients = new Map();
   const connectingClients = new Set();
+  const connecting = new Map();
+  let nextGeneration = 0;
   const cloudSkillSpaces = new Map();
   let closed = false;
   const assertOpen = () => { if (closed) throw new LocalResourceError('RESOURCE_ADAPTER_CLOSED', '资源适配器已关闭'); };
+  const retireMcpEntry = async entry => {
+    await Promise.resolve(entry?.client?.close?.()).catch(() => {});
+    if (entry && mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
+  };
+  const closeRetiredMcpEntry = async entry => {
+    if (entry && mcpClients.get(entry.cacheKey) !== entry) await Promise.resolve(entry.client?.close?.()).catch(() => {});
+  };
 
   async function describeMcp(binding) {
     const key = resourceId(binding);
@@ -164,30 +188,40 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       await Promise.resolve(cached.client.close?.()).catch(() => {});
       mcpClients.delete(cacheKey);
     }
-    const Transport = stdio ? StdioClientTransport : detail.transport === 'sse' ? SSEClientTransport : StreamableHTTPClientTransport;
-    if (exact && Transport.jsonParserContract !== MCP_JSON_PARSER_CONTRACT) throw new LocalResourceError('MCP_JSON_CODEC_UNAVAILABLE', 'MCP 客户端缺少精确 JSON 解析接口');
-    const jsonOptions = exact ? { jsonParser: nativeMcpJsonParser } : {};
-    const transport = stdio ? new Transport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe', ...jsonOptions })
-      : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl, ...jsonOptions });
-    const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' },
-      exact ? { jsonSchemaValidator: nativeMcpSchemaValidator } : undefined);
-    assertCurrent?.();
-    connectingClients.add(client);
-    if (stdio) transport.stderr?.resume();
+    const inFlight = connecting.get(cacheKey);
+    if (inFlight?.fingerprint === fingerprint) return inFlight.promise;
+    const generation = ++nextGeneration;
+    const promise = (async () => {
+      const Transport = stdio ? StdioClientTransport : detail.transport === 'sse' ? SSEClientTransport : StreamableHTTPClientTransport;
+      if (exact && Transport.jsonParserContract !== MCP_JSON_PARSER_CONTRACT) throw new LocalResourceError('MCP_JSON_CODEC_UNAVAILABLE', 'MCP 客户端缺少精确 JSON 解析接口');
+      const jsonOptions = exact ? { jsonParser: nativeMcpJsonParser } : {};
+      const transport = stdio ? new Transport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe', ...jsonOptions })
+        : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl, ...jsonOptions });
+      const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' },
+        exact ? { jsonSchemaValidator: nativeMcpSchemaValidator } : undefined);
+      assertCurrent?.();
+      connectingClients.add(client);
+      if (stdio) transport.stderr?.resume();
+      try {
+        await client.connect(transport, { timeout: 20000 });
+        assertOpen();
+      } catch (error) {
+        await Promise.resolve(client.close()).catch(() => {});
+        await Promise.resolve(transport.close?.()).catch(() => {});
+        throw mcpFailure(error, key);
+      } finally { connectingClients.delete(client); }
+      if (closed) { await client.close().catch(() => {}); assertOpen(); }
+      return { client, transport, fingerprint, cacheKey, generation };
+    })();
+    connecting.set(cacheKey, { fingerprint, generation, promise });
     try {
-      await client.connect(transport, { timeout: 20000 });
-      assertOpen();
-    } catch (error) {
-      await Promise.resolve(client.close()).catch(() => {});
-      await Promise.resolve(transport.close?.()).catch(() => {});
-      throw mcpFailure(error, key);
-    } finally { connectingClients.delete(client); }
-    const entry = { client, transport, fingerprint, cacheKey };
-    const displaced = mcpClients.get(cacheKey);
-    if (displaced && displaced !== entry) await displaced.client.close().catch(() => {});
-    if (closed) { await client.close().catch(() => {}); assertOpen(); }
-    mcpClients.set(cacheKey, entry);
-    return entry;
+      const entry = await promise;
+      const current = connecting.get(cacheKey);
+      if (current?.generation === generation && !closed) mcpClients.set(cacheKey, entry);
+      return entry;
+    } finally {
+      if (connecting.get(cacheKey)?.generation === generation) connecting.delete(cacheKey);
+    }
   }
 
   async function listMcpTools(id, { jsonCodec, snapshot = false } = {}) {
@@ -205,7 +239,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       if (snapshot) {
         await Promise.resolve(entry.client.close?.()).catch(() => {});
         if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
-      }
+      } else await closeRetiredMcpEntry(entry);
     }
   }
 
@@ -225,22 +259,50 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     if (!['content', 'mcp-result/v1'].includes(resultFormat)) throw new LocalResourceError('MCP_RESULT_FORMAT_INVALID', 'MCP 结果格式无效');
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
-    const entry = await mcp(id, resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined, undefined, check);
-    // Credentials and connection initialization may wait. A connected client
-    // cannot extend the original parent or child's Native dispatch authority.
-    check();
-    let result;
-    try { result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal }); }
-    catch (error) {
-      // The SDK sends cancellation asynchronously on this shared transport.
-      signal?.throwIfAborted();
-      await Promise.resolve(entry.client.close?.()).catch(() => {});
-      if (mcpClients.get(entry.cacheKey) === entry) mcpClients.delete(entry.cacheKey);
-      throw mcpFailure(error, key, 'call', name);
+    const codec = resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined;
+    let entry;
+    try {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        let enteredCall = false;
+        try {
+          entry = await mcp(id, codec, undefined, check);
+          // Credentials and connection initialization may wait. A connected client
+          // cannot extend the original parent or child's Native dispatch authority.
+          check();
+          enteredCall = true;
+          const result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal });
+          if (resultFormat === 'mcp-result/v1') return result;
+          if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
+          return result?.content || result;
+        } catch (error) {
+          // The SDK sends cancellation asynchronously on this shared transport.
+          signal?.throwIfAborted();
+          if (!enteredCall) {
+            if (error instanceof LocalResourceError) throw error;
+            throw mcpFailure(error, key, 'connect', name, { attempts: attempt, retryClass: 'pre_dispatch' });
+          }
+          // A normal MCP tool error is a returned application result, not a
+          // transport failure. Keep the shared session reusable for the caller's
+          // next explicit action.
+          if (error instanceof LocalResourceError && error.code === 'MCP_TOOL_FAILED') throw error;
+          const expired = sessionExpired(error, entry);
+          if (expired && attempt === 1) {
+            await retireMcpEntry(entry);
+            entry = undefined;
+            continue;
+          }
+          if (entry) await retireMcpEntry(entry);
+          throw mcpFailure(error, key, 'call', name, {
+            attempts: attempt,
+            retryClass: expired ? 'session_expired' : 'transport_ambiguous',
+            sessionExpired: expired,
+          });
+        }
+      }
+      throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具调用失败', { resourceId: key, name, attempts: 2 });
+    } finally {
+      await closeRetiredMcpEntry(entry);
     }
-    if (resultFormat === 'mcp-result/v1') return result;
-    if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
-    return result?.content || result;
   }
 
   async function loadCloudSkillSpace(id) {
@@ -438,6 +500,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     const clients = new Set([...connectingClients, ...[...mcpClients.values()].map(entry => entry.client)]);
     await Promise.allSettled([...clients].map(client => client.close()));
     connectingClients.clear();
+    connecting.clear();
     mcpClients.clear();
     cloudSkillSpaces.clear();
   }
