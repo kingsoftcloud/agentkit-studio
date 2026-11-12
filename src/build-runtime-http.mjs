@@ -268,6 +268,19 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       // including cancellation. A failed durability barrier is not success,
       // but it must not replace the failure that actually ended the run:
       // keep the original code for callers and record settlement separately.
+      // A run that dies without a code loses its cause: `safeDiagnosticCode`
+      // only keeps string codes, so a DOMException TimeoutError (code 23) reports
+      // the inert fallback and the duration is the only surviving clue. Record
+      // the raw name, message and call site before anything normalizes them.
+      try {
+        console.error('[agentkit-studio] run error', JSON.stringify({
+          name: String(error?.name || ''),
+          code: typeof error?.code === 'number' ? error.code : String(error?.code || ''),
+          message: String(error?.message || '').slice(0, 300),
+          stack: String(error?.stack || '').split('\n').slice(0, 6)
+            .map(line => line.trim().replace(/^at /, '')).join(' <- '),
+        }));
+      } catch { /* diagnostics never replace the failure */ }
       let settlementFailure;
       if (abort && platformActions) {
         try { await platformActions.settleRun(input); }
