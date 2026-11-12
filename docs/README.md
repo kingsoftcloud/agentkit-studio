@@ -7,6 +7,7 @@
 
 - [Getting started](getting-started.md): installation, models and local development.
 - [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
+- [Resource retry and MCP recovery](resource-retry-design.md): 资源绑定重试、MCP 连接恢复与失败分类（提案）。
 - [Lifecycle implementation](refactor-lifecycle.md): scope ownership changes, real DSH evidence and remaining acceptance work.
 - [Sidebar implementation](refactor-sidebar.md): native DSH list reuse, removed filtering and acceptance evidence.
 - [前端模块化实施与验收](refactor-client.md)
