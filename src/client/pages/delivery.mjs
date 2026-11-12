@@ -138,7 +138,10 @@ export function createDeliveryPages({
       ['部署位置', `${preview.environment === 'pre-online' ? '预发环境' : preview.environment} · ${preview.region}`],
       ['实例规格', `${preview.resources.cpu} 核 / ${preview.resources.memoryGiB} GB · 1 个实例`],
       ['对话存储', storageSummary(preview.resources)],
-      ['运行时与镜像', `${preview.runtime} · ${preview.image.version}`],
+      ['运行时', `${preview.runtime} · 当前镜像 ${targetRecord?.imageVersion || '—'}`],
+      // The immutable image tag and digest are the deployment identity an
+      // operator checks before an upgrade rolls a frozen version.
+      ['目标运行镜像', `${preview.image.version || '—'}${preview.image.digest ? ` · ${preview.image.digest}` : ''}`],
       ['已绑定资源', `${preview.resourceCounts.models} 个模型 · ${preview.resourceCounts.mcps} 个 MCP · ${preview.resourceCounts.skills} 个 Skill · ${preview.resourceCounts.remote} 个云端资源`],
       ['操作人', preview.identity.kind === 'subaccount' ? preview.identity.userName : '主账号'],
     ] : [];
@@ -182,7 +185,7 @@ export function createDeliveryPages({
             h('div', { className: 'ad-record-head' },
               h('strong', { className: 'ad-record-title' }, `${record.agentName} · 版本 ${record.revision}`),
               h(Pill, { tone: record.state === 'READY' ? 'accent' : record.state === 'DELETED' ? 'neutral' : 'signal' }, DEPLOYMENT_LABELS[record.state] || record.state)),
-            h('p', { className: 'ad-record-meta' }, `${record.environment === 'pre-online' ? '预发环境' : record.environment} · ${record.region} · ${record.resources?.cpu || '—'} 核 / ${record.resources?.memoryGiB || '—'} GB · ${deliveryDate(record.createdAt)}`),
+            h('p', { className: 'ad-record-meta' }, `${record.environment === 'pre-online' ? '预发环境' : record.environment} · ${record.region} · ${record.resources?.cpu || '—'} 核 / ${record.resources?.memoryGiB || '—'} GB · 镜像 ${record.imageVersion || '—'} · ${deliveryDate(record.createdAt)}`),
             record.rollout ? h('p', { className: 'ad-record-meta' }, `${record.rollout.kind === 'rollback' ? '回滚' : '升级'}到 Revision ${record.rollout.revision} · ${record.rollout.status === 'SUCCEEDED' ? '入口版本已确认' : record.rollout.status === 'FAILED' ? '未提交成功' : '等待目标版本生效'}`) : null,
             record.failure ? h('p', { className: 'ad-record-meta ad-record-failure' }, `${record.failure.code} · ${record.failure.message}`) : null,
             h('div', { className: 'ad-record-actions' },
@@ -204,6 +207,7 @@ export function createDeliveryPages({
             details[record.id] ? h('dl', { className: 'ad-detail' },
               h('dt', null, '云端 Agent'), h('dd', null, record.cloudAgentId || record.name || '等待创建结果'),
               h('dt', null, '运行时'), h('dd', null, RUNTIME_LABELS[record.runtime] || record.runtime),
+              h('dt', null, '运行镜像'), h('dd', null, `${record.imageVersion || '—'}${record.imageDigest ? ` · ${record.imageDigest}` : ''}`),
               h('dt', null, '构建版本'), h('dd', null, record.buildId),
               h('dt', null, '对话存储'), h('dd', null, storageSummary(record.resources))) : null))),
         pageCount > 1 ? h('div', { className: 'ad-pager' },
