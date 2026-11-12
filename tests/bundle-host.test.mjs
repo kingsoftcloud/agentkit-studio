@@ -133,13 +133,20 @@ test('personal directory links and foreign DSH profiles cannot become deployment
   assert.equal(await readFile(join(foreign.state, 'dsh/cordis.patch.yml'), 'utf8'), 'personal-profile');
 });
 
-test('versioned state isolates immutable bundles and preserves prior history on rollback', async t => {
+test('versioned state isolates immutable bundles while the DSH home survives updates', async t => {
   const f = await fixture(t), g = await fixture(t);
   const first = await prepareBundleHost({ ...f, versionedState: true });
   const history = join(first.env.DSH_HOME, 'retained-history'); await writeFile(history, 'original-history');
   const second = await prepareBundleHost({ ...f, archive: g.archive, versionedState: true });
-  assert.notEqual(first.env.DSH_HOME, second.env.DSH_HOME);
+  // The imported bundle belongs to a version, so each version keeps its own
+  // AGENTKIT_HOME receipt. Sessions, the user home and the workspace belong to
+  // the Agent: an accepted update must keep reading the same DSH home or every
+  // conversation becomes invisible to the new version.
+  assert.notEqual(first.env.AGENTKIT_HOME, second.env.AGENTKIT_HOME);
+  assert.equal(first.env.DSH_HOME, second.env.DSH_HOME);
+  assert.equal(await readFile(history, 'utf8'), 'original-history');
   const restored = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(restored.env.AGENTKIT_HOME, first.env.AGENTKIT_HOME);
   assert.equal(restored.env.DSH_HOME, first.env.DSH_HOME);
   assert.equal(await readFile(history, 'utf8'), 'original-history');
   assert.equal(restored.env.AGENTKIT_BUNDLE_SHA256, restored.identity.sha256);
