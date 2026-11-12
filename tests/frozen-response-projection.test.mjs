@@ -45,9 +45,10 @@ test('a cold presentation reuses its full original response and tool results wit
   assert.equal(f.rows.length, 1);
 });
 
-test('conflicting input, malformed presentation, and duplicate records cannot reset a completed response', async () => {
+test('conflicting input or model, malformed presentation, and duplicate records cannot reset a completed response', async () => {
   const f = fixture(); await f.create().save(request, response, events, signal());
   await assert.rejects(f.create().load({ ...request, input: 'different' }, signal()), { code: 'RUNTIME_REQUEST_CONFLICT' });
+  await assert.rejects(f.create().load({ ...request, model: 'other-model' }, signal()), { code: 'RUNTIME_REQUEST_CONFLICT' });
   const original = structuredClone(f.rows[0]);
   f.rows[0].data.events.push({ type: 'execute-tool', data: {} });
   await assert.rejects(f.create().load(request, signal()), { code: 'RESPONSES_PROJECTION_INVALID' });

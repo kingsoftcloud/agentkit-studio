@@ -50,7 +50,7 @@ async function fixture(t, credentialName = 'MODEL_KEY') {
 }
 
 test('offline boot wires the public DSH CLI/profile and forwards only target resource credentials', async t => {
-  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const f = await fixture(t), plan = await prepareBundleHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_TIMEOUT_MS: '1200000' } });
   const installationRequire = createRequire(join(f.installation, 'package.json'));
   for (const name of ['@deepseek-ai/dsh-base/package.json', '@deepseek-ai/dsh-session-persistence-jsonl/package.json']) {
     assert.throws(() => installationRequire.resolve(name), { code: 'MODULE_NOT_FOUND' }, 'strict profile must not hoist ' + name);
@@ -58,6 +58,7 @@ test('offline boot wires the public DSH CLI/profile and forwards only target res
   assert.match(plan.entry, /node_modules\/@deepseek-ai\/dsh\/lib\/bin.js$/);
   assert.deepEqual(plan.args, ['--profile', 'agentkit-runtime', '--host', '127.0.0.1', '--no-open', '--port', '0']);
   assert.equal(plan.env.MODEL_KEY, 'target-secret');
+  assert.equal(plan.env.AGENTKIT_RUNTIME_TIMEOUT_MS, '1200000');
   for (const key of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'CLOUD_SECRET_KEY']) assert.equal(plan.env[key], undefined);
   assert.equal(plan.env.HOME, join(f.state, 'home'));
   assert.equal(plan.env.DSH_HOME, join(f.state, 'dsh'));

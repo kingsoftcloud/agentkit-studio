@@ -929,10 +929,22 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspa
               : ' This Build permits exact edits during deadline delivery when this tool is admitted. Extend an already successfully written deliverable in bounded portions using an exact unique tail or marker; do not resend its whole body. Approval, current file revision and replacement checks still apply.') } : {}),
           ...(name === browserName && visionTimeouts.has(String(agent?.session?.id))
           ? { timeoutMs: visionTimeouts.get(String(agent.session.id)).timeoutMs } : {}) };
-        const schema = schemas.get(name);
-        invariant(schema, `studio_native_tool_schema_missing:${name}`);
         const mcpSchema = mcpSchemas.get(name);
-        if (mcpSchema) invariant(canonical(schema.parameters) === canonical(mcpSchema.registryParameters), 'studio_native_mcp_schema_binding_changed');
+        // A Native preset can be selected on an already-created Session. In
+        // that case the first DSH prompt assembly runs before this preset's
+        // agent-scoped tool gateway is mounted, so the assembly's public
+        // schema list does not contain the newly admitted MCP tool. The
+        // frozen Native contract is authoritative for that first turn; use
+        // its snapshotted schema instead of dropping the tool or failing the
+        // whole request. Once the registry catches up, keep validating that
+        // DSH's declared schema still matches the frozen contract.
+        const schema = schemas.get(name) || (mcpSchema ? {
+          name,
+          description: mcpContracts.get(name)?.description || '',
+          parameters: mcpSchema.registryParameters,
+        } : undefined);
+        invariant(schema, `studio_native_tool_schema_missing:${name}`);
+        if (mcpSchema && schemas.has(name)) invariant(canonical(schema.parameters) === canonical(mcpSchema.registryParameters), 'studio_native_mcp_schema_binding_changed');
         return {
           name, description: schema.description || '', parameters: structuredClone(mcpSchema?.input ?? schema.parameters),
           ...(toolDiscoveryPolicy ? { discovery: { deferred: true,
