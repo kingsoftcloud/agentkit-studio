@@ -40,7 +40,7 @@ function createExpertPages({ ui, hostRemote, actions, window = globalThis.window
     }, []);
     return h(
       "div",
-      { style: { height: "100%", overflow: "auto", background: 'var(--dsw-alias-bg-base, #ffffff)' } },
+      { className: "studio-template-surface", style: { height: "100%", overflow: "auto", background: 'var(--dsw-alias-bg-base, #ffffff)' } },
       h(
         "div",
         { "data-studio-drag-region": "true", style: { maxWidth: '960px', margin: '0 auto', padding: '28px clamp(24px, 4vw, 48px) 0' } },

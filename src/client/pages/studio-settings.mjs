@@ -4,7 +4,7 @@ export function createStudioSettingsSection({
 }) {
   const { STUDIO_VERSION, STUDIO_PLUGIN_VERSION, DSH_VERSION } = versions;
   const SettingsGroup = (title, ...rows) => h('section', { 'data-studio-settings-group': true },
-    h('h3', null, title), h('div', { className: 'studio-settings-panel' }, ...rows));
+    h('h3', null, title), h('div', { className: 'studio-settings-panel studio-panel' }, ...rows));
   function StudioSettingsSection() {
     const [host, setHost] = useState({ status: 'loading', error: '' });
     const [promptPrediction, setPromptPrediction] = useState(() => {
@@ -68,7 +68,7 @@ export function createStudioSettingsSection({
       h(SettingsRow, { label: '会话绑定策略', value: '可选 Agent', detail: '不选择 Agent 时直接使用 DSH 原生会话；选择后在新会话创建时固定主 Agent', tone: 'accent' }),
       h(SettingsRow, { label: '默认执行目标', value: 'Local Host', detail: '创建 Agent 和运行会话时使用的默认目标', tone: 'signal' }),
       h(SettingsRow, { label: 'Studio Host', value: host.status === 'ready' ? '已连接' : host.status === 'loading' ? '检查中' : '连接失败', detail: host.status === 'ready' ? '已成功读取 Host 配置' : host.error || '正在读取 Host 配置', tone: 'signal' }),
-      h('div', { 'data-studio-settings-row': true },
+      h('div', { 'data-studio-settings-row': true, className: 'studio-srow' },
         h('div', null,
           h('div', { className: 'agentkit-check-label' }, '下一句提示'),
           h('div', { role: 'note', className: 'agentkit-form-note' }, '仅在输入框为空且上一轮完成后请求短文本预测；预测不会写入会话历史。')),
@@ -78,7 +78,7 @@ export function createStudioSettingsSection({
       h(SettingsRow, { label: 'AgentKit Studio 版本', value: STUDIO_VERSION, detail: '当前安装的桌面应用版本' }),
       h(SettingsRow, { label: 'Studio 插件版本', value: STUDIO_PLUGIN_VERSION, detail: '产品功能与运行适配层版本' }),
       h(SettingsRow, { label: 'DSH 宿主兼容版本', value: DSH_VERSION, detail: '固定的宿主基线，不代表 Studio 产品版本' }),
-      h('div', { 'data-studio-settings-row': true },
+      h('div', { 'data-studio-settings-row': true, className: 'studio-srow' },
         h('div', null,
           h('div', { className: 'agentkit-check-label' }, '桌面更新'),
           h('div', { role: 'status', className: 'agentkit-form-note' }, !desktopUpdates ? '请在 AgentKit Studio 桌面应用中检查更新。' : desktopUpdate.phase === 'error' ? '更新检查失败，可重试。' : desktopUpdate.version ? `目标版本：${desktopUpdate.version}` : '使用 Studio 的更新源检查新版本。')),

@@ -15,7 +15,7 @@ function render({ resources = [], kind = 'model', status = 'ready', error = '' }
     return [Object.hasOwn(values, index) ? values[index] : typeof initial === 'function' ? initial() : initial, value => changes.push([index, value])];
   } };
   const ui = { React, ...createFormStyles() };
-  for (const name of ['ContentIntro', 'EmptyState', 'StudioPageTabs', 'StudioSubnav', 'Pill', 'ModelResourceDialog', 'ResourceDialog']) ui[name] = name;
+  for (const name of ['Menu', 'MenuItemButton', 'ContentIntro', 'EmptyState', 'StudioPageTabs', 'StudioSubnav', 'Pill', 'ModelResourceDialog', 'ResourceDialog']) ui[name] = name;
   const { ResourcesPage } = createResourcePages({ ui, hostRemote: {}, window: { localStorage: { getItem() {}, removeItem() {} } } });
   const tree = ResourcesPage();
   return { tree, all: nodes(tree), changes };
@@ -25,7 +25,7 @@ test('resource rows consolidate metadata, keep status detail and dispatch viewin
   const resource = { resourceId: 'model-one', displayName: '模型一', source: 'local', version: 'v1', status: 'ready' };
   const { tree, all, changes } = render({ resources: [resource] });
   const row = all.find(node => node.props?.['data-studio-resource-card']);
-  assert.equal(row.props.className, 'resource-row');
+  assert.equal(row.props.className, 'resource-row studio-row');
   assert.equal(row.props.title, '目录状态不代表 Agent 绑定后的实际执行结果。');
   assert.ok(text(row).includes('本地配置 · v1 · model-one'));
   assert.equal(text(row).includes(row.props.title), false);
@@ -54,7 +54,12 @@ test('MCP rows retain every local action and a visible error status', () => {
   const row = all.find(node => node.props?.['data-studio-resource-card']);
   assert.equal(row.props.title, 'unreachable');
   assert.ok(text(row).includes('探测失败'));
-  assert.deepEqual(nodes(row).filter(node => node.type === 'button').map(text), ['查看', '编辑凭证', '重新探测', '查看工具', '移除配置']);
+  assert.deepEqual(nodes(row).filter(node => node.type === 'button').map(text), ['编辑凭证', '查看']);
+  const fix = nodes(row).find(node => node.type === 'button' && text(node) === '编辑凭证');
+  assert.equal(fix.props['data-size'], 'sm');
+  assert.equal(fix.props.className, 'af-btn');
+  assert.deepEqual(nodes(row).filter(node => node.type === 'MenuItemButton').map(text), ['重新探测', '查看工具', '移除配置']);
+  assert.equal(nodes(row).find(node => node.type === 'Menu').props.align, 'end');
 });
 
 test('empty and unavailable catalogs preserve their existing recovery surfaces', () => {

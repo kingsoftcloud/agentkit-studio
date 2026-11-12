@@ -10,7 +10,10 @@ export function createOperationalComponents({
     return h('span', { className: 'studio-st', 'data-tone': tone }, status.toLowerCase());
   }
 
-  function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick }) {
+  function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick, layout = 'table' }) {
+    if (layout === 'rows') return h('div', { className: 'studio-rows' }, rows.length ? rows.map((row, index) => h('article', { key: operationalId(row, String(index)), className: 'studio-row', onClick: onRowClick ? () => onRowClick(row) : undefined },
+      h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '◈'),
+      columns.map((column, columnIndex) => h('div', { key: column.id, className: columnIndex === 0 ? 'studio-row-main' : column.id === 'action' ? 'studio-row-actions' : 'studio-row-cell', title: column.label }, column.cell ? column.cell(row) : String(row?.[column.id] ?? '—'))))) : h('div', { className: 'studio-empty' }, empty));
     const header = h('thead', null,
       h('tr', { style: { position: 'sticky', top: 0, zIndex: 1, textAlign: 'left', color: BRAND.inkMuted, background: BRAND.surface } },
         columns.map(column => h('th', { key: column.id, style: { padding: '12px', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '.5px solid ' + BRAND.border } }, column.label))));

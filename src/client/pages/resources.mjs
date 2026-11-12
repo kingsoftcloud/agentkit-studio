@@ -1,3 +1,4 @@
+import { createStatusText } from '../components/status-text.mjs';
 import { resourceStatusPresentation } from '../state/resource-status.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
@@ -5,7 +6,8 @@ export function createResourcePages({
   ui,
   hostRemote, actions, window = globalThis.window
 }) {
-  const { React: { createElement: h, useEffect, useRef, useState, Fragment }, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, Pill, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND } = ui;
+  const { React: { createElement: h, useEffect, useRef, useState, Fragment }, Menu, MenuItemButton, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND } = ui;
+  const Pill = createStatusText(h);
   const ghostButtonStyle = () => ({ ...buttonStyle(), border: 0, minHeight: '28px', padding: '0 8px', fontSize: '12px' });
   const primaryButtonStyle = () => ({ ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' });
   function ResourcesPage() {
@@ -34,6 +36,7 @@ export function createResourcePages({
     const [modelDialogOpen, setModelDialogOpen] = useState(false);
     const [resourcePreview, setResourcePreview] = useState(null);
     const [deleting, setDeleting] = useState(false);
+    const [resourceMenu, setResourceMenu] = useState('');
     const platformKinds = ['knowledge-base', 'memory-instance', 'skill-space'];
     const isPlatform = platformKinds.includes(resourceKind);
     const requestSeq = useRef(0);
@@ -133,19 +136,23 @@ export function createResourcePages({
       const localMcp = resourceKind === 'mcp' && resource.source === 'local';
       const canDelete = localMcp || (resourceKind === 'mcp' && resource.source === 'agentengine-server');
       const displayStatus = resourceStatusPresentation(resource, resourceKind);
-      return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, className: 'resource-row' },
-        h('div', { 'aria-hidden': 'true', className: 'resource-row-icon' }, resourceKind === 'mcp' ? '⌘' : resourceKind === 'skill' ? '✦' : resourceKind === 'model' ? '◌' : '◈'),
-        h('div', { className: 'resource-row-main' },
-          h('strong', { className: 'resource-row-title' }, name),
-          h('div', { className: 'resource-row-meta' }, [sourceLabel(resource), kindDetail(resource), id].filter(Boolean).join(' · '))),
-        h('span', { className: 'resource-row-status' }, h('span', { 'aria-hidden': 'true', className: 'studio-status-dot', style: { background: displayStatus.tone === 'signal' ? 'var(--dsw-alias-state-warn-primary, #946200)' : displayStatus.tone === 'accent' ? 'var(--dsw-alias-state-success-primary, #36865a)' : 'var(--dsw-alias-label-tertiary, #999)' } }), displayStatus.label),
-        h('div', { className: 'resource-row-actions' },
-          h('button', { type: 'button', onClick: () => setResourcePreview(resource), style: ghostButtonStyle() }, '查看'),
-          localMcp ? h('button', { type: 'button', onClick: () => openMcpEdit(resource), style: ghostButtonStyle() }, '编辑凭证') : null,
-          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => void probeMcp(resource), style: ghostButtonStyle() }, '重新探测') : null,
-          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: () => setMcpPreview(resource), style: ghostButtonStyle() }, '查看工具') : null,
-          resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h('button', { type: 'button', onClick: () => void previewInstalledSkill(resource), style: ghostButtonStyle() }, '查看文件') : null,
-          canDelete ? h('button', { type: 'button', disabled: deleting, onClick: () => void remove(resource), style: { ...ghostButtonStyle(), color: BRAND.danger } }, localMcp ? '移除配置' : '删除云端 MCP') : null));
+      const needsFix = displayStatus.tone === 'signal' || resource.status === 'credential-missing' || (resourceKind === 'mcp' && displayStatus.label === '已配置，未探测');
+      return h('article', { key: id, 'data-studio-resource-card': id, title: displayStatus.detail, className: 'resource-row studio-row' },
+        h('div', { 'aria-hidden': 'true', className: 'resource-row-icon studio-tile' }, resourceKind === 'mcp' ? '⌘' : resourceKind === 'skill' ? '✦' : resourceKind === 'model' ? '◌' : '◈'),
+        h('div', { className: 'resource-row-main studio-row-main' },
+          h('strong', { className: 'resource-row-title studio-row-title' }, name),
+          h('div', { className: 'resource-row-meta studio-row-meta' }, [sourceLabel(resource), kindDetail(resource), id].filter(Boolean).join(' · '))),
+        h('span', { className: 'resource-row-status studio-st', 'data-tone': needsFix ? 'warn' : displayStatus.tone === 'accent' ? 'ok' : 'neutral' }, displayStatus.label),
+        h('div', { className: 'resource-row-actions studio-row-actions' },
+          needsFix && localMcp ? h('button', { type: 'button', className: 'af-btn', 'data-size': 'sm', onClick: () => openMcpEdit(resource) }, '编辑凭证') : null,
+          needsFix && resourceKind === 'mcp' && !localMcp ? h('button', { type: 'button', className: 'af-btn', 'data-size': 'sm', onClick: () => void probeMcp(resource) }, '重新探测') : null,
+          h('button', { type: 'button', className: 'studio-hover-action', onClick: () => setResourcePreview(resource), style: ghostButtonStyle() }, '查看'),
+          h(Menu, { open: resourceMenu === id, onClose: () => setResourceMenu(''), align: 'end', portal: true, compact: true, listClassName: 'studio-menu', anchor: h('button', { type: 'button', 'aria-label': `更多资源操作 ${name}`, 'aria-haspopup': 'menu', 'aria-expanded': resourceMenu === id, onClick: () => setResourceMenu(resourceMenu === id ? '' : id), style: ghostButtonStyle() }, '⋯') },
+            localMcp && !needsFix ? h(MenuItemButton, { onSelect: () => openMcpEdit(resource) }, '编辑凭证') : null,
+            resourceKind === 'mcp' && (!needsFix || localMcp) ? h(MenuItemButton, { onSelect: () => void probeMcp(resource) }, '重新探测') : null,
+            resourceKind === 'mcp' ? h(MenuItemButton, { onSelect: () => setMcpPreview(resource) }, '查看工具') : null,
+            resourceKind === 'skill' && ['local-import', 'catalog-import'].includes(resource.source) ? h(MenuItemButton, { onSelect: () => void previewInstalledSkill(resource) }, '查看文件') : null,
+            canDelete ? h(MenuItemButton, { disabled: deleting, danger: true, onSelect: () => void remove(resource) }, localMcp ? '移除配置' : '删除云端 MCP') : null)));
     });
     const table = rows.length ? h('div', { 'data-studio-resource-grid': resourceKind, className: 'resource-list', style: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 } }, tableRows) : null;
     const platformTable = platformCatalog ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
@@ -225,7 +232,7 @@ export function createResourcePages({
     const visible = resources.filter(item => !normalized || `${item.displayName || ''} ${item.name || ''} ${item.resourceId || ''}`.toLowerCase().includes(normalized));
     return h('div', null,
       h(ContentIntro, { detail: '汇总当前 Host 可发现的模型、MCP、Skill、知识库和记忆库，用于检查资源来源与连接状态。Agent 实际使用哪些资源，以其绑定和会话工具记录为准。', action: h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h(Pill, { tone: status === 'ready' && !warnings.length ? 'accent' : 'signal' }, status === 'ready' ? warnings.length ? '部分目录需处理' : '目录已读取' : '读取中'), h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '刷新')) }),
-      h('p', { style: { color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '此处展示资源清单，不表示云端已部署或 Agent 已执行验证。DSH 会话动态加载的工具请在原生会话轨迹中查看。'),
+      h(ContentIntro, { detail: '此处展示资源清单，不表示云端已部署或 Agent 已执行验证。DSH 会话动态加载的工具请在原生会话轨迹中查看。' }),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取运行资源', detail: '读取本地配置和各类云端资源目录。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '运行资源不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,

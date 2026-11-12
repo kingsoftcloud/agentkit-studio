@@ -1,4 +1,13 @@
 export default String.raw`
+[data-studio-model-settings] .ms-section.studio-panel, [data-studio-model-settings] .ms-cloud.studio-panel { padding: 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }
+[data-studio-model-settings] .studio-panel .ms-grid-2 { grid-template-columns: minmax(0,1fr); gap: 0; }
+[data-studio-model-settings] .ms-field.studio-srow { display: grid; grid-template-columns: minmax(120px,1fr) minmax(0,2fr); align-items: center; gap: 6px 20px; min-height: 56px; padding: 12px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+[data-studio-model-settings] .studio-srow > .ms-label { grid-column: 1; font-size: 14px; font-weight: 500; }
+[data-studio-model-settings] .studio-srow > :not(.ms-label):not(.ms-hint) { grid-column: 2; min-width: 0; }
+[data-studio-model-settings] .studio-srow > .ms-hint { grid-column: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-studio-model-settings] .ms-section .ms-section-title, [data-studio-model-settings] .ms-cloud-title h4 { font-size: 14px; font-weight: 500; }
+[data-studio-model-settings] .ms-panel { border: 0; box-shadow: none; }
+@container ms (max-width: 480px) { [data-studio-model-settings] .ms-field.studio-srow { grid-template-columns: minmax(0,1fr); } [data-studio-model-settings] .studio-srow > :not(.ms-label):not(.ms-hint) { grid-column: 1; } }
 /*
  * Model & credential settings surface.
  *

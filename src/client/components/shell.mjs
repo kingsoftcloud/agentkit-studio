@@ -66,6 +66,7 @@ export function createStudioShell({
   function SettingsRow({ label, value, detail, tone = 'neutral' }) {
     return h('div', {
       'data-studio-settings-row': true,
+      className: 'studio-srow',
     },
     h('div', null,
       h('div', { className: 'agentkit-check-label' }, label),

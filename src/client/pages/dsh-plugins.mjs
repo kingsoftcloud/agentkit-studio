@@ -1,3 +1,4 @@
+import { createStatusText } from '../components/status-text.mjs';
 import { refreshIcon } from '../components/refresh-icon.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
@@ -32,6 +33,7 @@ export function createDshPluginPages({
   ui: { React: { createElement: h, useEffect, useState, Fragment }, Pill, buttonStyle, EmptyState, ResourceDialog, inputStyle, BRAND = DEFAULT_BRAND },
   hostRemote
 }) {
+  const StatusText = createStatusText(h);
   function DshPluginMarketItem({ view } = {}) {
     const [tab, setTab] = useState('discover');
     const [discovery, setDiscovery] = useState(null);
@@ -248,7 +250,7 @@ export function createDshPluginPages({
     ].filter(Boolean);
 
     const discoveryCard = item => h('article', {
-      key: idOf(item), className: 'studio-plugin-row',
+      key: idOf(item), className: 'studio-plugin-row studio-row',
       style: { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)', background: BRAND.surface, minWidth: 0 }
     },
       h('div', { style: { display: 'flex', gap: '9px', alignItems: 'center', minWidth: 0 } },
@@ -270,13 +272,13 @@ export function createDshPluginPages({
           ? pill(item?.enabled === false ? '已装·停用' : '已装·启用', item?.enabled === false ? 'neutral' : 'accent')
           : actionButton(`install:${idOf(item)}`, '安装', () => { void installItem(item); }, { primary: true, compact: true })));
 
-    const installedRow = item => h('article', { key: idOf(item), className: 'studio-plugin-row', style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)' } },
+    const installedRow = item => h('article', { key: idOf(item), className: 'studio-plugin-row studio-row', style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)' } },
       iconSquare(item),
       h('button', { type: 'button', onClick: () => setSelectedId(idOf(item)), style: { flex: '1 1 180px', minWidth: 0, padding: 0, border: 0, background: 'transparent', textAlign: 'left', color: BRAND.ink, cursor: 'pointer' } },
         h('strong', { style: { display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, labelOf(item)),
         h('span', { style: { display: 'block', marginTop: '3px', color: BRAND.inkMuted, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item?.description || item?.category || idOf(item))),
       h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-        pill(stateLabel(item), stateTone(item)),
+        h(StatusText, { tone: stateTone(item) }, stateLabel(item)),
         lifecycleActions(item, true)));
 
     const section = (title, rows, extra = '') => rows.length ? h('section', { key: title },
@@ -342,7 +344,7 @@ export function createDshPluginPages({
               h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '17px' } }, labelOf(item)),
               h('code', { style: { display: 'block', marginTop: '5px', color: BRAND.inkMuted, fontSize: '10px', wordBreak: 'break-word' } }, idOf(item)))),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-            pill(stateLabel(item), stateTone(item)),
+            h(StatusText, { tone: stateTone(item) }, stateLabel(item)),
             lifecycleActions(item, false))),
         item.description ? h('p', { style: { margin: 0, color: BRAND.ink, lineHeight: 1.65, fontSize: '12px', whiteSpace: 'pre-wrap' } }, item.description) : null,
         h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '.5px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
