@@ -40,11 +40,21 @@ export function prepareCodexProxyRequest(input) {
   for (const tool of request.tools || []) add(tool);
   request.tools = tools;
   if (Array.isArray(request.input)) request.input = request.input.map(item => {
-    if (['function_call', 'custom_tool_call', 'tool_search_call'].includes(item.type)) {
-      const spec = { type: item.type === 'custom_tool_call' ? 'custom' : item.type === 'tool_search_call' ? 'tool_search' : 'function', name: item.type === 'tool_search_call' ? 'tool_search' : item.name, namespace: item.namespace };
-      return { ...item, type: 'function_call', name: register(spec), arguments: item.type === 'custom_tool_call' ? JSON.stringify({ input: item.input }) : typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}) };
+    // Codex 0.167.2 executes shell commands through `local_shell_call`, which
+    // carries its own `call_id`. Converting it like any other client tool keeps
+    // the assistant tool_calls and the tool result paired; leaving it untouched
+    // dropped both items, so the model never saw the command it had run.
+    if (['function_call', 'custom_tool_call', 'tool_search_call', 'local_shell_call'].includes(item.type)) {
+      const shell = item.type === 'local_shell_call';
+      const spec = { type: item.type === 'custom_tool_call' ? 'custom' : item.type === 'tool_search_call' ? 'tool_search' : 'function', name: item.type === 'tool_search_call' ? 'tool_search' : (shell ? 'local_shell' : item.name), namespace: item.namespace };
+      // A local shell call carries its command as `action`, not `arguments`.
+      const args = shell
+        ? JSON.stringify({ command: item.action?.command ?? item.action ?? item.command ?? [] })
+        : item.type === 'custom_tool_call' ? JSON.stringify({ input: item.input }) : typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {});
+      return { ...item, type: 'function_call', name: register(spec), arguments: args };
     }
     if (item.type === 'tool_search_output') return { ...item, type: 'function_call_output', output: JSON.stringify(item.tools || item.output || []) };
+    if (item.type === 'local_shell_call_output') return { ...item, type: 'function_call_output' };
     return item;
   });
   if (request.tool_choice?.name) {
