@@ -67,6 +67,7 @@ export function inputToMessages(input) {
   const items = Array.isArray(input) ? input : [typeof input === 'string' ? { type: 'message', role: 'user', content: input } : input];
   const messages = [];
   const calls = [];
+  const pendingCalls = [];
   // Codex may omit `call_id`; the synthetic id assigned to the call has to be
   // the one its output references, otherwise the upstream rejects the request
   // with "assistant message with 'tool_calls' must be followed by tool
@@ -92,14 +93,21 @@ export function inputToMessages(input) {
     } else if (type === 'reasoning') {
       reasoning += [...(item.summary || []), ...(item.content || [])].map(part => part.text || '').join('\n');
     } else if (type === 'function_call' || type === 'custom_tool_call') {
-      calls.push({
+      const call = {
         id: item.call_id || syntheticId(calls.length),
         type: 'function',
         function: { name: item.name, arguments: type === 'custom_tool_call' ? json({ input: item.input || '' }) : (item.arguments || '') },
-      });
+      };
+      calls.push(call);
+      pendingCalls.push(call);
     } else if (type === 'function_call_output' || type === 'custom_tool_call_output') {
-      // Pair with the most recent call when the id is absent.
-      const pending = calls.at(-1);
+      // Pair an id-less output with the oldest unresolved call. Codex emits
+      // multiple local shell calls in one response, and using the last call
+      // paired every id-less output with the final command.
+      const pendingIndex = item.call_id
+        ? pendingCalls.findIndex(call => call.id === item.call_id)
+        : 0;
+      const pending = pendingIndex >= 0 ? pendingCalls.splice(pendingIndex, 1)[0] : undefined;
       flush();
       messages.push({ role: 'tool', tool_call_id: item.call_id || pending?.id || '', content: json(item.output) });
     }

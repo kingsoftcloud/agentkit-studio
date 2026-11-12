@@ -169,3 +169,19 @@ test('a call without call_id still pairs with its output', () => {
   assert.equal(calls.length, 1);
   assert.deepEqual(calls, outputs);
 });
+
+test('multiple calls without call_id pair with outputs in emission order', () => {
+  const tools = [{ type: 'function', name: 'shell', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }];
+  const input = [
+    { type: 'function_call', name: 'shell', arguments: '{"cmd":"one"}' },
+    { type: 'function_call', name: 'shell', arguments: '{"cmd":"two"}' },
+    { type: 'function_call_output', output: 'one' },
+    { type: 'function_call_output', output: 'two' },
+  ];
+  const ctx = prepareCodexProxyRequest({ model: 'm', input, tools });
+  const chat = responsesToChat(ctx.request);
+  const calls = chat.messages.flatMap(message => (message.tool_calls || []).map(call => call.id));
+  const outputs = chat.messages.filter(message => message.role === 'tool').map(message => message.tool_call_id);
+  assert.deepEqual(calls, ['call_0', 'call_1']);
+  assert.deepEqual(outputs, calls);
+});
