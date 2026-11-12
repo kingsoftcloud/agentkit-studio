@@ -84,18 +84,14 @@ export default String.raw`
 .af-help { display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; border: 1px solid var(--dsw-alias-border-l4,#c8c8c8); border-radius: 999px; color: var(--dsw-alias-label-tertiary); font-size: 10px; font-style: normal; font-weight: 600; line-height: 1; cursor: help; }
 .af-help:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-label-secondary); }
 .af-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.af-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; box-sizing: border-box; height: 36px; padding: 0 14px; border: .5px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-md,12px); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; font-weight: 500; line-height: 22px; white-space: nowrap; cursor: pointer; }
+.af-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box; height: 32px; padding: 0 12px; border: .5px solid var(--dsw-alias-border-l3); border-radius: 12px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; font-weight: 400; line-height: 20px; white-space: nowrap; cursor: pointer; }
 .af-btn:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); }
 .af-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: not-allowed; }
 .af-btn[data-variant="primary"] { border-color: transparent; background: var(--dsw-alias-button-primary-fill,#0b0b0d); color: var(--dsw-alias-label-primary-foreground,#fff); }
 .af-btn[data-variant="primary"]:not(:disabled):hover { background: var(--dsw-alias-button-primary-hover, var(--dsw-alias-button-primary-fill)); }
-/* A disabled primary keeps the dimmed fill but must stay readable: the dimmed
-   token is a pale surface in light mode, so white-on-white made the label
-   disappear (the form footer and the deploy check button both hit this). Use
-   the secondary label color instead of the foreground one, and never fade the
-   whole control on top of it. */
-.af-btn[data-variant="primary"]:disabled { border-color: transparent; background: var(--dsw-alias-button-primary-dimmed, var(--dsw-alias-bg-layer-3)); color: var(--dsw-alias-label-secondary,#61666b); opacity: 1; }
-.af-btn[data-size="sm"] { height: 30px; padding: 0 10px; font-size: 13px; font-weight: 400; border-radius: var(--dsw-radius-sm,8px); }
+.af-btn[data-variant="ghost"] { border-color: transparent; color: var(--dsw-alias-label-secondary); }
+.af-btn[data-variant="primary"]:disabled { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); opacity: .4; }
+.af-btn[data-size="sm"] { height: 28px; padding: 0 10px; font-size: 12px; font-weight: 400; border-radius: 8px; }
 .af-fieldset { margin: 0 0 12px; padding: 4px 16px 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md,12px); }
 .af-fieldset > legend { padding: 0 6px; font-size: 13px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
 .af-fieldset .af-row:last-of-type { border-bottom: 0; }

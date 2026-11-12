@@ -35,11 +35,10 @@ export default String.raw`
   background: var(--dsw-alias-state-danger-hover, var(--dsw-alias-state-danger-primary, #c2402a)) !important;
   color: var(--dsw-static-neutral-00, #ffffff) !important;
 }
-/* A disabled primary keeps a readable label instead of fading white onto a pale fill. */
 :where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button[data-variant="primary"]:disabled {
-  opacity: 1 !important;
-  color: var(--dsw-alias-label-secondary, #61666b) !important;
-  background: var(--dsw-alias-button-primary-dimmed, var(--dsw-alias-bg-layer-3, #f4f4f4)) !important;
+  opacity: .4 !important;
+  color: var(--dsw-alias-label-primary-foreground) !important;
+  background: var(--dsw-alias-button-primary-fill) !important;
   border-color: transparent !important;
 }
 :where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button:disabled { opacity: .4; cursor: not-allowed !important; }

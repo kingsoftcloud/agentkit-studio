@@ -14,11 +14,10 @@ function rule(pattern, styles = agentFormStyles) {
 
 test('a disabled primary button keeps its label readable', () => {
   const disabled = rule(/\.af-btn\[data-variant="primary"\]:disabled \{([^}]*)\}/);
-  // The dimmed fill token is a pale surface in light mode; white-on-white made
-  // the form footer and the deploy check button disappear.
-  assert.doesNotMatch(disabled, /label-primary-foreground/, 'white foreground on the pale dimmed fill is invisible');
-  assert.match(disabled, /color: var\(--dsw-alias-label-secondary/);
-  assert.match(disabled, /opacity: 1/);
+  assert.doesNotMatch(disabled, /button-primary-dimmed/);
+  assert.match(disabled, /background: var\(--dsw-alias-button-primary-fill/);
+  assert.match(disabled, /color: var\(--dsw-alias-label-primary-foreground/);
+  assert.match(disabled, /opacity: \.4/);
 });
 
 test('the agent form uses a capped body and horizontal text steps', () => {

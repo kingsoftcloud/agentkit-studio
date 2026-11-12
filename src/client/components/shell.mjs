@@ -28,7 +28,7 @@ export function createStudioShell({
       status === 'ready' ? 'Host 已连接' : status === 'loading' ? '读取 Host' : 'Host 待接入');
   }
 
-  function StudioShell({ scheduleRemote, page = 'overview', onNavigate }) {
+  function StudioShell({ scheduleRemote, page = 'overview', onNavigate, action }) {
     // The macOS title-band strip belongs to the Studio chrome pages only. The
     // agents hub already drags through its own subnav row (`data-window-drag`),
     // and DSH's native session page owns its conversation header. The hook runs
@@ -41,11 +41,11 @@ export function createStudioShell({
       'data-agentkit-studio': 'product-application',
       style: { height: '100%', minHeight: 0, minWidth: 0, overflow: 'auto', background: 'var(--dsw-alias-bg-base, #ffffff)', color: BRAND.ink, fontFamily: 'inherit' },
     },
-    h('main', { 'data-studio-shell-main': 'true', style: { minWidth: 0, minHeight: '100%', maxWidth: '960px', margin: '0 auto', padding: '0 clamp(24px, 4vw, 48px) 48px' } },
+    h('main', { 'data-studio-shell-main': 'true', className: 'studio-page', style: { minWidth: 0, minHeight: '100%', maxWidth: '960px', margin: '0 auto', padding: '0 clamp(24px, 4vw, 48px) 72px' } },
       h('header', { 'data-studio-header': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px' } },
         h('div', null,
           h('h1', { style: { color: BRAND.ink, margin: 0, fontSize: '20px', lineHeight: '28px', fontWeight: 500 } }, activeNav.label)),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h(HostStatusPill))),
+        h('div', { className: 'studio-page-actions' }, action || h(HostStatusPill))),
       page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
   }
 

@@ -55,8 +55,8 @@ export function createStudioPrimitives({ React }) {
     }[tone];
     return h('span', {
       style: {
-        display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '0 8px',
-        borderRadius: '999px', fontSize: '12px', lineHeight: '20px', fontWeight: 500, whiteSpace: 'nowrap', ...styles,
+        display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '0 7px',
+        borderRadius: '999px', fontSize: '11px', lineHeight: '18px', fontWeight: 500, whiteSpace: 'nowrap', ...styles,
       },
     }, children);
   }
@@ -85,7 +85,8 @@ export function createStudioPrimitives({ React }) {
 
   function OperationalPanel({ title, detail, action, children }) {
     return h('section', {
-      style: { border: '0.5px solid var(--dsw-alias-border-l2, #e5e5e5)', borderRadius: 'var(--dsw-radius-xl, 16px)', padding: '16px', overflow: 'hidden', background: BRAND.surface },
+      className: 'studio-panel studio-panel-padded',
+      style: { border: '0.5px solid var(--dsw-alias-border-l3)', borderRadius: 'var(--dsw-radius-xl, 16px)', padding: '16px', overflow: 'hidden', background: BRAND.surface },
     },
     (title || action) ? h('div', {
       style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' },
@@ -118,14 +119,15 @@ export function createStudioPrimitives({ React }) {
 
   function EmptyState({ icon, title, detail, action }) {
     return h('div', {
+      className: 'studio-empty',
       style: {
-        minHeight: '220px', display: 'grid', placeItems: 'center', textAlign: 'center', padding: '28px',
+        minHeight: '220px', display: 'grid', placeItems: 'center', textAlign: 'center', padding: '72px 0 56px',
         border: 0, background: 'transparent',
       },
     },
     h('div', null,
       h('div', { style: { margin: '0 auto 14px', display: 'grid', placeItems: 'center', width: '40px', height: '40px', border: '0.5px solid var(--dsw-alias-border-l2, #e5e5e5)', borderRadius: '12px', color: BRAND.inkMuted, fontSize: '20px', fontWeight: 500 } }, icon),
-      h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '16px' } }, title),
+      h('h3', { style: { margin: 0, color: BRAND.ink, fontSize: '14px', fontWeight: 500 } }, title),
       h('p', { style: { maxWidth: '420px', color: BRAND.inkMuted, lineHeight: 1.6, margin: '8px auto 16px', fontSize: '13px' } }, detail),
       action || null));
   }

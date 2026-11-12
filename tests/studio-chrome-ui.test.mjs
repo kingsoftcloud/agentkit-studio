@@ -35,12 +35,12 @@ test('headings and intros keep details in compact accessible help', () => {
   }
 });
 
-test('chip navigation preserves selection, drag markers and dispatch', () => {
+test('segmented tabs and filter chips preserve selection, drag markers and dispatch', () => {
   const { StudioPageTabs, StudioSubnav } = createNavigation({ ui: { React: { createElement: h } } });
   for (const Component of [StudioPageTabs, StudioSubnav]) {
     let selected;
     const tree = Component({ items: [{ id: 'one', label: '一' }, { id: 'two', label: '二' }], value: 'one', onChange: value => { selected = value; } });
-    assert.equal(tree.props.className, 'studio-tabs');
+    assert.equal(tree.props.className, Component === StudioPageTabs ? 'studio-tabs' : 'studio-chips');
     assert.equal(tree.props['data-window-drag'], 'true');
     const buttons = nodes(tree).filter(node => node.type === 'button');
     assert.ok(buttons[0].props['aria-selected'] || buttons[0].props['aria-current']);
@@ -62,7 +62,10 @@ test('host status keeps loading, ready and error copy without pill chrome', () =
 test('shared controls and surfaces use lightweight DSH dimensions', () => {
   const { buttonStyle, pagerButtonStyle } = createFormStyles();
   assert.equal(buttonStyle().minHeight, '32px');
-  assert.equal(buttonStyle().borderRadius, '16px');
+  assert.equal(buttonStyle().borderRadius, '12px');
+  assert.equal(buttonStyle('ghost', 'sm').borderRadius, '8px');
+  assert.equal(buttonStyle('ghost', 'sm').minHeight, '28px');
+  assert.equal(buttonStyle('primary').border, '0.5px solid transparent');
   assert.equal(pagerButtonStyle(true).background, 'transparent');
   assert.equal(pagerButtonStyle(true).opacity, 0.4);
   assert.equal(pagerButtonStyle(false).opacity, 1);
