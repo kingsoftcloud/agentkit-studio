@@ -1,5 +1,5 @@
 /** Resource-bearing export/import for a fixed Build, consumed by the existing DSH Host. */
-import { mkdir, readFile, writeFile, rm, lstat, link } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, lstat, link, readdir } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { stringify } from 'yaml';
@@ -110,19 +110,31 @@ export async function importPortableBundle(zip, destination) {
   } catch (error) { await rm(home, { recursive: true, force: true }); throw error; }
 }
 
-/** Recognized automatically only in an explicitly configured, isolated AGENTKIT_HOME. */
-export async function loadPortableRuntime(home, env = process.env) {
-  if (!home) return null;
-  if (await lstat(join(home, '.portable-importing')).catch(() => null)) throw portableError('PORTABLE_IMPORT_INCOMPLETE', '运行包导入未完成');
-  const path = join(home, 'portable-bundle.zip');
-  const info = await lstat(path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-  if (!info) return null;
-  if (!info.isFile() || info.size > 20 * 1024 * 1024) throw portableError('PORTABLE_ARCHIVE_SIZE_INVALID', '运行包必须是大小不超过 20 MiB 的普通文件');
-  const { manifest, files } = verifyPortableBundle(await readFile(path));
-  const missing = [...new Set(manifest.requirements.filter(item => !String(env[item.name] || '').trim()).map(item => item.name))];
-  if (missing.length) throw portableError('PORTABLE_CREDENTIAL_MISSING', `目标 Host 缺少环境凭证：${missing.join(', ')}`);
-  for (const [key, expected] of [['AGENTKIT_RUNTIME_AGENT_ID', manifest.agentId], ['AGENTKIT_RUNTIME_BUILD_ID', manifest.buildId]]) {
-    if (env[key] !== expected) throw portableError('PORTABLE_RUNTIME_MISMATCH', `请将 ${key} 设置为运行包中对应的标识`);
+async function readPortableDirectory(root, relative = '') {
+  const directory = join(root, relative);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const name = relative ? `${relative}/${entry.name}` : entry.name;
+    const path = join(root, name);
+    if (entry.isSymbolicLink()) throw portableError('PORTABLE_BUNDLE_SYMLINK', '运行包目录不能包含符号链接');
+    if (entry.isDirectory()) files.push(...await readPortableDirectory(root, name));
+    else if (entry.isFile()) {
+      const info = await lstat(path);
+      files.push({ name, data: await readFile(path), executable: Boolean(info.mode & 0o111) });
+    } else throw portableError('PORTABLE_BUNDLE_FILE_INVALID', '运行包目录包含不支持的文件类型');
+  }
+  return files;
+}
+
+async function loadPortableRuntimeArchive(zip, home, env = process.env, { managed = false } = {}) {
+  const { manifest, files } = verifyPortableBundle(zip);
+  if (!managed) {
+    const missing = [...new Set(manifest.requirements.filter(item => !String(env[item.name] || '').trim()).map(item => item.name))];
+    if (missing.length) throw portableError('PORTABLE_CREDENTIAL_MISSING', `目标 Host 缺少运行包声明的凭证：${missing.join(', ')}`);
+    for (const [key, expected] of [['AGENTKIT_RUNTIME_AGENT_ID', manifest.agentId], ['AGENTKIT_RUNTIME_BUILD_ID', manifest.buildId]]) {
+      if (env[key] !== expected) throw portableError('PORTABLE_RUNTIME_MISMATCH', `请将 ${key} 设置为运行包中对应的标识`);
+    }
   }
   const skillValues = new Map();
   for (const skill of manifest.resources.skills) {
@@ -141,4 +153,26 @@ export async function loadPortableRuntime(home, env = process.env) {
       return value;
     },
   };
+}
+
+/** Load a portable bundle extracted by the Runtime Service CodeSource. */
+export async function loadPortableRuntimeDirectory(directory, env = process.env) {
+  const root = resolve(directory);
+  const info = await lstat(root).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (!info?.isDirectory()) throw portableError('PORTABLE_BUNDLE_DIRECTORY_INVALID', 'ManagedRuntime 运行包目录无效');
+  const files = await readPortableDirectory(root);
+  const bytes = files.reduce((total, file) => total + file.data.length, 0);
+  if (files.length > 2000 || bytes > 20 * 1024 * 1024) throw portableError('PORTABLE_ARCHIVE_SIZE_INVALID', 'ManagedRuntime 运行包超过大小限制');
+  return loadPortableRuntimeArchive(createZip(files, { timestamp: new Date('2026-01-01T00:00:00Z') }), join(env.AGENTKIT_HOME || root, 'managed-bundle'), env, { managed: true });
+}
+
+/** Recognized automatically only in an explicitly configured, isolated AGENTKIT_HOME. */
+export async function loadPortableRuntime(home, env = process.env) {
+  if (!home) return null;
+  if (await lstat(join(home, '.portable-importing')).catch(() => null)) throw portableError('PORTABLE_IMPORT_INCOMPLETE', '运行包导入未完成');
+  const path = join(home, 'portable-bundle.zip');
+  const info = await lstat(path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (!info) return null;
+  if (!info.isFile() || info.size > 20 * 1024 * 1024) throw portableError('PORTABLE_ARCHIVE_SIZE_INVALID', '运行包必须是大小不超过 20 MiB 的普通文件');
+  return loadPortableRuntimeArchive(await readFile(path), home, env);
 }

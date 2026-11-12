@@ -11,10 +11,10 @@ import { createDeploymentStore } from '../src/deployment-store.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
 import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
-async function fixture(t, { runtime = 'harness', credentialName = 'MODEL_KEY', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
+async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
-  const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: 'private-test' };
+  const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: deploymentType === 'ManagedRuntime' ? '' : 'private-test' };
   const configuration = { resolve: async () => ({ values }) };
   const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName, apiKey: 'model-private' };
   const mcp = { resourceId: 'search', endpoint: 'https://search.example/mcp', apiKey: 'search-private' };
@@ -28,7 +28,7 @@ async function fixture(t, { runtime = 'harness', credentialName = 'MODEL_KEY', c
   const control = { failNextDetail: null };
   let deleted = false;
   const client = {
-    inspectIdentity: async () => ({ kind: 'subaccount', accountId: 'owner', userUuid: 'actor', userName: 'operator' }),
+    inspectIdentity: async () => ({ kind: 'subaccount', accountId: deploymentType === 'ManagedRuntime' ? '123' : 'owner', userUuid: 'actor', userName: 'operator' }),
     getBootstrapConfig: async () => ({ data: { Product: 'agentkit-studio', ClientType: 'studio', Region: 'cn-beijing-6', Environment: 'pre-online',
       Capabilities: { ContainerStorage: { Contract: 'agentengine.container-storage/v1', Frameworks: ['harness', 'codex'], MinSizeGi: 20, MaxSizeGi: 500, MaxReplicas: 1, PaymentType: 'Daily' } }, Configs: { 'studio.runtime.images.v1': {
       format: 'agentkit.runtime-images/v1', environment: 'pre-online', region: 'cn-beijing-6', defaultReleaseId: release.id, releases: [release],
@@ -36,8 +36,11 @@ async function fixture(t, { runtime = 'harness', credentialName = 'MODEL_KEY', c
     createAgent: async payload => {
       calls.push(['create', payload]);
       if (createError && !responseLost) throw createError;
+      const managed = payload.DeploymentType === 'ManagedRuntime';
       Object.assign(remote, { Basic: { AgentId: cloudAgentId, Name: payload.Name, Status: initialStatus, ReadyReplicas: initialStatus === 'RUNNING' ? 1 : 0 },
-        Deployment: { ArtifactPath: payload.ContainerConfig.ImageAddr, Storage: payload.Storage }, Advanced: { EnvironmentVariables: payload.Advanced.EnvironmentVariables },
+        Deployment: managed
+          ? { DeploymentType: 'ManagedRuntime', ArtifactPath: payload.ManagedRuntimeConfig && release.image, RuntimeConfig: { Name: payload.ManagedRuntimeConfig.RuntimeName, Version: payload.ManagedRuntimeConfig.RuntimeVersion, StudioBundleArtifact: { SHA256: payload.ManagedRuntimeConfig.StudioBundleArtifact.SHA256 } }, Storage: payload.Storage }
+          : { DeploymentType: 'Container', ArtifactPath: payload.ContainerConfig.ImageAddr, Storage: payload.Storage }, Advanced: { EnvironmentVariables: payload.Advanced.EnvironmentVariables },
         Network: { PublicEndpoint: `https://${cloudAgentId}.agent-pre.kspmas.ksyun.com` }, QuickAccess: { ApiKey: key } });
       if (createError) throw createError;
       return { data: { AgentId: cloudAgentId } };
@@ -89,9 +92,9 @@ async function fixture(t, { runtime = 'harness', credentialName = 'MODEL_KEY', c
     },
   };
   const service = createStudioDeployments(options);
-  const input = { agentId, buildId: built.id, resources: { cpu: 2, memoryGiB: 8 } };
+  const input = { agentId, buildId: built.id, ...(deploymentType !== 'Container' ? { deploymentType } : {}), resources: { cpu: 2, memoryGiB: 8 } };
   const preview = await service.prepare(input);
-  const request = { ...input, bundleId: preview.bundleId, releaseId: preview.releaseId, previewId: preview.previewId, idempotencyKey: 'request-test-123456' };
+  const request = { ...input, bundleId: preview.bundleId, ...(deploymentType === 'ManagedRuntime' ? { bundleUploadId: preview.bundleUploadId } : {}), releaseId: preview.releaseId, previewId: preview.previewId, idempotencyKey: 'request-test-123456' };
   async function settled() {
     const deadline = performance.now() + 10_000;
     let records = [];
@@ -173,6 +176,22 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
     await assert.rejects(() => f.service.agents.connect(ready.cloudAgentId), { code: 'DEPLOYMENT_DELETED' });
     await f.service.remove(first.id); assert.equal(f.calls.filter(([action]) => action === 'delete').length, 1);
   }
+});
+
+test('ManagedRuntime delivery keeps Skills in the bundle and maps MCP to the manifest', async t => {
+  const f = await fixture(t, { runtime: 'harness', deploymentType: 'ManagedRuntime' });
+  const created = await f.service.create(f.request);
+  await f.settled();
+  const payload = f.calls.find(([action]) => action === 'create')[1];
+  assert.equal(payload.DeploymentType, 'ManagedRuntime');
+  assert.equal(payload.ManagedRuntimeConfig.RuntimeName, 'harness');
+  assert.equal(payload.ManagedRuntimeConfig.StudioBundleArtifact.SHA256, f.preview.bundleSha256);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /artifact_type: ManagedRuntime/);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /mcp_servers:/);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /endpoint: https:\/\/search\.example\/mcp/);
+  assert.equal(payload.ModelConfig.Model, 'bound-model');
+  assert.equal(payload.Advanced.EnvironmentVariables.filter(row => row.Key.startsWith('MCP_STUDIO_')).length, 1);
+  assert.equal((await f.service.get(created.id)).state, 'READY');
 });
 
 test('unset bucket uses verified account and physical region, retaining an isolated private bundle prefix', async t => {
