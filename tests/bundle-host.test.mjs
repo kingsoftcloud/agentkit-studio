@@ -152,6 +152,33 @@ test('versioned state isolates immutable bundles while the DSH home survives upd
   assert.equal(restored.env.AGENTKIT_BUNDLE_SHA256, restored.identity.sha256);
 });
 
+test('versioned state adopts the newest legacy version directory atomically', async t => {
+  const f = await fixture(t), oldHash = 'a'.repeat(64), legacy = join(f.state, 'versions', oldHash);
+  await mkdir(join(legacy, 'dsh', 'sessions'), { recursive: true });
+  await mkdir(join(legacy, 'home', '.config'), { recursive: true });
+  await mkdir(join(legacy, 'workspace'), { recursive: true });
+  await writeFile(join(legacy, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: oldHash }));
+  await writeFile(join(legacy, 'dsh/sessions/history.jsonl'), 'durable-history');
+  await writeFile(join(legacy, 'home/.config/settings.json'), '{"theme":"dark"}');
+  await writeFile(join(legacy, 'workspace/task.txt'), 'keep-workspace');
+
+  const plan = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(await readFile(join(plan.env.DSH_HOME, 'sessions/history.jsonl'), 'utf8'), 'durable-history');
+  assert.equal(await readFile(join(plan.env.HOME, '.config/settings.json'), 'utf8'), '{"theme":"dark"}');
+  assert.equal(await readFile(join(plan.cwd, 'task.txt'), 'utf8'), 'keep-workspace');
+  assert.equal(await readFile(join(legacy, 'dsh/sessions/history.jsonl'), 'utf8'), 'durable-history');
+  const sourceStat = await lstat(join(legacy, 'dsh/sessions/history.jsonl'));
+  const adoptedStat = await lstat(join(plan.env.DSH_HOME, 'sessions/history.jsonl'));
+  assert.equal(adoptedStat.dev, sourceStat.dev);
+  assert.equal(adoptedStat.ino, sourceStat.ino);
+  const marker = JSON.parse(await readFile(join(f.state, '.agentkit-agent-state.json'), 'utf8'));
+  assert.equal(marker.format, 'agentkit.bundle-agent-state-adoption/v1');
+  assert.equal(marker.adoptedFrom, `versions/${oldHash}`);
+
+  const restarted = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(await readFile(join(restarted.env.DSH_HOME, 'sessions/history.jsonl'), 'utf8'), 'durable-history');
+});
+
 
 test('verified legacy whole-directory profiles migrate once and retain rollback code, Settings and session state', async t => {
   const f = await fixture(t), plan = await prepareBundleHost(f);

@@ -1,5 +1,5 @@
 /** Offline boot preparation over the public DSH profile/package contract. */
-import { copyFile, link, lstat, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { link, lstat, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { importPortableBundle, loadPortableRuntime, verifyPortableBundle } from './portable-bundle.mjs';
@@ -25,7 +25,7 @@ async function linkStateEntry(source, target, entry) {
       await linkStateEntry(join(source, child.name), join(target, child.name), child);
     }
   } else if (entry.isFile()) {
-    try { await link(join(source, entry.name ?? ''), target); }
+    try { await link(source, target); }
     catch (error) {
       if (error.code === 'EEXIST') return;
       // Some volume drivers refuse hard links (or cross a device boundary); a
@@ -33,6 +33,41 @@ async function linkStateEntry(source, target, entry) {
       if (!['EXDEV', 'EPERM', 'EACCES', 'ENOTSUP', 'ENOSYS'].includes(error.code)) throw error;
       await copyFile(source, target);
     }
+  }
+}
+
+async function stateSource(root, names) {
+  const entries = [];
+  let mtimeMs = 0;
+  for (const name of names) {
+    const source = join(root, name), info = await exists(source);
+    if (!info) continue;
+    if (!info.isDirectory()) continue;
+    entries.push(name);
+    mtimeMs = Math.max(mtimeMs, info.mtimeMs);
+  }
+  return entries.length ? { root, names: entries, mtimeMs } : null;
+}
+
+/** Find the newest legacy version directory that still contains Agent state. */
+async function findVersionedAgentState({ parent, root, hash }) {
+  const versions = join(parent, 'versions'), candidates = [];
+  const current = await stateSource(root, ['dsh', 'home', 'workspace']);
+  if (current) candidates.push({ ...current, adoptedFrom: `versions/${hash}` });
+  const entries = await readdir(versions, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === hash) continue;
+    const candidate = await stateSource(join(versions, entry.name), ['dsh', 'home', 'workspace']);
+    if (candidate) candidates.push({ ...candidate, adoptedFrom: `versions/${entry.name}` });
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0] || null;
+}
+
+async function stageStateDirectory(source, staging) {
+  await directory(staging);
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    await linkStateEntry(join(source, entry.name), join(staging, entry.name), entry);
   }
 }
 
@@ -49,40 +84,34 @@ async function linkStateEntry(source, target, entry) {
  * Agent-scoped directory directly.
  */
 async function adoptVersionedAgentState({ parent, root, hash }) {
-  const target = join(parent, 'dsh');
-  if (await exists(target)) return;
   const receiptPath = join(parent, '.agentkit-agent-state.json');
   if (await exists(receiptPath)) return;
-  if (await exists(join(root, 'dsh'))) {
-    const staging = join(parent, `.agent-state-${randomUUID()}`);
-    try {
-      await directory(staging);
-      for (const name of ['dsh', 'home', 'workspace']) {
-        const source = join(root, name);
-        const info = await exists(source);
-        if (!info) continue;
-        if (info.isDirectory()) {
-          for (const child of await readdir(source, { withFileTypes: true })) {
-            await linkStateEntry(join(source, child.name), join(staging, name, child.name), child);
-          }
-        } else await copyFile(source, join(staging, name));
-      }
-      await writeFile(join(parent, '.agentkit-agent-state.json'), JSON.stringify({
-        format: 'agentkit.bundle-agent-state-adoption/v1',
-        adoptedFrom: `versions/${hash}`, adoptedAt: new Date().toISOString(),
-      }), { flag: 'wx', mode: 0o600 });
-      try { await rename(staging, target); }
-      catch (error) {
-        if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error;
-      }
-    } finally { await rm(staging, { recursive: true, force: true }); }
-  }
-  for (const name of ['home', 'workspace']) {
-    const source = join(root, name);
-    if (await exists(source) && !await exists(join(parent, name))) {
-      try { await rename(source, join(parent, name)); }
-      catch (error) { if (!['EXDEV', 'EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error; }
+  const source = await findVersionedAgentState({ parent, root, hash });
+  if (source) {
+    for (const name of source.names) {
+      const target = join(parent, name);
+      if (await exists(target)) continue;
+      const stagingRoot = join(parent, `.agent-state-${randomUUID()}`), staging = join(stagingRoot, name);
+      try {
+        await stageStateDirectory(join(source.root, name), staging);
+        try { await rename(staging, target); }
+        catch (error) {
+          if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error;
+        }
+      } finally { await rm(stagingRoot, { recursive: true, force: true }); }
     }
+  }
+  // Publish the completion receipt only after every state directory has been
+  // moved into place. If the process dies between directory renames, the next
+  // boot sees no receipt and resumes the missing directories without replacing
+  // any state that was already published.
+  try {
+    await writeFile(receiptPath, JSON.stringify({
+      format: 'agentkit.bundle-agent-state-adoption/v1',
+      adoptedFrom: source?.adoptedFrom || null, adoptedAt: new Date().toISOString(),
+    }), { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
   }
 }
 
