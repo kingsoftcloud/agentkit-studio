@@ -2,6 +2,7 @@ import { selectCloudPermissionPresentation } from './cloud-permission.mjs';
 import { codexToolDefinition } from './codex-tool.mjs';
 import { mountA2aObservation } from './a2a-observation.mjs';
 import { mountNativeEngineView } from './native-engine-view.mjs';
+import { HARNESS_SERVICE_PRESET_SUFFIX } from '../../harness-service-preset.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
 import { createNativeSessionBinding, selectSessionModel } from './session-entry.mjs';
 import { registerPanelNavigation } from './panel-navigation.mjs';
@@ -82,7 +83,7 @@ export function mountStudio(ctx, app) {
       const presetId = String(selectedPreset || ctx.sessions?.list?.getSnapshot?.().byId?.[sessionId]?.projectionValues?.agentPreset || '');
       const agent = (roster?.items || []).find(item => {
         const base = presetIdForAgent(item);
-        return base && (base === presetId || base + '-harness-service' === presetId);
+        return base && (base === presetId || base + HARNESS_SERVICE_PRESET_SUFFIX === presetId);
       });
       if (!agent) return;
       const agentId = String(agent?.metadata?.id || agent?.id || '').trim();

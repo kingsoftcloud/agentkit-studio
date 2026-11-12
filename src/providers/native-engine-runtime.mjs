@@ -24,6 +24,7 @@ import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGIN
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
 export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
 export const NATIVE_ENGINE_EVENT = 'agentkit/native-engine-event';
+export const NATIVE_ENGINE_TOOL_DRAFT = 'agentkit/native-engine-tool-draft';
 export const ENGINE_VIEW_CONTRACT = 'agentkit.engine-view/v1';
 const SHA256 = /^[a-f0-9]{64}$/;
 
@@ -52,6 +53,16 @@ export function createEngineViewStore(stateRoot) {
 const MODEL_ENV = 'AGENTKIT_ENGINE_MODEL_API_KEY';
 const failure = (code, message) => Object.assign(new Error(message), { code });
 const text = value => typeof value === 'string' && value.trim().length > 0;
+
+function sessionToolPolicy(policy, sandbox) {
+  if (!policy || policy.mode === 'loose') return null;
+  if (sandbox !== 'danger-full-access') return policy;
+  // Full access waives Agent-level confirmations. Custom denials and the
+  // Host's own approval requirements remain part of tool admission.
+  if (policy.mode === 'strict') return null;
+  return { ...policy, rules: Object.fromEntries(Object.entries(policy.rules)
+    .map(([name, action]) => [name, action === 'ask' ? 'inherit' : action])) };
+}
 
 /** DSH selects a model route before invoking the agent loop. This adapter
  * supplies that route's metadata. The authenticated loop waterfall owns execution. */
@@ -92,6 +103,16 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
     : engineServiceFetch(viewService.endpoint, viewService.caFile));
   return {
     usesService: Boolean(serviceEndpoint),
+    async readDeliveryEvidence({ sessionId, runId, cwd, signal }) {
+      if (!serviceEndpoint || !text(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE) || resolve(cwd) !== resolve(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)) return null;
+      signal?.throwIfAborted();
+      const engine = connectEngineService({ endpoint: serviceEndpoint, token: env.AGENTKIT_ENGINE_SERVICE_TOKEN,
+        sessionId: createHash('sha256').update(sessionId).digest('hex'), runId, observeOnly: true, fetchImpl: serviceFetch });
+      const abort = () => void engine.close().catch(() => {});
+      signal?.addEventListener('abort', abort, { once: true });
+      try { return (await engine.status(runId, { deliveryPresentation: true })).deliveryEvidence ?? null; }
+      finally { signal?.removeEventListener('abort', abort); await engine.close(); }
+    },
     async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
@@ -110,7 +131,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       // permission mode decides: workspace-write and full access allow, anything else denies.
       const interactive = typeof requestApproval === 'function';
       const standing = ['workspace-write', 'danger-full-access'].includes(sandbox) ? 'allow' : 'deny';
-      const policy = serviceEndpoint && agentToolPolicy?.mode !== 'loose' ? agentToolPolicy : null;
+      const policy = serviceEndpoint ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !serviceEndpoint ? undefined : async request => {
         const responder = interactive ? requestApproval : request.requiresUserApproval ? requestPolicyApproval : null;
@@ -187,12 +208,28 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         }
         yield { type: 'engine', engine: { version: hello.engine?.version ?? null, preset: hello.engine?.preset ?? null, protocol: hello.protocolVersion }, view };
         let finalText = null, rest;
+        let thinkingCursor = hello.capabilities?.liveThinking === true ? '' : undefined;
+        let toolDraftCursor = hello.capabilities?.liveToolDrafts === true ? '' : undefined;
         for (let cursor = 0; ;) {
-          const page = await engine.events(runId, cursor, 5000);
+          const page = await engine.events(runId, cursor, 5000, thinkingCursor, toolDraftCursor);
           for (const event of page.events) {
             yield { type: 'engine-event', runId, view, event };
             for (const chunk of chunksOf(event)) yield chunk;
             if (event.kind === 'run.terminal' && text(event.detail)) finalText = event.detail;
+          }
+          const preview = page.thinking;
+          if (thinkingCursor !== undefined && typeof preview?.id === 'string' && typeof preview.cursor === 'string'
+            && typeof preview.text === 'string' && preview.text.length <= 8192 && preview.cursor !== thinkingCursor) {
+            if (preview.text) yield { type: 'engine-thinking', attemptId: preview.id, text: preview.text };
+            thinkingCursor = preview.cursor;
+          }
+          const draft = page.toolDraft;
+          if (toolDraftCursor !== undefined && typeof draft?.cursor === 'string' && draft.cursor !== toolDraftCursor
+            && SHA256.test(String(draft.requestId)) && Array.isArray(draft.tools) && draft.tools.length <= 16) {
+            const tools = draft.tools.filter(tool => Number.isSafeInteger(tool?.index) && tool.index >= 0
+              && typeof tool.name === 'string' && /^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$/.test(tool.name));
+            if (tools.length) yield { type: 'engine-tool-draft', runId, requestId: draft.requestId, tools };
+            toolDraftCursor = draft.cursor;
           }
           cursor = page.cursor;
           if (!page.running && page.events.length === 0) {

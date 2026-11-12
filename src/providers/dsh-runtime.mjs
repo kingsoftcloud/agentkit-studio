@@ -12,7 +12,7 @@ import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.
 import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
-import { NATIVE_ENGINE_EVENT } from './native-engine-runtime.mjs';
+import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
 
 /** Runtimes that run in their own process behind the stream seam. */
 const PROCESS_RUNTIMES = new Set(['codex', 'native-engine']);
@@ -256,16 +256,30 @@ function appendNativeToolCall(state, call) {
   ];
 }
 
-async function* codexFrames(codexRuntime, options, onChunk, toolRecorder, recordEngineEvent) {
+async function* codexFrames(codexRuntime, options, onChunk, toolRecorder, recordEnginePresentation) {
   const state = createChunkState();
   const usage = { inputTokens: 0, outputTokens: 0 };
+  let engineAttempt = null;
   for await (const chunk of codexRuntime.stream(options)) {
     onChunk?.(chunk);
     if (chunk?.type === 'usage') {
       for (const [key, value] of Object.entries(chunk.usage)) usage[key] = (usage[key] || 0) + value;
       yield { type: 'usage', usage: nativeCodexUsage(usage) };
     }
-    else if (chunk?.type === 'engine-event') { recordEngineEvent?.(chunk); continue; }
+    else if (chunk?.type === 'engine-event') {
+      const event = chunk.event;
+      if (engineAttempt && (event.kind === 'effect.settled' && event.category === 'model' || event.kind === 'run.terminal')) {
+        recordEnginePresentation?.({ ...chunk, settledThinkingBlock: state.currentIndex });
+        yield* closeBlock(state, 'reasoning');
+        engineAttempt = null;
+      } else recordEnginePresentation?.(chunk);
+    }
+    else if (chunk?.type === 'engine-tool-draft') recordEnginePresentation?.(chunk);
+    else if (chunk?.type === 'engine-thinking') {
+      if (engineAttempt !== chunk.attemptId) yield* closeBlock(state, 'reasoning');
+      engineAttempt = chunk.attemptId;
+      yield* appendBlock(state, 'reasoning', chunk.text);
+    }
     else if (chunk?.type === 'reasoning') yield* appendBlock(state, 'reasoning', chunk.text);
     else if (chunk?.type === 'tool') {
       // Codex tool calls are already recorded as an ignorable, native Chat
@@ -720,7 +734,16 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               } : {}),
             }, recordChunk, toolRecorder, chunk => {
               // The engine's own view renders these; Studio only keeps them in the Session.
-              try { toolAgent?.session?.append?.(NATIVE_ENGINE_EVENT, { runId: chunk.runId, view: chunk.view ?? null, event: chunk.event }, { ignorable: true }); }
+              try {
+                if (chunk.type === 'engine-tool-draft') {
+                  toolAgent?.session?.append?.(NATIVE_ENGINE_TOOL_DRAFT,
+                    { runId: chunk.runId, requestId: chunk.requestId, tools: chunk.tools }, { ignorable: true });
+                } else {
+                  toolAgent?.session?.append?.(NATIVE_ENGINE_EVENT, { runId: chunk.runId, view: chunk.view ?? null, event: chunk.event,
+                    ...(Number.isSafeInteger(chunk.settledThinkingBlock) && chunk.settledThinkingBlock >= 0
+                      ? { settledThinkingBlock: chunk.settledThinkingBlock } : {}) }, { ignorable: true });
+                }
+              }
               catch { /* presentation evidence only */ }
             });
             if (typeof resources.writeMemory === 'function') {

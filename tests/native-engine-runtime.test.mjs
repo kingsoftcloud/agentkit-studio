@@ -155,6 +155,38 @@ test('the Session permission mode decides writes when no approval seat exists, a
   }
 });
 
+test('an independent service honors full Session access with a strict Agent policy', externalEngine, async t => {
+  const { createEngineService } = await import(new URL('engine-service.mjs',
+    import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
+  const token = 'fixture-studio-permission-token';
+  const contract = 'agentkit.native-agent-policy/v1';
+  for (const [sandbox, mode, rules, writes] of [
+    ['danger-full-access', 'strict', {}, true],
+    ['workspace-write', 'strict', {}, false],
+    ['danger-full-access', 'custom', { write_workspace_file: 'deny' }, false],
+  ]) {
+    const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Done.')]);
+    if (mode === 'custom') f.model.respond = request => {
+      assert.ok(!request.tools.some(tool => tool.function.name === 'write_workspace_file'));
+      return final('Write tool unavailable.');
+    };
+    const service = createEngineService({ token, startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
+      model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY' },
+      scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, env: { MODEL_KEY: 'fixture-key' } });
+    t.after(() => service.close());
+    await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+    const runtime = createNativeEngineRuntime({ stateRoot: join(f.cwd, '..', 'host-state'), env: {
+      AGENTKIT_ENGINE_SERVICE_URL: 'http://127.0.0.1:' + service.server.address().port,
+      AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd,
+    } });
+    let prompts = 0;
+    await collect(runtime.stream({ ...f.options, sandbox, agentToolPolicy: { contract, mode, rules },
+      requestPolicyApproval: async () => { prompts++; return 'denied'; }, signal: AbortSignal.timeout(10000) }));
+    assert.equal(existsSync(join(f.cwd, 'out.txt')), writes, `${sandbox} / ${mode}`);
+    assert.equal(prompts, sandbox === 'workspace-write' ? 1 : 0);
+  }
+});
+
 test('only a negotiated image-capable engine receives current-turn image input', externalEngine, async t => {
   const f = await setup(t, [final('Image received.')]);
   const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';

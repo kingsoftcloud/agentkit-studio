@@ -1,4 +1,5 @@
 import { harnessServiceHostBindings } from './providers/dsh-node-builtin-catalog.mjs';
+import { HARNESS_SERVICE_PRESET_SUFFIX } from './harness-service-preset.mjs';
 /**
  * The narrow bridge between a Studio AgentRevision and the public DSH
  * agent-preset registry.
@@ -147,7 +148,7 @@ export function unsupportedDshBindings(agent = {}, { activeModel } = {}) {
   return [...new Set(refs)];
 }
 
-export const HARNESS_SERVICE_PRESET_SUFFIX = '-harness-service';
+export { HARNESS_SERVICE_PRESET_SUFFIX };
 
 export function dshPresetId(agentId, revision = 1, buildId = '') {
   const rev = Number.isFinite(Number(revision)) && Number(revision) > 0 ? Number(revision) : 1;

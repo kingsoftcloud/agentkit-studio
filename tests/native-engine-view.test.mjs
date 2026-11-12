@@ -105,6 +105,8 @@ test('the renderer embeds the engine view in a sandboxed iframe and relays the r
     await frame.getByText('Checking the refund policy.').waitFor({ timeout: 15000 });
     await tab.evaluate(() => window.finish());
     await frame.getByText('Refunds are accepted within 30 days.').waitFor({ timeout: 15000 });
+    assert.equal(await frame.getByText('Checking the refund policy.').count(), 0, 'completed process starts folded');
+    await frame.getByTestId('work-history-toggle').click();
     assert.equal(await frame.getByText('Checking the refund policy.').count(), 1, 'events already sent are not resent');
     await tab.waitForFunction(() => document.querySelector('iframe').getBoundingClientRect().height !== 160);
     // The host's dark scheme reaches the view: light text on a transparent background.

@@ -177,6 +177,10 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   await registerBuildDownload(ctx, { studioBuildPromise, getPortableBundles: () => portableBundles });
   const { registerNativeEngineView } = await import('./routes/native-engine-view.mjs');
   registerNativeEngineView(ctx, nativeEngineRuntime);
+  if (!managedRuntime && !portableRuntime) {
+    const { registerNativeWebDelivery } = await import('./routes/native-web-delivery.mjs');
+    ctx.inject(['sessionQuery', 'workspaceFiles'], scope => registerNativeWebDelivery(scope, nativeEngineRuntime));
+  }
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
   const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
   const dshRuntimeAdapter = createDshRuntimeAdapter({

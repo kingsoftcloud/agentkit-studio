@@ -52,12 +52,12 @@ export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl 
 
 /** Host-side network transport for agentkit.engine/v1. */
 export function connectEngineService({ endpoint, token, sessionId, runId, onApproveTool, onCallTool, onReadToolReceipt,
-  requiredToolPolicy, requiredToolEffects, fetchImpl = fetch }) {
+  requiredToolPolicy, requiredToolEffects, observeOnly = false, fetchImpl = fetch }) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('engine_service_binding_invalid');
   const root = engineServiceEndpoint(endpoint, token) + '/v1/sessions/' + sessionId + '/';
   const lifetime = new AbortController();
   let poll, initializing;
-  const initialization = { protocolVersions: [ENGINE_PROTOCOL], host: { name: 'agentkit-studio' },
+  const initialization = { protocolVersions: [ENGINE_PROTOCOL], host: { name: 'agentkit-studio', ...(observeOnly ? { observeOnly } : {}) },
     services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
       ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}),
       ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}) } };
@@ -177,8 +177,9 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
   return {
     initialize,
     startRun: params => call('run/start', params),
-    status: runId => call('run/status', { runId }),
-    events: (runId, cursor = 0, waitMs = 0) => call('run/events', { runId, cursor, waitMs, follow: true }),
+    status: (runId, options) => call('run/status', { runId, ...options }),
+    events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor) =>
+      call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor, follow: true }),
     resume: runId => call('run/resume', { runId }),
     approve: (runId, interactionId, decision) => call('run/approve', { runId, interactionId, decision }),
     cancel: runId => call('run/cancel', { runId }),

@@ -2585,12 +2585,61 @@
       },
       "sequence": 52,
       "sha256": "e903a00d71a7019eac161651f77087b2839c371bf99a64016309fe36e64d29b6"
+    },
+    {
+      "id": "084",
+      "file": "084-chat-runtime-presentation.patch",
+      "category": "product",
+      "baseCommit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+      "dependsOn": [
+        "058"
+      ],
+      "affectedFiles": [
+        "packages/client/ui-chat/src/client/apply.ts",
+        "packages/client/ui-chat/src/client/chat/ChatFlow.tsx",
+        "packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx",
+        "packages/client/ui-chat/src/client/chat/ChatView.module.css",
+        "packages/client/ui-chat/src/client/chat/ChatView.tsx",
+        "packages/client/ui-chat/src/client/chat/TurnTailNodeView.tsx",
+        "packages/client/ui-chat/src/client/chat/register-node-renderers.ts",
+        "packages/client/ui-chat/src/client/contract/slots.ts",
+        "packages/client/ui-chat/tests/chat-view.client.spec.tsx",
+        "packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts",
+        "packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx"
+      ],
+      "affectedPackages": [
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-sidebar-browser"
+      ],
+      "contracts": [
+        "A session presenter can render the transcript inside the shared Chat viewport. The default flow and shared assistant actions remain available through the same host contract."
+      ],
+      "risk": "medium",
+      "maintainerRole": "Studio UI maintainers",
+      "upstreamStatus": {
+        "state": "not-submitted",
+        "evidence": "Chat view and plugin registration regression tests."
+      },
+      "removeWhen": "The host offers a session-specific chat presenter with access to existing assistant actions.",
+      "verification": {
+        "hostTests": [
+          "packages/client/ui-chat/tests/chat-apply.client.spec.tsx",
+          "packages/client/ui-chat/tests/chat-view.client.spec.tsx",
+          "packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx"
+        ],
+        "integrations": [
+          "source",
+          "web"
+        ]
+      },
+      "sequence": 53,
+      "sha256": "6d9f7cc2998589ccfb29fc0a78a43e7796c38a13960ae0f894b0742f0a81f15f"
     }
   ],
-  "patchedTree": "528711c889fd7041f3caf55c9c114bdf7e5de89d",
-  "patchedSourceSha256": "5ed309d1cff802a585331425bbd2c2ad8ee2011de149ee0416347c89245ae43b",
+  "patchedTree": "dfb26a10882831b3a0075f5674c17abfa002eb24",
+  "patchedSourceSha256": "a9681425531107a4b6424379aa07b607295158b189cac9e3146159f992dbfea0",
   "maintenanceSource": {
     "descriptor": "source.json",
-    "sha256": "162f9bed2d85110d7358575efb07221cdcd346715b0e208b165593204669dbab"
+    "sha256": "c21be17228984f0d3f2a7f565901fe56610e6296385d95c96ca3761a42ce8833"
   }
 }
