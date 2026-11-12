@@ -26,19 +26,20 @@ function harness(name = 'CloudDeploymentPanel', initialProps = { agentId: 'a', s
   const api = { deployments: async () => ({ items: rows }), prepareDeployment: async request => { calls.push(['prepare', request]); return preview(request); },
     createDeployment: async (...args) => { calls.push(['create', ...args]); return { id: 'created', agentId: 'a', state: 'CREATING' }; },
     agents: async () => ({ items: [] }), operations: async () => ({ items: [] }), agent: async () => ({ builds: [] }) };
-  const names = ['Pill', 'StudioPageTabs', 'SectionHeading', 'EmptyState'];
+  const names = ['Menu', 'MenuItemButton', 'Pill', 'StudioPageTabs', 'SectionHeading', 'EmptyState'];
   const Component = createDeliveryPages({
     ui: { React: { createElement: h, useState, useEffect, useRef, Fragment: 'fragment' }, BRAND: {}, RUNTIME_LABELS: {}, buttonStyle: () => ({}), inputStyle: () => ({}), ...Object.fromEntries(names.map(name => [name, name])) },
-    hostRemote: api, actions: { confirm: async () => true }, window, setInterval: () => 1, clearInterval: () => {},
+    hostRemote: api, actions: { confirm: async () => true, bindAgent: value => calls.push(['bind', value]) }, window, setInterval: () => 1, clearInterval: () => {},
   })[name];
   const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); };
-  const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action)] : [];
+  const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action), ...walk(node.props.anchor)] : [];
   const nodes = () => { if (dirty) render(); return walk(tree); };
   const text = node => typeof node === 'string' ? node : node?.children?.map(text).join('') || '';
   const button = label => nodes().find(node => node.type === 'button' && text(node) === label);
+  const menuItem = label => nodes().find(node => node.type === 'MenuItemButton' && text(node) === label);
   const field = label => nodes().find(node => node.props['aria-label'] === label);
   const settle = async () => { for (let i = 0; i < 30; i++) { if (dirty) render(); await Promise.resolve(); } };
-  return { api, calls, rows, nodes, text, button, field, settle, props: async value => { props = value; dirty = true; await settle(); } };
+  return { api, calls, rows, nodes, text, button, menuItem, field, settle, props: async value => { props = value; dirty = true; await settle(); } };
 }
 
 test('Delivery hydrates the preferred Agent, consumes focus and scrolls the requested section after loading', async () => {
@@ -93,7 +94,7 @@ test('paired specifications default to 2 cores / 4 GB and checking never submits
 test('delivery groups settings into panels without repeating the active tab heading', async () => {
   const ui = harness('DeliveryPage', {}); await ui.settle();
   assert.equal(ui.nodes().some(node => node.type === 'SectionHeading' && node.props.title === '构建与部署'), false);
-  assert.ok(ui.nodes().some(node => node.props.className === 'ad-panel'));
+  assert.ok(ui.nodes().some(node => node.props.className === 'ad-panel studio-panel'));
   assert.equal(ui.button('构建当前版本').props['data-variant'], 'primary');
   assert.ok(ui.button('构建当前版本').props.className.includes('ad-build-primary'));
   assert.equal(ui.button('构建当前版本').props.disabled, true);
@@ -154,7 +155,7 @@ test('deployment history pages newest first and details retain the cloud identit
   await ui.settle();
   let content = ui.nodes().filter(node => node.type === 'strong').map(ui.text).join(' ');
   assert.match(content, /Record 6/); assert.doesNotMatch(content, /Record 0/);
-  ui.button('详情').props.onClick(); await ui.settle(); assert.match(ui.nodes().map(ui.text).join(' '), /ar-cloud-6/);
+  ui.menuItem('详情').props.onSelect(); await ui.settle(); assert.match(ui.nodes().map(ui.text).join(' '), /ar-cloud-6/);
   ui.button('下一页').props.onClick(); await ui.settle();
   content = ui.nodes().filter(node => node.type === 'strong').map(ui.text).join(' '); assert.match(content, /Record 0/); assert.doesNotMatch(content, /Record 6/);
 });
@@ -171,4 +172,97 @@ test('fast Agent changes retain the latest target builds even when the earlier r
   b.resolve({ builds: [{ id: 'b-build', revision: 2, status: 'SUCCEEDED' }] }); await ui.settle();
   assert.equal(ui.field('目标 Agent').props.value, 'c');
   assert.equal(ui.field('构建版本').props.value, 'c-build');
+});
+
+test('subject and current-revision build show compact identity, completed step and outline rebuild', async () => {
+  const ui = harness('DeliveryPage', {});
+  ui.api.agents = async () => ({ items: [{ metadata: { id: 'a', name: 'Research', revision: 2, local: true }, spec: { runtime: { type: 'codex' } } }] });
+  ui.api.agent = async () => ({ builds: [{ id: 'build-a', revision: 2, status: 'SUCCEEDED' }] });
+  await ui.settle();
+  assert.ok(ui.nodes().some(node => node.props.className === 'studio-row-id' && ui.text(node) === 'a'));
+  assert.ok(ui.nodes().some(node => node.props.className === 'studio-row-meta' && ui.text(node) === 'codex · 当前配置 r2'));
+  assert.ok(ui.field('目标 Agent').props.className.includes('ad-agent-picker'));
+  assert.equal(ui.field('目标 Agent').props.value, 'a');
+  assert.equal(ui.field('目标 Agent').props.disabled, false);
+  assert.equal(ui.button('重新构建').props['data-variant'], 'outline');
+  assert.equal(ui.nodes().find(node => node.props.className === 'ad-step-number').props['data-done'], true);
+  const history = ui.nodes().find(node => node.type === 'details');
+  assert.equal(Boolean(history.props.open), false);
+  assert.match(ui.text(history), /构建历史 · 1 个版本/);
+  assert.ok(ui.button('在新会话运行'));
+  ui.button('在新会话运行').props.onClick();
+  assert.deepEqual(ui.calls.at(-1), ['bind', { agentId: 'a', buildId: 'build-a' }]);
+  assert.equal(ui.button('下载定义 ZIP'), undefined);
+  assert.ok(ui.menuItem('下载定义 ZIP'));
+  assert.ok(ui.menuItem('导出运行包'));
+  const menu = ui.nodes().find(node => node.type === 'Menu');
+  assert.equal(menu.props.open, false);
+  ui.field('更多操作 build-a').props.onClick(); await ui.settle();
+  assert.equal(ui.nodes().find(node => node.type === 'Menu').props.open, true);
+  assert.equal(ui.nodes().find(node => node.type === 'Menu').props.align, 'end');
+});
+
+test('a stale revision keeps build primary while an unbuilt deployment stays dimmed with its original disabled controls', async () => {
+  const page = harness('DeliveryPage', {});
+  page.api.agents = async () => ({ items: [{ metadata: { id: 'a', revision: 3, local: true } }] });
+  page.api.agent = async () => ({ builds: [{ id: 'old', revision: 1, status: 'SUCCEEDED' }] });
+  await page.settle();
+  assert.equal(page.button('构建当前版本').props['data-variant'], 'primary');
+  assert.equal(page.nodes().find(node => node.type?.name === 'CloudDeploymentPanel').props.hasCurrentBuild, false);
+  const cloud = harness('CloudDeploymentPanel', { agentId: 'a', selectedBuild: '' });
+  await cloud.settle();
+  const deploy = cloud.nodes().find(node => node.props['data-delivery-section'] === 'deploy');
+  assert.match(deploy.props.className, /ad-step-dimmed/);
+  assert.match(cloud.text(deploy), /构建成功后可以部署/);
+  assert.equal(cloud.button('检查部署').props.disabled, true);
+  assert.equal(cloud.button('检查部署').props['data-variant'], 'outline');
+  assert.equal(cloud.field('部署目标').props.disabled, false);
+  assert.equal(cloud.field('实例规格').props.disabled, false);
+});
+
+test('deployment steps keep checks, warnings, records actions and two-stage deletion behind an overflow menu', async () => {
+  const ui = harness();
+  const record = { id: 'live', agentId: 'a', agentName: 'Current', state: 'READY', cloudAgentId: 'cloud-a', buildId: 'old', resources: { cpu: 2, memoryGiB: 4 } };
+  ui.rows.push(record);
+  ui.api.deploymentLogs = async id => { ui.calls.push(['logs', id]); return { lines: ['running'] }; };
+  ui.api.removeDeployment = async id => { ui.calls.push(['remove', id]); return { ...record, state: 'DELETED' }; };
+  await ui.settle();
+  assert.equal(ui.button('检查更新').props['data-variant'], 'outline');
+  assert.ok(ui.nodes().some(node => node.type === 'table' && node.props.className.includes('studio-tbl')));
+  assert.ok(ui.nodes().some(node => node.type === 'StudioPageTabs' && node.props.value === 'current' && node.props.ariaLabel === '部署记录范围'));
+  assert.ok(ui.button('开始对话'));
+  assert.ok(ui.button('刷新状态'));
+  assert.equal(ui.button('日志'), undefined);
+  await ui.menuItem('日志').props.onSelect(); await ui.settle();
+  assert.deepEqual(ui.calls.at(-1), ['logs', 'live']);
+  assert.match(ui.nodes().map(ui.text).join(' '), /running/);
+  ui.menuItem('详情').props.onSelect(); await ui.settle();
+  await ui.menuItem('删除').props.onSelect(); await ui.settle();
+  assert.equal(ui.calls.some(([name]) => name === 'remove'), false);
+  await ui.menuItem('确认删除云端实例').props.onSelect(); await ui.settle();
+  assert.deepEqual(ui.calls.at(-1), ['remove', 'live']);
+
+  const checked = harness();
+  checked.api.prepareDeployment = async request => ({ ...preview(request), warnings: ['配额提醒'] });
+  await checked.settle();
+  assert.equal(checked.button('检查部署').props['data-variant'], 'primary');
+  await checked.button('检查部署').props.onClick(); await checked.settle();
+  const result = checked.field('部署检查结果');
+  assert.match(checked.text(result), /检查通过/);
+  assert.match(checked.text(result), /冻结版本.*资源凭证.*部署位置与配额/);
+  assert.match(checked.text(result), /配额提醒/);
+  assert.equal(checked.button('检查部署').props['data-variant'], 'outline');
+  assert.equal(checked.button('确认创建云端实例').props['data-variant'], 'primary');
+  checked.button('取消').props.onClick(); await checked.settle();
+  assert.equal(checked.field('部署检查结果'), undefined);
+});
+
+test('deployment failure remains a one-line alert without changing retry availability', async () => {
+  const ui = harness();
+  ui.api.prepareDeployment = async () => { throw Error('quota unavailable'); };
+  await ui.settle();
+  await ui.button('检查部署').props.onClick(); await ui.settle();
+  assert.ok(ui.nodes().some(node => node.props.role === 'alert' && node.props.title === 'quota unavailable'));
+  assert.equal(ui.button('检查部署').props.disabled, false);
+  assert.equal(ui.field('部署检查结果'), undefined);
 });
