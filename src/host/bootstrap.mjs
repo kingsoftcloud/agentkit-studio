@@ -65,6 +65,32 @@ export function logPresetComposition(ctx, plugins) {
   }
 }
 
+/**
+ * Name the archive path that cancels a running turn.
+ *
+ * DSH publishes `workspace/session-stop` while archiving a Session, and its
+ * archive admission answers by cancelling the live Agent with
+ * `{kind: 'user'}` — indistinguishable in `turn/end` from the user's own stop
+ * button. Record the session so a cancelled turn names the archiving path
+ * instead of leaving only the cancellation cause.
+ * @param ctx - the Host context carrying the workspace service.
+ */
+function observeSessionStop(ctx) {
+  try {
+    ctx.on('workspace/session-stop', request => {
+      try {
+        console.info('[agentkit-studio] session stop', JSON.stringify({
+          source: 'workspace/session-stop',
+          sessionId: String(request?.sessionId || ''),
+        }));
+      } catch { /* diagnostics never fail a stop */ }
+    });
+  } catch (error) {
+    // An older DSH without the workspace registry keeps every other path working.
+    console.warn('[agentkit-studio] session stop probe unavailable:', error?.message || error);
+  }
+}
+
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
@@ -520,6 +546,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const teamRuntime = (await import('../studio-team-runtime.mjs')).ensureStudioTeamRuntime(ctx);
   const studioTeams = (await import('../studio-teams.mjs')).createStudioTeams({ ctx, runtimeReady: teamRuntime, directory: join(studioStoreDir,'teams'), agents: await agentStorePromise, getAdmission: () => presetAdmission });
   teamTemplates = (await import('../team-template-summon.mjs')).createTeamTemplateSummon({ catalog: templateServices.templateCatalog, summon: templateServices.templateSummon, teams: studioTeams });
+  observeSessionStop(ctx);
   presetAdmission = createPresetAdmission();
   // Cordis unloads and reruns this scope when the registry changes. An old
   // scope must dispose its own admission, never whichever admission is current
