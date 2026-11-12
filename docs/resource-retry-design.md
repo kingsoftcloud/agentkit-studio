@@ -1,33 +1,35 @@
 # 资源绑定重试与 MCP 调用恢复（方案）
 
-> 状态：**提案（未实现）**。本文定义目标语义和验收边界；实现完成并通过测试后，才可把它作为运行时契约。
+> 状态：**提案（部分实现）**。本 PR 落地托管 Memory 写入保护和 MCP 连接恢复的第一批安全修复；资源事件、UI 动作、绝对 deadline 和 safe-read 等后续能力仍需单独实现并通过验收，不能把本文整体当作已生效的运行时契约。
 >
 > 审计基线：`10ce599a46d4614b12fc50bf3398214165394be2`。该 SHA 只固定 Studio 源码；安装的 Native Harness、MCP SDK 和桌面 Profile 仍需在验收记录中分别记录版本和 provenance。
 >
 > 相关文档：[资源降级](resource-degradation.md)、[托管资源绑定](managed-resource-bindings.md)、[架构](architecture.md)、[生命周期](refactor-lifecycle.md)。
 
+本 PR 同时落地了第一批安全修复：托管 Memory 写入不再重试；MCP 首次并发建连使用 single-flight；已有 session 的明确“session not found”响应会清理缓存并自动重建 session、最多重放一次。资源事件、UI 动作和 safe-read capability 仍按后续阶段验收，不在本 PR 中宣称已完成。
+
 ## 1. 先固定当前事实
 
-本方案把“连接恢复”和“业务效果重放”分开。当前代码并没有一套统一的 MCP supervisor，且不同 runtime 的模型循环也不同。
+本方案把“连接恢复”和“业务效果重放”分开。下表的“当前行为”指审计基线（本 PR 之前）；不同 runtime 仍没有一套可以直接共用的 MCP supervisor，模型循环也不同。
 
 | 面 | 当前行为 | 本方案范围 |
 | --- | --- | --- |
-| 托管资源 RPC（Knowledge / Memory / Skill Space / `GetMCP`） | `managed-resource-client.mjs` 对所有 action 共用 3 次重试；当前也会重试 `CreateMemorySdk`，与 `managed-resource-identity.md` 的“写入不自动重试”相冲突 | P0 先修正写入策略；读/查询的重试单独保留 |
-| 本地 MCP 建连、工具目录、`tools/call` | `local-resource-adapters.mjs` 无 single-flight、无统一 attempt 计数；传输异常会关闭当前缓存连接；工具结果 `isError` 与传输异常走不同路径 | P0/P1 实现连接状态和失败分类 |
+| 托管资源 RPC（Knowledge / Memory / Skill Space / `GetMCP`） | 审计基线的 `managed-resource-client.mjs` 对所有 action 共用 3 次重试；当时也会重试 `CreateMemorySdk`，与 `managed-resource-identity.md` 的“写入不自动重试”相冲突 | 本 PR 已先修正写入策略；读/查询的重试单独保留 |
+| 本地 MCP 建连、工具目录、`tools/call` | 审计基线的 `local-resource-adapters.mjs` 无 single-flight、无统一 attempt 计数；传输异常会关闭当前缓存连接；工具结果 `isError` 与传输异常走不同路径 | 本 PR 已落地首调 single-flight、连接代际和明确 session 过期恢复；其余失败分类和事件传播仍按 P0/P1 实现 |
 | Native Harness | Native kernel 负责 Run、receipt 和 `uncertain`；MCP 工具定义当前固定为 `readOnly:false`、未知副作用 | 只把可证明未派发的错误转换为 `error(executed:false)`；未知效果继续对账 |
 | DSH-native / Codex | 使用不同的模型/工具循环；不能直接套用 Native kernel 的 safe-read 或 recovery policy | 适配器错误契约可共用；模型循环和 UI 必须分别验收 |
 | MCP 探测 | `listMcpTools` 建连失败直接失败，无工具调用重试 | 保持手动重新探测；不把探测结果当作工具调用成功证明 |
 
 ### 1.1 必须先解决的托管 Memory 写入矛盾
 
-`src/managed-resource-client.mjs` 的 `call()` 对 `RetrieveKnowledge`、`QueryMemorySdk` 和 `CreateMemorySdk` 使用同一个重试循环；`bindMemoryWriter()` 还会把相同策略传给持久写入端口。普通 `writeMemory()` 没有稳定 request id，因此网络失败后重放可能重复提交。
+审计基线的 `src/managed-resource-client.mjs` 的 `call()` 对 `RetrieveKnowledge`、`QueryMemorySdk` 和 `CreateMemorySdk` 使用同一个重试循环；`bindMemoryWriter()` 还会把相同策略传给持久写入端口。普通 `writeMemory()` 没有稳定 request id，因此网络失败后重放可能重复提交。
 
 落地前必须二选一：
 
 1. 将 `CreateMemorySdk` 从自动重试集合中排除，并保留现有“写入不自动重试”文档；或
 2. 先让服务端提供可验证的幂等写入契约，再把同一个外部幂等键用于重试，并同步更新文档。
 
-本方案默认选择第 1 项。默认 3 次托管资源读请求实际只使用两段间隔：`200ms`、`600ms`；`1500ms` 只在调用者把 `maxAttempts` 提高到至少 4 时才有意义。
+本 PR 选择第 1 项。默认 3 次托管资源读请求实际只使用两段间隔：`200ms`、`600ms`；`1500ms` 只在调用者把 `maxAttempts` 提高到至少 4 时才有意义。
 
 ## 2. 目标与非目标
 
@@ -54,7 +56,7 @@
 | `retryClass` | 适用阶段 | Host 能证明的事实 | 默认动作 |
 | --- | --- | --- | --- |
 | `pre_dispatch` | connect / credential / local validation | `tools/call` 请求尚未开始发送 | 可有界恢复建连；不重放业务效果 |
-| `session_expired` | 已有 session 的 HTTP 404/400 | 只能证明 session 不可用，不能自动证明工具未执行 | 关闭并删除缓存，返回 typed error；默认不立即重放 |
+| `session_expired` | 已有 session 且响应明确表示 session 不存在/已过期 | MCP transport 语义保证请求在执行前被拒绝 | 关闭缓存并重建 session；最多重放一次，失败后 typed error |
 | `rate_limited` | connect/list 或明确拒绝的请求 | 服务端返回拒绝；是否进入工具执行取决于 phase | connect/list 可按 `Retry-After` 重试；`tools/call` 默认不重放 |
 | `connect_rejected` | `initialize` | 初始化请求没有业务工具副作用 | 可有界重试；端点不存在、鉴权和 TLS 错误终态化 |
 | `transport_ambiguous` | `tools/call` 已开始后，断连、超时、5xx、SSE 中断 | 可能已执行，也可能未执行 | 保持 `uncertain`；除非有 Host 冻结的 safe-read + 服务端幂等契约 |
@@ -64,14 +66,17 @@
 
 ### 3.1 session 过期不等于安全重放
 
-带 `mcp-session-id` 的 404 能帮助区分“端点不存在”和“当前 session 不存在”，但它本身不是效果收据。除非服务端明确承诺“未知 session 的 `tools/call` 在执行前拒绝”，并且该承诺进入冻结的资源契约，否则本地只做：
+带 `mcp-session-id` 的 404 能帮助区分“端点不存在”和“当前 session 不存在”，但它本身不是普通网络错误的效果收据。本 PR 只对同时满足以下条件的情况做一次自动恢复：transport 仍有 session id，响应文本明确表示 session 不存在/已过期，并遵循 MCP Streamable HTTP 的“未知 session 在执行前拒绝”语义。其他 404、断连、超时和 5xx 仍不自动重放。
+
+恢复流程是：
 
 1. 关闭当前 client；
 2. 从缓存删除；
-3. 返回 `MCP_SESSION_EXPIRED`、`sessionState:'expired'`、`executed:'unknown'`；
-4. 由下一次新的逻辑调用建立新 session。
+3. 建立新 session；
+4. 使用同一次逻辑调用重放一次；
+5. 第二次仍失败时返回 `MCP_SESSION_EXPIRED`、`sessionState:'expired'`、`attempts:2`。
 
-若未来增加服务端幂等能力，自动重放必须使用独立的外部 idempotency key，并限制为一次；这不改变 Native 原始 `callId`。
+若服务端不能提供上述协议保证，或需要覆盖更宽的错误集合，必须先增加外部幂等能力；这不改变 Native 原始 `callId`。
 
 ### 3.2 Native 状态转换
 
@@ -87,7 +92,7 @@
 
 ### 4.1 single-flight 与 generation
 
-`mcpClients` 为每个 `cacheKey` 保存 `{ generation, promise, entry }`：
+`mcpClients` 为每个 `cacheKey` 保存 active entry；`connecting` 为每个 `cacheKey` 保存 in-flight `{ generation, fingerprint, promise }`：
 
 - 同一个 fingerprint 的并发调用共享一次 `initialize`；
 - 旧连接收尾时必须检查 generation，不能关闭后来接管缓存的新连接；
@@ -176,7 +181,7 @@ sessionState: none | active | expired
 1. 为 `CreateMemorySdk` 增加“写入不自动重试”的回归测试；明确 managed client 的 action policy。
 2. 为 MCP adapter 增加 single-flight、generation、独立连接 owner 和缓存清理。
 3. 引入 `phase/dispatchState/retryClass`，只对 `not_started` 赋 `executed:false`。
-4. 对 session 404 做关闭、缓存删除和 typed error；默认不自动重放 `tools/call`。
+4. 对明确的 session-not-found 404 做关闭、缓存删除和一次 session 重建；其他 404 不自动重放 `tools/call`。
 5. 用绝对 deadline 接入 connect/call timeout，并覆盖 response body 中途断开。
 6. 完成 `studio/resource-check` 的 MCP 事件和 attempts 传播。
 
@@ -196,7 +201,7 @@ sessionState: none | active | expired
 
 已有证据：
 
-- `.scratch/retry-audit/repro-mcp-retry.mjs`：并发首调会产生两次 initialize；session 404 会被误诊为 `MCP_ENDPOINT_NOT_FOUND`。
+- `.scratch/retry-audit/repro-mcp-retry.mjs`（审计基线复现）：并发首调会产生两次 initialize；session 404 会被误诊为 `MCP_ENDPOINT_NOT_FOUND`。本 PR 的回归运行结果已修正这两条路径。
 - `tests/native-dsh-tools.test.mjs`：已知 MCP 工具错误与传输失败分别得到 `error` 和 `uncertain`。
 - `tests/local-resource-adapters.test.mjs`：协议工具错误、凭证轮换、authority guard 已有覆盖。
 - `tests/managed-resource-retry.test.mjs`：托管资源读重试和取消已有覆盖。
@@ -206,7 +211,7 @@ sessionState: none | active | expired
 1. `CreateMemorySdk` 的 503、网络失败和 response body reset 都只发送一次；
 2. response body 中途断开和 timeout 的分类/attempts；
 3. 同 cacheKey 并发调用只 initialize 一次；单个调用取消不会取消其他等待者；
-4. session 404 关闭缓存并返回 `MCP_SESSION_EXPIRED`，不自动重放业务调用；
+4. 明确 session-not-found 的 404 只重建并重放一次；其他 404 关闭缓存并返回对应的 endpoint/tool typed error；
 5. 真正 `pre_dispatch` 的失败返回 `executed:false`；`transport_ambiguous` 保持 `uncertain`；
 6. cancel、authority stale、credential rotation 不产生额外 `tools/call`；
 7. `checkedResource()` 将 top-level/nested attempts 投影到 `studio/resource-check`；

@@ -116,6 +116,34 @@ test('a successful first response performs no retry and keeps the existing contr
   assert.equal(calls, 1);
 });
 
+test('mutating memory submissions do not replay transport failures', async () => {
+  for (const failure of ['response', 'network', 'body']) {
+    let calls = 0;
+    const managed = createManagedResourceClient({ runtime: { ...runtime,
+      declaration: { resources: { memory: { id: 'memory-fixture' } } } }, env,
+      getResourcePermit: () => 'fixture-permit', retryDelaysMs: [0, 0, 0],
+      fetchImpl: async () => {
+        calls += 1;
+        if (failure === 'network') throw new TypeError('socket closed');
+        if (failure === 'body') {
+          const stream = new ReadableStream({ start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"Code":0'));
+            controller.error(new Error('response body reset'));
+          } });
+          return new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response('upstream unavailable', { status: 503 });
+      },
+    });
+    await assert.rejects(managed.action('CreateMemorySdk', { MemoryCollectionId: 'memory-fixture' }), error => {
+      assert.equal(error.code, failure === 'body' ? 'MANAGED_RESOURCE_RESPONSE_INVALID' : 'MANAGED_RESOURCE_SERVER_UNAVAILABLE');
+      if (failure !== 'body') assert.equal(error.attempts, 1);
+      return true;
+    });
+    assert.equal(calls, 1, `expected one write attempt for ${failure}`);
+  }
+});
+
 test('the retry ceiling is configurable and invalid policy values fail fast', async () => {
   let calls = 0;
   const managed = client(async () => { calls += 1; return new Response('unavailable', { status: 503 }); },

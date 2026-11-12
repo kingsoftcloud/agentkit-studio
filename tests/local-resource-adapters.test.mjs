@@ -336,6 +336,73 @@ test('MCP tool protocol errors remain tool failures instead of connection failur
   await adapters.close();
 });
 
+test('concurrent first MCP calls share one initialization', async () => {
+  let initializes = 0, calls = 0;
+  const fetchImpl = async (_url, init = {}) => {
+    const message = init.body ? JSON.parse(init.body) : null;
+    if (message?.method === 'initialize') {
+      initializes += 1;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'single-flight', version: '1' },
+      } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'single-flight-session' } });
+    }
+    if (message?.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (message?.method === 'tools/call') {
+      calls += 1;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {
+        content: [{ type: 'text', text: `ok:${message.params.arguments.id}` }], isError: false,
+      } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'single-flight-session' } });
+    }
+    return new Response(null, { status: 405 });
+  };
+  const adapters = createLocalResourceAdapters({ fetchImpl });
+  const binding = { resourceId: 'mcp-single-flight', endpointUrl: 'https://example.test/mcp' };
+  const results = await Promise.all([1, 2].map(id => adapters.callMcpTool(binding, 'search', { id }, { resultFormat: 'mcp-result/v1' })));
+  assert.deepEqual(results.map(result => result.content[0].text), ['ok:1', 'ok:2']);
+  assert.equal(initializes, 1);
+  assert.equal(calls, 2);
+  await adapters.close();
+});
+
+test('an expired MCP session is rebuilt and the call is retried once', async () => {
+  let initializes = 0, requests = 0, effects = 0;
+  const liveSessions = new Set();
+  const fetchImpl = async (_url, init = {}) => {
+    const message = init.body ? JSON.parse(init.body) : null;
+    if (message?.method === 'initialize') {
+      const session = `session-${++initializes}`;
+      liveSessions.add(session);
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'expiry', version: '1' },
+      } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': session } });
+    }
+    if (message?.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (message?.method === 'tools/call') {
+      requests += 1;
+      const session = new Headers(init.headers).get('mcp-session-id');
+      if (session === 'session-1' && effects > 0) {
+        liveSessions.delete(session);
+        return new Response('Session not found', { status: 404 });
+      }
+      if (!liveSessions.has(session)) return new Response('Session not found', { status: 404 });
+      effects += 1;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {
+        content: [{ type: 'text', text: `effect:${effects}` }], isError: false,
+      } }), { status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': session } });
+    }
+    return new Response(null, { status: 405 });
+  };
+  const adapters = createLocalResourceAdapters({ fetchImpl });
+  const binding = { resourceId: 'mcp-expired-session', endpointUrl: 'https://example.test/mcp' };
+  assert.equal((await adapters.callMcpTool(binding, 'search', {}, { resultFormat: 'mcp-result/v1' })).content[0].text, 'effect:1');
+  assert.equal((await adapters.callMcpTool(binding, 'search', {}, { resultFormat: 'mcp-result/v1' })).content[0].text, 'effect:2');
+  assert.equal(initializes, 2);
+  assert.equal(requests, 3, 'the expired session request is followed by one rebuilt-session request');
+  assert.equal(effects, 2);
+  await adapters.close();
+});
+
 test('local MCP records resolve nested server endpoint and authorization reference', async () => {
   const requests = [];
   const dir = await mkdtemp(join(tmpdir(), 'agentkit-local-mcp-'));
