@@ -27,10 +27,10 @@ export function createDeliveryPages({
   hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
 }) {
   const { Section: FormSection, Row: FormRow, Select, Input, Button, Note: FormNote, Collapsible, Summary, Switch } = createFormKit({ React: { createElement: h } });
-  const Row = (props, ...children) => FormRow({ ...props, className: 'af-row studio-srow' }, ...children);
+  const Row = ({ help, title, ...props }, ...children) => FormRow({ ...props, title: help ? h('span', { title: help }, title) : title, className: 'af-row studio-srow' }, ...children);
   const Note = (props, ...children) => FormNote({ title: children.every(child => typeof child === 'string') ? children.join('') : undefined, ...props }, ...children);
-  const Section = ({ number, done, current, panel = true, ...props }, ...children) => FormSection({ ...props,
-    title: number ? h(Fragment, null, h('span', { className: 'ad-step-number', 'data-done': done || undefined, 'data-current': current || undefined, 'aria-hidden': 'true' }, done ? '✓' : number), props.title) : props.title,
+  const Section = ({ number, done, current, panel = true, help, ...props }, ...children) => FormSection({ ...props,
+    title: number ? h(Fragment, null, h('span', { className: 'ad-step-number', 'data-done': done || undefined, 'data-current': current || undefined, 'aria-hidden': 'true' }, done ? '✓' : number), h('span', { title: help }, props.title)) : h('span', { title: help }, props.title),
     'data-delivery-step': number }, panel ? h('div', { className: 'ad-panel studio-panel' }, ...children) : children);
   const MenuAction = ({ onClick, ...props }, ...children) => h(MenuItemButton, { ...props, onSelect: onClick }, ...children);
   const MoreMenu = ({ id, open, onToggle, onClose }, ...children) => h(Menu, { open, onClose, align: 'end', portal: true, compact: true, listClassName: 'studio-menu',
@@ -183,8 +183,7 @@ export function createDeliveryPages({
           Button({ variant: 'ghost', disabled: busy, onClick: () => setPreview(null) }, '取消'),
           Button({ variant: hasCurrentBuild && !existing.length ? 'primary' : 'outline', disabled: busy, onClick: deploy }, preview.deploymentId ? preview.rollbackVersionId ? '确认回滚当前实例' : '确认升级当前实例' : '确认创建云端实例'))) : null,
       Section({ id: 'sec-records', 'data-delivery-section': 'records', number: 3, current: existing.length > 0 && hasCurrentBuild, panel: false, title: '云端实例', meta: `${visibleRecords.length} 条`, help: '部署进度每 5 秒自动刷新，页面切到后台时暂停轮询。',
-          action: Switch({ 'aria-label': '显示已删除的部署记录', label: `显示已删除（${scopedRecords.filter(record => record.state === 'DELETED').length}）`, checked: showDeleted, onChange: event => setShowDeleted(event.target.checked) }) },
-        h('div', { className: 'ad-record-scope' }, h(StudioPageTabs, { ariaLabel: '部署记录范围', value: scope, onChange: setScope, items: [{ id: 'current', label: '当前 Agent' }, { id: 'all', label: '全部' }] })),
+          action: h('div', { className: 'ad-record-header-actions' }, Switch({ 'aria-label': '显示已删除的部署记录', label: `显示已删除（${scopedRecords.filter(record => record.state === 'DELETED').length}）`, checked: showDeleted, onChange: event => setShowDeleted(event.target.checked) }), h('div', { className: 'ad-record-scope' }, h(StudioPageTabs, { ariaLabel: '部署记录范围', value: scope, onChange: setScope, items: [{ id: 'current', label: '当前 Agent' }, { id: 'all', label: '全部' }] }))) },
         scope === 'current' && otherAttention
           ? Note({ role: 'status' }, `其他 Agent 有 ${otherAttention} 条部署需要处理。`, Button({ size: 'sm', onClick: () => setScope('all') }, '查看全部'))
           : null,
@@ -300,7 +299,7 @@ export function createDeliveryPages({
       consumeOperationsFocus(window, focus);
       if (selectedAgent !== focus.agentId) return;
       const section = pageElement.current?.querySelector(`[data-delivery-section="${focus.section}"]`);
-      section?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      section?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       section?.classList.add('studio-focus-highlight');
       const timer = setTimeout(() => section?.classList.remove('studio-focus-highlight'), 1500);
       return () => { clearTimeout(timer); section?.classList.remove('studio-focus-highlight'); };

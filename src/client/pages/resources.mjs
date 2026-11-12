@@ -1,6 +1,7 @@
 import { createStatusText } from '../components/status-text.mjs';
 import { resourceStatusPresentation } from '../state/resource-status.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
+import { createHeaderAction } from '../components/header-action.mjs';
 
 export function createResourcePages({
   ui,
@@ -8,10 +9,11 @@ export function createResourcePages({
 }) {
   const { React: { createElement: h, useEffect, useRef, useState, Fragment }, Menu, MenuItemButton, ContentIntro, EmptyState, McpResourceDialog, McpToolsDialog, ModelResourceDialog, ResourceDialog, SkillDiscoveryDialog, SkillPreviewDialog, StudioPageTabs, buttonStyle, inputStyle, pagerButtonStyle, StudioSubnav, BRAND = DEFAULT_BRAND } = ui;
   const Pill = createStatusText(h);
+  const HeaderAction = createHeaderAction(ui);
   const ghostButtonStyle = () => ({ ...buttonStyle(), border: 0, minHeight: '28px', padding: '0 8px', fontSize: '12px' });
   const primaryButtonStyle = () => ({ ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' });
-  function ResourcesPage() {
-    const [resourceKind, setResourceKind] = useState(() => { try { const kind = window.localStorage.getItem('agentkit-studio:resource-kind'); window.localStorage.removeItem('agentkit-studio:resource-kind'); if (['skill', 'mcp'].includes(kind)) return kind; } catch {} return 'model'; });
+  function ResourcesPage({ initialRuntime = false } = {}) {
+    const [resourceKind, setResourceKind] = useState(() => { try { const kind = window.localStorage.getItem('agentkit-studio:resource-kind'); window.localStorage.removeItem('agentkit-studio:resource-kind'); if (['skill', 'mcp'].includes(kind)) return kind; } catch {} return initialRuntime ? 'runtime-resources' : 'model'; });
     const [libraryView, setLibraryView] = useState(() => { try { const value = window.localStorage.getItem('agentkit-studio:resource-library-view'); window.localStorage.removeItem('agentkit-studio:resource-library-view'); return value === 'catalog' ? 'catalog' : 'installed'; } catch { return 'installed'; } });
     const [libraryRevision, setLibraryRevision] = useState(0);
     const [sourceFilter, setSourceFilter] = useState('all');
@@ -43,8 +45,11 @@ export function createResourcePages({
     const resourceKinds = [
       ['model', '模型'], ['mcp', 'MCP'], ['skill', 'Skill'],
       ['knowledge-base', '知识库'], ['memory-instance', '记忆库'],
+      ['runtime-resources', '运行资源'],
     ];
     const label = resourceKinds.find(item => item[0] === resourceKind)?.[1] || '资源';
+    const libraryHelp = '资源库只负责资源目录生命周期：发现、导入、探测、查看、删除和状态刷新。新增或变更 Agent 绑定关系请在 Agent 创建页或编辑页完成。模型、Tool、MCP、Skill 可绑定多个；知识库、记忆库和 Skill Center 每类默认绑定一个。';
+    const kindHelp = resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : ['skill', 'skill-space'].includes(resourceKind) ? '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。' : '';
 
     const load = async (kind = resourceKind, cursor = null, resetPaging = true, preserveMessage = false) => {
       const seq = ++requestSeq.current;
@@ -73,7 +78,7 @@ export function createResourcePages({
       const timer = setTimeout(() => setSubmittedQuery(query), 250);
       return () => clearTimeout(timer);
     }, [query]);
-    useEffect(() => { if (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery, sourceFilter, libraryView]);
+    useEffect(() => { if (resourceKind !== 'runtime-resources' && (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind))) void load(resourceKind, null, true); }, [resourceKind, pageSize, submittedQuery, sourceFilter, libraryView]);
     const reloadCatalog = (preserveMessage = false) => load(resourceKind, null, true, preserveMessage === true);
     const openMcpCreate = () => { setMcpEditing(null); setMcpDialogOpen(true); };
     const openMcpEdit = resource => { setMcpEditing(resource); setMcpDialogOpen(true); };
@@ -127,6 +132,13 @@ export function createResourcePages({
       await load(resourceKind, nextCursor, false);
     };
     const pageCount = total ? Math.max(1, Math.ceil(total / pageSize)) : (nextCursor ? page + 2 : page + 1);
+    const pager = h('div', { 'data-studio-pager': 'true', className: 'studio-list-footer' },
+      h('div', { className: 'studio-toolbar-controls' }, h('span', null, `${total || resources.length} 项`),
+        h('select', { className: 'af-select studio-pick-quiet', value: String(pageSize), onChange: event => setPageSize(Number(event.target.value)), 'aria-label': '每页显示数量' }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条'))),
+      h('div', { className: 'studio-toolbar-controls' },
+        h('button', { type: 'button', 'aria-label': '资源上一页', disabled: page <= 0 || status === 'loading', onClick: () => void previousPage(), style: pagerButtonStyle(page <= 0 || status === 'loading') }, '‹'),
+        h('span', null, `${page + 1}/${pageCount}`),
+        h('button', { type: 'button', 'aria-label': '资源下一页', disabled: !nextCursor || status === 'loading', onClick: () => void nextPage(), style: pagerButtonStyle(!nextCursor || status === 'loading') }, '›')));
     const sourceLabel = item => ({ local: '本地配置', 'local-import': '本地导入', 'agentengine-server': '云端' })[item.source] || item.source || item.provider || item.origin || '—';
     const kindDetail = item => resourceKind === 'skill' && item.source === 'agentengine-server' ? 'Skill Space' : item.contract?.model || item.contract?.entrypoint || item.contract?.transport || item.region || item.version || '—';
     const rows = isPlatform ? (platformCatalog?.items || []) : resources;
@@ -158,7 +170,13 @@ export function createResourcePages({
     const platformTable = platformCatalog ? h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '12px', padding: '14px', background: BRAND.surface } },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', marginBottom: '10px' } }, h('div', null, h('strong', { style: { color: BRAND.ink, fontSize: '14px' } }, label), h('div', { style: { color: BRAND.inkMuted, fontSize: '11px', marginTop: '4px' } }, platformCatalog.connectionRef ? '云端目录资源只在这里做发现、查看和刷新；每类默认只允许绑定一个资源。绑定动作在 Agent 创建或编辑页完成。' : '当前没有可用云端凭证，先到设置页配置后再读取目录。')), h(Pill, { tone: platformCatalog.connectionRef ? 'accent' : 'signal' }, platformCatalog.connectionRef ? '目录已连接' : '待连接')),
       platformCatalog.items?.length ? table : h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: platformCatalog.connectionRef ? '云端目录没有返回可用资源。' : '连接云端后刷新此目录。' })) : null;
+    const navigation = h(StudioPageTabs, { ariaLabel: '资源类型', value: resourceKind, onChange: kind => { setResourceKind(kind); setLibraryView(['mcp','skill'].includes(kind) ? 'catalog' : 'installed'); }, items: resourceKinds.map(([id, value]) => ({ id, label: value })) });
+    if (resourceKind === 'runtime-resources') return h('div', null, navigation, h(RuntimeResourcesPage));
     return h('div', { className: 'resource-library' },
+      h(HeaderAction, null,
+        resourceKind === 'model' ? h('button', { type: 'button', onClick: () => setModelDialogOpen(true), style: primaryButtonStyle() }, '添加模型') : null,
+        resourceKind === 'mcp' ? h('button', { type: 'button', onClick: openMcpCreate, style: primaryButtonStyle() }, '添加 MCP') : null,
+        resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: primaryButtonStyle() }, '扫描本地 Skill') : null),
       h('style', null, `
         .resource-library .resource-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 8px; margin: 0 -8px; border-radius: var(--dsw-radius-xl, 16px); }
         .resource-library .resource-row:hover { background: var(--dsw-alias-interactive-bg-hover, #f0f0f0); }
@@ -168,38 +186,30 @@ export function createResourcePages({
         .resource-library .resource-row-meta { margin-top: 4px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, #676767); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .resource-library .resource-row-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, #676767); white-space: nowrap; }
         .resource-library .resource-row-actions { display: flex; justify-content: flex-end; align-items: center; gap: 2px; flex-wrap: wrap; }
-        .resource-library > .studio-tabs > button { height: 24px; font-size: 13px; padding: 0 8px; }
-        .resource-library > .studio-tabs { margin-bottom: 12px; }
         .resource-library .resource-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
         .resource-library .resource-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
         .resource-library .resource-toolbar [data-studio-content-intro] { margin: 0 !important; }
         @media (max-width: 760px) { .resource-library .resource-row { flex-wrap: wrap; gap: 8px; } .resource-library .resource-row-main { flex-basis: calc(100% - 56px); } .resource-library .resource-row-actions { margin-left: auto; } }
       `),
-      h(StudioPageTabs, { ariaLabel: '资源类型', value: resourceKind, onChange: kind => { setResourceKind(kind); setLibraryView(['mcp','skill'].includes(kind) ? 'catalog' : 'installed'); }, items: resourceKinds.map(([id, value]) => ({ id, label: value })) }),
+      navigation,
       ['mcp','skill'].includes(resourceKind) ? h(StudioSubnav, { value: libraryView, onChange: setLibraryView, items: [{ id: 'catalog', label: '资源广场' }, { id: 'installed', label: '已安装 / 已连接' }] }) : null,
-      h('div', { className: 'resource-toolbar' },
+      h('div', { className: 'resource-toolbar', title: `${libraryHelp}${kindHelp}` },
         !isPlatform && (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) && status === 'ready' ? h(Fragment, null,
-          h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, height: '36px', borderRadius: '10px', maxWidth: '360px', flex: '1 1 180px' } }),
-          resourceKind === 'skill' ? h('select', { value: sourceFilter, 'aria-label': 'Skill 来源', onChange: event => setSourceFilter(event.target.value), style: {...inputStyle(), width: '100px', marginTop:0} }, h('option',{value:'all'},'全部来源'),h('option',{value:'local'},'本地'),h('option',{value:'cloud'},'云端')) : null,
-          h('div', { 'data-studio-pager': 'true', style: { display: 'flex', alignItems: 'center', gap: '6px', color: BRAND.inkMuted, fontSize: '11px' } },
-            h('span', { title: `当前页 ${resources.length} 项` }, `${total || resources.length} 项 · 第 ${page + 1}/${pageCount} 页`),
-            h('select', { className: 'af-select', value: String(pageSize), onChange: event => setPageSize(Number(event.target.value)), 'aria-label': '每页显示数量', style: { ...inputStyle(), width: '100px', marginTop: 0, padding: '0 28px 0 10px', background: undefined, fontSize: '13px' } }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')),
-            h('button', { type: 'button', 'aria-label': '资源上一页', disabled: page <= 0 || status === 'loading', onClick: () => void previousPage(), style: pagerButtonStyle(page <= 0 || status === 'loading') }, '上一页'),
-            h('button', { type: 'button', 'aria-label': '资源下一页', disabled: !nextCursor || status === 'loading', onClick: () => void nextPage(), style: pagerButtonStyle(!nextCursor || status === 'loading') }, '下一页'))) : null,
+          h('span', { className: 'resource-count' }, `${total || resources.length} 项`),
+          h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: `搜索${label}`, 'aria-label': '搜索资源', style: { ...inputStyle(), marginTop: 0, marginLeft: 'auto', height: '32px', width: '220px' } }),
+          resourceKind === 'skill' ? h('select', { className: 'af-select studio-pick-quiet', value: sourceFilter, 'aria-label': 'Skill 来源', onChange: event => setSourceFilter(event.target.value) }, h('option',{value:'all'},'全部来源'),h('option',{value:'local'},'本地'),h('option',{value:'cloud'},'云端')) : null,
+          null) : null,
         h('div', { className: 'resource-toolbar-actions' },
-          h(ContentIntro, { detail: '资源库只负责资源目录生命周期：发现、导入、探测、查看、删除和状态刷新。新增或变更 Agent 绑定关系请在 Agent 创建页或编辑页完成。模型、Tool、MCP、Skill 可绑定多个；知识库、记忆库和 Skill Center 每类默认绑定一个。' }),
           h('button', { type: 'button', 'aria-label': '刷新', title: '刷新', onClick: () => void reloadCatalog(), style: { ...ghostButtonStyle(), width: '32px', minHeight: '32px', borderRadius: '50%' } }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1', strokeLinecap: 'round', strokeLinejoin: 'round' }))),
-          resourceKind === 'model' ? h('button', { type: 'button', onClick: () => setModelDialogOpen(true), style: primaryButtonStyle() }, '添加模型') : null,
-          resourceKind === 'mcp' ? h('button', { type: 'button', onClick: openMcpCreate, style: primaryButtonStyle() }, '添加 MCP') : null,
-          resourceKind === 'skill' ? h('button', { type: 'button', onClick: () => setSkillDialogOpen(true), style: primaryButtonStyle() }, '扫描本地 Skill') : null)),
+          null)),
       libraryView === 'catalog' && ['mcp','skill'].includes(resourceKind) ? h(ui.TemplateResourceLibrary, { key: resourceKind, kind: resourceKind, refreshKey: libraryRevision, onConfigureMcp: value => { setMcpEditing(value); setMcpDialogOpen(true); } }) : null,
-      ['skill', 'skill-space', 'mcp'].includes(resourceKind) ? h(ContentIntro, { detail: resourceKind === 'mcp' ? '探测通过表示连接和工具列表读取成功；工具是否能完成任务，需要在绑定的 Agent 中实际调用验证。移除配置只影响本机，删除云端 MCP 会清理云端资源。' : '本地已导入：文件已保存到本机。云端目录可见：绑定后由 Host 下载加载 Skill Space。两种状态都不代表脚本依赖或 Agent 实际执行已验证。' }) : null,
       libraryView !== 'catalog' && status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取资源目录', detail: '读取 Host 的资源清单和云端平台目录。' }) : null,
       libraryView !== 'catalog' && status === 'error' ? h(EmptyState, { icon: '!', title: '资源目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => void reloadCatalog(), style: buttonStyle() }, '重新读取') }) : null,
       (libraryView !== 'catalog' || !['mcp','skill'].includes(resourceKind)) && status === 'ready' ? h(Fragment, null,
         !isPlatform ? h('section', { style: { display: 'grid', gap: '10px' } },
           table || h(EmptyState, { icon: '◈', title: `暂无${label}`, detail: '可以从右上角添加、发现或刷新资源。' })
         ) : platformTable,
+        !isPlatform ? pager : null,
         message ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null,
         error ? h('div', { role: 'alert', style: { marginTop: '10px', color: BRAND.danger, fontSize: '12px' } }, error) : null,
       ) : null,
@@ -231,8 +241,8 @@ export function createResourcePages({
     const normalized = query.trim().toLowerCase();
     const visible = resources.filter(item => !normalized || `${item.displayName || ''} ${item.name || ''} ${item.resourceId || ''}`.toLowerCase().includes(normalized));
     return h('div', null,
-      h(ContentIntro, { detail: '汇总当前 Host 可发现的模型、MCP、Skill、知识库和记忆库，用于检查资源来源与连接状态。Agent 实际使用哪些资源，以其绑定和会话工具记录为准。', action: h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h(Pill, { tone: status === 'ready' && !warnings.length ? 'accent' : 'signal' }, status === 'ready' ? warnings.length ? '部分目录需处理' : '目录已读取' : '读取中'), h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '刷新')) }),
-      h(ContentIntro, { detail: '此处展示资源清单，不表示云端已部署或 Agent 已执行验证。DSH 会话动态加载的工具请在原生会话轨迹中查看。' }),
+      h('div', { className: 'studio-page-header', title: '汇总当前 Host 可发现的模型、MCP、Skill、知识库和记忆库，用于检查资源来源与连接状态。Agent 实际使用哪些资源，以其绑定和会话工具记录为准。此处展示资源清单，不表示云端已部署或 Agent 已执行验证。DSH 会话动态加载的工具请在原生会话轨迹中查看。' },
+        h('span', null, '运行资源'), h('div', { className: 'studio-page-actions' }, h(Pill, { tone: status === 'ready' && !warnings.length ? 'accent' : 'signal' }, status === 'ready' ? warnings.length ? '部分目录需处理' : '目录已读取' : '读取中'), h('button', { type: 'button', 'aria-label': '刷新', title: '刷新', onClick: () => void load(), style: ghostButtonStyle() }, '刷新'))),
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取运行资源', detail: '读取本地配置和各类云端资源目录。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '运行资源不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
@@ -265,8 +275,7 @@ export function createResourcePages({
       } catch { return 'models'; }
     });
     return h('div', null,
-      h(StudioSubnav, { value: tab, onChange: setTab, items: [{ id: 'models', label: '模型与工具' }, { id: 'runtime-resources', label: '运行资源' }] }),
-      tab === 'models' ? h(ResourcesPage) : h(RuntimeResourcesPage));
+      h(ResourcesPage, { initialRuntime: tab === 'runtime-resources' }));
   }
   return { ResourcesPage, RuntimeResourcesPage, ResourceWorkspace };
 }

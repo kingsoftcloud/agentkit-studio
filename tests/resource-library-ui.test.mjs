@@ -9,8 +9,9 @@ const text = tree => tree && typeof tree === 'object' ? tree.children.flat(Infin
 function render({ resources = [], kind = 'model', status = 'ready', error = '' } = {}) {
   let cursor = 0;
   const changes = [];
+  const effects = [];
   const values = { 0: kind, 1: 'installed', 4: resources, 10: resources.length, 13: status, 15: error };
-  const React = { createElement: h, Fragment: 'fragment', useEffect() {}, useRef: () => ({ current: 0 }), useState: initial => {
+  const React = { createElement: h, Fragment: 'fragment', useEffect: callback => effects.push(callback), useRef: () => ({ current: 0 }), useState: initial => {
     const index = cursor++;
     return [Object.hasOwn(values, index) ? values[index] : typeof initial === 'function' ? initial() : initial, value => changes.push([index, value])];
   } };
@@ -18,8 +19,19 @@ function render({ resources = [], kind = 'model', status = 'ready', error = '' }
   for (const name of ['Menu', 'MenuItemButton', 'ContentIntro', 'EmptyState', 'StudioPageTabs', 'StudioSubnav', 'Pill', 'ModelResourceDialog', 'ResourceDialog']) ui[name] = name;
   const { ResourcesPage } = createResourcePages({ ui, hostRemote: {}, window: { localStorage: { getItem() {}, removeItem() {} } } });
   const tree = ResourcesPage();
-  return { tree, all: nodes(tree), changes };
+  return { tree, all: nodes(tree), changes, effects };
 }
+
+test('resource kinds share one tab row and runtime resources retain their separate reader', () => {
+  const { all, changes, effects } = render({ kind: 'runtime-resources' });
+  const tabs = all.find(node => node.type === 'StudioPageTabs');
+  assert.deepEqual(tabs.props.items.map(item => item.label), ['模型', 'MCP', 'Skill', '知识库', '记忆库', '运行资源']);
+  assert.ok(all.some(node => node.type?.name === 'RuntimeResourcesPage'));
+  effects[1]();
+  assert.deepEqual(changes, []);
+  tabs.props.onChange('mcp');
+  assert.deepEqual(changes, [[0, 'mcp'], [1, 'catalog']]);
+});
 
 test('resource rows consolidate metadata, keep status detail and dispatch viewing', () => {
   const resource = { resourceId: 'model-one', displayName: '模型一', source: 'local', version: 'v1', status: 'ready' };
@@ -34,18 +46,20 @@ test('resource rows consolidate metadata, keep status detail and dispatch viewin
   all.find(node => node.type === 'button' && text(node) === '查看').props.onClick();
   assert.deepEqual(changes.at(-1), [23, resource]);
   const search = all.find(node => node.props?.['aria-label'] === '搜索资源');
-  assert.equal(search.props.style.height, '36px');
+  assert.equal(search.props.style.height, '32px');
+  assert.equal(search.props.style.width, '220px');
   const toolbar = all.find(node => node.props?.className === 'resource-toolbar');
   assert.ok(nodes(toolbar).includes(search));
-  assert.ok(nodes(toolbar).some(node => node.props?.['aria-label'] === '资源下一页'));
-  const pageSize = nodes(toolbar).find(node => node.props?.['aria-label'] === '每页显示数量');
-  assert.equal(pageSize.props.className, 'af-select');
-  assert.equal(pageSize.props.style.height, '32px');
-  assert.equal(pageSize.props.style.background, undefined);
+  assert.equal(nodes(toolbar).some(node => node.props?.['aria-label'] === '资源下一页'), false);
+  const footer = all.find(node => node.props?.['data-studio-pager']);
+  assert.ok(nodes(footer).some(node => node.props?.['aria-label'] === '资源下一页'));
+  const pageSize = nodes(footer).find(node => node.props?.['aria-label'] === '每页显示数量');
+  assert.equal(pageSize.props.className, 'af-select studio-pick-quiet');
+  assert.equal(pageSize.props.style?.background, undefined);
   pageSize.props.onChange({ target: { value: '50' } });
   assert.deepEqual(changes.at(-1), [7, 50]);
   assert.ok(nodes(toolbar).some(node => node.props?.['aria-label'] === '刷新' && nodes(node).some(child => child.type === 'svg')));
-  const add = nodes(toolbar).find(node => node.type === 'button' && text(node) === '添加模型');
+  const add = all.find(node => node.type === 'button' && text(node) === '添加模型');
   assert.equal(add.props.style.background, 'var(--dsw-alias-button-primary-fill, #0b0b0d)');
 });
 

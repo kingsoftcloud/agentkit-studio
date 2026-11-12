@@ -29,6 +29,18 @@ test('zero search results retain the search input and do not claim there are no 
   assert.equal(nodes.some(node => node.props.title === '还没有 Agent'), false);
 });
 
+test('Agent chips, search and refresh share one toolbar while pagination stays below the list', () => {
+  const nodes = render([{ metadata: { id: 'local-a' } }]);
+  const toolbar = nodes.find(node => node.props.className === 'ak-agents-toolbar');
+  const controls = walk(toolbar);
+  assert.ok(controls.some(node => node.type === 'nav'));
+  assert.equal(controls.find(node => node.props['aria-label'] === '搜索 Agent').props.style.width, '220px');
+  assert.ok(controls.some(node => node.props['aria-label'] === '刷新 Agent'));
+  assert.equal(controls.some(node => node.props['data-studio-pager']), false);
+  assert.ok(nodes.find(node => node.props['data-studio-pager']));
+  assert.ok(controls.find(node => node.props['aria-label'] === '筛选 Agent 状态').props.className.includes('studio-pick-quiet'));
+});
+
 test('a previous revision Build is shown as historical, not a built current revision', () => {
   const nodes = render([{ metadata: { id: 'local-a', revision: 2 }, builds: [{ revision: 1, status: 'SUCCEEDED' }] }]);
   assert.ok(nodes.find(node => node.props.className === 'studio-st' && node.children.includes('有历史构建')));

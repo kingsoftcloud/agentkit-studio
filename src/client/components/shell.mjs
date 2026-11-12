@@ -39,13 +39,14 @@ export function createStudioShell({
     const activeNav = PANELS.find(item => item.page === page) || PANELS[0];
     return h('div', {
       'data-agentkit-studio': 'product-application',
+      'data-studio-page-frame': true,
       style: { height: '100%', minHeight: 0, minWidth: 0, overflow: 'auto', background: 'var(--dsw-alias-bg-base, #ffffff)', color: BRAND.ink, fontFamily: 'inherit' },
     },
     h('main', { 'data-studio-shell-main': 'true', className: 'studio-page', style: { minWidth: 0, minHeight: '100%', maxWidth: '960px', margin: '0 auto', padding: '0 clamp(24px, 4vw, 48px) 72px' } },
       h('header', { 'data-studio-header': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px' } },
         h('div', null,
           h('h1', { style: { color: BRAND.ink, margin: 0, fontSize: '20px', lineHeight: '28px', fontWeight: 500 } }, activeNav.label)),
-        h('div', { className: 'studio-page-actions' }, action || h(HostStatusPill))),
+        h('div', { className: 'studio-page-actions' }, h(HostStatusPill), action || null)),
       page === 'overview' ? h(OverviewPage, { onNavigate }) : page === 'agents' ? h(AgentWorkspace, { onNavigate }) : page === 'resource-hub' ? h(ResourceWorkspace) : page === 'operations' ? h(OperationsWorkspace, { scheduleRemote }) : h(DomainPage, { page })));
   }
 

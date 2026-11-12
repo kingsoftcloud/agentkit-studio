@@ -7,7 +7,7 @@ export function createNavigation({
     if (variant === 'segmented') return h('nav', { 'aria-label': ariaLabel || 'Studio 二级导航', className: 'ak-segmented studio-tabs' },
       items.map(item => h('button', { key: item.id, type: 'button', onClick: () => onChange(item.id), 'aria-current': value === item.id ? 'page' : undefined }, item.label)));
     return h('nav', {
-      'aria-label': 'Studio 二级导航',
+      'aria-label': ariaLabel || 'Studio 二级导航',
       'data-studio-tabs': 'true',
       'data-studio-drag-region': 'true',
       // DSH only honours its own `[data-window-drag]` hook; the Studio marker

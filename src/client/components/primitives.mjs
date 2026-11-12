@@ -1,8 +1,10 @@
 import { BRAND } from '../theme.mjs';
+import { createHeaderAction } from './header-action.mjs';
 import { AGENTKIT_STUDIO_BRAND as PRODUCT_BRAND, AGENTKIT_STUDIO_MARK_BODY as STUDIO_MARK_BODY } from '../../brand.js';
 
-export function createStudioPrimitives({ React }) {
+export function createStudioPrimitives({ React, ReactDOM }) {
   const { createElement: h, useEffect, useState } = React;
+  const HeaderAction = createHeaderAction({ React, ReactDOM });
   const HelpTip = text => text ? h('i', { className: 'studio-help', role: 'img', 'aria-label': text, title: text, tabIndex: 0 }, 'i') : null;
   function SecretInput({ label = 'API Key', value = '', style = {}, ...props }) {
     const [visible, setVisible] = useState(false);
@@ -80,7 +82,7 @@ export function createStudioPrimitives({ React }) {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
       h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '16px', lineHeight: '24px', fontWeight: 500 } }, title),
       HelpTip(detail)),
-    action ? h('div', { className: 'studio-page-actions' }, action) : null);
+    action ? h(HeaderAction, null, h('div', { className: 'studio-page-actions' }, action)) : null);
   }
 
   function OperationalPanel({ title, detail, action, children }) {

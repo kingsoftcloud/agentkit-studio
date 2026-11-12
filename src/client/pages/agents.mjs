@@ -1,10 +1,14 @@
 import { createFormKit } from '../components/form-kit.mjs';
 import { focusOperations } from '../operations-focus.mjs';
+import { createHeaderAction } from '../components/header-action.mjs';
+import { refreshIcon } from '../components/refresh-icon.mjs';
 
 export function createAgentPages({
-  ui: { React: { createElement: h, useState, useEffect, useRef, Fragment }, Menu, MenuItemButton, BRAND, inputStyle, buttonStyle, pagerButtonStyle, StudioSubnav, RuntimeCatalogPage, EmptyState, Pill, RUNTIME_LABELS, DEPLOYMENT_LABELS, AgentCreatePage, AgentEditPage },
+  ui,
   window = globalThis.window, hostRemote, actions
 }) {
+  const { React: { createElement: h, useState, useEffect, useRef, Fragment }, Menu, MenuItemButton, BRAND, inputStyle, buttonStyle, pagerButtonStyle, StudioSubnav, RuntimeCatalogPage, EmptyState, Pill, RUNTIME_LABELS, DEPLOYMENT_LABELS, AgentCreatePage, AgentEditPage } = ui;
+  const HeaderAction = createHeaderAction(ui);
   const { Button } = createFormKit({ React: { createElement: h } });
   function AgentWorkspace({ onNavigate }) {
     const [view, setView] = useState('list');
@@ -100,12 +104,11 @@ export function createAgentPages({
     });
     const filteredPageAgents = filteredAgents;
     const pageCount = Math.max(1, Math.ceil((total || filteredPageAgents.length) / pageSize));
+    const listControls = tab !== 'runtime' && (agents.length || query.trim()) ? h('div', { className: 'studio-toolbar-controls' },
+          h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索 Agent 名称或 ID', 'aria-label': '搜索 Agent', style: { ...inputStyle(), marginTop: 0, width: '220px' } }),
+          h('button', { type: 'button', className: 'af-btn', 'aria-label': '刷新 Agent', title: '刷新', onClick: () => void load() }, refreshIcon(h)),
+          h('select', { className: 'af-select studio-pick-quiet', hidden: tab === 'cloud', value: statusFilter, onChange: event => setStatusFilter(event.target.value), 'aria-label': '筛选 Agent 状态', style: { display: tab === 'cloud' ? 'none' : undefined } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'built' }, '已构建'), h('option', { value: 'draft' }, '草稿'))) : null;
     const agentTable = agents.length || query.trim() ? h('section', { 'data-studio-agent-list': 'true', className: 'ak-agents-list' },
-      h('div', { className: 'ak-agents-list-head' },
-        h('strong', null, `${total} 个${tab === 'cloud' ? '云端' : '本地'} Agent`),
-        h('div', { style: { display: 'flex', gap: '8px', minWidth: 'min(100%, 430px)' } },
-          h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索 Agent 名称或 ID', 'aria-label': '搜索 Agent', style: { ...inputStyle(), marginTop: 0, flex: 1, minWidth: '180px' } }),
-          h('select', { hidden: tab === 'cloud', value: statusFilter, onChange: event => setStatusFilter(event.target.value), 'aria-label': '筛选 Agent 状态', style: { ...inputStyle(), display: tab === 'cloud' ? 'none' : undefined, marginTop: 0, width: '112px' } }, h('option', { value: 'all' }, '全部状态'), h('option', { value: 'built' }, '已构建'), h('option', { value: 'draft' }, '草稿')))),
       h('div', { 'data-studio-agent-grid': 'true', style: { overflow: 'auto', maxHeight: 'min(64vh, 680px)', padding: '0 8px', display: 'flex', flexDirection: 'column', gap: '2px' } }, filteredPageAgents.map(agent => {
         const metadata = agent?.metadata || agent || {};
         const spec = agent?.spec || {};
@@ -145,23 +148,25 @@ export function createAgentPages({
               agent?.metadata?.local ? h(MenuItemButton, { onSelect: async () => { setRowMenu(''); if (!await actions.confirm({ title: '删除本地 Agent', detail: `确定删除本地 Agent「${agent?.metadata?.name || agent?.metadata?.id}」吗？此操作不可撤销。`, confirmLabel: '删除', danger: true })) return; void onDeleteLocal?.(agent?.metadata?.id); } }, '删除') : null)));
       })),
       h('div', { 'data-studio-pager': 'true', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 14px', borderTop: '.5px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-tertiary)', fontSize: '12px' } },
-        h('span', null, `${total || filteredPageAgents.length} 个 Agent · 第 ${Math.min(page, pageCount)}/${pageCount} 页`),
+        h('span', null, `${total || filteredPageAgents.length} 个 Agent`),
         h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-          h('select', { value: String(pageSize), onChange: event => { setPageSize(Number(event.target.value)); setPage(1); }, 'aria-label': '每页显示数量', style: { ...inputStyle(), width: '112px', marginTop: 0, padding: '0 7px' } }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')),
-          h('button', { type: 'button', 'aria-label': 'Agent 上一页', disabled: page <= 1 || status === 'loading', onClick: () => setPage(current => Math.max(1, current - 1)), style: pagerButtonStyle(page <= 1 || status === 'loading') }, '上一页'),
-          h('button', { type: 'button', 'aria-label': 'Agent 下一页', disabled: page >= pageCount || status === 'loading', onClick: () => setPage(current => Math.min(pageCount, current + 1)), style: pagerButtonStyle(page >= pageCount || status === 'loading') }, '下一页')))
+          h('select', { className: 'af-select studio-pick-quiet', value: String(pageSize), onChange: event => { setPageSize(Number(event.target.value)); setPage(1); }, 'aria-label': '每页显示数量' }, h('option', { value: '10' }, '每页 10 条'), h('option', { value: '20' }, '每页 20 条'), h('option', { value: '50' }, '每页 50 条')),
+          h('button', { type: 'button', 'aria-label': 'Agent 上一页', disabled: page <= 1 || status === 'loading', onClick: () => setPage(current => Math.max(1, current - 1)), style: pagerButtonStyle(page <= 1 || status === 'loading') }, '‹'),
+          h('span', null, `${Math.min(page, pageCount)}/${pageCount}`),
+          h('button', { type: 'button', 'aria-label': 'Agent 下一页', disabled: page >= pageCount || status === 'loading', onClick: () => setPage(current => Math.min(pageCount, current + 1)), style: pagerButtonStyle(page >= pageCount || status === 'loading') }, '›')))
     ) : null;
     return h('div', null,
       h('div', { className: 'ak-agents-toolbar' },
-        h(StudioSubnav, { variant: 'segmented', ariaLabel: 'Agent 范围', value: tab, onChange: value => { if (value === tab) return; setPage(1); setQuery(''); setStatusFilter('all'); setAgents([]); setTotal(0); setStatus('loading'); onTabChange(value); }, items: [{ id: 'local', label: '本地' }, { id: 'cloud', label: '云端' }, { id: 'runtime', label: '运行目标' }] }),
-        tab === 'runtime' ? null : h('div', { className: 'ak-agents-actions ak-create-group' },
+        h(StudioSubnav, { ariaLabel: 'Agent 范围', value: tab, onChange: value => { if (value === tab) return; setPage(1); setQuery(''); setStatusFilter('all'); setAgents([]); setTotal(0); setStatus('loading'); onTabChange(value); }, items: [{ id: 'local', label: '本地' }, { id: 'cloud', label: '云端' }, { id: 'runtime', label: '运行目标' }] }),
+        listControls,
+        tab === 'runtime' ? null : h(HeaderAction, null, h('div', { className: 'ak-agents-actions ak-create-group' },
           Button({ variant: 'primary', className: 'ak-create-primary', 'aria-label': '对话创建', onClick: () => onCreate('conversation'), disabled: status !== 'ready', title: '通过多轮对话完善提示词和资源绑定，确认草稿后创建' },
             h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'm12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z' })), '对话创建'),
           h(Menu, { open: createMenuOpen, portal: true, compact: true, align: 'end', onClose: () => setCreateMenuOpen(false),
             anchor: Button({ variant: 'primary', className: 'ak-create-more', 'aria-label': '更多创建方式', 'aria-haspopup': 'menu', 'aria-expanded': createMenuOpen, onClick: () => setCreateMenuOpen(value => !value) },
               h('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'm6 9 6 6 6-6', strokeLinecap: 'round', strokeLinejoin: 'round' }))) },
             h(MenuItemButton, { disabled: status !== 'ready', onSelect: () => { setCreateMenuOpen(false); onCreate('manual'); } }, '手动配置'),
-            h(MenuItemButton, { onSelect: () => { setCreateMenuOpen(false); onNavigate('experts'); } }, '从专家模板创建')))),
+            h(MenuItemButton, { onSelect: () => { setCreateMenuOpen(false); onNavigate('experts'); } }, '从专家模板创建'))))),
       tab === 'runtime' ? h(RuntimeCatalogPage, { onNavigate }) : null,
       tab === 'runtime' ? null : h(Fragment, null,
       created ? h('div', { role: 'status', className: 'ak-agents-notice' }, `${created.updated ? '已保存' : '已创建'} ${created.name || created.id}（r${created.revision || 1}），${created.source === 'agentengine-managed-runtime' ? '新会话将使用更新后的云端配置。' : '可在运行中心构建。'}`) : null,

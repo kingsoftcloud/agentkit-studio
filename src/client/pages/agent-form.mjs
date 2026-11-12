@@ -22,7 +22,7 @@ export function createAgentForm({
   const kit = createFormKit({ React });
   const { Section: FormSection, Row: FormRow, Field, Input, TextArea, Select, Switch, Choice, CheckCard, Button, Note: FormNote, Collapsible, Summary, HelpTip } = kit;
   const Section = (props, ...children) => FormSection(props, h('div', { className: 'studio-panel af-config-panel' }, ...children));
-  const Row = (props, ...children) => FormRow({ ...props, className: 'af-row studio-srow' }, ...children);
+  const Row = ({ help, title, ...props }, ...children) => FormRow({ ...props, title: help ? h('span', { title: help }, title) : title, className: 'af-row studio-srow' }, ...children);
   const Note = (props, ...children) => FormNote({ title: children.every(child => typeof child === 'string') ? children.join('') : undefined, ...props }, ...children);
   const nativeRoleFields = createNativeRoleFields({ React, kit });
   function AgentCreatePage({ initialAgent = null, creationSeed = null, onBack, onCreated, onReload, allowHarnessRuntime = false }) {
@@ -211,13 +211,15 @@ export function createAgentForm({
         key: value, selected: form.template === value, title, desc: detail, onClick: () => chooseTemplate(value),
       })))) : null;
 
-    const capabilityPicker = (kind, title, values, setValues) => FormSection({ title, meta: title ? `${values.length} 已选择` : undefined, className: title ? undefined : 'af-section-plain' },
+    const capabilityPicker = (kind, title, values, setValues) => Row({ title: title || '工具', desc: `${values.length} 已选择` },
+      h('span', { className: 'af-selection-summary' }, values.length ? `${values.length} 项` : '未绑定'),
+      Collapsible({ summary: values.length ? '更改' : '绑定', className: 'af-binding-picker' },
       catalog[kind]?.length ? h('div', { className: 'af-choices' }, catalog[kind].map(resource => {
         const id = resource.resourceId;
         return CheckCard({ key: id, checked: values.includes(id), disabled: resource.disabled === true,
           title: resource.displayName || resource.name || id, desc: resource.unavailableReason || resource.description || resource.version || '',
           onChange: event => setValues(current => event.target.checked ? [...current, id] : current.filter(value => value !== id)) });
-      })) : h('div', { className: 'af-empty' }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源'));
+      })) : h('div', { className: 'af-empty' }, catalogStatus === 'loading' ? '正在读取目录…' : '暂无可用资源')));
 
     // Native memory configuration. The local-default path (harness, blank/edit)
     // exposes recall/write/rollout; every other enabled path is cloud-only and
@@ -284,13 +286,14 @@ export function createAgentForm({
       cloudEditing ? Note({ role: 'status' }, '当前是云端 Agent。模型、MCP、本地 Skill 和 Tool 由 AgentEngine Runtime 自身管理；本页只保存知识库、记忆库和 Skill Center 这三类云端 ComponentConfig。') : null,
       !cloudEditing && form.runtime === 'codex' ? Note({ role: 'status' }, '可选 Codex 账户模型或已配置的网关模型；网关模型使用对应提供商的凭证和 API 设置。导出运行包时只支持网关模型。') : null,
       !cloudEditing ? Section({ title: '模型' },
-        Field({ label: '默认模型' }, Select({ value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); } }, h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'), catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, resource.displayName || resource.name || resource.resourceId)))),
-        h('div', { className: 'af-field-label' }, '可用模型', HelpTip('对话中可切换到这些模型；默认模型始终可用。')),
-        h('div', { className: 'af-choices' }, catalog.model.map(resource => CheckCard({ key: resource.resourceId, checked: selectedModels.includes(resource.resourceId), title: resource.displayName || resource.name || resource.resourceId,
-          onChange: event => setSelectedModels(current => event.target.checked ? [...current, resource.resourceId] : current.filter(id => id !== resource.resourceId)) })))) : null,
+        Row({ title: '默认模型' }, Select({ 'aria-label': '默认模型', value: selectedModel, onChange: event => { setSelectedModel(event.target.value); setSelectedModels(current => current.includes(event.target.value) ? current : [event.target.value, ...current]); } }, h('option', { value: '' }, catalogStatus === 'loading' ? '正在读取模型…' : '请选择模型'), catalog.model.map(resource => h('option', { key: resource.resourceId, value: resource.resourceId }, resource.displayName || resource.name || resource.resourceId)))),
+        Row({ title: '可用模型', help: '对话中可切换到这些模型；默认模型始终可用。' },
+          h('div', { className: 'af-selected-chips' }, catalog.model.filter(resource => selectedModels.includes(resource.resourceId)).map(resource => h('span', { key: resource.resourceId, className: 'af-runtime-tag' }, resource.displayName || resource.name || resource.resourceId))),
+          Collapsible({ summary: '添加', className: 'af-binding-picker' }, h('div', { className: 'af-choices' }, catalog.model.map(resource => CheckCard({ key: resource.resourceId, checked: selectedModels.includes(resource.resourceId), title: resource.displayName || resource.name || resource.resourceId,
+          onChange: event => setSelectedModels(current => event.target.checked ? [...current, resource.resourceId] : current.filter(id => id !== resource.resourceId)) })))))) : null,
       Section({ title: '能力' },
       !cloudEditing && form.runtime === 'dsh-native'
-        ? FormSection({ title: '工具' }, Note({ style: { margin: 0 } }, 'DSH Native 使用自带的工具循环，无需绑定工具；MCP、Skill 和平台资源仍可按需绑定。'))
+        ? Row({ title: '工具', desc: '使用 DSH Native 工具循环', help: 'DSH Native 使用自带的工具循环，无需绑定工具；MCP、Skill 和平台资源仍可按需绑定。' })
         : !cloudEditing && form.runtime === 'harness' ? FormSection({ title: '工具', help: NATIVE_TOOL_HELP, meta: `${selectedTools.length} 已选择` },
           catalog.tool.find(tool => tool.resourceId === 'web_search')?.disabled
             ? Note({ role: 'status' }, catalog.tool.find(tool => tool.resourceId === 'web_search').unavailableReason) : null,

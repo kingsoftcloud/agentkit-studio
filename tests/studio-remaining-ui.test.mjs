@@ -21,6 +21,8 @@ test('overview start cards and workspace use only existing actions and totals', 
   const tree = Page({ onNavigate: route => routes.push(route) }), all = nodes(tree);
   assert.equal(all.filter(node => node.props.className === 'studio-start-card').length, 3);
   assert.equal(all.filter(node => node.props.className === 'studio-stats studio-panel')[0].children.length, 4);
+  const stats = all.find(node => node.props.className === 'studio-stats studio-panel');
+  assert.deepEqual(stats.children.map(cell => cell.children.map(text)), [['3', 'Agent'], ['2', '运行时'], ['—', '资源'], ['—', '交付']]);
   for (const label of ['对话创建', '手动配置', '从模板开始', '去配置']) all.find(node => node.type === 'button' && (text(node) === label || node.children.some(child => child.type === 'strong' && text(child) === label))).props.onClick();
   assert.deepEqual(events, ['agentkit-studio:open-authoring', 'agentkit-studio:open-settings']);
   assert.deepEqual(routes, ['agents', 'experts']);
@@ -31,6 +33,8 @@ test('overview empty/loading and error states keep recovery and credential warni
   for (const status of ['loading', 'error', 'ready']) {
     const Page = createOverviewPage({ ui: ui([{ status, agents: 0, runtimes: null, error: 'Host offline', warning: 'Runtime unavailable' }, { status: 'ready', configured: true }]), hostRemote: {}, window: {} });
     const all = nodes(Page({}));
+    const stats = all.find(node => node.props.className === 'studio-stats studio-panel');
+    assert.deepEqual(stats.children.map(cell => text(cell.children[0])), [status === 'ready' ? '0' : '—', '—', '—', '—']);
     assert.equal(all.some(node => node.type === 'EmptyState'), status !== 'ready');
     assert.equal(all.some(node => text(node) === '去配置'), false);
     assert.ok(all.some(node => node.props.role === 'status' && text(node) === 'Runtime unavailable'));
@@ -97,8 +101,9 @@ test('operational headings group multiple actions at the right without losing em
   const { OperationalPageHeading } = createStudioPrimitives({ React: react([]) });
   const actions = h('Fragment', null, h('button', null, '新增渠道'), h('span', null, '待配置'));
   const heading = OperationalPageHeading({ title: 'Channels', detail: '连接错误', action: actions });
-  assert.equal(heading.children[1].props.className, 'studio-page-actions');
-  assert.equal(heading.children[1].children[0], actions);
+  const group = nodes(heading).find(node => node.props.className === 'studio-page-actions');
+  assert.ok(group);
+  assert.equal(group.children[0], actions);
   assert.ok(nodes(heading).some(node => node.props.title === '连接错误'));
   assert.equal(OperationalPageHeading({ title: '观测' }).children.length, 1);
 });

@@ -62,9 +62,9 @@ test('the delivery page stacks its rows and actions on a narrow shell', () => {
   assert.match(block, /\.ad-actions \{ justify-content: flex-start/, 'actions must not stay pinned right');
 });
 
-test('the form centres its column instead of hugging the left edge of a wide window', () => {
-  assert.match(agentFormStyles, /\[data-studio-agent-form\] > \[data-studio-heading\],[\s\S]{0,80}\[data-studio-agent-form\] > \.af-layout \{ max-width: 848px; margin-inline: auto; \}/);
-  assert.match(agentFormStyles, /\[data-studio-agent-form\] > \.af-layout/, 'the layout must be centred');
+test('the form aligns its heading and layout to the content column', () => {
+  assert.match(agentFormStyles, /\[data-studio-agent-form\] > \[data-studio-heading\],[\s\S]{0,80}\[data-studio-agent-form\] > \.af-layout \{ max-width: 848px; margin-inline: 0; \}/);
+  assert.match(agentFormStyles, /\[data-studio-agent-form\] > \.af-layout/, 'the layout shares the heading start');
   assert.match(rule(/\.af-field-label \{([^}]*)\}/), /margin-bottom: 8px; font-size: 14px; font-weight: 500/);
   assert.match(rule(/\.af-field \{([^}]*)\}/), /margin: 0 0 20px/);
   assert.match(rule(/\.af-footer \{([^}]*)\}/), /justify-content: flex-end/);

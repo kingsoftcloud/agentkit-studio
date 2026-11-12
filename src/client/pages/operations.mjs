@@ -20,7 +20,7 @@ export function createOperationsWorkspace({
       return () => window.removeEventListener(OPERATIONS_FOCUS_KEY, receive);
     }, []);
     return h('div', null,
-      h(StudioSubnav, { value: tab, onChange: setTab, items: [{ id: 'delivery', label: '构建与部署' }, { id: 'automation', label: '自动化' }, { id: 'evaluation', label: '评测' }, { id: 'observability', label: '观测' }, { id: 'channels', label: 'Channels' }] }),
+      h(StudioSubnav, { variant: 'segmented', value: tab, onChange: setTab, items: [{ id: 'delivery', label: '构建与部署' }, { id: 'automation', label: '自动化' }, { id: 'evaluation', label: '评测' }, { id: 'observability', label: '观测' }, { id: 'channels', label: 'Channels' }] }),
       tab === 'delivery' ? h(DeliveryPage, { focus }) : tab === 'automation' ? h(AutomationPage, { scheduleRemote }) : h(OperationalPage, { page: tab }));
   }
   return { OperationalPage, OperationsWorkspace };

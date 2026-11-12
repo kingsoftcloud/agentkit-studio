@@ -3,7 +3,7 @@ export default String.raw`
 [data-studio-agent-form] [data-studio-heading] { margin-bottom: 24px; align-items: center; }
 .af-layout { display: grid; grid-template-columns: 184px minmax(0,640px); gap: 24px; align-items: start; }
 [data-studio-agent-form] > [data-studio-heading],
-[data-studio-agent-form] > .af-layout { max-width: 848px; margin-inline: auto; }
+[data-studio-agent-form] > .af-layout { max-width: 848px; margin-inline: 0; }
 .af-page-heading { display: flex; align-items: center; gap: 12px; }
 [data-studio-agent-form] .af-page-heading [data-studio-heading] { margin-bottom: 0; }
 .af-page-heading h2 { font-size: 20px !important; line-height: 28px !important; font-weight: 500; }
@@ -21,7 +21,7 @@ export default String.raw`
 .af-config-panel > .af-section { margin-top: 16px; }
 .af-config-panel > .af-field, .af-config-panel > .af-choices, .af-config-panel > .af-grid-3, .af-config-panel > .af-details, .af-config-panel > .af-note, .af-config-panel > .af-empty, .af-config-panel > .af-summary { margin: 16px 0; }
 .af-config-panel .studio-srow { box-sizing: border-box; min-height: 56px; padding: 12px 0; border-bottom: 0; }
-[data-studio-agent-form] .af-note:not([role="alert"]) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+[data-studio-agent-form] .af-note { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .af-field-label small { color: var(--dsw-alias-label-tertiary); font-size: 12px; font-weight: 400; margin-left: 8px; }
 .af-runtime-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 .af-btn.af-runtime-option { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; height: auto; min-height: 88px; padding: 12px; white-space: normal; text-align: left; }
@@ -120,6 +120,7 @@ export default String.raw`
 [data-studio-agent-form] :is(.af-input,.af-textarea,.af-select,.af-btn,.af-choice,.af-step):focus-visible, [data-studio-agent-form] :is(.af-check,.af-switch) input:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary)); outline-offset: 1px; }
 /* Agent list entry page */
 .ak-agents-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.ak-agents-toolbar > .studio-chips { margin-bottom: 0; }
 .ak-agents-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ak-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--dsw-radius-md,12px); background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2,#f4f5f6)); }
 .ak-segmented > button { height: 32px; padding: 0 14px; border: 0; border-radius: var(--dsw-radius-sm,8px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; white-space: nowrap; }
