@@ -194,7 +194,7 @@ test('Native Host uses admitted tool sources for counting/model/recovery and pre
   await f.host.executeTurn(f.payload);
   const head = f.head(), original = f.ledger.load(head.scope, head.runId);
   const expected = [persona, 'ADMITTED_FILE_GUIDANCE', 'Preserve enterprise instructions.'].join('\n\n');
-  assert.equal(original.configuration.hostRecoveryBinding.instructionAssemblyPolicy, 'native-owned-sections/v3');
+  assert.equal(original.configuration.hostRecoveryBinding.instructionAssemblyPolicy, 'engine-instructions/v1');
   assert.equal(original.configuration.hostRecoveryBinding.systemPrompt, expected);
   assert.equal(original.snapshot.messages[0].content, expected);
   const body = JSON.parse(f.requests[0].options.body);

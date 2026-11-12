@@ -111,7 +111,8 @@ test('bound Agents use the official DSH native conversation surface', () => {
   assert.doesNotMatch(clientSource, /function BoundAgentConversationPage/);
   assert.doesNotMatch(clientSource, /onOpenConversation/);
   assert.match(clientSource, /actions\.registerBinding/);
-  assert.match(clientSource, /sessions\.create\(admission \? \{ agentPreset: admission\.presetId \} : \{\}\)/);
+  assert.match(clientSource, /const sessionOptions = admission \? \{ agentPreset: admission\.presetId \} : \{\}/);
+  assert.match(clientSource, /navCtx\.sessions\.create\(sessionOptions\)/);
   assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
 });
 
