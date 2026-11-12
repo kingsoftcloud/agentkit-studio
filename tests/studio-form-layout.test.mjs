@@ -20,16 +20,16 @@ test('a disabled primary button keeps its label readable', () => {
   assert.match(disabled, /opacity: \.4/);
 });
 
-test('the agent form uses a capped body and horizontal text steps', () => {
+test('the agent form uses a capped body and vertical step rail', () => {
   const layout = rule(/\.af-layout \{([^}]*)\}/);
-  assert.match(layout, /grid-template-columns: minmax\(0,1fr\)/);
+  assert.match(layout, /grid-template-columns: 184px minmax\(0,640px\)/);
   const bodyRule = agentFormStyles.match(/\.af-body \{[^}]*\}/)[0];
   const body = Number(bodyRule.match(/max-width: (\d+)px/)[1]);
-  assert.equal(body, 720);
-  assert.match(rule(/\.af-steps \{([^}]*)\}/), /flex-direction: row; flex-wrap: wrap; gap: 24px/);
+  assert.equal(body, 640);
+  assert.match(rule(/\.af-steps \{([^}]*)\}/), /flex-direction: column; gap: 16px/);
   assert.doesNotMatch(agentFormStyles, /\.af-step\[aria-current="step"\] \{[^}]*background:/);
-  assert.match(agentFormStyles, /@container studio-agent-form \(max-width: 1000px\)/);
-  const block = agentFormStyles.slice(agentFormStyles.indexOf('@container studio-agent-form (max-width: 1000px)'));
+  assert.match(agentFormStyles, /@container studio-agent-form \(max-width: 720px\)/);
+  const block = agentFormStyles.slice(agentFormStyles.indexOf('@container studio-agent-form (max-width: 720px)'));
   assert.match(block, /\.af-layout \{ grid-template-columns: minmax\(0,1fr\)/, 'the rail must fold into a row');
   assert.match(block, /\.af-steps \{ position: static; flex-direction: row/, 'the rail must become a horizontal step strip');
   assert.match(block, /\.af-row-control \{ width: 100%/, 'row controls must stop sharing the line with their label');
@@ -45,7 +45,7 @@ test('the delivery page stacks its rows and actions on a narrow shell', () => {
 });
 
 test('the form centres its column instead of hugging the left edge of a wide window', () => {
-  assert.match(agentFormStyles, /\[data-studio-agent-form\] > \[data-studio-heading\],[\s\S]{0,80}\[data-studio-agent-form\] > \.af-layout \{ max-width: 720px; margin-inline: auto; \}/);
+  assert.match(agentFormStyles, /\[data-studio-agent-form\] > \[data-studio-heading\],[\s\S]{0,80}\[data-studio-agent-form\] > \.af-layout \{ max-width: 848px; margin-inline: auto; \}/);
   assert.match(agentFormStyles, /\[data-studio-agent-form\] > \.af-layout/, 'the layout must be centred');
   assert.match(rule(/\.af-field-label \{([^}]*)\}/), /margin-bottom: 8px; font-size: 14px; font-weight: 500/);
   assert.match(rule(/\.af-field \{([^}]*)\}/), /margin: 0 0 20px/);

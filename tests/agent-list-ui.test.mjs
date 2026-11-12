@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentPages } from '../src/client/pages/agents.mjs';
 const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.anchor)] : [];
-function render(agents, query = '', props = {}, changes = [], menuOpen = false, status = 'ready') {
+function render(agents, query = '', props = {}, changes = [], menuOpen = false, status = 'ready', window = {}) {
   const states = [agents, status, '', [], query, 'all', 1, 20, agents.length, '', menuOpen];
   let cursor = 0;
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
-  const { AgentsPage: Page } = createAgentPages({ ui: { React: { Fragment: 'fragment', createElement: h, useState: () => { const index = cursor++; return [states[index], value => changes.push([index, value])]; }, useEffect() {}, useRef: () => ({ current: 0 }) }, Menu: 'menu', MenuItemButton: 'menuitem', BRAND: {}, inputStyle: () => ({}), buttonStyle: () => ({}), pagerButtonStyle: () => ({}), StudioSubnav: 'nav', RuntimeCatalogPage: 'runtime', EmptyState: 'empty', Pill: 'pill', RUNTIME_LABELS: {}, DEPLOYMENT_LABELS: {} }, window: {}, hostRemote: {}, actions: {} });
+  const { AgentsPage: Page } = createAgentPages({ ui: { React: { Fragment: 'fragment', createElement: h, useState: () => { const index = cursor++; return [states[index], value => changes.push([index, value])]; }, useEffect() {}, useRef: () => ({ current: 0 }) }, Menu: 'menu', MenuItemButton: 'menuitem', BRAND: {}, inputStyle: () => ({}), buttonStyle: () => ({}), pagerButtonStyle: () => ({}), StudioSubnav: 'nav', RuntimeCatalogPage: 'runtime', EmptyState: 'empty', Pill: 'pill', RUNTIME_LABELS: {}, DEPLOYMENT_LABELS: {} }, window, hostRemote: {}, actions: {} });
   return walk(Page(props));
 }
 
@@ -31,7 +31,7 @@ test('zero search results retain the search input and do not claim there are no 
 
 test('a previous revision Build is shown as historical, not a built current revision', () => {
   const nodes = render([{ metadata: { id: 'local-a', revision: 2 }, builds: [{ revision: 1, status: 'SUCCEEDED' }] }]);
-  assert.ok(nodes.find(node => node.type === 'pill' && node.children.includes('有历史构建')));
+  assert.ok(nodes.find(node => node.props.className === 'studio-st' && node.children.includes('有历史构建')));
   assert.equal(nodes.some(node => node.type === 'pill' && node.children.includes('已构建')), false);
 });
 
@@ -60,7 +60,7 @@ test('API-created ManagedRuntime cards expose separate management and deletion a
   const nodes = render([{ metadata: { id: 'ar-managed', name: '托管 Agent', local: false }, managedRuntime: true,
     source: 'agentengine-managed-runtime', deployment: { available: true }, spec: { runtime: { type: 'dsh-native' } } }], '', { tab: 'cloud' });
   assert.ok(nodes.find(node => node.type === 'button' && node.children.includes('管理')));
-  assert.ok(nodes.find(node => node.type === 'button' && node.children.includes('删除')));
+  assert.ok(nodes.find(node => node.type === 'menuitem' && node.children.includes('删除')));
   assert.equal(nodes.some(node => node.type === 'button' && node.children.includes('管理 / 删除')), false);
 });
 
@@ -80,9 +80,33 @@ test('Agent rows consolidate metadata while retaining keyboard and action dispat
   const nodes = render([agent], '', { onEdit: value => edited.push(value) });
   const row = nodes.find(node => node.props['data-studio-agent-card'] === 'local-row');
   assert.equal(row.props.tabIndex, 0);
-  assert.ok(nodes.some(node => node.props.className === 'ak-agent-icon'));
-  assert.ok(nodes.some(node => node.props.className === 'ak-agent-meta' && node.children.includes('codex · r2 · local-row')));
+  assert.ok(nodes.some(node => node.props.className === 'studio-tile'));
+  assert.ok(nodes.some(node => node.props.className === 'studio-row-meta' && node.children.includes('codex · r2')));
+  assert.ok(nodes.some(node => node.props.className === 'studio-row-id' && node.children.includes('local-row')));
   assert.equal(nodes.find(node => node.props['data-studio-agent-grid']).props.style.flexDirection, 'column');
   row.props.onKeyDown({ key: 'Enter', preventDefault() {} });
   assert.deepEqual(edited, [agent]);
+});
+
+test('local rows expose one build or deploy next step and keep conversation binding', async () => {
+  for (const built of [false, true]) {
+    const routes = [], events = [], stored = [], bound = [];
+    const agent = { metadata: { id: 'a', local: true, revision: 2 }, builds: built ? [{ status: 'SUCCEEDED', revision: 2 }] : [] };
+    const window = { localStorage: { setItem: (...args) => stored.push(args) }, dispatchEvent: event => events.push(event) };
+    const nodes = render([agent], '', { onNavigate: route => routes.push(route), onBindAgent: value => bound.push(value) }, [], false, 'ready', window);
+    const next = nodes.find(node => node.type === 'button' && node.children.includes(built ? '部署' : '构建'));
+    assert.equal(next.props['data-variant'], 'outline');
+    next.props.onClick({ stopPropagation() {} });
+    assert.equal(JSON.parse(stored[0][1]).section, built ? 'deploy' : 'build');
+    assert.equal(events[0].type, 'agentkit-studio:operations-focus');
+    assert.deepEqual(routes, ['studio-operations']);
+    const chat = nodes.find(node => node.type === 'button' && node.children.includes('对话'));
+    assert.equal(chat.props['data-variant'], 'ghost');
+    await chat.props.onClick({ stopPropagation() {} });
+    assert.deepEqual(bound, [agent]);
+    assert.ok(nodes.some(node => node.type === 'menuitem' && node.children.includes('编辑 Agent')));
+    assert.ok(nodes.some(node => node.type === 'menuitem' && node.children.includes('删除')));
+  }
+  const nodes = render([{ metadata: { id: 'blocked' }, deployment: { available: false } }]);
+  assert.equal(nodes.find(node => node.type === 'button' && node.children.includes('对话')).props.disabled, true);
 });

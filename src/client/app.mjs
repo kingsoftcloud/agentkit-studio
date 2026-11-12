@@ -97,7 +97,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.EvaluationPage = createEvaluationPage({ ui, hostRemote, window, document });
   ui.ObservabilityPage = createObservabilityPage({ ui, hostRemote, window, document });
   ui.ChannelsPage = createChannelsPage({ ui, hostRemote, actions, window });
-  Object.assign(ui, createOperationsWorkspace({ ui }));
+  Object.assign(ui, createOperationsWorkspace({ ui, window }));
   const documentEffects = createProductDocumentEffects({ window, document, MutationObserver });
   const { createDshModelBridge: makeModelBridge } = createModelBridge({ hostRemote });
   const createDshModelBridge = ctx => makeModelBridge(ctx, { isActive: () => !closed });

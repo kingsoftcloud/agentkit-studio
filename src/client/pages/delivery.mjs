@@ -1,6 +1,7 @@
 import { createFormKit } from '../components/form-kit.mjs';
 import { DEPLOYMENT_ATTENTION_STATES, DEPLOYMENT_LABELS, DEPLOYMENT_POLL_STATES, deliveryDate } from '../state/deployment.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
+import { consumeOperationsFocus } from '../operations-focus.mjs';
 
 /**
  * Deployments always run on the platform's default persistent volume.
@@ -216,7 +217,7 @@ export function createDeliveryPages({
           h('pre', { className: 'ad-log' }, log.lines.join('\n') || '暂无日志')) : null));
   }
 
-  function DeliveryPage() {
+  function DeliveryPage({ focus } = {}) {
     const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
     const [agents, setAgents] = useState([]);
     const [deployments, setDeployments] = useState([]);
@@ -233,6 +234,8 @@ export function createDeliveryPages({
     const [agentLoading, setAgentLoading] = useState(false);
     const [deploymentBusy, setDeploymentBusy] = useState(false);
     const agentRequest = useRef(0);
+    const pageElement = useRef(null);
+    const [loadedFocus, setLoadedFocus] = useState(null);
 
     const load = async (preferredAgent = selectedAgent) => {
       const request = ++agentRequest.current;
@@ -265,6 +268,7 @@ export function createDeliveryPages({
         }
         const readyBuild = [...builds].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
         setSelectedBuild(String(readyBuild?.id || ''));
+        setLoadedFocus(focus);
         setStatus('ready');
       } catch (reason) {
         if (request !== agentRequest.current) return;
@@ -272,7 +276,17 @@ export function createDeliveryPages({
         setError(reason?.message || '构建与部署状态不可用');
       }
     };
-    useEffect(() => { void load(); return () => { agentRequest.current++; }; }, []);
+    useEffect(() => { void load(focus?.agentId); return () => { agentRequest.current++; }; }, [focus]);
+    useEffect(() => {
+      if (!focus || loadedFocus !== focus || status !== 'ready') return;
+      consumeOperationsFocus(window, focus);
+      if (selectedAgent !== focus.agentId) return;
+      const section = pageElement.current?.querySelector(`[data-delivery-section="${focus.section}"]`);
+      section?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      section?.classList.add('studio-focus-highlight');
+      const timer = setTimeout(() => section?.classList.remove('studio-focus-highlight'), 1500);
+      return () => { clearTimeout(timer); section?.classList.remove('studio-focus-highlight'); };
+    }, [focus, loadedFocus, status, selectedAgent]);
 
     const currentAgent = agents.find(item => (item?.metadata?.id || item?.id) === selectedAgent);
     const builds = [...(Array.isArray(currentAgent?.builds) ? currentAgent.builds : [])].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -394,7 +408,7 @@ export function createDeliveryPages({
             canRunBuild && directServerMode && succeeded ? Button({ size: 'sm', disabled: saving, onClick: () => exportPortableBuild(item.id) }, '导出运行包') : null)));
       })
       : h('tr', null, h('td', { colSpan: 4 }, Note(null, '当前 Agent 还没有 Build。')));
-    return h('div', { 'data-studio-delivery': 'true' },
+    return h('div', { 'data-studio-delivery': 'true', ref: pageElement },
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: Button({ onClick: () => load() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
@@ -404,7 +418,7 @@ export function createDeliveryPages({
               agents.length ? agents.map(item => { const id = item?.metadata?.id || item?.id; return h('option', { key: id, value: id }, item?.metadata?.name || item?.name || id); }) : h('option', { value: '' }, '暂无本地 Agent'))),
           currentAgent ? Row({ title: '运行时', desc: `当前版本 ${currentAgent.metadata?.revision || '—'}` },
             h('span', { className: 'ad-value' }, RUNTIME_LABELS[currentAgent.spec?.runtime?.type] || 'Agent')) : null),
-        Section({ title: '构建版本', meta: builds.length ? `${builds.length} 个构建` : '尚未构建', help: '构建保存当前提示词、模型和资源绑定；部署使用这个冻结版本。',
+        Section({ 'data-delivery-section': 'build', title: '构建版本', meta: builds.length ? `${builds.length} 个构建` : '尚未构建', help: '构建保存当前提示词、模型和资源绑定；部署使用这个冻结版本。',
             action: Button({ variant: 'primary', className: 'ad-build-primary', onClick: createBuild, disabled: deliveryBusy || agentLoading || !selectedAgent }, saving ? '构建中…' : '构建当前版本') },
           Row({ title: '冻结版本', desc: agentLoading ? '正在读取版本…' : readyBuilds.length ? '只列出构建成功的版本' : '尚无成功的构建' },
             Select({ 'aria-label': '构建版本', value: selectedBuild, disabled: deliveryBusy || agentLoading || !readyBuilds.length, onChange: event => setSelectedBuild(event.target.value) },
@@ -417,8 +431,8 @@ export function createDeliveryPages({
                 h('tbody', null, buildRows))),
             builds.length > historyLimit ? Button({ size: 'sm', style: { marginTop: '12px' }, onClick: () => setHistoryLimit(historyLimit + 5) }, '显示更多版本') : null) : null),
         directServerMode
-          ? h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, selectedBuild: agentLoading ? '' : selectedBuild, onBusyChange: setDeploymentBusy })
-          : Section({ title: '部署', help: '当前 Host 没有连接 AgentEngine Server，云端发布不可用；已构建的版本仍可导出运行包或在独立 Host 中运行。' },
+          ? h('div', { 'data-delivery-section': 'deploy' }, h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, selectedBuild: agentLoading ? '' : selectedBuild, onBusyChange: setDeploymentBusy }))
+          : Section({ 'data-delivery-section': 'deploy', title: '部署', help: '当前 Host 没有连接 AgentEngine Server，云端发布不可用；已构建的版本仍可导出运行包或在独立 Host 中运行。' },
             Row({ title: 'Build' }, Select({ value: selectedBuild, onChange: event => setSelectedBuild(event.target.value), disabled: directServerMode }, h('option', { value: '' }, readyBuilds.length ? '请选择 Build' : '暂无成功 Build'), readyBuilds.map(item => h('option', { key: item.id, value: item.id }, `${item.id} · Revision ${item.revision || '—'}`)))),
             Row({ title: '区域' }, Input({ value: region, onChange: event => setRegion(event.target.value), disabled: directServerMode })),
             Row({ title: '环境' }, Input({ value: environment, onChange: event => setEnvironment(event.target.value), disabled: directServerMode })),

@@ -252,30 +252,34 @@ const advance = (harness, tree) => {
   next.props.onClick();
   return harness.render();
 };
-// New local authoring defaults to DSH Native and keeps Star Harness hidden until
-// that runtime stabilizes. Harness-specific tests opt in with
+// New local authoring defaults to DSH Native and disables Star Harness.
+// Harness-specific tests opt in with
 // `allowHarnessRuntime: true` and select it explicitly here.
 const switchToHarness = (harness, tree) => {
-  const runtimeSelect = findBy(tree, node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness'));
+  const runtimeSelect = findBy(tree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness');
   assert.ok(runtimeSelect, 'harness runtime option is available for this test configuration');
-  assert.equal(runtimeSelect.props.value, 'dsh-native', 'new local Agent defaults to DSH Native on step 0');
-  runtimeSelect.props.onChange({ target: { value: 'harness' } });
+  assert.equal(findBy(tree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'dsh-native').props['aria-checked'], true, 'new local Agent defaults to DSH Native on step 0');
+  runtimeSelect.props.onClick();
   return harness.render();
 };
 
-test('form: new local authoring defaults to DSH Native and hides Star Harness until it is stable', async () => {
+test('form: new local authoring defaults to DSH Native and disables Star Harness until it is stable', async () => {
   const hidden = formHarness({ onBack: () => {}, onCreated: () => {} });
   let tree = hidden.render(); await hidden.flush(); tree = hidden.render();
-  const runtimeSelect = findBy(tree, node => node.type === 'select' && (node.children || []).some(option => ['dsh-native', 'harness', 'codex'].includes(option?.props?.value)));
-  assert.equal(runtimeSelect.props.value, 'dsh-native');
-  assert.equal((runtimeSelect.children || []).some(option => option?.props?.value === 'harness'), false, 'Star Harness is hidden for new Agents');
+  const runtimeSelect = findBy(tree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'dsh-native');
+  assert.equal(runtimeSelect.props['aria-checked'], true);
+  const unavailable = findBy(tree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness');
+  assert.equal(unavailable.props.disabled, true);
+  assert.equal(unavailable.props.title, '该能力暂未开放');
+  assert.match(JSON.stringify(unavailable.children), /未开放/);
   const enabled = formHarness({ allowHarnessRuntime: true, onBack: () => {}, onCreated: () => {} });
   let enabledTree = enabled.render(); await enabled.flush(); enabledTree = enabled.render();
-  assert.ok(findBy(enabledTree, node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness')), 'explicit opt-in restores the Star Harness option');
+  assert.equal(findBy(enabledTree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness').props.disabled, false, 'explicit opt-in restores the Star Harness option');
   const editing = formHarness({ initialAgent: { metadata: { id: 'harness-agent', name: 'Harness', revision: 1 }, source: 'local', spec: { runtime: { type: 'harness' }, bindings: { modelProfileId: 'model-1', plugins: [] } } }, onBack: () => {}, onCreated: () => {} });
   let editTree = editing.render(); await editing.flush(); editTree = editing.render();
-  const editSelect = findBy(editTree, node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness'));
-  assert.equal(editSelect.props.value, 'harness', 'editing an existing harness Agent keeps its runtime visible');
+  const editSelect = findBy(editTree, node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness');
+  assert.equal(editSelect.props['aria-checked'], true, 'editing an existing harness Agent keeps its runtime visible');
+  assert.equal(editSelect.props.disabled, true);
 });
 
 test('form: harness blank create offers the local memory source and needs no binding', async () => {

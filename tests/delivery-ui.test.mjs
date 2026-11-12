@@ -5,7 +5,7 @@ const deferred = () => { let resolve; const promise = new Promise(yes => { resol
 const preview = request => ({ ...request, agentName: 'Selected Agent', revision: 1, environment: 'pre-online', region: 'test-region',
   runtime: 'harness', image: { version: 'test' }, resourceCounts: { models: 1, mcps: 0, skills: 0, remote: 0 }, identity: { kind: 'subaccount', userName: 'operator' }, warnings: [] });
 
-function harness(name = 'CloudDeploymentPanel', initialProps = { agentId: 'a', selectedBuild: 'build-a' }) {
+function harness(name = 'CloudDeploymentPanel', initialProps = { agentId: 'a', selectedBuild: 'build-a' }, window = { __AGENTKIT_STUDIO__: { controlPlane: 'agentengine-server' } }) {
   const slots = [], effects = [];
   let cursor = 0, dirty = true, tree, props = initialProps;
   const useState = initial => {
@@ -29,7 +29,7 @@ function harness(name = 'CloudDeploymentPanel', initialProps = { agentId: 'a', s
   const names = ['Pill', 'StudioPageTabs', 'SectionHeading', 'EmptyState'];
   const Component = createDeliveryPages({
     ui: { React: { createElement: h, useState, useEffect, useRef, Fragment: 'fragment' }, BRAND: {}, RUNTIME_LABELS: {}, buttonStyle: () => ({}), inputStyle: () => ({}), ...Object.fromEntries(names.map(name => [name, name])) },
-    hostRemote: api, actions: { confirm: async () => true }, window: { __AGENTKIT_STUDIO__: { controlPlane: 'agentengine-server' } }, setInterval: () => 1, clearInterval: () => {},
+    hostRemote: api, actions: { confirm: async () => true }, window, setInterval: () => 1, clearInterval: () => {},
   })[name];
   const render = () => { cursor = 0; dirty = false; tree = Component(props); for (const effect of effects.splice(0)) effect(); };
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action)] : [];
@@ -40,6 +40,43 @@ function harness(name = 'CloudDeploymentPanel', initialProps = { agentId: 'a', s
   const settle = async () => { for (let i = 0; i < 30; i++) { if (dirty) render(); await Promise.resolve(); } };
   return { api, calls, rows, nodes, text, button, field, settle, props: async value => { props = value; dirty = true; await settle(); } };
 }
+
+test('Delivery hydrates the preferred Agent, consumes focus and scrolls the requested section after loading', async () => {
+  const focus = { tab: 'delivery', agentId: 'b', section: 'deploy' };
+  let stored = JSON.stringify(focus), scrolled = 0;
+  const window = { localStorage: { getItem: () => stored, removeItem: () => { stored = null; } } };
+  const ui = harness('DeliveryPage', { focus }, window);
+  ui.api.agents = async () => ({ items: [{ metadata: { id: 'a' } }, { metadata: { id: 'b' } }] });
+  const hydrated = [], selectors = [], classes = new Set();
+  ui.api.agent = async id => { hydrated.push(id); return { metadata: { id }, builds: [] }; };
+  ui.nodes().find(node => node.props['data-studio-delivery']).props.ref.current = { querySelector: selector => { selectors.push(selector); return { scrollIntoView: () => { scrolled++; }, classList: { add: value => classes.add(value), remove: value => classes.delete(value) } }; } };
+  await ui.settle();
+  assert.equal(ui.field('目标 Agent').props.value, 'b');
+  assert.deepEqual(hydrated, ['b']);
+  assert.equal(stored, null);
+  assert.equal(scrolled, 1);
+  assert.deepEqual(selectors, ['[data-delivery-section="deploy"]']);
+  assert.ok(classes.has('studio-focus-highlight'));
+  await ui.props({ focus: { tab: 'delivery', agentId: 'a', section: 'build' } });
+  assert.equal(ui.field('目标 Agent').props.value, 'a');
+  assert.deepEqual(hydrated, ['b', 'a']);
+  assert.equal(selectors.at(-1), '[data-delivery-section="build"]');
+});
+
+test('Delivery handles an empty preferred catalog and retains focus when loading fails', async () => {
+  const focus = { tab: 'delivery', agentId: 'missing', section: 'build' };
+  let stored = JSON.stringify(focus);
+  const window = { localStorage: { getItem: () => stored, removeItem: () => { stored = null; } } };
+  const ui = harness('DeliveryPage', { focus }, window);
+  await ui.settle();
+  assert.equal(ui.field('目标 Agent').props.value, '');
+  assert.equal(stored, null);
+  stored = JSON.stringify(focus);
+  ui.api.agents = async () => { throw Error('catalog offline'); };
+  await ui.props({ focus: { ...focus } });
+  assert.notEqual(stored, null);
+  assert.ok(ui.nodes().some(node => node.props.title === '交付状态不可用' && node.props.detail === 'catalog offline'));
+});
 
 test('paired specifications default to 2 cores / 4 GB and checking never submits a create', async () => {
   const ui = harness(); await ui.settle();
