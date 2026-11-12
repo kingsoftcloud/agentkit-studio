@@ -53,6 +53,15 @@ test('paired specifications default to 2 cores / 4 GB and checking never submits
   assert.equal(ui.button('确认创建云端实例'), undefined, 'changed configuration needs a fresh check');
 });
 
+test('delivery groups settings into panels without repeating the active tab heading', async () => {
+  const ui = harness('DeliveryPage', {}); await ui.settle();
+  assert.equal(ui.nodes().some(node => node.type === 'SectionHeading' && node.props.title === '构建与部署'), false);
+  assert.ok(ui.nodes().some(node => node.props.className === 'ad-panel'));
+  assert.equal(ui.button('构建当前版本').props['data-variant'], 'primary');
+  assert.ok(ui.button('构建当前版本').props.className.includes('ad-build-primary'));
+  assert.equal(ui.button('构建当前版本').props.disabled, true);
+});
+
 test('deployments always use the default persistent volume and never offer a storage choice', async () => {
   const ui = harness(); await ui.settle();
   assert.equal(ui.field('对话存储'), undefined, 'storage is stated, not selected');

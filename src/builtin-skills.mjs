@@ -58,15 +58,17 @@ export function builtinSkillDefinitions() {
   // The DSH SkillRegistry owns the registered objects for the lifetime of a
   // preset; hand out fresh top-level values so one preset cannot mutate the
   // cached definition observed by another.
-  return cachedDefinitions.map(definition => ({
-    ...definition,
+  return cachedDefinitions.map(definition => {
     // Electron ships this package inside app.asar. The manifest is readable
     // through the module loader, but its asar path is not a real directory
     // that the Native source can opendir/stat. This builtin guide has no
     // auxiliary files, so keep it inline and hash only its manifest bytes.
-    resourceBase: undefined,
-    invocation: { ...definition.invocation },
-  }));
+    // Omit resourceBase entirely: a present `undefined` property is rejected
+    // by the Native canonical JSON boundary before the Session can start.
+    const inlineDefinition = { ...definition };
+    delete inlineDefinition.resourceBase;
+    return { ...inlineDefinition, invocation: { ...definition.invocation } };
+  });
 }
 
 /**

@@ -18,6 +18,27 @@ const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9_]{0,79}$/;
 /** Client-facing codes stay inside the documented families. */
 const safeClientCode = code => (typeof code === 'string' && CLIENT_ERROR_CODE.test(code) ? code : 'RUNTIME_RUN_FAILED');
 /** Diagnostics may carry upstream codes, but only as inert uppercase tokens. */
+/**
+ * Name the source that aborted a run.
+ *
+ * A turn that ends with `turn/end {kind: 'aborted', reason: {kind: 'user'}}`
+ * loses every trace of *who* cancelled it: the DSH loop records only the
+ * cancellation cause, and the duration alone cannot distinguish a client
+ * disconnect from a control RPC. Record the call site next to the reason so a
+ * red run names its source instead of only its duration.
+ * @param source - the internal call site aborting the run.
+ * @param reason - the exact reason object handed to AbortController.abort.
+ * @returns the same reason, so behaviour is unchanged.
+ */
+function logAbort(source, reason) {
+  try {
+    const stack = String(new Error().stack || '').split('\n').slice(1, 5)
+      .map(line => line.trim().replace(/^at /, '').replace(/\(.*?([^/\\]+\.mjs:\d+)\)$/, '$1')).join(' <- ');
+    console.error('[agentkit-studio] run abort', JSON.stringify({ source, code: reason?.code || '', status: reason?.status ?? null, stack }));
+  } catch { /* diagnostics never abort a run */ }
+  return reason;
+}
+
 const safeDiagnosticCode = code => (typeof code === 'string' && DIAGNOSTIC_CODE.test(code) ? code : 'RUNTIME_SETTLEMENT_FAILED');
 // Managed Responses callers need the failure detail; credentials and control
 // characters never leave the host, and the run log keeps only the code.
@@ -46,9 +67,9 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
   platformActions?.setRunControl({ cancelRun: (runId, sessionId, principalDigest) => {
     const target = active.get(runId);
     if (!target || target.sessionId !== sessionId || target.principalDigest !== principalDigest) return false;
-    target.abort.abort(fail('RUNTIME_CANCELLED', 409)); return true;
+    target.abort.abort(logAbort('control-cancel', fail('RUNTIME_CANCELLED', 409))); return true;
   }, cancelSession: sessionId => {
-    for (const target of active.values()) if (target.sessionId === sessionId) target.abort.abort(fail('RUNTIME_CANCELLED', 409));
+    for (const target of active.values()) if (target.sessionId === sessionId) target.abort.abort(logAbort('session-cancel', fail('RUNTIME_CANCELLED', 409)));
   } });
   let closing = false;
   const json = (res, status, value) => { if (!res.destroyed) { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)); } };
@@ -102,7 +123,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         const target = active.get(targetId);
         if (!target || (cancelResponse && target.responseId !== cancelResponse[1])) throw fail('RUNTIME_RUN_NOT_ACTIVE', 404);
         platformActions?.authorizeCancel(req.headers, target);
-        target.abort.abort(fail('RUNTIME_CANCELLED', 409));
+        target.abort.abort(logAbort('replaced-run-cancel', fail('RUNTIME_CANCELLED', 409)));
         json(res, 202, { runId: targetId, ...(cancelResponse ? { id: cancelResponse[1] } : {}), cancellationRequested: true }); return;
       }
       action = /^\/agentengine\/api\/v1\/([A-Za-z]+)$/.exec(url.pathname)?.[1];
@@ -173,11 +194,11 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       if (platformActions && [...active.values()].some(target => target.sessionId === sessionId)) throw fail('RUNTIME_SESSION_BUSY', 409);
       if (active.size >= maxActive) throw fail('RUNTIME_BUSY', 429);
       abort = new AbortController(); active.set(runId, { abort, responseId: input.responseId, sessionId, principalDigest: input.principalDigest });
-      res.on('close', () => { if (!res.writableEnded) abort.abort(fail('RUNTIME_CLIENT_DISCONNECTED', 499)); });
+      res.on('close', () => { if (!res.writableEnded) abort.abort(logAbort('client-disconnect', fail('RUNTIME_CLIENT_DISCONNECTED', 499))); });
       const emit = (event, data) => {
         if (res.destroyed || !input.stream) return;
         const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-        if (res.writableLength + Buffer.byteLength(line) > 4 * 1024 * 1024) { abort.abort(fail('RUNTIME_SLOW_CONSUMER')); res.destroy(); return; }
+        if (res.writableLength + Buffer.byteLength(line) > 4 * 1024 * 1024) { abort.abort(logAbort('slow-consumer', fail('RUNTIME_SLOW_CONSUMER'))); res.destroy(); return; }
         res.write(line);
       };
       if (platformActions) { await platformActions.checkRun(input); abort.signal.throwIfAborted(); }
@@ -264,6 +285,19 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       // including cancellation. A failed durability barrier is not success,
       // but it must not replace the failure that actually ended the run:
       // keep the original code for callers and record settlement separately.
+      // A run that dies without a code loses its cause: `safeDiagnosticCode`
+      // only keeps string codes, so a DOMException TimeoutError (code 23) reports
+      // the inert fallback and the duration is the only surviving clue. Record
+      // the raw name, message and call site before anything normalizes them.
+      try {
+        console.error('[agentkit-studio] run error', JSON.stringify({
+          name: String(error?.name || ''),
+          code: typeof error?.code === 'number' ? error.code : String(error?.code || ''),
+          message: String(error?.message || '').slice(0, 300),
+          stack: String(error?.stack || '').split('\n').slice(0, 6)
+            .map(line => line.trim().replace(/^at /, '')).join(' <- '),
+        }));
+      } catch { /* diagnostics never replace the failure */ }
       let settlementFailure;
       if (abort && platformActions) {
         try { await platformActions.settleRun(input); }
@@ -298,7 +332,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
     address: server.address(),
     close: async () => {
       closing = true;
-      for (const { abort } of active.values()) abort.abort(fail('RUNTIME_STOPPING', 503));
+      for (const { abort } of active.values()) abort.abort(logAbort('runtime-stopping', fail('RUNTIME_STOPPING', 503)));
       const closed = new Promise(resolve => server.close(resolve));
       server.closeAllConnections();
       await closed;

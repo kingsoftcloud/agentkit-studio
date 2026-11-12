@@ -521,7 +521,9 @@ for (const deliveryReviewPolicy of [undefined, { pathSuffixes: ['.ts'] }]) for (
   const scope = bound.scope;
   assert.equal(bound.configuration.outputRecoveryPolicy, 'response-boundary/v2');
   assert.deepEqual(bound.configuration.profile.inlineReasoningPolicy, { contract: 'profiled-content/v2', rule: 'auto' });
-  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v4', rule: 'auto' });
+  // Harness 0.0.17 advances the admitted provider compatibility contract to
+  // v5; keep the managed binding assertion aligned with the shipped runtime.
+  assert.deepEqual(bound.configuration.profile.providerCompatibilityPolicy, { contract: 'provider-compat/v5', rule: 'auto' });
   assert.equal(bound.configuration.profile.maxProviderRetries, 10);
   assert.equal(bound.configuration.providerRecoveryPolicy, 'provider-recovery/v2');
   assert.equal(bound.configuration.profile.streamTimeoutPolicy, 'idle/v1');

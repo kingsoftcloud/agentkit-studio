@@ -64,7 +64,7 @@ function createStudioTeamPages({ ui, hostRemote, actions, window = globalThis.wi
     return h(
       "section",
       { "aria-label": "\u4E13\u5BB6\u56E2\u6A21\u677F" },
-      h("div", { className: "sq-toolbar" }, h("div", null, h("h2", { style: { fontSize: 19, margin: "0 0 7px" } }, "\u4E13\u5BB6\u56E2\u6A21\u677F"), h("p", { className: "sq-muted", style: { margin: 0 } }, "\u89D2\u8272\u3001\u63D0\u793A\u8BCD\u548C\u914D\u5957\u6280\u80FD\u5DF2\u914D\u597D\u3002\u53EC\u5524\u6574\u961F\u540E\uFF0C\u5373\u53EF\u5F00\u59CB\u534F\u4F5C\uFF0C\u4E5F\u80FD\u7EE7\u7EED\u7F16\u8F91\u3002")), h("span", { className: "sq-muted" }, `${result.total} \u4E2A\u56E2\u961F\u6A21\u677F`)),
+      h("div", { className: "sq-toolbar" }, h("div", null, h("h2", { style: { fontSize: 19, margin: "0 0 7px" } }, "\u4E13\u5BB6\u56E2\u6A21\u677F"), h("i", { className: "studio-help", role: "img", "aria-label": "\u89D2\u8272\u3001\u63D0\u793A\u8BCD\u548C\u914D\u5957\u6280\u80FD\u5DF2\u914D\u597D\u3002\u53EC\u5524\u6574\u961F\u540E\uFF0C\u5373\u53EF\u5F00\u59CB\u534F\u4F5C\uFF0C\u4E5F\u80FD\u7EE7\u7EED\u7F16\u8F91\u3002", title: "\u89D2\u8272\u3001\u63D0\u793A\u8BCD\u548C\u914D\u5957\u6280\u80FD\u5DF2\u914D\u597D\u3002\u53EC\u5524\u6574\u961F\u540E\uFF0C\u5373\u53EF\u5F00\u59CB\u534F\u4F5C\uFF0C\u4E5F\u80FD\u7EE7\u7EED\u7F16\u8F91\u3002" }, "i")), h("span", { className: "sq-muted" }, `${result.total} \u4E2A\u56E2\u961F\u6A21\u677F`)),
       h("input", { type: "search", "aria-label": "\u641C\u7D22\u4E13\u5BB6\u56E2\u6A21\u677F", placeholder: "\u641C\u7D22\u4E13\u5BB6\u56E2\u6A21\u677F", value: query, onChange: (e) => {
         setQuery(e.target.value);
         setCursor(null);

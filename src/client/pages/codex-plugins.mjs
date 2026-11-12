@@ -1,3 +1,4 @@
+import { refreshIcon } from '../components/refresh-icon.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createCodexPluginPages({
@@ -17,7 +18,7 @@ export function createCodexPluginPages({
     }, [pluginId, revision]);
     const labels = { callable: '可调用', disabled: '已禁用', 'not-callable': '尚不可调用', 'not-loaded': '未连接或未加载', unknown: '状态未确认' };
     return h('section', { style: { borderTop: '1px solid ' + BRAND.border, paddingTop: '16px', marginTop: '16px' } },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('h3', { style: { margin: 0, fontSize: '15px', color: BRAND.ink } }, '能力与连接状态'), h('button', { type: 'button', disabled: state.loading, onClick: () => setRevision(value => value + 1), style: buttonStyle() }, '刷新连接状态')),
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } }, h('h3', { style: { margin: 0, fontSize: '15px', color: BRAND.ink } }, '能力与连接状态'), h('button', { type: 'button', disabled: state.loading, onClick: () => setRevision(value => value + 1), 'aria-label': '刷新连接状态', title: '刷新连接状态', style: { ...buttonStyle(), width: '32px', padding: 0, border: 0 } }, refreshIcon(h))),
       state.loading ? h('p', { role: 'status' }, '正在读取插件能力和连接状态…') : null,
       state.error ? h('p', { role: 'alert', style: { color: BRAND.danger } }, state.error) : null,
       state.value ? h('div', { style: { fontSize: '12px', lineHeight: 1.7, color: BRAND.inkMuted } },
@@ -89,14 +90,14 @@ export function createCodexPluginPages({
     const openInstall = () => { setInstallSource(''); setError(''); setInstallOpen(true); };
     const lifecycleButton = (item, compact = false) => lifecycleAvailable(item) ? h('button', {
       type: 'button', disabled: Boolean(busyId), onClick: () => void mutate(item, installed(item) ? 'uninstall' : 'install'),
-      style: { ...buttonStyle(), padding: compact ? '5px 9px' : '7px 12px', fontSize: compact ? '10px' : '12px', color: installed(item) ? BRAND.danger : BRAND.primaryText, background: installed(item) ? BRAND.surface : BRAND.primaryFill, borderColor: installed(item) ? BRAND.border : 'transparent' },
+      style: { ...buttonStyle(), padding: compact ? '5px 9px' : '7px 12px', fontSize: compact ? '10px' : '12px', color: installed(item) ? BRAND.danger : compact ? BRAND.ink : BRAND.primaryText, background: compact ? 'transparent' : installed(item) ? BRAND.surface : BRAND.primaryFill, borderColor: installed(item) ? BRAND.border : 'transparent' },
     }, busyId === id(item) ? '处理中…' : installed(item) ? '卸载' : '安装') : null;
     const iconSquare = item => {
       const icon = item?.iconDataUrl || item?.iconUrl || item?.icon;
-      return h('div', { style: { width: '42px', height: '42px', display: 'grid', placeItems: 'center', borderRadius: '11px', overflow: 'hidden', background: '#f2f0ff', color: '#6656c8', fontWeight: 800 } }, icon
+      return h('div', { style: { width: '42px', height: '42px', display: 'grid', placeItems: 'center', borderRadius: '11px', overflow: 'hidden', background: 'transparent', border: '.5px solid var(--dsw-alias-border-l3)', color: BRAND.inkMuted, fontWeight: 500 } }, icon
         ? h('img', { src: icon, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', style: { width: '70%', height: '70%', objectFit: 'contain' } }) : String(label(item)).charAt(0).toUpperCase());
     };
-    const row = item => h('article', { key: id(item), style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid ' + BRAND.border } },
+    const row = item => h('article', { key: id(item), className: 'studio-plugin-row', style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)' } },
       iconSquare(item),
       h('button', { type: 'button', onClick: () => setSelectedId(id(item)), style: { flex: '1 1 180px', minWidth: 0, padding: 0, border: 0, background: 'transparent', textAlign: 'left', color: BRAND.ink, cursor: 'pointer' } },
         h('strong', { style: { display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label(item)),
@@ -112,7 +113,7 @@ export function createCodexPluginPages({
           h('code', { style: { display: 'block', marginTop: '5px', color: BRAND.inkMuted, fontSize: '10px', wordBreak: 'break-word' } }, id(selected)))),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h(Pill, { tone: !lifecycleAvailable(selected) ? 'signal' : 'accent' }, stateLabel(selected)), lifecycleButton(selected))),
       selected.description ? h('p', { style: { margin: 0, color: BRAND.ink, lineHeight: 1.65, fontSize: '12px', whiteSpace: 'pre-wrap' } }, selected.description) : null,
-      h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
+      h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '.5px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
         [['版本', selected.version], ['市场', selected.marketplaceName || selected.marketplace], ['来源', selected.source], ['分类', selected.category], ['状态', stateLabel(selected)]].map(([key, value]) => h('div', { key, style: { display: 'grid', gridTemplateColumns: '70px minmax(0, 1fr)', gap: '10px', fontSize: '11px' } }, h('dt', { style: { color: BRAND.inkMuted } }, key), h('dd', { style: { margin: 0, color: BRAND.ink, wordBreak: 'break-word' } }, value || '—')))),
       selected.error ? h('p', { role: 'alert', style: { margin: 0, color: BRAND.danger, whiteSpace: 'pre-wrap', fontSize: '12px' } }, selected.error.message || selected.error.diagnostic || selected.error.code || 'Codex 目录错误') : null,
       h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '插件在新建的 Codex Agent 会话中加载。需要登录的连接器沿用 Codex 授权状态。'),
@@ -125,8 +126,8 @@ export function createCodexPluginPages({
       selected ? detail : h(Fragment, null,
         h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
           h('input', { type: 'search', value: query, onChange: event => setQuery(event.target.value), placeholder: '搜索 Codex 插件', 'aria-label': '搜索 Codex 插件', style: { ...inputStyle(), marginTop: 0, flex: '1 1 260px' } }),
-          h('button', { type: 'button', onClick: openInstall, disabled: Boolean(busyId), style: buttonStyle() }, '添加 Codex 插件'),
-          h('button', { type: 'button', onClick: () => void load(), disabled: status === 'loading' || Boolean(busyId), style: buttonStyle() }, status === 'loading' ? '读取中…' : '刷新')),
+          h('button', { type: 'button', onClick: openInstall, disabled: Boolean(busyId), style: { ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' } }, '添加 Codex 插件'),
+          h('button', { type: 'button', onClick: () => void load(), disabled: status === 'loading' || Boolean(busyId), 'aria-label': status === 'loading' ? '读取中…' : '刷新', title: '刷新', style: { ...buttonStyle(), width: '32px', padding: 0, border: 0 } }, refreshIcon(h))),
         h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '12px', lineHeight: 1.6 } }, '安装状态与当前 Codex 配置共享。新建 Codex Agent 会话后加载插件，连接器仍需完成服务授权。'),
         status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取 Codex 插件目录', detail: '读取可用插件和当前安装状态。' }) : null,
         status !== 'loading' && visible.length ? h('div', { style: { maxHeight: 'min(65vh, 620px)', overflow: 'auto' } },

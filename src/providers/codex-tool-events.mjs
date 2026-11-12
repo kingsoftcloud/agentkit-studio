@@ -8,13 +8,19 @@ export const CODEX_TOOL_EVENT = 'agentkit/codex-tool';
  * Reconcile only command calls from its opt-in raw Responses events. Never expose
  * message/reasoning items; native lifecycle items remain authoritative when present.
  */
+// Codex's unified exec surface: `exec_command` starts a command and
+// `write_stdin` continues one that already yielded its session. Both return the
+// same leading metadata, so both must be observed or a continued command loses
+// its output and the turn stalls on the missing result.
+const CODEX_COMMAND_TOOLS = new Set(['exec_command', 'write_stdin']);
+
 export function createCodexCommandFallback() {
   const calls = new Map(), native = new Map();
   return {
     observeRaw(item) {
       if (!item?.call_id) return;
-      if (item.type === 'function_call' && item.name === 'exec_command' && (!item.namespace || item.namespace === 'functions')) {
-        if (!calls.has(item.call_id)) calls.set(item.call_id, { arguments: item.arguments });
+      if (item.type === 'function_call' && CODEX_COMMAND_TOOLS.has(item.name) && (!item.namespace || item.namespace === 'functions')) {
+        if (!calls.has(item.call_id)) calls.set(item.call_id, { arguments: item.arguments, name: item.name });
       } else if (item.type === 'function_call_output' && calls.has(item.call_id)) {
         calls.get(item.call_id).output = item.output;
       }
@@ -29,16 +35,24 @@ export function createCodexCommandFallback() {
         const text = typeof call.output === 'string' ? call.output : '';
         // Parse only the executor's leading metadata, not command stdout which
         // may itself contain text such as "Process exited with code 1".
-        const match = /^(?:Chunk ID: [^\n]+\n)?Wall time: [^\n]+\nProcess exited with code (-?\d+)\n/.exec(text);
-        const exitCode = match ? Number(match[1]) : null;
+        const exited = /^(?:Chunk ID: [^\n]+\n)?Wall time: [^\n]+\nProcess exited with code (-?\d+)\n/.exec(text);
+        // A command that outlives its yield budget is not a failure: Codex
+        // answers "Process running with session ID <n>" and keeps the process
+        // alive so the model continues it by session id. Treating that as an
+        // unknown outcome aborted the whole turn, which is why every command
+        // longer than the 30s yield budget surfaced as a 300s run failure.
+        const running = /^.*?Process running with session ID (\d+)\n/m.exec(text);
+        const exitCode = exited ? Number(exited[1]) : null;
+        const sessionId = running ? Number(running[1]) : null;
         const rejected = /^exec_command failed:|^Error parsing function call:/.test(text);
-        const known = exitCode !== null || rejected;
-        const failed = !known || rejected || exitCode !== 0;
-        const tool = { type: 'tool', id, name: 'codex/command', arguments: call.arguments ?? {} };
+        const known = exitCode !== null || rejected || sessionId !== null;
+        const failed = rejected || (sessionId === null && (exitCode === null || exitCode !== 0));
+        const status = sessionId !== null ? 'running' : known ? (failed ? 'failed' : 'completed') : 'unknown';
+        const tool = { type: 'tool', id, name: call.name === 'write_stdin' ? 'codex/write_stdin' : 'codex/command', arguments: call.arguments ?? {} };
         if (!phase) yield { ...tool, phase: 'started' };
         yield { ...tool, phase: failed ? 'failed' : 'completed', result: {
           content: [{ type: 'text', text }],
-          structuredContent: { status: known ? failed ? 'failed' : 'completed' : 'unknown', exitCode, source: 'codex-raw-command-result' },
+          structuredContent: { status, exitCode, ...(sessionId !== null ? { sessionId } : {}), source: 'codex-raw-command-result' },
         }, ...(failed ? { error: {
           code: known ? 'CODEX_TOOL_FAILED' : 'CODEX_TOOL_OUTCOME_UNKNOWN',
           message: known ? `Codex 命令执行失败${exitCode !== null ? `（exit ${exitCode}）` : ''}` : '未收到 Codex 命令的确定执行状态；请查看返回结果。',

@@ -10,7 +10,7 @@ export function createDomainPage({
       resources: ['资源', '管理模型、工具、MCP 与 Skill 的目录生命周期。', '◈', '资源目录只负责发现、导入、探测、查看、刷新和删除；Agent 绑定在创建或编辑页完成。'],
       delivery: ['构建与部署', '从 Revision 到 Build、Deploy 和回滚。', '↗', '云端 API gap 完成核对后，这里接入真实异步 operation 和部署状态。'],
     }[page];
-    return h('section', { style: { border: '1px solid ' + BRAND.border, borderRadius: '16px', padding: '22px', background: BRAND.surface } },
+    return h('section', { style: { border: '.5px solid ' + BRAND.border, borderRadius: 'var(--dsw-radius-xl,16px)', padding: '16px', background: BRAND.surface } },
       h(SectionHeading, { eyebrow: 'Studio domain', title: content[0], detail: content[1], action: h(Pill, { tone: 'signal' }, 'Host 待接入') }),
       h(EmptyState, { icon: content[2], title: content[0] + '正在准备', detail: content[3], action: h(DisabledAction, null, '等待 Host 能力') }));
   }

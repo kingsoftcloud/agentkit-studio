@@ -1,3 +1,4 @@
+import { refreshIcon } from '../components/refresh-icon.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 const ALL_CATEGORIES = '全部';
@@ -129,7 +130,7 @@ export function createDshPluginPages({
         ...buttonStyle(),
         padding: options.compact === false ? '7px 12px' : '5px 9px',
         fontSize: options.compact === false ? '12px' : '10px',
-        ...(options.primary ? { color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } : { background: BRAND.surface }),
+        ...(options.primary && options.compact === false ? { color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } : { background: 'transparent', borderColor: 'transparent' }),
         ...(options.danger ? { color: BRAND.danger } : {})
       }
     }, busy === key ? '处理中…' : text);
@@ -236,7 +237,7 @@ export function createDshPluginPages({
     const iconSquare = item => {
       const icon = item?.icon;
       const seed = String(labelOf(item)).replace(/^@[^/]+\//u, '');
-      return h('div', { style: { width: '38px', height: '38px', flex: '0 0 38px', display: 'grid', placeItems: 'center', borderRadius: '10px', overflow: 'hidden', background: BRAND.accentSoft, color: BRAND.ink, fontWeight: 800, fontSize: '15px' } }, icon
+      return h('div', { style: { width: '38px', height: '38px', flex: '0 0 38px', display: 'grid', placeItems: 'center', borderRadius: '10px', overflow: 'hidden', background: BRAND.accentSoft, color: BRAND.ink, fontWeight: 500, fontSize: '15px' } }, icon
         ? h('img', { src: icon, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', style: { width: '70%', height: '70%', objectFit: 'contain' } })
         : seed.charAt(0).toUpperCase());
     };
@@ -247,8 +248,8 @@ export function createDshPluginPages({
     ].filter(Boolean);
 
     const discoveryCard = item => h('article', {
-      key: idOf(item),
-      style: { display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', border: '1px solid ' + BRAND.border, borderRadius: '12px', background: BRAND.surface, minWidth: 0 }
+      key: idOf(item), className: 'studio-plugin-row',
+      style: { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: '8px', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)', background: BRAND.surface, minWidth: 0 }
     },
       h('div', { style: { display: 'flex', gap: '9px', alignItems: 'center', minWidth: 0 } },
         iconSquare(item),
@@ -261,7 +262,7 @@ export function createDshPluginPages({
             h('strong', { style: { display: 'block', fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, labelOf(item)),
             h('code', { style: { display: 'block', marginTop: '2px', color: BRAND.inkMuted, fontSize: '9.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.packageName || item.repo || '')),
           h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' } }, ...cardBadges(item), installed(item) ? pill('已安装', 'accent') : null))),
-      h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.55, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: '2.9em' } }, item.description || '未提供描述'),
+      h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.55, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', maxWidth: '280px' } }, item.description || '未提供描述'),
       h('div', { style: { display: 'flex', gap: '7px', flexWrap: 'wrap', color: BRAND.inkMuted, fontSize: '10px' } }, ...statsLine(item).map(text => h('span', { key: text }, text))),
       h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto', paddingTop: '4px' } },
         h('button', { type: 'button', onClick: () => setSelectedId(idOf(item)), style: { ...buttonStyle(), padding: '4px 8px', fontSize: '10px', background: BRAND.surface } }, '详情'),
@@ -269,7 +270,7 @@ export function createDshPluginPages({
           ? pill(item?.enabled === false ? '已装·停用' : '已装·启用', item?.enabled === false ? 'neutral' : 'accent')
           : actionButton(`install:${idOf(item)}`, '安装', () => { void installItem(item); }, { primary: true, compact: true })));
 
-    const installedRow = item => h('article', { key: idOf(item), style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid ' + BRAND.border } },
+    const installedRow = item => h('article', { key: idOf(item), className: 'studio-plugin-row', style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)' } },
       iconSquare(item),
       h('button', { type: 'button', onClick: () => setSelectedId(idOf(item)), style: { flex: '1 1 180px', minWidth: 0, padding: 0, border: 0, background: 'transparent', textAlign: 'left', color: BRAND.ink, cursor: 'pointer' } },
         h('strong', { style: { display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, labelOf(item)),
@@ -303,7 +304,7 @@ export function createDshPluginPages({
           ? pill(item?.enabled === false ? '已安装（停用中）' : '已安装', 'accent')
           : actionButton(`install:${idOf(item)}`, '安装到当前 Host', () => { void installItem(item); }, { primary: true, compact: false })),
       item.description ? h('p', { style: { margin: 0, color: BRAND.ink, lineHeight: 1.65, fontSize: '12px', whiteSpace: 'pre-wrap' } }, item.description) : null,
-      h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
+      h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '.5px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
         [
           ['分类', item.category || '未分类'],
           ['版本', item.version || '—'],
@@ -344,7 +345,7 @@ export function createDshPluginPages({
             pill(stateLabel(item), stateTone(item)),
             lifecycleActions(item, false))),
         item.description ? h('p', { style: { margin: 0, color: BRAND.ink, lineHeight: 1.65, fontSize: '12px', whiteSpace: 'pre-wrap' } }, item.description) : null,
-        h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '1px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
+        h('dl', { style: { margin: 0, padding: '10px 0', borderTop: '1px solid ' + BRAND.border, borderBottom: '.5px solid ' + BRAND.border, display: 'grid', gap: '6px' } },
           [['版本', item.version || '—'], ['来源', item.source || '—'], ['分类', item.category || '未分类'], ['安装源', item.installTarget?.spec || item.installSpec || '—'], ['状态', stateLabel(item)]]
             .map(([key, value]) => h('div', { key, style: { display: 'grid', gridTemplateColumns: '70px minmax(0, 1fr)', gap: '10px', fontSize: '11px' } },
               h('dt', { style: { color: BRAND.inkMuted } }, key),
@@ -412,7 +413,7 @@ export function createDshPluginPages({
         ...buttonStyle(),
         padding: '6px 14px',
         fontSize: '12px',
-        ...(tab === name ? { color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } : { background: BRAND.surface })
+        border: 0, borderRadius: '14px', height: '28px', ...(tab === name ? { color: BRAND.ink, background: 'var(--dsw-alias-interactive-bg-hover)' } : { color: BRAND.inkMuted, background: 'transparent' })
       }
     }, text);
 
@@ -421,8 +422,8 @@ export function createDshPluginPages({
         tabButton('discover', '发现插件'),
         tabButton('installed', `已安装${items.length ? `（${items.length}）` : ''}`),
         h('span', { style: { flex: 1 } }),
-        h('button', { type: 'button', onClick: () => { void refreshAll(); }, disabled: Boolean(busy) || status === 'loading', style: buttonStyle() }, busy === 'refresh' ? '刷新中…' : '刷新目录'),
-        h('button', { type: 'button', onClick: () => { setInstallSpec(''); setError(''); setInstallOpen(true); }, disabled: Boolean(busy), style: buttonStyle() }, '手动安装')));
+        h('button', { type: 'button', onClick: () => { void refreshAll(); }, disabled: Boolean(busy) || status === 'loading', 'aria-label': busy === 'refresh' ? '刷新中…' : '刷新目录', title: '刷新目录', style: { ...buttonStyle(), width: '32px', padding: 0, border: 0 } }, refreshIcon(h)),
+        h('button', { type: 'button', onClick: () => { setInstallSpec(''); setError(''); setInstallOpen(true); }, disabled: Boolean(busy), style: { ...buttonStyle(), color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } }, '手动安装')));
 
     const discoverPanel = h(Fragment, null,
       h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
@@ -443,7 +444,7 @@ export function createDshPluginPages({
             ...buttonStyle(),
             padding: '4px 10px',
             fontSize: '11px',
-            ...(activeCategory === name ? { color: BRAND.primaryText, background: BRAND.primaryFill, borderColor: 'transparent' } : { background: BRAND.surface })
+            border: 0, borderRadius: '14px', height: '28px', ...(activeCategory === name ? { color: BRAND.ink, background: 'var(--dsw-alias-interactive-bg-hover)' } : { color: BRAND.inkMuted, background: 'transparent' })
           }
         }, name))),
       h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px', lineHeight: 1.6 } },
@@ -451,7 +452,7 @@ export function createDshPluginPages({
       remoteInfo?.stale ? h('p', { role: 'status', style: { margin: 0, color: BRAND.signal, fontSize: '11px' } }, '目录刷新失败，正在展示上一次成功获取的数据。') : null,
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在发现社区插件', detail: '从 npm 与 GitHub 聚合插件目录，并读取本地安装状态。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '插件目录不可用', detail: error, action: h('button', { type: 'button', onClick: () => { void load({ force: true }); }, style: buttonStyle() }, '重新加载') }) : null,
-      status === 'ready' && sortedDiscovery.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(248px,1fr))', gap: '10px' } }, ...sortedDiscovery.map(discoveryCard)) : null,
+      status === 'ready' && sortedDiscovery.length ? h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: '10px' } }, ...sortedDiscovery.map(discoveryCard)) : null,
       status === 'ready' && !sortedDiscovery.length ? h(EmptyState, { icon: '⌕', title: '没有匹配的插件', detail: discoveryItems.length ? '试试其他关键词，或清空搜索与分类筛选。' : '目录暂时为空，可以刷新目录或手动安装。' }) : null,
       status === 'ready' && sortedDiscovery.length ? h('p', { style: { margin: 0, color: BRAND.inkMuted, fontSize: '11px' } }, `共 ${sortedDiscovery.length} 个结果。`) : null);
 

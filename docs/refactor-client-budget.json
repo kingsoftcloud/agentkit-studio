@@ -1,8 +1,10 @@
 {
-  "id": "user-approved-refactor-7-percent",
-  "baselineCommit": "fd654a22cdbd6e4dbdae9804a026097fbd279561",
-  "baselineGzipBytes": 87440,
-  "originalGrowthPercent": 5,
-  "maximumGrowthPercent": 7,
-  "approval": "User approved 7 percent for this refactoring stage while retaining the original baseline and proceeding to Host splitting."
+  "id": "user-approved-ratchet-2-percent",
+  "baselineCommit": "b6679c28f5e589b7f3c1e7bd572da9e809032a40",
+  "baselineGzipBytes": 609602,
+  "originalGrowthPercent": 2,
+  "maximumGrowthPercent": 2,
+  "historicalBaselineCommit": "fd654a22cdbd6e4dbdae9804a026097fbd279561",
+  "historicalBaselineGzipBytes": 87440,
+  "approval": "The size gate was never wired, so the browser bundle grew from 87440 B at fd654a22 to 609602 B at b6679c28 (6.97x) with no failing check. Freeze the current size with a 2 percent allowance so it cannot grow further while the Markdown payload (68.9 percent of the bundle, 366214 B gzip) is split; that work is tracked in kingsoftcloud/ksadk-harness#26. Lower this baseline back towards 87440 once #26 ships."
 }

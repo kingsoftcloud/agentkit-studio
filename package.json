@@ -47,7 +47,7 @@
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
     "inspect:image-catalog": "node scripts/inspect-image-catalog.mjs",
-    "check": "node scripts/check-dsh-pin.mjs && node scripts/check-node-version.mjs && tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node scripts/test-studio.mjs",
+    "check": "node scripts/check-dsh-pin.mjs && node scripts/check-node-version.mjs && tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node scripts/verify-client-modules.mjs && node scripts/test-studio.mjs",
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "pretest": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
@@ -78,7 +78,8 @@
     "verify-native-dsh-numeric": "node scripts/verify-native-dsh-numeric.mjs",
     "verify-studio-native-harness": "node scripts/verify-studio-native-harness.mjs",
     "build:harness-node": "node scripts/verify-native-dependencies.mjs",
-    "pin:native-registry": "node scripts/pin-native-registry.mjs"
+    "pin:native-registry": "node scripts/pin-native-registry.mjs",
+    "verify:client-modules": "node scripts/verify-client-modules.mjs"
   },
   "engines": {
     "node": ">=24.9.0",

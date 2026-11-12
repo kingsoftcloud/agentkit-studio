@@ -32,9 +32,98 @@ import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-bindings.mjs';
 import { createPromptPredictionHost } from '../prompt-prediction/host.mjs';
 
+/**
+ * Report the composed Agent preset once the registry resolves it.
+ *
+ * Bash background execution is a *composition* property, not a configuration
+ * one: `@deepseek-ai/dsh-tool-bash` exposes `run_in_background` and promotes a
+ * foreground command that reaches its deadline into a background job, while the
+ * PTY `@deepseek-ai/dsh-terminal-bash` only settles a hard `timeout` and kills
+ * the command. The managed runtime therefore cannot tell from its own settings
+ * which of the two it runs with, and a 300s command failure is indistinguishable
+ * from a model or transport timeout. Log the resolved composition so a red run
+ * names the bash tool, the job service, and whether promotion is reachable.
+ * @param ctx - the Host context resolving the composed services.
+ * @param plugins - the plugin list the preset registry returned.
+ */
+export function logPresetComposition(ctx, plugins) {
+  try {
+    const names = (Array.isArray(plugins) ? plugins : [])
+      .map(entry => String(entry?.name || entry?.id || '')).filter(Boolean);
+    let jobs;
+    try { jobs = ctx.get('jobs'); } catch { jobs = undefined; }
+    console.info('[agentkit-studio] preset composition', JSON.stringify({
+      requested: 'standard',
+      pluginCount: names.length,
+      bashTools: names.filter(name => /(?:tool-bash|terminal-bash|bash-persistent)$/.test(name)),
+      jobsService: jobs !== undefined && jobs !== null,
+      backgroundPromotion: names.includes('@deepseek-ai/dsh-tool-bash'),
+    }));
+  } catch (error) {
+    // A diagnostic must never turn a working preset into a failed turn.
+    console.warn('[agentkit-studio] preset composition probe failed:', error?.message || error);
+  }
+}
+
+/**
+ * Name the archive path that cancels a running turn.
+ *
+ * DSH publishes `workspace/session-stop` while archiving a Session, and its
+ * archive admission answers by cancelling the live Agent with
+ * `{kind: 'user'}` — indistinguishable in `turn/end` from the user's own stop
+ * button. Record the session so a cancelled turn names the archiving path
+ * instead of leaving only the cancellation cause.
+ * @param ctx - the Host context carrying the workspace service.
+ */
+function observeSessionStop(ctx) {
+  try {
+    ctx.on('workspace/session-stop', request => {
+      try {
+        console.info('[agentkit-studio] session stop', JSON.stringify({
+          source: 'workspace/session-stop',
+          sessionId: String(request?.sessionId || ''),
+        }));
+      } catch { /* diagnostics never fail a stop */ }
+    });
+  } catch (error) {
+    // An older DSH without the workspace registry keeps every other path working.
+    console.warn('[agentkit-studio] session stop probe unavailable:', error?.message || error);
+  }
+}
+
+/**
+ * Name the caller of a long `AbortSignal.timeout` deadline.
+ *
+ * A deadline that fires inside `build-runtime-http.mjs` surfaces as a
+ * `DOMException` `TimeoutError` whose stack is only the timer callback, so the
+ * duration is the sole clue and every layer looks equally guilty. Trace the
+ * creation site of long deadlines once per process: the run boundary records the
+ * failure, this records who armed it.
+ * @param thresholdMs - deadlines at or above this value are traced.
+ */
+function traceLongAbortDeadlines(thresholdMs = 100_000) {
+  const original = AbortSignal.timeout;
+  if (typeof original !== 'function' || original.traced) return;
+  const traced = function timeout(ms) {
+    try {
+      if (Number(ms) >= thresholdMs) {
+        console.info('[agentkit-studio] abort deadline', JSON.stringify({
+          ms: Number(ms),
+          stack: String(new Error().stack || '').split('\n').slice(1, 8)
+            .map(line => line.trim().replace(/^at /, '')).join(' <- '),
+        }));
+      }
+    } catch { /* diagnostics never arm a deadline */ }
+    return original.call(AbortSignal, ms);
+  };
+  traced.traced = true;
+  AbortSignal.timeout = traced;
+}
+
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
+  traceLongAbortDeadlines();
   // The Desktop shell resolves this plugin through the profile, so an upgraded
   // application can still load an older profile copy. Align it before any Studio
   // surface loads; module resolution already happened, so it applies NEXT launch.
@@ -78,7 +167,16 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ? await import('../managed-resource-context.mjs').then(({ createManagedResourceContext }) => createManagedResourceContext(managedRuntime)) : undefined;
   const resolveResourceUser = managedRuntime
     ? await import('../managed-resource-identity.mjs').then(({ createManagedResourceIdentityResolver }) => createManagedResourceIdentityResolver({
-      runtime: managedRuntime, directory: join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
+      runtime: managedRuntime,
+      // Session ownership is Agent state, not deployment-version state. AGENTKIT_HOME
+      // is version-scoped (versions/<sha256(VersionId)>/agentkit), so reading the
+      // registry from it opened a fresh, empty directory after every accepted
+      // UpdateAgent: the Hosted UI found the Session, but resource identity
+      // resolution answered MANAGED_RESOURCE_IDENTITY_UNAVAILABLE and the turn
+      // failed with 托管资源缺少可核对的会话归属. Consume the same Agent-scoped
+      // registry the Session actions write, keeping the version directory only as
+      // the fallback for a Host launched without the explicit path.
+      directory: runtimeEnv.AGENTKIT_MANAGED_SESSIONS || join(runtimeEnv.AGENTKIT_HOME, 'managed-sessions'),
     })) : undefined;
   const studioStoreDir = join(runtimeEnv.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio');
   let managedKernel;
@@ -387,6 +485,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     getBasePlugins: async agent => {
       if (typeof registry?.pluginsFor !== 'function') throw Object.assign(new Error('DSH preset composition snapshot is unavailable; apply the pinned Studio patch series'), { code: 'DSH_PRESET_COMPOSITION_UNAVAILABLE' });
       const plugins = await registry.pluginsFor('standard');
+      logPresetComposition(ctx, plugins);
       return agent.metadata?.teamRole ? (await import('../studio-team-composition.mjs')).teamBasePlugins(plugins) : plugins;
     },
     getAgent: async agentId => {
@@ -525,6 +624,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const teamRuntime = (await import('../studio-team-runtime.mjs')).ensureStudioTeamRuntime(ctx);
   const studioTeams = (await import('../studio-teams.mjs')).createStudioTeams({ ctx, runtimeReady: teamRuntime, directory: join(studioStoreDir,'teams'), agents: await agentStorePromise, getAdmission: () => presetAdmission });
   teamTemplates = (await import('../team-template-summon.mjs')).createTeamTemplateSummon({ catalog: templateServices.templateCatalog, summon: templateServices.templateSummon, teams: studioTeams });
+  observeSessionStop(ctx);
   presetAdmission = createPresetAdmission();
   // Cordis unloads and reruns this scope when the registry changes. An old
   // scope must dispose its own admission, never whichever admission is current

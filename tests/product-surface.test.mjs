@@ -202,10 +202,10 @@ test('directServer Agent authoring persists through the Host bridge', async () =
   assert.match(hostSource, /templateAuthoring\.create\(\{/);
 });
 
-test('Studio domains use the DSH left panel list and old Studio underline tabs', () => {
+test('Studio domains use the DSH left panel list and filter-chip tabs', () => {
   assert.match(clientSource, /ctx\.slots\.register\(\s*\{ name: 'main', key: panel\.id \}/s);
   assert.match(clientSource, /ctx\.slots\.register\(\s*\{ name: 'sidebar\.panellist', id: panel\.id/s);
-  assert.match(clientSource, /borderBottom: '2px solid ' \+ \(value === item\.id/s);
+  assert.match(clientSource, /className: 'studio-tabs'/);
   assert.match(clientSource, /function StudioPageTabs/);
 });
 

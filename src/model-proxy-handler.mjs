@@ -6,7 +6,7 @@ import { responsesToChat, chatToResponses, createResponsesStreamTransformer } fr
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
-import { applyReasoningFallback, isReasoningEffortRejection, logReasoningFallback, studioReasoningFallbackWire } from './model-reasoning.mjs';
+import { applyReasoningFallback, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeReasoningContent, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
 /**
  * Bounded provider identifiers from a rejected-request body.
@@ -55,16 +55,11 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       if (convert && input.previous_response_id) throw Object.assign(new Error('请传入完整对话历史；此兼容端点不保存远端 Response ID'), { status: 400, code: 'STATELESS_INPUT_REQUIRED' });
       const toolContext = convert && codexTools ? prepareCodexProxyRequest(input) : undefined;
       const body = convert ? responsesToChat(toolContext?.request || input) : input;
-      // Codex serializes an absent reasoning body as null. Some Responses
-      // providers reject that optional field instead of treating it as absent.
-      // Preserve summaries, encrypted content, message phases and tool items.
-      if (nativeResponses && Array.isArray(body.input)) {
-        body.input = body.input.map(item => {
-          if (item?.type !== 'reasoning' || item.content !== null) return item;
-          const { content: _absent, ...reasoning } = item;
-          return reasoning;
-        });
-      }
+      // Reasoning items are forwarded exactly as Codex emitted them: the same
+      // request works when Codex reaches this gateway directly, so the proxy
+      // must not rewrite the item shape up front. A provider that refuses the
+      // optional `content` field is handled by the 400 fallback below, which
+      // retries once with the field removed.
       // A route represents exactly one configured model. Callers choose a
       // different profile route to use a different model/credential pair.
       // An unbound native Codex provider may let Codex select its default model.
@@ -110,6 +105,17 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
           upstream = await requestUpstream(serialized);
           deadline.touch();
           upstreamBodyConsumed = false;
+        } else if (nativeResponses && isReasoningReplayRejection(upstream.status, detail)) {
+          // Codex reaches this gateway directly without any rewrite, so
+          // reasoning items are forwarded unchanged. Only when a provider
+          // refuses the optional `content` field do we retry once with it
+          // removed, keeping reasoning continuity intact otherwise.
+          if (normalizeReasoningContent(body) > 0) {
+            serialized = JSON.stringify(body);
+            upstream = await requestUpstream(serialized);
+            deadline.touch();
+            upstreamBodyConsumed = false;
+          }
         }
       }
       if (!upstream.ok) {
