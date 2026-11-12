@@ -80,7 +80,7 @@ export function createStudioPrimitives({ React }) {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
       h('h2', { style: { margin: 0, color: BRAND.ink, fontSize: '16px', lineHeight: '24px', fontWeight: 500 } }, title),
       HelpTip(detail)),
-    action || null);
+    action ? h('div', { className: 'studio-page-actions' }, action) : null);
   }
 
   function OperationalPanel({ title, detail, action, children }) {

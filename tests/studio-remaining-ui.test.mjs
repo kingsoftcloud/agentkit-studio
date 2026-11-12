@@ -4,6 +4,7 @@ import { createOverviewPage } from '../src/client/pages/overview.mjs';
 import { createRuntimeCatalogPage } from '../src/client/pages/runtime-catalog.mjs';
 import { createStatusText } from '../src/client/components/status-text.mjs';
 import { createOperationalComponents } from '../src/client/components/operational.mjs';
+import { createStudioPrimitives } from '../src/client/components/primitives.mjs';
 
 const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
 const nodes = tree => tree && typeof tree === 'object' ? [tree, ...tree.children.flatMap(nodes)] : [];
@@ -79,4 +80,25 @@ test('operational object rows retain cells and dispatch while time records remai
   assert.deepEqual(opened, [row]);
   assert.ok(nodes(OperationalTable(props)).some(node => node.type === 'table' && node.props.className === 'studio-tbl'));
   assert.equal(OperationalTable({ ...props, rows: [], layout: 'rows' }).children[0].props.className, 'studio-empty');
+});
+
+test('operational tables fit the desktop column and toolbar filters share its available width', () => {
+  const { OperationalTable, OperationalToolbar } = createOperationalComponents({ ui: { React: { createElement: h }, BRAND: {}, buttonStyle: () => ({}) } });
+  for (const rows of [[], [{ id: 'trace-1' }]]) {
+    const table = OperationalTable({ columns: Array.from({ length: 7 }, (_, id) => ({ id, label: String(id) })), rows });
+    assert.equal(nodes(table).find(node => node.type === 'table').props.style.minWidth, '680px');
+  }
+  const toolbar = OperationalToolbar({ children: h('input'), onRefresh() {} });
+  assert.equal(toolbar.children[0].props.style.flex, 1);
+  assert.equal(toolbar.children[0].props.style.minWidth, 0);
+});
+
+test('operational headings group multiple actions at the right without losing empty or error help', () => {
+  const { OperationalPageHeading } = createStudioPrimitives({ React: react([]) });
+  const actions = h('Fragment', null, h('button', null, '新增渠道'), h('span', null, '待配置'));
+  const heading = OperationalPageHeading({ title: 'Channels', detail: '连接错误', action: actions });
+  assert.equal(heading.children[1].props.className, 'studio-page-actions');
+  assert.equal(heading.children[1].children[0], actions);
+  assert.ok(nodes(heading).some(node => node.props.title === '连接错误'));
+  assert.equal(OperationalPageHeading({ title: '观测' }).children.length, 1);
 });

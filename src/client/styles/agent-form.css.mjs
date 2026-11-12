@@ -26,6 +26,7 @@ export default String.raw`
 .af-runtime-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
 .af-btn.af-runtime-option { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; height: auto; min-height: 88px; padding: 12px; white-space: normal; text-align: left; }
 .af-runtime-option[aria-checked="true"] { border-color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.af-runtime-option:disabled { opacity: 1; background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-tertiary); }
 .af-runtime-option small { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 .af-runtime-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; font-weight: 500; }
 .af-runtime-tag { padding: 0 5px; border: .5px solid var(--dsw-alias-border-l3); border-radius: 4px; font-size: 11px; font-weight: 400; color: var(--dsw-alias-label-tertiary); }

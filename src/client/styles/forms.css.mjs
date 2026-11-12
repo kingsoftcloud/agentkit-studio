@@ -41,7 +41,9 @@ export default String.raw`
 .studio-template-surface :is(.ec-card,.rl-card,.sq-team-card) { box-shadow: none; border: .5px solid var(--dsw-alias-border-l2); border-radius: 16px; }
 .studio-template-surface .ec-card-main { padding: 16px; }
 .studio-template-surface :is(.ec-card-heading,.rl-card-heading) { align-items: flex-start; gap: 12px; }
-.studio-template-surface :is(.ec-card-copy p,.rl-card p,.sq-team-card p) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13px; line-height: 20px; }
+.studio-template-surface :is(.ec-card-copy p,.rl-card p,.sq-team-card p) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; min-height: 40px; font-size: 13px; line-height: 20px; }
+.studio-template-surface .ec-card h3 { font-size: 14px; font-weight: 500; }
+.studio-template-surface .ec-card:hover { box-shadow: none; transform: none; }
 .studio-template-surface .ec-card-heading svg, .studio-template-surface .ec-card-heading img { max-width: 40px; max-height: 40px; }
 .studio-template-surface .ec-tag { border: 0; border-radius: 6px; padding: 1px 6px; font-size: 11px; font-weight: 400; background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); }
 .studio-template-surface .ec-sort { border: 0; background: transparent; gap: 8px; }

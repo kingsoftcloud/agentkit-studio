@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import agentFormStyles from '../src/client/styles/agent-form.css.mjs';
 import deliveryStyles from '../src/client/styles/delivery.css.mjs';
 import modelSettingsStyles from '../src/client/styles/model-settings.css.mjs';
+import sharedStyles from '../src/client/styles/forms.css.mjs';
+import responsiveStyles from '../src/client/styles/responsive.css.mjs';
 
 /** The declaration block of the first rule that matches `pattern`. */
 function rule(pattern, styles = agentFormStyles) {
@@ -18,6 +20,22 @@ test('a disabled primary button keeps its label readable', () => {
   assert.match(disabled, /background: var\(--dsw-alias-button-primary-fill/);
   assert.match(disabled, /color: var\(--dsw-alias-label-primary-foreground/);
   assert.match(disabled, /opacity: \.4/);
+});
+
+test('unavailable runtime names and Studio placeholders retain readable token colors', () => {
+  const runtime = rule(/\.af-runtime-option:disabled \{([^}]*)\}/);
+  assert.match(runtime, /opacity: 1/);
+  assert.match(runtime, /color: var\(--dsw-alias-label-tertiary\)/);
+  const placeholder = rule(/::placeholder \{([^}]*)\}/, responsiveStyles);
+  assert.match(placeholder, /color: var\(--dsw-alias-label-secondary\)/);
+  assert.match(placeholder, /opacity: 1/);
+});
+
+test('template descriptions wrap to two lines instead of inheriting catalog nowrap', () => {
+  const description = rule(/\.studio-template-surface :is\(\.ec-card-copy p,\.rl-card p,\.sq-team-card p\) \{([^}]*)\}/, sharedStyles);
+  assert.match(description, /white-space: normal/);
+  assert.match(description, /-webkit-line-clamp: 2/);
+  assert.match(description, /min-height: 40px/);
 });
 
 test('the agent form uses a capped body and vertical step rail', () => {
