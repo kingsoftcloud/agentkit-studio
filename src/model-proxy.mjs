@@ -67,6 +67,11 @@ export function inputToMessages(input) {
   const items = Array.isArray(input) ? input : [typeof input === 'string' ? { type: 'message', role: 'user', content: input } : input];
   const messages = [];
   const calls = [];
+  // Codex may omit `call_id`; the synthetic id assigned to the call has to be
+  // the one its output references, otherwise the upstream rejects the request
+  // with "assistant message with 'tool_calls' must be followed by tool
+  // messages" and no id in the report.
+  const syntheticId = index => `call_${index}`;
   let reasoning = '';
   const attach = message => {
     if (reasoning) { message.reasoning_content = reasoning; reasoning = ''; }
@@ -88,13 +93,15 @@ export function inputToMessages(input) {
       reasoning += [...(item.summary || []), ...(item.content || [])].map(part => part.text || '').join('\n');
     } else if (type === 'function_call' || type === 'custom_tool_call') {
       calls.push({
-        id: item.call_id || `call_${calls.length}`,
+        id: item.call_id || syntheticId(calls.length),
         type: 'function',
         function: { name: item.name, arguments: type === 'custom_tool_call' ? json({ input: item.input || '' }) : (item.arguments || '') },
       });
     } else if (type === 'function_call_output' || type === 'custom_tool_call_output') {
+      // Pair with the most recent call when the id is absent.
+      const pending = calls.at(-1);
       flush();
-      messages.push({ role: 'tool', tool_call_id: item.call_id || '', content: json(item.output) });
+      messages.push({ role: 'tool', tool_call_id: item.call_id || pending?.id || '', content: json(item.output) });
     }
   }
   flush();
