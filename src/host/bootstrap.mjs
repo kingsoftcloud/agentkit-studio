@@ -91,9 +91,39 @@ function observeSessionStop(ctx) {
   }
 }
 
+/**
+ * Name the caller of a long `AbortSignal.timeout` deadline.
+ *
+ * A deadline that fires inside `build-runtime-http.mjs` surfaces as a
+ * `DOMException` `TimeoutError` whose stack is only the timer callback, so the
+ * duration is the sole clue and every layer looks equally guilty. Trace the
+ * creation site of long deadlines once per process: the run boundary records the
+ * failure, this records who armed it.
+ * @param thresholdMs - deadlines at or above this value are traced.
+ */
+function traceLongAbortDeadlines(thresholdMs = 100_000) {
+  const original = AbortSignal.timeout;
+  if (typeof original !== 'function' || original.traced) return;
+  const traced = function timeout(ms) {
+    try {
+      if (Number(ms) >= thresholdMs) {
+        console.info('[agentkit-studio] abort deadline', JSON.stringify({
+          ms: Number(ms),
+          stack: String(new Error().stack || '').split('\n').slice(1, 8)
+            .map(line => line.trim().replace(/^at /, '')).join(' <- '),
+        }));
+      }
+    } catch { /* diagnostics never arm a deadline */ }
+    return original.call(AbortSignal, ms);
+  };
+  traced.traced = true;
+  AbortSignal.timeout = traced;
+}
+
 export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, configurationHome, resourceAdapterFactory,
   nativeHookRegistrations = [], nativeContextSourceRegistrations = [], githubSkillSourceFetch = hostFetch,
   nativeA2aInbound, nativeManagedKernel } = {}) {
+  traceLongAbortDeadlines();
   // The Desktop shell resolves this plugin through the profile, so an upgraded
   // application can still load an older profile copy. Align it before any Studio
   // surface loads; module resolution already happened, so it applies NEXT launch.
