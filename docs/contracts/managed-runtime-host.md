@@ -22,6 +22,9 @@ fields fail explicitly. The platform must inject:
 - `OPENAI_BASE_URL`, `AGENTKIT_MODEL_API_KEY` and a dedicated
   `AGENTKIT_RUNTIME_TOKEN` of at least 24 characters.
 - Optional `AGENTKIT_RUNTIME_HOST` / `AGENTKIT_RUNTIME_PORT` for this Host listener.
+  `AGENTKIT_RUNTIME_TIMEOUT_MS` may tune the bounded outer Native run deadline
+  (1 second to 24 hours); the default is 900 seconds so a five-minute foreground
+  tool yield can be promoted and settled without the runner aborting first.
   `AGENTKIT_MANAGED_CODEX_API` selects `responses` (default) or `chat-completions`.
 
 Identity comes from the platform environment, not from caller-supplied YAML.

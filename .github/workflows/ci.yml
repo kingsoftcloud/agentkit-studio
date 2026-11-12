@@ -67,7 +67,7 @@ jobs:
       matrix:
         # Keep the runner within the locked Playwright browser installer support.
         os: [ubuntu-24.04]
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - name: Preserve source line endings
         run: git config --global core.autocrlf false
@@ -120,6 +120,27 @@ jobs:
       - name: Build and test the patched DSH host
         timeout-minutes: 15
         run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - name: Install Chromium for the frozen Host proof
+        timeout-minutes: 12
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install the accepted Studio plugin in an isolated profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_source="$(node -p "JSON.parse(require('fs').readFileSync('.artifacts/patched-host-acceptance.json')).checkout")"
+          export DSH_HOME="$RUNNER_TEMP/studio-frozen-dsh"
+          export AGENTKIT_HOME="$RUNNER_TEMP/studio-frozen-agentkit"
+          make profile-install DSH_ROOT="$host_source" DSH_PROFILE=studio-refactor
+          {
+            echo "AGENTKIT_DSH_ROOT=$host_source"
+            echo "DSH_HOME=$DSH_HOME"
+            echo "AGENTKIT_HOME=$AGENTKIT_HOME"
+            echo "STUDIO_VERIFY_PROFILE=studio-refactor"
+            echo "STUDIO_VERIFY_CHROME=$(node --input-type=module -e 'import { chromium } from "@playwright/test"; console.log(chromium.executablePath())')"
+          } >> "$GITHUB_ENV"
+      - name: Verify the real frozen Host MCP turn
+        timeout-minutes: 12
+        run: node scripts/verify-studio-frozen-host.mjs .artifacts/frozen-host.json
       - name: Verify actual Native turn ownership, approvals and process recovery
         timeout-minutes: 8
         shell: bash
@@ -155,6 +176,7 @@ jobs:
             .artifacts/patched-host-acceptance.json
             .artifacts/patched-host/host-tests.json
             .artifacts/patched-host/host-dependency-lifecycle.json
+            .artifacts/frozen-host.json
             .artifacts/native-host-contracts.log
           if-no-files-found: error
           retention-days: 7
