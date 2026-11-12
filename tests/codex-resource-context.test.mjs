@@ -101,3 +101,35 @@ test('independent Team roles use only the frozen role and the actual Session-sco
   assert.equal(result.content.accepted, true);
   assert.equal(calls[0][2].agent, owner);
 });
+
+test('an independent browser call keeps the structured screenshot and the original effect identity', async () => {
+  const name = 'browser_inspect_workspace';
+  const owner = { session: { id: 'browser-session' } };
+  const definition = { name, readOnly: false, timeoutMs: 110000, parameters: { type: 'object' } };
+  const record = { spec: { bindings: { tools: [{ resourceId: name }] } } };
+  const context = createCodexResourceContext({ agentStore: { get: async () => record }, builds: {}, resources: {} });
+  const calls = [];
+  const content = { ok: true, screenshot_path: '.artifacts/browser.png' };
+  const prepared = await context({ agentId: 'agent', runtime: 'native-engine', nativeService: true, agent: owner, toolAdapter: {
+    nativeBrowserTool: definition,
+    listTools: () => [{ ...definition, resourceId: name }],
+    callNativeBrowserTool: async (args, options) => { calls.push({ args, ...options }); return { status: 'ok', content }; },
+  } });
+  assert.equal(prepared.dynamicTools.length, 1);
+  const [tool] = prepared.dynamicTools;
+  assert.equal(tool.name, name);
+  assert.equal(tool.timeoutMs, 110000);
+  assert.equal(tool.readOnly, false);
+  const signal = new AbortController().signal;
+  const input = { name, arguments: { path: 'starark/index.html' }, signal, runId: 'run', callId: 'model-call' };
+  assert.equal((await prepared.nativeHostToolHandler(input)).content.code, 'BROWSER_EFFECT_UNBOUND');
+  assert.equal(calls.length, 0);
+  const admitted = { ...input, effect: { contract: 'agentkit.engine-host-tool-effect/v1', operationKey: 'browser-effect' } };
+  assert.equal(tool.effectProtocol, admitted.effect.contract);
+  assert.deepEqual(await prepared.nativeHostToolHandler(admitted), { status: 'ok', content });
+  await prepared.nativeHostToolHandler({ ...admitted, callId: 'another-model-call' });
+  assert.equal(calls[0].callId, calls[1].callId);
+  assert.equal(calls[0].agent, owner);
+  assert.equal(calls[0].signal, signal);
+  assert.deepEqual(calls[0].args, input.arguments);
+});

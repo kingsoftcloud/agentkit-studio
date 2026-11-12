@@ -184,7 +184,7 @@ function createToolAdapter(ctx, bindings) {
     },
     async callTool(name, args = {}, { callId, signal, agent } = {}) {
       const schema = resolve(name, agent);
-      const result = await ctx.tools.execute({
+      const result = await executeNativeDshToolCall(ctx.tools, {
         callId: String(callId || `studio-tool-${Date.now().toString(36)}`),
         name: schema.name,
         arguments: args,
@@ -288,13 +288,23 @@ export function apply(ctx, config = {}) {
   const a2aNames = new Set(nativeA2aToolDefinitions().map(tool => tool.name));
   const a2aHostTools = service && config.a2aBindings?.length
     ? builtinToolBindings?.definitions.filter(tool => a2aNames.has(tool.name)) ?? [] : [];
+  const browserHostTool = service && toolNames(config.toolBindings).includes('browser_inspect_workspace')
+    ? builtinToolBindings?.definitions.find(tool => tool.name === 'browser_inspect_workspace') : undefined;
   const teamRole = service && config.teamRole === true;
   const teamHostTools = agent => (ctx.tools.schemas?.(agent) ?? []).filter(tool => Object.hasOwn(STUDIO_TEAM_HOST_TOOLS, tool.name))
     .map(tool => ({ ...tool, readOnly: STUDIO_TEAM_HOST_TOOLS[tool.name] }));
   const toolAdapter = config.runtime === 'codex'
     ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) }
-    : a2aHostTools.length || teamRole ? {
+    : a2aHostTools.length || browserHostTool || teamRole ? {
       ...boundToolAdapter,
+      ...(browserHostTool ? {
+        nativeBrowserTool: browserHostTool,
+        callNativeBrowserTool: (args, options) => executeIndependentHostTool(ctx, browserHostTool, args, options, result => {
+          const content = JSON.parse(result.value.result);
+          if (!content || typeof content.ok !== 'boolean') throw Error('Browser tool outcome invalid');
+          return { status: content.status === 'uncertain' ? 'uncertain' : content.ok ? 'ok' : 'error', content };
+        }),
+      } : {}),
       ...(a2aHostTools.length ? {
         listNativeA2aTools: () => a2aHostTools,
         ...(builtinToolBindings.observeA2aReceipt ? {

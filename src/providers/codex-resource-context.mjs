@@ -61,8 +61,10 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
     const nativeA2a = independent && resourceRecord.spec.bindings?.a2a?.length
       ? toolAdapter?.listNativeA2aTools?.() ?? [] : [];
     const nativeTeam = teamRole ? toolAdapter?.listNativeTeamTools?.(agent) ?? [] : [];
+    const nativeBrowser = independent ? toolAdapter?.nativeBrowserTool : undefined;
     const nativeTools = [...nativeA2a.map(tool => ({ ...tool, _source: 'native-a2a' })),
-      ...nativeTeam.map(tool => ({ ...tool, _source: 'native-team' }))];
+      ...nativeTeam.map(tool => ({ ...tool, _source: 'native-team' })),
+      ...(nativeBrowser ? [{ ...nativeBrowser, _source: 'native-browser' }] : [])];
     const nativeByName = new Map(nativeTools.map(tool => [tool.name, tool]));
     const a2aReceipts = typeof toolAdapter?.observeNativeA2aReceipt === 'function'
       && nativeA2a.some(tool => tool.name === 'call_a2a_agent');
@@ -104,11 +106,14 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
           if (!definition) return undefined;
           if (!runId || !callId || !definition.readOnly && (effect?.contract !== 'agentkit.engine-host-tool-effect/v1'
             || typeof effect.operationKey !== 'string' || !effect.operationKey))
-            return { status: 'error', content: { code: definition._source === 'native-a2a' ? 'A2A_EFFECT_UNBOUND' : 'TEAM_EFFECT_UNBOUND', executed: false } };
+            return { status: 'error', content: { code: definition._source === 'native-a2a' ? 'A2A_EFFECT_UNBOUND'
+              : definition._source === 'native-browser' ? 'BROWSER_EFFECT_UNBOUND' : 'TEAM_EFFECT_UNBOUND', executed: false } };
           // Model call IDs can repeat across Runs. Tie host effects to their
           // durable engine operation, including calls admitted after approval.
           const identity = effect?.operationKey ?? callId;
           const ownedCallId = nativeHostToolCallId(runId, identity);
+          if (definition._source === 'native-browser')
+            return toolAdapter.callNativeBrowserTool(args, { agent, callId: ownedCallId, signal });
           const execute = definition._source === 'native-a2a' ? toolAdapter.callNativeA2aTool : toolAdapter.callNativeTeamTool;
           return execute(name, args, { agent, callId: ownedCallId, signal });
         },

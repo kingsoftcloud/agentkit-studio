@@ -159,7 +159,11 @@ for (const runtime of ['dsh-native', 'codex']) test(`${runtime} maps legacy snip
   const ctx = { get: id => id === 'studioRuntimeBridge' ? bridge : undefined,
     tools: { register: tool => { assert.notEqual(tool.name, 'run_code'); registered.push(tool); return () => {}; },
       schemas: () => [...registered, { name: 'run_code', parameters: { type: 'object' } }],
-      execute: exec => { assert.equal(exec.name, 'sandbox_run_code'); return registered[0].execute(exec.arguments, exec); } },
+      execute: ({ calls: [call], agent, signal }) => {
+        assert.equal(call.name, 'sandbox_run_code');
+        const args = JSON.parse(call.arguments);
+        return registered[0].execute(args, { name: call.name, callId: call.id, arguments: args, agent, signal });
+      } },
     on: (name, listener) => { listeners.set(name, listener); return () => {}; }, effect: install => disposers.push(install()) };
   applyPreset(ctx, { agentId: 'code-agent', runtime, local: true, toolBindings: ['run_code'],
     spawnImpl: () => assert.fail('missing Node snippet port cannot enter Python') });

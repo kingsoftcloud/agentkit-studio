@@ -514,7 +514,11 @@ test('the DSH runtime plugin exposes only bound registry tools to Studio', async
       schemas: agent => agent === scopeAgent
         ? [{ name: 'component_status', description: '状态', parameters: { type: 'object', properties: {} } }, { name: 'other', description: '其他', parameters: {} }]
         : [],
-      execute: async call => { executed = call; return { isError: false, content: [{ type: 'text', text: 'healthy' }] }; },
+      execute: async batch => {
+        executed = batch;
+        return { results: [{ callId: batch.calls[0].id, result: { isError: false, content: [{ type: 'text', text: 'healthy' }] } }],
+          additionalContexts: [], concluded: false };
+      },
     },
     on: (_event, callback) => { listener = callback; return () => {}; },
   }, { agentId: 'demo/agent', runtime: 'dsh-native', local: true, toolBindings: ['component_status'] });
@@ -524,8 +528,7 @@ test('the DSH runtime plugin exposes only bound registry tools to Studio', async
   const listed = forwarded.studioToolAdapter.listTools([], scopeAgent);
   assert.deepEqual(listed.map(tool => tool.name), ['component_status']);
   assert.deepEqual(await forwarded.studioToolAdapter.callTool('component_status', {}, { callId: 'call-1', agent: scopeAgent }), [{ type: 'text', text: 'healthy' }]);
-  assert.equal(executed.name, 'component_status');
-  assert.equal(executed.callId, 'call-1');
+  assert.deepEqual(executed.calls, [{ type: 'tool-call', id: 'call-1', name: 'component_status', arguments: '{}' }]);
   assert.equal(executed.agent, scopeAgent);
   dispose();
   unbindDshAgentRoutes('demo/agent');

@@ -5,6 +5,7 @@ import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/a
 import { browserInspectParameters, parseWorkspaceBrowserInput } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-protocol';
 import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-server';
 import { browserCanvasMetrics } from '@kingsoftcloud/agentkit-harness-node/native/browser-canvas-metrics';
+import { resolveNativeBrowserExecutable } from '@kingsoftcloud/agentkit-harness-node/native/browser-availability';
 import { isInside, publishWorkspaceBytes, realpathExisting } from '@kingsoftcloud/agentkit-harness-node/native/workspace-paths';
 import { commandStateRoot, DshNodeCommandLedger } from './dsh-node-command-ledger.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
@@ -48,7 +49,8 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
     executable: browserExecutablePath ?? null, backend, browser: 'playwright-chromium', network: 'local-workspace-only/v1' });
   const launch = launchBrowser ?? (async () => {
     const { chromium } = await import('playwright-core');
-    return chromium.launch({ headless: true, ...(browserExecutablePath ? { executablePath: browserExecutablePath } : {}) });
+    const executablePath = browserExecutablePath ?? resolveNativeBrowserExecutable();
+    return chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
   });
   const lifetime = new AbortController(), lifetimeSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const ledgers = new Map(), active = new Set(), disposing = new Set(), cleanupFailures = new Set(); let closing;
