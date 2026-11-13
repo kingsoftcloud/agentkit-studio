@@ -138,6 +138,26 @@ test('the engine keeps provider cache hits and reasoning separate from the alrea
   } }]);
 });
 
+test('an invalid executable fails initialization without exiting Studio', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'studio-engine-invalid-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const runtime = createNativeEngineRuntime({ stateRoot: join(root, 'state'), env: {
+    AGENTKIT_ENGINE_COMMAND: join(root, 'missing-engine'),
+  } });
+  await assert.rejects(collect(runtime.stream({ input: 'Hello', cwd: root, sessionId: 'fixture', model: 'fixture',
+    modelProvider: { baseUrl: 'http://127.0.0.1:1', apiKey: 'fixture' } })), { code: 'NATIVE_ENGINE_UNAVAILABLE' });
+});
+
+test('consecutive identical inputs without a turn ID start different Runs', externalEngine, async t => {
+  const f = await setup(t, [final('Done.')]);
+  const runs = [];
+  for (let i = 0; i < 2; i++) {
+    const chunks = await collect(f.runtime.stream({ ...f.options, turnId: '' }));
+    runs.push(chunks.find(chunk => chunk.type === 'engine-event').runId);
+  }
+  assert.notEqual(runs[0], runs[1]);
+});
+
 test('an approved turn writes the file and streams engine progress as ordinary runtime chunks', externalEngine, async t => {
   const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Created out.txt.')]);
   const approvals = [];

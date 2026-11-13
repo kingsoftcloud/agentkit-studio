@@ -16,7 +16,7 @@
  * Memory recall and write-back stay host-side around the turn, as on the
  * Codex path. Bound A2A calls retain the Host's existing A2A authority. */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
@@ -162,7 +162,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         } catch (error) { return { status: 'error', content: { message: String(error?.message || error).slice(0, 2000) } }; }
       };
       let diagnostics = '';
-      const runId = `studio-${createHash('sha256').update(`${session}\n${turnId ?? Date.now()}\n${objective}`).digest('hex').slice(0, 32)}`;
+      const runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
       const onReadToolReceipt = nativeHostReceiptHandler && ((request, receiptSignal) => {
         if (request?.runId !== runId) return {};
         return nativeHostReceiptHandler({ ...request, name: hostTools.originalName(request.name),

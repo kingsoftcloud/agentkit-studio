@@ -84,7 +84,16 @@ export function spawnEngine({ command, args = [], env, onApproveTool, onCallTool
   const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.setEncoding('utf8').on('data', chunk => onLog(chunk));
   const client = connectEngine({ input: child.stdout, output: child.stdin, onApproveTool, onCallTool, hostName });
-  const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
-  return { ...client, child, exited,
-    async close() { try { await client.shutdown(); } catch { /* already gone */ } child.stdin.end(); return exited; } };
+  const exited = new Promise(resolve => {
+    child.once('exit', code => resolve({ code }));
+    child.once('error', error => resolve({ error }));
+  });
+  // A spawn error is asynchronous. Race RPCs against exit so a missing
+  // executable is reported through initialize instead of crashing the host.
+  child.stdin.on('error', () => {});
+  const call = invoke => (...values) => Promise.race([invoke(...values), exited.then(({ error }) => {
+    throw error ?? new Error('engine process exited');
+  })]);
+  return { ...client, child, exited: exited.then(({ code }) => code ?? null), initialize: call(client.initialize),
+    async close() { try { await client.shutdown(); } catch { /* already gone */ } child.stdin.end(); return (await exited).code ?? null; } };
 }
