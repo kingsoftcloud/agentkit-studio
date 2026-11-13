@@ -31,7 +31,7 @@ import { createSsrfPinnedFetch, resolveWebSearchConfig, resolveWebSsrfPolicy } f
 
 export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, agentRevision, buildId, isClosed, signal,
   env = process.env, fetchImpl = hostFetch, persistOutput, toolBindings, toolContracts = [], componentBindings, skillConnection,
-  skillDefinitions = [], a2aBindings = [], a2aSessionEvents, browserExecutablePath, getSkillManagement, getKnowledgeTools, knowledgeBindings,
+  skillDefinitions = [], a2aBindings = [], a2aSessionEvents, browserExecutablePath, applicationPreviewOrigin, getSkillManagement, getKnowledgeTools, knowledgeBindings,
   getLegacyMemoryTools, legacyMemoryBindings } = {}) {
   invariant(persistOutput === undefined || typeof persistOutput === 'function', 'dsh_node_output_store_invalid');
   env = { ...env };
@@ -67,7 +67,9 @@ export function createDshNodeBuiltins({ ctx, workspaceRoot, stateDir, agentId, a
       sessionEvents: a2aSessionEvents,
       fetchImpl, isClosed, signal }) : null;
   const browser = !requested || requested.has('browser_inspect_workspace')
-    ? createDshNodeBrowserTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, browserExecutablePath, backend: commandBackend, isClosed, signal }) : null;
+    ? createDshNodeBrowserTools({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir, browserExecutablePath,
+      applicationPreviewOrigin: commandBackend === 'local_process' ? applicationPreviewOrigin : undefined,
+      backend: commandBackend, isClosed, signal }) : null;
   const management = getSkillManagement && (!requested || skillManagementDefinitions().some(tool => requested.has(tool.name)))
     ? createDshNodeSkillManagement({ ctx, agentId, agentRevision, buildId, workspaceRoot, stateDir,
       management: getSkillManagement(agentId), isClosed, signal }) : null;

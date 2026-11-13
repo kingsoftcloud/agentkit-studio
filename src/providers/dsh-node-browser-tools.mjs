@@ -11,7 +11,7 @@ import { commandStateRoot, DshNodeCommandLedger } from './dsh-node-command-ledge
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
 
 export const DSH_NODE_BROWSER_CONTRACT = 'agentkit.dsh-node-browser/v1';
-export function dshBrowserDefinition() {
+export function dshBrowserDefinition({ applicationPreview = false } = {}) {
   const parameters = browserInspectParameters({ maxActions: 50 });
   // The Python legacy tool defaults omitted click/fill selectors to body.
   for (const action of parameters.properties.actions.items.oneOf) {
@@ -19,7 +19,12 @@ export function dshBrowserDefinition() {
     delete action.not;
     if (['click', 'fill'].includes(action.properties.type.const)) delete action.oneOf;
   }
-  return { name: 'browser_inspect_workspace', description: 'Inspect a local workspace HTML page in an isolated browser; bounded actions and screenshot evidence.',
+  if (applicationPreview) parameters.properties.target = { enum: ['workspace', 'application'],
+    description: 'Use application for a running backend on the Host-bound preview origin. Use workspace (default) for static HTML.' };
+  const description = 'Inspect a static workspace HTML page in an isolated browser. Workspace mode serves files only and cannot reach application APIs.'
+    + (applicationPreview ? ' For frontend/backend flows, use target=application and path="." for the root of the running Host-bound preview. Only that origin is reachable.' : '')
+    + ' For a key press, use {type:"press",key:"Enter",selector:"optional CSS selector"}.';
+  return { name: 'browser_inspect_workspace', description,
     parameters, readOnly: false, concurrentSafe: false, permissions: [], timeoutMs: 110000 };
 }
 const rejected = code => ({ status: 'error', content: { ok: false, error_type: code, executed: false } });
@@ -38,13 +43,18 @@ function abortable(work, signal, late) {
 }
 
 export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  browserExecutablePath, launchBrowser, backend = 'local_process', isClosed = () => false, signal: hostSignal } = {}) {
+  browserExecutablePath, launchBrowser, backend = 'local_process', applicationPreviewOrigin, isClosed = () => false, signal: hostSignal } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
     && (buildId === null || typeof buildId === 'string' && buildId.trim()) && typeof isClosed === 'function'
     && (hostSignal === undefined || hostSignal instanceof AbortSignal)
     && (browserExecutablePath === undefined || isAbsolute(browserExecutablePath))
     && ['local_process', 'e2b'].includes(backend), 'dsh_node_browser_binding_invalid');
-  const state = commandStateRoot(join(stateDir, 'browser'), workspaceRoot, agentId), definition = dshBrowserDefinition();
+  const preview = applicationPreviewOrigin === undefined ? null : new URL(applicationPreviewOrigin);
+  invariant(!preview || preview.protocol === 'http:' && preview.hostname === '127.0.0.1' && preview.port
+    && !preview.username && !preview.password && preview.pathname === '/' && !preview.search && !preview.hash,
+  'dsh_node_browser_preview_origin_invalid');
+  const state = commandStateRoot(join(stateDir, 'browser'), workspaceRoot, agentId);
+  const definition = dshBrowserDefinition({ applicationPreview: Boolean(preview) });
   const binding = Object.freeze({ contract: DSH_NODE_BROWSER_CONTRACT, agentId, agentRevision, buildId, workspace: state.workspace,
     executable: browserExecutablePath ?? null, backend, browser: 'playwright-chromium', network: 'local-workspace-only/v1' });
   const launch = launchBrowser ?? (async () => {
@@ -99,7 +109,10 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       if (errors.length) throw errors[0];
     })();
     try {
-      server = await step(() => createBrowserWorkspaceServer({ root: state.workspace, path: input.path, signal: request.signal }), dispose);
+      const application = input.target === 'application';
+      if (!application) server = await step(() => createBrowserWorkspaceServer({ root: state.workspace, path: input.path, signal: request.signal }), dispose);
+      const url = application ? new URL(input.path.split('/').map(encodeURIComponent).join('/'), preview).href : server.url;
+      const methods = application ? ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] : ['GET', 'HEAD'];
       browser = await step(launch, dispose);
       context = await step(() => browser.newContext({ viewport: { width: 1280, height: 720 }, serviceWorkers: 'block', acceptDownloads: false }), dispose);
       abortCleanup = () => { void release().catch(() => {}); };
@@ -109,7 +122,11 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       await step(() => context.route('**/*', async route => {
         try {
           guard(); const req = route.request();
-          if (req.frame().page() !== page || !server.allows(req.url()) || !['GET', 'HEAD'].includes(req.method())) {
+          const destination = new URL(req.url());
+          const allowed = application ? destination.origin === preview.origin && !destination.username && !destination.password
+            : server.allows(req.url());
+          const sameFrame = application ? req.frame() === page.mainFrame() : req.frame().page() === page;
+          if (!sameFrame || !allowed || !methods.includes(req.method())) {
             log(failures, 'browser_network_denied'); await route.abort('blockedbyclient'); return;
           }
           // Never hand Chromium a redirect; fulfilled redirects may bypass
@@ -127,7 +144,7 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       page.on('requestfailed', () => log(failures, 'browser_request_failed'));
       page.setDefaultTimeout(10000);
       sent = true;
-      const response = await step(() => page.goto(server.url, { waitUntil: 'domcontentloaded', timeout: 30000 }));
+      const response = await step(() => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }));
       if (input.waitMs) await step(() => page.waitForTimeout(input.waitMs));
       for (const [index, action] of input.actions.entries()) {
         const locator = () => page.locator(action.selector ?? 'body');
@@ -153,11 +170,17 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       const metrics = await browserCanvasMetrics(page, step); guard();
       const title = await step(() => page.title()), rendered = Boolean(body.trim() || visualCount || appChildCount);
       const content = { ok: Boolean(response?.ok() && rendered && !errors.length && !pageErrors.length && !failures.length),
-        entry_path: relative(state.workspace, server.entry).split('\\').join('/'), screenshot_path: input.screenshotPath,
+        ...(application ? { target: 'application', page_path: new URL(url).pathname }
+          : { entry_path: relative(state.workspace, server.entry).split('\\').join('/') }),
+        screenshot_path: input.screenshotPath,
         status_code: response?.status() ?? null, title, rendered, body_text_preview: [...body.trim()].slice(0, 2000).join(''),
         visual_element_count: visualCount, canvas_metrics: metrics,
         visual_warnings: metrics.filter(row => row.viewport_coverage >= .2 && row.visually_uniform).map(() => 'large canvas appears visually uniform after requested actions'),
-        app_child_count: appChildCount, console_errors: errors, page_errors: pageErrors, request_failures: failures, actions_ok: true, actions };
+        app_child_count: appChildCount, console_errors: errors, page_errors: pageErrors, request_failures: failures, actions_ok: true, actions,
+        ...(!application && failures.includes('browser_network_denied') ? {
+          instruction: preview ? 'Workspace preview serves static files only. Use target=application for the bound backend.'
+            : 'Workspace preview serves static files only. Use the running application address in Studio’s sidebar browser for backend flows.',
+        } : {}) };
       await release(); guard(); const target = targetFor(input); guard(); publishWorkspaceBytes(target, screenshot); guard();
       return { status: 'ok', content };
     } catch (error) {
@@ -201,15 +224,20 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
             && canonical(args) === original.args && canonical(exec.arguments) === original.args, 'dsh_node_browser_request_drifted');
         };
         guard = () => { stable(); open(); stable(); return true; }; guard();
-        const normalized = { ...copy(args), actions: (args.actions ?? []).map(row => ['click', 'fill'].includes(row.type)
+        const { target = 'workspace', ...workspaceArgs } = copy(args);
+        const normalized = { ...workspaceArgs, actions: (args.actions ?? []).map(row => ['click', 'fill'].includes(row.type)
           && row.selector === undefined && row.element_ref === undefined ? { ...row, selector: 'body' } : row) };
-        const input = parseWorkspaceBrowserInput(normalized, request.operationKey, { maxActions: 50 });
+        const input = { ...parseWorkspaceBrowserInput(normalized, request.operationKey, { maxActions: 50 }), target };
         invariant(!input.actions.some(row => row.elementRef !== undefined && row.elementRef !== null), 'dsh_node_browser_element_ref_unavailable');
-        resolveBrowserWorkspaceEntry(state.workspace, input.path); targetFor(input);
+        if (target === 'application') {
+          invariant(preview && !/[?#:%\u0000-\u001f\u007f]/u.test(input.path), 'dsh_node_browser_application_path_invalid');
+        } else resolveBrowserWorkspaceEntry(state.workspace, input.path);
+        targetFor(input);
         await abortable(() => authorizeNativeBuiltin(ctx, { ...exec, signal: request.signal }, definition), request.signal); guard();
         if (!ledgers.has(original.sessionId)) ledgers.set(original.sessionId, new DshNodeCommandLedger({ root: state.root,
           agentId, sessionId: original.sessionId, assertRoot: state.guard }));
-        const pending = ledgers.get(original.sessionId).execute({ request, binding, assertCurrent: guard,
+        const pending = ledgers.get(original.sessionId).execute({ request,
+          binding: target === 'application' ? { ...binding, network: 'bound-application-origin/v1', origin: preview.origin } : binding, assertCurrent: guard,
           dispatch: () => inspect(input, request, guard) });
         active.add(pending); try { return await pending; } finally { active.delete(pending); }
       } catch (error) {

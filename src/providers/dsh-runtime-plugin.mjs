@@ -96,7 +96,8 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
         ? nodeTools.definitions.find(definition => definition.name === String(contract.name)) : null;
       return ctx.tools.register({
         name: String(contract.name),
-        description: String(contract.description || `AgentEngine 内置 Tool：${contract.name}`),
+        description: String(formal?.name === 'browser_inspect_workspace' ? formal.description
+          : contract.description || `AgentEngine 内置 Tool：${contract.name}`),
         parameters: formal?.parameters || contract.parameters || { type: 'object', properties: {} },
         output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
         execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, exec)),

@@ -212,6 +212,61 @@ test('identity drift at actual navigation retains original intent and cannot dis
   assert.equal(existsSync(join(h.options.workspaceRoot, '.artifacts/browser-check.png')), false);
 });
 
+test('an explicitly bound application supports same-origin API writes and denies other loopback origins', { timeout: 30000 }, async t => {
+  let ticket = null, foreignRequests = 0;
+  async function listen(handler) {
+    const server = createServer(handler);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+    return `http://127.0.0.1:${server.address().port}`;
+  }
+  const foreign = await listen((_request, response) => { foreignRequests++; response.end(); });
+  const application = await listen((request, response) => {
+    if (request.url === '/api/tickets' && request.method === 'POST') {
+      request.setEncoding('utf8');
+      let body = '';
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => { ticket = JSON.parse(body); response.writeHead(201, { 'Content-Type': 'application/json' }); response.end('{}'); });
+      return;
+    }
+    if (request.url === '/api/tickets') {
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(ticket)); return;
+    }
+    if (request.url === '/redirect') { response.writeHead(302, { Location: foreign }); response.end(); return; }
+    response.setHeader('Content-Type', 'text/html');
+    response.end(`<!doctype html><title>Application</title><link rel="icon" href="data:,">
+      <input id="title"><button id="create">Create</button><p id="result"></p>
+      <script>
+        document.querySelector('#create').onclick = async () => {
+          await fetch('/api/tickets', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: document.querySelector('#title').value }) });
+          document.querySelector('#result').textContent = (await (await fetch('/api/tickets')).json()).title;
+        };
+      </script>`);
+  });
+  const h = setup(t);
+  const bound = h.create({ applicationPreviewOrigin: application });
+  const args = { target: 'application', path: '.', wait_ms: 0, actions: [
+    { type: 'fill', selector: '#title', value: 'SQLite ticket' },
+    { type: 'click', selector: '#create' }, { type: 'wait', ms: 400 },
+  ] };
+  assert.equal((await h.invoke(args)).status, 'error', 'unbound callers cannot choose an application');
+  for (const path of [foreign, '//127.0.0.1', '../escape', '?bad']) {
+    const rejected = { ...args, path };
+    assert.equal((await h.invoke(rejected, h.exec(rejected), bound)).status, 'error');
+  }
+  assert.equal(h.launches, 0);
+  const result = await h.invoke(args, h.exec(args), bound);
+  assert.equal(result.content.ok, true, canonical(result));
+  assert.match(result.content.body_text_preview, /SQLite ticket/);
+  assert.deepEqual(ticket, { title: 'SQLite ticket' });
+  assert.equal(result.content.target, 'application');
+  assert.equal(Object.hasOwn(result.content, 'entry_path'), false);
+  const redirect = { target: 'application', path: 'redirect', wait_ms: 0 };
+  assert.equal((await h.invoke(redirect, h.exec(redirect, { callId: 'redirect-call' }), bound)).content.ok, false);
+  assert.equal(foreignRequests, 0);
+});
+
 test('fifty legacy actions are supported and a different Session owns a separate inspection', { timeout: 60000 }, async t => {
   const h = setup(t), args = { path: '.', wait_ms: 0, actions: Array.from({ length: 50 }, () => ({ type: 'wait', ms: 0 })) };
   const a = await h.invoke(args); assert.equal(a.status, 'ok', canonical(a)); assert.equal(a.content.actions?.length, 50, canonical(a));

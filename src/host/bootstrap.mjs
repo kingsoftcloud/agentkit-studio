@@ -371,6 +371,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       isClosed, signal, env: runtimeEnv, fetchImpl: hostFetch,
       a2aSessionEvents: a2aSessionSink.forPreset(config),
       browserExecutablePath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE || undefined,
+      applicationPreviewOrigin: config.runtime === 'native-engine' && localHarnessService?.workspaceRoot === workspaceRoot
+        ? runtimeEnv.AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN || undefined : undefined,
       getSkillManagement, getKnowledgeTools, knowledgeBindings: config.knowledgeBindings,
       getLegacyMemoryTools, legacyMemoryBindings: config.legacyMemoryBindings,
       toolBindings: config.toolBindings ?? [], toolContracts: config.toolContracts ?? [], componentBindings: config.componentBindings,
