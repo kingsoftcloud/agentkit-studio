@@ -105,7 +105,7 @@ export function createDeliveryPages({
       if (deploymentTarget !== 'new') { if (deploymentCanUpdate(targetRecord)) await inspectUpdate(targetRecord); return; }
       setBusy(true); setError(''); setPreview(null); setNotice('正在检查冻结版本、资源凭证和部署位置…');
       try {
-        const result = await hostRemote.prepareDeployment({ agentId, buildId: selectedBuild, resources });
+        const result = await hostRemote.prepareDeployment({ agentId, buildId: selectedBuild, deploymentType: 'ManagedRuntime', resources });
         if (latestInput.current === inputKey) { setPreview(result); setRequestKey(`studio-deploy-${crypto.randomUUID()}`); }
         setNotice('');
       } catch (reason) { setError(reason?.message || '部署检查失败'); setNotice(''); }
@@ -126,7 +126,7 @@ export function createDeliveryPages({
       try {
         const record = preview.deploymentId ? await hostRemote.applyDeploymentUpdate({ ...preview, idempotencyKey: requestKey })
           : await hostRemote.createDeployment(preview.buildId, { agentId: preview.agentId, bundleId: preview.bundleId,
-          releaseId: preview.releaseId, previewId: preview.previewId, resources: preview.resources }, requestKey);
+          deploymentType: 'ManagedRuntime', bundleUploadId: preview.bundleUploadId, releaseId: preview.releaseId, previewId: preview.previewId, resources: preview.resources }, requestKey);
         updateRecord(record); setPreview(null); setNotice('部署已提交，进度会自动更新。');
       } catch (reason) { setError(reason?.message || '提交结果未确认，请保留当前页面并核对部署记录'); }
       finally { setBusy(false); }

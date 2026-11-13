@@ -111,7 +111,7 @@ export async function capturePortableResources({ record, models, adapters, confi
     const inline = Object.entries(detail.headers || {});
     for (const [header, value] of inline) {
       if (/^(accept|content-type|mcp-protocol-version)$/i.test(header)) { headers[header] = String(value); continue; }
-      const name = `AGENTKIT_BUNDLE_MCP_${sha256(`${detail.resourceId}:${header.toLowerCase()}`).slice(0, 16).toUpperCase()}`;
+      const name = `MCP_STUDIO_${sha256(`${detail.resourceId}:${header.toLowerCase()}`).slice(0, 16).toUpperCase()}_TOKEN`;
       envRefs[header] = requireEnv(name, detail.resourceId, `MCP header ${header}`);
     }
     for (const [header, ref] of Object.entries(detail.envRefs || {})) {
@@ -119,7 +119,7 @@ export async function capturePortableResources({ record, models, adapters, confi
       envRefs[header] = requireEnv(refName(ref), detail.resourceId, `MCP header ${header}`);
     }
     if ((detail.apiKey || detail.credentialRef) && ![...Object.keys(headers), ...Object.keys(envRefs)].some(key => key.toLowerCase() === 'authorization')) {
-      envRefs.Authorization = requireEnv(!detail.apiKey && refName(detail.credentialRef) || `AGENTKIT_BUNDLE_MCP_${sha256(detail.resourceId).slice(0, 16).toUpperCase()}`, detail.resourceId, 'MCP Authorization');
+      envRefs.Authorization = requireEnv(!detail.apiKey && refName(detail.credentialRef) || `MCP_STUDIO_${sha256(detail.resourceId).slice(0, 16).toUpperCase()}_TOKEN`, detail.resourceId, 'MCP Authorization');
     }
     mcps.push({ resourceId: detail.resourceId, endpointUrl: endpoint(detail.endpoint), headers, envRefs });
   }

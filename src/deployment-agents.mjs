@@ -21,11 +21,19 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
   async function project(record) {
     record = currentDeployment(record);
     const frozen = await build.resolve(record.plan.agentId, record.plan.buildId);
-    const zip = Buffer.from((await portableBundles.download(record.plan.agentId, record.plan.buildId, record.plan.bundleId)).base64, 'base64');
-    if (sha256(zip) !== record.plan.bundleSha256) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包与部署记录不一致');
-    const { manifest } = verifyPortableBundle(zip);
-    if (manifest.agentId !== record.plan.agentId || manifest.buildId !== record.plan.buildId) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包身份不一致');
-    const models = frozenModels(manifest.resources.profiles), profile = models.find(item => item.default) || models[0];
+    let models, profile;
+    if (record.plan.bundleId) {
+      const zip = Buffer.from((await portableBundles.download(record.plan.agentId, record.plan.buildId, record.plan.bundleId)).base64, 'base64');
+      if (sha256(zip) !== record.plan.bundleSha256) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包与部署记录不一致');
+      const { manifest } = verifyPortableBundle(zip);
+      if (manifest.agentId !== record.plan.agentId || manifest.buildId !== record.plan.buildId) throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '冻结运行包身份不一致');
+      models = frozenModels(manifest.resources.profiles);
+      profile = models.find(item => item.default) || models[0];
+    } else {
+      const model = String(record.plan.managedModelConfig?.Model || '').trim();
+      if (model) models = [{ id: model, name: model }];
+      profile = models?.[0];
+    }
     if (!profile) throw portableError('DEPLOYMENT_MODEL_MISSING', '冻结版本缺少模型配置');
     return { source: 'studio-deployment', metadata: { ...frozen.metadata, id: record.cloudAgentId, local: false,
       name: record.plan.agentName, createdAt: record.createdAt }, spec: frozen.spec,
@@ -58,7 +66,8 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     const endpoint = endpointFor(remote, record);
     if (!endpoint || typeof token !== 'string' || token.length < 24 || token.includes('*')) throw portableError('DEPLOYMENT_NOT_READY', '云端访问配置尚未就绪');
     const identityRequired = record.activeVersion || currentDeployment(record).plan.image.runtimeIdentity === true;
-    const identity = identityRequired ? await inspectDeploymentVersion({ fetchImpl, endpoint, token, plan: currentDeployment(record).plan, versionId: deploymentVersionId(record) }) : null;
+    const identity = identityRequired ? await inspectDeploymentVersion({ fetchImpl, endpoint, token,
+      plan: { ...currentDeployment(record).plan, cloudAgentId: record.cloudAgentId }, versionId: deploymentVersionId(record) }) : null;
     if (identityRequired && !identity) {
       throw portableError('DEPLOYMENT_NOT_READY', '运行入口尚未确认当前冻结版本，请刷新部署状态后重试');
     }
