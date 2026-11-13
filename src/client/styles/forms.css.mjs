@@ -4,8 +4,12 @@ export default String.raw`
 .studio-start-card { display: grid; gap: 8px; text-align: left; padding: 20px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; cursor: pointer; }
 .studio-start-card strong { font-size: 14px; font-weight: 500; }
 .studio-start-card small { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
-.studio-start-card[data-primary] { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); border-color: transparent; }
-.studio-start-card[data-primary] small, .studio-start-card[data-primary] .studio-tile { color: inherit; }
+/* The recommended card is a tinted surface with a filled glyph tile, not a
+   full-bleed dark fill: three cards in a row make a solid primary fill read as
+   a heavy slab, and the shared secondary-button hover rule repaints the
+   background light while the label stays white. */
+.studio-start-card[data-primary] { background: var(--dsw-alias-bg-layer-2); border-color: var(--dsw-alias-border-l2); }
+.studio-start-card[data-primary] .studio-tile { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); border-color: transparent; }
 .studio-credential-note { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-radius: 10px; padding: 8px 12px; background: var(--dsw-alias-state-warn-tertiary); color: var(--dsw-alias-state-warn-primary); font-size: 13px; }
 .studio-credential-note > span, .studio-inline-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-credential-note button { flex: none; }
@@ -34,6 +38,9 @@ export default String.raw`
 .studio-task-switch::after { content: ''; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--dsw-alias-label-primary-foreground); }
 .studio-task-switch[aria-checked=true] { background: var(--dsw-alias-button-primary-fill); }
 .studio-task-switch[aria-checked=true]::after { left: 14px; }
+/* The shared neutral hover rule is excluded for switches, so give them their
+   own affordance that never repaints the track under the white knob. */
+.studio-task-switch:not(:disabled):hover { opacity: .85; }
 .studio-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .resource-library .resource-toolbar > [data-studio-pager] { order: -1; }
 .resource-library .resource-toolbar > input[type=search] { margin-left: auto; }
