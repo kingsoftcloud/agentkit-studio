@@ -30,7 +30,14 @@ test('real mounted React never paints the transport footer before Native hydrati
     await page.waitForTimeout(100);
     assert.equal(await page.locator('[data-testid="studio-task-timeline"]').count(), 0, 'status alone cannot paint a partial frame');
     await page.getByRole('button', { name: '释放子任务目录', exact: true }).click();
-    await page.getByText('本轮内容 alpha', { exact: true }).waitFor();
+    const history = page.locator('[data-testid="work-history"]');
+    const toggle = page.locator('[data-testid="work-history-toggle"]');
+    const alpha = page.getByText('本轮内容 alpha', { exact: true });
+    await toggle.waitFor();
+    assert.equal(await history.getAttribute('open'), null, 'a failed turn starts with its process collapsed');
+    assert.equal(await alpha.isVisible(), false);
+    await toggle.click();
+    await alpha.waitFor();
     assert.equal(await page.locator('#legacy-paints').textContent(), '0');
     await page.getByRole('button', { name: '模拟同步失败', exact: true }).click();
     await page.getByText('任务过程同步失败，请重试。', { exact: true }).waitFor();
@@ -45,6 +52,11 @@ test('real mounted React never paints the transport footer before Native hydrati
     await page.waitForTimeout(100);assert.equal(await page.locator('[data-testid="studio-task-timeline"]').count(), 0);
     await page.getByRole('button', { name: '释放运行状态', exact: true }).click();
     await page.getByRole('button', { name: '释放子任务目录', exact: true }).click();
-    await page.getByText('本轮内容 beta', { exact: true }).waitFor();
+    const beta = page.getByText('本轮内容 beta', { exact: true });
+    await toggle.waitFor();
+    assert.equal(await history.getAttribute('open'), null, 'an expanded history does not carry into a different session');
+    assert.equal(await beta.isVisible(), false);
+    await toggle.click();
+    await beta.waitFor();
     assert.equal(await page.locator('#legacy-paints').textContent(), '0');assert.deepEqual(errors, []);
   });
