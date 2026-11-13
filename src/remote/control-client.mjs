@@ -153,13 +153,13 @@ export function createProductClient(connection, { window = globalThis.window } =
       if (operation.status !== 'succeeded') throw Object.assign(new Error(operation.error?.message || '模板操作被中断，可重新尝试'), { code: operation.error?.code || 'TEMPLATE_OPERATION_FAILED' });
       return operation.result;
     }
-    async function ensureDshPreset(agentId, buildId = '') {
+    async function ensureDshPreset(agentId, buildId = '', presetId) {
         if (!connection?.rpc?.call) {
             const error = new Error('DSH Agent preset 准入需要已连接的 Studio Host');
             error.code = 'DSH_PRESET_HOST_CONNECTION_MISSING';
             throw error;
         }
-        const result = await callStudioOperation(connection, 'agents/ensure-preset', { agentId, ...(buildId ? { buildId } : {}) });
+        const result = await callStudioOperation(connection, 'agents/ensure-preset', { agentId, ...(buildId ? { buildId } : {}), ...(presetId ? { presetId } : {}) });
         if (!result?.ok) {
             const error = new Error(result?.error?.message || 'DSH Agent preset 准入失败');
             error.code = result?.error?.code || 'DSH_PRESET_ADMISSION_FAILED';

@@ -4,10 +4,11 @@
 import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { canonical, copy, invariant, toolInputRejection } from '@kingsoftcloud/agentkit-harness-core';
-import { createDshA2aToolPort, nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
+import { createDshA2aToolPort, nativeA2aTerminalResult, nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
 import { prepareDshA2AHost } from './native-a2a-host.mjs';
 import { commandStateRoot, commandDigest, DshNodeCommandLedger } from './dsh-node-command-ledger.mjs';
 import { authorizeNativeBuiltin } from './native-tool-policy.mjs';
+import { a2aTerminal } from './native-a2a-protocol.mjs';
 
 export const DSH_NODE_A2A_CONTRACT = 'agentkit.dsh-node-a2a-tools/v1';
 const errorResult = code => ({ status: 'error', content: { ok: false, error_type: code, executed: false } });
@@ -23,10 +24,11 @@ function abortable(work, signal) {
 }
 
 export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
-  env = {}, bindings = [], fetchImpl, sessionEvents, isClosed = () => false, signal: hostSignal } = {}) {
+  env = {}, bindings = [], fetchImpl, sessionEvents, isClosed = () => false, signal: hostSignal, assertManagedAuthority } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision >= 1
     && (buildId === null || typeof buildId === 'string' && buildId.trim()) && typeof isClosed === 'function'
-    && (hostSignal === undefined || hostSignal instanceof AbortSignal), 'dsh_a2a_binding_invalid');
+    && (hostSignal === undefined || hostSignal instanceof AbortSignal)
+    && (assertManagedAuthority === undefined || typeof assertManagedAuthority === 'function'), 'dsh_a2a_binding_invalid');
   const prepared = prepareDshA2AHost({ env: { ...env }, bindings: copy(bindings), ...(fetchImpl ? { fetchImpl } : {}),
     ...(sessionEvents ? { sessionEvents } : {}) });
   const definitions = nativeA2aToolDefinitions(), formal = new Map(definitions.map(definition => [definition.name, definition]));
@@ -49,10 +51,11 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
     if (!sessions.has(sessionId)) sessions.set(sessionId, new DshNodeCommandLedger({ root: state.root, agentId, sessionId, assertRoot: state.guard }));
     return sessions.get(sessionId);
   };
-  const ownedCall = (ledger, callId) => {
+  const ownedCall = (ledger, callId, allowMissing = false) => {
     let record;
     try { record = ledger.read(ledger.entry(callId)); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!record && allowMissing) return null;
     invariant(record?.request.call.name === 'call_a2a_agent'
       && record.request.operationKey === `dsh-a2a:${callId}` && canonical(record.binding) === canonical(binding), 'DSH_A2A_CALL_NOT_OWNED');
     return record;
@@ -60,6 +63,43 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
   let closing;
   return { contract: DSH_NODE_A2A_CONTRACT,
     get binding() { return copy(binding); }, get definitions() { return copy(definitions); }, supports: name => formal.has(name),
+    async observeOwnedReceipt({ sessionId, callId, args, signal, assertCurrent, observationId }) {
+      const readinessOnly = observationId === undefined;
+      const check = () => {
+        assertOpen(); signal.throwIfAborted();
+        invariant(assertCurrent() === true, 'DSH_A2A_RECEIPT_AUTHORITY_LOST');
+        return true;
+      };
+      check();
+      const ledger = sessionFor(sessionId), record = ownedCall(ledger, callId, true);
+      if (!record) return {};
+      invariant(canonical(record.request.call.arguments) === canonical(args), 'DSH_A2A_RECEIPT_IDENTITY_CONFLICT');
+      if (record.phase === 'finished' && ['ok', 'error'].includes(record.result?.status)) {
+        return readinessOnly ? { token: commandDigest(record.result), settled: true } : { result: copy(record.result) };
+      }
+      if (!prepared) return {};
+      const locator = { agentId, agentRevision, buildId, sessionId, operationKey: record.request.operationKey, callId };
+      const authority = { contract: 'agentkit.studio-a2a-receipt/v1', observationId };
+      const owner = prepared.forSession({ agentId, agentRevision, buildId, sessionId, workspaceRoot: state.workspace,
+        stateRoot: join(ledger.root, 'remote-calls'), assertCurrent: () => false,
+        assertControl: input => check() && input.kind === 'get' && canonical(input.operation_locator) === canonical(locator)
+          && canonical(input.authority) === canonical(authority),
+        authorizeControl: ({ readOnly }) => check() && readOnly ? 'allow' : 'deny' });
+      owners.add(owner);
+      try {
+        const found = owner.peekDshReceipt(locator, record.request, check);
+        if (!found) return {};
+        if (readinessOnly) return found.result ? { token: found.token, settled: true }
+          : { token: found.token, settled: false, retryUntil: found.retryUntil };
+        const observation = found.result ?? await owner.control.execute({ kind: 'get', commandId: observationId,
+          operation_locator: locator, authority, signal: AbortSignal.any([signal, ownerSignal]) });
+        check();
+        return a2aTerminal.has(observation.state) ? { result: nativeA2aTerminalResult(observation, found.agent) } : {};
+      } finally {
+        if (!readinessOnly) await Promise.allSettled([Promise.resolve().then(() => owner.eventDelivery?.flushSession?.({ raiseOnError: false }))]);
+        owner.close(); owners.delete(owner);
+      }
+    },
     taskHistory({ sessionId, offset = 0, limit = 64, inventoryDigest }, assertCurrent) {
       assertOpen(); invariant(typeof sessionId === 'string' && sessionId.trim() && sessionId.length <= 256
         && Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(limit) && limit >= 1 && limit <= 64
@@ -119,9 +159,12 @@ export function createDshNodeA2aTools({ ctx, agentId, agentRevision = 1, buildId
             && exec.callId === original.callId && exec.signal === original.signal && exec.name === name && canonical(args) === original.args
             && canonical(exec.arguments) === original.args, 'dsh_a2a_request_drifted');
         };
-        assertCurrent = () => { stable(); assertOpen(); stable(); return true; };
+        assertCurrent = () => { stable(); assertOpen(); assertManagedAuthority?.(exec); stable(); return true; };
         assertCurrent();
-        await abortable(() => authorizeNativeBuiltin(ctx, { ...exec, signal: request.signal }, definition), request.signal); assertCurrent();
+        if (!assertManagedAuthority) {
+          await abortable(() => authorizeNativeBuiltin(ctx, { ...exec, signal: request.signal }, definition), request.signal);
+          assertCurrent();
+        }
         if (!prepared) return errorResult('A2A_SPACE_NOT_CONFIGURED');
         const ledger = sessionFor(original.sessionId);
         const dispatch = async () => {

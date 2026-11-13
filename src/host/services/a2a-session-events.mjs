@@ -3,7 +3,7 @@
  * Native kernel commit, external turn or task effect is created here. */
 import { createHash } from 'node:crypto';
 import { canonical, copy, invariant } from '@kingsoftcloud/agentkit-harness-core';
-import { dshPresetId } from '../../agent-preset-admission.mjs';
+import { dshPresetId, HARNESS_SERVICE_PRESET_SUFFIX } from '../../agent-preset-admission.mjs';
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 
 export const A2A_SESSION_EVENT = 'agentkit/a2a-observation';
@@ -76,9 +76,11 @@ export function createStudioA2aSessionSink({ ctx } = {}) {
     return { sessions, projections };
   }
   return Object.freeze({
-    forPreset({ agentId, agentRevision = 1, buildId = null }) {
+    forPreset({ agentId, agentRevision = 1, buildId = null, scopedPresetId }) {
       invariant(id(agentId) && Number.isSafeInteger(agentRevision) && agentRevision > 0 && (buildId === null || id(buildId)), 'A2A_SESSION_PRESET_INVALID');
-      const preset = dshPresetId(agentId, agentRevision, buildId || '');
+      const base = dshPresetId(agentId, agentRevision, buildId || '');
+      const preset = scopedPresetId ?? base;
+      invariant(preset === base || preset === base + HARNESS_SERVICE_PRESET_SUFFIX, 'A2A_SESSION_PRESET_INVALID');
       return Object.freeze({ contract: A2A_SESSION_CONTRACT,
         write({ owner, destinationSessionId = owner?.sessionId, sourceKey, events, signal }) {
           invariant(!closed, 'A2A_SESSION_SINK_CLOSED');

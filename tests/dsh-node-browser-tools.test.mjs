@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { fork } from 'node:child_process';
+import { fork, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, realpathSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { chromium } from 'playwright-core';
 import { PNG } from 'pngjs';
-import { createDshNodeBrowserTools } from '../src/providers/dsh-node-browser-tools.mjs';
+import { createDshNodeBrowserTools, launchOwnedInspectionBrowser } from '../src/providers/dsh-node-browser-tools.mjs';
 import { browserImageVariation } from '@kingsoftcloud/agentkit-harness-node/native/browser-canvas-metrics';
 import { canonical } from '@kingsoftcloud/agentkit-harness-core';
 import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
@@ -24,7 +24,7 @@ const html = `<!doctype html><title>Browser 😀</title><div id="app">
 function records(directory) { return readdirSync(directory, { recursive: true }).filter(p => p.endsWith('record.json')).map(p => {
   const path = join(directory, p), bytes = readFileSync(path); return { path, bytes, value: JSON.parse(bytes) };
 }); }
-function setup(t, extra = {}) {
+function setup(t, extra = {}, instrumentPage) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-browser-'))), workspaceRoot = join(root, 'workspace'), stateDir = join(root, 'state');
   mkdirSync(workspaceRoot); mkdirSync(stateDir); writeFileSync(join(workspaceRoot, 'index.html'), html);
   const options = { agentId: 'browser-agent', agentRevision: 3, buildId: 'frozen-browser', workspaceRoot, stateDir, browserExecutablePath: executable };
@@ -47,7 +47,7 @@ function setup(t, extra = {}) {
       catch (error) { t.diagnostic('Chromium Context creation failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
       const newPage = context.newPage.bind(context);
       context.newPage = async (...args) => {
-        try { return await newPage(...args); }
+        try { const page = await newPage(...args); instrumentPage?.(page); return page; }
         catch (error) { t.diagnostic('Chromium Page creation failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
       };
       contexts.add(context); const closeContext = context.close.bind(context);
@@ -66,6 +66,81 @@ function setup(t, extra = {}) {
   return { root, options, port, create, exec, invoke, records: () => records(stateDir), get launches() { return launches; },
     policy: value => { policy = value; }, approval: fn => { approval = fn; }, onNavigated: fn => { navigated = fn; } };
 }
+
+for (const recovered of [true, false]) test(`static browser screenshot timeout ${recovered ? 'recovers' : 'returns a settled evidence error'} without repeating the click`, { timeout: 30000 }, async t => {
+  let captures = 0, clicks = 0;
+  const h = setup(t, {}, page => {
+    const screenshot = page.screenshot.bind(page), locator = page.locator.bind(page);
+    page.screenshot = async options => {
+      if (++captures === 1 || !recovered) throw Object.assign(new Error('private driver details'), { name: 'TimeoutError' });
+      return screenshot(options);
+    };
+    page.locator = (...args) => {
+      const result = locator(...args), click = result.click.bind(result);
+      result.click = (...options) => { clicks++; return click(...options); };
+      return result;
+    };
+  });
+  const args = { path: '.', wait_ms: 0, actions: [{ type: 'click', selector: '#hit' }] };
+  const result = await h.invoke(args);
+  assert.equal(captures, 2); assert.equal(clicks, 1);
+  assert.deepEqual(await h.invoke(args, h.exec(args), h.create()), result);
+  assert.equal(h.launches, 1);
+  if (recovered) {
+    assert.equal(result.status, 'ok');
+    assert.match(result.content.body_text_preview, /count:1/);
+  } else {
+    assert.equal(result.status, 'error');
+    assert.equal(result.content.error_type, 'browser_evidence_failed');
+    assert.equal(result.content.stage, 'screenshot');
+    assert.equal(result.content.cause, 'timeout');
+    assert.equal(result.content.actions_ok, true);
+    assert.doesNotMatch(canonical(result), /private driver details/);
+  }
+});
+
+test('a stalled graceful Chromium shutdown kills only the owned browser and waits for its exit', { timeout: 15000 }, async t => {
+  let child, graceful = 0, killed = 0;
+  const h = setup(t, { launchBrowser: () => launchOwnedInspectionBrowser({
+    async launchServer(options) {
+      assert.equal(options.host, '127.0.0.1');
+      const owner = await chromium.launchServer(options);
+      child = owner.process();
+      t.after(() => owner.kill());
+      return { process: () => child, wsEndpoint: () => owner.wsEndpoint(), close: () => { graceful++; return new Promise(() => {}); },
+        kill: () => { killed++; return owner.kill(); } };
+    },
+    connect: (...args) => chromium.connect(...args),
+  }, executable, 100) });
+  const args = { path: '.', wait_ms: 0, actions: [{ type: 'click', selector: '#hit' }] };
+  const result = await h.invoke(args);
+  assert.equal(result.status, 'ok', canonical(result));
+  assert.match(result.content.body_text_preview, /count:1/);
+  assert.equal(graceful, 1); assert.equal(killed, 1);
+  assert.ok(child.exitCode !== null || child.signalCode !== null);
+  assert.deepEqual(await h.invoke(args, h.exec(args), h.create()), result);
+  assert.equal(killed, 1);
+});
+
+test('an inherited output pipe cannot hold up the receipt once the owned browser has exited', { timeout: 5000 }, async t => {
+  const child = spawn(process.execPath, ['-e', `
+    const { spawn } = require('node:child_process');
+    const helper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1800)'],
+      { stdio: ['ignore', process.stdout, 'ignore'] });
+    helper.unref();
+    setTimeout(() => process.exit(0), 250);
+  `], { stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  const closed = once(child, 'close');
+  const browser = await launchOwnedInspectionBrowser({
+    launchServer: async () => ({ process: () => child, wsEndpoint: () => 'unused',
+      close: () => closed, kill: () => assert.fail('the already exited browser needs no force kill') }),
+    connect: async () => ({}),
+  }, undefined, 1200);
+  await browser.close();
+  assert.equal(child.exitCode, 0);
+  assert.equal(child.stdout.destroyed, true);
+});
 
 test('actual Chromium actions, full screenshot, isolated canvas pixels and exact durable duplicate/cold receipt', { timeout: 60000 }, async t => {
   const h = setup(t), args = { path: '.', wait_ms: 0, actions: [{ type: 'click', selector: '#hit', duration_ms: 10, button: 'left' },
@@ -210,6 +285,61 @@ test('identity drift at actual navigation retains original intent and cannot dis
   const result = await h.invoke(args, exec); assert.equal(result.status, 'uncertain', canonical(result));
   assert.equal(h.records()[0].value.request.sessionId, 'original-session');
   assert.equal(existsSync(join(h.options.workspaceRoot, '.artifacts/browser-check.png')), false);
+});
+
+test('an explicitly bound application supports same-origin API writes and denies other loopback origins', { timeout: 30000 }, async t => {
+  let ticket = null, foreignRequests = 0;
+  async function listen(handler) {
+    const server = createServer(handler);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+    return `http://127.0.0.1:${server.address().port}`;
+  }
+  const foreign = await listen((_request, response) => { foreignRequests++; response.end(); });
+  const application = await listen((request, response) => {
+    if (request.url === '/api/tickets' && request.method === 'POST') {
+      request.setEncoding('utf8');
+      let body = '';
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => { ticket = JSON.parse(body); response.writeHead(201, { 'Content-Type': 'application/json' }); response.end('{}'); });
+      return;
+    }
+    if (request.url === '/api/tickets') {
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(ticket)); return;
+    }
+    if (request.url === '/redirect') { response.writeHead(302, { Location: foreign }); response.end(); return; }
+    response.setHeader('Content-Type', 'text/html');
+    response.end(`<!doctype html><title>Application</title><link rel="icon" href="data:,">
+      <input id="title"><button id="create">Create</button><p id="result"></p>
+      <script>
+        document.querySelector('#create').onclick = async () => {
+          await fetch('/api/tickets', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: document.querySelector('#title').value }) });
+          document.querySelector('#result').textContent = (await (await fetch('/api/tickets')).json()).title;
+        };
+      </script>`);
+  });
+  const h = setup(t);
+  const bound = h.create({ applicationPreviewOrigin: application });
+  const args = { target: 'application', path: '.', wait_ms: 0, actions: [
+    { type: 'fill', selector: '#title', value: 'SQLite ticket' },
+    { type: 'click', selector: '#create' }, { type: 'wait', ms: 400 },
+  ] };
+  assert.equal((await h.invoke(args)).status, 'error', 'unbound callers cannot choose an application');
+  for (const path of [foreign, '//127.0.0.1', '../escape', '?bad']) {
+    const rejected = { ...args, path };
+    assert.equal((await h.invoke(rejected, h.exec(rejected), bound)).status, 'error');
+  }
+  assert.equal(h.launches, 0);
+  const result = await h.invoke(args, h.exec(args), bound);
+  assert.equal(result.content.ok, true, canonical(result));
+  assert.match(result.content.body_text_preview, /SQLite ticket/);
+  assert.deepEqual(ticket, { title: 'SQLite ticket' });
+  assert.equal(result.content.target, 'application');
+  assert.equal(Object.hasOwn(result.content, 'entry_path'), false);
+  const redirect = { target: 'application', path: 'redirect', wait_ms: 0 };
+  assert.equal((await h.invoke(redirect, h.exec(redirect, { callId: 'redirect-call' }), bound)).content.ok, false);
+  assert.equal(foreignRequests, 0);
 });
 
 test('fifty legacy actions are supported and a different Session owns a separate inspection', { timeout: 60000 }, async t => {

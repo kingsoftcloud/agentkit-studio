@@ -111,3 +111,39 @@ test('a replacement registry recovers while the retiring registry is still settl
   release();
   await old;
 });
+
+test('recovery keeps the original preset and restores its independent service route separately', async () => {
+  const row = {
+    metadata: { id: 'ar-local-0123456789abcdef', revision: 2, local: true },
+    spec: { runtime: { type: 'harness' }, bindings: { tools: ['read_workspace_file', 'run_command', 'component_status'] } },
+  };
+  const presets = new Map();
+  const legacy = { provider: 'legacy', model: 'configured' };
+  const modelSelection = { provider: 'harness-service', model: 'Harness' };
+  const workspaceRoot = '/workspace/native-agent';
+  const admission = new DshPresetAdmission({
+    getAgent: async () => row,
+    getModelSelection: async () => legacy,
+    localHarnessService: { workspaceRoot, modelSelection },
+    registry: { register: async preset => { presets.set(preset.id, preset); return () => presets.delete(preset.id); } },
+  });
+  try {
+    await restoreLocalPresets({
+      store: { list: async () => [row], captureRevision: async () => {}, listRevisions: async () => [row] },
+      build: { list: async () => [] }, admission,
+    });
+    const id = dshPresetId(row.metadata.id, 2);
+    const original = await admission.ensure(row.metadata.id, { preferService: true, requestedPresetId: id });
+    const service = await admission.ensure(row.metadata.id, { preferService: true });
+    assert.deepEqual([...presets.keys()], [id, service.presetId]);
+    assert.equal(original.runtime, 'harness');
+    assert.deepEqual(original.modelSelection, legacy);
+    assert.equal(service.runtime, 'native-engine');
+    assert.equal(service.workspaceRoot, workspaceRoot);
+    assert.deepEqual(service.modelSelection, modelSelection);
+    assert.equal(service.reused, true);
+    const tools = id => presets.get(id).plugins.find(plugin => plugin.id === 'studio-runtime').config.toolBindings;
+    assert.deepEqual(tools(original.presetId), ['read_workspace_file', 'run_command', 'component_status']);
+    assert.deepEqual(tools(service.presetId), ['component_status']);
+  } finally { await admission.dispose(); }
+});

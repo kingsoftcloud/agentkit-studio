@@ -107,3 +107,24 @@ for(const runtime of ['dsh-native'])test(`${runtime} peer-only continuation reac
  for await(const _ of adapter.stream({sessionId:id,model:`local:${id}`,messages:[{role:'user',source:{kind:'agent-message',form:'relay',senderSessionId:'reviewer-session'},content:[{type:'text',text:'TEAM-REPORT-CANARY: use a+b'}]}]})){}
  assert.match(JSON.stringify(requests[0].messages),/TEAM-REPORT-CANARY/);
 });
+
+test('the independent Harness receives only the current DSH image receipts', async t => {
+  const agentId = 'independent-image-agent', sessionId = 'independent-image-session';
+  t.after(() => unbindDshAgentRoutes(agentId));
+  bindDshAgentRoute(sessionId, { agentId, runtime: 'native-engine', local: true, agent: { session: { header: { cwd: '/tmp/dsh-session-workspace' } } } });
+  let call;
+  const reads = [];
+  const adapter = createDshRuntimeAdapter({
+    attachments: { readImageRequest: async ref => {
+      reads.push(ref.attachmentId);
+      return { data: Uint8Array.of(1, 2, 3), mediaType: 'image/png' };
+    } },
+    nativeEngineRuntime: { usesService: true, async *stream(options) { call = options; yield { type: 'text', text: 'image received' }; } },
+  });
+  const oldImage = { ...image, attachment: { ...image.attachment, attachmentId: 'historical-image' } };
+  for await (const _ of adapter.stream({ sessionId, messages: [{ role: 'user', content: [oldImage] },
+    { role: 'assistant', content: 'I saw the first image.' }, { role: 'user', content: [image] }] })) {}
+  assert.deepEqual(reads, ['image-receipt']);
+  assert.equal(call.input, '');
+  assert.deepEqual(call.inputImages, [wireImage]);
+});

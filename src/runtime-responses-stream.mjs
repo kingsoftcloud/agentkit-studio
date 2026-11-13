@@ -2,6 +2,8 @@
 import { runtimeResponse } from './runtime-responses-contract.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { RESOURCE_CHECK_EVENT, sanitizeResourceCheck } from './resource-checks.mjs';
+import { HOSTED_HARNESS_VIEW_EVENT, hostedHarnessView } from './harness-view-presentation.mjs';
+import { NATIVE_ENGINE_EVENT } from './providers/native-engine-runtime.mjs';
 
 export function createRuntimeResponsesStream(request, write) {
   const items = [], blocks = new Map(), calls = new Map(), delivery = [];
@@ -108,6 +110,9 @@ export function createRuntimeResponsesStream(request, write) {
       } else if (frame.kind === 'assistant' && value.type === 'end') {
         const status = value.outcome?.kind === 'committed' && value.outcome.eventType === 'assistant/message' ? 'completed' : 'incomplete';
         for (const record of items) if (record.key?.startsWith(`${value.attemptId}:`)) close(record, status);
+      } else if (frame.kind === 'event' && value.type === NATIVE_ENGINE_EVENT) {
+        const view = hostedHarnessView(value);
+        if (view) emit(HOSTED_HARNESS_VIEW_EVENT, { run_id: request.requestId, harness_view: view });
       } else if (frame.kind === 'event' && value.type === RESOURCE_CHECK_EVENT) {
         const check = sanitizeResourceCheck(value.data);
         if (check) emit('response.resource_check', { check });

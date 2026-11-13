@@ -1,19 +1,37 @@
 /** Materialize Codex-bound resources while keeping DSH delivery execution authoritative. */
 import { prepareLocalResourceContext, codexToolBindings, writeBoundMemory } from '../local-runtime.mjs';
 import { codexPresentationBindings } from './dsh-presentation-tools.mjs';
+import { harnessServiceHostBindings } from './dsh-node-builtin-catalog.mjs';
+import { nativeAgentPolicyFromSpec } from '../native-agent-policy.mjs';
+import { nativeHostToolCallId } from './native-engine-runtime.mjs';
 
-export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise }) {
-  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent } = {}) => {
+export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise, augmentContext }) {
+  return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService, runtimeRecord } = {}) => {
     const [store, buildState, resourceAdapter] = await Promise.all([agentStorePromise, studioBuildPromise, resourceAdaptersPromise]);
+    const independent = nativeService === true && runtime === 'native-engine';
+    const frozenTeamRole = independent && runtimeRecord?.metadata?.teamRole;
     let record;
-    try { record = buildId ? await buildState.build.resolve(agentId, buildId) : agentRevision ? await store.getRevision(agentId,Number(agentRevision)) : await store.get(agentId); }
+    try {
+      if (frozenTeamRole) {
+        if (runtimeRecord.metadata.id !== agentId || runtimeRecord.metadata.revision !== Number(agentRevision) || buildId)
+          throw Object.assign(new Error('团队角色与当前会话不匹配'), { code: 'TEAM_PRESET_CONFLICT' });
+        record = runtimeRecord;
+      } else {
+        record = buildId ? await buildState.build.resolve(agentId, buildId)
+          : agentRevision ? await store.getRevision(agentId, Number(agentRevision)) : await store.get(agentId);
+      }
+    }
     catch (error) {
       console.warn('[agentkit-studio] Codex resource resolution failed:', JSON.stringify({ agentId, buildId: buildId || '', code: error?.code || 'UNKNOWN' }));
       throw error;
     }
     if (!record) throw Object.assign(new Error('本地 Codex Agent 不存在'), { code: 'AGENT_NOT_FOUND' });
+    const teamRole = independent && record.metadata?.teamRole;
+    const resourceRecord = runtime === 'native-engine'
+      ? { ...record, spec: { ...record.spec, bindings: harnessServiceHostBindings(record.spec?.bindings || record.bindings) } }
+      : record;
     const prepared = await prepareLocalResourceContext({
-      record,
+      record: resourceRecord,
       input,
       resourceAdapter,
       toolAdapter,
@@ -40,19 +58,66 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
     const presentation = codexPresentationBindings(toolAdapter, agent);
     if (declaredMemory && !prepared.memory) reportMemoryGap('MEMORY_BINDING_SKIPPED');
     else if (prepared.memory && prepared.memoryHitCount === null) reportMemoryGap('MEMORY_RECALL_SKIPPED');
-    const toolBindings = codexToolBindings([...prepared.tools.filter(tool => !presentation.length || tool.name !== 'present'), ...presentation]);
+    const nativeA2a = independent && resourceRecord.spec.bindings?.a2a?.length
+      ? toolAdapter?.listNativeA2aTools?.() ?? [] : [];
+    const nativeTeam = teamRole ? toolAdapter?.listNativeTeamTools?.(agent) ?? [] : [];
+    const nativeBrowser = independent ? toolAdapter?.nativeBrowserTool : undefined;
+    const nativeTools = [...nativeA2a.map(tool => ({ ...tool, _source: 'native-a2a' })),
+      ...nativeTeam.map(tool => ({ ...tool, _source: 'native-team' })),
+      ...(nativeBrowser ? [{ ...nativeBrowser, _source: 'native-browser' }] : [])];
+    const nativeByName = new Map(nativeTools.map(tool => [tool.name, tool]));
+    const a2aReceipts = typeof toolAdapter?.observeNativeA2aReceipt === 'function'
+      && nativeA2a.some(tool => tool.name === 'call_a2a_agent');
+    const toolBindings = codexToolBindings([
+      ...nativeTools,
+      ...prepared.tools.filter(tool => (!presentation.length || tool.name !== 'present')
+        && !(tool._source === 'dsh' && nativeByName.has(tool.name))),
+      ...presentation,
+    ]);
     const systemPrompt = [
       record.spec?.instructions?.system || record.spec?.description || '',
       record.spec?.instructions?.task || '',
+      nativeTeam.length ? '你是 Studio 团队的成员。使用团队工具读取、分配和更新共享任务，完成后用 send_message 向 lead 汇报。文件修改限于分配给你的工作范围。' : '',
       prepared.resourceContext ? `Relevant resources:\n${prepared.resourceContext}` : '',
       presentation.length ? 'For a separate final deliverable, create the actual file in the current workspace, then call dsh_present with files: [{path, description?}]. This is the official DSH present tool; it validates the file and creates native conversation cards with Sidebar preview. For an inline preview, use ![description](<absolute/path/to/image.png>) in the final reply.' : '',
     ].filter(Boolean).join('\n\n');
-    return {
+    // Use the same frozen record for resource calls and builtin skill context.
+    const context = {
       agentName: String(record.metadata?.name || record.name || ''),
       memory: prepared.memory || null,
       memoryHitCount: prepared.memoryHitCount,
+      ...(runtime === 'native-engine' ? { nativeAgentPolicy: nativeAgentPolicyFromSpec(record.spec) } : {}),
       systemPrompt,
-      dynamicTools: toolBindings.map(item => item.spec),
+      dynamicTools: toolBindings.map(({ spec, tool }) => nativeByName.get(spec.name) === tool ? {
+        ...spec, readOnly: tool.readOnly, timeoutMs: tool.timeoutMs,
+        ...(a2aReceipts && tool._source === 'native-a2a' && tool.name === 'call_a2a_agent' ? { receiptObservation: true } : {}),
+        ...(tool.readOnly ? {} : { effectProtocol: 'agentkit.engine-host-tool-effect/v1' }),
+      } : spec),
+      ...(a2aReceipts ? {
+        nativeHostReceiptHandler: ({ name, runId, originalOperationKey, arguments: args, observationId, signal }) => {
+          if (name !== 'call_a2a_agent' || !runId || !originalOperationKey) return {};
+          return toolAdapter.observeNativeA2aReceipt({ agent, sessionId, callId: nativeHostToolCallId(runId, originalOperationKey),
+            args, observationId, signal });
+        },
+      } : {}),
+      ...(nativeTools.length ? {
+        async nativeHostToolHandler({ name, arguments: args, runId, callId, effect, signal }) {
+          const definition = nativeByName.get(name);
+          if (!definition) return undefined;
+          if (!runId || !callId || !definition.readOnly && (effect?.contract !== 'agentkit.engine-host-tool-effect/v1'
+            || typeof effect.operationKey !== 'string' || !effect.operationKey))
+            return { status: 'error', content: { code: definition._source === 'native-a2a' ? 'A2A_EFFECT_UNBOUND'
+              : definition._source === 'native-browser' ? 'BROWSER_EFFECT_UNBOUND' : 'TEAM_EFFECT_UNBOUND', executed: false } };
+          // Model call IDs can repeat across Runs. Tie host effects to their
+          // durable engine operation, including calls admitted after approval.
+          const identity = effect?.operationKey ?? callId;
+          const ownedCallId = nativeHostToolCallId(runId, identity);
+          if (definition._source === 'native-browser')
+            return toolAdapter.callNativeBrowserTool(args, { agent, callId: ownedCallId, signal });
+          const execute = definition._source === 'native-a2a' ? toolAdapter.callNativeA2aTool : toolAdapter.callNativeTeamTool;
+          return execute(name, args, { agent, callId: ownedCallId, signal });
+        },
+      } : {}),
       writeMemory: prepared.memoryWrite
         ? async assistantText => writeBoundMemory({
           agent,
@@ -79,5 +144,6 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
         return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal });
       },
     };
+    return augmentContext ? augmentContext(context, record.spec?.bindings || record.bindings || {}) : context;
   };
 }

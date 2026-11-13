@@ -4,6 +4,10 @@ import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/n
 
 export const STUDIO_RUNTIME_CONTRACT_VERSION = 'agentkit.studio.runtime/v1';
 export const STUDIO_RUNTIME_TYPES = Object.freeze(['dsh-native', 'harness', 'codex']);
+/** Routable locally but not part of the frozen public runtime list: the Native
+ * engine as its own process. Not offered in the Agent form, portable bundles
+ * or deployments until its resource tools are carried over the protocol. */
+export const STUDIO_EXPERIMENTAL_RUNTIME_TYPES = Object.freeze(['native-engine']);
 export const STUDIO_CANONICAL_IDENTIFIERS = Object.freeze(['agentId', 'revision', 'buildId', 'sessionId', 'runId']);
 export const STUDIO_ENTITY_CONTRACT = Object.freeze({
   Agent: Object.freeze({ id: 'agentId', revision: 'revision' }),
@@ -32,7 +36,7 @@ export const STUDIO_RUNTIME_CAPABILITY_MATRIX = Object.freeze({
 
 export function assertStudioRuntimeType(runtimeType) {
   const value = String(runtimeType || '').trim();
-  if (!STUDIO_RUNTIME_TYPES.includes(value)) throw Object.assign(new Error(`Unsupported Studio runtime: ${value || '(empty)'}`), { code: 'RUNTIME_UNSUPPORTED' });
+  if (!STUDIO_RUNTIME_TYPES.includes(value) && !STUDIO_EXPERIMENTAL_RUNTIME_TYPES.includes(value)) throw Object.assign(new Error(`Unsupported Studio runtime: ${value || '(empty)'}`), { code: 'RUNTIME_UNSUPPORTED' });
   return value;
 }
 

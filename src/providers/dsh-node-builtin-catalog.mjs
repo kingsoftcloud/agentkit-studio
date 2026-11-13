@@ -31,6 +31,18 @@ const families = new Map(Object.entries(groups).flatMap(([family, names]) =>
 // Native's structured patch port does not change DSH Native's ten-tool workspace contract.
 export const NATIVE_NODE_BUILTIN_NAMES = Object.freeze([...Object.values(groups).flat(), 'apply_workspace_patch',
   'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files']);
+const harnessServiceBuiltins = new Set([...groups.WORKSPACE, ...groups.COMMAND, ...groups.WEB,
+  'apply_workspace_patch', 'list_workspace_checkpoints', 'preview_workspace_rewind', 'rewind_workspace_files']);
+
+/** Legacy bindings for these operations belong to the independent engine.
+ * Keep the original revision and resource IDs intact for old sessions. */
+export function harnessServiceHostBindings(bindings = {}) {
+  if (!Array.isArray(bindings.tools)) return bindings;
+  return { ...bindings, tools: bindings.tools.filter(value => {
+    const name = typeof value === 'string' ? value : value?.resourceId || value?.id || value?.name;
+    return !harnessServiceBuiltins.has(name);
+  }) };
+}
 export const DSH_NODE_BUILTIN_NAMES = Object.freeze([...families.keys()]);
 const meta = new Set(['tool_search', 'tool_dispatcher', 'agentengine_tool_dispatcher']);
 

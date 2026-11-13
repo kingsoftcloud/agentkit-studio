@@ -15,6 +15,8 @@ import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/n
 import { nativeA2aToolDefinitions } from '@kingsoftcloud/agentkit-harness-node/native/a2a-tools';
 import { sandboxRegistryName } from './sandbox-code-name.mjs';
 import { assertConcreteBuiltin, unavailableNodeBuiltin } from './dsh-node-builtin-catalog.mjs';
+import { STUDIO_TEAM_HOST_TOOLS } from '../studio-team-tools.mjs';
+import { executeNativeDshToolCall } from './native-dsh-tool-call.mjs';
 import { installNativeBoundPolicy } from './native-bound-policy.mjs';
 import { normalizeNativeAgentPolicy } from '../native-agent-policy.mjs';
 
@@ -94,7 +96,8 @@ function registerBuiltinTools(ctx, contracts, config, bridge) {
         ? nodeTools.definitions.find(definition => definition.name === String(contract.name)) : null;
       return ctx.tools.register({
         name: String(contract.name),
-        description: String(contract.description || `AgentEngine 内置 Tool：${contract.name}`),
+        description: String(formal?.name === 'browser_inspect_workspace' ? formal.description
+          : contract.description || `AgentEngine 内置 Tool：${contract.name}`),
         parameters: formal?.parameters || contract.parameters || { type: 'object', properties: {} },
         output: { schema: BRIDGED_OUTPUT_SCHEMA, render: renderBridgedOutput },
         execute: async (args, exec) => bridgedOutput(await executeBuiltin(contract, args, exec)),
@@ -147,6 +150,22 @@ function toolNames(values) {
   }).filter(Boolean).map(String);
 }
 
+async function executeIndependentHostTool(ctx, definition, args, { agent, callId, signal }, decode) {
+  if (!definition || !agent?.session?.id)
+    return { status: 'error', content: { code: 'BOUND_TOOL_NOT_FOUND', executed: false } };
+  const preflightDefer = ctx.tools.callerOptionsContract === 'dsh.tool-batch-caller-options/v1'
+    ? 'dsh.tool-preflight-defer/v2' : undefined;
+  try {
+    const result = await executeNativeDshToolCall(ctx.tools, { name: definition.name, arguments: args, agent, callId, signal, preflightDefer });
+    if (!result.isError) return decode(result);
+    if (definition.readOnly || preflightDefer && result.preflightRejected === preflightDefer)
+      return { status: 'error', content: { code: 'HOST_TOOL_REJECTED', executed: false } };
+  } catch {
+    // A mutating call without a settled result may already have executed.
+  }
+  return { status: definition.readOnly ? 'error' : 'uncertain', content: { code: 'HOST_TOOL_OUTCOME_UNAVAILABLE' } };
+}
+
 function createToolAdapter(ctx, bindings) {
   const allowed = new Set(toolNames(bindings).map(sandboxRegistryName));
   if (!allowed.size) return undefined;
@@ -166,7 +185,7 @@ function createToolAdapter(ctx, bindings) {
     },
     async callTool(name, args = {}, { callId, signal, agent } = {}) {
       const schema = resolve(name, agent);
-      const result = await ctx.tools.execute({
+      const result = await executeNativeDshToolCall(ctx.tools, {
         callId: String(callId || `studio-tool-${Date.now().toString(36)}`),
         name: schema.name,
         arguments: args,
@@ -266,8 +285,51 @@ export function apply(ctx, config = {}) {
   if (!wholeNativeTurn) registerMcpTools(ctx, config.toolContracts, config, bridge);
   const boundToolAdapter = createToolAdapter(ctx, [...toolNames(config.toolBindings),
     ...(!wholeNativeTurn && config.a2aBindings?.length ? nativeA2aToolDefinitions().map(tool => tool.name) : [])]);
+  const service = config.runtime === 'native-engine';
+  const a2aNames = new Set(nativeA2aToolDefinitions().map(tool => tool.name));
+  const a2aHostTools = service && config.a2aBindings?.length
+    ? builtinToolBindings?.definitions.filter(tool => a2aNames.has(tool.name)) ?? [] : [];
+  const browserHostTool = service && toolNames(config.toolBindings).includes('browser_inspect_workspace')
+    ? builtinToolBindings?.definitions.find(tool => tool.name === 'browser_inspect_workspace') : undefined;
+  const teamRole = service && config.teamRole === true;
+  const teamHostTools = agent => (ctx.tools.schemas?.(agent) ?? []).filter(tool => Object.hasOwn(STUDIO_TEAM_HOST_TOOLS, tool.name))
+    .map(tool => ({ ...tool, readOnly: STUDIO_TEAM_HOST_TOOLS[tool.name] }));
   const toolAdapter = config.runtime === 'codex'
-    ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) } : boundToolAdapter;
+    ? { ...boundToolAdapter, ...createDshPresentationTools(ctx) }
+    : a2aHostTools.length || browserHostTool || teamRole ? {
+      ...boundToolAdapter,
+      ...(browserHostTool ? {
+        nativeBrowserTool: browserHostTool,
+        callNativeBrowserTool: (args, options) => executeIndependentHostTool(ctx, browserHostTool, args, options, result => {
+          const content = JSON.parse(result.value.result);
+          if (!content || typeof content.ok !== 'boolean') throw Error('Browser tool outcome invalid');
+          return { status: content.status === 'uncertain' ? 'uncertain' : content.ok ? 'ok' : 'error', content };
+        }),
+      } : {}),
+      ...(a2aHostTools.length ? {
+        listNativeA2aTools: () => a2aHostTools,
+        ...(builtinToolBindings.observeA2aReceipt ? {
+          observeNativeA2aReceipt: ({ agent, ...request }) => {
+            const session = agent?.session;
+            if (!session?.id || stopped) return {};
+            return builtinToolBindings.observeA2aReceipt({ ...request, sessionId: session.id,
+              assertCurrent: () => !stopped && agent.session === session && session.id === request.sessionId });
+          },
+        } : {}),
+        callNativeA2aTool: (name, args, options) => executeIndependentHostTool(ctx,
+          a2aHostTools.find(tool => tool.name === name), args, options, result => {
+            if (typeof result.value?.result !== 'string') throw Error('A2A tool outcome invalid');
+            const content = JSON.parse(result.value.result);
+            return { status: content?.status === 'uncertain' ? 'uncertain' : content?.ok === false ? 'error' : 'ok', content };
+          }),
+      } : {}),
+      ...(teamRole ? {
+        listNativeTeamTools: teamHostTools,
+        callNativeTeamTool: (name, args, options) => executeIndependentHostTool(ctx,
+          teamHostTools(options.agent).find(tool => tool.name === name), args, options,
+          result => ({ status: 'ok', content: result.content })),
+      } : {}),
+    } : boundToolAdapter;
   // Legacy resource adapters retain their existing per-model-step ownership.
   // Local AgentKit Harness is claimed above at the whole-turn boundary.
   const nativeTools = config.local === true && config.runtime !== 'codex';
@@ -277,6 +339,13 @@ export function apply(ctx, config = {}) {
     return bridge.executeNativeTurn({ ...payload, binding: { agentId, runtime: config.runtime, local: true,
       buildId: config.buildId, agentRevision: config.agentRevision, nativeEngineContract: config.nativeEngineContract,
       boundToolPolicy, nativeTools: bindNativeTools(payload.agent) } });
+  });
+  // The active preset supplies resource identity to the trusted service
+  // transport. The request cannot select a different Agent or Build.
+  if (wholeNativeTurn || config.runtime === 'native-engine') ctx.on('agentkit/harness-resource-binding', () => {
+    assertResources('Native Harness 资源恢复失败，请修复绑定后重试');
+    if (stopped) throw Object.assign(new Error('Studio preset scope was retired'), { code: 'STUDIO_PRESET_SCOPE_CLOSED' });
+    return { agentId, agentRevision: config.agentRevision, buildId: config.buildId, scopedPresetId: config.scopedPresetId };
   });
   // Trusted Host queries this ephemeral binding through agentEvents(ctx, agent).
   // Durable ownership grants no tools or permissions by itself.

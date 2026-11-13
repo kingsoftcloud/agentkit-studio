@@ -1,0 +1,303 @@
+diff --git a/packages/client/ui-chat/src/client/apply.ts b/packages/client/ui-chat/src/client/apply.ts
+index d3a6df8b96c7cfd94ad9325c417551e3bab7d5cb..0f5dc4d164efd3d6dab2c9e8cc11717bc086518c 100644
+--- a/packages/client/ui-chat/src/client/apply.ts
++++ b/packages/client/ui-chat/src/client/apply.ts
+@@ -242,6 +242,8 @@ export function apply(ctx: Context): void {
+       locale: NS,
+       children: {
+         'conversation.chat.flow': { kind: 'single', scope: 'session', inject: CHAT_FLOW_INJECT },
++        'conversation.chat.presentation': { kind: 'single', scope: 'session' },
++        'conversation.chat.assistant-actions': { kind: 'list', scope: 'session' },
+         'conversation.chat.text-interaction': { kind: 'keyed', scope: 'session' },
+       },
+       store: chatStore,
+diff --git a/packages/client/ui-chat/src/client/chat/ChatFlow.tsx b/packages/client/ui-chat/src/client/chat/ChatFlow.tsx
+index d83a3043ccf7e9f0d17e6c31b606ac5b390927d1..d864682d776fedc407611f2967a7fa4bb196201a 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatFlow.tsx
++++ b/packages/client/ui-chat/src/client/chat/ChatFlow.tsx
+@@ -27,7 +27,7 @@ export const ChatFlow = memo(function ChatFlow({
+   entries, pendingInputs, lastInputTurn, deferCollapse,
+   useSession, useChat, useChatNode, useChatNodeBottom, useChatNodeProcess, useChatGroup, usePresentation, useConnectionState,
+   useStore, actions, renderSlot, renderFactorySlot, t, useGroupAction, useGroupHeaderAction,
+-  cwd, openFile, inspectCall, forkAt, loadImage,
++  cwd, openFile, inspectCall, forkAt, loadImage, renderAssistantActions,
+ }: ChatFlowSlotProps) {
+   const nodeStore = useChat(snapshot => snapshot.nodes)
+   const running = useSession(snapshot => snapshot.running)
+@@ -47,7 +47,7 @@ export const ChatFlow = memo(function ChatFlow({
+   const seatProps = {
+     nodeStore, useChatNode, useChatNodeBottom, useChatNodeProcess, usePresentation,
+     useStore, actions, renderSlot, t, useGroupAction, deferCollapse,
+-    cwd, openFile, inspectCall, forkAt, loadImage,
++    cwd, openFile, inspectCall, forkAt, loadImage, renderAssistantActions,
+   }
+   const rows = entries.map((entry) => {
+     switch (entry.kind) {
+diff --git a/packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx b/packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx
+index 4efdb94142b591fea37e5be720dbe23d44135ba8..edd9e96621a719225fd78ba2d74c5c8e91cdf91c 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx
++++ b/packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx
+@@ -49,7 +49,7 @@ function turnOf(node: ChatNode | undefined): number | undefined {
+  */
+ export const ChatNodeSeat = memo(function ChatNodeSeat({
+   nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation,
+-  cwd, openFile, inspectCall, forkAt,
++  cwd, openFile, inspectCall, forkAt, renderAssistantActions,
+   loadImage, useStore, actions, renderSlot, t, useChatNodeBottom, deferCollapse, useGroupAction,
+ }: ChatNodeSeatProps) {
+   const bottom = useChatNodeBottom(nodeKey)
+@@ -137,10 +137,11 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
+       openFile,
+       inspectCall,
+       forkAt,
++      renderAssistantActions,
+       loadImage,
+       turnProcess,
+     }, [
+-    node, groupPart, cwd, openFile, inspectCall, forkAt,
++    node, groupPart, cwd, openFile, inspectCall, forkAt, renderAssistantActions,
+     loadImage, turnProcess,
+   ])
+   if (routedNode === undefined || owner === null) return null
+diff --git a/packages/client/ui-chat/src/client/chat/ChatView.module.css b/packages/client/ui-chat/src/client/chat/ChatView.module.css
+index 9929770b35ce50767884e8117cc77262e3fc6822..79797163930f88eced4a4b96cfdfbb371b3b4286 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatView.module.css
++++ b/packages/client/ui-chat/src/client/chat/ChatView.module.css
+@@ -19,6 +19,14 @@
+   overflow-y: clip;
+ }
+ 
++.statusPanel {
++  position: sticky;
++  top: 0;
++  z-index: 20;
++  flex: none;
++  height: 0;
++}
++
+ .scroll {
+   flex: 1 1 auto;
+   min-height: 0;
+diff --git a/packages/client/ui-chat/src/client/chat/ChatView.tsx b/packages/client/ui-chat/src/client/chat/ChatView.tsx
+index 86e49f36bc72b5a3bb3f3597dfe266e5598a259d..7a1994cd5a38ad85aee33353fa813ea4d522c361 100644
+--- a/packages/client/ui-chat/src/client/chat/ChatView.tsx
++++ b/packages/client/ui-chat/src/client/chat/ChatView.tsx
+@@ -2,6 +2,7 @@
+ // otherwise this view owns it. Each row subscribes to one stable node key.
+ 
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
++import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
+ import type {
+   NodeKey, RenderEntry,
+ } from '@deepseek-ai/dsh-client-ui-conversation/client'
+@@ -62,8 +63,9 @@ export function ChatView({
+   useSession, useChat, useConversation, useSessions, renderSlot,
+   sessionId, openFile, openExternalLink, resolveFilePath, useContextMenu,
+   loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt,
+-  usePresentation, useProjection, useInteractionIds, dispatchInteraction, t, fileDrag,
++  usePresentation, useProjection, useInteractionIds, dispatchInteraction, t, fileDrag, useAccess,
+ }: ChatViewSlotProps) {
++  const canFork = useAccess('session/fork')
+   const { getTriggerProps } = useContextMenu()
+   const getMarkdownTriggerProps = useCallback((target: MarkdownMenuTarget) => getTriggerProps(() => {
+     switch (target.kind) {
+@@ -87,6 +89,7 @@ export function ChatView({
+   // both the data and its change signal: the array identity moves only when a
+   // Turn enters, leaves, or changes its preview.
+   const turnNavigationItems = useChat(s => s.navigation.items())
++  const turnAnchors = useMemo(() => new Map(turnNavigationItems.map(item => [item.turn, item.anchorKey])), [turnNavigationItems])
+   // Host-computed whole-log outline; the merge is view-layer only (the
+   // conversation snapshot never carries projection values).
+   const turnOutline = useProjection('turnOutline')
+@@ -213,6 +216,15 @@ export function ChatView({
+   const interactionIds = useInteractionIds(ids => ids)
+   const textInteraction = useTextInteraction(scroll.columnRef, interactionSurfaceRef, dispatchInteraction, interactionIds)
+   const flowContext = useMemo<ChatFlowHookContext>(() => ({ motion: scroll.motion }), [scroll.motion])
++  const [statusTarget, setStatusTarget] = useState<HTMLDivElement | null>(null)
++  const [statusLayout, setStatusLayout] = useState<'auto' | 'mini' | 'panel' | null>(null)
++  const statusPanel = useMemo(() => ({ target: statusTarget, setLayout: setStatusLayout }), [statusTarget])
++  const renderAssistantActions = useCallback(
++    (messageId: MessageId) => renderSlot('conversation.chat.assistant-actions', { messageId }), [renderSlot],
++  )
++  const flowOwner = { entries, pendingInputs, lastInputTurn, deferCollapse, cwd,
++    openFile: requestOpenFile, inspectCall, forkAt, loadImage, renderAssistantActions }
++  const defaultFlow = renderSlot('conversation.chat.flow', flowOwner, { hookContext: flowContext })
+ 
+   return (
+     <div className={css.frame}>
+@@ -226,6 +238,7 @@ export function ChatView({
+         />
+       )}
+       <div className={css.root} data-chat-following-tail={scroll.followingTail ? '' : undefined}>
++        <div ref={setStatusTarget} className={css.statusPanel} data-chat-status-layout={statusLayout ?? undefined} />
+         <div ref={scroll.listRef} className={css.scroll} data-markdown-table-layout-root="true">
+           <div ref={scroll.columnRef} className={css.column} data-chat-flow=""
+             data-chat-motion={deferCompletedTurns && scroll.initialized
+@@ -249,10 +262,10 @@ export function ChatView({
+               openExternalLink={openExternalLink}
+               fileImages={fileImages}
+             >
+-              {renderSlot('conversation.chat.flow', {
+-                entries, pendingInputs, lastInputTurn, deferCollapse,
+-                cwd, openFile: requestOpenFile, inspectCall, forkAt, loadImage,
+-              }, { hookContext: flowContext })}
++              {renderSlot('conversation.chat.presentation', {
++                ...flowOwner, fallback: defaultFlow, openExternalLink, turnAnchors, statusPanel,
++                ...(canFork ? { branchAt: forkAt } : {}),
++              }, { fallback: defaultFlow })}
+             </MarkdownDelegateProvider>
+             <div ref={interactionSurfaceRef} className={css.textInteraction} data-text-interaction-surface=""
+               aria-hidden={textInteraction.active === null}>
+diff --git a/packages/client/ui-chat/src/client/chat/TurnTailNodeView.tsx b/packages/client/ui-chat/src/client/chat/TurnTailNodeView.tsx
+index c29b831ce8153b4470afe33c2b40df0efae5a3be..5ffd69bff4aae108b03d1b5d8a4ee316c3b588f0 100644
+--- a/packages/client/ui-chat/src/client/chat/TurnTailNodeView.tsx
++++ b/packages/client/ui-chat/src/client/chat/TurnTailNodeView.tsx
+@@ -10,7 +10,7 @@ import type { ChatSnapshot } from '../contract/snapshot.ts'
+ import css from './TurnTailNodeView.module.css'
+ 
+ type TurnTailNodeViewProps = ChatNodeViewProps<'turn-tail'>
+-  & PropsRenderSlots<'conversation.chat.turnTail' | 'conversation.chat.assistant-actions'>
++  & PropsRenderSlots<'conversation.chat.turnTail'>
+   & InjectFace<PerformanceUsageInjected>
+ 
+ function lastContent(snapshot: ChatSnapshot, turn: number, skipWarning: boolean): ChatNode | undefined {
+@@ -26,7 +26,7 @@ function lastContent(snapshot: ChatSnapshot, turn: number, skipWarning: boolean)
+ 
+ /** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
+ export const TurnTailNodeView = memo(function TurnTailNodeView({
+-  node, openFile, forkAt, renderSlot, t, useAccess, useChat, usePerformanceUsage,
++  node, openFile, forkAt, renderAssistantActions, renderSlot, t, useAccess, useChat, usePerformanceUsage,
+ }: TurnTailNodeViewProps) {
+   const detailed = usePerformanceUsage(mode => mode) === 'detailed'
+   const forkAllowed = useAccess('session/fork')
+@@ -53,7 +53,7 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
+   const messageId = closing.finalNode.messageId
+   const assistantActions = messageId === undefined
+     ? null
+-    : renderSlot('conversation.chat.assistant-actions', { messageId })
++    : renderAssistantActions?.(messageId)
+   return (
+     <div
+       className={css.root}
+diff --git a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+index d12619a624d2296316e2b490de8fa574380fbb6b..6497185e182c253eac356792ff304fe6fcb41ab9 100644
+--- a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
++++ b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+@@ -92,7 +92,6 @@ export function registerChatNodeRenderers(
+     inject: () => ({ hooks: { performanceUsage } }),
+     children: {
+       'conversation.chat.turnTail': { kind: 'list', scope: 'session' },
+-      'conversation.chat.assistant-actions': { kind: 'list', scope: 'session' },
+     },
+   }, TurnTailNodeView))
+   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
+diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
+index a87960174743b1f328aa286fccadab1dc02196d2..53c173fc62da241fa5144d19498828662fcc8350 100644
+--- a/packages/client/ui-chat/src/client/contract/slots.ts
++++ b/packages/client/ui-chat/src/client/contract/slots.ts
+@@ -1,5 +1,5 @@
+ /** Chat-owned Slot declarations and composed component props. */
+-import type { RefObject } from 'react'
++import type { ReactNode, RefObject } from 'react'
+ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
+ import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
+ import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/client'
+@@ -242,6 +242,7 @@ export interface ChatNodeOwnerProps {
+   openFile: (path: string, options?: OpenFileOptions) => void
+   inspectCall: ((callId: ToolCallId) => void) | undefined
+   forkAt: (seq: number) => void
++  renderAssistantActions?: ((messageId: MessageId) => ReactNode) | undefined
+   /** Session-authorized image loader supplied by the Chat view. */
+   loadImage: MessageImageLoader
+   /** Turn-process state when this Node belongs to a projected Turn. */
+@@ -368,7 +369,7 @@ export type ChatFlowDataInjected = Pick<ChatViewInjected, 'keyedHooks'> & {
+ 
+ /** Ordered rows and reconciled local echoes rendered inside one Chat viewport. */
+ export interface ChatFlowOwnerProps extends Pick<ChatNodeOwnerProps,
+-  'cwd' | 'openFile' | 'inspectCall' | 'forkAt' | 'loadImage'> {
++  'cwd' | 'openFile' | 'inspectCall' | 'forkAt' | 'loadImage' | 'renderAssistantActions'> {
+   readonly entries: readonly RenderEntry[]
+   readonly pendingInputs: readonly (PendingSubmission | InboxState['next-step'][number])[]
+   readonly lastInputTurn: number | undefined
+@@ -387,7 +388,7 @@ export type ChatFlowSlotProps =
+ /** Full Chat view props. */
+ export type ChatViewSlotProps =
+   PropsRuntime<'conversation.view'>
+-  & PropsRenderSlots<'conversation.chat.flow' | 'conversation.chat.text-interaction'>
++  & PropsRenderSlots<'conversation.chat.flow' | 'conversation.chat.presentation' | 'conversation.chat.assistant-actions' | 'conversation.chat.text-interaction'>
+   & PropsStore<ChatStore>
+   & InjectFace<ChatViewInjected>
+   & PropsLocale<'chat'>
+@@ -424,6 +425,21 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+   }
+ 
+   interface SlotMap {
++    /** Optional session presentation inside the shared conversation viewport. */
++    'conversation.chat.presentation': {
++      kind: 'single'
++      scope: 'session'
++      owner: ChatFlowOwnerProps & {
++        readonly fallback: ReactNode
++        readonly openExternalLink: (url: string) => void
++        readonly branchAt?: ChatFlowOwnerProps['forkAt']
++        readonly turnAnchors: ReadonlyMap<number, string>
++        readonly statusPanel: {
++          readonly target: HTMLElement | null
++          readonly setLayout: (layout: 'auto' | 'mini' | 'panel' | null) => void
++        }
++      }
++    }
+     /** Area-local text gestures and surfaces; each consumer registers its own synchronous admission. */
+     'conversation.chat.text-interaction': { kind: 'keyed'; scope: 'session'; owner: TextInteractionSurface }
+ 
+diff --git a/packages/client/ui-chat/tests/chat-view.client.spec.tsx b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+index 2bc8286e93585af92b864a545b9cfb77744b2e53..406f06cbb2d5ea8be88aaead3c2e9d670359904e 100644
+--- a/packages/client/ui-chat/tests/chat-view.client.spec.tsx
++++ b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+@@ -479,7 +479,8 @@ function makeHarness(
+     return renderUserContent(owner as UserContentInput, renderImages, props.t)
+   }
+   const renderSlot = (key: string, owner: ChatFlowOwnerProps, opts: Parameters<FlowRenderer>[2]) => {
+-    if (key === 'conversation.chat.text-interaction') return null
++    if (key === 'conversation.chat.text-interaction' || key === 'conversation.chat.assistant-actions') return null
++    if (key === 'conversation.chat.presentation') return (owner as ChatFlowOwnerProps & { fallback: React.ReactNode }).fallback
+     if (key !== 'conversation.chat.flow') throw new Error(`Undeclared ChatView child: ${key}`)
+     if ('renderSlot' in owner || 'useStore' in owner || 'actions' in owner) {
+       throw new Error('Flow owner data must not replace its rendering or store authority')
+diff --git a/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts b/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts
+index fc064f5ca7f01646607c025e48eaff1b196d4b19..4a60f3dd0c646c77580dbb0c9ff8f061fcc00b63 100644
+--- a/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts
++++ b/packages/client/ui-sidebar-browser/src/client/view/IframePresentation.ts
+@@ -74,7 +74,12 @@ export class IframePresentation implements BrowserPresentation {
+     element.title = current.target.title
+     element.referrerPolicy = 'no-referrer'
+     element.dataset.sidebarBrowserFrame = 'iframe'
+-    if (current.sandboxed) element.setAttribute('sandbox', WEB_BROWSER_SANDBOX)
++    if (current.sandboxed) {
++      const url = new URL(current.target.url)
++      const workspacePreview = url.protocol === 'http:' && /^preview-[a-f0-9]{24}\.localhost$/.test(url.hostname)
++        && /^\/[a-f0-9]{48}\//.test(url.pathname)
++      element.setAttribute('sandbox', workspacePreview ? `${WEB_BROWSER_SANDBOX} allow-pointer-lock` : WEB_BROWSER_SANDBOX)
++    }
+     element.addEventListener('load', () => {
+       if (this.element === element) this.events.loaded(current.revision)
+     })
+diff --git a/packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx b/packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx
+index aa36ee6384509cd842c55d9a23daa0e1a813f58b..f9ffc6a34314b4c69c301dc21887f38d1bf8fdf8 100644
+--- a/packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx
++++ b/packages/client/ui-sidebar-browser/tests/browser-body.client.spec.tsx
+@@ -247,6 +247,14 @@ describe('BrowserBody', () => {
+     expect(mounted.view.container.querySelector('iframe')?.getAttribute('src')).toBe('http://localhost:5173/')
+   })
+ 
++  it('allows pointer lock in a workspace preview while retaining the sidebar sandbox', async () => {
++    const url = `http://preview-${'a'.repeat(24)}.localhost:5173/${'b'.repeat(48)}/game.html`
++    const mounted = mountBrowser({ url })
++    await waitFor(() => { expect(mounted.view.container.querySelector('iframe')?.src).toBe(url) })
++    expect(mounted.view.container.querySelector('iframe')?.getAttribute('sandbox'))
++      .toBe(`${WEB_BROWSER_SANDBOX} allow-pointer-lock`)
++  })
++
+   it('opens known Web targets externally and consumes an initial typed navigation', async () => {
+     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+     const mounted = mountBrowser({ url: 'https://initial.example/path' })

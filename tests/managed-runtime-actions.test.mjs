@@ -18,7 +18,7 @@ const ownerHeaders = subject => ({ 'x-agentengine-identity-namespace': 'business
 const runtime = { identity: { agentId: 'ar-managed', versionId: 'version-1', manifestSha256: 'a'.repeat(64), runtimeName: 'dsh-native', runtimeVersion: 'studio-1' },
   declaration: { name: 'fixture' }, agent: {} };
 
-async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false, runLog } = {}) {
+async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false, runLog, harnessFrames = [], harnessView } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'managed-actions-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const stored = new Map(), live = new Map();
@@ -73,12 +73,14 @@ async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false
     append(request.sessionId, [
       { type: 'turn/start', data: { turn: modelCalls } },
       { type: 'user/message', data: { source: { rpcId: request.occurrenceId }, content: [{ type: 'text', text: request.input }] } },
+      ...harnessFrames,
       { type: 'assistant/attempt', data: { message: { content: [{ type: 'text', text: 'discarded' }] } } },
       { type: 'tool/call', data: { callId: 'call', name: 'lookup', arguments: '{}' } },
       { type: 'tool/result', data: { message: { source: { callId: 'call' }, content: [{ type: 'text', text: 'found' }] } } },
       { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'checked' }, { type: 'text', text: `answer:${request.input}` }] } } },
       { type: 'turn/end', data: { reason: { kind: 'completed' } } },
     ]);
+    for (const frame of harnessFrames) request.onFrame?.({ kind: 'event', value: frame });
     request.onFrame?.({ kind: 'assistant', value: { type: 'chunk', attemptId: 'one', chunk: { type: 'text-delta', index: 0, text: `answer:${request.input}` } } });
     request.onFrame?.({ kind: 'assistant', value: { type: 'end', attemptId: 'one', outcome: { kind: 'committed', eventType: 'assistant/message' } } });
     return { output: `answer:${request.input}` };
@@ -87,7 +89,7 @@ async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false
   const start = async () => {
     const actions = await createManagedRuntimeActions({ ctx, runtime, model: 'model', models: ['model'], directory: root,
       admit: async () => ({ presetId: 'managed-preset' }) });
-    server = await startBuildRuntimeHttp({ agentId: runtime.identity.agentId, managedIdentity: runtime.identity, platformActions: actions, token, runner, withResourceContext, runLog,
+    server = await startBuildRuntimeHttp({ agentId: runtime.identity.agentId, managedIdentity: runtime.identity, platformActions: actions, token, runner, withResourceContext, runLog, harnessView,
       model: 'model', port: 0, validatePrevious: async previous => {
         if (!stored.get(previous.sessionId)?.events.some(event => event.data?.source?.rpcId === previous.occurrenceId)) throw Object.assign(Error('absent'), { status: 404 });
       } });
@@ -100,9 +102,46 @@ async function setup(t, { onRun, withResourceContext, repairColdOpenTurn = false
   });
   const action = (name, body, user, extra) => post(`/agentengine/api/v1/${name}`, { AgentId: 'ar-managed', ...body }, user, extra);
   const run = (text, id, session = 'public-session', user = 'alice') => post('/v1/responses', { input: text, session_id: session, request_id: id }, user);
-  return { action, post, run, stored, live, append, root, restart: async () => { await server.close(); await start(); },
+  return { action, post, run, stored, live, append, root, get origin() { return `http://127.0.0.1:${server.address.port}`; },
+    restart: async () => { await server.close(); await start(); },
     counts: () => ({ creates, modelCalls, flushed, reads, observationsDisposed }), services };
 }
+
+test('Hosted UI gets the same safe Harness presentation during a turn and on history reload', async t => {
+  const sha256 = 'b'.repeat(64);
+  const api = await setup(t, {
+    harnessView: async id => id === sha256 ? '<!doctype html><title>Harness view</title>' : null,
+    harnessFrames: [{ type: 'agentkit/native-engine-event', data: { runId: 'internal-engine-run', view: sha256,
+      event: { schema: 'agentkit.engine-event/v1', seq: 4, kind: 'tool.completed', category: 'tool',
+        title: 'write_workspace_file', status: 'ok', result: 'PRIVATE_TOOL_RESULT', calls: [{ arguments: 'PRIVATE_ARGS' }] } } }],
+  });
+  const response = await api.action('RunAgent', { SessionId: 'public-session', InvocationId: 'public-invocation',
+    ResponsesInput: 'write', Stream: true, ApiFormat: 'responses' });
+  assert.equal(response.status, 200);
+  const stream = await response.text();
+  const frame = stream.split('\n').filter(line => line.startsWith('data: {'))
+    .map(line => JSON.parse(line.slice(6))).find(event => event.type === 'response.harness_view');
+  assert.equal(frame.run_id, 'public-invocation');
+  assert.doesNotMatch(stream, /PRIVATE_|internal-engine-run/);
+  const { Data: history } = await (await api.action('ListSessionEvents', { SessionId: 'public-session' })).json();
+  const row = history.Events.find(event => event.EventType === 'harness_view');
+  assert.equal(row.InvocationId, frame.run_id);
+  assert.deepEqual(row.Content.harness_view, frame.harness_view);
+  const viewPath = api.origin + '/_ksadk/harness/v1/views/';
+  const headers = { authorization: 'Bearer ' + token,
+    'x-agentengine-target-version-id': runtime.identity.versionId,
+    'x-agentengine-manifest-sha256': runtime.identity.manifestSha256 };
+  assert.equal((await fetch(viewPath + sha256)).status, 401);
+  assert.equal((await fetch(viewPath + sha256, { headers: { authorization: headers.authorization } })).status, 409);
+  const view = await fetch(viewPath + sha256, { headers });
+  assert.equal(view.status, 200);
+  assert.match(view.headers.get('content-security-policy'), /sandbox allow-scripts/);
+  assert.match(await view.text(), /Harness view/);
+  const head = await fetch(viewPath + sha256, { method: 'HEAD', headers });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal((await fetch(viewPath + 'c'.repeat(64), { headers })).status, 404);
+});
 
 test('managed run logs use public session and invocation IDs with the deployed version', async t => {
   const logs = [];

@@ -1,5 +1,5 @@
 /** Catalog Studio-owned revisions and explicitly supported cloud runtimes. */
-const SUPPORTED_RUNTIMES = new Set(['dsh-native', 'harness', 'codex']);
+const SUPPORTED_RUNTIMES = new Set(['dsh-native', 'harness', 'codex', 'native-engine']);
 const SUPPORTED_MANAGED_RUNTIMES = new Set(['dsh-native', 'codex']);
 function createdAt(item) {
   return Date.parse(String(item.metadata?.createdAt || item.createdAt || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1')) || 0;

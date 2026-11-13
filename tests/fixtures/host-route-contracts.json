@@ -218,6 +218,8 @@
           [
             "agent-fixture",
             {
+              "preferService": true,
+              "requestedPresetId": "[undefined]",
               "agent": {
                 "metadata": {
                   "id": "agent-fixture",

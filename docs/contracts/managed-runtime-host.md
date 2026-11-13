@@ -19,8 +19,13 @@ fields fail explicitly. The platform must inject:
 - `AGENTENGINE_MANIFEST_PROTOCOL=runtime-manifest/v1` and the exact mounted byte
   SHA-256 in `AGENTENGINE_MANIFEST_SHA256`.
 - Stable `AGENTENGINE_AGENT_ID` and immutable `AGENTENGINE_AGENT_VERSION_ID`.
-- `OPENAI_BASE_URL`, `AGENTKIT_MODEL_API_KEY` and a dedicated
-  `AGENTKIT_RUNTIME_TOKEN` of at least 24 characters.
+- A dedicated `AGENTKIT_RUNTIME_TOKEN` of at least 24 characters.
+- `OPENAI_BASE_URL` and `AGENTKIT_MODEL_API_KEY` for runtimes that connect
+  to the model provider from Studio.
+- `AGENTKIT_ENGINE_SERVICE_URL`, `AGENTKIT_ENGINE_SERVICE_TOKEN` and
+  `AGENTKIT_ENGINE_SERVICE_WORKSPACE` for a managed Harness bound to its own
+  service. The service owns the inference model and its credentials. Studio
+  uses the model name in the manifest as the public session model.
 - Optional `AGENTKIT_RUNTIME_HOST` / `AGENTKIT_RUNTIME_PORT` for this Host listener.
   `AGENTKIT_RUNTIME_TIMEOUT_MS` may tune the bounded outer Native run deadline
   (1 second to 24 hours); the default is 900 seconds so a five-minute foreground

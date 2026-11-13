@@ -587,6 +587,17 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
       checkReceipt();
       return { ...observed, agent: record.request.spec.target_agent_id };
     }
+    function peekDshReceipt(identity, request, check) {
+      invariant(dsh && typeof assertControl === 'function' && check() === true, 'A2A_RECEIPT_WAIT_AUTHORITY_LOST');
+      const record = readIdentity(identity);
+      if (!record) return null;
+      invariant(canonical(record.request.dsh) === canonical(request), 'A2A_RECEIPT_SOURCE_CONFLICT');
+      if (record.phase === 'terminal' && a2aTerminal.has(record.projection.state))
+        return { token: hash(record.result), result: copy(record.result), agent: record.request.spec.target_agent_id };
+      const taskId = record.projection.taskId ?? record.managed?.taskId;
+      return taskId ? { token: hash({ taskId, contextId: record.projection.contextId }), result: null,
+        retryUntil: record.deadlineAt, agent: record.request.spec.target_agent_id } : null;
+    }
     function checkQuestion(query) {
       invariant(!dsh && internal && typeof assertQuestion === 'function', 'A2A_QUESTION_AUTHORITY_REQUIRED');
       checkOwner(query.signal); const verdict = assertQuestion(query);
@@ -705,7 +716,7 @@ function prepareA2AHost({ env = {}, bindings = [], fetchImpl = hostFetch, worklo
     const exposurePlan = { assertGenericTargetAllowed(target) { invariant(specs.some(spec => spec.target_agent_id === target), 'A2A_TARGET_NOT_BOUND'); } };
     return { discovery: { list: input => list({ ...input, signal: AbortSignal.any([input.signal, sessionLifetime.signal]),
       assertCurrent: () => { checkOwner(input.signal); return true; } }) },
-      invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, peekReceipt, exposurePlan,
+      invocation: { resolve: resolveCall, dispatch }, control, observeReceipt, peekReceipt, peekDshReceipt, exposurePlan,
       ...(questions ? { questions } : {}),
       ...(internal ? { eventDelivery: {
         flush: options => eventDispatcher.flush(options),

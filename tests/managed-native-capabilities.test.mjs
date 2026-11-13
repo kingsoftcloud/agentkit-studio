@@ -52,6 +52,25 @@ test('managed Harness admits usable workspace and command tools into its real pr
   assert.deepEqual(runtime.agent.bindings, runtime.agent.spec.bindings);
 });
 
+test('a managed Harness declaration can select its independent service without changing platform identity', async t => {
+  const remote = { AGENTKIT_ENGINE_SERVICE_URL: 'https://harness-service.agent-fixture.svc:8787',
+    AGENTKIT_ENGINE_SERVICE_TOKEN: 'fixture-service-credential', AGENTKIT_ENGINE_SERVICE_WORKSPACE: '/data/workspace' };
+  const runtime = await definition(t, 'harness', remote);
+  assert.equal(runtime.identity.runtimeName, 'harness');
+  assert.equal(runtime.agent.spec.runtime.type, 'native-engine');
+  assert.equal(runtime.agent.spec.bindings.tools, undefined, 'independent engine owns the workspace tools');
+  let preset;
+  const admission = new DshPresetAdmission({ getAgent: async () => runtime.agent,
+    registry: { register: async value => { preset = value; return () => {}; } } });
+  t.after(() => admission.dispose());
+  await admission.ensure(runtime.identity.agentId);
+  const plugin = preset.plugins.find(item => item.id === 'studio-runtime');
+  assert.equal(plugin.config.runtime, 'native-engine');
+  assert.equal(plugin.config.nativeEngineContract, undefined);
+  await assert.rejects(definition(t, 'harness', { ...remote, AGENTKIT_ENGINE_SERVICE_TOKEN: '' }),
+    { code: 'MANAGED_HARNESS_SERVICE_BINDING_INVALID' });
+});
+
 test('managed defaults never replace an explicitly selected remote command backend with local execution', async t => {
   const runtime = await definition(t, 'harness', { KSADK_SANDBOX_BACKEND: 'e2b' });
   const names = runtime.agent.spec.bindings.tools.map(ref => ref.resourceId);

@@ -45,6 +45,13 @@ export function studioTeammateRequest({ role, run, prompt, signal, context = 'fr
   return request;
 }
 
+// Shared with the independent service bridge. These are the Team authority's
+// registered operations, with observation-only calls identified explicitly.
+export const STUDIO_TEAM_HOST_TOOLS = Object.freeze({
+  spawn_teammate: false, send_message: false, list_agents: true, wait_agent: true, interrupt_agent: false,
+  team_task_create: false, team_task_list: true, team_task_get: true, team_task_update: false,
+});
+
 function studioPolicy(useOfficialTools) {
   if (useOfficialTools) {
     return '本会话使用官方 Agent Teams。Studio 负责已配置角色的 preset 映射；官方 Agent Teams 工具保持 DSH 原生能力，Lead 可按任务需要创建额外成员。所有任务、消息和状态均由 agent-teams 持久保存。成员必须通过 send_message 向 lead 汇报结果，必要时读取和认领共享任务。inactive 仅表示没有回合执行，不表示任务已完成。所有成员共享当前工作目录，文件写入先分配互不重叠的范围。';

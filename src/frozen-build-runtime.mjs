@@ -5,16 +5,17 @@ import { readNativeRequestEvents } from './native-request-history.mjs';
 import { CODEX_TOOL_EVENT } from './providers/codex-tool-events.mjs';
 import { frozenModels } from './frozen-models.mjs';
 import { RESOURCE_CHECK_EVENT } from './resource-checks.mjs';
-import { createHash } from 'node:crypto';
 import { createManagedRuntimeActions } from './managed-runtime-actions.mjs';
 import { join } from 'node:path';
 import { createFrozenHostedActions } from './frozen-hosted-actions.mjs';
-import { createRuntimeResponsesContract } from './runtime-responses-contract.mjs';
+import { createRuntimeResponsesContract, responsesRequestFingerprint } from './runtime-responses-contract.mjs';
 import { createFrozenResponseProjection } from './frozen-response-projection.mjs';
 import { createManagedApprovalRegistry } from './managed-runtime-approval.mjs';
+import { NATIVE_ENGINE_EVENT } from './providers/native-engine-runtime.mjs';
+import { hostedHarnessView } from './harness-view-presentation.mjs';
 import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecutionPolicy, executionModesUpTo, readExecutionMode } from './execution-policy.mjs';
 
-const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, 'step/end', 'turn/end']);
+const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, NATIVE_ENGINE_EVENT, 'step/end', 'turn/end']);
 
 // The automation runner's local default is intentionally strict, but a
 // managed/frozen Runtime must also cover a foreground tool command that gets
@@ -34,13 +35,21 @@ export function frozenRuntimeTimeoutMs(env = process.env) {
 export function observeNativeRun(ctx, agent, onFrame) {
   const disposers = [
     ctx.on('agent/assistant-stream', ({ agent: source, frame }) => { if (source === agent) onFrame({ kind: 'assistant', value: frame }); }),
-    ctx.on('session/event', (session, event) => { if (session === agent.session && durableTypes.has(event.type)) onFrame({ kind: 'event', value: event }); }),
+    ctx.on('session/event', (session, event) => {
+      if (session !== agent.session || !durableTypes.has(event.type)) return;
+      if (event.type === NATIVE_ENGINE_EVENT) {
+        const view = hostedHarnessView(event);
+        if (view) onFrame({ kind: 'event', value: { type: event.type, data: { view: view.sha256, event: view.event } } });
+        return;
+      }
+      onFrame({ kind: 'event', value: event });
+    }),
   ];
   return () => { for (const dispose of disposers) dispose(); };
 }
 
-export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, managedResourceContext, admit, modelService, hostCompatibility, resources, env = process.env,
-  createAutomationRunner = createNativeAutomationRunner }) {
+export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, managedResourceContext, admit, modelService, hostCompatibility, resources,
+  nativeEngineRuntime, env = process.env, createAutomationRunner = createNativeAutomationRunner }) {
   const agentId = managedRuntime?.identity.agentId || env.AGENTKIT_RUNTIME_AGENT_ID;
   const buildId = managedRuntime ? undefined : env.AGENTKIT_RUNTIME_BUILD_ID;
   if (!agentId && !buildId && !managedRuntime) return null;
@@ -51,11 +60,13 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   const resolveDefinition = () => managedRuntime ? Promise.resolve(structuredClone(managedRuntime.agent)) : build.resolve(agentId, buildId);
   const frozen = await resolveDefinition();
   await admit(agentId, frozen);
+  const harnessModel = managedRuntime?.harnessModelSelection;
   const bindings = frozen.spec?.bindings || {}, first = bindings.modelProfileIds?.[0];
   const primary = bindings.modelProfileId || (typeof first === 'string' ? first : first?.resourceId || first?.id) || '';
   const ids = [...new Set([primary, ...(bindings.modelProfileIds || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id)].filter(Boolean))];
-  const catalog = modelService ? frozenModels(await Promise.all(ids.map(async id => ({ ...await modelService.profile(id), id, default: id === primary })))) : [];
+  const catalog = harnessModel || !modelService ? [] : frozenModels(await Promise.all(ids.map(async id => ({ ...await modelService.profile(id), id, default: id === primary }))));
   const selections = new Map();
+  if (harnessModel) selections.set(harnessModel.model, harnessModel);
   for (const entry of catalog) {
     const admission = await admit(agentId, { ...frozen, spec: { ...frozen.spec, bindings: { ...bindings, modelProfileId: entry.profileId } } });
     if (!admission.modelSelection) throw Object.assign(new Error('冻结模型没有可用的运行时路由'), { code: 'RUNTIME_MODEL_UNAVAILABLE' });
@@ -73,14 +84,13 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
     assertHostCompatible: () => hostCompatibility?.require('frozen-runtime'),
     loadReplay: request => loadFrozenRequestReplay(request, selections.get(request.model)),
     admit: async () => admit(agentId, await resolveDefinition()),
-    ...(catalog.length ? { selectModel: async key => {
+    ...(selections.size ? { selectModel: async key => {
       if (!selections.has(key)) throw Object.assign(new Error('模型不在冻结绑定中'), { code: 'RESPONSES_FROZEN_MODEL_MISMATCH', status: 400 });
       return selections.get(key);
     } } : {}),
     observe: (agent, listener) => observeNativeRun(ctx, agent, listener),
   });
-  const runner = request => nativeRun({ ...request, requestFingerprint: createHash('sha256')
-    .update(JSON.stringify({ version: 1, input: request.input, model: request.model ?? null })).digest('hex') });
+  const runner = request => nativeRun({ ...request, requestFingerprint: responsesRequestFingerprint(request) });
   const validatePrevious = async (previous, signal) => {
     try {
       const events = await readNativeRequestEvents(ctx.get('sessionController'), previous.sessionId, previous.occurrenceId, signal);
@@ -90,7 +100,7 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
       throw error;
     }
   };
-  const model = catalog.find(item => item.default)?.id || catalog[0]?.id || primary;
+  const model = harnessModel?.model || catalog.find(item => item.default)?.id || catalog[0]?.id || primary;
   const models = catalog.length ? catalog.map(item => item.id) : [model];
   // One bridge owns the interactive approval answerer and the presented
   // interaction records for this Host process.
@@ -117,17 +127,18 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
     withResourceContext: managedResourceContext?.run, bundleSha256: env.AGENTKIT_BUNDLE_SHA256 || '',
     deploymentVersion: env.AGENTKIT_DEPLOYMENT_VERSION || 'initial', runner, executionPolicy: declaredPolicy, executionPolicyMax: executionModeMax,
     validatePrevious, responseProjection: createFrozenResponseProjection({ getService: name => ctx.get(name) }), approval, model, models, token: env.AGENTKIT_RUNTIME_TOKEN,
+    ...(managedRuntime && nativeEngineRuntime?.usesService ? { harnessView: nativeEngineRuntime.resolveView, allowImages: Boolean(harnessModel) } : {}),
     host: env.AGENTKIT_RUNTIME_HOST || '127.0.0.1', port: Number(env.AGENTKIT_RUNTIME_PORT || 8080) });
 }
 
-async function loadFrozenRequestReplay({ controller, sessionId, occurrenceId, input, model, requestFingerprint, signal }, expectedSelection) {
+async function loadFrozenRequestReplay({ controller, sessionId, occurrenceId, input, images, model, requestFingerprint, signal }, expectedSelection) {
   let events;
   try { events = await readNativeRequestEvents(controller, sessionId, occurrenceId, signal, { includeRequestHeader: true }); }
   catch (error) { if (error?.code === 'CHANNEL_REQUEST_NOT_FOUND') return null; throw error; }
   const message = events.find(event => event.type === 'user/message' && event.data?.source?.rpcId === occurrenceId)?.data;
   const text = (message?.content || []).filter(part => part.type === 'text').map(part => part.text).join('');
   const fingerprint = message?.source?.requestFingerprint;
-  if (text !== input || (fingerprint !== undefined && fingerprint !== requestFingerprint)) {
+  if (text !== input || (fingerprint === undefined ? images?.length : fingerprint !== requestFingerprint)) {
     throw Object.assign(new Error('request input conflict'), { code: 'RUNTIME_REQUEST_CONFLICT', status: 409 });
   }
   if (fingerprint === undefined) {

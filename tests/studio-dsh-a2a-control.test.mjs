@@ -4,9 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshNodeBuiltins } from '../src/providers/dsh-node-builtins.mjs';
@@ -14,8 +16,10 @@ import { createStudioDshA2aControls } from '../src/host/services/dsh-a2a-control
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { createNativeA2aTaskState } from '../src/client/state/native-a2a.mjs';
 import { createDshA2aHistoryState } from '../src/client/state/dsh-a2a-history.mjs';
+import { createCodexResourceContext } from '../src/providers/codex-resource-context.mjs';
+import { createNativeEngineRuntime } from '../src/providers/native-engine-runtime.mjs';
 const delay = () => new Promise(resolve => setImmediate(resolve));
-async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } = {}) {
+async function setup(t, { runtime = 'dsh-native', busy = false, lost = false, recoverSend = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'studio-dsh-a2a-'))), workspaceRoot = join(root, 'workspace'); mkdirSync(workspaceRoot);
   const counts = { discovery: 0, send: 0, get: 0, continue: 0, cancel: 0, approval: 0 }, errors = [], approvals = [], tasks = new Map(), bodies = [];
   let finishStream, approve = async () => 'allowed-once', lookup, preset = 'original-preset', held;
@@ -29,7 +33,8 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
     }
     const wrap = result => ({ jsonrpc: '2.0', id: body.id, result });
     if (body.method === 'SendStreamingMessage') {
-      counts.send++; const task = { id: `remote-${counts.send}`, contextId: 'context', status: { state: busy ? 'TASK_STATE_WORKING' : 'TASK_STATE_INPUT_REQUIRED' } };
+      counts.send++; const task = { id: `remote-${counts.send}`, contextId: 'context',
+        status: { state: busy || recoverSend ? 'TASK_STATE_WORKING' : 'TASK_STATE_INPUT_REQUIRED' } };
       tasks.set(task.id, task); res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write('id: 1\ndata: ' + JSON.stringify(wrap({ task })) + '\n\n');
       if (busy) finishStream = () => { res.end('id: 2\ndata: ' + JSON.stringify(wrap({ statusUpdate: { taskId: task.id,
@@ -42,7 +47,11 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
       res.setHeader('content-type', 'text/event-stream');
       res.end('id: 1\ndata: ' + JSON.stringify(wrap({ task })) + '\n\n'); return;
     }
-    if (body.method === 'GetTask') { counts.get++; res.end(JSON.stringify(wrap(task))); return; }
+    if (body.method === 'GetTask') {
+      counts.get++;
+      if (recoverSend && task.status.state !== 'TASK_STATE_COMPLETED') { res.writeHead(503); res.end('{}'); return; }
+      res.end(JSON.stringify(wrap(task))); return;
+    }
     if (body.method === 'CancelTask') { counts.cancel++; task.status = { state: 'TASK_STATE_CANCELED' }; }
     else { assert.equal(body.method, 'SendMessage'); counts.continue++;
       assert.equal(body.params.message.contextId, task.contextId); task.status = { state: 'TASK_STATE_COMPLETED' }; }
@@ -52,7 +61,7 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const origin = `http://127.0.0.1:${server.address().port}`;
   const binding = { local_name: 'remote', binding_id: 'binding', space_id: 'space', target_agent_id: 'remote', expected_version_id: 'version' };
   const bridge = createRuntimeBridge(), effects = [], listeners = new Map(), registered = new Map(), ports = [];
-  const agent = { session: { id: 'session' } };
+  const agent = { id: 'session', session: { id: 'session' } };
   const services = { studioRuntimeBridge: bridge, sessions: { flush: async () => true },
     sessionProjections: { stateOf: (_session, name) => name === 'turnBoundary' ? { lastTurn: 1, openTurnStartSeq: 0 } : preset },
     sessionController: { resolveAgent: id => lookup ? lookup(id) : Promise.resolve({ agent }) },
@@ -60,7 +69,14 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
     approval: { request: async input => { counts.approval++; approvals.push(input); return approve(input); } } };
   const ctx = { get: name => services[name], on: (name, handler) => { listeners.set(name, handler); },
     effect: install => { const result = install(); if (result) effects.push(result); },
-    tools: { register: tool => { registered.set(tool.name, tool); return () => {}; } } };
+    tools: {
+      register: tool => { registered.set(tool.name, tool); return () => {}; },
+      async execute({ calls: [call], agent: owner, signal }) {
+        const args = JSON.parse(call.arguments);
+        const value = await registered.get(call.name).execute(args, { agent: owner, name: call.name, arguments: args, callId: call.id, signal });
+        return { results: [{ callId: call.id, result: { isError: false, value, content: [] } }], additionalContexts: [], concluded: false };
+      },
+    } };
   bridge.setBuiltinToolsFactory(({ config, isClosed, signal }) => {
     const port = createDshNodeBuiltins({ ctx, workspaceRoot, stateDir: join(root, 'state'), agentId: config.agentId,
       agentRevision: config.agentRevision, buildId: config.buildId, toolBindings: [], a2aBindings: config.a2aBindings,
@@ -86,7 +102,13 @@ async function setup(t, { runtime = 'dsh-native', busy = false, lost = false } =
     } }; walk(join(root, 'state')); return rows.sort(); };
   t.after(async () => { bridge.close(); await service.close(); for (const dispose of effects) await dispose(); await Promise.all(ports.map(port => port.close()));
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); rmSync(root, { recursive: true, force: true }); assert.deepEqual(errors, []); });
-  return { request, invoke, remote, launch, counts, receipts, approvals, bodies, service, services, listeners, agent,
+  return { request, invoke, remote, launch, counts, receipts, approvals, bodies, service, services, listeners, agent, bridge,
+    workspaceRoot, root, binding,
+    completeRemote() {
+      const task = tasks.get('remote-1');
+      task.status = { state: 'TASK_STATE_COMPLETED' };
+      task.artifacts = [{ artifactId: 'result', parts: [{ text: 'verified original remote result' }] }];
+    },
     approve: value => { approve = value; }, preset: value => { preset = value; }, lookup: value => { lookup = value; },
     finish: () => finishStream?.(), ready: async () => { const end = Date.now() + 5000; while (!finishStream) { assert.ok(Date.now() < end); await delay(); } },
     reopen: async () => { for (const port of ports) await port.close(); applyPreset(ctx, config); } };
@@ -181,4 +203,104 @@ test('leaving DSH inventory aborts the actual request and ignores late results',
   release({ contract: 'agentkit.studio-dsh-a2a-inventory/v1', agentId: 'agent', sessionId: 'session', applicable: false,
     offset: 0, total: 0, complete: true, items: [] });
   await pending; assert.equal(state.getSnapshot().page, null);
+});
+
+test('Native service callbacks dispatch through the bound A2A registry and expose the original remote task', async t => {
+  const f = await setup(t, { runtime: 'native-engine' });
+  await f.listeners.get('agent/request')({ agent: f.agent }, async () => ({}));
+  const adapter = f.bridge.getRoute('session').toolAdapter;
+  const definitions = adapter.listNativeA2aTools();
+  assert.deepEqual(definitions.map(tool => tool.name), ['list_a2a_agents', 'get_a2a_agent_card', 'call_a2a_agent']);
+  const signal = new AbortController().signal;
+  assert.equal((await adapter.callNativeA2aTool('run_command', {}, { agent: f.agent, callId: 'unknown', signal })).status, 'error');
+  const args = { agent: 'remote', message: 'original' };
+  const options = { agent: f.agent, callId: 'engine-owned-call', signal };
+  const outcome = await adapter.callNativeA2aTool('call_a2a_agent', args, options);
+  assert.equal(outcome.status, 'uncertain');
+  assert.deepEqual(await adapter.callNativeA2aTool('call_a2a_agent', args, options), outcome);
+  assert.equal(f.counts.send, 1);
+  const page = await f.remote.dshA2aTaskHistory({ agentId: 'agent', sessionId: 'session' });
+  assert.equal(page.items[0].callId, options.callId);
+  const result = await f.remote.controlDshA2aTask({ ...f.request, callId: options.callId,
+    operationKey: 'dsh-a2a:' + options.callId, kind: 'get', commandId: 'original-observation' }, signal);
+  assert.ok(JSON.stringify(result).includes('remote-1'));
+});
+
+test('Desktop Studio resumes the original service Run and original A2A task after a service restart', { timeout: 25000 }, async t => {
+  const f = await setup(t, { runtime: 'native-engine', recoverSend: true });
+  await f.listeners.get('agent/request')({ agent: f.agent }, async () => ({}));
+  const toolAdapter = f.bridge.getRoute('session').toolAdapter;
+  const frozen = { metadata: { id: 'agent', revision: 3 }, spec: { bindings: { a2a: [f.binding] } } };
+  const createResources = createCodexResourceContext({ agentStore: {}, builds: { build: { resolve: async () => frozen } }, resources: {} });
+  const resources = await createResources({ agentId: 'agent', buildId: 'build', runtime: 'native-engine',
+    nativeService: true, sessionId: 'session', agent: f.agent, toolAdapter });
+  assert(resources.dynamicTools.some(tool => tool.name === 'call_a2a_agent' && tool.receiptObservation === true));
+  const { createEngineService } = await import(new URL('engine-service.mjs',
+    import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
+  const token = 'fixture-studio-local-receipt-token', modelRequests = [];
+  const startup = { workspace: f.workspaceRoot, stateDir: join(f.root, 'engine-state'),
+    scope: { tenantId: 'fixture', workspaceId: 'workspace', userId: 'user', agentId: 'agent' },
+    model: { name: 'fixture', baseUrl: 'https://example.test/v1', apiKeyEnv: 'FIXTURE_KEY' } };
+  let service, port = 0;
+  async function start() {
+    service = createEngineService({ startup, token, env: { FIXTURE_KEY: 'fixture-model-key' },
+      fetchImpl: async (_url, request) => {
+        modelRequests.push(JSON.parse(request.body));
+        const tool = modelRequests.length === 1;
+        const delta = tool ? { tool_calls: [{ index: 0, id: 'engine-model-call', type: 'function', function: {
+          name: 'call_a2a_agent', arguments: JSON.stringify({ agent: 'remote', message: 'original' }) } }] }
+          : { content: 'Finished original task.' };
+        const frame = { id: 'fixture', choices: [{ index: 0, delta, finish_reason: tool ? 'tool_calls' : 'stop' }],
+          usage: { prompt_tokens: 10, completion_tokens: 2 } };
+        return new Response('data: ' + JSON.stringify(frame) + '\n\ndata: [DONE]\n\n', {
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      } });
+    await new Promise((resolve, reject) => {
+      service.server.once('error', reject);
+      service.server.listen(port, '127.0.0.1', resolve);
+    });
+    port = service.server.address().port;
+  }
+  t.after(() => service?.close());
+  await start();
+  const endpoint = 'http://127.0.0.1:' + port;
+  const runtime = createNativeEngineRuntime({ stateRoot: join(f.root, 'host-state'), env: {
+    AGENTKIT_ENGINE_SERVICE_URL: endpoint, AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.workspaceRoot,
+  } });
+  const chunks = [], stream = (async () => {
+    for await (const chunk of runtime.stream({ ...resources, input: 'Find original evidence.', turnId: 'original-turn',
+      sessionId: 'session', cwd: f.workspaceRoot, sandbox: 'workspace-write', requestPolicyApproval: async () => 'allowed-once',
+    })) chunks.push(chunk);
+  })();
+  void stream.catch(() => {});
+  const deadline = Date.now() + 8000;
+  let runId, status;
+  while (Date.now() < deadline) {
+    runId ??= chunks.find(chunk => chunk.type === 'engine-event')?.runId;
+    if (runId) {
+      const session = createHash('sha256').update('session').digest('hex');
+      const response = await fetch(endpoint + '/v1/sessions/' + session + '/rpc', {
+        method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'check', method: 'run/status', params: { runId } }),
+      });
+      status = (await response.json()).result;
+      if (status?.phase === 'awaiting_reconciliation') break;
+    }
+    await sleep(25);
+  }
+  assert.equal(status?.phase, 'awaiting_reconciliation');
+  assert.equal(f.counts.send, 1);
+  assert.equal(modelRequests.length, 1);
+  await service.close();
+  service = null;
+  f.completeRemote();
+  await start();
+  await stream;
+  assert(chunks.some(chunk => chunk.type === 'text' && chunk.text === 'Finished original task.'));
+  assert(chunks.filter(chunk => chunk.type === 'engine-event').every(chunk => chunk.runId === runId));
+  assert.equal(modelRequests.length, 2);
+  assert(JSON.stringify(modelRequests[1].messages).includes('verified original remote result'));
+  assert.equal(f.counts.send, 1);
+  assert(f.counts.get >= 2);
 });
