@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startFrozenBuildRuntime } from '../src/frozen-build-runtime.mjs';
+import { frozenRuntimeTimeoutMs, startFrozenBuildRuntime } from '../src/frozen-build-runtime.mjs';
 
 const buildId = 'build_0123456789abcdef0123';
 const token = 'runtime-test-token-with-at-least-24-characters';
@@ -108,4 +108,31 @@ test('frozen runtime preserves build admission, durable replay and request-input
   assert.equal(turns, 2);
   assert.equal(selected.length, 1);
   assert.equal(admissions.length, 2); // Startup preflight and first native session.
+});
+
+test('frozen runtime gives long foreground work a configurable outer deadline', async t => {
+  const captured = [];
+  const controller = {
+    promptFingerprintVersion: 1,
+    projections: async () => null,
+    create: async () => {},
+    resolveAgent: async () => ({ agent: { session: { id: 'session' }, whenIdle: async () => {}, cancel() {} } }),
+  };
+  const runtime = await startFrozenBuildRuntime({
+    createAutomationRunner: options => {
+      captured.push(options);
+      return async () => ({ output: 'ok' });
+    },
+    ctx: { get: name => name === 'sessionController' ? controller : undefined },
+    build: { resolve: async () => ({ spec: {} }) },
+    admit: async () => ({ presetId: 'frozen' }),
+    env: { AGENTKIT_RUNTIME_AGENT_ID: 'test-agent', AGENTKIT_RUNTIME_BUILD_ID: buildId,
+      AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: '0' },
+  });
+  t.after(() => runtime.close());
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].timeoutMs, 900_000);
+  assert.equal(frozenRuntimeTimeoutMs({ AGENTKIT_RUNTIME_TIMEOUT_MS: '1200000' }), 1_200_000);
+  assert.equal(frozenRuntimeTimeoutMs({ AGENTKIT_RUNTIME_TIMEOUT_MS: '0' }), 900_000);
+  assert.equal(frozenRuntimeTimeoutMs({ AGENTKIT_RUNTIME_TIMEOUT_MS: '999999999' }), 86_400_000);
 });

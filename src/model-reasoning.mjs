@@ -171,6 +171,53 @@ export function isReasoningEffortRejection(status, message) {
 }
 
 /**
+ * Whether an upstream failure is a rejection of a replayed reasoning item.
+ *
+ * Kspmas validates every assistant turn as `content`-or-`tool_calls` and answers
+ * `400 Invalid assistant message: content or tool_calls must be set` when a
+ * replayed `reasoning` item reaches it. OpenAI documents replaying reasoning
+ * items with tool outputs to keep reasoning continuity, so this must stay a
+ * *fallback*: forward reasoning items and only drop them after the gateway
+ * actually refuses them.
+ *
+ * @param {number} status - the upstream HTTP status.
+ * @param {string} message - the upstream error text.
+ * @returns {boolean} true for a 400 whose detail names the assistant-message rule.
+ */
+export function isReasoningReplayRejection(status, message) {
+  if (Number(status) !== 400) return false;
+  const text = String(message || '');
+  // A provider that refuses the optional `content` field on a replayed reasoning
+  // item names either the field deserialization or the assistant-message rule.
+  return /response\s*input\s+deserialization/i.test(text)
+    || (/invalid\s+assistant\s+message/i.test(text) && /content\s+or\s+tool_calls/i.test(text));
+}
+
+/**
+ * Strip the explicit `content: null` Codex serializes for an absent reasoning
+ * body.
+ *
+ * Codex reaches this gateway directly without any such rewrite, so this
+ * normalization stays a *fallback*: forward reasoning items unchanged and only
+ * retry with the field removed when a provider answers that the optional field
+ * is invalid.
+ *
+ * @param {object} body - the serialized request body to mutate.
+ * @returns {number} how many reasoning items were normalized.
+ */
+export function normalizeReasoningContent(body) {
+  if (!body || !Array.isArray(body.input)) return 0;
+  let normalized = 0;
+  body.input = body.input.map(item => {
+    if (item?.type !== 'reasoning' || item.content !== null) return item;
+    normalized += 1;
+    const { content: _absent, ...reasoning } = item;
+    return reasoning;
+  });
+  return normalized;
+}
+
+/**
  * Rewrite a request body's reasoning value in place. Handles both wire shapes:
  * Chat Completions' `reasoning_effort` and Responses' `reasoning.effort`.
  * @param {object} body - the serialized request body to mutate.

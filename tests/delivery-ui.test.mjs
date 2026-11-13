@@ -149,6 +149,26 @@ test('records default to the selected Agent, hide deleted history and keep other
   content = ui.nodes().map(ui.text).join(' '); assert.match(content, /Deleted history/);
 });
 
+test('deployment surfaces retain current and frozen target image identities with missing-value fallbacks', async () => {
+  for (const populated of [true, false]) {
+    const ui = harness();
+    const imageVersion = populated ? 'runtime-current' : undefined;
+    const imageDigest = populated ? 'sha256:current' : undefined;
+    const image = populated ? { version: 'runtime-target', digest: 'sha256:target' } : {};
+    ui.rows.push({ id: 'live', agentId: 'a', agentName: 'Existing instance', state: 'READY', cloudAgentId: 'ar-existing', imageVersion, imageDigest });
+    ui.api.prepareDeploymentUpdate = async request => ({ ...preview({ resources: {} }), deploymentId: request.deploymentId, image });
+    await ui.settle();
+    assert.ok(ui.nodes().some(node => node.props.className === 'ad-record-meta' && ui.text(node).includes(`镜像 ${imageVersion || '—'}`)));
+    ui.menuItem('详情').props.onSelect(); await ui.settle();
+    assert.ok(ui.nodes().some(node => node.type === 'dd' && ui.text(node) === (populated ? 'runtime-current · sha256:current' : '—')));
+    await ui.button('检查更新').props.onClick(); await ui.settle();
+    const result = ui.text(ui.field('部署检查结果'));
+    assert.ok(result.includes(`当前镜像 ${imageVersion || '—'}`));
+    assert.ok(result.includes(`目标运行镜像${populated ? 'runtime-target · sha256:target' : '—'}`));
+    assert.equal(ui.calls.some(([kind]) => kind === 'create'), false);
+  }
+});
+
 test('deployment history pages newest first and details retain the cloud identity', async () => {
   const ui = harness();
   for (let i = 0; i < 7; i++) ui.rows.push({ id: `d-${i}`, agentId: 'a', agentName: `Record ${i}`, state: 'READY', cloudAgentId: `ar-cloud-${i}`, createdAt: `2026-10-0${i + 1}T00:00:00Z` });
