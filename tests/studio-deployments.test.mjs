@@ -11,7 +11,7 @@ import { createDeploymentStore } from '../src/deployment-store.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
 import { modelCredentialName } from '../src/client/dsh/model-bridge.mjs';
 
-async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
+async function fixture(t, { runtime = 'harness', deploymentType = 'Container', credentialName = 'MODEL_KEY', bindings: bindingOverrides = {}, createError, responseLost = false, health = true, gatewayHealth = false, authReady = true, initialStatus = 'RUNNING', uploadDelayMs = 0 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'studio-deploy-')); t.after(() => rm(root, { force: true, recursive: true }));
   const agentId = 'ar-local-1234567890abcdef', cloudAgentId = 'ar-cloud-test';
   const values = { cloudServerUrl: 'https://aicp.api.ksyun.com', cloudRegion: 'pre-online', cloudAccessKey: 'test-ak', cloudSecretKey: 'test-sk', cloudBucket: deploymentType === 'ManagedRuntime' ? '' : 'private-test' };
@@ -19,7 +19,7 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
   const profile = { id: 'model', provider: 'ksyun', modelName: 'bound-model', baseUrl: 'https://model.example/v1', credentialName, apiKey: 'model-private' };
   const mcp = { resourceId: 'search', endpoint: 'https://search.example/mcp', apiKey: 'search-private' };
   const models = { profile: async () => profile }, adapters = { describeMcp: async () => mcp };
-  const build = createStudioBuild({ storeDir: root }), bindings = { modelProfileId: 'model', mcpServers: ['search'] };
+  const build = createStudioBuild({ storeDir: root }), bindings = { modelProfileId: 'model', mcpServers: ['search'], ...bindingOverrides };
   const built = await build.build({ agentId, revision: 2, metadata: { id: agentId, name: 'Agent', local: true, revision: 2 }, spec: { runtime: { type: runtime }, bindings }, bindings });
   const portableBundles = createPortableBundles({ storeDir: root, build, models, adapters, configuration });
   const release = { id: '0.0.1-test', version: '0.0.1-test', label: 'Test', channel: 'preview', enabled: true, runtimeIdentity: true, image: `hub-vpc-cn-beijing-6.kce.ksyun.com/test/runtime@sha256:${'a'.repeat(64)}`,
@@ -39,7 +39,7 @@ async function fixture(t, { runtime = 'harness', deploymentType = 'Container', c
       const managed = payload.DeploymentType === 'ManagedRuntime';
       Object.assign(remote, { Basic: { AgentId: cloudAgentId, Name: payload.Name, Status: initialStatus, ReadyReplicas: initialStatus === 'RUNNING' ? 1 : 0 },
         Deployment: managed
-          ? { DeploymentType: 'ManagedRuntime', ArtifactPath: payload.ManagedRuntimeConfig && release.image, RuntimeConfig: { Name: payload.ManagedRuntimeConfig.RuntimeName, Version: payload.ManagedRuntimeConfig.RuntimeVersion, StudioBundleArtifact: { SHA256: payload.ManagedRuntimeConfig.StudioBundleArtifact.SHA256 } }, Storage: payload.Storage }
+          ? { DeploymentType: 'ManagedRuntime', ArtifactPath: payload.ManagedRuntimeConfig && release.image, RuntimeConfig: { Name: payload.ManagedRuntimeConfig.RuntimeName, Version: payload.ManagedRuntimeConfig.RuntimeVersion, ...(payload.ManagedRuntimeConfig.StudioBundleArtifact ? { StudioBundleArtifact: { SHA256: payload.ManagedRuntimeConfig.StudioBundleArtifact.SHA256 } } : {}) }, Storage: payload.Storage }
           : { DeploymentType: 'Container', ArtifactPath: payload.ContainerConfig.ImageAddr, Storage: payload.Storage }, Advanced: { EnvironmentVariables: payload.Advanced.EnvironmentVariables },
         Network: { PublicEndpoint: `https://${cloudAgentId}.agent-pre.kspmas.ksyun.com` }, QuickAccess: { ApiKey: key } });
       if (createError) throw createError;
@@ -178,20 +178,44 @@ test('three runtimes create from a frozen Build, synchronize the platform token,
   }
 });
 
-test('ManagedRuntime delivery keeps Skills in the bundle and maps MCP to the manifest', async t => {
+test('ManagedRuntime delivery skips KS3 for prompt and direct MCP-only bindings', async t => {
   const f = await fixture(t, { runtime: 'harness', deploymentType: 'ManagedRuntime' });
   const created = await f.service.create(f.request);
   await f.settled();
   const payload = f.calls.find(([action]) => action === 'create')[1];
   assert.equal(payload.DeploymentType, 'ManagedRuntime');
   assert.equal(payload.ManagedRuntimeConfig.RuntimeName, 'harness');
-  assert.equal(payload.ManagedRuntimeConfig.StudioBundleArtifact.SHA256, f.preview.bundleSha256);
+  assert.equal(payload.ManagedRuntimeConfig.StudioBundleArtifact, undefined);
   assert.match(payload.ManagedRuntimeConfig.Manifest, /artifact_type: ManagedRuntime/);
   assert.match(payload.ManagedRuntimeConfig.Manifest, /mcp_servers:/);
   assert.match(payload.ManagedRuntimeConfig.Manifest, /endpoint: https:\/\/search\.example\/mcp/);
   assert.equal(payload.ModelConfig.Model, 'bound-model');
   assert.equal(payload.Advanced.EnvironmentVariables.filter(row => row.Key.startsWith('MCP_STUDIO_')).length, 1);
+  assert.equal(f.calls.filter(([action]) => action === 'upload').length, 0);
   assert.equal((await f.service.get(created.id)).state, 'READY');
+  const cloud = await f.service.agents.get('ar-cloud-test');
+  assert.equal(cloud.deployment.model, 'bound-model');
+});
+
+test('ManagedRuntime maps Skill Center, knowledge base and memory without a bundle artifact', async t => {
+  const f = await fixture(t, { runtime: 'codex', deploymentType: 'ManagedRuntime', bindings: {
+    mcpServers: [],
+    plugins: [
+      { enabled: true, config: { binding: { resource: { kind: 'knowledge-base', id: 'kb-1' } } } },
+      { enabled: true, config: { binding: { resource: { kind: 'memory-instance', id: 'memory-1' } } } },
+      { enabled: true, config: { binding: { resource: { kind: 'skill-space', id: 'space-1' } } } },
+    ],
+  } });
+  await f.service.create(f.request);
+  await f.settled();
+  const payload = f.calls.find(([action]) => action === 'create')[1];
+  assert.equal(payload.ManagedRuntimeConfig.StudioBundleArtifact, undefined);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /knowledge_base:/);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /memory:/);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /skill_spaces:/);
+  assert.match(payload.ManagedRuntimeConfig.Manifest, /id: space-1/);
+  assert.deepEqual(payload.ComponentConfig, { KnowledgeBase: { Id: 'kb-1' }, Memory: { Id: 'memory-1' } });
+  assert.equal(f.calls.filter(([action]) => action === 'upload').length, 0);
 });
 
 test('unset bucket uses verified account and physical region, retaining an isolated private bundle prefix', async t => {

@@ -54,7 +54,8 @@ export function verifyDeploymentRemote(detail, record) {
       || (detail.Deployment?.ArtifactPath && detail.Deployment.ArtifactPath !== record.plan.image.image)
       || runtime.Name && runtime.Name !== record.plan.runtime
       || runtime.Version && runtime.Version !== record.plan.runtimeVersion
-      || artifact.SHA256 && artifact.SHA256 !== record.plan.bundleSha256) {
+      || artifact.SHA256 && artifact.SHA256 !== record.plan.bundleSha256
+      || record.plan.managedManifestSha256 && runtime.ManifestSha256 && runtime.ManifestSha256 !== record.plan.managedManifestSha256) {
       throw portableError('DEPLOYMENT_PROVENANCE_MISMATCH', '云端 ManagedRuntime Agent 与冻结部署记录不一致，已停止管理操作');
     }
     return;
@@ -70,6 +71,12 @@ export async function inspectDeploymentVersion({ fetchImpl = fetch, endpoint, to
     redirect: 'error', signal: AbortSignal.timeout(10000) });
   if (!response.ok) { await response.body?.cancel(); return null; }
   const body = await response.json();
+  if (body.format === 'agentengine.managed-runtime/v1') {
+    const agentMatches = body.agentId === plan.agentId || body.agentId === plan.cloudAgentId;
+    return body.status === 'ready' && agentMatches
+      && body.versionId === plan.runtimeVersion
+      && (!plan.managedManifestSha256 || body.manifestSha256 === plan.managedManifestSha256) ? body : null;
+  }
   return body.format === 'agentkit.runtime-identity/v1' && body.status === 'ready' && body.agentId === plan.agentId
     && body.buildId === plan.buildId && body.bundleSha256 === plan.bundleSha256 && body.deploymentVersion === versionId ? body : null;
 }

@@ -61,23 +61,61 @@ function resourceRef(resource) {
   return { id: String(resource.id), ...(resource.region ? { region: String(resource.region) } : {}) };
 }
 
+// A cloud Skill Center binding is resolved by the ManagedRuntime resource
+// server. A local Skill has to travel in the Studio bundle so the Host can
+// read its files without reaching back into the desktop. Unknown plugin
+// kinds remain bundle-backed until their cloud delivery contract is explicit.
+function managedBundleRequired(definition) {
+  const bindings = definition?.spec?.bindings || definition?.bindings || {};
+  if (Array.isArray(bindings.skills) && bindings.skills.length) return true;
+  for (const plugin of bindings.plugins || []) {
+    const kind = plugin?.config?.binding?.resource?.kind;
+    if (kind && !['knowledge-base', 'memory-instance', 'skill-space'].includes(kind)) return true;
+    if (!kind && plugin?.enabled !== false) return true;
+  }
+  return false;
+}
+
+async function managedManifestSnapshot(definition, models) {
+  const bindings = definition?.spec?.bindings || definition?.bindings || {};
+  const ids = [...new Set([bindings.modelProfileId, ...(bindings.modelProfileIds || [])].filter(Boolean).map(String))];
+  const profiles = [];
+  for (const id of ids) {
+    const profile = await models?.profile?.(id);
+    if (!profile) continue;
+    profiles.push({ id, modelName: profile.modelName, default: profiles.length === 0 });
+  }
+  const remote = (bindings.plugins || [])
+    .map(plugin => plugin?.config?.binding?.resource)
+    .filter(resource => ['knowledge-base', 'memory-instance'].includes(resource?.kind));
+  return { resources: { profiles, mcps: [], skills: [], remote } };
+}
+
 /**
- * Project a frozen Studio build into the ManagedRuntime declaration. Skills
- * remain in the KS3 bundle; platform resources and direct MCP endpoints live
- * in the manifest so the runtime has one authoritative mapping.
+ * Project a frozen Studio build into the ManagedRuntime declaration. Local
+ * Skills remain in the optional KS3 bundle; Skill Center, platform resources
+ * and direct MCP endpoints live in the manifest so the runtime has one
+ * authoritative mapping.
  */
 async function buildManagedRuntimeDelivery({ frozen, definition, manifest, runtime, image, adapters, credentials, env }) {
   const bindings = definition.spec?.bindings || definition.bindings || {};
   const resources = {};
   const componentConfig = {};
+  const skillSpaces = [];
   for (const plugin of bindings.plugins || []) {
     const resource = plugin?.config?.binding?.resource;
+    if (resource?.kind === 'skill-space') {
+      const ref = resourceRef(resource);
+      if (ref && !skillSpaces.some(item => item.id === ref.id)) skillSpaces.push(ref);
+      continue;
+    }
     const key = managedResourceKinds.get(resource?.kind);
     const ref = resourceRef(resource);
     if (!key || !ref) continue;
     resources[key] = ref;
     componentConfig[key === 'knowledge_base' ? 'KnowledgeBase' : 'Memory'] = { Id: ref.id };
   }
+  if (skillSpaces.length) resources.skill_spaces = skillSpaces;
 
   const environment = new Map();
   const mcpServers = [];
@@ -143,9 +181,16 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
     const managed = deploymentType === 'ManagedRuntime';
     const frozen = await build.resolve(agentId, buildId);
     if (!/^ar-local-[a-f0-9]{16}$/.test(agentId) || frozen.metadata.local === false) throw portableError('DEPLOYMENT_AGENT_UNSUPPORTED', '仅支持本地创建的 Agent Build 部署');
-    const bundleId = prepareBundle ? (await portableBundles.prepare(agentId, buildId)).bundleId : input.bundleId;
-    const zip = Buffer.from((await portableBundles.download(agentId, buildId, bundleId)).base64, 'base64');
-    const { manifest, definition } = verifyPortableBundle(zip);
+    const bundleRequired = !managed || managedBundleRequired(frozen);
+    let bundleId = null, zip = null, manifest, definition;
+    if (bundleRequired) {
+      bundleId = prepareBundle ? (await portableBundles.prepare(agentId, buildId)).bundleId : input.bundleId;
+      zip = Buffer.from((await portableBundles.download(agentId, buildId, bundleId)).base64, 'base64');
+      ({ manifest, definition } = verifyPortableBundle(zip));
+    } else {
+      definition = frozen;
+      manifest = await managedManifestSnapshot(frozen, models);
+    }
     const runtime = frozen.spec.runtime.type, { catalog, image } = await images.resolve(runtime, input.releaseId);
     const identity = await client.inspectIdentity(), { values } = await configuration.resolve();
     if (identity.kind !== 'subaccount') throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署需要已核验的子账号 AK/SK，请在设置中更新云端凭证；不会使用主账号创建资源');
@@ -155,29 +200,33 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       ? `agentengine-${identity.accountId}-${catalog.region}` : '';
     // Server-side ManagedRuntime admission can prove ownership only for the
     // account default bucket; keep the portable artifact on that immutable path.
-    const bucket = managed ? defaultBucket : (values.cloudBucket || defaultBucket);
-    if (!bucket) throw portableError('KS3_BUCKET_REQUIRED', '无法确定账号默认存储桶，请核验云端身份或在高级设置中指定 KS3 Bucket');
+    const bucket = bundleRequired ? (managed ? defaultBucket : (values.cloudBucket || defaultBucket)) : null;
+    if (bundleRequired && !bucket) throw portableError('KS3_BUCKET_REQUIRED', '无法确定账号默认存储桶，请核验云端身份或在高级设置中指定 KS3 Bucket');
     const resources = shapeOf(input.resources);
     admitDeploymentStorage(resources, catalog, runtime);
     // Validate storage and environment before the user commits to a billable create.
-    const bundleUploadId = managed ? String(input?.bundleUploadId || randomUUID()) : null;
-    const source = planKs3BundleUpload(zip, { endpoint: ks3BundleEndpoint(catalog.region), bucket, uploadId: bundleUploadId || randomUUID() });
+    const bundleUploadId = managed && bundleRequired ? String(input?.bundleUploadId || randomUUID()) : null;
+    const source = bundleRequired
+      ? planKs3BundleUpload(zip, { endpoint: ks3BundleEndpoint(catalog.region), bucket, uploadId: bundleUploadId || randomUUID() })
+      : null;
     const managedDelivery = managed
       ? await buildManagedRuntimeDelivery({ frozen, definition, manifest, runtime, image, adapters, credentials, env })
       : null;
     const resolved = managed ? null : await resolveDeploymentCredentials({ zip, models, adapters, credentials, configuration, env });
     if (!managed) createContainerDeploymentEnvironment({ zip, expectedSha256: source.sha256, runtimeToken: randomBytes(32).toString('hex'), credentials: resolved, bundleSource: source });
-    const plan = { agentId, agentName: frozen.metadata.name || agentId, buildId, bundleId, bundleSha256: sha256(zip),
+    const plan = { agentId, agentName: frozen.metadata.name || agentId, buildId, bundleId, bundleSha256: zip ? sha256(zip) : null,
       revision: frozen.metadata.revision, runtime, image, catalogRevision: catalog.revision, region: catalog.region, environment: catalog.environment,
       deploymentType, ...(managed ? { bundleUploadId } : {}), runtimeVersion: image.version, managedManifest: managedDelivery?.manifest || null,
+      managedManifestSha256: managedDelivery?.manifest ? sha256(managedDelivery.manifest) : null,
       managedModelConfig: managedDelivery?.modelConfig || null, managedComponentConfig: managedDelivery?.componentConfig || null,
-      managedEnvironment: managedDelivery?.environment || [], bundleArtifact: managed ? {
+      managedEnvironment: managedDelivery?.environment || [], bundleArtifact: managed && bundleRequired ? {
         Format: 'agentkit.ks3-bundle/v1', Bucket: source.bucket, ObjectKey: source.objectKey, Region: catalog.region,
         SHA256: source.sha256, Bytes: source.bytes, AgentId: source.agentId, BuildId: source.buildId, BundleId: source.bundleId,
       } : null,
-      resources, bucket: source.bucket, storageEndpoint: source.endpoint, credentialScope: credentialScope(values),
+      resources, bucket: source?.bucket || null, storageEndpoint: source?.endpoint || null, credentialScope: credentialScope(values),
       identity: { kind: identity.kind, accountId: identity.accountId, userUuid: identity.userUuid, userName: identity.userName },
-      resourceCounts: managedDelivery?.resourceCounts || { models: manifest.resources.profiles.length, mcps: manifest.resources.mcps.length, skills: manifest.resources.skills.length, remote: manifest.resources.remote.length } };
+      resourceCounts: managedDelivery?.resourceCounts || { models: manifest.resources.profiles.length, mcps: manifest.resources.mcps.length, skills: manifest.resources.skills.length, remote: manifest.resources.remote.length },
+      bundleRequired };
     return { plan, zip, resolved, values, fingerprint: sha256(JSON.stringify(plan)) };
   }
   async function prepare(input) {
@@ -226,12 +275,15 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
       if (identity.kind !== 'subaccount' || identity.userUuid !== record.plan.identity.userUuid || identity.accountId !== record.plan.identity.accountId) {
         throw portableError('CLOUD_SUBACCOUNT_REQUIRED', '部署身份已变化，请重新核验子账号后提交');
       }
-      if (!await store.claim(record.id, 'upload')) return;
-      const source = planKs3BundleUpload(prepared.zip, { endpoint: record.plan.storageEndpoint, bucket: record.plan.bucket, uploadId: record.plan.deploymentType === 'ManagedRuntime' ? record.plan.bundleUploadId : randomUUID() });
-      await store.update(record.id, { state: 'UPLOADING', source });
-      const storage = storageFactory({ accessKey: prepared.values.cloudAccessKey, secretKey: prepared.values.cloudSecretKey, sessionToken: prepared.values.cloudSessionToken, fetchImpl });
-      await storage.upload(prepared.zip, source);
-      await store.update(record.id, { state: 'UPLOADED' });
+      let source = null;
+      if (record.plan.bundleRequired) {
+        if (!await store.claim(record.id, 'upload')) return;
+        source = planKs3BundleUpload(prepared.zip, { endpoint: record.plan.storageEndpoint, bucket: record.plan.bucket, uploadId: record.plan.deploymentType === 'ManagedRuntime' ? record.plan.bundleUploadId : randomUUID() });
+        await store.update(record.id, { state: 'UPLOADING', source });
+        const storage = storageFactory({ accessKey: prepared.values.cloudAccessKey, secretKey: prepared.values.cloudSecretKey, sessionToken: prepared.values.cloudSessionToken, fetchImpl });
+        await storage.upload(prepared.zip, source);
+        await store.update(record.id, { state: 'UPLOADED' });
+      }
       const { values } = await configuration.resolve();
       if (credentialScope(values) !== record.plan.credentialScope) throw portableError('DEPLOYMENT_ACCOUNT_CHANGED', '云端配置已变化，已停止创建');
       const { image, resources, runtime, name, deploymentType } = record.plan;
@@ -246,7 +298,7 @@ export function createStudioDeployments({ storeDir, build, portableBundles, mode
         Name: name, Description: `AgentKit Studio ${record.id}`, Framework: runtime,
         Region: record.plan.region, DeploymentType: 'ManagedRuntime',
         ManagedRuntimeConfig: { Manifest: record.plan.managedManifest, RuntimeName: runtime, RuntimeVersion: record.plan.runtimeVersion,
-          StudioBundleArtifact: record.plan.bundleArtifact },
+          ...(record.plan.bundleArtifact ? { StudioBundleArtifact: record.plan.bundleArtifact } : {}) },
         ModelConfig: record.plan.managedModelConfig,
         ...(record.plan.managedComponentConfig ? { ComponentConfig: record.plan.managedComponentConfig } : {}),
         Resource: { Cpu: resources.cpu, Memory: resources.memoryGiB }, Scaling: { MinReplicas: 1, MaxReplicas: 1, QpsPerInstance: 10 },
