@@ -40,11 +40,12 @@ function createExpertPages({ ui, hostRemote, actions, window = globalThis.window
     }, []);
     return h(
       "div",
-      { style: { height: "100%", overflow: "auto", background: 'var(--dsw-alias-bg-base, #ffffff)' } },
+      { className: "studio-template-surface studio-agent-hub", 'data-studio-page-frame': true, style: { height: "100%", overflow: "auto", background: 'var(--dsw-alias-bg-base, #ffffff)' } },
       h(
         "div",
         { "data-studio-drag-region": "true", style: { maxWidth: '960px', margin: '0 auto', padding: '28px clamp(24px, 4vw, 48px) 0' } },
-        h(StudioSubnav, { value: view, onChange: choose, items: [{ id: "mine", label: "\u6211\u7684\u667A\u80FD\u4F53" }, { id: "catalog", label: "\u6A21\u677F\u5E7F\u573A" }] })
+        h('header', { 'data-studio-header': true, className: 'studio-page-header' }, h('h1', null, '智能体'), h('div', { className: 'studio-page-actions' }, ui.HostStatusPill ? h(ui.HostStatusPill) : null)),
+        h(StudioSubnav, { variant: 'segmented', value: view, onChange: choose, items: [{ id: "mine", label: "\u6211\u7684\u667A\u80FD\u4F53" }, { id: "catalog", label: "\u6A21\u677F\u5E7F\u573A" }] })
       ),
       view === "catalog" ? h(ui.StudioTemplateSquare) : h("div", { "data-agentkit-studio": "product-application", style: { maxWidth: '960px', margin: '0 auto', padding: '8px clamp(24px, 4vw, 48px) 48px' } }, h(AgentWorkspace, { onNavigate }))
     );

@@ -1,10 +1,12 @@
+import { createStatusText } from '../components/status-text.mjs';
 import { operationalCollection, operationalDate, operationalId, operationalLabel } from '../state/operational-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createObservabilityPage({
-  ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalBars, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalBars, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document
 }) {
+  const Pill = createStatusText(h);
   function ObservabilityPage() {
     const [status, setStatus] = useState('loading');
     const [error, setError] = useState('');
@@ -172,7 +174,7 @@ export function createObservabilityPage({
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取观测数据', detail: '读取聚合指标和 Trace 列表。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '观测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
+        h('div', { className: 'studio-stats studio-panel', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
         overview?.buckets ? h(OperationalBars, { buckets: overview.buckets }) : null,
         overview?.cloud ? h('div', { style: { color: BRAND.inkMuted, fontSize: '12px', marginBottom: '12px' } }, `云端统计 · 会话 ${overview.cloud.sessionCount ?? '—'} · Tokens ${overview.cloud.tokenCount ?? '—'} · 错误 ${overview.cloud.errorCount ?? '—'}`) : null,
         h(OperationalToolbar, { onRefresh: () => void load(), busy: status === 'loading' },

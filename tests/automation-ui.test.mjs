@@ -21,6 +21,19 @@ test('a blank one-time schedule is refused instead of silently selecting one hou
   assert.ok(ui.nodes().some(node => node.props.role === 'alert' && ui.text(node) === '请选择未来的执行时间。'));
 });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+test('task rows retain a right-aligned switch, hover actions and a table for execution records', async () => {
+  const ui = harness();
+  ui.api.scheduleOccurrences = async () => ({ items: [{ occurrenceId: 'occ-a', taskId: 'a', state: 'succeeded', completedAt: '2026-10-07T05:00:00.000Z' }] });
+  await ui.ready();
+  assert.equal(ui.nodes().filter(node => node.props.className === 'studio-task-row studio-row').length, 2);
+  const toggle = ui.nodes().find(node => node.props.role === 'switch');
+  assert.equal(toggle.props['aria-checked'], true);
+  assert.equal(toggle.props.disabled, false);
+  assert.match(ui.buttons('编辑')[0].props.className, /studio-hover-action/);
+  assert.match(ui.buttons('执行一次')[0].props.className, /studio-hover-action/);
+  ui.buttons('执行记录')[0].props.onClick(); await ui.settle();
+  assert.ok(ui.nodes().some(node => node.type === 'table' && node.props.className === 'studio-tbl'));
+});
 const task = id => ({ taskId: id, displayName: `Task ${id}`, enabled: true, revision: 1,
   target: { agentId: 'ar-test' }, schedule: { kind: 'interval', everySeconds: 60 },
   nextRunAt: new Date(Date.now() - 1000).toISOString(), command: { payload: { content: 'A saved prompt' } } });

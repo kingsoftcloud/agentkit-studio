@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chatToResponses, createResponsesStreamTransformer, responsesToChat, UnsupportedToolsError } from '../src/model-proxy.mjs';
+import { prepareCodexProxyRequest } from '../src/codex-proxy-tools.mjs';
 
 test('Responses request preserves multimodal input and maps Kspmas-compatible fields', () => {
   const result = responsesToChat({
@@ -132,4 +133,55 @@ test('a rejected upstream request is classified by its provider code', async () 
   // An unclassified 400 stays an explicit invalid response, never a silent retry.
   assert.equal(dshModelFailure({ code: 'MODEL_UPSTREAM_ERROR', message: '模型服务返回 400',
     details: { status: 400 } }).code, 'INVALID_RESPONSE');
+});
+
+// Codex 0.167.2 executes shell commands through `local_shell_call`. Both the
+// call and its output must reach the chat request, and the synthetic call id
+// used when Codex omits `call_id` must be the one the tool result references —
+// otherwise the upstream rejects the turn with "assistant message with
+// 'tool_calls' must be followed by tool messages".
+test('local_shell_call pairs with its output in the chat request', () => {
+  const tools = [{ type: 'function', name: 'shell', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }];
+  const input = [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'run' }] },
+    { type: 'local_shell_call', call_id: 'call_2', action: { type: 'exec', command: ['echo', 'hi'] } },
+    { type: 'local_shell_call_output', call_id: 'call_2', output: 'hi' },
+  ];
+  const ctx = prepareCodexProxyRequest({ model: 'm', input, tools });
+  const chat = responsesToChat(ctx.request);
+  const calls = chat.messages.flatMap(message => (message.tool_calls || []).map(call => call.id));
+  const outputs = chat.messages.filter(message => message.role === 'tool').map(message => message.tool_call_id);
+  assert.deepEqual(calls, ['call_2']);
+  assert.deepEqual(outputs, ['call_2']);
+});
+
+test('a call without call_id still pairs with its output', () => {
+  const tools = [{ type: 'function', name: 'shell', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }];
+  const input = [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'run' }] },
+    { type: 'function_call', name: 'shell', arguments: '{"cmd":"echo hi"}' },
+    { type: 'function_call_output', output: 'hi' },
+  ];
+  const ctx = prepareCodexProxyRequest({ model: 'm', input, tools });
+  const chat = responsesToChat(ctx.request);
+  const calls = chat.messages.flatMap(message => (message.tool_calls || []).map(call => call.id));
+  const outputs = chat.messages.filter(message => message.role === 'tool').map(message => message.tool_call_id);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls, outputs);
+});
+
+test('multiple calls without call_id pair with outputs in emission order', () => {
+  const tools = [{ type: 'function', name: 'shell', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }];
+  const input = [
+    { type: 'function_call', name: 'shell', arguments: '{"cmd":"one"}' },
+    { type: 'function_call', name: 'shell', arguments: '{"cmd":"two"}' },
+    { type: 'function_call_output', output: 'one' },
+    { type: 'function_call_output', output: 'two' },
+  ];
+  const ctx = prepareCodexProxyRequest({ model: 'm', input, tools });
+  const chat = responsesToChat(ctx.request);
+  const calls = chat.messages.flatMap(message => (message.tool_calls || []).map(call => call.id));
+  const outputs = chat.messages.filter(message => message.role === 'tool').map(message => message.tool_call_id);
+  assert.deepEqual(calls, ['call_0', 'call_1']);
+  assert.deepEqual(outputs, calls);
 });

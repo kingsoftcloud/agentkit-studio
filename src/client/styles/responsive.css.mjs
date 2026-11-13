@@ -35,16 +35,15 @@ export default String.raw`
   background: var(--dsw-alias-state-danger-hover, var(--dsw-alias-state-danger-primary, #c2402a)) !important;
   color: var(--dsw-static-neutral-00, #ffffff) !important;
 }
-/* A disabled primary keeps a readable label instead of fading white onto a pale fill. */
 :where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button[data-variant="primary"]:disabled {
-  opacity: 1 !important;
-  color: var(--dsw-alias-label-secondary, #61666b) !important;
-  background: var(--dsw-alias-button-primary-dimmed, var(--dsw-alias-bg-layer-3, #f4f4f4)) !important;
+  opacity: .4 !important;
+  color: var(--dsw-alias-label-primary-foreground) !important;
+  background: var(--dsw-alias-button-primary-fill) !important;
   border-color: transparent !important;
 }
 :where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button:disabled { opacity: .4; cursor: not-allowed !important; }
 :where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #4b73e8); outline-offset: 2px; }
-:where([data-agentkit-studio="product-application"], [data-studio-model-settings]) :is(input, select, textarea)::placeholder { color: var(--dsw-alias-label-dimmed, #999); }
+:where([data-agentkit-studio="product-application"], [data-studio-model-settings]) :is(input, select, textarea)::placeholder { color: var(--dsw-alias-label-secondary); opacity: 1; }
 [data-agentkit-studio="product-application"] [data-studio-tabs] { overflow-x: auto; scrollbar-width: thin; }
 [data-agentkit-studio="product-application"] [data-studio-tabs] > button { flex: 0 0 auto; white-space: nowrap; }
 [data-agentkit-studio="product-application"] [data-studio-heading],
