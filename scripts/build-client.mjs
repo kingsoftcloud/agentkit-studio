@@ -7,9 +7,11 @@ import { CLIENT_PRIVATE_PROPERTIES } from './client-private-properties.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Source dependencies are ES Modules. DSH receives one browser script and
 // supplies React and UI capabilities through its existing ModuleLoader.
+// The bundle is served as UTF-8; keep localized text in UTF-8 instead of
+// expanding it into JavaScript Unicode escapes in the shipped asset.
 const result = await build({
   absWorkingDir: root, entryPoints: ['src/client.js'],
-  bundle: true, format: 'iife', platform: 'browser', target: 'es2022',
+  bundle: true, format: 'iife', platform: 'browser', target: 'es2022', charset: 'utf8',
   minify: true, legalComments: 'none', write: false, metafile: true,
   mangleProps: new RegExp('^(' + CLIENT_PRIVATE_PROPERTIES.join('|') + ')$'),
   mangleCache: {},
