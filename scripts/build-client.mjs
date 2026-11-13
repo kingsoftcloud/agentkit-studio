@@ -27,6 +27,16 @@ const result = await build({
         const result = await transform(match[1], { loader: 'css', minify: true, legalComments: 'none' });
         return { contents: `export default ${JSON.stringify(result.code)};`, loader: 'js' };
       });
+      // The published Harness package exports these styles as static template
+      // strings. Minify the CSS with the same parser used for Studio assets.
+      builder.onLoad({ filter: /agentkit-harness-ui[\/]src[\/](styles|status-panel)\.mjs$/ }, async ({ path }) => {
+        const source = await readFile(path, 'utf8');
+        const declaration = /(export const (?:styles|statusPanelStyles) = )`([^`]+)`;/;
+        const match = source.match(declaration);
+        if (!match || /\$\{/.test(match[2])) return;
+        const css = await transform(match[2], { loader: 'css', minify: true, legalComments: 'none' });
+        return { contents: source.replace(declaration, () => match[1] + JSON.stringify(css.code) + ';'), loader: 'js' };
+      });
     },
   }],
 });
