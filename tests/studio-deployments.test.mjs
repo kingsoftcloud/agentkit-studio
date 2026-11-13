@@ -560,7 +560,7 @@ test('in-place upgrades and exact rollbacks require serving identity; all runtim
     const pending = await f.service.applyUpdate(preview); await f.settled();
     assert.equal(pending.state, 'UPDATING');
     const patch = f.calls.filter(([action]) => action === 'update').at(-1)[1];
-    assert(patch.EnvironmentVariablePatch.Delete.some(key => key.startsWith('AGENTKIT_BUNDLE_MCP_')));
+    assert(patch.EnvironmentVariablePatch.Delete.some(key => key.startsWith('MCP_STUDIO_')));
     assert(!patch.EnvironmentVariablePatch.Delete.includes('KSYUN_SECRET_KEY'));
     assert.equal(f.remote.Advanced.EnvironmentVariables.find(row => row.Key === 'KSYUN_SECRET_KEY').Value, 'platform-injected');
     assert.equal((await f.service.refresh(initial.id)).state, 'UPDATING', 'new control-plane fields and healthy old pod must not pass');
