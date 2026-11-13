@@ -18,6 +18,7 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
 import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
 import { nativeEngineApprovalReply } from './native-host-approval.mjs';
@@ -114,7 +115,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       try { return (await engine.status(runId, { deliveryPresentation: true })).deliveryEvidence ?? null; }
       finally { signal?.removeEventListener('abort', abort); await engine.close(); }
     },
-    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler } = {}) {
+    async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
       if (!text(cwd)) throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '会话未提供工作目录，请重新选择工作区');
@@ -169,14 +170,15 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       });
       const engine = serviceEndpoint ? connectEngineService({ endpoint: serviceEndpoint,
         token: env.AGENTKIT_ENGINE_SERVICE_TOKEN, sessionId: createHash('sha256').update(session).digest('hex'),
-        runId, onApproveTool, onCallTool, onReadToolReceipt, requiredToolPolicy: policy?.contract,
+        runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, requiredToolPolicy: policy?.contract,
         requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: serviceFetch }) : spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
         env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
           AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
           ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
           ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}) },
         onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
-      const abort = () => { engine.cancel(runId).catch(() => {}); };
+      let cancellation;
+      const abort = () => { cancellation ??= engine.cancel(runId).catch(() => {}); };
       try {
         let hello;
         try { hello = await engine.initialize(); }
@@ -202,9 +204,11 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           ...Object.fromEntries(hostTools.tools.filter(tool => Object.hasOwn(policy.rules, hostTools.originalName(tool.name)))
             .map(tool => [tool.name, policy.rules[hostTools.originalName(tool.name)]])),
         } };
+        // The remote start can be committed before its response reaches Studio.
+        if (serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
         const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
           ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}), ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
-        signal?.addEventListener('abort', abort, { once: true });
+        if (!serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
         // A remote Run retains its original view after an engine upgrade.
         let view = null;
@@ -217,9 +221,30 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let finalText = null, rest;
         let thinkingCursor = hello.capabilities?.liveThinking === true ? '' : undefined;
         let toolDraftCursor = hello.capabilities?.liveToolDrafts === true ? '' : undefined;
+        let canGuide = typeof nextGuidance === 'function' && typeof commitGuidance === 'function'
+          && hello.capabilities?.methods?.includes('run/guide');
+        let pendingGuidance = null;
         for (let cursor = 0; ;) {
+          if (canGuide && !pendingGuidance) {
+            const item = nextGuidance();
+            if (item && text(item.text) && item.text.length <= 32768) {
+              const inputId = 'guide-' + createHash('sha256').update(JSON.stringify([item.id, item.text])).digest('hex');
+              const receipt = await engine.guide(runId, inputId, item.text);
+              if (['accepted', 'duplicate'].includes(receipt.status)) pendingGuidance = { inputId, item };
+              else canGuide = false;
+            }
+          }
           const page = await engine.events(runId, cursor, 5000, thinkingCursor, toolDraftCursor);
           for (const event of page.events) {
+            if (pendingGuidance && event.inputId === pendingGuidance.inputId) {
+              if (event.kind === 'input.guidance_applied') {
+                commitGuidance(pendingGuidance.item);
+                pendingGuidance = null;
+              } else if (event.kind === 'command.applied' && event.status !== 'applied') {
+                canGuide = false;
+                pendingGuidance = null;
+              }
+            }
             yield { type: 'engine-event', runId, view, event };
             for (const chunk of chunksOf(event)) yield chunk;
             if (event.kind === 'run.terminal' && text(event.detail)) finalText = event.detail;
@@ -258,6 +283,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
           throw failure('NATIVE_ENGINE_RUN_INCOMPLETE', runFailureMessage(rest));
       } finally {
         signal?.removeEventListener('abort', abort);
+        // The turn's abort stops event polling immediately. Let its separate
+        // best-effort cancel reach the service before closing the connection.
+        if (serviceEndpoint && cancellation) await Promise.race([cancellation, sleep(1000, undefined, { ref: false })]);
         await engine.close().catch(() => {});
       }
     },
@@ -281,9 +309,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
 /** Render projected engine events generically: a new engine event kind needs no Studio change. */
 function chunksOf(event) {
   if (event.category === 'model' && event.usage)
-    return [{ type: 'usage', usage: { inputTokens: event.usage.inputTokens ?? 0, outputTokens: event.usage.outputTokens ?? 0 } },
+    return [{ type: 'usage', usage: { inputTokens: event.usage.inputTokens ?? 0, outputTokens: event.usage.outputTokens ?? 0,
+      ...Object.fromEntries(['cachedInputTokens', 'cacheWriteInputTokens', 'reasoningTokens']
+        .filter(key => Number.isSafeInteger(event.usage[key]) && event.usage[key] >= 0).map(key => [key, event.usage[key]])) } },
       ...(event.kind === 'model.completed' && Array.isArray(event.tools) && text(event.detail) ? [{ type: 'reasoning', text: event.detail }] : [])];
-  if (event.category === 'model' && event.status === 'retrying') return [{ type: 'reasoning', text: `模型请求失败（${event.detail ?? 'unknown'}），正在重试。` }];
   if (event.category === 'tool' && text(event.title)) return [{ type: 'tool', name: event.title, phase: event.status === 'ok' ? 'completed' : 'failed' }];
   return [];
 }
@@ -341,6 +370,7 @@ function approvalReason(request) {
   return `${request.tool ?? 'tool'}${subject ? `: ${subject.slice(0, 500)}` : ''}`;
 }
 function runFailureMessage(rest) {
+  if (text(rest.modelError)) return rest.modelError;
   const reason = rest.reason ?? rest.phase ?? 'unknown';
   if (rest.phase === 'paused') return `任务已暂停（${reason}），可稍后继续。`;
   return `任务未完成（${reason}）。`;

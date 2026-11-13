@@ -5,7 +5,10 @@ import { Agent } from 'undici';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { ENGINE_PROTOCOL } from './engine-protocol-client.mjs';
 
-const RETRYABLE_RPC = new Set(['initialize', 'run/start', 'run/status', 'run/events', 'run/approve', 'ui/view']);
+const RETRYABLE_RPC = new Set(['initialize', 'run/start', 'run/status', 'run/events', 'run/approve', 'run/guide', 'ui/view']);
+// Every operation here is either read-only or has a durable identity supplied by Studio.
+const ATTACHED_RPC = new Set(['run/start', 'run/status', 'run/events', 'run/approve', 'run/guide']);
+const RETRYABLE_SOCKET_ERRORS = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT']);
 export const ENGINE_TOOL_RECEIPT = 'agentkit.tool-receipt-observation/v1';
 
 export function engineServiceEndpoint(endpoint, token) {
@@ -52,10 +55,11 @@ export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl 
 
 /** Host-side network transport for agentkit.engine/v1. */
 export function connectEngineService({ endpoint, token, sessionId, runId, onApproveTool, onCallTool, onReadToolReceipt,
-  requiredToolPolicy, requiredToolEffects, observeOnly = false, fetchImpl = fetch }) {
+  requiredToolPolicy, requiredToolEffects, observeOnly = false, runSignal, fetchImpl = fetch }) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('engine_service_binding_invalid');
   const root = engineServiceEndpoint(endpoint, token) + '/v1/sessions/' + sessionId + '/';
   const lifetime = new AbortController();
+  const attachment = runSignal ? AbortSignal.any([lifetime.signal, runSignal]) : lifetime.signal;
   let poll, initializing;
   const initialization = { protocolVersions: [ENGINE_PROTOCOL], host: { name: 'agentkit-studio', ...(observeOnly ? { observeOnly } : {}) },
     services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
@@ -63,18 +67,24 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
       ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}) } };
   const requestPath = runId ? 'host-requests?runId=' + encodeURIComponent(runId) : 'host-requests';
 
-  async function request(path, body) {
+  async function request(path, body, signal = lifetime.signal) {
     const headers = { authorization: 'Bearer ' + token };
     if (body !== undefined) headers['content-type'] = 'application/json';
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(35000)]);
     let response;
+    const transportError = error => {
+      signal.throwIfAborted();
+      // The connection can disappear after response headers but before the JSON body.
+      const transient = requestSignal.reason?.name === 'TimeoutError' || error?.name === 'TimeoutError'
+        || RETRYABLE_SOCKET_ERRORS.has(error?.cause?.code ?? error?.code);
+      return Object.assign(new Error('engine_service_transport_unavailable', { cause: error }), { transient });
+    };
     try {
       response = await fetchImpl(root + path, { headers, redirect: 'error',
-        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(35000)]),
+        signal: requestSignal,
         ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }) });
     } catch (error) {
-      // Fetch can reuse a socket the old worker closed during replacement.
-      const transient = error?.name === 'TimeoutError' || ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET'].includes(error?.cause?.code);
-      throw Object.assign(new Error('engine_service_transport_unavailable', { cause: error }), { transient });
+      throw transportError(error);
     }
     if (!response.ok) {
       const body = [404, 409].includes(response.status) ? await response.json().catch(() => null) : null;
@@ -83,12 +93,16 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
         transient: body?.error === 'request_unavailable' || [502, 503, 504].includes(response.status),
       });
     }
-    return response.json();
+    try { return await response.json(); }
+    catch (error) {
+      if (error instanceof SyntaxError) throw new Error('engine_service_reply_invalid', { cause: error });
+      throw transportError(error);
+    }
   }
 
-  async function rpc(method, params) {
+  async function rpc(method, params, signal) {
     const id = randomUUID();
-    const response = await request('rpc', { jsonrpc: '2.0', id, method, params });
+    const response = await request('rpc', { jsonrpc: '2.0', id, method, params }, signal);
     if (response?.jsonrpc !== '2.0' || response.id !== id) throw new Error('engine_service_reply_invalid');
     if (response.error) throw Object.assign(new Error(response.error.message), { code: response.error.code });
     return response.result;
@@ -106,8 +120,9 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     }
   }
 
-  function initialize() {
-    initializing ??= exchange('initialize', initialization).then(result => {
+  function initialize(reattaching = false) {
+    initializing ??= (reattaching ? rpc('initialize', initialization, attachment)
+      : exchange('initialize', initialization)).then(result => {
       if (requiredToolPolicy && (result.capabilities?.toolPolicy !== requiredToolPolicy
         || result.capabilities?.approvals !== 'durable'))
         throw Object.assign(new Error('当前 Harness 服务不支持该 Agent 的工具审批规则。'),
@@ -123,13 +138,28 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
   }
 
   async function call(method, params = {}) {
-    try { return await exchange(method, params); }
-    catch (error) {
-      // A replacement worker reopens the same persisted session. A frame
-      // rejected before initialization has not reached its method handler.
-      if (error.code !== -32010 || lifetime.signal.aborted) throw error;
-      await initialize();
-      return exchange(method, params);
+    const attached = !observeOnly && !!runId && params.runId === runId && ATTACHED_RPC.has(method);
+    const signal = attached ? attachment : lifetime.signal;
+    const attempt = () => attached ? rpc(method, params, signal) : exchange(method, params);
+    // Keep the Studio turn attached to its original identity and cursor for
+    // as long as the user keeps it open. The service reclaims the durable Run
+    // on a following event read; this loop never issues run/resume or a tool call.
+    for (let delay = 125; ;) {
+      signal.throwIfAborted();
+      try {
+        try { return await attempt(); }
+        catch (error) {
+          if (error.code !== -32010) throw error;
+          signal.throwIfAborted();
+          await initialize(attached);
+          return await attempt();
+        }
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!attached || !error.transient && error.code !== -32010) throw error;
+        await sleep(delay, undefined, { signal });
+        delay = Math.min(delay * 2, 2000);
+      }
     }
   }
 
@@ -175,7 +205,7 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
   }
 
   return {
-    initialize,
+    initialize: () => initialize(),
     startRun: params => call('run/start', params),
     status: (runId, options) => call('run/status', { runId, ...options }),
     events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor) =>
@@ -185,6 +215,7 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
       decision: typeof reply === 'string' ? reply : reply.decision,
       ...(reply?.denialReason === undefined ? {} : { denialReason: reply.denialReason }) }),
     cancel: runId => call('run/cancel', { runId }),
+    guide: (runId, inputId, text) => call('run/guide', { runId, inputId, text }),
     view: sha256 => call('ui/view', sha256 === undefined ? {} : { sha256 }),
     async close() {
       lifetime.abort();

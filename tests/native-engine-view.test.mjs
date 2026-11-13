@@ -114,6 +114,17 @@ test('the renderer embeds the engine view in a sandboxed iframe and relays the r
       const root = createRoot(document.getElementById('root'));
       const render = list => root.render(React.createElement(View, { node: { data: { runId: 'r1', view: '${view}', events: list, last: list.at(-1).seq } } }));
       render(events);
+      const compaction = e(8, 'effect.prepared', { category: 'model', title: 'request', purpose: 'compaction' });
+      const observed = [...events, compaction, e(9, 'effect.settled', { category: 'model', title: 'request' }),
+        e(10, 'model.failure_observed', { status: 'retrying' })];
+      const retrying = [...observed, e(11, 'effect.prepared', { category: 'model', title: 'request', retry: true })];
+      window.compact = () => render([...events, compaction]);
+      window.observeFailure = () => render(observed);
+      window.retry = () => render(retrying);
+      window.fail = () => render([...retrying,
+        e(12, 'effect.settled', { category: 'model', title: 'request' }),
+        e(13, 'run.terminal', { title: 'failed', status: 'failed', reason: 'provider_terminal_error',
+          modelError: '模型网关拒绝了请求（HTTP 400），未自动重试。' })]);
       window.finish = () => render([...events, e(12, 'run.terminal', { title: 'completed', status: 'unverified', detail: 'Refunds are accepted within 30 days.' })]);
     `);
     const bundle = await build({ entryPoints: [join(dir, 'entry.mjs')], bundle: true, write: false, format: 'iife', platform: 'browser',
@@ -148,5 +159,17 @@ test('the renderer embeds the engine view in a sandboxed iframe and relays the r
     const [r, g, b] = colors.text.match(/\d+/g).map(Number);
     assert.ok(r > 180 && g > 180 && b > 180, `text should be light in dark mode, got ${colors.text}`);
     assert.match(colors.bg, /rgba\(0, 0, 0, 0\)|transparent/);
+    await tab.reload();
+    await frame.getByText('Checking the refund policy.').waitFor({ timeout: 15000 });
+    await tab.evaluate(() => window.compact());
+    await frame.getByText('正在压缩上下文…').waitFor();
+    assert.equal(await frame.getByTestId('model-thinking').count(), 0);
+    await tab.evaluate(() => window.observeFailure());
+    assert.equal(await frame.getByTestId('model-retry').count(), 0);
+    await tab.evaluate(() => window.retry());
+    await frame.getByText('模型正在重试…').waitFor();
+    await tab.evaluate(() => window.fail());
+    await frame.getByRole('alert').getByText('模型网关拒绝了请求（HTTP 400），未自动重试。').waitFor();
+    assert.equal(await frame.getByTestId('model-retry').count(), 0);
     assert.deepEqual(errors, []);
   });

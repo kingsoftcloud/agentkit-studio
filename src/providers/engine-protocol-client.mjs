@@ -64,6 +64,7 @@ export function connectEngine({ input, output, onApproveTool, onCallTool, hostNa
       call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor }),
     resume: runId => call('run/resume', { runId }),
     cancel: runId => call('run/cancel', { runId }),
+    guide: (runId, inputId, text) => call('run/guide', { runId, inputId, text }),
     view: () => call('ui/view'),
     shutdown: () => call('shutdown'),
     /** Follow a Run to rest, handing each projected event to `onEvent`. */

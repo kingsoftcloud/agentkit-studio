@@ -132,6 +132,27 @@ function textOf(message) {
     .map(part => String(part.text || part.value || '')).join('');
 }
 
+function nativeInboxGuidance(agent, messages) {
+  if (!agent?.inbox || !agent.session || typeof agent.session.append !== 'function') return {};
+  const { inbox, session } = agent;
+  const displayed = new Set((messages ?? []).filter(message => message.role === 'user').map(message => message.id));
+  return {
+    nextGuidance() {
+      const message = inbox.nextStep[0];
+      if (message?.source?.kind !== 'user' || typeof message.id !== 'string'
+        || !Array.isArray(message.content) || !message.content.every(part => part.type === 'text')) return null;
+      return { id: message.id, text: textOf(message), message };
+    },
+    commitGuidance({ id, text, message }) {
+      if (!displayed.has(id)) {
+        session.append('user/message', message, { surfaceOp: 'append' });
+        displayed.add(id);
+      }
+      if (inbox.nextStep.some(queued => queued.id === id && textOf(queued) === text)) inbox.remove(id);
+    },
+  };
+}
+
 function isUserInput(message, includeTeamMessages = false) {
   return isDshUserInput(message) || (includeTeamMessages && isDshAgentNotice(message));
 }
@@ -705,6 +726,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
               ...(runtime === 'native-engine' ? { inputImages: Array.isArray(content) ? content.filter(part => part.type === 'image_url') : [] }
                 : { imageInputs: history.flatMap(message => Array.isArray(message.content)
                   ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : []) }),
+              ...(runtime === 'native-engine' ? nativeInboxGuidance(toolAgent, options.messages) : {}),
               signal: options.signal,
               systemPrompt: resources.systemPrompt || '',
               dynamicTools,

@@ -1,4 +1,5 @@
 import { ENGINE_VIEW_CONTRACT, NATIVE_ENGINE_EVENT } from './providers/native-engine-runtime.mjs';
+import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
 
 export const HOSTED_HARNESS_VIEW_PATH = '/_ksadk/harness/v1/views';
 export const HOSTED_HARNESS_VIEW_EVENT = 'response.harness_view';
@@ -16,8 +17,12 @@ export function hostedHarnessView(event) {
     if (typeof frame[key] === 'string') projected[key] = frame[key].slice(0, 200);
   }
   if (frame.kind === 'model.failure_observed' && typeof frame.detail === 'string') projected.detail = frame.detail.slice(0, 200);
+  if (frame.kind === 'effect.prepared' && frame.category === 'model' && frame.retry === true) projected.retry = true;
+  if (frame.kind === 'effect.prepared' && frame.category === 'model' && frame.purpose === 'compaction') projected.purpose = 'compaction';
+  if (['run.terminal', 'model.retry_exhausted'].includes(frame.kind) && typeof frame.modelError === 'string')
+    projected.modelError = redactDiagnosticText(frame.modelError, 200);
   if (Array.isArray(frame.tools)) projected.tools = frame.tools.slice(0, 32).filter(tool => typeof tool === 'string').map(tool => tool.slice(0, 128));
-  if (frame.usage) projected.usage = Object.fromEntries(['inputTokens', 'outputTokens']
+  if (frame.usage) projected.usage = Object.fromEntries(['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'reasoningTokens']
     .filter(key => Number.isSafeInteger(frame.usage[key]) && frame.usage[key] >= 0).map(key => [key, frame.usage[key]]));
   return { contract: ENGINE_VIEW_CONTRACT, sha256: view, event: projected };
 }

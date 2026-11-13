@@ -2,14 +2,20 @@
 // against a local model fixture. Studio code under test imports no engine module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
+import { pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { createNativeEngineRuntime, resolveEngineCommand } from '../src/providers/native-engine-runtime.mjs';
 
 const engineCommand = process.env.AGENTKIT_ENGINE_COMMAND;
 const engineArgs = process.env.AGENTKIT_ENGINE_ARGS;
+const createTestService = async () => (await import(new URL('engine-service.mjs',
+  process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER
+    ? pathToFileURL(process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER)
+    : import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')))).createEngineService;
 const externalEngine = { skip: !engineCommand && 'Set AGENTKIT_ENGINE_COMMAND to exercise a separately installed engine' };
 
 const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
@@ -23,11 +29,16 @@ function fixture(script) {
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       const parsed = JSON.parse(body);
       requests.push(parsed);
+      const frames = handle.respond ? await handle.respond(parsed) : script[Math.min(requests.length - 1, script.length - 1)];
+      if (!Array.isArray(frames)) {
+        res.writeHead(frames.status, { 'content-type': 'application/json', ...frames.headers });
+        res.end(JSON.stringify(frames.body));
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      const frames = handle.respond ? handle.respond(parsed) : script[Math.min(requests.length - 1, script.length - 1)];
       for (const frame of frames) res.write(`data: ${JSON.stringify(frame)}\n\n`);
       res.end('data: [DONE]\n\n');
     });
@@ -45,6 +56,87 @@ async function setup(t, script) {
     modelProvider: { baseUrl: model.url, apiKey: 'studio-fixture-key' }, cwd, sessionId: 'session-1', turnId: '1' } };
 }
 const collect = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks; };
+
+test('Studio sends an interjection to the original Run before the retry and commits it once', { ...externalEngine, timeout: 15000 }, async t => {
+  const f = await setup(t, []);
+  const release = Promise.withResolvers();
+  const firstRequest = Promise.withResolvers();
+  const guide = { id: 'studio-guidance-1', text: 'Use the Studio browser to verify the page.' };
+  let queued = null;
+  const committed = [];
+  f.model.respond = async () => {
+    if (f.model.requests.length !== 1) return final('Verified.');
+    firstRequest.resolve();
+    await release.promise;
+    const repeated = ' — **hmm'.repeat(160);
+    return [{ id: 'c', choices: [{ index: 0, delta: { reasoning_content: repeated } }] }];
+  };
+  t.after(() => release.resolve());
+  const stream = f.runtime.stream({ ...f.options, nextGuidance: () => queued, commitGuidance: item => {
+    committed.push(item);
+    queued = null;
+  } });
+  const events = [];
+  try {
+    for await (const chunk of stream) {
+      if (chunk.type === 'engine') {
+        await firstRequest.promise;
+        queued = guide;
+      }
+      if (chunk.type !== 'engine-event') continue;
+      events.push(chunk);
+      if (chunk.event.kind === 'effect.prepared' && chunk.event.category === 'model') release.resolve();
+    }
+  } finally { release.resolve(); }
+  assert.deepEqual(committed, [guide]);
+  assert.equal(new Set(events.map(event => event.runId)).size, 1);
+  assert.equal(f.model.requests.length, 2);
+  assert.equal(f.model.requests[1].max_tokens, 8192);
+  assert.match(JSON.stringify(f.model.requests[1].messages), /Use the Studio browser to verify the page/);
+  assert.equal(events.filter(({ event }) => event.kind === 'input.guidance_applied').length, 1);
+  assert.equal(events.filter(({ event }) => event.kind === 'effect.prepared' && event.retry === true).length, 1);
+});
+
+test('Studio carries a real model retry and a terminal 400 without confusing the two', externalEngine, async t => {
+  const requestId = '65cd9c89-0944-4a65-ac03-ec5eff3e17cf';
+  const f = await setup(t, [
+    toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'saved\n' }),
+    { status: 429, headers: { 'retry-after': '0', 'x-request-id': 'Bearer private-id' },
+      body: { error: { code: 'private-provider-code' } } },
+    { status: 400, headers: { 'x-request-id': requestId },
+      body: { code: 'invalid_request_error', type: 'BadRequestError', message: 'Bearer private-gateway-body' } },
+  ]);
+  const chunks = [];
+  let approvals = 0;
+  await assert.rejects(async () => {
+    for await (const chunk of f.runtime.stream({ ...f.options, requestApproval: async () => { approvals++; return 'allowed-once'; } }))
+      chunks.push(chunk);
+  }, /HTTP 400.*未自动重试/);
+  const events = chunks.filter(chunk => chunk.type === 'engine-event').map(chunk => chunk.event);
+  const failures = events.filter(event => event.kind === 'model.failure_observed');
+  const retries = events.filter(event => event.kind === 'effect.prepared' && event.retry === true);
+  assert.equal(f.model.requests.length, 3);
+  assert.equal(approvals, 1);
+  assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'saved\n');
+  assert.deepEqual(failures.map(event => event.httpStatus), [429, 400]);
+  assert.equal(failures[0].gateway, undefined);
+  assert.deepEqual(failures[1].gateway, { code: 'invalid_request_error', type: 'BadRequestError', requestId });
+  assert.equal(retries.length, 1);
+  assert.ok(failures[0].seq < retries[0].seq && retries[0].seq < failures[1].seq);
+  assert.match(events.find(event => event.kind === 'run.terminal').modelError, /HTTP 400.*未自动重试/);
+  assert.doesNotMatch(JSON.stringify(chunks), /正在重试|private-id|private-gateway-body|private-provider-code|studio-fixture-key/);
+});
+
+test('the engine keeps provider cache hits and reasoning separate from the already-inclusive token totals', externalEngine, async t => {
+  const answer = final('Completed.');
+  answer.at(-1).usage = { ...usage, prompt_tokens_details: { cached_tokens: 7 },
+    completion_tokens_details: { reasoning_tokens: 2 } };
+  const f = await setup(t, [answer]);
+  const chunks = await collect(f.runtime.stream(f.options));
+  assert.deepEqual(chunks.filter(chunk => chunk.type === 'usage'), [{ type: 'usage', usage: {
+    inputTokens: 10, outputTokens: 5, cachedInputTokens: 7, reasoningTokens: 2,
+  } }]);
+});
 
 test('an approved turn writes the file and streams engine progress as ordinary runtime chunks', externalEngine, async t => {
   const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Created out.txt.')]);
@@ -156,8 +248,7 @@ test('the Session permission mode decides writes when no approval seat exists, a
 });
 
 test('an independent service honors full Session access with a strict Agent policy', externalEngine, async t => {
-  const { createEngineService } = await import(new URL('engine-service.mjs',
-    import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
+  const createEngineService = await createTestService();
   const token = 'fixture-studio-permission-token';
   const contract = 'agentkit.native-agent-policy/v1';
   for (const [sandbox, mode, rules, writes] of [
@@ -225,10 +316,122 @@ test('reconnecting an active Run refuses a replacement service that lacks its to
   } finally { await engine.close(); }
 });
 
+test('an attached event cursor survives repeated transport failures and reinitializes the same session', async t => {
+  const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const calls = [];
+  const engine = connectEngineService({
+    endpoint: 'http://127.0.0.1:8787', token: 'fixture-engine-service-token', sessionId: 'fixture', runId: 'active-run',
+    fetchImpl: async (url, request) => {
+      assert.match(url, /\/v1\/sessions\/fixture\/rpc$/);
+      const frame = JSON.parse(request.body);
+      calls.push({ method: frame.method, params: frame.params });
+      if (calls.length <= 2) {
+        now += 35000;
+        throw new DOMException('request deadline elapsed', 'TimeoutError');
+      }
+      if (calls.length === 3) return { ok: true, async json() {
+        throw new TypeError('terminated', { cause: { code: 'UND_ERR_SOCKET' } });
+      } };
+      if (calls.length === 4) return Response.json({ error: 'session_not_found' }, { status: 404 });
+      if (frame.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: frame.id, result: {} });
+      return Response.json({ jsonrpc: '2.0', id: frame.id, result: { events: [], cursor: 73, running: true } });
+    },
+  });
+  try {
+    assert.equal((await engine.events('active-run', 73, 5000, 'original-thinking', 'original-tool')).cursor, 73);
+    assert.deepEqual(calls.map(call => call.method), [
+      'run/events', 'run/events', 'run/events', 'run/events', 'initialize', 'run/events',
+    ]);
+    for (const call of calls.filter(call => call.method === 'run/events')) assert.deepEqual(call, calls[0]);
+  } finally { await engine.close(); }
+});
+
+test('turn cancellation stops reconnecting and authorization failures are not retried', async () => {
+  const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
+  const run = new AbortController(), sent = Promise.withResolvers();
+  let attempts = 0;
+  const options = { endpoint: 'http://127.0.0.1:8787', token: 'fixture-engine-service-token', sessionId: 'fixture', runId: 'active-run' };
+  const engine = connectEngineService({ ...options, runSignal: run.signal, fetchImpl: async () => {
+    attempts++;
+    sent.resolve();
+    throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } });
+  } });
+  const forbidden = connectEngineService({ ...options, fetchImpl: async () => {
+    attempts++;
+    return new Response(null, { status: 403 });
+  } });
+  try {
+    const pending = engine.events('active-run');
+    await sent.promise;
+    run.abort();
+    await assert.rejects(pending, { name: 'AbortError' });
+    await assert.rejects(forbidden.events('active-run'), /engine_service_http_403/);
+    assert.equal(attempts, 2);
+  } finally { await engine.close(); await forbidden.close(); }
+});
+
+test('Studio follows the same Run after service replacement without rerunning a committed tool', { ...externalEngine, timeout: 15000 }, async t => {
+  const f = await setup(t, []);
+  const createEngineService = await createTestService();
+  const reached = Promise.withResolvers(), release = Promise.withResolvers();
+  t.after(() => release.resolve());
+  f.model.respond = async () => {
+    const n = f.model.requests.length;
+    if (n === 1) return toolCall('first-write', 'write_workspace_file', { path: 'out.txt', content: 'settled before disconnect\n' });
+    if (n === 2) { reached.resolve(); await release.promise; }
+    return final('Continued after reconnect.');
+  };
+  const token = 'fixture-studio-replacement-token';
+  let port = 0, service;
+  async function start() {
+    service = createEngineService({ startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'restart-state'),
+      model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY' },
+      scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, token, env: { MODEL_KEY: 'fixture-key' } });
+    await new Promise(resolve => service.server.listen(port, '127.0.0.1', resolve));
+    port = service.server.address().port;
+  }
+  await start();
+  t.after(() => service?.close());
+  const runtime = createNativeEngineRuntime({ stateRoot: join(f.cwd, '..', 'studio-state'), env: {
+    AGENTKIT_ENGINE_SERVICE_URL: 'http://127.0.0.1:' + port,
+    AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd,
+  } });
+  const signal = AbortSignal.timeout(12000);
+  const chunks = [];
+  const observedWrite = Promise.withResolvers();
+  const consuming = (async () => {
+    for await (const chunk of runtime.stream({ ...f.options, sandbox: 'danger-full-access', signal })) {
+      chunks.push(chunk);
+      if (chunk.event?.kind === 'tool.completed') observedWrite.resolve();
+    }
+  })();
+  consuming.catch(() => {});
+  await Promise.race([Promise.all([reached.promise, observedWrite.promise]), consuming.then(() => assert.fail('Run ended before disconnect'))]);
+  const path = join(f.cwd, 'out.txt'), before = statSync(path, { bigint: true });
+  await service.close();
+  service = null;
+  release.resolve();
+  await sleep(650);
+  await start();
+  await consuming;
+  const after = statSync(path, { bigint: true });
+  assert.equal(after.mtimeNs, before.mtimeNs);
+  assert.equal(after.ino, before.ino);
+  const events = chunks.filter(chunk => chunk.type === 'engine-event');
+  assert.equal(new Set(events.map(chunk => chunk.runId)).size, 1);
+  assert.equal(events.filter(chunk => chunk.event.kind === 'run.started').length, 1);
+  assert.equal(events.filter(chunk => chunk.event.kind === 'tool.completed').length, 1);
+  assert.equal(events.filter(chunk => chunk.event.kind === 'run.terminal').length, 1);
+  assert.match(chunks.findLast(chunk => chunk.type === 'text').text, /Continued after reconnect/);
+  assert.equal(f.model.requests.length, 3);
+  assert.ok(f.model.requests.at(-1).messages.some(message => message.role === 'tool'));
+});
+
 test('an uncertain bound A2A Send pauses the independent Run without a model retry', externalEngine, async t => {
   const f = await setup(t, [toolCall('reused-model-id', 'call_a2a_agent', { agent: 'research', message: 'check' })]);
-  const { createEngineService } = await import(new URL('engine-service.mjs',
-    import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')));
+  const createEngineService = await createTestService();
   const token = 'fixture-studio-engine-effects-token';
   const service = createEngineService({ startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
     model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY' },
