@@ -14,7 +14,7 @@ async function loadDeliveryEvidence(sessionId, seq, signal) {
 }
 
 async function resolveWebDelivery(ctx, sessionId, delivery, signal) {
-  const href = deliveryUrl({ sessionId, seq: delivery.seq, path: delivery.path });
+  const href = deliveryUrl({ sessionId, seq: delivery.seq, path: delivery.path, ...(delivery.application ? { application: '1' } : {}) });
   const response = await fetch(href, { method: 'HEAD', credentials: 'same-origin', signal });
   if (!response.ok) return null;
   if (ctx.get('sidebarRightTabs')?.get('browser') === undefined) return { href };
@@ -23,8 +23,10 @@ async function resolveWebDelivery(ctx, sessionId, delivery, signal) {
     if (!response.ok) throw Error('无法打开交付网页');
     const { url } = await response.json();
     const preview = new URL(url);
-    if (preview.protocol !== 'http:' || !/^preview-[a-f0-9]{24}\.localhost$/.test(preview.hostname)
-      || !/^\/[a-f0-9]{48}\//.test(preview.pathname) || preview.username || preview.password)
+    const validTarget = delivery.application
+      ? preview.hostname === '127.0.0.1' && preview.port && preview.pathname === '/' && !preview.search && !preview.hash
+      : /^preview-[a-f0-9]{24}\.localhost$/.test(preview.hostname) && /^\/[a-f0-9]{48}\//.test(preview.pathname);
+    if (preview.protocol !== 'http:' || preview.username || preview.password || !validTarget)
       throw Error('交付网页地址无效');
     openSignal.throwIfAborted();
     ctx.sidebarRight.openTab('browser', { params: { url: preview.href } });

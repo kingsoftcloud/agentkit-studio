@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { build } from 'esbuild';
 import { createNativeEngineRuntime } from '../src/providers/native-engine-runtime.mjs';
+import { registerNativeWebDelivery } from '../src/host/routes/native-web-delivery.mjs';
 import { registerNativeEngineView } from '../src/host/routes/native-engine-view.mjs';
 import { nativeEngineViewDefinition, NATIVE_ENGINE_EVENT, NATIVE_ENGINE_VIEW_KIND } from '../src/client/dsh/native-engine-view.mjs';
 
@@ -62,6 +63,35 @@ test('cold managed Session views are fetched by digest and remain cached after t
   await new Promise(resolve => server.close(resolve));
   assert.equal((await route.fetch(new Request(request, { method: 'HEAD' }))).status, 200);
   assert.deepEqual(requests, [['/v1/views/' + sha256, 'Bearer ' + token]]);
+});
+
+
+test('a completed run opens its host-bound application and rejects other entries', async t => {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), 'native-web-delivery-'));
+  t.after(() => rmSync(workspaceRoot, { recursive: true, force: true }));
+  writeFileSync(join(workspaceRoot, 'index.html'), '<!doctype html><title>Work orders</title>');
+  let route;
+  const event = e(1, 'run.terminal', { title: 'completed', detail: 'Delivered',
+    deliverables: [{ kind: 'file', path: 'index.html' }] });
+  const ctx = {
+    effect() {},
+    connection: { fetch: { register: value => { route = value; } } },
+    sessionQuery: { readEvent: async ({ seq }) => ({
+      session: { cwd: workspaceRoot },
+      target: sessionEvent(seq, seq === 1 ? event : e(seq, 'model.completed')),
+    }) },
+  };
+  registerNativeWebDelivery(ctx, {}, { workspaceRoot, origin: 'http://127.0.0.1:18445', entryPath: 'index.html' });
+  const request = (query, method = 'GET') => route.fetch(new Request(
+    'http://localhost' + route.path + '?' + new URLSearchParams({
+      sessionId: 'session', seq: '1', mode: 'sidebar', application: '1', path: 'index.html', ...query,
+    }), { method, headers: { host: 'localhost' } }));
+  assert.equal((await request({}, 'HEAD')).status, 204);
+  assert.deepEqual(await (await request({})).json(), { url: 'http://127.0.0.1:18445/' });
+  assert.equal((await request({ path: 'other.html' })).status, 404);
+  assert.equal((await request({ seq: '2' })).status, 404);
+  registerNativeWebDelivery(ctx, {}, { workspaceRoot, origin: 'http://example.test:18445', entryPath: 'index.html' });
+  assert.equal((await request({})).status, 404);
 });
 
 const require = createRequire(import.meta.url);

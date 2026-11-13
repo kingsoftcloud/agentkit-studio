@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { extname, isAbsolute, relative, sep } from 'node:path';
+import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { createBrowserWorkspaceServer, resolveBrowserWorkspaceEntry } from '@kingsoftcloud/agentkit-harness-node/native/browser-workspace-server';
 import * as engineViewAdapter from '@kingsoftcloud/agentkit-harness-ui/engine-view/adapter';
 import { NATIVE_ENGINE_EVENT } from '../../providers/native-engine-runtime.mjs';
@@ -15,9 +15,12 @@ function isWorkspaceFile(root, absolutePath) {
   return Boolean(path) && !isAbsolute(path) && path !== '..' && !path.startsWith('..' + sep);
 }
 
-async function deliveryEvidenceResponse(ctx, runtime, { target, sessionId, root, mode, path, request, headers }) {
+async function deliveryEvidenceResponse(ctx, runtime, { target, sessionId, root, mode, path, request, headers, application }) {
   const { event, runId } = target.data;
-  const evidence = event.deliveryEvidence ?? await runtime.readDeliveryEvidence({ sessionId, runId, cwd: root, signal: request.signal });
+  const saved = event.deliveryEvidence;
+  const refreshed = saved?.basis === 'run-net-diff/v1' ? null
+    : await runtime.readDeliveryEvidence({ sessionId, runId, cwd: root, signal: request.signal }).catch(() => null);
+  const evidence = refreshed?.basis === 'run-net-diff/v1' ? refreshed : saved ?? refreshed;
   const workspaceRoot = await realpath(root), scope = { sessionId, workspaceRoot };
   const exists = async (file, maxBytes) => {
     try {
@@ -40,13 +43,24 @@ async function deliveryEvidenceResponse(ctx, runtime, { target, sessionId, root,
     Promise.all(images.map(async file => await exists(file, imageLimit) ? file : null)),
   ]);
   return Response.json({ files: checkedFiles.filter(Boolean), screenshots: checkedImages.filter(Boolean),
-    truncated: evidence?.truncated === true }, { headers });
+    truncated: evidence?.truncated === true, ...(application ? { application: { path: application.path } } : {}) }, { headers });
 }
 
-/** Open only the HTML file named in this Session's committed answer. The
- * authenticated Studio route hands off to a separate browser origin. */
-export function registerNativeWebDelivery(ctx, runtime) {
+function applicationBinding({ workspaceRoot, origin, entryPath }) {
+  if (!isAbsolute(workspaceRoot ?? '') || !relativeDeliveryPath(entryPath) || !/\.html?$/i.test(entryPath)) return null;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port
+      || url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+    return { root: resolve(workspaceRoot), url: url.href, path: entryPath };
+  } catch { return null; }
+}
+
+/** An application target must be bound by the host and declared by the Run.
+ * Static deliveries continue to use their own isolated file server. */
+export function registerNativeWebDelivery(ctx, runtime, config = {}) {
   if (typeof engineWebDeliveries !== 'function' || typeof relativeDeliveryPath !== 'function') return;
+  const binding = applicationBinding(config);
   const previews = new Map();
   const lifetime = new AbortController();
   ctx.effect(() => async () => {
@@ -75,8 +89,18 @@ export function registerNativeWebDelivery(ctx, runtime) {
         if (target.type !== NATIVE_ENGINE_EVENT || target.ignorable !== true || typeof root !== 'string' || !isAbsolute(root)
           || event?.schema !== ENGINE_EVENT_SCHEMA || event.kind !== 'run.terminal' || event.title !== 'completed')
           return new Response(null, { status: 404, headers });
+        const application = binding && resolve(root) === binding.root && await realpath(root) === await realpath(binding.root)
+          && event.deliverables?.some(item => item.path === binding.path && ['file', 'web'].includes(item.kind))
+          ? binding : null;
         if (mode === 'summary' || mode === 'image')
-          return await deliveryEvidenceResponse(ctx, runtime, { target, sessionId, root, mode, path, request, headers });
+          return await deliveryEvidenceResponse(ctx, runtime, { target, sessionId, root, mode, path, request, headers, application });
+        if (searchParams.get('application') === '1') {
+          if (!application || application.path !== path) return new Response(null, { status: 404, headers });
+          resolveBrowserWorkspaceEntry(root, path);
+          if (request.method === 'HEAD') return new Response(null, { status: 204, headers });
+          if (mode === 'sidebar') return Response.json({ url: application.url }, { headers });
+          return new Response(null, { status: 302, headers: { ...headers, location: application.url } });
+        }
         const delivery = engineWebDeliveries(event).find(item => item.path === path);
         if (!delivery) return new Response(null, { status: 404, headers });
         resolveBrowserWorkspaceEntry(root, path);

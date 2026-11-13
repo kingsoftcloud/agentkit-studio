@@ -277,7 +277,11 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   registerNativeEngineView(ctx, nativeEngineRuntime);
   if (!managedRuntime && !portableRuntime) {
     const { registerNativeWebDelivery } = await import('./routes/native-web-delivery.mjs');
-    ctx.inject(['sessionQuery', 'workspaceFiles'], scope => registerNativeWebDelivery(scope, nativeEngineRuntime));
+    ctx.inject(['sessionQuery', 'workspaceFiles'], scope => registerNativeWebDelivery(scope, nativeEngineRuntime, {
+      workspaceRoot: localHarnessService?.workspaceRoot,
+      origin: runtimeEnv.AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN,
+      entryPath: runtimeEnv.AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ENTRY,
+    }));
   }
   const { CLOUD_PROVIDER, createDeploymentModelAdapter } = await import('../deployment-agents.mjs');
   const { createDeploymentConversation } = await import('../deployment-conversation.mjs');
