@@ -348,6 +348,43 @@ test('an attached event cursor survives repeated transport failures and reinitia
   } finally { await engine.close(); }
 });
 
+test('a duplicate Host frame resends only the cached reply after a lost acknowledgement', async () => {
+  const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
+  const received = Promise.withResolvers();
+  let dispatches = 0, deliveries = 0;
+  const replies = [];
+  const frame = { id: 'engine-fixture', method: 'host/callTool', expiresAt: Date.now() + 10000, params: { runId: 'original' } };
+  const engine = connectEngineService({
+    endpoint: 'http://127.0.0.1:8787', token: 'fixture-engine-service-token', sessionId: 'fixture', runId: 'original',
+    onCallTool: async () => { dispatches++; await sleep(200); return { status: 'ok', content: 'saved once' }; },
+    fetchImpl: async (url, options) => {
+      const address = new URL(url);
+      if (address.pathname.endsWith('/host-requests')) {
+        assert.equal(address.searchParams.get('runId'), 'original');
+        assert.match(address.searchParams.get('receiver'), /^[a-f0-9-]{36}$/);
+        deliveries++;
+        return Response.json({ requests: [frame] });
+      }
+      const request = JSON.parse(options.body);
+      if (address.pathname.endsWith('/host-reply')) {
+        replies.push(request);
+        if (replies.length === 1) throw new TypeError('terminated', { cause: { code: 'UND_ERR_SOCKET' } });
+        received.resolve();
+        return Response.json({ accepted: true });
+      }
+      return Response.json({ jsonrpc: '2.0', id: request.id, result: { capabilities: {} } });
+    },
+  });
+  try {
+    await engine.initialize();
+    await Promise.race([received.promise, sleep(5000, null, { ref: false }).then(() => assert.fail('Host reply did not recover'))]);
+    assert.ok(deliveries >= 2);
+    assert.equal(dispatches, 1);
+    assert.equal(replies.length, 2);
+    assert.deepEqual(replies[0], replies[1]);
+  } finally { await engine.close(); }
+});
+
 test('turn cancellation stops reconnecting and authorization failures are not retried', async () => {
   const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
   const run = new AbortController(), sent = Promise.withResolvers();

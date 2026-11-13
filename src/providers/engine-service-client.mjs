@@ -65,7 +65,10 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
       ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}),
       ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}) } };
-  const requestPath = runId ? 'host-requests?runId=' + encodeURIComponent(runId) : 'host-requests';
+  const requestPath = runId ? 'host-requests?' + new URLSearchParams({ runId, receiver: randomUUID() }) : 'host-requests';
+  // One callback execution per frame for this attached Run. A transport
+  // retry may resend the already computed reply, never rerun the effect.
+  const hostReplies = new Map();
 
   async function request(path, body, signal = lifetime.signal) {
     const headers = { authorization: 'Bearer ' + token };
@@ -91,6 +94,7 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
       throw Object.assign(new Error('engine_service_http_' + response.status), {
         code: body?.error === 'session_not_found' ? -32010 : undefined,
         transient: body?.error === 'request_unavailable' || [502, 503, 504].includes(response.status),
+        hostReplyGone: body?.error === 'host_request_not_found',
       });
     }
     try { return await response.json(); }
@@ -163,7 +167,7 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     }
   }
 
-  async function reply(frame) {
+  async function hostReply(frame) {
     const envelope = { jsonrpc: '2.0', id: frame.id };
     if (frame.method === 'host/approveTool') {
       let decision = 'deny';
@@ -180,14 +184,37 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
         envelope.result = await onReadToolReceipt(frame.params, signal);
       } catch { envelope.error = { code: -32603, message: 'Host receipt unavailable' }; }
     } else envelope.error = { code: -32601, message: 'Unsupported host method' };
-    if (!lifetime.signal.aborted) await request('host-reply', envelope);
+    return envelope;
+  }
+
+  function reply(frame) {
+    const now = Date.now();
+    for (const [id, state] of hostReplies) if (state.expiresAt <= now) hostReplies.delete(id);
+    if (typeof frame?.id !== 'string' || !Number.isSafeInteger(frame.expiresAt) || frame.expiresAt <= now) return;
+    let state = hostReplies.get(frame.id);
+    if (state) return;
+    state = { expiresAt: frame.expiresAt };
+    hostReplies.set(frame.id, state);
+    void (async () => {
+      const envelope = await hostReply(frame);
+      if (!envelope) return;
+      for (let delay = 125; !attachment.aborted && Date.now() < state.expiresAt;) {
+        const signal = AbortSignal.any([attachment, AbortSignal.timeout(Math.max(1, state.expiresAt - Date.now()))]);
+        try { await request('host-reply', envelope, signal); return; }
+        catch (error) {
+          if (error.hostReplyGone || !error.transient || Date.now() + delay >= state.expiresAt) return;
+          await sleep(delay, undefined, { signal });
+          delay = Math.min(delay * 2, 2000);
+        }
+      }
+    })().catch(() => {});
   }
 
   async function pollHost() {
     let backoff = 125;
     while (!lifetime.signal.aborted) {
       let requests;
-      try { ({ requests } = await request(requestPath)); }
+      try { ({ requests } = await request(requestPath, undefined, attachment)); }
       catch (error) {
         if (!error.transient && error.code !== -32010) throw error;
         await sleep(backoff, undefined, { signal: lifetime.signal });
@@ -198,9 +225,9 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
       for (const frame of requests) {
         // These ephemeral callbacks belong to the original worker. A
         // replacement worker will recover them from its Run's effect policy.
-        void reply(frame).catch(() => {});
+        reply(frame);
       }
-      await sleep(125, undefined, { signal: lifetime.signal });
+      await sleep(125, undefined, { signal: attachment });
     }
   }
 
