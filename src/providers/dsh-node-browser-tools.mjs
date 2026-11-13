@@ -42,6 +42,39 @@ function abortable(work, signal, late) {
   });
 }
 
+function closeDeadline(work, timeoutMs) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('dsh_node_browser_cleanup_unknown'),
+      { code: 'dsh_node_browser_cleanup_unknown' })), timeoutMs);
+  });
+  return Promise.race([Promise.resolve().then(work), deadline]).finally(() => clearTimeout(timer));
+}
+
+// Use a process handle owned by this call. A disconnected Playwright client
+// alone is not evidence that Chromium and its temporary profile were retired.
+export async function launchOwnedInspectionBrowser(chromium, executablePath, closeTimeoutMs = 5000) {
+  const server = await chromium.launchServer({ headless: true, host: '127.0.0.1',
+    ...(executablePath ? { executablePath } : {}) });
+  const child = server.process();
+  // On macOS Chrome can exit while a helper still holds an inherited pipe.
+  // Playwright waits for ChildProcess 'close', which also waits for every
+  // stdio stream. Close only this browser's handles, and only after 'exit'.
+  const releasePipes = () => { for (const pipe of child.stdio) pipe?.destroy(); };
+  if (child.exitCode !== null || child.signalCode !== null) releasePipes();
+  else child.once('exit', releasePipes);
+  let closing;
+  const close = () => closing ??= closeDeadline(() => server.close(), closeTimeoutMs)
+    .catch(() => closeDeadline(() => server.kill(), closeTimeoutMs));
+  try {
+    const browser = await chromium.connect(server.wsEndpoint(), { timeout: 10000 });
+    return { newContext: options => browser.newContext(options), close, managedClose: true };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
 export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, buildId = null, workspaceRoot, stateDir,
   browserExecutablePath, launchBrowser, backend = 'local_process', applicationPreviewOrigin, isClosed = () => false, signal: hostSignal } = {}) {
   invariant(typeof agentId === 'string' && agentId.trim() && Number.isSafeInteger(agentRevision) && agentRevision > 0
@@ -60,18 +93,14 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
   const launch = launchBrowser ?? (async () => {
     const { chromium } = await import('playwright-core');
     const executablePath = browserExecutablePath ?? resolveNativeBrowserExecutable();
-    return chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
+    return launchOwnedInspectionBrowser(chromium, executablePath);
   });
   const lifetime = new AbortController(), lifetimeSignal = AbortSignal.any([lifetime.signal, ...(hostSignal ? [hostSignal] : [])]);
   const ledgers = new Map(), active = new Set(), disposing = new Set(), cleanupFailures = new Set(); let closing;
-  const dispose = value => {
+  const dispose = (value, timeoutMs = 5000) => {
     // A stalled driver must not block retirement or prevent closing the file
     // server. A deadline reports unknown cleanup, never proves process exit.
-    let timer;
-    const pending = Promise.race([Promise.resolve().then(() => value.close()), new Promise((_, reject) => {
-      timer = setTimeout(() => reject(Object.assign(new Error('dsh_node_browser_cleanup_unknown'),
-        { code: 'dsh_node_browser_cleanup_unknown' })), 5000);
-    })]).finally(() => { clearTimeout(timer); disposing.delete(pending); });
+    const pending = closeDeadline(() => value.close(), timeoutMs).finally(() => disposing.delete(pending));
     disposing.add(pending); pending.catch(error => cleanupFailures.add(error)); return pending;
   };
   const open = () => {
@@ -85,6 +114,7 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
   };
   async function inspect(input, request, guard) {
     let browser, context, page, server, abortCleanup, cleanup;
+    let stage = 'setup';
     const step = async (work, late) => {
       guard(); const result = await abortable(work, request.signal, late);
       try { guard(); return result; } catch (error) {
@@ -103,8 +133,8 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       // Drain the owned Context first, then stop Chromium and the file server.
       // A failed close must not prevent attempting the remaining resources.
       const errors = [];
-      for (const value of [context, browser, server]) if (value) {
-        try { await dispose(value); } catch (error) { errors.push(error); }
+      for (const [value, timeoutMs] of [[context, 5000], [browser, browser?.managedClose ? 11000 : 5000], [server, 5000]]) if (value) {
+        try { await dispose(value, timeoutMs); } catch (error) { errors.push(error); }
       }
       if (errors.length) throw errors[0];
     })();
@@ -113,7 +143,7 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       if (!application) server = await step(() => createBrowserWorkspaceServer({ root: state.workspace, path: input.path, signal: request.signal }), dispose);
       const url = application ? new URL(input.path.split('/').map(encodeURIComponent).join('/'), preview).href : server.url;
       const methods = application ? ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] : ['GET', 'HEAD'];
-      browser = await step(launch, dispose);
+      browser = await step(launch, value => dispose(value, value.managedClose ? 11000 : 5000));
       context = await step(() => browser.newContext({ viewport: { width: 1280, height: 720 }, serviceWorkers: 'block', acceptDownloads: false }), dispose);
       abortCleanup = () => { void release().catch(() => {}); };
       request.signal.addEventListener('abort', abortCleanup, { once: true });
@@ -144,8 +174,10 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
       page.on('requestfailed', () => log(failures, 'browser_request_failed'));
       page.setDefaultTimeout(10000);
       sent = true;
+      stage = 'navigation';
       const response = await step(() => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }));
       if (input.waitMs) await step(() => page.waitForTimeout(input.waitMs));
+      stage = 'actions';
       for (const [index, action] of input.actions.entries()) {
         const locator = () => page.locator(action.selector ?? 'body');
         try {
@@ -162,8 +194,19 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
           actions.push({ index, type: action.kind, ok: true });
         } catch (error) { actions.push({ index, type: action.kind, ok: false, error_type: error.code ?? error.name }); throw error; }
       }
-      const screenshot = await step(() => page.screenshot({ type: 'png', fullPage: true, timeout: 5000 }));
+      stage = 'screenshot';
+      const capture = timeout => step(() => page.screenshot({ type: 'png', fullPage: true, timeout }));
+      let screenshot;
+      try { screenshot = await capture(5000); }
+      catch (error) {
+        guard();
+        if (error?.name !== 'TimeoutError') throw error;
+        // A busy renderer can miss the capture deadline. Retry the observation
+        // on the same page, never the navigation or already executed actions.
+        screenshot = await capture(8000);
+      }
       invariant(screenshot.length <= 16 * 1024 * 1024, 'dsh_node_browser_screenshot_limit');
+      stage = 'page_observation';
       const body = await step(() => page.locator('body').innerText({ timeout: 5000 }));
       const visualCount = await step(() => page.locator('canvas,svg,img,video').count());
       const appChildCount = await step(() => page.locator('#app > *').count());
@@ -181,10 +224,27 @@ export function createDshNodeBrowserTools({ ctx, agentId, agentRevision = 1, bui
           instruction: preview ? 'Workspace preview serves static files only. Use target=application for the bound backend.'
             : 'Workspace preview serves static files only. Use the running application address in Studio’s sidebar browser for backend flows.',
         } : {}) };
-      await release(); guard(); const target = targetFor(input); guard(); publishWorkspaceBytes(target, screenshot); guard();
+      stage = 'cleanup';
+      await release(); guard();
+      stage = 'publish_screenshot';
+      const target = targetFor(input); guard(); publishWorkspaceBytes(target, screenshot); guard();
       return { status: 'ok', content };
     } catch (error) {
+      const cause = request.signal.aborted ? 'aborted' : error?.name === 'TimeoutError' ? 'timeout'
+        : error?.code === 'dsh_node_browser_cleanup_unknown' ? 'cleanup_timeout' : 'failed';
+      // These observations cannot leave a running workspace application with
+      // unverified API mutations. Confirm cleanup before returning an ordinary
+      // failure, and keep the original actions in the durable receipt.
+      if (input.target !== 'application' && ['screenshot', 'page_observation', 'publish_screenshot'].includes(stage) && !request.signal.aborted) {
+        try {
+          await release(); guard();
+          return { status: 'error', content: { ok: false, error_type: 'browser_evidence_failed', stage, cause,
+            evidence_incomplete: true, actions, actions_ok: true,
+            instruction: 'Browser actions finished, but evidence was not saved. Do not repeat the actions automatically.' } };
+        } catch { stage = 'cleanup'; }
+      }
       return sent || request.signal.aborted ? { status: 'uncertain', content: { ok: false, error_type: 'dsh_node_browser_outcome_unknown',
+        stage, cause: stage === 'cleanup' && !request.signal.aborted ? 'cleanup_unconfirmed' : cause,
         evidence_incomplete: true, actions, instruction: 'Inspect the original call; never automatically replay browser actions.' } }
         : rejected(/^dsh_node_browser_/.test(error.code ?? '') ? error.code : 'browser_runtime_unavailable');
     } finally {
