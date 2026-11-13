@@ -159,11 +159,15 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // Defer optional portable-bundle dependencies until Host activation.
   // The browser uses the separately declared ./client bundle; it must never
   // load this Host bootstrap or its Node-only configuration dependencies.
-  const { loadPortableRuntime, createPortableBundles } = await import('../portable-bundle.mjs');
+  const { loadPortableRuntime, loadPortableRuntimeDirectory, createPortableBundles } = await import('../portable-bundle.mjs');
   const portableRuntime = await loadPortableRuntime(runtimeEnv.AGENTKIT_HOME, runtimeEnv);
   const managedRuntime = runtimeEnv.AGENTENGINE_MANIFEST_PATH
     ? await import('../managed-runtime-definition.mjs').then(({ loadManagedRuntimeDefinition }) => loadManagedRuntimeDefinition({ manifest: runtimeEnv.AGENTENGINE_MANIFEST_PATH, env: runtimeEnv })) : null;
+  const managedBundleRuntime = managedRuntime && runtimeEnv.AGENTKIT_STUDIO_BUNDLE_DIR
+    ? await loadPortableRuntimeDirectory(runtimeEnv.AGENTKIT_STUDIO_BUNDLE_DIR, runtimeEnv)
+    : null;
   if (portableRuntime && managedRuntime) throw Object.assign(new Error('运行输入不能同时包含声明和 portable bundle'), { code: 'MANAGED_HOST_INPUT_CONFLICT' });
+  const resourceBundleRuntime = portableRuntime || managedBundleRuntime;
   const managedResourceContext = managedRuntime
     ? await import('../managed-resource-context.mjs').then(({ createManagedResourceContext }) => createManagedResourceContext(managedRuntime)) : undefined;
   const resolveResourceUser = managedRuntime
@@ -184,7 +188,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const cloudExecutionModes = createCloudExecutionModes({ directory: studioStoreDir });
   let templateServices, teamTemplates;
   const services = createStudioServices(ctx, {
-    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime, managedRuntime, managedResourceContext, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
+    env: runtimeEnv, storeDir: studioStoreDir, portableRuntime: resourceBundleRuntime, managedRuntime, managedResourceContext, cloudEndpointOptions, configurationHome, resourceAdapterFactory, hostCompatibility,
     getTemplateAuthoring: () => templateServices?.templateAuthoring, getAdmission: () => presetAdmission, getModels: () => models, getPortableBundles: () => portableBundles,
   });
   const {
@@ -644,12 +648,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     // The portable profile delays native schedule restoration until frozen
     // preset/model/permission initialization has completed. No timer retry or
     // Session prewarming substitutes for the native dependency lifecycle.
-    readyService: portableRuntime || managedRuntime ? FROZEN_RUNTIME_READY : undefined,
+    readyService: resourceBundleRuntime || managedRuntime ? FROZEN_RUNTIME_READY : undefined,
     start: async runtimeCtx => startFrozenBuildRuntime({ ctx: runtimeCtx, env: runtimeEnv, hostCompatibility, managedRuntime, managedResourceContext, nativeEngineRuntime, modelService: models, resources: () => resourceAdaptersPromise, build: (await studioBuildPromise).build,
       admit: (agentId, frozen) => presetAdmission.ensure(agentId, { agent: { ...frozen, metadata: { ...frozen.metadata, local: true } }, allowUnavailableResources: !strictResources, requireModelSelection: true }) }),
     onUnavailable: error => console.warn('[agentkit-studio] frozen runtime unavailable:', error.message),
   });
-  if (portableRuntime || managedRuntime) {
+  if (resourceBundleRuntime || managedRuntime) {
     // Settings writes reconcile the Loader. Awaiting them inside plugin apply
     // deadlocks that reconciliation; use the same public startup boundary as DSH Settings.
     let stopped = false;
@@ -658,7 +662,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       if (stopped) return;
       if (!managedRuntime?.harnessModelSelection) {
         const { syncPortableModelProfiles } = await import('../portable-model-bridge.mjs');
-        await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: managedRuntime?.modelProfiles || portableRuntime.manifest.resources.profiles,
+        await syncPortableModelProfiles({ settings: ctx.get('settings'), profiles: managedRuntime?.modelProfiles || resourceBundleRuntime.manifest.resources.profiles,
           capabilities: profile => models.capabilitiesOf(profile) });
       }
       if (stopped) return;
@@ -668,7 +672,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     await bindRuntime();
   }
   bindNativeBackgroundRuntime(ctx, { getHost: nativeHost,
-    readyService: portableRuntime ? FROZEN_RUNTIME_READY : undefined,
+    readyService: resourceBundleRuntime ? FROZEN_RUNTIME_READY : undefined,
     onError: error => console.error('[agentkit-studio] Native background startup failed:', error?.code || 'NATIVE_BACKGROUND_STARTUP_FAILED'),
   });
   const routes = createStudioRoutes(ctx, {

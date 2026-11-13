@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createStudioBuild } from '../src/studio-build.mjs';
-import { createPortableBundles, verifyPortableBundle, importPortableBundle, loadPortableRuntime } from '../src/portable-bundle.mjs';
+import { createPortableBundles, verifyPortableBundle, importPortableBundle, loadPortableRuntime, loadPortableRuntimeDirectory } from '../src/portable-bundle.mjs';
 import { resolveDeploymentCredentials } from '../src/deployment-credentials.mjs';
 import { runtimeSkill } from '../src/skill-files.mjs';
 import { createGlobalConfiguration } from '../src/global-config.mjs';
@@ -118,6 +119,21 @@ test('export and import retain exact build, file modes, resource identity and ta
   await assert.rejects(runtime.loadSkill('not-in-bundle'), { code: 'PORTABLE_SKILL_MISSING' });
   await assert.rejects(importPortableBundle(zip, target), { code: 'PORTABLE_HOME_EXISTS' });
   assert.equal((await readFile(join(target, 'portable-bundle.zip'))).equals(zip), true);
+});
+
+test('ManagedRuntime loads an Operator-extracted bundle without portable Host credentials', async t => {
+  const f = await fixture(t), prepared = await f.portable.prepare(f.agentId, f.record.id);
+  const zip = Buffer.from((await f.portable.download(f.agentId, f.record.id, prepared.bundleId)).base64, 'base64');
+  const extracted = join(f.root, 'managed-extracted');
+  for (const file of readZipFiles(zip)) {
+    const path = join(extracted, file.name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, file.data, { mode: file.executable ? 0o700 : 0o600 });
+  }
+  const runtime = await loadPortableRuntimeDirectory(extracted, { AGENTKIT_HOME: join(f.root, 'managed-home') });
+  const skill = await runtime.loadSkill(f.skillId);
+  assert.equal(skill.definitions.length, 1);
+  assert.match(await readFile(join(skill.definitions[0].resourceBase.path, 'SKILL.md'), 'utf8'), /inventory-format/);
 });
 
 test('resource content changes yield a new export identity while an old export stays immutable', async t => {

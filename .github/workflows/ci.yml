@@ -120,9 +120,24 @@ jobs:
       - name: Build and test the patched DSH host
         timeout-minutes: 15
         run: pnpm exec node scripts/verify-patched-dsh-host.mjs --source .ci-dsh --patches "${{ steps.dsh-pin.outputs.patches }}" --output .artifacts/patched-host --report .artifacts/patched-host-acceptance.json
+      - name: Restore test Chromium cache
+        id: patched-playwright-browsers
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/studio-native-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
       - name: Install Chromium for the frozen Host proof
         timeout-minutes: 12
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/studio-native-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          if [[ "${{ steps.patched-playwright-browsers.outputs.cache-hit }}" == "true" ]]; then
+            pnpm exec playwright install-deps chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
       - name: Install the accepted Studio plugin in an isolated profile
         shell: bash
         run: |
