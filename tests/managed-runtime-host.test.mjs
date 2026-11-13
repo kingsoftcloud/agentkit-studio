@@ -78,13 +78,14 @@ test('managed Harness boots with a service binding and no model credentials in S
 });
 
 test('canonical YAML prepares a real DSH profile without ZIPs, Build ids or persisted model secrets', async t => {
-  const f = await fixture(t), plan = await prepareManagedRuntimeHost(f);
+  const f = await fixture(t), plan = await prepareManagedRuntimeHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_TIMEOUT_MS: '1200000' } });
   assert.match(plan.entry, /@deepseek-ai\/dsh\/lib\/bin.js$/);
   assert.equal(plan.identity.manifestSha256, hash(f.raw));
   assert.equal(plan.identity.agentId, f.env.AGENTENGINE_AGENT_ID);
   assert.equal(plan.env.AGENTKIT_RUNTIME_BUILD_ID, undefined);
   assert.equal(plan.env.AGENTKIT_BUNDLE_SHA256, undefined);
   assert.equal(plan.env.AGENTKIT_MODEL_API_KEY, f.env.AGENTKIT_MODEL_API_KEY);
+  assert.equal(plan.env.AGENTKIT_RUNTIME_TIMEOUT_MS, '1200000');
   for (const name of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'KSYUN_SECRET_KEY', 'UNRELATED_SECRET']) assert.equal(plan.env[name], undefined);
   // Platform-managed observability reaches the Host child so the OTel plugin can export.
   for (const name of ['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',

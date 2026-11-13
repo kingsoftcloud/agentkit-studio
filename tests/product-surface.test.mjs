@@ -48,7 +48,7 @@ test('Agent context selector uses the DSH Connection catalog and official sessio
   assert.match(clientSource, /conversation\.hero\.agentPreset/);
   assert.match(clientSource, /会话已开始，Agent 已锁定/);
   assert.match(clientSource, /actions\.bindAgent/);
-  assert.match(clientSource, /绑定到新会话/);
+  assert.match(clientSource, /'对话'/);
   assert.match(clientSource, /uiWorkspace\.openSession\(sessionId\)/);
   assert.match(clientSource, /h\(Menu, /);
   assert.match(clientSource, /createConversationAgentState/);

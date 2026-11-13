@@ -55,7 +55,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   let closed = false;
 
   /** Show only the value just typed; stored credentials are never read back. */
-  const { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React });
+  const { SecretInput, StudioMark, StudioWordmark, Pill, SectionHeading, OperationalPageHeading, OperationalPanel, ContentIntro, Metric, EmptyState, DisabledAction } = createStudioPrimitives({ React, ReactDOM });
   const { inputStyle, buttonStyle, pagerButtonStyle } = createFormStyles(BRAND);
   const ResourceDialog = createResourceDialog({ React, buttonStyle });
   const { IconSettingsOutlineMedium, IconChevronDownOutlineRegular, Menu, MenuItemButton, Input, Tooltip, Modal, MarkdownText, MarkdownDelegateProvider, DisclosureRow, StateDot, ImageLightbox, FileTypeIcon, Button, RiskConfirmation } = primitives;
@@ -97,7 +97,7 @@ export function createStudioApp({ React, ReactDOM, primitives, ConversationNodeA
   ui.EvaluationPage = createEvaluationPage({ ui, hostRemote, window, document });
   ui.ObservabilityPage = createObservabilityPage({ ui, hostRemote, window, document });
   ui.ChannelsPage = createChannelsPage({ ui, hostRemote, actions, window });
-  Object.assign(ui, createOperationsWorkspace({ ui }));
+  Object.assign(ui, createOperationsWorkspace({ ui, window }));
   const documentEffects = createProductDocumentEffects({ window, document, MutationObserver });
   const { createDshModelBridge: makeModelBridge } = createModelBridge({ hostRemote });
   const createDshModelBridge = ctx => makeModelBridge(ctx, { isActive: () => !closed });

@@ -101,11 +101,11 @@ export function createCredentialOnboarding({
         h('p', { className: 'agentkit-onboarding-status', role: state.status === 'error' ? 'alert' : 'status', style: state.status === 'error' ? { color: BRAND.danger } : undefined }, state.status === 'error' ? state.error : loading ? '正在检查本机模型配置…' : state.configured ? '已检测到可用模型凭证。' : '尚未配置模型凭证。'), actions),
       stage !== 'welcome' ? h('section', { className: 'agentkit-onboarding-form', 'aria-label': stage === 'model' ? '连接模型' : '云端配置（可选）' }, h(ModelSettingsSection, { key: stage, dshModel, mode: stage, onSaved: stage === 'model' ? () => setStage('cloud') : close })) : h('section', { className: 'agentkit-credential-guide', 'aria-label': '模型配置操作演示' },
         h('ol', null, ...labels.map((label, index) => h('li', { key: label }, h('button', { type: 'button', className: 'agentkit-guide-step', 'aria-current': step === index ? 'step' : undefined, onClick: () => setStep(index) }, h('span', { className: 'agentkit-guide-number', 'aria-hidden': true }, index + 1), label)))),
-        h('div', { className: 'agentkit-guide-preview', 'aria-label': '模型配置预览' },
+        h('div', { className: 'agentkit-guide-preview studio-panel', 'aria-label': '模型配置预览' },
           h('div', { className: 'agentkit-guide-preview-header' }, h(StudioMark, { size: 24, title: '' }), '模型与凭证'),
-          h('label', null, '提供商'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 0 }, '金山云模型服务', h('span', { 'aria-hidden': true }, '⌄')),
-          h('label', null, 'API Key'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 1 }, step === 0 ? '填写你的 API Key' : '••••••••••••••••'),
-          h('label', null, '模型'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 2 }, step === 2 ? '从模型目录选择' : '保存时自动读取')),
+          h('div', { className: 'studio-srow' }, h('label', null, '提供商'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 0 }, '金山云模型服务', h('span', { 'aria-hidden': true }, '⌄'))),
+          h('div', { className: 'studio-srow' }, h('label', null, 'API Key'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 1 }, step === 0 ? '填写你的 API Key' : '••••••••••••••••')),
+          h('div', { className: 'studio-srow' }, h('label', null, '模型'), h('div', { className: 'agentkit-guide-field', 'data-active': step === 2 }, step === 2 ? '从模型目录选择' : '保存时自动读取'))),
         h('p', { className: 'agentkit-guide-caption', role: 'status' }, descriptions[step]),
         h('button', { type: 'button', className: 'agentkit-guide-next', onClick: () => setStep((step + 1) % labels.length) }, step === 2 ? '重新查看步骤' : '查看下一步 →'))));
   }

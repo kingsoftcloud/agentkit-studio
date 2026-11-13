@@ -88,15 +88,16 @@ export function createFrozenResponseProjection({ getService }) {
     if (data.format !== FROZEN_RESPONSE_PROJECTION || data.agentId !== request.agentId
       || data.buildId !== request.buildId || data.responseId !== request.responseId
       || !response || response.object !== 'response' || response.status !== 'completed'
-      || response.id !== request.responseId || response.model !== request.model
-      || response.session_id !== (request.publicSessionId || request.conversationId)
-      || response.conversation?.id !== request.conversationId
+      || response.id !== request.responseId
       || response.metadata?.agentkit?.agentId !== request.agentId
       || response.metadata?.agentkit?.buildId !== request.buildId
       || !Number.isSafeInteger(response.created_at) || !Array.isArray(response.output)
       || !Array.isArray(data.events) || data.events.some(event => !event || !presentationTypes.has(event.type)
         || !event.data || typeof event.data !== 'object' || Array.isArray(event.data))) throw fail('RESPONSES_PROJECTION_INVALID');
     if (data.requestFingerprint !== fingerprint(request)) throw fail('RUNTIME_REQUEST_CONFLICT');
+    if (response.model !== request.model
+      || response.session_id !== (request.publicSessionId || request.conversationId)
+      || response.conversation?.id !== request.conversationId) throw fail('RESPONSES_PROJECTION_INVALID');
     return structuredClone({ response, events: data.events });
   }
   function read(session, request) {

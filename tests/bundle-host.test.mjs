@@ -50,7 +50,7 @@ async function fixture(t, credentialName = 'MODEL_KEY') {
 }
 
 test('offline boot wires the public DSH CLI/profile and forwards only target resource credentials', async t => {
-  const f = await fixture(t), plan = await prepareBundleHost(f);
+  const f = await fixture(t), plan = await prepareBundleHost({ ...f, env: { ...f.env, AGENTKIT_RUNTIME_TIMEOUT_MS: '1200000' } });
   const installationRequire = createRequire(join(f.installation, 'package.json'));
   for (const name of ['@deepseek-ai/dsh-base/package.json', '@deepseek-ai/dsh-session-persistence-jsonl/package.json']) {
     assert.throws(() => installationRequire.resolve(name), { code: 'MODULE_NOT_FOUND' }, 'strict profile must not hoist ' + name);
@@ -58,6 +58,7 @@ test('offline boot wires the public DSH CLI/profile and forwards only target res
   assert.match(plan.entry, /node_modules\/@deepseek-ai\/dsh\/lib\/bin.js$/);
   assert.deepEqual(plan.args, ['--profile', 'agentkit-runtime', '--host', '127.0.0.1', '--no-open', '--port', '0']);
   assert.equal(plan.env.MODEL_KEY, 'target-secret');
+  assert.equal(plan.env.AGENTKIT_RUNTIME_TIMEOUT_MS, '1200000');
   for (const key of ['NODE_OPTIONS', 'OPENAI_API_KEY', 'CLOUD_SECRET_KEY']) assert.equal(plan.env[key], undefined);
   assert.equal(plan.env.HOME, join(f.state, 'home'));
   assert.equal(plan.env.DSH_HOME, join(f.state, 'dsh'));
@@ -132,16 +133,50 @@ test('personal directory links and foreign DSH profiles cannot become deployment
   assert.equal(await readFile(join(foreign.state, 'dsh/cordis.patch.yml'), 'utf8'), 'personal-profile');
 });
 
-test('versioned state isolates immutable bundles and preserves prior history on rollback', async t => {
+test('versioned state isolates immutable bundles while the DSH home survives updates', async t => {
   const f = await fixture(t), g = await fixture(t);
   const first = await prepareBundleHost({ ...f, versionedState: true });
   const history = join(first.env.DSH_HOME, 'retained-history'); await writeFile(history, 'original-history');
   const second = await prepareBundleHost({ ...f, archive: g.archive, versionedState: true });
-  assert.notEqual(first.env.DSH_HOME, second.env.DSH_HOME);
+  // The imported bundle belongs to a version, so each version keeps its own
+  // AGENTKIT_HOME receipt. Sessions, the user home and the workspace belong to
+  // the Agent: an accepted update must keep reading the same DSH home or every
+  // conversation becomes invisible to the new version.
+  assert.notEqual(first.env.AGENTKIT_HOME, second.env.AGENTKIT_HOME);
+  assert.equal(first.env.DSH_HOME, second.env.DSH_HOME);
+  assert.equal(await readFile(history, 'utf8'), 'original-history');
   const restored = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(restored.env.AGENTKIT_HOME, first.env.AGENTKIT_HOME);
   assert.equal(restored.env.DSH_HOME, first.env.DSH_HOME);
   assert.equal(await readFile(history, 'utf8'), 'original-history');
   assert.equal(restored.env.AGENTKIT_BUNDLE_SHA256, restored.identity.sha256);
+});
+
+test('versioned state adopts the newest legacy version directory atomically', async t => {
+  const f = await fixture(t), oldHash = 'a'.repeat(64), legacy = join(f.state, 'versions', oldHash);
+  await mkdir(join(legacy, 'dsh', 'sessions'), { recursive: true });
+  await mkdir(join(legacy, 'home', '.config'), { recursive: true });
+  await mkdir(join(legacy, 'workspace'), { recursive: true });
+  await writeFile(join(legacy, '.agentkit-runtime.json'), JSON.stringify({ format: 'agentkit.runtime-state/v1', bundleSha256: oldHash }));
+  await writeFile(join(legacy, 'dsh/sessions/history.jsonl'), 'durable-history');
+  await writeFile(join(legacy, 'home/.config/settings.json'), '{"theme":"dark"}');
+  await writeFile(join(legacy, 'workspace/task.txt'), 'keep-workspace');
+
+  const plan = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(await readFile(join(plan.env.DSH_HOME, 'sessions/history.jsonl'), 'utf8'), 'durable-history');
+  assert.equal(await readFile(join(plan.env.HOME, '.config/settings.json'), 'utf8'), '{"theme":"dark"}');
+  assert.equal(await readFile(join(plan.cwd, 'task.txt'), 'utf8'), 'keep-workspace');
+  assert.equal(await readFile(join(legacy, 'dsh/sessions/history.jsonl'), 'utf8'), 'durable-history');
+  const sourceStat = await lstat(join(legacy, 'dsh/sessions/history.jsonl'));
+  const adoptedStat = await lstat(join(plan.env.DSH_HOME, 'sessions/history.jsonl'));
+  assert.equal(adoptedStat.dev, sourceStat.dev);
+  assert.equal(adoptedStat.ino, sourceStat.ino);
+  const marker = JSON.parse(await readFile(join(f.state, '.agentkit-agent-state.json'), 'utf8'));
+  assert.equal(marker.format, 'agentkit.bundle-agent-state-adoption/v1');
+  assert.equal(marker.adoptedFrom, `versions/${oldHash}`);
+
+  const restarted = await prepareBundleHost({ ...f, versionedState: true });
+  assert.equal(await readFile(join(restarted.env.DSH_HOME, 'sessions/history.jsonl'), 'utf8'), 'durable-history');
 });
 
 

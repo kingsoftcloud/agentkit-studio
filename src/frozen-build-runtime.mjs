@@ -17,6 +17,21 @@ import { DEFAULT_CLOUD_EXECUTION_MAX, DEFAULT_CLOUD_EXECUTION_MODE, cloudExecuti
 
 const durableTypes = new Set(['turn/start', 'step/start', 'assistant/message', 'assistant/attempt', 'tool/call', 'tool/result', CODEX_TOOL_EVENT, RESOURCE_CHECK_EVENT, NATIVE_ENGINE_EVENT, 'step/end', 'turn/end']);
 
+// The automation runner's local default is intentionally strict, but a
+// managed/frozen Runtime must also cover a foreground tool command that gets
+// promoted to a background job at its own five-minute yield boundary. Keeping
+// this outer budget at 15 minutes avoids reintroducing the same 300s cliff at
+// the runner layer while retaining a bounded request lifetime. Deployments can
+// tune it through the explicitly allowlisted environment variable.
+export const DEFAULT_FROZEN_RUNTIME_TIMEOUT_MS = 900_000;
+const MAX_FROZEN_RUNTIME_TIMEOUT_MS = 86_400_000;
+
+export function frozenRuntimeTimeoutMs(env = process.env) {
+  const configured = Number(env?.AGENTKIT_RUNTIME_TIMEOUT_MS);
+  if (!Number.isSafeInteger(configured) || configured < 1_000) return DEFAULT_FROZEN_RUNTIME_TIMEOUT_MS;
+  return Math.min(configured, MAX_FROZEN_RUNTIME_TIMEOUT_MS);
+}
+
 export function observeNativeRun(ctx, agent, onFrame) {
   const disposers = [
     ctx.on('agent/assistant-stream', ({ agent: source, frame }) => { if (source === agent) onFrame({ kind: 'assistant', value: frame }); }),
@@ -33,7 +48,8 @@ export function observeNativeRun(ctx, agent, onFrame) {
   return () => { for (const dispose of disposers) dispose(); };
 }
 
-export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, managedResourceContext, admit, modelService, hostCompatibility, resources, nativeEngineRuntime, env = process.env }) {
+export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, managedResourceContext, admit, modelService, hostCompatibility, resources,
+  nativeEngineRuntime, env = process.env, createAutomationRunner = createNativeAutomationRunner }) {
   const agentId = managedRuntime?.identity.agentId || env.AGENTKIT_RUNTIME_AGENT_ID;
   const buildId = managedRuntime ? undefined : env.AGENTKIT_RUNTIME_BUILD_ID;
   if (!agentId && !buildId && !managedRuntime) return null;
@@ -62,8 +78,9 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   const executionModeDefault = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_DEFAULT) || DEFAULT_CLOUD_EXECUTION_MODE;
   const executionModeMax = readExecutionMode(env.AGENTKIT_EXECUTION_POLICY_MAX) || DEFAULT_CLOUD_EXECUTION_MAX;
   const declaredPolicy = cloudExecutionPolicy(executionModeDefault);
-  const nativeRun = createNativeAutomationRunner({
+  const nativeRun = createAutomationRunner({
     getService: name => ctx.get(name), reuseSession: true, executionPolicy: declaredPolicy,
+    timeoutMs: frozenRuntimeTimeoutMs(env),
     assertHostCompatible: () => hostCompatibility?.require('frozen-runtime'),
     loadReplay: request => loadFrozenRequestReplay(request, selections.get(request.model)),
     admit: async () => admit(agentId, await resolveDefinition()),

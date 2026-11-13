@@ -766,6 +766,21 @@ for (const invalidOutput of [false, true]) test(`Native MCP pins exact input/out
   assert.throws(() => host.gateway.definitions(host.agent, [{ name: 'exact', parameters: { type: 'object' } }]), /studio_native_mcp_schema_binding_changed/);
 });
 
+test('Native MCP keeps a frozen tool visible when the first prompt assembly predates preset mounting', t => {
+  const parameters = { type: 'object', properties: { value: { type: 'string' } }, additionalProperties: false };
+  const contract = { name: 'refactor_probe', description: 'Controlled frozen Host probe', executor: 'mcp', resourceId: 'mcp-frozen-fixture',
+    nativeMcpSchema: snapshotNativeMcpSchema({ inputSchema: parameters }) };
+  const host = setup(t, ['refactor_probe'], [contract], { executeMcpTool: async () => ({ content: [] }) });
+
+  // Selecting a preset on an existing Session can leave the current DSH
+  // assembly without the newly registered agent-scoped schema. The frozen
+  // contract must still supply the model-facing declaration for turn one.
+  const [definition] = host.gateway.definitions(host.agent, []);
+  assert.equal(definition.name, 'refactor_probe');
+  assert.equal(definition.description, 'Controlled frozen Host probe');
+  assert.deepEqual(definition.parameters, parameters);
+});
+
 test('Plan MCP admission binds actual MCP identity, preserves Host denials and freezes restored selections', async t => {
   const contracts = ['allowed', 'destructive', 'blocked_by_host', 'legacy'].map(name => ({ name, executor: 'mcp', resourceId: 'catalog',
     ...(name === 'legacy' ? {} : { nativeMcpPlanAccess: snapshotNativeMcpPlanAccess({ annotations: { destructiveHint: name === 'destructive' } }) }) }));
