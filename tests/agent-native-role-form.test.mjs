@@ -47,8 +47,8 @@ test('ordinary Native creation needs no manual tool binding and does not admit u
   ] });
   await editor.flush();
   // Star Harness is paused for new Agents; select it explicitly for this harness path.
-  editor.nodes().find(node => node.type === 'select' && (node.children || []).some(option => option?.props?.value === 'harness'))
-    .props.onChange({ target: { value: 'harness' } });
+  editor.nodes().find(node => node.props.role === 'radio' && node.props['data-runtime'] === 'harness')
+    .props.onClick();
   // The runtime change re-runs the resource-catalog effect; render once more so
   // its async resolution is reflected before the test asserts the harness UI.
   await editor.flush(); await editor.flush(); editor.next();

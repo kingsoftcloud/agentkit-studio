@@ -39,30 +39,20 @@ export function createOverviewPage({
       return () => { active = false; };
     }, []);
     const hostReady = connection.status === 'ready';
-    const hero = h('section', {
-      style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: '20px', padding: '16px', borderRadius: '16px', color: BRAND.ink, overflow: 'hidden', background: BRAND.surface, border: '.5px solid ' + BRAND.border, },
-    },
-    h('div', null,
-      h(Pill, { tone: 'accent' }, '本地工作区'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', margin: '12px 0 8px' } },
-        h('h2', { style: { margin: 0, fontSize: '20px', lineHeight: '28px', fontWeight: 500 } }, '把 Agent 从想法交付到运行'),
-        h('i', { className: 'studio-help', role: 'img', 'aria-label': '在同一个工作区管理 Agent、运行时、资源和交付版本。对话与工作台会话由底层运行时统一承载。', title: '在同一个工作区管理 Agent、运行时、资源和交付版本。对话与工作台会话由底层运行时统一承载。' }, 'i')),
-      h('div', { style: { display: 'flex', gap: '10px', marginTop: '22px', flexWrap: 'wrap' } },
-        h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: { ...buttonStyle(), background: BRAND.primaryFill, color: BRAND.primaryText, borderColor: 'transparent' } }, '创建第一个 Agent'),
-        h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: { ...buttonStyle(), border: 0, background: 'transparent' } }, '查看 Agents'))),
-    );
-    const metrics = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: '12px', marginTop: '18px' } },
-      h(Metric, { label: 'Agent', value: String(connection.agents), detail: hostReady ? '当前目录总数' : '尚未读取' }), h(Metric, { label: '运行时', value: connection.runtimes === null ? '未提供' : String(connection.runtimes), detail: connection.runtimes === null ? '当前连接未提供目录' : hostReady ? '已发现的运行时类型' : '等待 DSH Host', tone: hostReady ? 'neutral' : 'signal' }),
-      h(Metric, { label: '资源', value: '资源库', detail: '查看与绑定资源' }), h(Metric, { label: '交付', value: '构建与部署', detail: '在 Agent 中管理版本' }));
-    const cards = h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: '18px', marginTop: '18px' } },
-      h('section', { style: { border: '.5px solid ' + BRAND.border, borderRadius: '16px', padding: '16px', background: BRAND.surface } },
-        h(SectionHeading, { eyebrow: 'Start here', title: '从一个 Agent 开始', detail: directServerMode ? 'Agent、运行时和资源由 AgentEngine Server 控制面提供；本地运行时承载会话与工具执行。' : 'Agent、运行时和资源会在接入 DSH Host 后成为可操作的产品对象。' }),
-        connection.status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 DSH Host', detail: directServerMode ? '读取 Server catalog、详情和运行时能力。' : '读取 health、workspace 和 runtime capability。' }) : connection.status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'DSH Host 尚未连接', detail: connection.error || (directServerMode ? '检查 ~/.agentkit 配置、云端凭证和网络。' : '启动本地 DSH Host 后点击重试。'), action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : h(EmptyState, { icon: '✦', title: connection.agents ? '继续配置 Agent' : '创建第一个 Agent', detail: directServerMode ? (connection.warning || '已读取 Agent 目录，可以进入 Agents 页面继续配置。') : '已连接 Host，可以进入 Agents 页面配置本地 Agent。', action: h('button', { type: 'button', onClick: () => onNavigate && onNavigate('studio-agents'), style: buttonStyle() }, '查看 Agents') })),
-    );
-    const credentialGuide = credential.status === 'ready' && !credential.configured ? h('section', {
-      role: 'status', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '18px', padding: '15px 18px', border: '.5px solid ' + BRAND.border, borderRadius: '14px', background: BRAND.surface },
-    }, h('div', null, h('strong', { style: { display: 'block', color: BRAND.ink, fontSize: '14px' } }, '先配置一个模型凭证'), h('span', { style: { display: 'block', marginTop: '5px', color: BRAND.inkMuted, fontSize: '12px' } }, '首次使用前完成 API Key 配置，Agent 对话和 DSH Native 模型目录才能正常工作。')), h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:open-settings')), style: buttonStyle() }, '去配置模型凭证')) : null;
-    return h('div', null, credentialGuide, hero, h(StartChecks), metrics, cards);
+    return h('div', { className: 'studio-overview studio-page' },
+      credential.status === 'ready' && !credential.configured ? h('section', { role: 'status', className: 'studio-credential-note' }, h('span', null, '先配置一个模型凭证，即可开始对话。'), h('button', { type: 'button', onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:open-settings')), style: buttonStyle('ghost') }, '去配置')) : null,
+      h('h3', { className: 'studio-group-title' }, '创建 Agent'),
+      h('div', { className: 'studio-start-cards' },
+        h('button', { type: 'button', className: 'studio-start-card', 'data-primary': true, onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')) }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '✦'), h('strong', null, '对话创建'), h('small', null, '和 AI 一起完善配置')),
+        h('button', { type: 'button', className: 'studio-start-card', onClick: () => onNavigate?.('agents') }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '+'), h('strong', null, '手动配置'), h('small', null, '选择运行时与能力')),
+        h('button', { type: 'button', className: 'studio-start-card', onClick: () => onNavigate?.('experts') }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '◈'), h('strong', null, '从模板开始'), h('small', null, '复用专家模板'))),
+      h('h3', { className: 'studio-group-title', title: '在同一个工作区管理 Agent、运行时、资源和交付版本。对话与工作台会话由底层运行时统一承载。' }, '工作区'),
+      h('div', { className: 'studio-stats studio-panel' }, [
+        ['Agent', hostReady ? String(connection.agents) : '—', 'agents'], ['运行时', !hostReady || connection.runtimes === null ? '—' : String(connection.runtimes), null], ['资源', '—', 'studio-resources'], ['交付', '—', 'studio-operations'],
+      ].map(([label, value, target]) => h(target ? 'button' : 'div', { key: label, type: target ? 'button' : undefined, onClick: target ? () => onNavigate?.(target) : undefined }, h('strong', null, value), h('small', null, label)))),
+      h('details', { className: 'studio-start-checks' }, h('summary', null, '启动检查'), h(StartChecks)),
+      connection.warning ? h('p', { role: 'status', className: 'studio-inline-note', title: connection.warning }, connection.warning) : null,
+      connection.status === 'loading' ? h(EmptyState, { icon: '·', title: directServerMode ? '正在读取 AgentEngine Server' : '正在读取 DSH Host' }) : connection.status === 'error' ? h(EmptyState, { icon: '!', title: directServerMode ? 'AgentEngine Server 不可达' : 'DSH Host 尚未连接', detail: connection.error, action: h('button', { type: 'button', onClick: load, style: buttonStyle() }, '重新连接') }) : null);
   }
 
   function AgentCard({ agent, onResources }) {

@@ -1,10 +1,12 @@
+import { createStatusText } from '../components/status-text.mjs';
 import { operationalCollection, operationalDate, operationalId, operationalLabel } from '../state/operational-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createEvaluationPage({
-  ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, Pill, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, EmptyState, Metric, OperationalPageHeading, OperationalPager, OperationalTable, OperationalToolbar, ResourceDialog, StudioPageTabs, buttonStyle, inputStyle, operationalStatus, BRAND = DEFAULT_BRAND },
   hostRemote, window = globalThis.window, document = globalThis.document
 }) {
+  const Pill = createStatusText(h);
   function EvaluationPage() {
     const [status, setStatus] = useState('loading');
     const [error, setError] = useState('');
@@ -146,7 +148,7 @@ export function createEvaluationPage({
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取评测数据', detail: '读取评测目标、评测集和运行记录。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '评测暂不可用', detail: error, action: h('button', { type: 'button', onClick: () => void load(), style: buttonStyle() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
+        h('div', { className: 'studio-stats studio-panel', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px', marginBottom: '14px' } }, summary.map(item => h(Metric, { key: item[0], label: item[0], value: String(item[1]), detail: item[2] }))),
         createOpen ? h(ResourceDialog, { title: '新建评测', detail: '选择 EvalSet、目标和评估器，提交后由 Host 在后台执行。', onClose: () => { if (!creating) setCreateOpen(false); } }, h('form', { onSubmit: startCreate, style: { display: 'grid', gap: '14px' } },
           h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(180px, .8fr)', gap: '12px' } },
             h('label', { style: { color: BRAND.inkMuted, fontSize: '11px', fontWeight: 500 } }, 'EvalSet 文件', h('input', { value: evalsetFile, onChange: event => setEvalsetFile(event.target.value), placeholder: '.agentkit/evaluations/example.yaml', style: inputStyle(), required: true }), h('input', { type: 'file', accept: '.yaml,.yml,.json', onChange: importEvalset, disabled: evalsetUploading, style: { ...inputStyle(), marginTop: '6px', padding: '6px' } }), evalsetUploading ? h('span', { style: { color: BRAND.inkMuted, fontSize: '10px' } }, '正在导入…') : null),
@@ -167,8 +169,8 @@ export function createEvaluationPage({
           h(OperationalTable, { columns: runColumns, rows, empty: '还没有评测运行，点击“新建评测”提交一个真实任务。', onRowClick: openRun }),
           h(OperationalPager, { page, pageSize, total: filteredRuns.length, onChange: setPage }),
           message ? h('div', { role: 'status', style: { marginTop: '10px', color: BRAND.accentStrong, fontSize: '12px' } }, message) : null) : null,
-        tab === 'sets' ? h(Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '评测集', cell: row => h('strong', null, operationalLabel(row)) }, { id: 'source', label: '来源', cell: row => row?.sourceFormat || row?.source || 'Host' }, { id: 'cases', label: '用例数', cell: row => row?.caseCount ?? row?.cases?.length ?? '—' }, { id: 'updatedAt', label: '更新时间', cell: row => operationalDate(row?.updatedAt || row?.createdAt) }], rows: visibleEvalsets, empty: '暂无已导入评测集。' }), h(OperationalPager, { page: evalsetPage, pageSize, total: evalsets.length, onChange: setEvalsetPage })) : null,
-        tab === 'targets' ? h(Fragment, null, h(OperationalTable, { columns: [{ id: 'name', label: '目标', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'kind', label: '类型', cell: row => row?.kind || row?.runtime || row?.type || 'Build' }, { id: 'agentId', label: 'Agent', cell: row => row?.agentId || row?.agent?.id || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || 'ready') }], rows: visibleTargets, empty: '暂无可评测目标，请先完成 Agent Build。' }), h(OperationalPager, { page: targetPage, pageSize, total: targets.length, onChange: setTargetPage })) : null,
+        tab === 'sets' ? h(Fragment, null, h(OperationalTable, { layout: 'rows', columns: [{ id: 'name', label: '评测集', cell: row => h('strong', null, operationalLabel(row)) }, { id: 'source', label: '来源', cell: row => row?.sourceFormat || row?.source || 'Host' }, { id: 'cases', label: '用例数', cell: row => row?.caseCount ?? row?.cases?.length ?? '—' }, { id: 'updatedAt', label: '更新时间', cell: row => operationalDate(row?.updatedAt || row?.createdAt) }], rows: visibleEvalsets, empty: '暂无已导入评测集。' }), h(OperationalPager, { page: evalsetPage, pageSize, total: evalsets.length, onChange: setEvalsetPage })) : null,
+        tab === 'targets' ? h(Fragment, null, h(OperationalTable, { layout: 'rows', columns: [{ id: 'name', label: '目标', cell: row => h('strong', null, operationalLabel(row, operationalId(row))) }, { id: 'kind', label: '类型', cell: row => row?.kind || row?.runtime || row?.type || 'Build' }, { id: 'agentId', label: 'Agent', cell: row => row?.agentId || row?.agent?.id || '—' }, { id: 'status', label: '状态', cell: row => operationalStatus(row?.status || 'ready') }], rows: visibleTargets, empty: '暂无可评测目标，请先完成 Agent Build。' }), h(OperationalPager, { page: targetPage, pageSize, total: targets.length, onChange: setTargetPage })) : null,
         error ? h('div', { role: 'alert', style: { color: BRAND.danger, marginTop: '10px', fontSize: '12px' } }, error) : null,
         selectedDetail) : null);
   }

@@ -23,14 +23,15 @@ test('manual configuration treats templates as an optional collapsed section', (
   assert.ok(nodes.some(node => node.type === 'heading' && node.props.title === '手动配置 Agent'));
 });
 
-test('manual form places the back icon before the heading without changing navigation', () => {
+test('manual form places the back link above the heading without changing navigation', () => {
   let returned = false;
   const nodes = formHarness({ onBack: () => { returned = true; } }).render();
   const header = nodes.find(node => node.props.className === 'af-page-heading');
-  assert.equal(header.children[0].props['aria-label'], '返回 Agents');
-  assert.ok(walk(header.children[0]).some(node => node.type === 'svg'));
-  assert.equal(header.children[1].props.title, '手动配置 Agent');
-  header.children[0].props.onClick();
+  const back = nodes.find(node => node.props['aria-label'] === '返回 Agents');
+  assert.ok(back.children.includes('‹ 智能体'));
+  assert.equal(header.children[0].props.title, '手动配置 Agent');
+  assert.ok(nodes.indexOf(back) < nodes.indexOf(header));
+  back.props.onClick();
   assert.equal(returned, true);
 });
 
@@ -38,6 +39,28 @@ test('research template fills an actual research Prompt', () => {
   const form = formHarness(); form.chooseResearch();
   assert.match(form.prompt().props.value, /研究助手/);
   assert.match(form.prompt().props.value, /来源/);
+});
+
+test('runtime radios skip the unavailable Star Harness with arrow keys and cannot select it', () => {
+  const form = formHarness();
+  const radios = form.render().filter(node => node.props.role === 'radio');
+  const native = radios.find(node => node.props['data-runtime'] === 'dsh-native');
+  const harness = radios.find(node => node.props['data-runtime'] === 'harness');
+  assert.equal(harness.props.disabled, true);
+  assert.equal(harness.props.title, '该能力暂未开放');
+  assert.match(JSON.stringify(harness.children), /未开放/);
+  harness.props.onClick();
+  assert.equal(form.render().find(node => node.props['data-runtime'] === 'dsh-native').props['aria-checked'], true);
+  let focused = false;
+  native.props.onKeyDown({ key: 'ArrowRight', preventDefault() {}, currentTarget: { parentElement: { querySelectorAll: () => [{ disabled: false, focus() {} }, { disabled: true }, { disabled: false, focus() { focused = true; } }] } } });
+  assert.equal(form.render().find(node => node.props['data-runtime'] === 'codex').props['aria-checked'], true);
+  assert.equal(focused, true);
+});
+
+test('cloud editing retains the selected server runtime and disables every runtime card', () => {
+  const nodes = formHarness({ initialAgent: { metadata: { id: 'cloud-a' }, source: 'agentengine-server', spec: { runtime: { type: 'langgraph' } } } }).render();
+  assert.equal(nodes.find(node => node.props['data-runtime'] === 'langgraph').props['aria-checked'], true);
+  assert.ok(nodes.filter(node => node.props.role === 'radio').every(node => node.props.disabled));
 });
 
 test('switching a template preserves a user-written Prompt', () => {

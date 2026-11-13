@@ -19,11 +19,14 @@ export default String.raw`
 .agentkit-guide-step[aria-current=step] { color: var(--studio-theme-ink); }
 .agentkit-guide-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--studio-theme-border); border-radius: 50%; font-size: 12px; }
 .agentkit-guide-step[aria-current=step] .agentkit-guide-number { border-color: var(--studio-theme-primaryFill); background: var(--studio-theme-primaryFill); color: var(--studio-theme-primaryText); }
-.agentkit-guide-preview { padding: 24px; border: .5px solid var(--studio-theme-border); border-radius: 16px; background: var(--studio-theme-surface); box-shadow: var(--dsw-elevation-subtle, 0 8px 24px rgb(0 0 0 / .04)); }
-.agentkit-guide-preview-header { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; margin-bottom: 24px; }
+.agentkit-guide-preview { padding: 0 16px; border: .5px solid var(--studio-theme-border); border-radius: 16px; background: var(--studio-theme-surface); }
+.agentkit-guide-preview .studio-srow { display: grid; grid-template-columns: minmax(80px,1fr) minmax(0,2fr); align-items: center; gap: 16px; min-height: 56px; padding: 12px 0; border-bottom: .5px solid var(--studio-theme-border); }
+.agentkit-guide-preview .studio-srow:last-child { border-bottom: 0; }
+.agentkit-guide-preview .studio-srow label { margin: 0; font-size: 14px; font-weight: 500; }
+.agentkit-guide-preview-header { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; padding: 16px 0; }
 .agentkit-guide-preview label { display: block; font-size: 12px; color: var(--studio-theme-inkMuted); margin: 16px 0 8px; }
 .agentkit-guide-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 38px; border: .5px solid var(--studio-theme-controlBorder); border-radius: 10px; padding: 0 12px; font-size: 13px; }
-.agentkit-guide-field[data-active=true] { border-color: #1858d6; outline: 2px solid light-dark(#edf3ff, #15243e); }
+.agentkit-guide-field[data-active=true] { border-color: var(--dsw-alias-state-business-primary); outline: 2px solid var(--dsw-alias-state-business-tertiary); }
 .agentkit-guide-caption { margin: 0; color: var(--studio-theme-inkMuted); font-size: 12px; line-height: 1.7; }
 .agentkit-guide-next { align-self: flex-start; color: var(--studio-theme-ink); background: transparent; border: 0; padding: 0; font: inherit; font-size: 12px; cursor: pointer; }
 .agentkit-onboarding-dialog button:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #1858d6); outline-offset: 4px; }

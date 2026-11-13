@@ -1,10 +1,12 @@
+import { createStatusText } from '../components/status-text.mjs';
 import { refreshIcon } from '../components/refresh-icon.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createCodexPluginPages({
-  ui: { React: { createElement: h, useEffect, useState, Fragment }, Pill, buttonStyle, EmptyState, ResourceDialog, inputStyle, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h, useEffect, useState, Fragment }, buttonStyle, EmptyState, ResourceDialog, inputStyle, BRAND = DEFAULT_BRAND },
   hostRemote
 }) {
+  const Pill = createStatusText(h);
   function CodexPluginCapabilities({ pluginId }) {
     const [state, setState] = useState({ loading: true });
     const [revision, setRevision] = useState(0);
@@ -97,7 +99,7 @@ export function createCodexPluginPages({
       return h('div', { style: { width: '42px', height: '42px', display: 'grid', placeItems: 'center', borderRadius: '11px', overflow: 'hidden', background: 'transparent', border: '.5px solid var(--dsw-alias-border-l3)', color: BRAND.inkMuted, fontWeight: 500 } }, icon
         ? h('img', { src: icon, alt: '', loading: 'lazy', referrerPolicy: 'no-referrer', style: { width: '70%', height: '70%', objectFit: 'contain' } }) : String(label(item)).charAt(0).toUpperCase());
     };
-    const row = item => h('article', { key: id(item), className: 'studio-plugin-row', style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)' } },
+    const row = item => h('article', { key: id(item), className: 'studio-plugin-row studio-row', style: { display: 'flex', flexWrap: 'wrap', gap: '11px', alignItems: 'center', padding: '8px', border: 0, borderRadius: 'var(--dsw-radius-xl,16px)' } },
       iconSquare(item),
       h('button', { type: 'button', onClick: () => setSelectedId(id(item)), style: { flex: '1 1 180px', minWidth: 0, padding: 0, border: 0, background: 'transparent', textAlign: 'left', color: BRAND.ink, cursor: 'pointer' } },
         h('strong', { style: { display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label(item)),

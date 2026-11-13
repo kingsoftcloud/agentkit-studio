@@ -1,6 +1,7 @@
 import { createFormKit } from '../components/form-kit.mjs';
 import { DEPLOYMENT_ATTENTION_STATES, DEPLOYMENT_LABELS, DEPLOYMENT_POLL_STATES, deliveryDate } from '../state/deployment.mjs';
 import { BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
+import { consumeOperationsFocus } from '../operations-focus.mjs';
 
 /**
  * Deployments always run on the platform's default persistent volume.
@@ -22,13 +23,20 @@ const SPEC_GROUPS = [
 ];
 
 export function createDeliveryPages({
-  ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, Pill, StudioPageTabs, SectionHeading, EmptyState, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
+  ui: { React: { createElement: h, useEffect, useRef, useState, Fragment }, Menu, MenuItemButton, Pill, StudioPageTabs, SectionHeading, EmptyState, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
   hostRemote, actions, window = globalThis.window, document = globalThis.document, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval
 }) {
-  const { Section: FormSection, Row, Select, Input, Button, Note, Collapsible, Summary, Switch } = createFormKit({ React: { createElement: h } });
-  const Section = (props, ...children) => FormSection(props, h('div', { className: 'ad-panel' }, ...children));
+  const { Section: FormSection, Row: FormRow, Select, Input, Button, Note: FormNote, Collapsible, Summary, Switch } = createFormKit({ React: { createElement: h } });
+  const Row = ({ help, title, ...props }, ...children) => FormRow({ ...props, title: help ? h('span', { title: help }, title) : title, className: 'af-row studio-srow' }, ...children);
+  const Note = (props, ...children) => FormNote({ title: children.every(child => typeof child === 'string') ? children.join('') : undefined, ...props }, ...children);
+  const Section = ({ number, done, current, panel = true, help, ...props }, ...children) => FormSection({ ...props,
+    title: number ? h(Fragment, null, h('span', { className: 'ad-step-number', 'data-done': done || undefined, 'data-current': current || undefined, 'aria-hidden': 'true' }, done ? '✓' : number), h('span', { title: help }, props.title)) : h('span', { title: help }, props.title),
+    'data-delivery-step': number }, panel ? h('div', { className: 'ad-panel studio-panel' }, ...children) : children);
+  const MenuAction = ({ onClick, ...props }, ...children) => h(MenuItemButton, { ...props, onSelect: onClick }, ...children);
+  const MoreMenu = ({ id, open, onToggle, onClose }, ...children) => h(Menu, { open, onClose, align: 'end', portal: true, compact: true, listClassName: 'studio-menu',
+    anchor: Button({ size: 'sm', variant: 'ghost', 'aria-label': `更多操作 ${id}`, 'aria-haspopup': 'menu', 'aria-expanded': open, onClick: onToggle }, '⋯') }, ...children);
 
-  function CloudDeploymentPanel({ agentId, selectedBuild, onBusyChange }) {
+  function CloudDeploymentPanel({ agentId, selectedBuild, onBusyChange, hasCurrentBuild = Boolean(selectedBuild) }) {
     const [preview, setPreview] = useState(null);
     const [requestKey, setRequestKey] = useState('');
     const [records, setRecords] = useState([]);
@@ -46,6 +54,7 @@ export function createDeliveryPages({
     const [target, setTarget] = useState('auto');
     const [useRecommendedImage, setUseRecommendedImage] = useState(true);
     const [recordsLoaded, setRecordsLoaded] = useState(false);
+    const [recordMenu, setRecordMenu] = useState('');
     // Polling every 5s must not re-render the page when nothing changed; React
     // state updates keep the list stable across refreshes of an idle deployment.
     const recordsSignature = useRef('');
@@ -146,7 +155,8 @@ export function createDeliveryPages({
       ['操作人', preview.identity.kind === 'subaccount' ? preview.identity.userName : '主账号'],
     ] : [];
     return h(Fragment, null,
-      Section({ title: '部署位置与规格', help: '更新已有实例会保留实例 ID、规格和存储；创建新实例时按下面的规格新建。' },
+      Section({ id: 'sec-deploy', 'data-delivery-section': 'deploy', number: 2, done: existing.length > 0 && hasCurrentBuild, current: Boolean(selectedBuild) && hasCurrentBuild && !existing.length,
+          title: '部署', className: !selectedBuild ? 'ad-step-dimmed' : undefined, meta: !selectedBuild ? '构建成功后可以部署' : undefined, help: '更新已有实例会保留实例 ID、规格和存储；创建新实例时按下面的规格新建。' },
         Row({ title: '部署到', desc: targetRecord ? `更新「${targetRecord.agentName}」的当前实例` : '创建新的云端实例' },
           Select({ 'aria-label': '部署目标', value: deploymentTarget, disabled: busy, onChange: event => setTarget(event.target.value) },
             existing.map(record => h('option', { key: record.id, value: record.id }, `更新 ${record.agentName} · 版本 ${record.revision} · ${record.cloudAgentId}`)),
@@ -157,59 +167,66 @@ export function createDeliveryPages({
           : Row({ title: '实例规格', desc: '默认 2 核 4 GB，可按需调整' },
             Select({ 'aria-label': '实例规格', value: spec, disabled: busy, onChange: event => setSpec(event.target.value) },
               SPEC_GROUPS.map(([label, options]) => h('optgroup', { key: label, label }, options.map(([value, text]) => h('option', { key: value, value }, text)))))),
+        targetRecord ? Row({ title: '实例规格' }, h('span', { className: 'ad-value' }, `${targetRecord.resources?.cpu || '—'} 核 / ${targetRecord.resources?.memoryGiB || '—'} GB`)) : null,
+        !targetRecord ? Row({ title: '运行镜像' }, h('span', { className: 'ad-value' }, preview?.image?.version || '检查部署后显示')) : null,
         Row({ title: '对话存储', help: STORAGE_HELP, desc: '不再提供选择，实例重建后仍保留会话历史' },
           h('span', { className: 'ad-value' }, `${DEPLOYMENT_STORAGE.storageGiB} GiB 持久化云盘`,
             h('span', { className: 'ad-value-sub' }, `挂载 ${DEPLOYMENT_STORAGE.mountPath} · 按天计费`))),
-        h('div', { className: 'ad-actions' },
-          Button({ variant: 'primary', disabled: busy || !recordsLoaded || !selectedBuild || (deploymentTarget !== 'new' && (!deploymentCanUpdate(targetRecord) || (!useRecommendedImage && selectedBuild === targetRecord.buildId))), onClick: inspect },
+        h('div', { className: 'studio-cfoot' },
+          Button({ variant: selectedBuild && hasCurrentBuild && !existing.length && !preview ? 'primary' : 'outline', disabled: busy || !recordsLoaded || !selectedBuild || (deploymentTarget !== 'new' && (!deploymentCanUpdate(targetRecord) || (!useRecommendedImage && selectedBuild === targetRecord.buildId))), onClick: inspect },
             busy ? '处理中…' : targetRecord ? '检查更新' : '检查部署')),
-        !selectedBuild ? Note(null, '请先构建或选择一个成功的版本。') : null,
         notice ? Note({ role: 'status' }, notice) : null,
         error ? Note({ role: 'alert', tone: 'danger' }, error) : null),
       preview ? h('section', { className: 'ad-preview', 'aria-label': '部署检查结果' },
         h('div', { className: 'ad-preview-head' }, h('strong', null, previewTitle)),
+        h('ul', { className: 'ad-checks' }, ['冻结版本', '资源凭证', '部署位置与配额'].map(label => h('li', { key: label }, h('span', { className: 'studio-st', 'data-tone': 'ok' }, label)))),
         Summary({ rows: previewRows }),
-        preview.warnings.length ? h('ul', { className: 'ad-warnings' }, preview.warnings.map((warning, index) => h('li', { key: index }, warning))) : null,
-        h('div', { className: 'ad-actions' },
-          Button({ disabled: busy, onClick: () => setPreview(null) }, '取消'),
-          Button({ variant: 'primary', disabled: busy, onClick: deploy }, preview.deploymentId ? preview.rollbackVersionId ? '确认回滚当前实例' : '确认升级当前实例' : '确认创建云端实例'))) : null,
-      Section({ title: '部署记录', meta: `${visibleRecords.length} 条`, help: '部署进度每 5 秒自动刷新，页面切到后台时暂停轮询。',
-          action: Switch({ 'aria-label': '显示已删除的部署记录', label: `显示已删除（${scopedRecords.filter(record => record.state === 'DELETED').length}）`, checked: showDeleted, onChange: event => setShowDeleted(event.target.checked) }) },
-        h(StudioPageTabs, { ariaLabel: '部署记录范围', value: scope, onChange: setScope, items: [{ id: 'current', label: '当前 Agent' }, { id: 'all', label: '全部 Agent' }] }),
+        preview.warnings.length ? h('ul', { className: 'ad-warnings' }, preview.warnings.map((warning, index) => h('li', { key: index, title: warning }, warning))) : null,
+        h('div', { className: 'studio-cfoot' },
+          Button({ variant: 'ghost', disabled: busy, onClick: () => setPreview(null) }, '取消'),
+          Button({ variant: hasCurrentBuild && !existing.length ? 'primary' : 'outline', disabled: busy, onClick: deploy }, preview.deploymentId ? preview.rollbackVersionId ? '确认回滚当前实例' : '确认升级当前实例' : '确认创建云端实例'))) : null,
+      Section({ id: 'sec-records', 'data-delivery-section': 'records', number: 3, current: existing.length > 0 && hasCurrentBuild, panel: false, title: '云端实例', meta: `${visibleRecords.length} 条`, help: '部署进度每 5 秒自动刷新，页面切到后台时暂停轮询。',
+          action: h('div', { className: 'ad-record-header-actions' }, Switch({ 'aria-label': '显示已删除的部署记录', label: `显示已删除（${scopedRecords.filter(record => record.state === 'DELETED').length}）`, checked: showDeleted, onChange: event => setShowDeleted(event.target.checked) }), h('div', { className: 'ad-record-scope' }, h(StudioPageTabs, { ariaLabel: '部署记录范围', value: scope, onChange: setScope, items: [{ id: 'current', label: '当前 Agent' }, { id: 'all', label: '全部' }] }))) },
         scope === 'current' && otherAttention
           ? Note({ role: 'status' }, `其他 Agent 有 ${otherAttention} 条部署需要处理。`, Button({ size: 'sm', onClick: () => setScope('all') }, '查看全部'))
           : null,
         !visibleRecords.length
           ? Note(null, scopedRecords.length ? '暂无进行中的部署，可显示已删除记录查看历史。' : scope === 'current' ? '当前 Agent 尚未部署，检查通过后即可创建云端实例。' : '还没有云端部署。')
-          : h('div', { className: 'ad-list' }, visibleRecords.slice((currentPage - 1) * 5, currentPage * 5).map(record => h('div', { key: record.id, className: 'ad-record' },
-            h('div', { className: 'ad-record-head' },
-              h('strong', { className: 'ad-record-title' }, `${record.agentName} · 版本 ${record.revision}`),
-              h(Pill, { tone: record.state === 'READY' ? 'accent' : record.state === 'DELETED' ? 'neutral' : 'signal' }, DEPLOYMENT_LABELS[record.state] || record.state)),
-            h('p', { className: 'ad-record-meta' }, `${record.environment === 'pre-online' ? '预发环境' : record.environment} · ${record.region} · ${record.resources?.cpu || '—'} 核 / ${record.resources?.memoryGiB || '—'} GB · 镜像 ${record.imageVersion || '—'} · ${deliveryDate(record.createdAt)}`),
-            record.rollout ? h('p', { className: 'ad-record-meta' }, `${record.rollout.kind === 'rollback' ? '回滚' : '升级'}到 Revision ${record.rollout.revision} · ${record.rollout.status === 'SUCCEEDED' ? '入口版本已确认' : record.rollout.status === 'FAILED' ? '未提交成功' : '等待目标版本生效'}`) : null,
-            record.failure ? h('p', { className: 'ad-record-meta ad-record-failure' }, `${record.failure.code} · ${record.failure.message}`) : null,
-            h('div', { className: 'ad-record-actions' },
-              Button({ size: 'sm', 'aria-expanded': Boolean(details[record.id]), onClick: () => setDetails(previous => ({ ...previous, [record.id]: !previous[record.id] })) }, details[record.id] ? '收起详情' : '详情'),
-              record.state !== 'DELETED' ? h(Fragment, null,
-                Button({ size: 'sm', disabled: busy, onClick: () => action(record, record.cloudAgentId ? 'refresh' : 'reconcile') }, record.cloudAgentId ? '刷新状态' : '核对创建结果'),
-                ['READY', 'AVAILABLE_UPDATING'].includes(record.state) ? Button({ size: 'sm', disabled: busy, onClick: () => actions.bindAgent?.(record.cloudAgentId) }, '开始对话') : null,
-                deploymentCanUpdate(record) && record.agentId === agentId ? Button({ size: 'sm', disabled: busy || !selectedBuild || (!useRecommendedImage && selectedBuild === record.buildId), onClick: () => inspectUpdate(record) }, record.state === 'READY' ? '升级到所选版本' : '用所选版本修复') : null,
+          : h('div', { className: 'ad-table-scroll' }, h('table', { className: 'studio-tbl ad-records-table' },
+            h('thead', null, h('tr', null, ['实例', '版本', '状态', '部署位置与规格', '操作'].map(label => h('th', { key: label }, label)))),
+            h('tbody', null, visibleRecords.slice((currentPage - 1) * 5, currentPage * 5).map(record => h(Fragment, { key: record.id },
+            h('tr', null,
+              h('td', null, h('strong', { className: 'ad-record-title' }, record.agentName)),
+              h('td', null, `版本 ${record.revision}`),
+              h('td', null, h('span', { className: 'studio-st', 'data-tone': record.state === 'READY' ? 'ok' : record.failure ? 'err' : record.state === 'DELETED' ? 'neutral' : 'run' }, DEPLOYMENT_LABELS[record.state] || record.state)),
+              h('td', null, h('span', { className: 'ad-record-meta' }, `${record.environment === 'pre-online' ? '预发环境' : record.environment} · ${record.region} · ${record.resources?.cpu || '—'} 核 / ${record.resources?.memoryGiB || '—'} GB · 镜像 ${record.imageVersion || '—'} · ${deliveryDate(record.createdAt)}`)),
+              h('td', null, h('div', { className: 'ad-record-actions' },
+                record.state !== 'DELETED' ? h(Fragment, null,
+                  Button({ size: 'sm', variant: 'ghost', disabled: busy, onClick: () => action(record, record.cloudAgentId ? 'refresh' : 'reconcile') }, record.cloudAgentId ? '刷新状态' : '核对创建结果'),
+                  ['READY', 'AVAILABLE_UPDATING'].includes(record.state) ? Button({ size: 'sm', variant: 'ghost', disabled: busy, onClick: () => actions.bindAgent?.(record.cloudAgentId) }, '开始对话') : null) : null,
+                MoreMenu({ id: record.id, open: recordMenu === record.id, onToggle: () => setRecordMenu(recordMenu === record.id ? '' : record.id), onClose: () => setRecordMenu('') },
+                  MenuAction({ 'aria-expanded': Boolean(details[record.id]), onClick: () => setDetails(previous => ({ ...previous, [record.id]: !previous[record.id] })) }, details[record.id] ? '收起详情' : '详情'),
+                  record.state !== 'DELETED' ? h(Fragment, null,
+                deploymentCanUpdate(record) && record.agentId === agentId ? MenuAction({ disabled: busy || !selectedBuild || (!useRecommendedImage && selectedBuild === record.buildId), onClick: () => inspectUpdate(record) }, record.state === 'READY' ? '升级到所选版本' : '用所选版本修复') : null,
                 record.state === 'READY' && (record.versions || []).some(version => version.id !== record.versionId)
                   ? h(Fragment, null,
-                    Select({ size: 'sm', 'aria-label': '回滚版本 ' + record.agentName, value: rollback[record.id] || '', disabled: busy, onChange: event => setRollback(previous => ({ ...previous, [record.id]: event.target.value })) },
+                    Select({ size: 'sm', className: 'ad-rollback-picker', 'aria-label': '回滚版本 ' + record.agentName, value: rollback[record.id] || '', disabled: busy, onChange: event => setRollback(previous => ({ ...previous, [record.id]: event.target.value })) },
                       h('option', { value: '' }, '选择历史版本'), record.versions.filter(version => version.id !== record.versionId).map(version => h('option', { key: version.id, value: version.id }, `Revision ${version.revision} · ${version.imageVersion} · ${version.completedAt}`))),
-                    Button({ size: 'sm', disabled: busy || !rollback[record.id], onClick: () => inspectUpdate(record, rollback[record.id]) }, '检查回滚'))
+                    MenuAction({ disabled: busy || !rollback[record.id], onClick: () => inspectUpdate(record, rollback[record.id]) }, '检查回滚'))
                   : null,
-                record.cloudAgentId ? Button({ size: 'sm', disabled: busy, onClick: () => action(record, 'logs') }, '日志') : null,
-                record.state === 'TOKEN_PENDING' && record.cloudStatus === 'RUNNING' && record.tokenBound === false ? Button({ size: 'sm', disabled: busy, onClick: () => action(record, 'repairAccess') }, '修复访问配置') : null,
-                details[record.id] && record.cloudAgentId ? Button({ size: 'sm', disabled: busy, onClick: () => deleting === record.id ? action(record, 'remove') : setDeleting(record.id) }, deleting === record.id ? '确认删除云端实例' : '删除') : null,
-                deleting === record.id ? Button({ size: 'sm', onClick: () => setDeleting('') }, '取消') : null) : null),
+                record.cloudAgentId ? MenuAction({ disabled: busy, onClick: () => action(record, 'logs') }, '日志') : null,
+                record.state === 'TOKEN_PENDING' && record.cloudStatus === 'RUNNING' && record.tokenBound === false ? MenuAction({ disabled: busy, onClick: () => action(record, 'repairAccess') }, '修复访问配置') : null,
+                details[record.id] && record.cloudAgentId ? MenuAction({ disabled: busy, onClick: () => deleting === record.id ? action(record, 'remove') : setDeleting(record.id) }, deleting === record.id ? '确认删除云端实例' : '删除') : null,
+                deleting === record.id ? MenuAction({ onClick: () => setDeleting('') }, '取消') : null) : null)))),
+            record.rollout || record.failure || details[record.id] ? h('tr', { className: 'ad-record-detail' }, h('td', { colSpan: 5 },
+            record.rollout ? Note(null, `${record.rollout.kind === 'rollback' ? '回滚' : '升级'}到 Revision ${record.rollout.revision} · ${record.rollout.status === 'SUCCEEDED' ? '入口版本已确认' : record.rollout.status === 'FAILED' ? '未提交成功' : '等待目标版本生效'}`) : null,
+            record.failure ? Note({ tone: 'danger' }, `${record.failure.code} · ${record.failure.message}`) : null,
             details[record.id] ? h('dl', { className: 'ad-detail' },
               h('dt', null, '云端 Agent'), h('dd', null, record.cloudAgentId || record.name || '等待创建结果'),
               h('dt', null, '运行时'), h('dd', null, RUNTIME_LABELS[record.runtime] || record.runtime),
               h('dt', null, '运行镜像'), h('dd', null, `${record.imageVersion || '—'}${record.imageDigest ? ` · ${record.imageDigest}` : ''}`),
               h('dt', null, '构建版本'), h('dd', null, record.buildId),
-              h('dt', null, '对话存储'), h('dd', null, storageSummary(record.resources))) : null))),
+              h('dt', null, '对话存储'), h('dd', null, storageSummary(record.resources))) : null)) : null))))),
         pageCount > 1 ? h('div', { className: 'ad-pager' },
           h('span', null, `${visibleRecords.length} 条 · ${currentPage} / ${pageCount}`),
           h('div', { className: 'ad-pager-actions' },
@@ -220,7 +237,7 @@ export function createDeliveryPages({
           h('pre', { className: 'ad-log' }, log.lines.join('\n') || '暂无日志')) : null));
   }
 
-  function DeliveryPage() {
+  function DeliveryPage({ focus } = {}) {
     const directServerMode = Boolean(window.__AGENTKIT_STUDIO__?.controlPlane === 'agentengine-server');
     const [agents, setAgents] = useState([]);
     const [deployments, setDeployments] = useState([]);
@@ -237,6 +254,9 @@ export function createDeliveryPages({
     const [agentLoading, setAgentLoading] = useState(false);
     const [deploymentBusy, setDeploymentBusy] = useState(false);
     const agentRequest = useRef(0);
+    const pageElement = useRef(null);
+    const [loadedFocus, setLoadedFocus] = useState(null);
+    const [buildMenu, setBuildMenu] = useState('');
 
     const load = async (preferredAgent = selectedAgent) => {
       const request = ++agentRequest.current;
@@ -269,6 +289,7 @@ export function createDeliveryPages({
         }
         const readyBuild = [...builds].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).find(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
         setSelectedBuild(String(readyBuild?.id || ''));
+        setLoadedFocus(focus);
         setStatus('ready');
       } catch (reason) {
         if (request !== agentRequest.current) return;
@@ -276,11 +297,23 @@ export function createDeliveryPages({
         setError(reason?.message || '构建与部署状态不可用');
       }
     };
-    useEffect(() => { void load(); return () => { agentRequest.current++; }; }, []);
+    useEffect(() => { void load(focus?.agentId); return () => { agentRequest.current++; }; }, [focus]);
+    useEffect(() => {
+      if (!focus || loadedFocus !== focus || status !== 'ready') return;
+      consumeOperationsFocus(window, focus);
+      if (selectedAgent !== focus.agentId) return;
+      const section = pageElement.current?.querySelector(`[data-delivery-section="${focus.section}"]`);
+      section?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      section?.classList.add('studio-focus-highlight');
+      const timer = setTimeout(() => section?.classList.remove('studio-focus-highlight'), 1500);
+      return () => { clearTimeout(timer); section?.classList.remove('studio-focus-highlight'); };
+    }, [focus, loadedFocus, status, selectedAgent]);
 
     const currentAgent = agents.find(item => (item?.metadata?.id || item?.id) === selectedAgent);
     const builds = [...(Array.isArray(currentAgent?.builds) ? currentAgent.builds : [])].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const readyBuilds = builds.filter(item => String(item?.status || '').toUpperCase() === 'SUCCEEDED');
+    const hasCurrentBuild = readyBuilds.some(item => Number(item.revision || 1) === Number(currentAgent?.metadata?.revision || 1));
+    const hasLiveDeployment = deployments.some(item => item.agentId === selectedAgent && !['DELETED', 'FAILED', 'CANCELLED'].includes(item.state || item.status));
     const deliveryBusy = saving || deploymentBusy;
     const visibleOperations = operations.filter(item => !item.resourceId || item.resourceId === selectedAgent);
     const canRunBuild = currentAgent?.metadata?.local === true;
@@ -391,45 +424,51 @@ export function createDeliveryPages({
             h('input', { type: 'radio', name: 'delivery-build', 'aria-label': `选择版本 ${item.revision} ${item.id.slice(-8)}`, checked: selectedBuild === item.id, disabled: deliveryBusy || agentLoading || !succeeded, onChange: () => setSelectedBuild(item.id) }),
             `版本 ${item.revision || '—'}`)),
           h('td', { title: item.id }, `${deliveryDate(item.createdAt)} · ${item.id.slice(-8)}`),
-          h('td', null, h(Pill, { tone: succeeded ? 'accent' : 'signal' }, succeeded ? '构建成功' : item.status || 'UNKNOWN')),
+          h('td', null, h('span', { className: 'studio-st', 'data-tone': succeeded ? 'ok' : String(item.status).toUpperCase() === 'FAILED' ? 'err' : 'neutral' }, succeeded ? '构建成功' : item.status || 'UNKNOWN')),
           h('td', null, h('div', { className: 'ad-table-cell-actions' },
-            canRunBuild && succeeded ? Button({ size: 'sm', onClick: () => actions.bindAgent?.({ agentId: selectedAgent, buildId: item.id }) }, '在新会话运行') : null,
-            directServerMode && succeeded ? Button({ size: 'sm', onClick: () => downloadBuild(item.id) }, '下载定义 ZIP') : null,
-            canRunBuild && directServerMode && succeeded ? Button({ size: 'sm', disabled: saving, onClick: () => exportPortableBuild(item.id) }, '导出运行包') : null)));
+            canRunBuild && succeeded ? Button({ size: 'sm', variant: 'ghost', onClick: () => actions.bindAgent?.({ agentId: selectedAgent, buildId: item.id }) }, '在新会话运行') : null,
+            directServerMode && succeeded ? MoreMenu({ id: item.id, open: buildMenu === item.id, onToggle: () => setBuildMenu(buildMenu === item.id ? '' : item.id), onClose: () => setBuildMenu('') },
+              MenuAction({ onClick: () => downloadBuild(item.id) }, '下载定义 ZIP'),
+              canRunBuild ? MenuAction({ disabled: saving, onClick: () => exportPortableBuild(item.id) }, '导出运行包') : null) : null)));
       })
       : h('tr', null, h('td', { colSpan: 4 }, Note(null, '当前 Agent 还没有 Build。')));
-    return h('div', { 'data-studio-delivery': 'true' },
+    return h('div', { 'data-studio-delivery': 'true', ref: pageElement },
       status === 'loading' ? h(EmptyState, { icon: '·', title: '正在读取交付状态', detail: '读取 Agent、Build、Deployment 和 Operation。' }) : null,
       status === 'error' ? h(EmptyState, { icon: '!', title: '交付状态不可用', detail: error, action: Button({ onClick: () => load() }, '重新读取') }) : null,
       status === 'ready' ? h(Fragment, null,
-        Section({ title: '目标 Agent', meta: agents.length ? `${agents.length} 个本地 Agent` : null, help: '选择 Agent 与冻结版本，检查配置后发布到云端。仅展示本地创建的 Agent。' },
-          Row({ title: 'Agent' },
-            Select({ 'aria-label': '目标 Agent', value: selectedAgent, onChange: chooseAgent, disabled: deliveryBusy },
-              agents.length ? agents.map(item => { const id = item?.metadata?.id || item?.id; return h('option', { key: id, value: id }, item?.metadata?.name || item?.name || id); }) : h('option', { value: '' }, '暂无本地 Agent'))),
-          currentAgent ? Row({ title: '运行时', desc: `当前版本 ${currentAgent.metadata?.revision || '—'}` },
-            h('span', { className: 'ad-value' }, RUNTIME_LABELS[currentAgent.spec?.runtime?.type] || 'Agent')) : null),
-        Section({ title: '构建版本', meta: builds.length ? `${builds.length} 个构建` : '尚未构建', help: '构建保存当前提示词、模型和资源绑定；部署使用这个冻结版本。',
-            action: Button({ variant: 'primary', className: 'ad-build-primary', onClick: createBuild, disabled: deliveryBusy || agentLoading || !selectedAgent }, saving ? '构建中…' : '构建当前版本') },
+        h('div', { className: 'ad-subject studio-row' },
+          h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '✦'),
+          h('div', { className: 'studio-row-main' },
+            h('div', { className: 'studio-row-title' }, currentAgent?.metadata?.name || currentAgent?.name || selectedAgent || '暂无本地 Agent', h('code', { className: 'studio-row-id' }, selectedAgent)),
+            currentAgent ? h('div', { className: 'studio-row-meta' }, `${RUNTIME_LABELS[currentAgent.spec?.runtime?.type] || currentAgent.spec?.runtime?.type || 'Agent'} · 当前配置 r${currentAgent.metadata?.revision || '—'}`) : null),
+          Select({ className: 'ad-agent-picker', 'aria-label': '目标 Agent', value: selectedAgent, onChange: chooseAgent, disabled: deliveryBusy },
+            agents.length ? agents.map(item => { const id = item?.metadata?.id || item?.id; return h('option', { key: id, value: id }, item?.metadata?.name || item?.name || id); }) : h('option', { value: '' }, '暂无本地 Agent'))),
+        Section({ id: 'sec-build', 'data-delivery-section': 'build', number: 1, done: hasCurrentBuild, current: !hasCurrentBuild, title: '构建', meta: builds.length ? `${builds.length} 个构建` : '尚未构建', help: '构建保存当前提示词、模型和资源绑定；部署使用这个冻结版本。' },
+          Row({ title: hasCurrentBuild ? `当前配置 r${currentAgent?.metadata?.revision || 1} 已构建` : readyBuilds.length ? `配置已更新到 r${currentAgent?.metadata?.revision || 1}` : '尚未构建' },
+            Button({ variant: hasCurrentBuild ? 'outline' : 'primary', className: 'ad-build-primary', onClick: createBuild, disabled: deliveryBusy || agentLoading || !selectedAgent }, saving ? '构建中…' : hasCurrentBuild ? '重新构建' : '构建当前版本')),
           Row({ title: '冻结版本', desc: agentLoading ? '正在读取版本…' : readyBuilds.length ? '只列出构建成功的版本' : '尚无成功的构建' },
             Select({ 'aria-label': '构建版本', value: selectedBuild, disabled: deliveryBusy || agentLoading || !readyBuilds.length, onChange: event => setSelectedBuild(event.target.value) },
               h('option', { value: '' }, agentLoading ? '正在读取版本…' : readyBuilds.length ? '选择成功的版本' : '尚无构建版本'),
               readyBuilds.map((item, index) => h('option', { key: item.id, value: item.id }, `版本 ${item.revision} · ${deliveryDate(item.createdAt)}${index === 0 ? ' · 最新构建' : ''}`)))),
-          builds.length ? Collapsible({ summary: `构建历史（${builds.length}）` },
+          builds.length ? Collapsible({ summary: `构建历史 · ${builds.length} 个版本` },
             h('div', { style: { overflowX: 'auto' } },
-              h('table', { className: 'ad-table' },
+              h('table', { className: 'studio-tbl ad-table' },
                 h('thead', null, h('tr', null, ['版本', '构建时间', '状态', '操作'].map(label => h('th', { key: label }, label)))),
                 h('tbody', null, buildRows))),
             builds.length > historyLimit ? Button({ size: 'sm', style: { marginTop: '12px' }, onClick: () => setHistoryLimit(historyLimit + 5) }, '显示更多版本') : null) : null),
         directServerMode
-          ? h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, selectedBuild: agentLoading ? '' : selectedBuild, onBusyChange: setDeploymentBusy })
-          : Section({ title: '部署', help: '当前 Host 没有连接 AgentEngine Server，云端发布不可用；已构建的版本仍可导出运行包或在独立 Host 中运行。' },
+          ? h(CloudDeploymentPanel, { key: selectedAgent, agentId: selectedAgent, selectedBuild: agentLoading ? '' : selectedBuild, hasCurrentBuild, onBusyChange: setDeploymentBusy })
+          : h(Fragment, null, Section({ id: 'sec-deploy', 'data-delivery-section': 'deploy', number: 2, done: hasLiveDeployment && hasCurrentBuild, current: hasCurrentBuild && !hasLiveDeployment, title: '部署', className: !selectedBuild ? 'ad-step-dimmed' : undefined, meta: !selectedBuild ? '构建成功后可以部署' : undefined, help: '当前 Host 没有连接 AgentEngine Server，云端发布不可用；已构建的版本仍可导出运行包或在独立 Host 中运行。' },
             Row({ title: 'Build' }, Select({ value: selectedBuild, onChange: event => setSelectedBuild(event.target.value), disabled: directServerMode }, h('option', { value: '' }, readyBuilds.length ? '请选择 Build' : '暂无成功 Build'), readyBuilds.map(item => h('option', { key: item.id, value: item.id }, `${item.id} · Revision ${item.revision || '—'}`)))),
             Row({ title: '区域' }, Input({ value: region, onChange: event => setRegion(event.target.value), disabled: directServerMode })),
             Row({ title: '环境' }, Input({ value: environment, onChange: event => setEnvironment(event.target.value), disabled: directServerMode })),
-            h('div', { className: 'ad-actions' }, Button({ variant: 'primary', onClick: createDeployment, disabled: directServerMode || saving || !selectedBuild }, saving ? '提交中…' : '提交部署')),
+            h('div', { className: 'studio-cfoot' }, Button({ variant: hasCurrentBuild && !hasLiveDeployment ? 'primary' : 'outline', onClick: createDeployment, disabled: directServerMode || saving || !selectedBuild }, saving ? '提交中…' : '提交部署'))),
+          Section({ id: 'sec-records', 'data-delivery-section': 'records', number: 3, current: hasLiveDeployment && hasCurrentBuild, title: '云端实例', panel: false },
             deployments.length
-              ? h('div', { className: 'ad-list', style: { marginTop: '16px' } }, deployments.slice(0, 8).map(item => h('div', { key: item.id, className: 'ad-record' },
-                h('div', { className: 'ad-record-head' }, h('span', { className: 'ad-record-meta', style: { margin: 0 } }, item.id || '—'), h(Pill, { tone: item.status === 'READY' ? 'accent' : 'signal' }, item.status || 'UNKNOWN')))))
+              ? h('table', { className: 'studio-tbl ad-local-records' },
+                h('thead', null, h('tr', null, h('th', null, '实例'), h('th', null, '状态'))),
+                h('tbody', null, deployments.slice(0, 8).map(item => h('tr', { key: item.id },
+                  h('td', null, item.id || '—'), h('td', null, h('span', { className: 'studio-st', 'data-tone': item.status === 'READY' ? 'ok' : 'neutral' }, item.status || 'UNKNOWN'))))))
               : Note(null, '暂无部署记录。'),
             Collapsible({ summary: `操作记录（${visibleOperations.length}）` },
               visibleOperations.length
@@ -438,7 +477,7 @@ export function createDeliveryPages({
                     h('span', { className: 'ad-record-meta', style: { margin: 0 } }, `${item.kind || item.type || 'operation'} · ${item.status || 'UNKNOWN'}`),
                     (directServerMode ? ['QUEUED'] : ['RUNNING', 'PENDING', 'ADMITTING', 'DEPLOYING']).includes(String(item.status || '').toUpperCase())
                       ? Button({ size: 'sm', onClick: () => cancel(item.id) }, '取消') : null))))
-                : Note(null, '暂无操作记录。'))),
+                : Note(null, '暂无操作记录。')))),
         message ? Note({ role: 'status' }, message) : null,
         error ? Note({ role: 'alert', tone: 'danger' }, error) : null,
       ) : null);
