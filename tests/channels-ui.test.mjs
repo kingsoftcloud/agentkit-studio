@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChannelsPage } from '../src/client/pages/channels.mjs';
-function harness() {
+function harness({ loadError = false } = {}) {
   const state = [], calls = [];
   let cursor = 0, fail = false;
   const useState = initial => {
@@ -12,11 +12,12 @@ function harness() {
   const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(item => item !== null && item !== undefined && item !== false) });
   const connection = { configured: true, tokenConfigured: true, serverUrl: 'http://localhost', accountId: 'test', workspaceId: 'logical-workspace', cloudAgents: [{ id: 'agent', name: 'Cloud Agent' }], localAgents: [{ id: 'local-a', name: 'Local A' }, { id: 'local-b', name: 'Local B' }], agentConnections: [] };
   const host = {
-    channelConnection: async () => connection,
+    channelConnection: async () => { if (loadError) throw new Error('channel offline'); return connection; },
     updateAgentChannelConnection: async (agentId, patch) => { calls.push({ action: 'connector', agentId, payload: patch }); connection.agentConnections = [{ agentId, enabled: patch.enabled, state: patch.enabled ? 'connected' : 'stopped', tokenConfigured: true }]; return connection; },
     updateChannelConnection: async value => value,
     channelAction: async (action, payload) => {
       calls.push({ action, payload });
+      if (loadError && action.startsWith('List')) throw new Error('channel offline');
       if (action === 'CreateChannel' && fail) throw new Error('create failed');
       return { Code: 0, Data: { Items: action === 'ListChannels' ? [{ Id: 'channel-1', AgentId: 'agent', Channel: 'feishu', ChannelAccountId: 'account', Enabled: true }] : [] } };
     },
@@ -27,7 +28,7 @@ function harness() {
     hostRemote: host, actions: { confirm: async () => true },
   });
   const render = () => { cursor = 0; return Page(); };
-  const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : [];
+  const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk), ...walk(node.props.action)] : [];
   const nodes = () => walk(render());
   const text = node => typeof node === 'string' ? node : node?.children?.map(text).join('') || '';
   const button = label => nodes().find(node => node.type === 'button' && text(node) === label);
@@ -38,6 +39,18 @@ function harness() {
   const ready = async () => { await nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); };
   return { calls, ready, nodes, button, fill, field, select, submit, fail: value => { fail = value; } };
 }
+
+test('channel primary action occupies the header only after a successful load', async () => {
+  for (const loadError of [false, true]) {
+    const ui = harness({ loadError });
+    assert.equal(ui.button('新增渠道'), undefined);
+    await ui.ready();
+    const heading = ui.nodes().find(node => node.type === 'OperationalPageHeading');
+    assert.equal(Boolean(ui.button('新增渠道')), !loadError);
+    if (!loadError) assert.ok(heading.props.action.children.some(node => node.type === 'button' && node.children.includes('新增渠道')));
+    else assert.ok(ui.nodes().some(node => node.type === 'EmptyState' && node.props.detail === 'channel offline'));
+  }
+});
 
 test('channel creation includes required credentials, keeps failure visible, and clears successful secret', async () => {
   const ui = harness(); await ui.ready();

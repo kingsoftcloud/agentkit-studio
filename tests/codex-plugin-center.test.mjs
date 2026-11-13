@@ -98,7 +98,7 @@ test('Codex cached or restricted plugins remain discoverable with no lifecycle c
 
 test('Codex plugin center does not render a second DSH market in the Studio resource workspace', async () => {
   const operations = await readFile(new URL('../src/client/pages/resources.mjs', import.meta.url), 'utf8');
-  assert.match(operations, /items: \[\{ id: 'models', label: '模型与工具' \}, \{ id: 'runtime-resources', label: '运行资源' \}\]/);
+  assert.match(operations, /\['model', '模型'\], \['mcp', 'MCP'\], \['skill', 'Skill'\],[\s\S]*?\['knowledge-base', '知识库'\], \['memory-instance', '记忆库'\],[\s\S]*?\['runtime-resources', '运行资源'\]/);
   assert.doesNotMatch(operations, /id: 'marketplace', label: '插件市场'/);
   assert.doesNotMatch(fragment, /function MarketplacePage/);
 });

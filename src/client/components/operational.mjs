@@ -2,23 +2,26 @@ import { operationalId, operationalDate } from '../state/operational-data.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 
 export function createOperationalComponents({
-  ui: { React: { createElement: h }, Pill, pagerButtonStyle, buttonStyle, OperationalPanel, BRAND = DEFAULT_BRAND },
+  ui: { React: { createElement: h }, pagerButtonStyle, buttonStyle, OperationalPanel, BRAND = DEFAULT_BRAND },
 }) {
   function operationalStatus(value) {
     const status = String(value || 'unknown').toUpperCase();
-    const tone = ['SUCCEEDED', 'SUCCESS', 'PASSED', 'COMPLETED', 'READY', 'CONNECTED', 'ENABLED', 'ONLINE'].includes(status) ? 'accent' : ['FAILED', 'ERROR', 'CANCELLED', 'REJECTED', 'OFFLINE'].includes(status) ? 'signal' : 'neutral';
-    return h(Pill, { tone }, status.toLowerCase());
+    const tone = ['SUCCEEDED', 'SUCCESS', 'PASSED', 'COMPLETED', 'READY', 'CONNECTED', 'ENABLED', 'ONLINE'].includes(status) ? 'ok' : ['FAILED', 'ERROR', 'CANCELLED', 'REJECTED', 'OFFLINE'].includes(status) ? 'err' : ['RUNNING', 'ACTIVE', 'IN_PROGRESS'].includes(status) ? 'run' : ['PENDING', 'QUEUED', 'WAITING'].includes(status) ? 'warn' : 'neutral';
+    return h('span', { className: 'studio-st', 'data-tone': tone }, status.toLowerCase());
   }
 
-  function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick }) {
+  function OperationalTable({ columns, rows, empty = '暂无数据', onRowClick, layout = 'table' }) {
+    if (layout === 'rows') return h('div', { className: 'studio-rows' }, rows.length ? rows.map((row, index) => h('article', { key: operationalId(row, String(index)), className: 'studio-row', onClick: onRowClick ? () => onRowClick(row) : undefined },
+      h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '◈'),
+      columns.map((column, columnIndex) => h('div', { key: column.id, className: columnIndex === 0 ? 'studio-row-main' : column.id === 'action' ? 'studio-row-actions' : 'studio-row-cell', title: column.label }, column.cell ? column.cell(row) : String(row?.[column.id] ?? '—'))))) : h('div', { className: 'studio-empty' }, empty));
     const header = h('thead', null,
       h('tr', { style: { position: 'sticky', top: 0, zIndex: 1, textAlign: 'left', color: BRAND.inkMuted, background: BRAND.surface } },
         columns.map(column => h('th', { key: column.id, style: { padding: '12px', fontWeight: 500, whiteSpace: 'nowrap', borderBottom: '.5px solid ' + BRAND.border } }, column.label))));
     const body = rows.length
-      ? rows.map((row, index) => h('tr', { key: operationalId(row, String(index)), onClick: onRowClick ? () => onRowClick(row) : undefined, style: { cursor: onRowClick ? 'pointer' : 'default', borderBottom: '1px solid ' + BRAND.border } }, columns.map(column => h('td', { key: column.id, style: { padding: '11px 12px', color: BRAND.ink, verticalAlign: 'top', maxWidth: column.maxWidth || undefined } }, column.cell ? column.cell(row) : String(row?.[column.id] ?? '—')))))
+      ? rows.map((row, index) => h('tr', { key: operationalId(row, String(index)), onClick: onRowClick ? () => onRowClick(row) : undefined, style: { cursor: onRowClick ? 'pointer' : 'default', borderBottom: '.5px solid ' + BRAND.border } }, columns.map(column => h('td', { key: column.id, style: { padding: '11px 12px', color: BRAND.ink, verticalAlign: 'top', maxWidth: column.maxWidth || undefined } }, column.cell ? column.cell(row) : String(row?.[column.id] ?? '—')))))
       : h('tr', null, h('td', { colSpan: columns.length, style: { padding: '28px 14px', color: BRAND.inkMuted, textAlign: 'center' } }, empty));
-    return h('div', { className: 'studio-operational-table', style: { overflow: 'auto', maxHeight: 'min(58vh, 560px)', border: '.5px solid ' + BRAND.border, borderRadius: 'var(--dsw-radius-xl,16px)', background: BRAND.surface } },
-      h('table', { style: { width: '100%', minWidth: Math.max(680, columns.length * 140) + 'px', borderCollapse: 'collapse', fontSize: '12px' } }, header, h('tbody', null, body)));
+    return h('div', { className: 'studio-operational-table', style: { overflow: 'auto', maxHeight: 'min(58vh, 560px)', background: BRAND.surface } },
+      h('table', { className: 'studio-tbl', style: { width: '100%', minWidth: '680px', borderCollapse: 'collapse', fontSize: '13px' } }, header, h('tbody', null, body)));
   }
 
   function OperationalPager({ page, pageSize, total, onChange }) {
@@ -32,7 +35,7 @@ export function createOperationalComponents({
 
   function OperationalToolbar({ children, onRefresh, busy }) {
     return h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' } },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, children),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flex: 1, minWidth: 0 } }, children),
       h('button', { type: 'button', onClick: onRefresh, disabled: busy, 'aria-label': busy ? '读取中…' : '刷新', title: busy ? '读取中…' : '刷新', style: { ...buttonStyle(), width: '32px', padding: 0, border: 0, background: 'transparent' } },
         h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }, h('path', { d: 'M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1', strokeLinecap: 'round', strokeLinejoin: 'round' }))));
   }

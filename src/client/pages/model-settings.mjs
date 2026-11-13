@@ -452,14 +452,14 @@ export function createModelSettingsSection({
     const draftCount = ready ? profiles.filter((profile, index) => isDirtyProfile(profile, index)).length : 0;
     const cloudDirty = ready && cloudIsDirty();
     const formDirty = draftCount > 0 || cloudDirty;
-    const cloudField = (label, key, placeholder, type = 'text') => h('label', { className: 'ms-field' },
+    const cloudField = (label, key, placeholder, type = 'text') => h('label', { className: 'ms-field studio-srow' },
       h('span', { className: 'ms-label' }, label),
       h(type === 'password' ? SecretInput : 'input', {
         label, type, className: 'ms-input', value: form[key] || '', placeholder,
         autoComplete: type === 'password' ? 'new-password' : 'off',
         onChange: event => setField(key, event.target.value),
       }));
-    const section = (step, title, extra, ...children) => h('section', { className: 'ms-section' },
+    const section = (step, title, extra, ...children) => h('section', { className: 'ms-section studio-panel' },
       h('div', { className: 'ms-section-head' },
         h('span', { className: 'ms-step', 'aria-hidden': 'true' }, String(step)),
         h('h5', { className: 'ms-section-title' }, title),
@@ -529,7 +529,7 @@ export function createModelSettingsSection({
 
     // 「思考等级」只展示当前提供商支持的档位，选项里直接写出实际发送值：
     // 选「最高」在 Codex 下会显示「最高 → high」，不需要用户猜测降级。
-    const reasoningField = h('label', { className: 'ms-field' },
+    const reasoningField = h('label', { className: 'ms-field studio-srow' },
       h('span', { className: 'ms-label' }, '思考等级'),
       h('select', {
         className: 'ms-select',
@@ -569,7 +569,7 @@ export function createModelSettingsSection({
             : profiles.length <= 1 ? null : h('button', { type: 'button', 'data-size': 'sm', 'data-variant': 'danger', className: 'ms-btn', onClick: () => removeProfile(selectedIndex) }, '移除'))),
       section(1, '连接', null,
         h('div', { className: 'ms-grid ms-grid-2' },
-          h('label', { className: 'ms-field' },
+          h('label', { className: 'ms-field studio-srow' },
             h('span', { className: 'ms-label' }, '提供商'),
             h('select', {
               className: 'ms-select',
@@ -594,7 +594,7 @@ export function createModelSettingsSection({
                 setForm(current => ({ ...current, profiles: current.profiles.map((item, cursor) => cursor === selectedIndex ? { ...item, ...fields } : item) }));
               },
             }, h('option', { value: 'ksyun' }, '金山云模型服务'), h('option', { value: 'openai' }, 'OpenAI'), h('option', { value: 'custom' }, '自定义提供商'))),
-          h('div', { className: 'ms-field' },
+          h('div', { className: 'ms-field studio-srow' },
             h('span', { className: 'ms-label', id: `ms-base-label-${selectedIndex}` }, 'API 地址'),
             selected.provider === 'ksyun'
               ? h('div', { className: 'ms-static', 'aria-labelledby': `ms-base-label-${selectedIndex}` }, h('span', null, selected.baseUrl || DEFAULT_KSYUN_BASE_URL), h('span', { className: 'ms-chip' }, '默认'))
@@ -612,7 +612,7 @@ export function createModelSettingsSection({
       section(2, '凭证', selected.provider === 'ksyun'
         ? h('a', { className: 'ms-link ms-section-extra', href: 'https://ksp.console.ksyun.com/#/apiKey', target: '_blank', rel: 'noopener noreferrer' }, '获取 Key ↗')
         : null,
-        h('label', { className: 'ms-field' },
+        h('label', { className: 'ms-field studio-srow' },
           h('span', { className: 'ms-label' }, 'API Key'),
           h(SecretInput, {
             label: 'API Key', value: selected.apiKey, className: 'ms-input',
@@ -628,7 +628,7 @@ export function createModelSettingsSection({
         connection.message ? h('p', { role: 'status', className: 'ms-note', 'data-tone': connection.state === 'error' ? 'danger' : connection.state === 'warning' ? 'warn' : 'success' }, connection.message) : null),
       section(3, '模型', null,
         h('div', { className: 'ms-grid ms-grid-2' },
-          h('label', { className: 'ms-field' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel,
+          h('label', { className: 'ms-field studio-srow' }, h('span', { className: 'ms-label' }, '模型名称'), modelSelect, customModel,
             h('span', { className: 'ms-hint' }, catalogItems.length ? '可从目录选择，也可以手动填写目录外的自定义模型名。'
               : profileCredential(selected).configured ? '点击「读取模型」从目录中选择，也可以直接手写模型名。'
                 : '填写 API Key 后点击「读取模型」，也可以直接手写模型名。')),
@@ -638,14 +638,14 @@ export function createModelSettingsSection({
         h('details', { className: 'ms-advanced' },
           h('summary', null, '连接与思考模式'),
           h('div', { className: 'ms-grid ms-grid-2' },
-            h('label', { className: 'ms-field' },
+            h('label', { className: 'ms-field studio-srow' },
               h('span', { className: 'ms-label' }, 'Codex 连接协议'),
               h('select', {
                 className: 'ms-select', 'aria-label': 'Codex 连接协议',
                 value: selected.codexApi || 'responses',
                 onChange: event => setProfile(selectedIndex, 'codexApi', event.target.value),
               }, h('option', { value: 'responses' }, 'Responses'), h('option', { value: 'chat-completions' }, 'Chat Completions'))),
-            h('label', { className: 'ms-field' },
+            h('label', { className: 'ms-field studio-srow' },
               h('span', { className: 'ms-label' }, 'Native 思考模式'),
               h('select', {
                 className: 'ms-select', 'aria-label': 'Native 思考模式',
@@ -668,7 +668,7 @@ export function createModelSettingsSection({
       statusStrip,
       h('div', { className: 'ms-panel', 'data-rail': showRail ? 'true' : 'false' }, showRail ? rail : null, detail)) : null;
 
-    const cloudSection = mode !== 'model' ? h('section', { className: 'ms-cloud', 'data-solo': mode === 'cloud' ? 'true' : 'false' },
+    const cloudSection = mode !== 'model' ? h('section', { className: 'ms-cloud studio-panel', 'data-solo': mode === 'cloud' ? 'true' : 'false' },
       h('div', { className: 'ms-cloud-head' },
         h('div', null,
           h('div', { className: 'ms-cloud-title' }, h('h4', null, '云端凭证'), h(Chip, { tone: cloudStatus.configured ? 'success' : 'warn' }, cloudStatus.configured ? '已配置' : '未配置'),
