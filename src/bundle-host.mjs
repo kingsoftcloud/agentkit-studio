@@ -1,5 +1,5 @@
 /** Offline boot preparation over the public DSH profile/package contract. */
-import { lstat, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { link, lstat, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { importPortableBundle, loadPortableRuntime, verifyPortableBundle } from './portable-bundle.mjs';
@@ -15,6 +15,104 @@ async function archiveBytes(path) {
   const info = await lstat(path);
   if (!info.isFile() || info.size > 20 * 1024 * 1024) fail('PORTABLE_ARCHIVE_SIZE_INVALID', '运行包必须是大小不超过 20 MiB 的普通文件');
   return readFile(path);
+}
+
+/** Hard-link a version-scoped directory into the Agent-scoped state root. */
+async function linkStateEntry(source, target, entry) {
+  if (entry.isDirectory()) {
+    await directory(target);
+    for (const child of await readdir(source, { withFileTypes: true })) {
+      await linkStateEntry(join(source, child.name), join(target, child.name), child);
+    }
+  } else if (entry.isFile()) {
+    try { await link(source, target); }
+    catch (error) {
+      if (error.code === 'EEXIST') return;
+      // Some volume drivers refuse hard links (or cross a device boundary); a
+      // real copy is the lossless fallback.
+      if (!['EXDEV', 'EPERM', 'EACCES', 'ENOTSUP', 'ENOSYS'].includes(error.code)) throw error;
+      await copyFile(source, target);
+    }
+  }
+}
+
+async function stateSource(root, names) {
+  const entries = [];
+  let mtimeMs = 0;
+  for (const name of names) {
+    const source = join(root, name), info = await exists(source);
+    if (!info) continue;
+    if (!info.isDirectory()) continue;
+    entries.push(name);
+    mtimeMs = Math.max(mtimeMs, info.mtimeMs);
+  }
+  return entries.length ? { root, names: entries, mtimeMs } : null;
+}
+
+/** Find the newest legacy version directory that still contains Agent state. */
+async function findVersionedAgentState({ parent, root, hash }) {
+  const versions = join(parent, 'versions'), candidates = [];
+  const current = await stateSource(root, ['dsh', 'home', 'workspace']);
+  if (current) candidates.push({ ...current, adoptedFrom: `versions/${hash}` });
+  const entries = await readdir(versions, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === hash) continue;
+    const candidate = await stateSource(join(versions, entry.name), ['dsh', 'home', 'workspace']);
+    if (candidate) candidates.push({ ...candidate, adoptedFrom: `versions/${entry.name}` });
+  }
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0] || null;
+}
+
+async function stageStateDirectory(source, staging) {
+  await directory(staging);
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    await linkStateEntry(join(source, entry.name), join(staging, entry.name), entry);
+  }
+}
+
+/**
+ * Versioned state made every directory of the deployment version-scoped, so an
+ * accepted update started the new bundle with an empty DSH home while the
+ * previous sessions stayed stranded under `versions/<sha256>/dsh`. Only the
+ * immutable receipt and the imported运行包 belong to a version; the DSH home,
+ * the user home and the workspace belong to the Agent.
+ *
+ * The newest versioned directory that actually holds session state is taken over
+ * once with hard links (the source directory is left untouched, so a rollback to
+ * a version-scoped bundle still reads it) and every later boot reuses the
+ * Agent-scoped directory directly.
+ */
+async function adoptVersionedAgentState({ parent, root, hash }) {
+  const receiptPath = join(parent, '.agentkit-agent-state.json');
+  if (await exists(receiptPath)) return;
+  const source = await findVersionedAgentState({ parent, root, hash });
+  if (source) {
+    for (const name of source.names) {
+      const target = join(parent, name);
+      if (await exists(target)) continue;
+      const stagingRoot = join(parent, `.agent-state-${randomUUID()}`), staging = join(stagingRoot, name);
+      try {
+        await stageStateDirectory(join(source.root, name), staging);
+        try { await rename(staging, target); }
+        catch (error) {
+          if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error;
+        }
+      } finally { await rm(stagingRoot, { recursive: true, force: true }); }
+    }
+  }
+  // Publish the completion receipt only after every state directory has been
+  // moved into place. If the process dies between directory renames, the next
+  // boot sees no receipt and resumes the missing directories without replacing
+  // any state that was already published.
+  try {
+    await writeFile(receiptPath, JSON.stringify({
+      format: 'agentkit.bundle-agent-state-adoption/v1',
+      adoptedFrom: source?.adoptedFrom || null, adoptedAt: new Date().toISOString(),
+    }), { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
 }
 
 /** A deployment owns one persistent state directory and one immutable bundle. */
@@ -42,12 +140,16 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
     await writeFile(receiptPath, JSON.stringify(receipt), { flag: 'wx', mode: 0o600 });
   }
   if (!(await lstat(receiptPath)).isFile() || JSON.stringify(await json(receiptPath)) !== JSON.stringify(receipt)) fail('BUNDLE_HOST_STATE_CONFLICT', '此状态目录属于另一运行包或不是此 Host 创建的目录');
-  const home = join(root, 'agentkit'), dshHome = await directory(join(root, 'dsh'));
-  const userHome = await directory(join(root, 'home')), cwd = await directory(join(root, 'workspace'));
+  // The receipt and the imported bundle are version state; the DSH home, user
+  // home and workspace are Agent state and must survive an accepted update.
+  if (versionedState) await adoptVersionedAgentState({ parent, root, hash });
+  const agentRoot = versionedState ? parent : root;
+  const home = join(root, 'agentkit'), dshHome = await directory(join(agentRoot, 'dsh'));
+  const userHome = await directory(join(agentRoot, 'home')), cwd = await directory(join(agentRoot, 'workspace'));
   // Only declared resource credentials enter the Host; NODE_OPTIONS, personal
   // profile paths, cloud credentials and proxy configuration are not inherited.
   const childEnv = Object.fromEntries(['PATH', 'LANG', 'LC_ALL', 'TZ', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
-    'AGENTKIT_DEPLOYMENT_VERSION', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT', ...manifest.requirements.map(item => item.name)]
+    'AGENTKIT_DEPLOYMENT_VERSION', 'AGENTKIT_RUNTIME_TOKEN', 'AGENTKIT_RUNTIME_HOST', 'AGENTKIT_RUNTIME_PORT', 'AGENTKIT_RUNTIME_TIMEOUT_MS', ...manifest.requirements.map(item => item.name)]
     .filter(key => env[key] !== undefined).map(key => [key, env[key]]));
   Object.assign(childEnv, { HOME: userHome, DSH_HOME: dshHome, CODEX_HOME: join(userHome, '.codex'),
     XDG_CONFIG_HOME: join(userHome, '.config'), XDG_CACHE_HOME: join(userHome, '.cache'), XDG_STATE_HOME: join(userHome, '.local/state'),
@@ -67,8 +169,13 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
     fail('BUNDLE_HOST_STATE_CONFLICT', '保留的 Agent Build 与已验证的运行包不一致');
   }
   await loadPortableRuntime(home, childEnv);
+  // One Agent-scoped DSH home is reused across versions, so the profile marker
+  // must carry the Agent identity rather than the per-version bundle digest;
+  // otherwise an accepted update rejects the existing profile as foreign. The
+  // installed code is still pinned by `dshVersion` and the Studio digest.
   await prepareRuntimeProfile({ dshHome, modules, dshVersion,
-    identity: { bundleSha256: hash, agentId: manifest.agentId, buildId: manifest.buildId, bundleId: manifest.bundleId } });
+    identity: { bundleSha256: hash, agentId: manifest.agentId, buildId: manifest.buildId, bundleId: manifest.bundleId },
+    ...(versionedState ? { profileIdentity: { agentId: manifest.agentId } } : {}) });
   // The official launcher owns the session store, runner, loop and shutdown.
   return { entry, args: runtimeProfileArgs(), cwd, env: childEnv,
     identity: { agentId: manifest.agentId, buildId: manifest.buildId, bundleId: manifest.bundleId, sha256: hash, dshVersion } };

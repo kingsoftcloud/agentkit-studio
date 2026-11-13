@@ -3,6 +3,11 @@ import { hostFetch } from './http-fetch.mjs';
 
 const actions = new Set(['RetrieveKnowledge', 'QueryMemorySdk', 'CreateMemorySdk', 'GetMCP']);
 const skillActions = new Set(['ListSkillsBySpaceId', 'GetSkillDownloadUrl', 'GetPremadeSkillDownloadUrl']);
+// CreateMemorySdk is a mutating AICP submission. It intentionally stays out of
+// the transport retry loop until the service exposes a durable idempotency
+// contract for ordinary writes. Durable callers still pass their request id,
+// but the Host must not infer that the service de-duplicates it.
+const nonRetryableActions = new Set(['CreateMemorySdk']);
 // A transient resource-server fault is worth two more attempts; 4xx responses
 // are deterministic (revoked access, a stale snapshot or a bad request) and
 // must never be replayed. The third backoff is available when a caller raises
@@ -130,6 +135,7 @@ export function createManagedResourceClient({
     if (['QueryMemorySdk', 'CreateMemorySdk'].includes(action) && !resourcePermit) fail('MANAGED_RESOURCE_PERMIT_REQUIRED');
     const scopedSignal = resourcePermit ? getResourceSignal?.() : undefined;
     const cancelSignal = signal && scopedSignal ? AbortSignal.any([signal, scopedSignal]) : signal || scopedSignal;
+    const retryable = !nonRetryableActions.has(action);
     for (let attempt = 1; attempt <= policy.attempts; attempt++) {
       let response;
       try {
@@ -145,7 +151,7 @@ export function createManagedResourceClient({
       } catch {
         if (cancelSignal?.aborted) fail('REQUEST_CANCELLED');
         // Timeouts and socket/connection errors surface as a fetch rejection.
-        if (attempt === policy.attempts) fail('MANAGED_RESOURCE_SERVER_UNAVAILABLE', 0, { attempts: attempt });
+        if (!retryable || attempt === policy.attempts) fail('MANAGED_RESOURCE_SERVER_UNAVAILABLE', 0, { attempts: attempt });
         await waitForRetry(policy.delays[attempt - 1] ?? 0, cancelSignal);
         continue;
       }
@@ -162,7 +168,7 @@ export function createManagedResourceClient({
       if (response.status !== 429 && response.status < 500) {
         fail('MANAGED_RESOURCE_REQUEST_FAILED', response.status, { attempts: attempt });
       }
-      if (attempt === policy.attempts) {
+      if (!retryable || attempt === policy.attempts) {
         fail('MANAGED_RESOURCE_SERVER_UNAVAILABLE', response.status, { attempts: attempt });
       }
       await waitForRetry(policy.delays[attempt - 1] ?? 0, cancelSignal);
