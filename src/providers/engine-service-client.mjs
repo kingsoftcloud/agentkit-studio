@@ -181,7 +181,9 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor) =>
       call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor, follow: true }),
     resume: runId => call('run/resume', { runId }),
-    approve: (runId, interactionId, decision) => call('run/approve', { runId, interactionId, decision }),
+    approve: (runId, interactionId, reply) => call('run/approve', { runId, interactionId,
+      decision: typeof reply === 'string' ? reply : reply.decision,
+      ...(reply?.denialReason === undefined ? {} : { denialReason: reply.denialReason }) }),
     cancel: runId => call('run/cancel', { runId }),
     view: sha256 => call('ui/view', sha256 === undefined ? {} : { sha256 }),
     async close() {

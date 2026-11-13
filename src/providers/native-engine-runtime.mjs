@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
 import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
+import { nativeEngineApprovalReply } from './native-host-approval.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
 export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
@@ -135,11 +136,17 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !serviceEndpoint ? undefined : async request => {
         const responder = interactive ? requestApproval : request.requiresUserApproval ? requestPolicyApproval : null;
-        if (typeof responder !== 'function') return request.requiresUserApproval ? 'deny' : standing;
+        const explain = request.requiresUserApproval === true && !request.childRunId;
+        if (typeof responder !== 'function') return request.requiresUserApproval ? nativeEngineApprovalReply('unavailable', explain) : standing;
         const tool = hostTools.originalName(request.tool ?? 'tool');
-        const outcome = await responder({ toolName: `native/${tool}`,
-          callId: request.interactionId ?? '', reason: approvalReason({ ...request, tool }), signal });
-        return outcome === 'allowed-once' ? 'allow' : 'deny';
+        try {
+          const outcome = await responder({ toolName: `native/${tool}`,
+            callId: request.interactionId ?? '', reason: approvalReason({ ...request, tool }), signal });
+          return nativeEngineApprovalReply(outcome, explain);
+        } catch (error) {
+          if (signal?.aborted || !explain) throw error;
+          return nativeEngineApprovalReply('unavailable', explain);
+        }
       };
       const onCallTool = !dynamicTools.length || typeof toolHandler !== 'function' ? undefined : async request => {
         const call = { name: hostTools.originalName(String(request.name || '')), namespace: null, arguments: request.arguments ?? {},

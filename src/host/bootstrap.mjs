@@ -31,6 +31,7 @@ import { bindNativeBackgroundRuntime } from './native-background-lifecycle.mjs';
 import { createStudioA2aSessionSink } from './services/a2a-session-events.mjs';
 import { boundSkillResources, loadBoundSkillDefinitions } from '../skill-bindings.mjs';
 import { createPromptPredictionHost } from '../prompt-prediction/host.mjs';
+import { requestNativeHostApproval } from '../providers/native-host-approval.mjs';
 
 /**
  * Report the composed Agent preset once the registry resolves it.
@@ -304,10 +305,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         return ctx.get?.('sessionProjections')?.stateOf?.(session, 'sandboxMode') ?? undefined;
       } catch { return undefined; }
     },
-    requestNativeApproval: async (agent, request) => {
+    requestNativeApproval: (agent, request) => {
       const approval = agent.ctx?.get?.('approval') ?? ctx.get?.('approval');
-      if (typeof approval?.request !== 'function') return 'denied';
-      return approval.request({ ...request, agent });
+      return requestNativeHostApproval(approval, agent, request);
     },
     resolveCodexModel: selection => resolveConfiguredCodexModel(selection, models),
     codexResourceContext,
