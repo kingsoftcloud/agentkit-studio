@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, transform } from 'esbuild';
+import { minify } from 'terser';
 import { CLIENT_PRIVATE_PROPERTIES } from './client-private-properties.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,6 +37,15 @@ const result = await build({
         if (!match || /\$\{/.test(match[2])) return;
         const css = await transform(match[2], { loader: 'css', minify: true, legalComments: 'none' });
         return { contents: source.replace(declaration, () => match[1] + JSON.stringify(css.code) + ';'), loader: 'js' };
+      });
+      // Compress the published renderer before linking it into the host script
+      // so syntax highlighting fits Studio's existing client budget.
+      builder.onLoad({ filter: /agentkit-harness-ui[\\/]markdown[\\/]dist[\\/]markdown\.mjs$/ }, async ({ path }) => {
+        const { code } = await minify(await readFile(path, 'utf8'), {
+          ecma: 2022, module: true, compress: { passes: 2 },
+        });
+        if (!code) throw new Error('Harness Markdown compression produced no code');
+        return { contents: code, loader: 'js' };
       });
     },
   }],
