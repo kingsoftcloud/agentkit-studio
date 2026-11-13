@@ -17,9 +17,10 @@ const a2aSpec = { local_name: 'research', binding_id: 'fixture-binding', space_i
   target_agent_id: 'a2a-agent-research', expected_version_id: 'fixture-version', exposure: 'tool' };
 const a2aInput = { agent: 'research', message: 'Find the evidence.' };
 
-for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'unknown-remote-task']) test(`signed managed Run across restart: ${scenario}`, async t => {
-  const useA2a = scenario !== 'mcp';
-  const interrupted = scenario !== 'mcp' && scenario !== 'a2a';
+for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'unknown-remote-task', 'no-delegation']) test(`signed managed Run across restart: ${scenario}`, async t => {
+  const delegated = scenario !== 'no-delegation';
+  const useA2a = delegated && scenario !== 'mcp';
+  const interrupted = useA2a && scenario !== 'a2a';
   let receiptAvailable = !interrupted, receiptReads = 0, droppedHostReply = false;
   let recoveredPeerReads = 0;
   const root = await mkdtemp(join(await realpath(tmpdir()), 'managed-host-resources-'));
@@ -90,7 +91,8 @@ for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'u
         return () => { route = undefined; };
       } } });
     },
-  }, { scope, token: callbackToken, resolveBinding: async id => id === sessionId
+  }, { scope, token: callbackToken,
+    ...(delegated ? { approvalAuthority: 'trusted-engine' } : {}), resolveBinding: async id => id === sessionId
     ? { agent, record, agentRevision: 2, buildId: 'studio-build', permissionMode: () => useA2a ? 'read-only' : 'danger-full-access' } : null,
   ...(useA2a ? { createA2aPort: config => createDshNodeA2aTools({ ...config, workspaceRoot: workspace, stateDir: join(root, 'studio-state'),
     env: { KSADK_A2A_SPACE_ID: a2aSpec.space_id, KSADK_A2A_SERVICE_URL: peerOrigin,
@@ -161,7 +163,10 @@ for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'u
       assert.equal(body.tools.some(tool => tool.function.name === 'call_a2a_agent'), useA2a);
       assert(JSON.stringify(body.messages).includes('Use exact evidence from the selected MCP tool.'));
       if (useA2a && step === 2) assert(JSON.stringify(body.messages).includes(a2aSpec.target_agent_id));
-      if (!next) assert(JSON.stringify(body.messages).includes(useA2a ? 'verified managed A2A result' : 'verified managed MCP result'));
+      if (!next) {
+        const expected = !delegated ? 'policy_denied' : useA2a ? 'verified managed A2A result' : 'verified managed MCP result';
+        assert(JSON.stringify(body.messages).includes(expected));
+      }
       const delta = next ? { tool_calls: [{ index: 0, id: 'bound-call-' + step, type: 'function',
         function: { name: next[0], arguments: JSON.stringify(next[1]) } }] } : { content: 'Verified.' };
       const frame = { id: 'fixture', choices: [{ index: 0, delta, finish_reason: next ? 'tool_calls' : 'stop' }],
@@ -224,7 +229,13 @@ for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'u
   assert.equal(requests, 0);
   const accepted = await send(input);
   assert.equal(accepted.status, 202, await accepted.clone().text());
-  const receipt = await accepted.json(), approval = await approvalFact();
+  const receipt = await accepted.json();
+  if (!delegated) {
+    await waitForPhase('completed');
+    assert.equal(calls.length, 0);
+    return;
+  }
+  const approval = await approvalFact();
   assert.equal(approval.run_id, receipt.run_id);
   assert.equal(skillLoads, 1);
   assert.equal(calls.length, 0);

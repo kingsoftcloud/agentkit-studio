@@ -93,19 +93,6 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
     try {
       const url = new URL(req.url, 'http://runtime');
       if (req.method === 'GET' && url.pathname === '/health') { json(res, closing ? 503 : 200, { status: closing ? 'stopping' : 'ready' }); return; }
-      if (managed && harnessView && ['GET', 'HEAD'].includes(req.method)
-        && url.pathname.startsWith(HOSTED_HARNESS_VIEW_PATH + '/')) {
-        if (closing) throw fail('RUNTIME_STOPPING', 503);
-        const sha256 = url.pathname.slice(HOSTED_HARNESS_VIEW_PATH.length + 1);
-        if (!/^[a-f0-9]{64}$/.test(sha256)) throw fail('RUNTIME_HARNESS_VIEW_NOT_FOUND', 404);
-        let html;
-        try { html = await harnessView(sha256); }
-        catch { throw fail('RUNTIME_HARNESS_VIEW_UNAVAILABLE', 502); }
-        if (html === null) throw fail('RUNTIME_HARNESS_VIEW_NOT_FOUND', 404);
-        res.writeHead(200, ENGINE_VIEW_HEADERS);
-        res.end(req.method === 'HEAD' ? undefined : html);
-        return;
-      }
       const bearer = /^Bearer (.+)$/i.exec(String(req.headers.authorization || ''));
       if (req.headers.origin || !bearer || !timingSafeEqual(hash(bearer[1]), tokenHash)) throw fail('RUNTIME_UNAUTHORIZED', 401);
       if (closing) throw fail('RUNTIME_STOPPING', 503);
@@ -116,6 +103,18 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       }
       if (managed && (req.headers['x-agentengine-target-version-id'] !== managedIdentity.versionId
         || req.headers['x-agentengine-manifest-sha256'] !== managedIdentity.manifestSha256)) throw fail('RUNTIME_DEPLOYMENT_CHANGED', 409);
+      if (managed && harnessView && ['GET', 'HEAD'].includes(req.method)
+        && url.pathname.startsWith(HOSTED_HARNESS_VIEW_PATH + '/')) {
+        const sha256 = url.pathname.slice(HOSTED_HARNESS_VIEW_PATH.length + 1);
+        if (!/^[a-f0-9]{64}$/.test(sha256)) throw fail('RUNTIME_HARNESS_VIEW_NOT_FOUND', 404);
+        let html;
+        try { html = await harnessView(sha256); }
+        catch { throw fail('RUNTIME_HARNESS_VIEW_UNAVAILABLE', 502); }
+        if (html === null) throw fail('RUNTIME_HARNESS_VIEW_NOT_FOUND', 404);
+        res.writeHead(200, ENGINE_VIEW_HEADERS);
+        res.end(req.method === 'HEAD' ? undefined : html);
+        return;
+      }
       const cancel = /^\/runs\/(run_[0-9a-f]{32})\/cancel$/.exec(url.pathname);
       const cancelResponse = /^\/v1\/responses\/([^/]+)\/cancel$/.exec(url.pathname);
       if (req.method === 'POST' && (cancel || cancelResponse)) {

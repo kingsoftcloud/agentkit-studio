@@ -1,16 +1,23 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { parseNativeJson } from '@kingsoftcloud/agentkit-harness-core';
+import { createNativeKernelPermitVerifier } from '@kingsoftcloud/agentkit-harness-node/native/kernel-permit';
+import { MANAGED_NATIVE_KERNEL_PATH as PATH } from '@kingsoftcloud/agentkit-harness-node/native/managed-kernel-http';
 import { engineServiceEndpoint, engineServiceFetch } from '../../providers/engine-service-client.mjs';
 
-const PATH = '/_agentkit/native-kernel/v1';
-const routes = new Set(['commands', 'status', 'events'].map(name => PATH + '/' + name));
+const routes = new Map([
+  [PATH + '/commands', { field: 'command' }],
+  [PATH + '/status', { field: 'query', operation: 'get_status' }],
+  [PATH + '/events', { field: 'subscription', operation: 'subscribe_events' }],
+]);
 const requestLimit = 2 * 1024 ** 2;
 const drainLimit = 4 * requestLimit;
 
-/** Forward the existing Server envelope unchanged. The Harness service
- * validates the permit; the Studio service credential is never exposed to
- * the caller and grants no authority to mint or modify a permit. */
-export function registerStudioManagedNativeRemote(ctx, { endpoint, token, caFile } = {}) {
+/** Admit the Server permit at the Studio boundary. Harness still verifies
+ * it and owns durable nonce consumption and command admission. */
+export function registerStudioManagedNativeRemote(ctx, { endpoint, token, caFile, target, verificationKeys,
+  platformApprovals = false } = {}) {
+  const verifier = createNativeKernelPermitVerifier({ target, verificationKeys, requireBoundApproval: platformApprovals });
   const origin = engineServiceEndpoint(endpoint, token);
   const fetchImpl = engineServiceFetch(endpoint, caFile);
   const lifetime = new AbortController();
@@ -36,7 +43,8 @@ export function registerStudioManagedNativeRemote(ctx, { endpoint, token, caFile
     try {
       signal.throwIfAborted();
       const path = request.url;
-      if (request.method !== 'POST' || !routes.has(path)) return fail(404, 'NATIVE_KERNEL_UNSUPPORTED');
+      const route = routes.get(path);
+      if (request.method !== 'POST' || !route) return fail(404, 'NATIVE_KERNEL_UNSUPPORTED');
       const chunks = [];
       let size = 0;
       if (Number(request.headers['content-length']) > drainLimit)
@@ -50,9 +58,20 @@ export function registerStudioManagedNativeRemote(ctx, { endpoint, token, caFile
         if (size <= requestLimit) chunks.push(chunk);
       }
       if (size > requestLimit) return fail(400, 'NATIVE_KERNEL_INVALID_REQUEST');
+      const bytes = Buffer.concat(chunks);
+      let envelope;
+      try {
+        envelope = parseNativeJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+        if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope))
+          return fail(400, 'NATIVE_KERNEL_INVALID_REQUEST');
+      } catch { return fail(400, 'NATIVE_KERNEL_INVALID_REQUEST'); }
+      const payload = envelope[route.field];
+      try { await verifier.verify(envelope.permit, payload, route.operation ?? payload?.command_type); }
+      catch { return fail(403, 'NATIVE_KERNEL_AUTHORIZATION_FAILED'); }
+      signal.throwIfAborted();
       timer = setTimeout(closed, 30000);
       upstream = await fetchImpl(origin + path, {
-        method: 'POST', redirect: 'error', signal, body: Buffer.concat(chunks),
+        method: 'POST', redirect: 'error', signal, body: bytes,
         headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
       });
       clearTimeout(timer);

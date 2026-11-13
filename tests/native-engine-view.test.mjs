@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { accessSync, constants, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
@@ -96,11 +96,17 @@ test('a completed run opens its host-bound application and rejects other entries
 
 const require = createRequire(import.meta.url);
 const browserPath = (() => { try { return require('playwright-core').chromium.executablePath(); } catch { return null; } })();
-const chrome = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', browserPath].find(path => { try { return path && readFileSync(path, { flag: 'r' }) && true; } catch { return false; } });
-const engineView = process.env.AGENTKIT_ENGINE_VIEW_FILE ? readFileSync(process.env.AGENTKIT_ENGINE_VIEW_FILE, 'utf8') : null;
+const configuredBrowser = process.env.AGENTKIT_NATIVE_TEST_CHROMIUM ?? process.env.KSADK_BROWSER_EXECUTABLE_PATH;
+const chrome = (configuredBrowser ? [configuredBrowser]
+  : [browserPath, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']).find(path => {
+  try { accessSync(path, constants.X_OK); return true; } catch { return false; }
+});
+const engineServer = import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server');
+const engineView = readFileSync(process.env.AGENTKIT_ENGINE_VIEW_FILE ?? new URL('../../dist/engine-view.html', engineServer), 'utf8');
+if (configuredBrowser || process.env.CI) assert.ok(chrome, 'Chromium must be installed for the engine view integration test');
 
 test('the renderer embeds the engine view in a sandboxed iframe and relays the run\'s events',
-  { skip: !chrome ? 'No installed browser' : !engineView ? 'engine view not built' : false, timeout: 60000 }, async t => {
+  { skip: !chrome && 'No installed browser', timeout: 60000 }, async t => {
     const dir = mkdtempSync(join(fileURLToPath(new URL('.', import.meta.url)), '.engine-view-ui-'));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     writeFileSync(join(dir, 'entry.mjs'), `

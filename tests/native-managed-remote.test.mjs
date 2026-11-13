@@ -37,6 +37,9 @@ test('Studio routes signed commands and resumable event delivery to the independ
     },
   };
   let engine = createEngineService(options), host;
+  let forwarded = 0;
+  const trackForwarding = service => service.server.on('request', () => { forwarded++; });
+  trackForwarding(engine);
   const dispose = [];
   t.after(async () => {
     for (const close of dispose.reverse()) close();
@@ -61,7 +64,8 @@ test('Studio routes signed commands and resumable event delivery to the independ
         return () => { route = undefined; };
       } } });
     },
-  }, { endpoint: 'http://127.0.0.1:' + port, token });
+  }, { endpoint: 'http://127.0.0.1:' + port, token, target,
+    verificationKeys: async () => new Map([['server', issuer.publicKeyPem]]) });
   host = createServer(route.handler);
   const origin = 'http://127.0.0.1:' + await listen(host) + route.path;
   const post = (path, body, signal = AbortSignal.timeout(8000)) => fetch(origin + '/' + path, {
@@ -109,7 +113,9 @@ test('Studio routes signed commands and resumable event delivery to the independ
   assert.equal((await post('commands?extra=1', {})).status, 404);
   assert.equal((await post('execution-grants/ensure', {})).status, 404);
   assert.equal(calls, 0);
+  assert.equal(forwarded, 0);
   const admitted = await send(input);
+  assert.equal(forwarded, 1);
   assert.equal(admitted.status, 202);
   const receipt = await admitted.json();
   const approval = await eventWhere('interaction.requested');

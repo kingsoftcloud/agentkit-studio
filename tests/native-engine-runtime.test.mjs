@@ -6,17 +6,17 @@ import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, statSync } fr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createNativeEngineRuntime, resolveEngineCommand } from '../src/providers/native-engine-runtime.mjs';
 
-const engineCommand = process.env.AGENTKIT_ENGINE_COMMAND;
-const engineArgs = process.env.AGENTKIT_ENGINE_ARGS;
+const installedEngine = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
+const engineCommand = process.env.AGENTKIT_ENGINE_COMMAND ?? process.execPath;
+const engineArgs = process.env.AGENTKIT_ENGINE_COMMAND ? process.env.AGENTKIT_ENGINE_ARGS : JSON.stringify([installedEngine]);
 const createTestService = async () => (await import(new URL('engine-service.mjs',
   process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER
     ? pathToFileURL(process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER)
     : import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server')))).createEngineService;
-const externalEngine = { skip: !engineCommand && 'Set AGENTKIT_ENGINE_COMMAND to exercise a separately installed engine' };
 
 const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
 const toolCall = (id, name, args) => [
@@ -57,7 +57,7 @@ async function setup(t, script) {
 }
 const collect = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks; };
 
-test('Studio sends an interjection to the original Run before the retry and commits it once', { ...externalEngine, timeout: 15000 }, async t => {
+test('Studio sends an interjection to the original Run before the retry and commits it once', { timeout: 15000 }, async t => {
   const f = await setup(t, []);
   const release = Promise.withResolvers();
   const firstRequest = Promise.withResolvers();
@@ -97,7 +97,7 @@ test('Studio sends an interjection to the original Run before the retry and comm
   assert.equal(events.filter(({ event }) => event.kind === 'effect.prepared' && event.retry === true).length, 1);
 });
 
-test('Studio carries a real model retry and a terminal 400 without confusing the two', externalEngine, async t => {
+test('Studio carries a real model retry and a terminal 400 without confusing the two', async t => {
   const requestId = '65cd9c89-0944-4a65-ac03-ec5eff3e17cf';
   const f = await setup(t, [
     toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'saved\n' }),
@@ -127,7 +127,7 @@ test('Studio carries a real model retry and a terminal 400 without confusing the
   assert.doesNotMatch(JSON.stringify(chunks), /正在重试|private-id|private-gateway-body|private-provider-code|studio-fixture-key/);
 });
 
-test('the engine keeps provider cache hits and reasoning separate from the already-inclusive token totals', externalEngine, async t => {
+test('the engine keeps provider cache hits and reasoning separate from the already-inclusive token totals', async t => {
   const answer = final('Completed.');
   answer.at(-1).usage = { ...usage, prompt_tokens_details: { cached_tokens: 7 },
     completion_tokens_details: { reasoning_tokens: 2 } };
@@ -148,7 +148,7 @@ test('an invalid executable fails initialization without exiting Studio', async 
     modelProvider: { baseUrl: 'http://127.0.0.1:1', apiKey: 'fixture' } })), { code: 'NATIVE_ENGINE_UNAVAILABLE' });
 });
 
-test('consecutive identical inputs without a turn ID start different Runs', externalEngine, async t => {
+test('consecutive identical inputs without a turn ID start different Runs', async t => {
   const f = await setup(t, [final('Done.')]);
   const runs = [];
   for (let i = 0; i < 2; i++) {
@@ -158,7 +158,7 @@ test('consecutive identical inputs without a turn ID start different Runs', exte
   assert.notEqual(runs[0], runs[1]);
 });
 
-test('an approved turn writes the file and streams engine progress as ordinary runtime chunks', externalEngine, async t => {
+test('an approved turn writes the file and streams engine progress as ordinary runtime chunks', async t => {
   const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Created out.txt.')]);
   const approvals = [];
   const chunks = await collect(f.runtime.stream({ ...f.options, requestApproval: async info => { approvals.push(info); return 'allowed-once'; } }));
@@ -178,7 +178,7 @@ test('an approved turn writes the file and streams engine progress as ordinary r
   assert.ok(!JSON.stringify(chunks).includes('studio-fixture-key'));
 });
 
-test('a turn without an approval seat cannot write, and a declined approval leaves the workspace untouched', externalEngine, async t => {
+test('a turn without an approval seat cannot write, and a declined approval leaves the workspace untouched', async t => {
   for (const requestApproval of [undefined, async () => 'denied']) {
     const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('The write was not permitted.')]);
     const chunks = await collect(f.runtime.stream({ ...f.options, ...(requestApproval ? { requestApproval } : {}) }));
@@ -201,7 +201,7 @@ test('configuration decides which engine runs; missing prerequisites fail with t
   assert.equal(f.model.requests.length, 0);
 });
 
-test('Studio resource tools run through Studio\'s own handler, with engine-refused names aliased and mapped back', externalEngine, async t => {
+test('Studio resource tools run through Studio\'s own handler, with engine-refused names aliased and mapped back', async t => {
   const longName = 'mcp__knowledge-base.prod__search_documents_by_semantic_similarity_v2';
   const f = await setup(t, []);
   const handled = [];
@@ -233,7 +233,7 @@ test('Studio resource tools run through Studio\'s own handler, with engine-refus
   assert.deepEqual(chunks.filter(chunk => chunk.type === 'text'), [{ type: 'text', text: 'Refunds are accepted within 30 days.' }]);
 });
 
-test('the engine view is fetched once per build, cached by hash, and each engine event is surfaced for the Session', externalEngine, async t => {
+test('the engine view is fetched once per build, cached by hash, and each engine event is surfaced for the Session', async t => {
   const f = await setup(t, [toolCall('call_1', 'write_workspace_file', { path: 'out.txt', content: 'hi\n' }), final('Created out.txt.')]);
   const chunks = await collect(f.runtime.stream({ ...f.options, requestApproval: async () => 'allowed-once' }));
   const engine = chunks.find(chunk => chunk.type === 'engine');
@@ -252,7 +252,7 @@ test('the engine view is fetched once per build, cached by hash, and each engine
   for (const bad of ['', 'abc', '0'.repeat(64)]) assert.equal(nativeEngineViewResponse(new Request(`http://studio/x?sha256=${bad}`), f.runtime).status, 404);
 });
 
-test('the Session permission mode decides writes when no approval seat exists, and history reaches the engine', externalEngine, async t => {
+test('the Session permission mode decides writes when no approval seat exists, and history reaches the engine', async t => {
   const { engineConversation } = await import('../src/providers/native-engine-runtime.mjs');
   assert.deepEqual(engineConversation([{ role: 'user', content: 'Fix calc.py' }, { role: 'assistant', content: [{ type: 'text', text: 'Failed.' }] },
     { role: 'user', source: { kind: 'notice' }, content: 'background done' }, { role: 'tool', content: 'x' }, { role: 'user', content: 'retry' }], 'retry'),
@@ -267,7 +267,7 @@ test('the Session permission mode decides writes when no approval seat exists, a
   }
 });
 
-test('an independent service honors full Session access with a strict Agent policy', externalEngine, async t => {
+test('an independent service honors full Session access with a strict Agent policy', async t => {
   const createEngineService = await createTestService();
   const token = 'fixture-studio-permission-token';
   const contract = 'agentkit.native-agent-policy/v1';
@@ -298,7 +298,7 @@ test('an independent service honors full Session access with a strict Agent poli
   }
 });
 
-test('only a negotiated image-capable engine receives current-turn image input', externalEngine, async t => {
+test('only a negotiated image-capable engine receives current-turn image input', async t => {
   const f = await setup(t, [final('Image received.')]);
   const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
   const inputImages = [{ type: 'image_url', image_url: { url } }];
@@ -429,7 +429,7 @@ test('turn cancellation stops reconnecting and authorization failures are not re
   } finally { await engine.close(); await forbidden.close(); }
 });
 
-test('Studio follows the same Run after service replacement without rerunning a committed tool', { ...externalEngine, timeout: 15000 }, async t => {
+test('Studio follows the same Run after service replacement without rerunning a committed tool', { timeout: 15000 }, async t => {
   const f = await setup(t, []);
   const createEngineService = await createTestService();
   const reached = Promise.withResolvers(), release = Promise.withResolvers();
@@ -486,7 +486,7 @@ test('Studio follows the same Run after service replacement without rerunning a 
   assert.ok(f.model.requests.at(-1).messages.some(message => message.role === 'tool'));
 });
 
-test('an uncertain bound A2A Send pauses the independent Run without a model retry', externalEngine, async t => {
+test('an uncertain bound A2A Send pauses the independent Run without a model retry', async t => {
   const f = await setup(t, [toolCall('reused-model-id', 'call_a2a_agent', { agent: 'research', message: 'check' })]);
   const createEngineService = await createTestService();
   const token = 'fixture-studio-engine-effects-token';

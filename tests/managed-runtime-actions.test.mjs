@@ -127,11 +127,20 @@ test('Hosted UI gets the same safe Harness presentation during a turn and on his
   const row = history.Events.find(event => event.EventType === 'harness_view');
   assert.equal(row.InvocationId, frame.run_id);
   assert.deepEqual(row.Content.harness_view, frame.harness_view);
-  const view = await fetch(api.origin + '/_ksadk/harness/v1/views/' + sha256);
+  const viewPath = api.origin + '/_ksadk/harness/v1/views/';
+  const headers = { authorization: 'Bearer ' + token,
+    'x-agentengine-target-version-id': runtime.identity.versionId,
+    'x-agentengine-manifest-sha256': runtime.identity.manifestSha256 };
+  assert.equal((await fetch(viewPath + sha256)).status, 401);
+  assert.equal((await fetch(viewPath + sha256, { headers: { authorization: headers.authorization } })).status, 409);
+  const view = await fetch(viewPath + sha256, { headers });
   assert.equal(view.status, 200);
   assert.match(view.headers.get('content-security-policy'), /sandbox allow-scripts/);
   assert.match(await view.text(), /Harness view/);
-  assert.equal((await fetch(api.origin + '/_ksadk/harness/v1/views/' + 'c'.repeat(64))).status, 404);
+  const head = await fetch(viewPath + sha256, { method: 'HEAD', headers });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal((await fetch(viewPath + 'c'.repeat(64), { headers })).status, 404);
 });
 
 test('managed run logs use public session and invocation IDs with the deployed version', async t => {

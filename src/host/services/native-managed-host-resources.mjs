@@ -17,10 +17,12 @@ const buildMatches = (binding, revision) => binding.agentRevision === revision.a
 
 /** Serve the resources of the exact persisted Session/Build admitted by the
  * independent engine. The ticket carries identity, not resource credentials. */
-export function registerStudioManagedHostResources(ctx, { scope, token, resolveBinding, resourceAdapters, sessionDelivery, createA2aPort } = {}) {
+export function registerStudioManagedHostResources(ctx, { scope, token, resolveBinding, resourceAdapters,
+  sessionDelivery, createA2aPort, approvalAuthority = 'studio-policy' } = {}) {
   invariant(object(scope) && Object.keys(scope).sort().join(',') === 'agentId,tenantId,userId,workspaceId'
     && Object.values(scope).every(text) && typeof token === 'string' && token.length >= 32
-    && typeof resolveBinding === 'function' && resourceAdapters, 'MANAGED_HOST_RESOURCE_CONFIG_INVALID');
+    && typeof resolveBinding === 'function' && resourceAdapters
+    && ['studio-policy', 'trusted-engine'].includes(approvalAuthority), 'MANAGED_HOST_RESOURCE_CONFIG_INVALID');
   scope = Object.freeze({ ...scope });
   const scopeBytes = canonical(scope), lifetime = new AbortController(), a2aPorts = new Map();
   const sign = value => createHmac('sha256', token).update(value).digest('base64url');
@@ -138,7 +140,8 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     const claims = open(body.ref);
     invariant(claims.sessionId === sessionId && claims.runId === runId && text(callId) && text(name) && object(args)
       && (effect === undefined || object(effect) && text(effect.operationKey)
-        && typeof effect.approved === 'boolean' && typeof effect.canRequestApproval === 'boolean'), 'MANAGED_HOST_TOOL_INVALID');
+        && typeof effect.approved === 'boolean' && typeof effect.canRequestApproval === 'boolean'
+        && !(effect.approved && effect.canRequestApproval)), 'MANAGED_HOST_TOOL_INVALID');
     const binding = await bindingFor(sessionId, signal);
     if (!buildMatches(binding, claims)) return { status: 'error', content: { code: 'managed_host_build_changed', executed: false } };
     const resources = await catalog(binding, claims.toolCatalog, { a2a: claims.a2a === true, signal });
@@ -154,15 +157,20 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     const session = current.agent.session;
     const needsApproval = () => policy === 'ask' || !readOnly
       && !['workspace-write', 'danger-full-access'].includes(current.permissionMode?.());
-    if (policy === 'deny' || !effect?.approved && !effect?.canRequestApproval && needsApproval())
+    // This callback authenticates the service, not an individual user
+    // decision. Only a deployment that owns both services may delegate it.
+    const delegatedApproval = approvalAuthority === 'trusted-engine' && effect?.approved === true;
+    if (policy === 'deny' || needsApproval() && !delegatedApproval) {
+      if (policy !== 'deny' && approvalAuthority === 'trusted-engine' && effect?.canRequestApproval)
+        return { status: 'approval_required' };
       return { status: 'error', content: { code: 'policy_denied', executed: false } };
-    if (!effect?.approved && needsApproval()) return { status: 'approval_required' };
+    }
     if (route._source === 'a2a') {
       return resources.port.execute(route.name, args, { name: route.name, arguments: args,
         agent: current.agent, callId: nativeHostToolCallId(runId, effect?.operationKey ?? callId), signal,
         assertManagedAuthority() {
           signal.throwIfAborted();
-          invariant(current.agent.session === session && session.id === sessionId && (effect?.approved || !needsApproval()),
+          invariant(current.agent.session === session && session.id === sessionId && (delegatedApproval || !needsApproval()),
             'MANAGED_HOST_TOOL_AUTHORITY_CHANGED');
         } });
     }
