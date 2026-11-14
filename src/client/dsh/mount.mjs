@@ -1,7 +1,6 @@
 import { selectCloudPermissionPresentation } from './cloud-permission.mjs';
 import { codexToolDefinition } from './codex-tool.mjs';
 import { mountA2aObservation } from './a2a-observation.mjs';
-import { mountNativeEngineView } from './native-engine-view.mjs';
 import { HARNESS_SERVICE_PRESET_SUFFIX } from '../../harness-service-preset.mjs';
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_DEFAULT_MODEL_SETTINGS_NS, DSH_MODEL_CREDENTIAL, modelCredentialName } from './model-bridge.mjs';
 import { createNativeSessionBinding, selectSessionModel } from './session-entry.mjs';
@@ -30,7 +29,9 @@ export function mountStudio(ctx, app) {
   ctx.effect(() => authoring.mount(), 'agentkit-studio:authoring-owner');
   ctx.uiConversation.events.register(codexToolDefinition);
   ctx.effect(() => mountA2aObservation(ctx, { React }).dispose, 'agentkit-studio: A2A observation view');
-  ctx.effect(() => mountNativeEngineView(ctx, { React }).dispose, 'agentkit-studio: Native engine task view');
+  // The conversation presentation slot owns Native turns as a whole. Adding
+  // an engine-event iframe here renders a second process view inside DSH's
+  // default transcript (and repeats its status, usage and error surfaces).
   // Settings owns first-run coordination. Registering here makes the
   // guide visible in the real DSH onboarding path and gives the shell a
   // stable entry it can reopen after the user chose “later”.

@@ -7,6 +7,13 @@ import { readClientSource } from './helpers/client-source.mjs';
 import { mountStudio } from '../src/client/dsh/mount.mjs';
 import React from 'react';
 import * as ReactDOM from 'react-dom';
+import { requireNativeConversationPresentation } from '../src/client/dsh/task-timeline.mjs';
+
+test('Native UI refuses a Host without the whole-conversation presentation seam', () => {
+  for (const slots of [{}, { snapshot: () => [] }, { snapshot: () => [{ type: 'slot', name: 'conversation.chat', kind: 'single' }] }])
+    assert.throws(() => requireNativeConversationPresentation(slots), { code: 'STUDIO_NATIVE_PRESENTATION_UNAVAILABLE' });
+  assert.doesNotThrow(() => requireNativeConversationPresentation({ snapshot: name => [{ type: 'slot', name, kind: 'single' }] }));
+});
 
 test('Studio disables the independent DSH account welcome and recharge flow', async () => {
   const entries = parse(await readFile(resolve(import.meta.dirname, '../cordis.patch.yml'), 'utf8'));
@@ -77,6 +84,7 @@ test('parent Studio mounting preserves local composer services and never install
     effect: noop, on: noop, inject(_dependencies, apply) { return apply(ctx); },
     uiConversation: { events: { register: noop } },
     slots: {
+      snapshot: name => [{ type: 'slot', name, kind: 'single' }],
       inject(name, register) { injected.push(name); return register(); },
       register(options) { registered.push(options); return noop; },
     },
@@ -96,6 +104,7 @@ test('parent Studio mounting preserves local composer services and never install
   assert.equal(ctx.conversation, composer);
   assert.equal(ctx.commandUi, commandUi);
   assert.equal(ctx.sessions, sessions);
+  assert.equal(registered.some(entry => entry.id === 'agentkit.native-engine-view'), false);
 });
 
 test('model settings keep multiple providers and profiles independently configurable', () => {

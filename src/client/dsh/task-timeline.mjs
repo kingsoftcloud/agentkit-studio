@@ -35,6 +35,7 @@ async function resolveWebDelivery(ctx, sessionId, delivery, signal) {
 
 /** Native owns task interaction; Studio supplies its product preset identity. */
 export function installTaskTimeline(ctx, options) {
+  requireNativeConversationPresentation(ctx.slots);
   return install(ctx, { ...options, loadDeliveryEvidence, resolveWebDelivery: (...args) => resolveWebDelivery(ctx, ...args),
     isIndependentPreset: presetId => typeof presetId === 'string' && presetId.endsWith(HARNESS_SERVICE_PRESET_SUFFIX),
     resolveAgentFromPreset: (presetId, agents) => {
@@ -43,4 +44,14 @@ export function installTaskTimeline(ctx, options) {
       throw Error('当前会话的智能体配置暂不可用，请重试读取');
     return id;
   } });
+}
+
+/** The chat dependency is loaded before Studio. Never silently run the DSH
+ * transcript when an old compiled Host lacks the Native presentation seam. */
+export function requireNativeConversationPresentation(slots) {
+  const topology = typeof slots.snapshot === 'function' ? slots.snapshot('conversation.chat.presentation') : [];
+  if (!topology.some(node => node.type === 'slot' && node.name === 'conversation.chat.presentation' && node.kind === 'single'))
+    throw Object.assign(new Error('当前宿主缺少 Native 会话展示接口，请更新 Studio 宿主。'), {
+      code: 'STUDIO_NATIVE_PRESENTATION_UNAVAILABLE',
+    });
 }
