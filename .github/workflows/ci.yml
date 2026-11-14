@@ -59,6 +59,36 @@ jobs:
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"
       - run: bash ci/run-public-gate.sh
+  native-engine-integration:
+    name: native-engine-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: kingsoftcloud/ksadk-harness
+          ref: 5f196ee3a8aeea0bbdb2fdc34c2d3128246839d5
+          path: .ci-harness
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - name: Build independent Harness
+        working-directory: .ci-harness
+        run: |
+          npm ci
+          npm run build
+      - name: Verify service approvals and acceptance
+        env:
+          AGENTKIT_STUDIO_TEST_ENGINE_SERVER: ${{ github.workspace }}/.ci-harness/packages/agentkit-harness-node/src/native/engine-server.mjs
+        run: node --test tests/native-engine-runtime.test.mjs tests/native-host-approval.test.mjs
   patched-host:
     name: patched-dsh-host
     runs-on: ${{ matrix.os }}

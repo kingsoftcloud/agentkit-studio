@@ -22,6 +22,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
 import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
 import { nativeEngineApprovalReply } from './native-host-approval.mjs';
+import { nativeEngineVerification } from './native-engine-verification.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
 export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
@@ -136,9 +137,13 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const policy = serviceEndpoint ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !serviceEndpoint ? undefined : async request => {
-        const responder = interactive ? requestApproval : request.requiresUserApproval ? requestPolicyApproval : null;
-        const explain = request.requiresUserApproval === true && !request.childRunId;
-        if (typeof responder !== 'function') return request.requiresUserApproval ? nativeEngineApprovalReply('unavailable', explain) : standing;
+        if (serviceEndpoint && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
+          && !request.requiresUserApproval && !request.childRunId) return 'allow';
+        const requiresApproval = request.requiresUserApproval === true || serviceEndpoint && sandbox === 'workspace-write'
+          && (request.childRunId || ['run_command', 'stop_command', 'delete_workspace_file', 'rewind_workspace_files'].includes(request.tool));
+        const responder = interactive ? requestApproval : requiresApproval ? requestPolicyApproval : null;
+        const explain = requiresApproval && !request.childRunId;
+        if (typeof responder !== 'function') return requiresApproval ? nativeEngineApprovalReply('unavailable', explain) : standing;
         const tool = hostTools.originalName(request.tool ?? 'tool');
         try {
           const outcome = await responder({ toolName: `native/${tool}`,
@@ -163,6 +168,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       };
       let diagnostics = '';
       const runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
+      const verification = serviceEndpoint ? nativeEngineVerification({ objective, runId }) : null;
       const onReadToolReceipt = nativeHostReceiptHandler && ((request, receiptSignal) => {
         if (request?.runId !== runId) return {};
         return nativeHostReceiptHandler({ ...request, name: hostTools.originalName(request.name),
@@ -170,12 +176,13 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       });
       const engine = serviceEndpoint ? connectEngineService({ endpoint: serviceEndpoint,
         token: env.AGENTKIT_ENGINE_SERVICE_TOKEN, sessionId: createHash('sha256').update(session).digest('hex'),
-        runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, requiredToolPolicy: policy?.contract,
+        runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify, requiredToolPolicy: policy?.contract,
         requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: serviceFetch }) : spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
         env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
           AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
           ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
-          ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}) },
+          ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
+          ...(env.KSADK_MODEL_COMPAT_RULE ? { AGENTKIT_ENGINE_MODEL_COMPAT_RULE: env.KSADK_MODEL_COMPAT_RULE } : {}) },
         onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
       let cancellation;
       const abort = () => { cancellation ??= engine.cancel(runId).catch(() => {}); };
@@ -183,7 +190,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let hello;
         try { hello = await engine.initialize(); }
         catch (error) {
-          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE'].includes(error.code)) throw error;
+          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE', 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE'].includes(error.code)) throw error;
           throw failure('NATIVE_ENGINE_UNAVAILABLE', `Native 引擎启动失败：${error.message}`);
         }
         const offeredTools = hello.capabilities?.hostToolReceipts === ENGINE_TOOL_RECEIPT ? dynamicTools
@@ -207,7 +214,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         // The remote start can be committed before its response reaches Studio.
         if (serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
         const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
-          ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}), ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
+          ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
+          ...(verification ? { hostVerification: verification.definition } : {}),
+          ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
         if (!serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
         // A remote Run retains its original view after an engine upgrade.

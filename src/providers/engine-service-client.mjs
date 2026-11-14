@@ -10,6 +10,8 @@ const RETRYABLE_RPC = new Set(['initialize', 'run/start', 'run/status', 'run/eve
 const ATTACHED_RPC = new Set(['run/start', 'run/status', 'run/events', 'run/approve', 'run/guide']);
 const RETRYABLE_SOCKET_ERRORS = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT']);
 export const ENGINE_TOOL_RECEIPT = 'agentkit.tool-receipt-observation/v1';
+export const ENGINE_VERIFICATION = 'agentkit.engine-verification/v1';
+export const ENGINE_COMMAND_VERIFIER = 'engine.workspace-command-receipt';
 
 export function engineServiceEndpoint(endpoint, token) {
   const url = new URL(endpoint);
@@ -54,7 +56,7 @@ export async function fetchEngineServiceView(endpoint, token, sha256, fetchImpl 
 }
 
 /** Host-side network transport for agentkit.engine/v1. */
-export function connectEngineService({ endpoint, token, sessionId, runId, onApproveTool, onCallTool, onReadToolReceipt,
+export function connectEngineService({ endpoint, token, sessionId, runId, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal,
   requiredToolPolicy, requiredToolEffects, observeOnly = false, runSignal, fetchImpl = fetch }) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('engine_service_binding_invalid');
   const root = engineServiceEndpoint(endpoint, token) + '/v1/sessions/' + sessionId + '/';
@@ -64,7 +66,8 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
   const initialization = { protocolVersions: [ENGINE_PROTOCOL], host: { name: 'agentkit-studio', ...(observeOnly ? { observeOnly } : {}) },
     services: { approvals: Boolean(onApproveTool), durableApprovals: Boolean(onApproveTool), tools: Boolean(onCallTool),
       ...(requiredToolEffects ? { toolEffects: 'agentkit.engine-host-tool-effect/v1' } : {}),
-      ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}) } };
+      ...(onReadToolReceipt ? { toolReceipts: ENGINE_TOOL_RECEIPT } : {}),
+      ...(onVerifyGoal ? { verification: ENGINE_VERIFICATION } : {}) } };
   const requestPath = runId ? 'host-requests?' + new URLSearchParams({ runId, receiver: randomUUID() }) : 'host-requests';
   // One callback execution per frame for this attached Run. A transport
   // retry may resend the already computed reply, never rerun the effect.
@@ -134,7 +137,11 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
       if (requiredToolEffects && result.capabilities?.hostToolEffects !== initialization.services.toolEffects)
         throw Object.assign(new Error('当前 Harness 服务不支持已绑定工具的持久执行回执。'),
           { code: 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE' });
-      if ((onCallTool || onReadToolReceipt || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
+      if (onVerifyGoal && (result.capabilities?.hostVerification !== ENGINE_VERIFICATION
+        || result.capabilities?.workspaceCommandVerification !== ENGINE_COMMAND_VERIFIER))
+        throw Object.assign(new Error('当前 Harness 服务不支持正式验收回执。'),
+          { code: 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE' });
+      if ((onCallTool || onReadToolReceipt || onVerifyGoal || onApproveTool && result.capabilities?.approvals !== 'durable') && !poll)
         poll = pollHost().catch(() => { poll = undefined; });
       return result;
     }).finally(() => { initializing = null; });
@@ -176,6 +183,9 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     } else if (frame.method === 'host/callTool' && onCallTool) {
       try { envelope.result = await onCallTool(frame.params); }
       catch { envelope.result = { status: frame.params?.effect ? 'uncertain' : 'error', content: { code: 'host_tool_failed' } }; }
+    } else if (frame.method === 'host/verifyGoal' && onVerifyGoal) {
+      try { envelope.result = await onVerifyGoal(frame.params); }
+      catch { envelope.error = { code: -32603, message: 'Host verification unavailable' }; }
     } else if (frame.method === 'host/readToolReceipt' && onReadToolReceipt) {
       try {
         const expiresIn = frame.expiresAt - Date.now();

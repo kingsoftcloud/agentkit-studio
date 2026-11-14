@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createNativeEngineRuntime, resolveEngineCommand } from '../src/providers/native-engine-runtime.mjs';
+import { nativeEngineVerification } from '../src/providers/native-engine-verification.mjs';
 
 const installedEngine = fileURLToPath(import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server'));
 const engineCommand = process.env.AGENTKIT_ENGINE_COMMAND ?? process.execPath;
@@ -311,6 +312,79 @@ test('only a negotiated image-capable engine receives current-turn image input',
   assert.equal(user.content.find(part => part.type === 'image_url')?.image_url.url, url);
   assert.doesNotMatch(JSON.stringify(chunks), /data:image/);
 });
+
+test('Workspace Write auto-allows scoped writes and read-only commands, but prompts for a shell mutation', {
+  skip: !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER && 'requires the matching Harness review build',
+}, async t => {
+  const f = await setup(t, [
+    toolCall('write', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
+    toolCall('read', 'run_command', { command: 'cat out.txt' }),
+    toolCall('shell', 'run_command', { command: 'printf changed > side.txt' }),
+    toolCall('blocked', 'run_command', { command: 'rm -r scratch' }),
+    final('Done.'),
+  ]);
+  const runtime = await serviceRuntime(t, f);
+  const approvals = [];
+  const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write',
+    requestApproval: async request => { approvals.push(request.toolName); return 'allowed-once'; } }));
+  assert.deepEqual(approvals, ['native/run_command']);
+  assert.equal(readFileSync(join(f.cwd, 'out.txt'), 'utf8'), 'fixture');
+  assert.equal(readFileSync(join(f.cwd, 'side.txt'), 'utf8'), 'changed');
+  const blocked = chunks.find(chunk => chunk.event?.kind === 'tool.completed' && chunk.event?.callId === 'blocked')?.event;
+  assert.equal(blocked.result.error_type, 'command_policy_blocked');
+  assert.equal(blocked.result.executed, false);
+  assert.match(blocked.result.finding.detail, /blocked by the command policy/);
+  assert.equal(chunks.some(chunk => chunk.event?.kind === 'approval.requested' && chunk.event?.callId === 'blocked'), false);
+});
+
+test('Studio verifies only an explicit acceptance command on the delivered workspace revision', {
+  skip: !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER && 'requires the matching Harness review build',
+}, async t => {
+  for (const stale of [false, true]) {
+    const f = await setup(t, [
+      toolCall('write', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
+      toolCall('test', 'run_command', { command: 'test -f out.txt' }),
+      ...(stale ? [toolCall('late', 'write_workspace_file', { path: 'late.txt', content: 'unverified change' })] : []),
+      final('Done.'),
+    ]);
+    const runtime = await serviceRuntime(t, f);
+    const chunks = await collect(runtime.stream({ ...f.options, sandbox: 'workspace-write',
+      requestPolicyApproval: async () => 'allowed-once',
+      input: 'Create out.txt.\n验收命令：`test -f out.txt`' }));
+    const terminal = chunks.find(chunk => chunk.event?.kind === 'run.terminal')?.event;
+    assert.equal(terminal?.status, stale ? 'blocked' : 'verified', JSON.stringify(terminal));
+    assert.equal(terminal?.reason, stale ? 'required_acceptance_blocked' : 'required_acceptance_verified');
+  }
+});
+
+test('acceptance ignores unrelated success and rejects failed or stale matching receipts', () => {
+  const objective = 'Create out.txt.\nAcceptance command: `node test.mjs`';
+  const verifier = nativeEngineVerification({ objective, runId: 'fixture' });
+  assert.equal(nativeEngineVerification({ objective: 'Run node test.mjs', runId: 'fixture' }), null);
+  const receipt = { eventId: 'receipt', status: 'ok', call: { name: 'run_command', arguments: { command: 'node test.mjs' } },
+    content: { status: 'completed', evidence_incomplete: false, exit_code: 0 },
+    workspaceChangeObservation: { status: 'captured', revision: 'current' } };
+  const check = calls => verifier.verify({ contract: verifier.definition.contract, definition: verifier.definition,
+    runId: 'fixture', goal: objective, workspaceRevision: 'current', operationKey: 'verify', inputDigest: 'input', evidence: { calls } });
+  assert.equal(check([receipt]).status, 'passed');
+  assert.equal(check([{ ...receipt, content: { ...receipt.content, exit_code: 1 } }, receipt]).status, 'failed');
+  assert.equal(check([{ ...receipt, workspaceChangeObservation: { status: 'captured', revision: 'previous' } }]).status, 'blocked');
+  assert.equal(check([{ ...receipt, call: { ...receipt.call, arguments: { command: 'true' } } }]).status, 'blocked');
+});
+
+async function serviceRuntime(t, f) {
+  const createEngineService = await createTestService();
+  const token = 'fixture-studio-service-approval-token';
+  const service = createEngineService({ token, startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
+    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY' },
+    scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, env: { MODEL_KEY: 'fixture-key' } });
+  t.after(() => service.close());
+  await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+  return createNativeEngineRuntime({ stateRoot: join(f.cwd, '..', 'studio-state'), env: {
+    AGENTKIT_ENGINE_SERVICE_URL: 'http://127.0.0.1:' + service.server.address().port,
+    AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd,
+  } });
+}
 
 test('reconnecting an active Run refuses a replacement service that lacks its tool policy', async () => {
   const { connectEngineService } = await import('../src/providers/engine-service-client.mjs');
