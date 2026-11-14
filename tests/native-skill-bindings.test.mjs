@@ -103,7 +103,8 @@ test('Native Frozen export/import and actual preset admission preserve multiple 
   t.after(() => admission.dispose());
   await admission.ensure(agentId);
   const config = registered[0].plugins.find(item => item.id === 'studio-runtime').config;
-  assert.equal(config.nativeEngineContract, native);
+  assert.equal(config.runtime, 'native-engine');
+  assert.equal(config.nativeEngineContract, undefined);
   assert.deepEqual(config.skillDefinitions.map(item => item.name), ['direct', 'first', 'second']);
   assert.deepEqual(loads, ['direct', 'first', 'second']);
   for (const definition of config.skillDefinitions) assert.ok(definition.path.startsWith(target));

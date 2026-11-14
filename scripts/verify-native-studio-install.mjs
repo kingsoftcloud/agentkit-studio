@@ -1,6 +1,6 @@
 /** Fresh installation with lifecycle scripts and Native components.
  * --host mounts the installed Host, checks DSH/Codex builtin pipelines and
- * deterministic Native full turns across restart. Real models/Codex CLI and
+ * the independent engine package boundary. Real models/Codex CLI and
  * complete product acceptance remain separate. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -68,8 +68,11 @@ const Harness = await loadNative('sqlite-store');
 const { SqliteNativeMemoryProvider } = await loadNative('memory-store');
 const { nativeUserMemoryCandidate, memoryDigest, nativeMemoryScopeBindings } = await loadNative('memory-candidate');
 const { checkPythonSyntax } = await loadNative('python-syntax');
-import { createStudioNativeHarness } from './node_modules/@kingsoftcloud/agentkit-studio/src/host/services/native-harness.mjs';
-assert.equal(typeof Studio.apply,'function'); assert.equal(typeof createStudioNativeHarness,'function');
+import { existsSync } from 'node:fs';
+import { createNativeEngineRuntime } from './node_modules/@kingsoftcloud/agentkit-studio/src/providers/native-engine-runtime.mjs';
+assert.equal(typeof Studio.apply,'function');
+assert.equal(existsSync('./node_modules/@kingsoftcloud/agentkit-studio/src/host/services/native-harness.mjs'),false);
+assert.equal(typeof createNativeEngineRuntime({stateRoot:'./studio-state',env:{}}).stream,'function');
 const scope={tenantId:'local',workspaceId:'fresh',agentId:'agent',userId:'user'};
 const store=new Harness.SqliteRunStore('./runs.sqlite'); store.close();
 const memory=new SqliteNativeMemoryProvider('./memory.sqlite',{principal:scope});
@@ -83,7 +86,7 @@ await writeFile(join(directory, 'verify.mjs'), verify);
 const proof = spawn(process.execPath, [join(directory, 'verify.mjs')], { cwd: directory, env, stdio: 'inherit', timeout: 30000 });
 assert.equal(await new Promise((resolve, reject) => { proof.once('error', reject); proof.once('exit', resolve); }), 0);
 if (values.host) {
-  for (const [script, flags] of [['verify-studio-node-builtins.mjs', []], ['verify-studio-native-harness.mjs', ['--mount-host']]]) {
+  for (const [script, flags] of [['verify-studio-node-builtins.mjs', []]]) {
     const host = spawn(process.execPath, [fileURLToPath(new URL(script, import.meta.url)),
       '--installation', directory, '--archive', archive, '--keep', ...flags], { cwd: directory, env, stdio: 'inherit', timeout: 120000 });
     assert.equal(await new Promise((resolve, reject) => { host.once('error', reject); host.once('exit', resolve); }), 0);
@@ -92,7 +95,7 @@ if (values.host) {
 await writeFile(join(directory, 'proof.json'), JSON.stringify({ format: 'agentkit.native-node-install-proof/v1', passed: true, node: process.version, directory, archive,
   archiveSha256, lockSha256: digest(await readFile(join(directory, 'package-lock.json'))),
   packageCount: Object.keys(lock.packages).length, scope: values.host
-    ? 'fresh Host dependency install, mount, Native full turns and restart, DSH/Codex builtin pipeline and cold restore; no real model/CLI or full product acceptance'
+    ? 'fresh Host dependency install, mount, DSH/Codex builtin pipeline and independent engine package boundary; no real model/CLI or full product acceptance'
     : 'fresh install and component loading; full mounted Host execution pending', installScripts: true, host: values.host,
   ...(maintained ? { maintainedHost: maintained.evidence } : {}) }, null, 2));
 console.log(JSON.stringify({ passed: true, directory, packageCount: Object.keys(lock.packages).length }));

@@ -36,12 +36,12 @@
 | --- | --- |
 | 本地独立进程 | `AGENTKIT_ENGINE_COMMAND` 指向单独安装的 `agentkit-engine`。Studio 走 `agentkit.engine/v1`。 |
 | 独立服务 | 本地或托管 Studio 配置 `AGENTKIT_ENGINE_SERVICE_URL`、`AGENTKIT_ENGINE_SERVICE_TOKEN` 和 `AGENTKIT_ENGINE_SERVICE_WORKSPACE` 后，Studio 通过协议连接。模型凭据只配置到 Harness。 |
-| 本地会话切换 | 配置服务后，普通新建 Harness 会话登记独立预设并绑定服务工作区。已有会话按原预设恢复。 |
+| 本地会话切换 | Studio 按会话持久化的工作区目录连接该项目的独立服务。未绑定的工作区会提示配置。 |
 | 审批与恢复 | 通过原 Run 的 `run/status` 和 `run/approve` 恢复工具及子任务审批。引擎替换后继续使用原账本。 |
 | 本地 A2A | 独立服务将已绑定的 A2A 工具交回当前 Studio 会话的 ToolRegistry。发送沿用原有的 A2A 授权与持久账本。发送结果未知时暂停 Run，原远端任务仍可通过 Studio A2A 控制查询。 |
 | 本地团队 | 新团队的 Harness 角色使用独立服务。各成员保留自己的会话、模型绑定与工作区，团队消息和任务板沿用 DSH 的权限与持久记录。已建立的团队按原预设恢复。 |
 | 展示 | 引擎交付带内容哈希的 `agentkit.engine-view/v1`。Studio 和 Hosted UI 在沙箱 iframe 中展示，历史使用原 Run 的视图版本。 |
-| 历史兼容 | 未配置独立服务的旧 `harness` 仍使用已有的 0.0.17 SDK。旧路径保留原策略与状态格式。独立服务的预设、提示词和自适应输出额度由引擎维护。 |
+| 打包 | Studio 保留工具适配和 UI 的 npm 依赖。执行入口由独立服务或外部引擎命令提供。 |
 
 ### 托管接口的信任边界
 
@@ -53,3 +53,19 @@
 
 - 托管 A2A，以及远端任务完成后接续原 Harness Run。
 - 云端 Runtime 自动绑定以及在真实集群中只升级或回滚 Harness 镜像。
+
+### 本地多项目
+
+为每个项目启动一个 Harness 服务，分别配置工作目录、状态目录、端口和服务令牌。Studio 启动环境中的 `AGENTKIT_ENGINE_SERVICE_WORKSPACES` 接收一组绑定：
+
+```json
+[
+  {"workspace":"/projects/alpha","endpoint":"http://127.0.0.1:8791","tokenEnv":"HARNESS_ALPHA_TOKEN","model":"deepseek-v4.1-flash"},
+  {"workspace":"/projects/beta","endpoint":"http://127.0.0.1:8792","tokenEnv":"HARNESS_BETA_TOKEN","model":"deepseek-v4.1-flash"}
+]
+```
+
+`tokenEnv` 填各自服务令牌所在的环境变量名。HTTPS 可选填 `caFile`。运行中应用的侧边预览可在绑定中设置 `previewOrigin` 和 `previewEntry`。同一 Studio 进程选择多项目或原有单服务配置其中一种。
+
+
+`AGENTKIT_DSH_ROOT=<已验收的 DSH 源码目录> node scripts/verify-independent-workspace-host.mjs <Studio.tgz>` 会挂载实际打包的 Studio，验证两个独立 HTTP 服务的写入、历史及切回原项目后的隔离，并确认未绑定目录不会落到另一个服务。模型使用本地测试响应；真实模型和侧边交互仍须单独验收。冻结版本、MCP 调用与重启回放的集成验证也使用独立引擎进程。

@@ -4,7 +4,7 @@ import { createNativeChildrenState } from '../src/client/state/native-children.m
 import { createNativeChildPanel } from '../src/client/dsh/native-children.mjs';
 import { createProductClient } from '../src/remote/control-client.mjs';
 import { createStudioHostRemote } from '../src/host-remote.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 
 const contract = 'agentkit.studio-native-child-history/v1';
 const task = { childRunId: 'child', sessionId: 'child-session', parentRunId: 'parent', role: 'reader', phase: 'requesting_model',

@@ -589,3 +589,62 @@ test('an uncertain bound A2A Send pauses the independent Run without a model ret
   assert.ok(chunks.some(chunk => chunk.type === 'engine-event' && chunk.event?.status === 'uncertain')
     || chunks.some(chunk => chunk.type === 'text' && /effect_outcome_unknown|任务已暂停/.test(chunk.text)));
 });
+
+test('two workspace bindings isolate writes, model traffic and Run history even with identical Session and Run IDs', async t => {
+  const createEngineService = await createTestService();
+  const projects = await Promise.all(['Alpha', 'Beta'].map(async (label, i) => {
+    const project = await setup(t, [
+      toolCall('same-call', 'write_workspace_file', { path: 'out.txt', content: label + '\n' }),
+      final(label + ' complete.'),
+      final(label + ' resumed.'),
+    ]);
+    const tokenEnv = 'TEST_ENGINE_TOKEN_' + i, token = 'test-isolated-harness-token-' + i;
+    const service = createEngineService({ token, startup: {
+      workspace: project.cwd, stateDir: join(project.cwd, '..', 'isolated-engine'),
+      model: { name: label, baseUrl: project.model.url, apiKeyEnv: 'TEST_MODEL_KEY' },
+      scope: { tenantId: 'local', workspaceId: label, userId: 'user', agentId: 'agent' },
+    }, env: { TEST_MODEL_KEY: 'fixture-key' } });
+    t.after(() => service.close());
+    await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
+    return { ...project, label, token, binding: { workspace: project.cwd, tokenEnv, model: label,
+      endpoint: 'http://127.0.0.1:' + service.server.address().port } };
+  }));
+  const [alpha, beta] = projects, stateRoot = join(alpha.cwd, '..', 'studio-shared-state');
+  const env = { AGENTKIT_ENGINE_SERVICE_WORKSPACES: JSON.stringify(projects.map(project => project.binding)),
+    ...Object.fromEntries(projects.map(project => [project.binding.tokenEnv, project.token])) };
+  const open = () => createNativeEngineRuntime({ stateRoot, env, resolveCommand: () => assert.fail('HTTP must never fall back to a process') });
+  const runtime = open();
+  assert.deepEqual(runtime.serviceModels, ['Alpha', 'Beta']);
+  assert.equal(runtime.serviceWorkspace(undefined), undefined);
+  const turn = (runtime, project, turnId, input = 'Write out.txt') =>
+    collect(runtime.stream({ cwd: project.cwd, input, sessionId: 'same-session', turnId, sandbox: 'danger-full-access' }));
+  const first = await turn(runtime, alpha, '1');
+  assert.equal(beta.model.requests.length, 0);
+  assert.equal(existsSync(join(beta.cwd, 'out.txt')), false);
+  const second = await turn(runtime, beta, '1');
+  const terminal = chunks => chunks.findLast(chunk => chunk.event?.kind === 'run.terminal');
+  assert.equal(terminal(first).runId, terminal(second).runId);
+  assert.equal(first.findLast(chunk => chunk.type === 'text').text, 'Alpha complete.');
+  assert.equal(second.findLast(chunk => chunk.type === 'text').text, 'Beta complete.');
+  const restartedStudio = open();
+  const result = await turn(restartedStudio, alpha, '2', 'Continue the original session.');
+  assert.equal(result.findLast(chunk => chunk.type === 'text').text, 'Alpha resumed.');
+  assert.match(JSON.stringify(alpha.model.requests[2].messages), /Alpha complete/);
+  assert.doesNotMatch(JSON.stringify(alpha.model.requests[2].messages), /Beta complete/);
+  assert.equal(beta.model.requests.length, 2);
+  for (const project of projects) {
+    assert.equal(runtime.serviceWorkspace(project.cwd).modelSelection.model, project.label);
+    assert.ok(project.model.requests.every(request => request.model === project.label));
+    assert.equal(readFileSync(join(project.cwd, 'out.txt'), 'utf8'), project.label + '\n');
+    assert.ok(await restartedStudio.readDeliveryEvidence({ cwd: project.cwd, sessionId: 'same-session', runId: terminal(first).runId }));
+  }
+  await assert.rejects(turn(runtime, { cwd: stateRoot }, '1'), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+  for (const duplicate of [
+    { ...beta.binding, workspace: alpha.cwd },
+    { ...beta.binding, endpoint: alpha.binding.endpoint + '/' },
+    { ...beta.binding, tokenEnv: alpha.binding.tokenEnv },
+  ]) {
+    assert.throws(() => createNativeEngineRuntime({ stateRoot, env: { ...env,
+      AGENTKIT_ENGINE_SERVICE_WORKSPACES: JSON.stringify([alpha.binding, duplicate]) } }), { code: 'NATIVE_ENGINE_CONFIG_INVALID' });
+  }
+});

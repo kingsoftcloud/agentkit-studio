@@ -105,7 +105,12 @@ await writeFile(join(home, 'config.yaml'), JSON.stringify({
   modelProfiles: profiles,
   modelProfileKeys: { STUDIO_FROZEN_FIXTURE_KEY: 'synthetic-frozen-fixture' },
 }), { mode: 0o600 });
-const env = { AGENTKIT_HOME: home, CODEX_HOME: join(home, 'codex') };
+// The frozen Host runs the independent executable. It must not revive the
+// retired in-process loop merely to satisfy this integration proof.
+const studioRequire = createRequire(join(installed, 'package.json'));
+const engineServer = studioRequire.resolve('@kingsoftcloud/agentkit-harness-node/native/engine-server');
+const env = { AGENTKIT_HOME: home, CODEX_HOME: join(home, 'codex'),
+  AGENTKIT_ENGINE_COMMAND: process.execPath, AGENTKIT_ENGINE_ARGS: JSON.stringify([engineServer]) };
 const resourceAdapterFactory = async () => ({
   listMcpTools: async () => [{ name: 'refactor_probe', description: 'Controlled frozen Host probe', inputSchema: { type: 'object', properties: {} } }],
   callMcpTool: async () => { toolCalls++; return { content: [{ type: 'text', text: 'FROZEN_TOOL_OK' }] }; },
@@ -255,8 +260,8 @@ try {
   assert.ok(requests.every(item => item.model === 'model-a' && item.frozenPrompt && !item.latestPrompt));
   check('frozen-model-and-mcp-tool-continuation', { modelCalls: requests.length, toolCalls });
   const sessionId = createRuntimeResponsesContract({ agentId, buildId, token, model: 'model-a', models: ['model-a'] }).parse(firstRequest, {}).sessionId;
-  // Native whole-turn execution owns the Session directly; the legacy DSH
-  // request route is intentionally not installed for this frozen runtime.
+  // Native execution belongs to the independent engine. Studio persists only
+  // its public projection and the surrounding DSH conversation.
   stage = 'host-restart-and-replay';
   await fiber.dispose(); fiber = undefined;
   await running.shutdown.shutdown(0); running = undefined;
@@ -276,8 +281,8 @@ try {
   const history = await running.ctx.sessionController.page({ address: { kind: 'session', sessionId }, throughSeq: projection.asOfSeq, maxMessages: 200 }, historySignal);
   const events = history.records.filter(item => item.type === 'event').map(item => item.event);
   assert.equal(events.filter(item => item.type === 'turn/end' && item.data.reason.kind === 'completed').length, 2);
-  assert.equal(events.filter(item => item.type === 'tool/call').length, 1);
-  assert.equal(events.filter(item => item.type === 'tool/result').length, 1);
+  assert.equal(events.filter(item => item.type === 'agentkit/native-engine-event'
+    && item.data?.event?.kind === 'tool.completed').length, 1);
   assert.equal(events.filter(item => item.type === 'studio/runtime-model').length, 0);
   assert.ok(events.filter(item => item.type === 'user/message' && item.data.source?.rpcId).every(item => /^[a-f0-9]{64}$/.test(item.data.source.requestFingerprint)));
   check('durable-session-tool-result-and-run-identities', { completedTurns: 2, toolCalls: 1, model: 'model-a' });

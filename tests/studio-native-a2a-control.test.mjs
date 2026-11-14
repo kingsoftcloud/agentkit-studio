@@ -13,7 +13,7 @@ import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqli
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 import { createStudioNativeA2aControl } from '../src/host/services/native-a2a-control.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 import { createStudioNativeRecovery } from '../src/host/services/native-recovery.mjs';
 import { createManagedNativeKernel } from '../src/providers/native-managed-kernel.mjs';
 import { createStudioManagedNativeSessionControl } from '../src/host/services/native-managed-kernel.mjs';

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createAgentStore } from '../../src/agent-store.mjs';
 import { createModelService } from '../../src/model-service.mjs';
-import { createStudioNativeHarness } from '../../src/host/services/native-harness.mjs';
+import { createStudioNativeHarness } from './retired-native-harness.mjs';
 import { mountRuntimeBridge } from '../../src/host/runtime-bridge.mjs';
 import { createNativeDshTools } from '../../src/providers/native-dsh-tools.mjs';
 import { dshPresetId } from '../../src/agent-preset-admission.mjs';

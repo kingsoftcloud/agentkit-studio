@@ -41,8 +41,7 @@
     "scripts/start-agent-manifest.mjs",
     "scripts/native-package-pins.json",
     "scripts/native-package-integrity.mjs",
-    "scripts/verify-native-dependencies.mjs",
-    "scripts/check-local-process-launcher.mjs"
+    "scripts/verify-native-dependencies.mjs"
   ],
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
@@ -51,7 +50,7 @@
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "pretest": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
-    "prepack": "node scripts/check-local-process-launcher.mjs && node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
+    "prepack": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "test": "node scripts/test-studio.mjs",
     "verify-dsh": "node scripts/verify-dsh-node-store.mjs",
     "verify-dsh-lifecycle": "node scripts/verify-dsh-lifecycle.mjs",
@@ -154,18 +153,7 @@
     "typescript": "6.0.3",
     "marked": "18.1.1"
   },
-  "bundledDependencies": [
-    "@kingsoftcloud/agentkit-harness-core",
-    "@kingsoftcloud/agentkit-harness-node",
-    "@kingsoftcloud/agentkit-harness-ui"
-  ],
   "publishConfig": {
-    "executableFiles": [
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/darwin-arm64/launcher",
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/darwin-x64/launcher",
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/linux-arm64/launcher",
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/linux-x64/launcher"
-    ],
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },

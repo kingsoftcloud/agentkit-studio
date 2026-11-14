@@ -8,7 +8,7 @@ import { nativeOwnershipHost } from './fixtures/native-ownership-host.mjs';
 import { createNativeRecoveryState } from '../src/client/state/native-recovery.mjs';
 import { nativeRunPresentation } from '../src/client/state/native-outcome.mjs';
 import { createStudioNativeRecovery, validateNativeBackgroundReviewRequest } from '../src/host/services/native-recovery.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 const scope = { ...fixtureScope, tenantId: 'local', userId: 'local-user' };
 
 test('review closes only the presentation owner; a fresh task retains unknown facts without repeating a launch', async () => {

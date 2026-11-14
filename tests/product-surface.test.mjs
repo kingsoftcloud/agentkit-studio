@@ -177,7 +177,7 @@ test('model-only local Agent admission can use the native DSH session UI', async
   const admissionSource = await readFile(resolve(import.meta.dirname, '../src/agent-preset-admission.mjs'), 'utf8');
   assert.match(clientSource, /studioRemote\.agentPresets\.select\(sessionId, admission\.presetId\)/);
   assert.match(hostSource, /localStore\.get\(agentId\)/);
-  assert.match(hostSource, /getAdmission\(\)\.ensure\(agentId, \{ agent: local \}\)/);
+  assert.match(hostSource, /getAdmission\(\)\.ensure\(agentId, \{ cwd: payload\?\.cwd,/);
   assert.match(admissionSource, /suppliedAgent \|\| await this\.getAgent/);
   assert.match(admissionSource, /mode: bridge \? 'studio-bridge' : 'dsh-native'/);
 });

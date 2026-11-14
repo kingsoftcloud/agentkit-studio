@@ -80,14 +80,15 @@ export function mountStudio(ctx, app) {
     try {
       const roster = await hostRemote.agents();
       if (app.closed()) return;
-      const presetId = String(selectedPreset || ctx.sessions?.list?.getSnapshot?.().byId?.[sessionId]?.projectionValues?.agentPreset || '');
+      const session = ctx.sessions?.list?.getSnapshot?.().byId?.[sessionId];
+      const presetId = String(selectedPreset || session?.projectionValues?.agentPreset || '');
       const agent = (roster?.items || []).find(item => {
         const base = presetIdForAgent(item);
         return base && (base === presetId || base + HARNESS_SERVICE_PRESET_SUFFIX === presetId);
       });
       if (!agent) return;
       const agentId = String(agent?.metadata?.id || agent?.id || '').trim();
-      const admission = await hostRemote.ensureDshPreset(agentId, '', presetId);
+      const admission = await hostRemote.ensureDshPreset(agentId, '', presetId, session?.cwd ?? null);
       if (app.closed()) return;
       if (admission.modelSelection) {
         const selected = await selectSessionModel(ctx.remote, { sessionId, ...admission.modelSelection, saveDefault: false });
@@ -206,7 +207,7 @@ export function mountStudio(ctx, app) {
   // Session to DSH's own navigation service. This keeps the native
   // composer visible from the first frame and makes binding an explicit
   // action rather than a side effect of opening a custom chat page.
-  ctx.inject(['uiWorkspace', 'sessions', 'modelDirectories'], navCtx => {
+  ctx.inject(['uiWorkspace', 'sessions', 'modelDirectories', 'workspaces'], navCtx => {
     const binding = createNativeSessionBinding({ navCtx, remote: ctx.remote, layout: ctx.layout, hostRemote, writeConversationAgent, actions, isActive: () => !app.closed() });
     const release = actions.registerBinding(binding.bindAgent);
     const releaseSession = actions.registerSessionOpener(sessionId => { if (app.closed()) return; navCtx.uiWorkspace.openSession(sessionId); ctx.layout.selectPanel(null); });

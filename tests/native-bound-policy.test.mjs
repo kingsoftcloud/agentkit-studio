@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { installNativeBoundPolicy, hasNativeBoundApproval } from '../src/providers/native-bound-policy.mjs';
 import { authorizeNativeBuiltin } from '../src/providers/native-tool-policy.mjs';
 import { NATIVE_AGENT_POLICY_CONTRACT, nativeAgentPolicyFromSpec, nativeAgentPolicyDecision } from '../src/native-agent-policy.mjs';
-import { DshPresetAdmission } from '../src/agent-preset-admission.mjs';
 import { nativeRecoveryBinding, assertNativeRecoveryPreset } from '../src/providers/native-recovery-binding.mjs';
 
 const policy = (mode, rules = {}) => ({ contract: NATIVE_AGENT_POLICY_CONTRACT, mode, rules });
@@ -107,16 +106,10 @@ test('legacy labels preserve old behavior; malformed versioned rules fail closed
     { code: 'STUDIO_NATIVE_AGENT_POLICY_INVALID' });
 });
 
-test('the admitted Revision and cold recovery capsule pin the same policy', async () => {
-  let preset;
-  const bound = policy('custom', { save_crm: 'deny' });
-  const record = { metadata: { id: 'agent', revision: 3, local: true }, source: 'local-studio',
-    spec: { runtime: { type: 'harness' }, bindings: { nativeAgentPolicy: bound } } };
-  const admission = new DshPresetAdmission({ nativeEngineContract: 'agentkit.native-dsh-turn/v1',
-    getAgent: async () => record, registry: { register: async value => { preset = value; } } });
-  await admission.ensure('agent');
-  const pinned = preset.plugins.find(item => item.id === 'studio-runtime').config.boundToolPolicy;
-  assert.deepEqual(pinned, bound);
+test('the retired recovery capsule still checks the frozen policy identity', () => {
+  const record = { spec: { bindings: { nativeAgentPolicy: policy('custom', { save_crm: 'deny' }) } } };
+  const pinned = nativeAgentPolicyFromSpec(record.spec);
+  assert.deepEqual(pinned, record.spec.bindings.nativeAgentPolicy);
   record.spec.bindings.nativeAgentPolicy.rules.save_crm = 'inherit';
   assert.equal(pinned.rules.save_crm, 'deny');
   const binding = { agentId: 'agent', agentRevision: 3, buildId: 'build-3', runtime: 'harness', local: true,

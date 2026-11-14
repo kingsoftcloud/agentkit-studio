@@ -1,58 +1,59 @@
-import { createStudioNativeModelBinding, selectStudioNativeModel } from './native-model-binding.mjs';
-import { createStudioNativeSessionInjection } from './native-session-injection.mjs';
-import { createStudioNativeChildViews } from './native-child-views.mjs';
+// Test-only reference for retired in-process Host contracts.
+import { createStudioNativeModelBinding, selectStudioNativeModel } from '../../src/host/services/native-model-binding.mjs';
+import { createStudioNativeSessionInjection } from '../../src/host/services/native-session-injection.mjs';
+import { createStudioNativeChildViews } from '../../src/host/services/native-child-views.mjs';
 import { createNativeChildObservationCache } from '@kingsoftcloud/agentkit-harness-node/native/child-observation';
-import { createStudioNativeWorkspaceViews } from './native-workspace-views.mjs';
-import { createStudioNativeCommandOutput, createStudioNativeCommandPreview } from './native-command-output.mjs';
-import { createNativeTraceProjection } from '../../providers/native-trace-projection.mjs';
-import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../providers/native-cloud-memory-turn.mjs';
+import { createStudioNativeWorkspaceViews } from '../../src/host/services/native-workspace-views.mjs';
+import { createStudioNativeCommandOutput, createStudioNativeCommandPreview } from '../../src/host/services/native-command-output.mjs';
+import { createNativeTraceProjection } from '../../src/providers/native-trace-projection.mjs';
+import { bindStudioNativeCloudMemoryTurn, readStudioNativeCloudMemoryTurn } from '../../src/providers/native-cloud-memory-turn.mjs';
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical, copy, invariant, normalizeDeliveryReviewPolicy, artifactToolDefinitions, toolDiscoveryDefinitions, todoToolDefinitions, planModeToolDefinitions, deliveryToolDefinitions, RESULT_DELIVERY_POLICY } from '@kingsoftcloud/agentkit-harness-core';
 import { createNativeArtifactStore } from '@kingsoftcloud/agentkit-harness-node/native/artifact-store';
-import { selectedNativeBuildContract } from '../../build-engine.mjs';
+import { selectedNativeBuildContract } from '../../src/build-engine.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTurnExecutor, freezeNativeDshConfiguration, NATIVE_DSH_TURN_CONTRACT, canCloseNativeReadInterruption, nativeDshRunId } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-runtime';
 import { nativeDeliveryProjection } from '@kingsoftcloud/agentkit-harness-node/native/session-delivery';
 import { nativeLiveStream } from '@kingsoftcloud/agentkit-harness-node/native/assistant-stream';
-import { projectNativeDshInput, projectNativeDshContent } from '../../providers/native-input.mjs';
-import { NATIVE_EXECUTION_CONTEXT_OWNERSHIP, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../../providers/native-context-ownership.mjs';
-import { bindNativeModelSurface, nativeChildInputMediaSources } from '../../providers/native-model-surface.mjs';
+import { projectNativeDshInput, projectNativeDshContent } from '../../src/providers/native-input.mjs';
+import { NATIVE_EXECUTION_CONTEXT_OWNERSHIP, NATIVE_WORKSPACE_CONTEXT_OWNERSHIP, NATIVE_CURRENT_INSTRUCTION_OWNERSHIP, nativeHostInputRows, nativeHostInputIsRefresh } from '../../src/providers/native-context-ownership.mjs';
+import { bindNativeModelSurface, nativeChildInputMediaSources } from '../../src/providers/native-model-surface.mjs';
 import { NATIVE_INSTRUCTION_ASSEMBLY, nativeInstructionAssembly } from '@kingsoftcloud/agentkit-harness-node/native/instruction-assembly';
 import { admitNativeWorkspaceContext, ensureNativeWorkspaceContext } from '@kingsoftcloud/agentkit-harness-node/native/workspace-context';
 import { createNativeWorkspaceInstructions } from '@kingsoftcloud/agentkit-harness-node/native/workspace-instructions';
-import { nativeConversationForkSeed } from '../../providers/native-conversation-fork.mjs';
-import { bindNativeContext, nativeContextDefaults } from '../../providers/native-context.mjs';
-import { bindStudioNativeMemoryRecall } from '../../providers/native-memory-recall.mjs';
-import { bindNativeDeadlinePolicy, bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../providers/native-task-policy.mjs';
-import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../providers/native-verification.mjs';
-import { dshModelRoute } from '../../agent-preset-admission.mjs';
-import { prepareLocalResourceContext } from '../../local-runtime.mjs';
-import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../providers/native-host-interaction.mjs';
-import { createNativeApprovalBridge } from '../../providers/native-approval-bridge.mjs';
-import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../providers/native-subagents.mjs';
-import { createStudioNativeChildWorkspaces } from '../../providers/native-child-workspace-host.mjs';
+import { nativeConversationForkSeed } from '../../src/providers/native-conversation-fork.mjs';
+import { bindNativeContext, nativeContextDefaults } from '../../src/providers/native-context.mjs';
+import { bindStudioNativeMemoryRecall } from '../../src/providers/native-memory-recall.mjs';
+import { bindNativeDeadlinePolicy, bindNativeTaskPolicy, STUDIO_NATIVE_TASK_POLICY_CONTRACT } from '../../src/providers/native-task-policy.mjs';
+import { createNativeVerification, nativeGoalContract, STUDIO_NATIVE_VERIFICATION_CONTRACT } from '../../src/providers/native-verification.mjs';
+import { dshModelRoute } from '../../src/agent-preset-admission.mjs';
+import { prepareLocalResourceContext } from '../../src/local-runtime.mjs';
+import { createNativeHostInteraction, STUDIO_NATIVE_INTERACTION_CONTRACT } from '../../src/providers/native-host-interaction.mjs';
+import { createNativeApprovalBridge } from '../../src/providers/native-approval-bridge.mjs';
+import { createStudioNativeChildren, nativeChildRoles, STUDIO_NATIVE_CHILD_CONTRACT } from '../../src/providers/native-subagents.mjs';
+import { createStudioNativeChildWorkspaces } from '../../src/providers/native-child-workspace-host.mjs';
 import { childCommandResource } from '@kingsoftcloud/agentkit-harness-node/native/child-command-resource';
-import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../providers/native-recovery-binding.mjs';
-import { createStudioNativeRecovery } from './native-recovery.mjs';
-import { hash, restoredPolicyConfiguration, profileIds, admittedModelSelection, recoveredPromptAssembly, nativePlanAssembly, createStudioNativeBackgroundBinding, createStudioNativeMemoryExtractionBinding } from './native-harness-bindings.mjs';
-import { createNativeModelDescriptions, resolveNativeProfile } from '../../providers/native-model-capabilities.mjs';
-import { createStudioNativeConversation } from './native-conversation.mjs';
-import { nativeConversationRewindAdmission } from '../../providers/native-conversation-rewind.mjs';
-import { createStudioNativeA2aControl } from './native-a2a-control.mjs';
-import { createStudioNativeManagedScopeControl } from './native-managed-scope-control.mjs';
-import { createStudioNativeBackgroundAdmission, createStudioNativeBackgroundDispatcher } from './native-background-admission.mjs';
-import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../providers/native-hooks.mjs';
-import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../providers/native-memory.mjs';
-import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../providers/native-memory-host.mjs';
-import { studioNativeComponentStatus } from '../../providers/native-component-status.mjs';
-import { nativeVisionProfileId } from '../../native-vision-model.mjs';
-import { createStudioNativeVisionBinding } from '../../providers/native-vision-binding.mjs';
-import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../providers/native-a2a-receipt.mjs';
-import { nativeChildA2aWaitSource } from '../../providers/native-child-a2a-wait.mjs';
+import { nativeRecoveryBinding, readNativeRecoveryBinding, assertNativeRecoveryPreset } from '../../src/providers/native-recovery-binding.mjs';
+import { createStudioNativeRecovery } from '../../src/host/services/native-recovery.mjs';
+import { hash, restoredPolicyConfiguration, profileIds, admittedModelSelection, recoveredPromptAssembly, nativePlanAssembly, createStudioNativeBackgroundBinding, createStudioNativeMemoryExtractionBinding } from '../../src/host/services/native-harness-bindings.mjs';
+import { createNativeModelDescriptions, resolveNativeProfile } from '../../src/providers/native-model-capabilities.mjs';
+import { createStudioNativeConversation } from '../../src/host/services/native-conversation.mjs';
+import { nativeConversationRewindAdmission } from '../../src/providers/native-conversation-rewind.mjs';
+import { createStudioNativeA2aControl } from '../../src/host/services/native-a2a-control.mjs';
+import { createStudioNativeManagedScopeControl } from '../../src/host/services/native-managed-scope-control.mjs';
+import { createStudioNativeBackgroundAdmission, createStudioNativeBackgroundDispatcher } from '../../src/host/services/native-background-admission.mjs';
+import { STUDIO_NATIVE_HOOK_CONTRACT } from '../../src/providers/native-hooks.mjs';
+import { bindStudioNativeMemoryFlush, composeStudioNativeHooks } from '../../src/providers/native-memory.mjs';
+import { bindStudioNativeMemoryHost, extendNativeMemoryGoal } from '../../src/providers/native-memory-host.mjs';
+import { studioNativeComponentStatus } from '../../src/providers/native-component-status.mjs';
+import { nativeVisionProfileId } from '../../src/native-vision-model.mjs';
+import { createStudioNativeVisionBinding } from '../../src/providers/native-vision-binding.mjs';
+import { nativeA2aReceiptWaitSource, NATIVE_A2A_QUESTION_CLEANUP } from '../../src/providers/native-a2a-receipt.mjs';
+import { nativeChildA2aWaitSource } from '../../src/providers/native-child-a2a-wait.mjs';
 import { readNativeDshManagedOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-managed-ownership';
-import { createStudioNativeCommandProgress } from './native-command-progress.mjs';
-import { createStudioNativeChildFile } from './native-child-file-binding.mjs';
+import { createStudioNativeCommandProgress } from '../../src/host/services/native-command-progress.mjs';
+import { createStudioNativeChildFile } from '../../src/host/services/native-child-file-binding.mjs';
 /** Host services and credentials stay outside the serializable Native core. */
 export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, agents, builds, models, resources,
   fetchImpl, renderPrompt, publishStreamFrame, ledger, agentEvents, assembleContextFor, hookRegistry, contextSourceRegistry, observability,
@@ -722,7 +723,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
     const starting = waitRecoveryStart.then(async () => {
       lifetime.signal.throwIfAborted(); signal?.throwIfAborted();
       await waitRecoveryOwner?.close();
-      const { createNativeWaitRecoveryWorker } = await import('./native-wait-recovery-worker.mjs');
+      const { createNativeWaitRecoveryWorker } = await import('../../src/host/services/native-wait-recovery-worker.mjs');
       const controller = new AbortController();
       const workerSignal = AbortSignal.any([lifetime.signal, controller.signal, ...(signal ? [signal] : [])]);
       workerSignal.throwIfAborted();
@@ -791,7 +792,7 @@ export async function createStudioNativeHarness({ ctx, storeDir, workspaceRoot, 
       signal?.throwIfAborted();
       await backgroundOwner?.close();
       const [{ createNativeBackgroundWatchStore }, { createStudioNativeBackgroundWatcher }] = await Promise.all([
-        import('./native-background-watch-store.mjs'), import('./native-background-watcher.mjs'),
+        import('../../src/host/services/native-background-watch-store.mjs'), import('../../src/host/services/native-background-watcher.mjs'),
       ]);
       invariant(!closed, 'studio_native_host_closed');
       signal?.throwIfAborted();

@@ -13,7 +13,7 @@ import { createRuntimeBridge } from '../src/host/runtime-bridge.mjs';
 import { apply as applyPreset } from '../src/providers/dsh-runtime-plugin.mjs';
 import { createDshNodeBuiltins } from '../src/providers/dsh-node-builtins.mjs';
 import { createStudioDshA2aControls } from '../src/host/services/dsh-a2a-control.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 import { createNativeA2aTaskState } from '../src/client/state/native-a2a.mjs';
 import { createDshA2aHistoryState } from '../src/client/state/dsh-a2a-history.mjs';
 import { createCodexResourceContext } from '../src/providers/codex-resource-context.mjs';
