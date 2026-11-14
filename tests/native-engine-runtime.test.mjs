@@ -48,16 +48,37 @@ function fixture(script) {
   const handle = { requests, respond: null, stream: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
   return new Promise(done => server.listen(0, '127.0.0.1', () => done(Object.assign(handle, { url: `http://127.0.0.1:${server.address().port}/v1` }))));
 }
-async function setup(t, script) {
+async function setup(t, script, extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'studio-engine-')), cwd = join(dir, 'workspace');
   mkdirSync(cwd);
   const model = await fixture(script);
   t.after(async () => { await model.close(); rmSync(dir, { recursive: true, force: true }); });
-  const runtime = createNativeEngineRuntime({ stateRoot: join(dir, 'state'), env: { PATH: process.env.PATH, HOME: dir, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs } });
+  const runtime = createNativeEngineRuntime({ stateRoot: join(dir, 'state'), env: { PATH: process.env.PATH, HOME: dir, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs, ...extraEnv } });
   return { runtime, model, cwd, options: { input: 'Create out.txt with a greeting.', systemPrompt: 'You are the Studio release agent.', model: 'fixture-model',
     modelProvider: { baseUrl: model.url, apiKey: 'studio-fixture-key' }, cwd, sessionId: 'session-1', turnId: '1' } };
 }
 const collect = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks; };
+
+test('Studio forwards the configured search binding to its independent engine process', async t => {
+  let searches = 0;
+  const search = createServer((req, res) => {
+    searches++;
+    assert.equal(req.headers.authorization, 'Bearer separate-search-fixture');
+    assert.equal(new URL(req.url, 'http://localhost').searchParams.get('q'), 'Studio search fixture');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ results: [{ title: 'Native search result', url: 'https://example.com/studio-search', snippet: 'Verified Studio search.' }] }));
+  });
+  await new Promise(resolve => search.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { search.closeAllConnections(); search.close(resolve); }));
+  const f = await setup(t, [toolCall('search', 'web_search', { query: 'Studio search fixture' }), final('Search complete.')], {
+    AGENTKIT_ENGINE_WEB_SEARCH_PROVIDER: 'http', AGENTKIT_ENGINE_WEB_SEARCH_BASE_URL: 'http://127.0.0.1:' + search.address().port,
+    AGENTKIT_ENGINE_WEB_SEARCH_API_KEY: 'separate-search-fixture',
+  });
+  const chunks = await collect(f.runtime.stream({ ...f.options, input: 'Search for Studio search fixture.', sandbox: 'workspace-write' }));
+  assert.equal(searches, 1);
+  assert.match(JSON.stringify(f.model.requests.at(-1)), /Verified Studio search/);
+  assert.doesNotMatch(JSON.stringify({ chunks, requests: f.model.requests }), /separate-search-fixture/);
+});
 
 test('Studio sends an interjection to the original Run before the retry and commits it once', { timeout: 15000 }, async t => {
   const f = await setup(t, []);

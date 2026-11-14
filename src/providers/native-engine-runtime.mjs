@@ -158,6 +158,11 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const { command, args } = serviceEndpoint ? {} : resolveCommand(env);
       const allowed = Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'SHELL', 'SystemRoot', 'TEMP', 'TMP']
         .filter(name => env[name] !== undefined).map(name => [name, env[name]]));
+      // A spawned independent engine reads its own search binding. HTTP
+      // services must receive this configuration in their service deployment.
+      for (const [name, value] of Object.entries(env))
+        if (/^(?:(?:AGENTKIT_ENGINE|KSADK|OPENCLAW)_WEB_SEARCH_(?:PROVIDER|BASE_URL|API_KEY|SCOPE)|KSADK_MCP_KEY|KSC_AIPRO_API_KEY|KSC_AIPRO_APIKEY|AIPRO_API_KEY)$/.test(name))
+          allowed[name] = value;
       // An interactive approval seat decides each call. Without one, the Session's
       // permission mode decides: workspace-write and full access allow, anything else denies.
       const interactive = typeof requestApproval === 'function';
