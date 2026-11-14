@@ -179,6 +179,7 @@ try {
   await boot(); await mount();
   stage = 'host-compatibility';
   const compatibility = await rpc('host/compatibility');
+  report.compatibility = compatibility;
   assert.deepEqual(compatibility.baseline, { required: dshPin.version, actual: dshPin.version, compatible: true });
   assert.deepEqual(compatibility.contract, { required: 1, actual: 1, compatible: true });
   assert.ok(Object.values(compatibility.features).every(feature => feature.available));

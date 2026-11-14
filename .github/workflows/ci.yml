@@ -67,12 +67,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: kingsoftcloud/ksadk-harness
-          ref: 5f196ee3a8aeea0bbdb2fdc34c2d3128246839d5
-          path: .ci-harness
-          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.2
@@ -80,14 +74,7 @@ jobs:
         with:
           node-version-file: .node-version
       - run: pnpm install --frozen-lockfile
-      - name: Build independent Harness
-        working-directory: .ci-harness
-        run: |
-          npm ci
-          npm run build
-      - name: Verify service approvals and acceptance
-        env:
-          AGENTKIT_STUDIO_TEST_ENGINE_SERVER: ${{ github.workspace }}/.ci-harness/packages/agentkit-harness-node/src/native/engine-server.mjs
+      - name: Verify service approvals and acceptance with the locked npm Harness
         run: node --test tests/native-engine-runtime.test.mjs tests/native-host-approval.test.mjs
   patched-host:
     name: patched-dsh-host

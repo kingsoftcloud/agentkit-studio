@@ -50,7 +50,12 @@ const result = await build({
     },
   }],
 });
-const output = result.outputFiles[0].text;
+// Run the linked browser script through the same semantics-preserving
+// compressor so dependency upgrades remain within the approved size budget.
+const { code: output } = await minify(result.outputFiles[0].text, {
+  ecma: 2022, compress: { passes: 2 },
+});
+if (!output) throw new Error('Studio browser compression produced no code');
 if (!output.includes('window.__ModuleLoader__.load({')) throw new Error('client bundle lost the DSH ModuleLoader registration');
 if (!output.includes('@kingsoftcloud/agentkit-studio')) throw new Error('client bundle lost the Studio module id');
 for (const input of Object.keys(result.metafile.inputs)) {
