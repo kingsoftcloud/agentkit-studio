@@ -17,15 +17,18 @@
  * Codex path. Bound A2A calls retain the Host's existing A2A authority. */
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { spawnEngine as defaultSpawnEngine } from './engine-protocol-client.mjs';
 import { connectEngineService, engineServiceFetch, fetchEngineServiceView, ENGINE_TOOL_RECEIPT } from './engine-service-client.mjs';
 import { nativeEngineApprovalReply } from './native-host-approval.mjs';
+import { nativeEngineVerification } from './native-engine-verification.mjs';
+import { canonicalEngineWorkspace, engineServiceWorkspaces } from './engine-service-workspaces.mjs';
+export { HARNESS_SERVICE_MODEL_PROVIDER } from './engine-service-workspaces.mjs';
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
-export const HARNESS_SERVICE_MODEL_PROVIDER = 'agentkit-studio-harness-service';
 export const NATIVE_ENGINE_EVENT = 'agentkit/native-engine-event';
+export const NATIVE_ENGINE_TEXT = 'agentkit/native-engine-text';
 export const NATIVE_ENGINE_TOOL_DRAFT = 'agentkit/native-engine-tool-draft';
 export const ENGINE_VIEW_CONTRACT = 'agentkit.engine-view/v1';
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -68,13 +71,15 @@ function sessionToolPolicy(policy, sandbox) {
 
 /** DSH selects a model route before invoking the agent loop. This adapter
  * supplies that route's metadata. The authenticated loop waterfall owns execution. */
-export function createHarnessServiceModelAdapter(AdapterBase, publicModel) {
+export function createHarnessServiceModelAdapter(AdapterBase, models, describeModel) {
+  const catalog = new Set(typeof models === 'string' ? [models] : models);
   return new class extends AdapterBase {
     providerInfo(provider) { return { id: provider, name: 'Harness' }; }
-    async listModels(provider) { return [await this.resolveModel(provider, publicModel)]; }
+    async listModels(provider) { return Promise.all([...catalog].map(model => this.resolveModel(provider, model))); }
     async resolveModel(provider, model) {
-      if (model !== publicModel) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
-      return { provider, id: model, name: model, modalities: ['text'] };
+      if (!catalog.has(model)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
+      const capabilities = await describeModel?.(model);
+      return { provider, id: model, name: model, modalities: capabilities?.images ? ['text', 'image'] : ['text'] };
     }
     async *stream() {
       throw failure('NATIVE_ENGINE_AGENT_LOOP_REQUIRED', '托管 Harness 仅接受绑定的 Agent 会话调用。');
@@ -98,18 +103,41 @@ export function resolveEngineCommand(env = process.env) {
 export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnEngine = defaultSpawnEngine, resolveCommand = resolveEngineCommand, viewService } = {}) {
   if (!text(stateRoot)) throw failure('NATIVE_ENGINE_CONFIG_INVALID', 'Native 引擎缺少状态目录。');
   const views = createEngineViewStore(stateRoot);
-  const serviceEndpoint = env.AGENTKIT_ENGINE_SERVICE_URL;
-  const serviceFetch = serviceEndpoint && engineServiceFetch(serviceEndpoint, env.AGENTKIT_ENGINE_SERVICE_CA_FILE);
-  const viewFetch = viewService?.endpoint && (viewService.endpoint === serviceEndpoint
-    && viewService.caFile === env.AGENTKIT_ENGINE_SERVICE_CA_FILE ? serviceFetch
-    : engineServiceFetch(viewService.endpoint, viewService.caFile));
+  const routes = engineServiceWorkspaces(env);
+  const routeFor = cwd => routes.get(canonicalEngineWorkspace(cwd));
+  const singleRoute = routes.size === 1 ? routes.values().next().value : undefined;
+  const viewFetch = viewService?.endpoint && engineServiceFetch(viewService.endpoint, viewService.caFile);
+  const modelCapabilities = new Map();
   return {
-    usesService: Boolean(serviceEndpoint),
+    usesService: routes.size > 0,
+    serviceCatalogWorkspace: routes.keys().next().value,
+    applicationPreviewAvailable: [...routes.values()].some(route => route.preview),
+    serviceModels: [...new Set([...routes.values()].map(route => route.modelSelection.model))],
+    async serviceModelInfo(model) {
+      if (!modelCapabilities.has(model)) {
+        const request = Promise.all([...routes.values()].filter(route => route.modelSelection.model === model).map(async route => {
+          const engine = connectEngineService({ endpoint: route.endpoint, token: route.token, fetchImpl: route.fetchImpl,
+            sessionId: 'studio-model-' + createHash('sha256').update(model).digest('hex'), observeOnly: true });
+          try { return (await engine.initialize()).capabilities?.inputImages; }
+          finally { await engine.close(); }
+        })).then(results => ({ images: results.some(limits => Number.isSafeInteger(limits?.maxCount) && limits.maxCount > 0
+          && Number.isSafeInteger(limits?.maxEncodedBytes) && limits.maxEncodedBytes > 0) }));
+        modelCapabilities.set(model, request);
+        request.catch(() => modelCapabilities.delete(model));
+      }
+      return modelCapabilities.get(model);
+    },
+    serviceWorkspace(cwd) {
+      const route = cwd === undefined ? singleRoute : routeFor(cwd);
+      return route && { workspaceRoot: route.workspaceRoot, modelSelection: { ...route.modelSelection } };
+    },
+    applicationPreview: cwd => routeFor(cwd)?.preview,
     async readDeliveryEvidence({ sessionId, runId, cwd, signal }) {
-      if (!serviceEndpoint || !text(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE) || resolve(cwd) !== resolve(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)) return null;
+      const route = routeFor(cwd);
+      if (!route) return null;
       signal?.throwIfAborted();
-      const engine = connectEngineService({ endpoint: serviceEndpoint, token: env.AGENTKIT_ENGINE_SERVICE_TOKEN,
-        sessionId: createHash('sha256').update(sessionId).digest('hex'), runId, observeOnly: true, fetchImpl: serviceFetch });
+      const engine = connectEngineService({ endpoint: route.endpoint, token: route.token,
+        sessionId: createHash('sha256').update(sessionId).digest('hex'), runId, observeOnly: true, fetchImpl: route.fetchImpl });
       const abort = () => void engine.close().catch(() => {});
       signal?.addEventListener('abort', abort, { once: true });
       try { return (await engine.status(runId, { deliveryPresentation: true })).deliveryEvidence ?? null; }
@@ -118,17 +146,23 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
     async *stream({ input, inputImages = [], messages = [], signal, systemPrompt = '', model, modelProvider, cwd, sessionId, turnId, sandbox, requestApproval, agentToolPolicy, requestPolicyApproval, dynamicTools = [], toolHandler, nativeHostToolHandler, nativeHostReceiptHandler, nextGuidance, commitGuidance } = {}) {
       if (!text(input) && !inputImages.length) throw failure('STUDIO_INPUT_REQUIRED', '请输入文字或添加图片后发送');
       const objective = text(input) ? input : '请查看用户提供的图片并说明其中的内容。';
-      if (!text(cwd)) throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '会话未提供工作目录，请重新选择工作区');
-      if (serviceEndpoint && (!text(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)
-        || resolve(cwd) !== resolve(env.AGENTKIT_ENGINE_SERVICE_WORKSPACE)))
+      const workspaceRoot = canonicalEngineWorkspace(cwd);
+      const service = routes.get(workspaceRoot);
+      const serviceEndpoint = service?.endpoint;
+      if (!workspaceRoot || routes.size && !service)
         throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '该会话的工作区没有绑定到配置的 Harness 服务。');
       if (!serviceEndpoint && (!text(model) || !text(modelProvider?.baseUrl))) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
       const session = text(sessionId) ? sessionId : 'studio-session';
-      const stateDir = join(stateRoot, createHash('sha256').update(session).digest('hex').slice(0, 32));
+      const stateDir = join(stateRoot, createHash('sha256').update(JSON.stringify([workspaceRoot, session])).digest('hex').slice(0, 32));
       mkdirSync(stateDir, { recursive: true });
       const { command, args } = serviceEndpoint ? {} : resolveCommand(env);
       const allowed = Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'SHELL', 'SystemRoot', 'TEMP', 'TMP']
         .filter(name => env[name] !== undefined).map(name => [name, env[name]]));
+      // A spawned independent engine reads its own search binding. HTTP
+      // services must receive this configuration in their service deployment.
+      for (const [name, value] of Object.entries(env))
+        if (/^(?:(?:AGENTKIT_ENGINE|KSADK|OPENCLAW)_WEB_SEARCH_(?:PROVIDER|BASE_URL|API_KEY|SCOPE)|KSADK_MCP_KEY|KSC_AIPRO_API_KEY|KSC_AIPRO_APIKEY|AIPRO_API_KEY)$/.test(name))
+          allowed[name] = value;
       // An interactive approval seat decides each call. Without one, the Session's
       // permission mode decides: workspace-write and full access allow, anything else denies.
       const interactive = typeof requestApproval === 'function';
@@ -136,9 +170,13 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const policy = serviceEndpoint ? sessionToolPolicy(agentToolPolicy, sandbox) : null;
       let hostTools = { tools: [], originalName: name => name };
       const onApproveTool = !interactive && !serviceEndpoint ? undefined : async request => {
-        const responder = interactive ? requestApproval : request.requiresUserApproval ? requestPolicyApproval : null;
-        const explain = request.requiresUserApproval === true && !request.childRunId;
-        if (typeof responder !== 'function') return request.requiresUserApproval ? nativeEngineApprovalReply('unavailable', explain) : standing;
+        if (serviceEndpoint && sandbox === 'workspace-write' && request.workspaceWriteSafe === true
+          && !request.requiresUserApproval && !request.childRunId) return 'allow';
+        const requiresApproval = request.requiresUserApproval === true || serviceEndpoint && sandbox === 'workspace-write'
+          && (request.childRunId || ['run_command', 'stop_command', 'delete_workspace_file', 'rewind_workspace_files'].includes(request.tool));
+        const responder = interactive ? requestApproval : requiresApproval ? requestPolicyApproval : null;
+        const explain = requiresApproval && !request.childRunId;
+        if (typeof responder !== 'function') return requiresApproval ? nativeEngineApprovalReply('unavailable', explain) : standing;
         const tool = hostTools.originalName(request.tool ?? 'tool');
         try {
           const outcome = await responder({ toolName: `native/${tool}`,
@@ -163,19 +201,21 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       };
       let diagnostics = '';
       const runId = `studio-${createHash('sha256').update(`${session}\n${text(turnId) ? turnId : randomUUID()}\n${objective}`).digest('hex').slice(0, 32)}`;
+      const verification = serviceEndpoint ? nativeEngineVerification({ objective, runId }) : null;
       const onReadToolReceipt = nativeHostReceiptHandler && ((request, receiptSignal) => {
         if (request?.runId !== runId) return {};
         return nativeHostReceiptHandler({ ...request, name: hostTools.originalName(request.name),
           signal: signal ? AbortSignal.any([signal, receiptSignal]) : receiptSignal });
       });
       const engine = serviceEndpoint ? connectEngineService({ endpoint: serviceEndpoint,
-        token: env.AGENTKIT_ENGINE_SERVICE_TOKEN, sessionId: createHash('sha256').update(session).digest('hex'),
-        runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, requiredToolPolicy: policy?.contract,
-        requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: serviceFetch }) : spawnEngine({ command, args: [...args, '--workspace', cwd, '--state-dir', stateDir, '--session', session, '--approval', standing],
+        token: service.token, sessionId: createHash('sha256').update(session).digest('hex'),
+        runId, runSignal: signal, onApproveTool, onCallTool, onReadToolReceipt, onVerifyGoal: verification?.verify, requiredToolPolicy: policy?.contract,
+        requiredToolEffects: dynamicTools.some(tool => tool.effectProtocol), fetchImpl: service.fetchImpl }) : spawnEngine({ command, args: [...args, '--workspace', workspaceRoot, '--state-dir', stateDir, '--session', session, '--approval', standing],
         env: { ...allowed, AGENTKIT_ENGINE_MODEL_NAME: model, AGENTKIT_ENGINE_MODEL_BASE_URL: modelProvider.baseUrl,
           AGENTKIT_ENGINE_MODEL_API_KEY_ENV: MODEL_ENV, [MODEL_ENV]: modelProvider.apiKey ?? '',
           ...(Number.isSafeInteger(modelProvider.contextWindow) ? { AGENTKIT_ENGINE_MODEL_CONTEXT_WINDOW: String(modelProvider.contextWindow) } : {}),
-          ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}) },
+          ...(modelProvider.images ? { AGENTKIT_ENGINE_MODEL_IMAGES: '1' } : {}),
+          ...(env.KSADK_MODEL_COMPAT_RULE ? { AGENTKIT_ENGINE_MODEL_COMPAT_RULE: env.KSADK_MODEL_COMPAT_RULE } : {}) },
         onApproveTool, onCallTool, hostName: 'agentkit-studio', onLog: chunk => { diagnostics = (diagnostics + chunk).slice(-4000); } });
       let cancellation;
       const abort = () => { cancellation ??= engine.cancel(runId).catch(() => {}); };
@@ -183,7 +223,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let hello;
         try { hello = await engine.initialize(); }
         catch (error) {
-          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE'].includes(error.code)) throw error;
+          if (['NATIVE_ENGINE_TOOL_POLICY_UNAVAILABLE', 'NATIVE_ENGINE_TOOL_EFFECT_UNAVAILABLE', 'NATIVE_ENGINE_VERIFICATION_UNAVAILABLE'].includes(error.code)) throw error;
           throw failure('NATIVE_ENGINE_UNAVAILABLE', `Native 引擎启动失败：${error.message}`);
         }
         const offeredTools = hello.capabilities?.hostToolReceipts === ENGINE_TOOL_RECEIPT ? dynamicTools
@@ -194,7 +234,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         if (inputImages.length) {
           const limits = hello.capabilities?.inputImages;
           if (!Number.isSafeInteger(limits?.maxCount) || !Number.isSafeInteger(limits?.maxEncodedBytes))
-            throw failure('NATIVE_ENGINE_IMAGE_UNAVAILABLE', '当前 Harness 服务或模型未声明图片输入能力。');
+            throw failure('NATIVE_ENGINE_IMAGE_UNAVAILABLE', '所连接的 Harness 没有启用图片输入，请检查该服务的模型能力配置。');
           if (inputImages.length > limits.maxCount || inputImages.reduce((bytes, block) =>
             bytes + Buffer.byteLength(block.image_url.url, 'utf8'), 0) > limits.maxEncodedBytes)
             throw failure('NATIVE_ENGINE_IMAGE_LIMIT', '图片超出当前 Harness 服务的输入限制。');
@@ -207,7 +247,9 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         // The remote start can be committed before its response reaches Studio.
         if (serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
         const started = await engine.startRun({ runId, objective, conversation: engineConversation(messages, input), hostInstructions: systemPrompt,
-          ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}), ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
+          ...(inputImages.length ? { inputImages } : {}), ...(toolPolicy ? { toolPolicy } : {}),
+          ...(verification ? { hostVerification: verification.definition } : {}),
+          ...(onCallTool && hostTools.tools.length ? { hostTools: hostTools.tools } : {}) });
         if (!serviceEndpoint) signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
         // A remote Run retains its original view after an engine upgrade.
@@ -221,6 +263,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let finalText = null, rest;
         let thinkingCursor = hello.capabilities?.liveThinking === true ? '' : undefined;
         let toolDraftCursor = hello.capabilities?.liveToolDrafts === true ? '' : undefined;
+        let textCursor = hello.capabilities?.liveText === true ? '' : undefined;
         let canGuide = typeof nextGuidance === 'function' && typeof commitGuidance === 'function'
           && hello.capabilities?.methods?.includes('run/guide');
         let pendingGuidance = null;
@@ -234,7 +277,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
               else canGuide = false;
             }
           }
-          const page = await engine.events(runId, cursor, 5000, thinkingCursor, toolDraftCursor);
+          const page = await engine.events(runId, cursor, 5000, thinkingCursor, toolDraftCursor, textCursor);
           for (const event of page.events) {
             if (pendingGuidance && event.inputId === pendingGuidance.inputId) {
               if (event.kind === 'input.guidance_applied') {
@@ -254,6 +297,13 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             && typeof preview.text === 'string' && preview.text.length <= 8192 && preview.cursor !== thinkingCursor) {
             if (preview.text) yield { type: 'engine-thinking', attemptId: preview.id, text: preview.text };
             thinkingCursor = preview.cursor;
+          }
+          const body = page.text;
+          if (textCursor !== undefined && SHA256.test(String(body?.requestId)) && typeof body.cursor === 'string'
+            && /^[\da-f-]{36}:\d{1,16}$/.test(body.cursor) && body.cursor !== textCursor
+            && Number.isSafeInteger(body.offset) && body.offset >= 0 && typeof body.text === 'string' && body.text.length <= 8192) {
+            yield { type: 'engine-text', runId, requestId: body.requestId, cursor: body.cursor, offset: body.offset, delta: body.text };
+            textCursor = body.cursor;
           }
           const draft = page.toolDraft;
           if (toolDraftCursor !== undefined && typeof draft?.cursor === 'string' && draft.cursor !== toolDraftCursor
@@ -294,10 +344,10 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       if (!SHA256.test(sha256)) return null;
       const cached = views.read(sha256);
       if (cached !== null) return cached;
-      let html = serviceEndpoint
-        ? await fetchEngineServiceView(serviceEndpoint, env.AGENTKIT_ENGINE_SERVICE_TOKEN, sha256, serviceFetch) : null;
-      if (html === null && viewFetch && (viewService.endpoint !== serviceEndpoint
-        || viewService.token !== env.AGENTKIT_ENGINE_SERVICE_TOKEN))
+      let html = singleRoute
+        ? await fetchEngineServiceView(singleRoute.endpoint, singleRoute.token, sha256, singleRoute.fetchImpl) : null;
+      if (html === null && viewFetch && (viewService.endpoint !== singleRoute?.endpoint
+        || viewService.token !== singleRoute?.token))
         html = await fetchEngineServiceView(viewService.endpoint, viewService.token, sha256, viewFetch);
       if (html === null) return null;
       if (!views.save({ contract: ENGINE_VIEW_CONTRACT, sha256, html })) throw new Error('engine_service_view_mismatch');

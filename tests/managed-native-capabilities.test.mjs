@@ -30,7 +30,7 @@ async function definition(t, framework, extraEnv = {}) {
   } });
 }
 
-test('managed Harness admits usable workspace and command tools into its real preset composition', async t => {
+test('managed Harness routes native builtins to the independent runtime', async t => {
   const runtime = await definition(t, 'harness');
   let preset;
   const admission = new DshPresetAdmission({ getAgent: async () => runtime.agent,
@@ -42,13 +42,10 @@ test('managed Harness admits usable workspace and command tools into its real pr
   t.after(() => admission.dispose());
   await admission.ensure(runtime.identity.agentId);
   const plugin = preset.plugins.find(item => item.id === 'studio-runtime');
-  assert.equal(plugin.config.nativeEngineContract, 'agentkit.native-dsh-turn/v1');
-  for (const name of ['read_workspace_file', 'write_workspace_file', 'run_command', 'read_command_output']) {
-    assert.ok(plugin.config.toolBindings?.includes(name), `cloud Harness must receive ${name}`);
-    assert.ok(plugin.config.toolContracts?.some(item => item.name === name && item.executor === 'builtin'));
-  }
-  assert.ok(!plugin.config.toolBindings.includes('web_search'), 'unconfigured search is not advertised');
-  assert.ok(!plugin.config.toolBindings.includes('skill_install'), 'defaults do not grant installation');
+  assert.equal(plugin.config.runtime, 'native-engine');
+  assert.equal(plugin.config.nativeEngineContract, undefined);
+  for (const name of ['read_workspace_file', 'write_workspace_file', 'run_command', 'read_command_output'])
+    assert.ok(!plugin.config.toolBindings?.includes(name), `Harness owns ${name}`);
   assert.deepEqual(runtime.agent.bindings, runtime.agent.spec.bindings);
 });
 

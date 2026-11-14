@@ -6,7 +6,7 @@ import { OWNED_COMMAND_OUTPUT_CONTRACT } from '@kingsoftcloud/agentkit-harness-n
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { nativeRecoveryBinding } from '../src/providers/native-recovery-binding.mjs';
 import { createStudioNativeCommandOutput } from '../src/host/services/native-command-output.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 
 const scope = { tenantId: 'local', workspaceId: 'w', userId: 'local-user', agentId: 'a' };
 const taskId = 'a'.repeat(64), request = () => ({ agentId: 'a', sessionId: 's', taskId });

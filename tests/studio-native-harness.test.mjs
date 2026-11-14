@@ -11,12 +11,12 @@ import { memoryDigest, nativeMemoryScopeBindings, nativeUserMemoryCandidate } fr
 import { canonical, MemoryRunStore, NativeKernel, BACKGROUND_COMMAND_CONTRACT, admitBackgroundNotification, backgroundCommandObservation } from '@kingsoftcloud/agentkit-harness-core';
 import { digest, tool } from './fixtures/native-core.mjs';
 import { nativeDshBackgroundOwnership } from '@kingsoftcloud/agentkit-harness-node/native/dsh-background-ownership';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 import { createBackgroundCommandPort } from '@kingsoftcloud/agentkit-harness-node/native/background-command-port';
 import { createAgentStore } from '../src/agent-store.mjs';
 import { createModelService } from '../src/model-service.mjs';
 import { frozenNativeModelDescription } from '../src/providers/native-model-capabilities.mjs';
-import { createStudioNativeHarness } from '../src/host/services/native-harness.mjs';
+import { createStudioNativeHarness } from './fixtures/retired-native-harness.mjs';
 import { createStudioObservability } from '../src/studio-observability.mjs';
 import { createStudioManagedNativeBinding } from '../src/host/services/native-managed-binding.mjs';
 import { STUDIO_MANAGED_NATIVE_INPUT } from '../src/host/services/native-managed-input.mjs';

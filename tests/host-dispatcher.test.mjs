@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createControlPlaneDispatcher } from '../src/host/routes/dispatcher.mjs';
 import { createAgentRoutes } from '../src/host/routes/agents.mjs';
+import { createSessionRoutes as createRetiredSessionRoutes } from './fixtures/retired-session-routes.mjs';
 import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
 import { STUDIO_OPERATION_IDS } from '../src/contracts/operations.mjs';
 
@@ -13,7 +14,7 @@ function harness(callback) {
 
 test('Native child routes reject malformed or canceled requests before loading the Host', async () => {
   let loaded = 0;
-  const host = harness(createSessionRoutes({ getNativeHost: async () => { loaded++; throw Error('must not load'); } }));
+  const host = harness(createRetiredSessionRoutes({ getNativeHost: async () => { loaded++; throw Error('must not load'); } }));
   for (const payload of [{}, { agentId: 'a', sessionId: 's', childRunId: 'extra' }, { agentId: 'a', sessionId: 's', runId: 42 }])
     assert.equal((await host.dispatch('sessions/native-child-tasks', payload)).error.code, 'STUDIO_NATIVE_CHILD_CONTROL_INVALID');
   assert.equal((await host.dispatch('sessions/native-child-promote', { agentId: 'a', sessionId: 's', childRunId: 'c', commandId: 'p' })).error.code,
@@ -27,6 +28,11 @@ test('Native child routes reject malformed or canceled requests before loading t
   host.owner.abort();
   assert.equal((await host.dispatch('sessions/native-child-tasks', { agentId: 'a', sessionId: 's' })).error.code, 'gateway/cancelled');
   assert.equal(loaded, 0);
+});
+
+test('the production session dispatcher does not mount a retired in-process Host', async () => {
+  const host = harness(createSessionRoutes({}));
+  assert.equal((await host.dispatch('sessions/native-child-tasks', { agentId: 'a', sessionId: 's' })).error.code, 'STUDIO_LEGACY_HARNESS_RETIRED');
 });
 
 test('unknown and pre-cancelled operations retain their envelopes without invoking a domain', async () => {

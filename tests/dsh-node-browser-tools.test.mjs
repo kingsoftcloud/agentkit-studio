@@ -99,7 +99,7 @@ for (const recovered of [true, false]) test(`static browser screenshot timeout $
   }
 });
 
-test('a stalled graceful Chromium shutdown kills only the owned browser and waits for its exit', { timeout: 15000 }, async t => {
+test('a stalled graceful Chromium shutdown kills only the owned browser and waits for its exit', { timeout: 30000 }, async t => {
   let child, graceful = 0, killed = 0;
   const h = setup(t, { launchBrowser: () => launchOwnedInspectionBrowser({
     async launchServer(options) {
@@ -111,7 +111,9 @@ test('a stalled graceful Chromium shutdown kills only the owned browser and wait
         kill: () => { killed++; return owner.kill(); } };
     },
     connect: (...args) => chromium.connect(...args),
-  }, executable, 100) });
+  // A deliberately stalled close guarantees the force-kill branch. Use the
+  // production deadline for actual OS process exit, even on a busy CI runner.
+  }, executable) });
   const args = { path: '.', wait_ms: 0, actions: [{ type: 'click', selector: '#hit' }] };
   const result = await h.invoke(args);
   assert.equal(result.status, 'ok', canonical(result));

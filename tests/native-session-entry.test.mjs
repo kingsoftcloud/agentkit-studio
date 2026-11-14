@@ -106,11 +106,36 @@ test('service sessions are created in the engine workspace with their admitted p
   const modelSelection = { provider: 'harness-service', model: 'Harness' };
   const workspaceRoot = '/workspace/native-agent';
   const presetId = 'preset-harness-service';
-  const f = bindingFixture(async () => ({ presetId, workspaceRoot, modelSelection }));
+  const f = bindingFixture(async () => ({ presetId, workspaceRoot, modelSelection, serviceOwnedModel: true }));
   await f.bind({ agentId: 'agent-a', modelSelection: { provider: 'legacy', model: 'stale-default' } });
   assert.deepEqual(f.calls, [
     ['create', { cwd: workspaceRoot, agentPreset: presetId }],
     ['model', { sessionId: 'blank', ...modelSelection, saveDefault: false }],
     ['open', 'blank'],
+  ]);
+});
+
+test('new Native conversations inherit the selected project and its model after a switch', async () => {
+  const calls = [], workspace = label => ({ id: label, cwd: '/' + label, retainedBy: { mainView: 1 } });
+  let current = workspace('project-a');
+  const navCtx = {
+    sessions: { list: { getSnapshot: () => ({ byId: { [current.id]: current } }) },
+      create: async options => { calls.push(options); return current.id; } },
+    workspaces: { list: { getSnapshot: () => ({ items: [{ workspaceId: 'workspace-' + current.id, sessionIds: [current.id] }] }) } },
+    uiWorkspace: { openSession() {} },
+  };
+  const hostRemote = { ensureDshPreset: async (_agent, _build, _preset, cwd) => {
+    assert.equal(cwd, current.cwd);
+    return { presetId: 'same-native-preset', workspaceRoot: cwd, serviceOwnedModel: true,
+      modelSelection: { provider: 'independent', model: current.id } };
+  } };
+  const remote = { session: { selectModel: async payload => { calls.push(payload.model); return { ok: true }; } } };
+  const f = createNativeSessionBinding({ navCtx, remote, hostRemote, layout: { selectPanel() {} }, writeConversationAgent() {}, actions: {} });
+  await f.bindAgent({ agentId: 'same-agent', throwOnError: true });
+  current = workspace('project-b');
+  await f.bindAgent({ agentId: 'same-agent', throwOnError: true });
+  assert.deepEqual(calls, [
+    { workspaceId: 'workspace-project-a', agentPreset: 'same-native-preset' }, 'project-a',
+    { workspaceId: 'workspace-project-b', agentPreset: 'same-native-preset' }, 'project-b',
   ]);
 });

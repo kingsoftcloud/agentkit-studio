@@ -119,20 +119,6 @@ test('Skill-bound presets reuse DSH loader and shell and register definitions in
   assert.deepEqual(registrations, [skill]);
 });
 
-test('only enabled bound Skill Spaces enter the whole-turn Native preset', async () => {
-  const plugin = (id, enabled = true) => ({ enabled, config: { binding: { resource: { kind: 'skill-space', id } } } });
-  for (const runtime of ['harness', 'codex', 'dsh-native']) {
-    let registered;
-    const record = agent({ spec: { runtime: { type: runtime }, bindings: { plugins: [plugin('space'), plugin('space'), plugin('disabled', false)] } } });
-    const admission = new DshPresetAdmission({ nativeEngineContract: 'agentkit.native-dsh-turn/v1',
-      getAgent: async () => record, registry: { register: async value => { registered = value; } } });
-    await admission.ensure('demo/agent');
-    const config = registered.plugins.find(row => row.name.endsWith('/dsh-runtime-plugin'))?.config;
-    if (runtime === 'harness') assert.deepEqual(config.skillSpaceIds, ['space']);
-    else assert.equal(config?.skillSpaceIds, undefined);
-  }
-});
-
 test('dsh preset admission uses a stable revision-scoped id', () => {
   assert.equal(dshPresetId('demo/agent', 3), 'agentkit-studio-agent-demo_2Fagent-r3');
   assert.deepEqual(dshPresetEligibility(agent()), {
@@ -260,7 +246,7 @@ test('derived presets collapse duplicate persona rows from a stale or reloaded b
   assert.equal(base[1].config.prefix, 'official');
 });
 
-test('whole-turn Native owns Web; ordinary legacy presets retain their base Web plugin', async () => {
+test('independent Native owns Web; ordinary legacy presets retain their base Web plugin', async () => {
   const base = [{ id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true } },
     { id: 'present', name: '@deepseek-ai/dsh-tool-present' }];
   for (const [runtime, nativeEngineContract, keepWeb] of [
@@ -362,7 +348,7 @@ test('the bridge preset forwards AgentEngine builtin Tool contracts for native r
   assert.deepEqual(registered[0].plugins[0].config.toolContracts, [{ resourceId: 'component_status', name: 'component_status', executor: 'builtin', parameters: { type: 'object', properties: {} } }]);
 });
 
-test('whole-turn Native activation is explicit and applies only to local Harness revisions', async () => {
+test('local Harness presets always use the independent runtime', async () => {
   for (const runtime of ['harness', 'dsh-native', 'codex']) {
     const registered = [], revision = agent({ metadata: { id: 'demo', revision: 1, local: true }, spec: { runtime: { type: runtime }, bindings: {} } });
     const admission = new DshPresetAdmission({ nativeEngineContract: 'agentkit.native-dsh-turn/v1',
@@ -370,7 +356,8 @@ test('whole-turn Native activation is explicit and applies only to local Harness
       getAgent: async () => revision });
     await admission.ensure('demo');
     const config = registered[0].plugins.find(plugin => plugin.id === 'studio-runtime')?.config;
-    assert.equal(config?.nativeEngineContract, runtime === 'harness' ? 'agentkit.native-dsh-turn/v1' : undefined);
+    assert.equal(config?.nativeEngineContract, undefined);
+    assert.equal(config?.runtime, { harness: 'native-engine', codex: 'codex' }[runtime]);
   }
   assert.throws(() => new DshPresetAdmission({ nativeEngineContract: 'unknown' }), /Unsupported Native Harness/);
 });
@@ -394,25 +381,16 @@ test('recovery keeps the preset registered when bound resources are temporarily 
   const config = runtime(registered[0]).config;
   assert.equal(config.resourcesUnavailable, true);
   assert.deepEqual(config.unavailableResources.map(item => item.kind), ['tool', 'skill']);
-  // Default policy degrades: the turn still runs with the bindings that are left.
-  let request;
+  let request, strictRequest;
   const bridge = createRuntimeBridge();
-  bridge.setNativeToolsFactory(() => ({ policyDefinition() {} }));
-  const strictBridge = createRuntimeBridge();
-  strictBridge.setNativeToolsFactory(() => ({ policyDefinition() {} }));
-  let strictRequest;
-  applyDshRuntimePlugin({ get: () => strictBridge, tools: {}, on: (event, callback) => { if (event === 'agent/execute-turn') strictRequest = callback; } },
+  applyDshRuntimePlugin({ get: () => bridge, tools: {}, on: (event, callback) => { if (event === 'agent/request') strictRequest = callback; } },
     { ...config, strictResources: true });
   await assert.rejects(() => strictRequest({ agent: { id: 'strict' } }, () => assert.fail('strict must not run')),
     error => error.code === 'STUDIO_PRESET_RESOURCES_UNAVAILABLE' && /MCP\/Tool mcp:old/.test(error.message));
-  strictBridge.close();
-  // A strict admission on the SAME instance must not reuse the placeholder.
   await assert.rejects(() => admission.ensure('demo/agent'), /old MCP resource is unavailable/);
-  applyDshRuntimePlugin({ get: () => bridge, tools: {}, on: (event, callback) => { if (event === 'agent/execute-turn') request = callback; } }, config);
-  // The resource gate is open: the turn reaches the runtime bridge instead of
-  // failing with STUDIO_PRESET_RESOURCES_UNAVAILABLE.
-  await assert.rejects(() => request({ agent: { id: 'degraded' } }, () => ({ ok: true })),
-    { code: 'STUDIO_NATIVE_TURN_EXECUTOR_UNAVAILABLE' });
+  applyDshRuntimePlugin({ get: () => bridge, tools: {}, on: (event, callback) => { if (event === 'agent/request') request = callback; } }, config);
+  await request({ agent: { id: 'degraded' } }, async () => ({}));
+  assert.equal(bridge.getRoute('degraded').runtime, 'native-engine');
   admission.getToolContracts = async () => [];
   admission.getSkillDefinitions = async () => [];
   await admission.ensure('demo/agent');
@@ -1061,16 +1039,16 @@ test('a new Harness Team role selects the service preset and recovery keeps its 
   const modelSelection = { provider: 'agentkit-studio-harness-service', model: 'Independent' };
   const registered = new Map();
   const admission = new DshPresetAdmission({ getAgent: async () => record,
-    localHarnessService: { workspaceRoot, modelSelection },
+    resolveHarnessWorkspace: () => ({ workspaceRoot, modelSelection }),
     registry: { register: async value => { registered.set(value.id, value); return () => {}; } } });
   const old = await admission.ensure(record.metadata.id);
-  const fresh = await admission.ensure(record.metadata.id, { preferService: true });
-  assert.equal(old.runtime, 'harness');
+  const fresh = await admission.ensure(record.metadata.id, { cwd: workspaceRoot });
+  assert.equal(old.presetId, fresh.presetId);
   assert.equal(fresh.runtime, 'native-engine');
   assert.equal(fresh.workspaceRoot, workspaceRoot);
   assert.deepEqual(fresh.modelSelection, modelSelection);
   const config = registered.get(fresh.presetId).plugins.find(plugin => plugin.name.endsWith('/dsh-runtime-plugin')).config;
   assert.equal(config.runtimeRecord.metadata.id, record.metadata.id);
   assert.equal((await admission.ensure(record.metadata.id, { requestedPresetId: fresh.presetId })).runtime, 'native-engine');
-  assert.equal((await admission.ensure(record.metadata.id, { requestedPresetId: old.presetId, preferService: true })).runtime, 'harness');
+  assert.equal((await admission.ensure(record.metadata.id, { requestedPresetId: old.presetId })).runtime, 'native-engine');
 });

@@ -47,5 +47,5 @@ test('an encoded Native MCP schema cannot fall back to the default DSH engine', 
   for (const runtime of ['harness', 'dsh-native', 'codex']) assert.throws(() => applyPreset({}, {
     agentId: 'schema', runtime, local: true,
     toolContracts: [{ name: 'exact', executor: 'mcp', nativeMcpSchema: { contract: NATIVE_MCP_SCHEMA_CONTRACT } }],
-  }), { code: 'STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED' });
+  }), { code: runtime === 'harness' ? 'STUDIO_LEGACY_HARNESS_RETIRED' : 'STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED' });
 });

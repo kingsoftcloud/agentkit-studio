@@ -59,8 +59,8 @@ export async function startFrozenBuildRuntime({ ctx, build, managedRuntime, mana
   }
   const resolveDefinition = () => managedRuntime ? Promise.resolve(structuredClone(managedRuntime.agent)) : build.resolve(agentId, buildId);
   const frozen = await resolveDefinition();
-  await admit(agentId, frozen);
-  const harnessModel = managedRuntime?.harnessModelSelection;
+  const runtimeAdmission = await admit(agentId, frozen);
+  const harnessModel = managedRuntime?.harnessModelSelection ?? (runtimeAdmission?.serviceOwnedModel ? runtimeAdmission.modelSelection : undefined);
   const bindings = frozen.spec?.bindings || {}, first = bindings.modelProfileIds?.[0];
   const primary = bindings.modelProfileId || (typeof first === 'string' ? first : first?.resourceId || first?.id) || '';
   const ids = [...new Set([primary, ...(bindings.modelProfileIds || []).map(item => typeof item === 'string' ? item : item.resourceId || item.id)].filter(Boolean))];

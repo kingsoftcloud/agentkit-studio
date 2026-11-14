@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNativeChildrenState } from '../src/client/state/native-children.mjs';
 import { createNativeChildPanel } from '../src/client/dsh/native-children.mjs';
+import { createNativeApprovalPanel } from '../src/client/dsh/native-approval.mjs';
 import { createProductClient } from '../src/remote/control-client.mjs';
 import { createStudioHostRemote } from '../src/host-remote.mjs';
-import { createSessionRoutes } from '../src/host/routes/sessions.mjs';
+import { createSessionRoutes } from './fixtures/retired-session-routes.mjs';
 
 const contract = 'agentkit.studio-native-child-history/v1';
 const task = { childRunId: 'child', sessionId: 'child-session', parentRunId: 'parent', role: 'reader', phase: 'requesting_model',
@@ -291,4 +292,20 @@ test('the actual header panel renders saved history, reads results and exposes o
   await tick();
   assert.equal(outer.render(changed), null, 'an unbound Session has no local Native child controls');
   child.dispose(); outer.dispose();
+});
+
+for (const kind of ['children', 'approval']) test(`independent service ${kind} header never polls retired in-process controls`, async () => {
+  const dispatcher = {}, React = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props, children }),
+    useState: (...args) => dispatcher.useState(...args), useEffect: (...args) => dispatcher.useEffect(...args) };
+  const calls = [];
+  const hostRemote = { agents: async () => ({ items: [{ metadata: { id: 'local-agent', local: true }, spec: { runtime: { type: 'harness' } } }] }),
+    nativeApprovalStatus: async () => { calls.push('approval'); throw Error('retired'); },
+    nativeRecoveryStatus: async () => { calls.push('recovery'); throw Error('retired'); } };
+  const factory = kind === 'children' ? createNativeChildPanel : createNativeApprovalPanel;
+  const Panel = factory({ ui: { React, ResourceDialog: 'dialog', buttonStyle: () => ({}) }, hostRemote,
+    setInterval: () => { calls.push('timer'); return 1; }, clearInterval() {} });
+  const mounted = hooks(Panel, dispatcher), props = { sessionId: 'session',
+    useSessions: select => select({ byId: { session: { projectionValues: { agentPreset: 'agentkit-studio-agent-local-agent-r1-harness-service' } } } }) };
+  mounted.render(props); await tick(); const result = mounted.render(props);
+  assert.equal(result, null); assert.deepEqual(calls, []); mounted.dispose();
 });

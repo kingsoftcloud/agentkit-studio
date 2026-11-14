@@ -41,8 +41,7 @@
     "scripts/start-agent-manifest.mjs",
     "scripts/native-package-pins.json",
     "scripts/native-package-integrity.mjs",
-    "scripts/verify-native-dependencies.mjs",
-    "scripts/check-local-process-launcher.mjs"
+    "scripts/verify-native-dependencies.mjs"
   ],
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
@@ -51,7 +50,7 @@
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "pretest": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
-    "prepack": "node scripts/check-local-process-launcher.mjs && node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
+    "prepack": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "test": "node scripts/test-studio.mjs",
     "verify-dsh": "node scripts/verify-dsh-node-store.mjs",
     "verify-dsh-lifecycle": "node scripts/verify-dsh-lifecycle.mjs",
@@ -96,6 +95,7 @@
         "@deepseek-ai/dsh-client-ui-plugin-manager",
         "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-workspace",
         "@deepseek-ai/dsh-client-ui-schedule"
@@ -127,9 +127,9 @@
   "dependencies": {
     "@astral-sh/ruff-wasm-nodejs": "0.16.8",
     "@deepseek-ai/dsh-experimental-agent-team": "0.2.2-rc.1",
-    "@kingsoftcloud/agentkit-harness-core": "0.0.20",
-    "@kingsoftcloud/agentkit-harness-node": "0.0.20",
-    "@kingsoftcloud/agentkit-harness-ui": "0.0.20",
+    "@kingsoftcloud/agentkit-harness-core": "0.0.22",
+    "@kingsoftcloud/agentkit-harness-node": "0.0.22",
+    "@kingsoftcloud/agentkit-harness-ui": "0.0.22",
     "@modelcontextprotocol/sdk": "1.32.0",
     "@openai/codex": "0.159.2",
     "ajv": "8.17.1",
@@ -154,18 +154,7 @@
     "typescript": "6.0.3",
     "marked": "18.1.1"
   },
-  "bundledDependencies": [
-    "@kingsoftcloud/agentkit-harness-core",
-    "@kingsoftcloud/agentkit-harness-node",
-    "@kingsoftcloud/agentkit-harness-ui"
-  ],
   "publishConfig": {
-    "executableFiles": [
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/darwin-arm64/launcher",
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/darwin-x64/launcher",
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/linux-arm64/launcher",
-      "node_modules/@kingsoftcloud/agentkit-harness-node/src/native/local-process-bin/linux-x64/launcher"
-    ],
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },

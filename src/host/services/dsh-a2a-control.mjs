@@ -61,7 +61,7 @@ export function createStudioDshA2aControls({ ctx, agentEvents, resolveManagedBin
         invariant(typeof tools?.a2aTaskHistory === 'function', 'STUDIO_DSH_A2A_UNAVAILABLE');
         return tools.a2aTaskHistory({ sessionId: original.sessionId, ...(original.offset !== undefined ? { offset: original.offset } : {}),
           ...(original.limit !== undefined ? { limit: original.limit } : {}),
-          ...(original.inventoryDigest !== undefined ? { inventoryDigest: original.inventoryDigest } : {}) }, assertCurrent);
+          ...(original.inventoryDigest !== undefined ? { inventoryDigest: original.inventoryDigest } : {}) }, assertCurrent, session.header?.cwd);
       }
       invariant(original.agentRevision === binding.agentRevision && original.buildId === binding.buildId
         && typeof tools?.controlA2aTask === 'function', 'STUDIO_DSH_A2A_BINDING_CHANGED');
@@ -98,7 +98,7 @@ export function createStudioDshA2aControls({ ctx, agentEvents, resolveManagedBin
             commandDigest: a2aDecisionDigest(command), receipt: outcome.receipt };
           return outcome === 'allowed-once' ? 'allow' : 'deny';
         },
-      }), signal);
+      }, session.header?.cwd), signal);
     })();
     active.add(task); void task.finally(() => active.delete(task)).catch(() => {}); return task;
   }
