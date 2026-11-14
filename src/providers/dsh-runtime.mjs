@@ -12,7 +12,7 @@ import { prepareLocalResourceContext, writeBoundMemory } from '../local-runtime.
 import { studioCodexReasoningWire } from '../model-reasoning.mjs';
 import { readSse } from '../sse.mjs';
 import { CODEX_PROVIDER } from './codex-models.mjs';
-import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
+import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
 
 /** Runtimes that run in their own process behind the stream seam. */
 const PROCESS_RUNTIMES = new Set(['codex', 'native-engine']);
@@ -295,7 +295,7 @@ async function* codexFrames(codexRuntime, options, onChunk, toolRecorder, record
         engineAttempt = null;
       } else recordEnginePresentation?.(chunk);
     }
-    else if (chunk?.type === 'engine-tool-draft') recordEnginePresentation?.(chunk);
+    else if (chunk?.type === 'engine-tool-draft' || chunk?.type === 'engine-text') recordEnginePresentation?.(chunk);
     else if (chunk?.type === 'engine-thinking') {
       if (engineAttempt !== chunk.attemptId) yield* closeBlock(state, 'reasoning');
       engineAttempt = chunk.attemptId;
@@ -757,7 +757,10 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
             }, recordChunk, toolRecorder, chunk => {
               // The engine's own view renders these; Studio only keeps them in the Session.
               try {
-                if (chunk.type === 'engine-tool-draft') {
+                if (chunk.type === 'engine-text') {
+                  toolAgent?.session?.append?.(NATIVE_ENGINE_TEXT,
+                    { runId: chunk.runId, requestId: chunk.requestId, cursor: chunk.cursor, offset: chunk.offset, delta: chunk.delta }, { ignorable: true });
+                } else if (chunk.type === 'engine-tool-draft') {
                   toolAgent?.session?.append?.(NATIVE_ENGINE_TOOL_DRAFT,
                     { runId: chunk.runId, requestId: chunk.requestId, tools: chunk.tools }, { ignorable: true });
                 } else {

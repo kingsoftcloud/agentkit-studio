@@ -321,7 +321,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     const serviceModels = new Set(nativeEngineRuntime.serviceModels);
     if (managedRuntime?.harnessModelSelection) serviceModels.add(managedRuntime.harnessModelSelection.model);
     if (serviceModels.size) {
-      llmCtx.effect(() => llmCtx.llm.registerAdapter([HARNESS_SERVICE_MODEL_PROVIDER], createHarnessServiceModelAdapter(LlmAdapter, serviceModels)),
+      llmCtx.effect(() => llmCtx.llm.registerAdapter([HARNESS_SERVICE_MODEL_PROVIDER], createHarnessServiceModelAdapter(LlmAdapter, serviceModels,
+        model => nativeEngineRuntime.serviceModelInfo(model))),
         'agentkit-studio: Harness model route');
     }
   });

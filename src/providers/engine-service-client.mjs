@@ -245,8 +245,8 @@ export function connectEngineService({ endpoint, token, sessionId, runId, onAppr
     initialize: () => initialize(),
     startRun: params => call('run/start', params),
     status: (runId, options) => call('run/status', { runId, ...options }),
-    events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor) =>
-      call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor, follow: true }),
+    events: (runId, cursor = 0, waitMs = 0, thinkingCursor, toolDraftCursor, textCursor) =>
+      call('run/events', { runId, cursor, waitMs, thinkingCursor, toolDraftCursor, textCursor, follow: true }),
     resume: runId => call('run/resume', { runId }),
     approve: (runId, interactionId, reply) => call('run/approve', { runId, interactionId,
       decision: typeof reply === 'string' ? reply : reply.decision,

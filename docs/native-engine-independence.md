@@ -67,5 +67,6 @@
 
 `tokenEnv` 填各自服务令牌所在的环境变量名。HTTPS 可选填 `caFile`。运行中应用的侧边预览可在绑定中设置 `previewOrigin` 和 `previewEntry`。同一 Studio 进程选择多项目或原有单服务配置其中一种。
 
+图片能力由各独立 Harness 的握手声明，Studio 的模型目录读取该声明。确认实际网关支持图片后，在对应服务启动环境设置 `AGENTKIT_ENGINE_MODEL_IMAGES=1`（程序化启动则传 `model.images: true`）。只改 Studio 中的模型名称不会改变服务的图片能力；未启用的服务会明确提示检查该服务的能力配置。
 
 `AGENTKIT_DSH_ROOT=<已验收的 DSH 源码目录> node scripts/verify-independent-workspace-host.mjs <Studio.tgz>` 会挂载实际打包的 Studio，验证两个独立 HTTP 服务的写入、历史及切回原项目后的隔离，并确认未绑定目录不会落到另一个服务。模型使用本地测试响应；真实模型和侧边交互仍须单独验收。冻结版本、MCP 调用与重启回放的集成验证也使用独立引擎进程。

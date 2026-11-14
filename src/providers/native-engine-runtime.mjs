@@ -28,6 +28,7 @@ export { HARNESS_SERVICE_MODEL_PROVIDER } from './engine-service-workspaces.mjs'
 
 export const NATIVE_ENGINE_RUNTIME = 'native-engine';
 export const NATIVE_ENGINE_EVENT = 'agentkit/native-engine-event';
+export const NATIVE_ENGINE_TEXT = 'agentkit/native-engine-text';
 export const NATIVE_ENGINE_TOOL_DRAFT = 'agentkit/native-engine-tool-draft';
 export const ENGINE_VIEW_CONTRACT = 'agentkit.engine-view/v1';
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -70,14 +71,15 @@ function sessionToolPolicy(policy, sandbox) {
 
 /** DSH selects a model route before invoking the agent loop. This adapter
  * supplies that route's metadata. The authenticated loop waterfall owns execution. */
-export function createHarnessServiceModelAdapter(AdapterBase, models) {
+export function createHarnessServiceModelAdapter(AdapterBase, models, describeModel) {
   const catalog = new Set(typeof models === 'string' ? [models] : models);
   return new class extends AdapterBase {
     providerInfo(provider) { return { id: provider, name: 'Harness' }; }
     async listModels(provider) { return Promise.all([...catalog].map(model => this.resolveModel(provider, model))); }
     async resolveModel(provider, model) {
       if (!catalog.has(model)) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '模型不在托管 Harness 绑定中。');
-      return { provider, id: model, name: model, modalities: ['text'] };
+      const capabilities = await describeModel?.(model);
+      return { provider, id: model, name: model, modalities: capabilities?.images ? ['text', 'image'] : ['text'] };
     }
     async *stream() {
       throw failure('NATIVE_ENGINE_AGENT_LOOP_REQUIRED', '托管 Harness 仅接受绑定的 Agent 会话调用。');
@@ -105,11 +107,26 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
   const routeFor = cwd => routes.get(canonicalEngineWorkspace(cwd));
   const singleRoute = routes.size === 1 ? routes.values().next().value : undefined;
   const viewFetch = viewService?.endpoint && engineServiceFetch(viewService.endpoint, viewService.caFile);
+  const modelCapabilities = new Map();
   return {
     usesService: routes.size > 0,
     serviceCatalogWorkspace: routes.keys().next().value,
     applicationPreviewAvailable: [...routes.values()].some(route => route.preview),
     serviceModels: [...new Set([...routes.values()].map(route => route.modelSelection.model))],
+    async serviceModelInfo(model) {
+      if (!modelCapabilities.has(model)) {
+        const request = Promise.all([...routes.values()].filter(route => route.modelSelection.model === model).map(async route => {
+          const engine = connectEngineService({ endpoint: route.endpoint, token: route.token, fetchImpl: route.fetchImpl,
+            sessionId: 'studio-model-' + createHash('sha256').update(model).digest('hex'), observeOnly: true });
+          try { return (await engine.initialize()).capabilities?.inputImages; }
+          finally { await engine.close(); }
+        })).then(results => ({ images: results.some(limits => Number.isSafeInteger(limits?.maxCount) && limits.maxCount > 0
+          && Number.isSafeInteger(limits?.maxEncodedBytes) && limits.maxEncodedBytes > 0) }));
+        modelCapabilities.set(model, request);
+        request.catch(() => modelCapabilities.delete(model));
+      }
+      return modelCapabilities.get(model);
+    },
     serviceWorkspace(cwd) {
       const route = cwd === undefined ? singleRoute : routeFor(cwd);
       return route && { workspaceRoot: route.workspaceRoot, modelSelection: { ...route.modelSelection } };
@@ -212,7 +229,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         if (inputImages.length) {
           const limits = hello.capabilities?.inputImages;
           if (!Number.isSafeInteger(limits?.maxCount) || !Number.isSafeInteger(limits?.maxEncodedBytes))
-            throw failure('NATIVE_ENGINE_IMAGE_UNAVAILABLE', '当前 Harness 服务或模型未声明图片输入能力。');
+            throw failure('NATIVE_ENGINE_IMAGE_UNAVAILABLE', '所连接的 Harness 没有启用图片输入，请检查该服务的模型能力配置。');
           if (inputImages.length > limits.maxCount || inputImages.reduce((bytes, block) =>
             bytes + Buffer.byteLength(block.image_url.url, 'utf8'), 0) > limits.maxEncodedBytes)
             throw failure('NATIVE_ENGINE_IMAGE_LIMIT', '图片超出当前 Harness 服务的输入限制。');
@@ -241,6 +258,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
         let finalText = null, rest;
         let thinkingCursor = hello.capabilities?.liveThinking === true ? '' : undefined;
         let toolDraftCursor = hello.capabilities?.liveToolDrafts === true ? '' : undefined;
+        let textCursor = hello.capabilities?.liveText === true ? '' : undefined;
         let canGuide = typeof nextGuidance === 'function' && typeof commitGuidance === 'function'
           && hello.capabilities?.methods?.includes('run/guide');
         let pendingGuidance = null;
@@ -254,7 +272,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
               else canGuide = false;
             }
           }
-          const page = await engine.events(runId, cursor, 5000, thinkingCursor, toolDraftCursor);
+          const page = await engine.events(runId, cursor, 5000, thinkingCursor, toolDraftCursor, textCursor);
           for (const event of page.events) {
             if (pendingGuidance && event.inputId === pendingGuidance.inputId) {
               if (event.kind === 'input.guidance_applied') {
@@ -274,6 +292,13 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
             && typeof preview.text === 'string' && preview.text.length <= 8192 && preview.cursor !== thinkingCursor) {
             if (preview.text) yield { type: 'engine-thinking', attemptId: preview.id, text: preview.text };
             thinkingCursor = preview.cursor;
+          }
+          const body = page.text;
+          if (textCursor !== undefined && SHA256.test(String(body?.requestId)) && typeof body.cursor === 'string'
+            && /^[\da-f-]{36}:\d{1,16}$/.test(body.cursor) && body.cursor !== textCursor
+            && Number.isSafeInteger(body.offset) && body.offset >= 0 && typeof body.text === 'string' && body.text.length <= 8192) {
+            yield { type: 'engine-text', runId, requestId: body.requestId, cursor: body.cursor, offset: body.offset, delta: body.text };
+            textCursor = body.cursor;
           }
           const draft = page.toolDraft;
           if (toolDraftCursor !== undefined && typeof draft?.cursor === 'string' && draft.cursor !== toolDraftCursor

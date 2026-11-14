@@ -33,6 +33,7 @@ function fixture(script) {
     req.on('end', async () => {
       const parsed = JSON.parse(body);
       requests.push(parsed);
+      if (handle.stream) { await handle.stream(parsed, res); return; }
       const frames = handle.respond ? await handle.respond(parsed) : script[Math.min(requests.length - 1, script.length - 1)];
       if (!Array.isArray(frames)) {
         res.writeHead(frames.status, { 'content-type': 'application/json', ...frames.headers });
@@ -44,7 +45,7 @@ function fixture(script) {
       res.end('data: [DONE]\n\n');
     });
   });
-  const handle = { requests, respond: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
+  const handle = { requests, respond: null, stream: null, close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) };
   return new Promise(done => server.listen(0, '127.0.0.1', () => done(Object.assign(handle, { url: `http://127.0.0.1:${server.address().port}/v1` }))));
 }
 async function setup(t, script) {
@@ -314,7 +315,6 @@ test('only a negotiated image-capable engine receives current-turn image input',
 });
 
 test('Workspace Write auto-allows scoped writes and read-only commands, but prompts for a shell mutation', {
-  skip: !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER && 'requires the matching Harness review build',
 }, async t => {
   const f = await setup(t, [
     toolCall('write', 'write_workspace_file', { path: 'out.txt', content: 'fixture' }),
@@ -338,7 +338,6 @@ test('Workspace Write auto-allows scoped writes and read-only commands, but prom
 });
 
 test('Studio verifies only an explicit acceptance command on the delivered workspace revision', {
-  skip: !process.env.AGENTKIT_STUDIO_TEST_ENGINE_SERVER && 'requires the matching Harness review build',
 }, async t => {
   for (const stale of [false, true]) {
     const f = await setup(t, [
@@ -372,17 +371,17 @@ test('acceptance ignores unrelated success and rejects failed or stale matching 
   assert.equal(check([{ ...receipt, call: { ...receipt.call, arguments: { command: 'true' } } }]).status, 'blocked');
 });
 
-async function serviceRuntime(t, f) {
+async function serviceRuntime(t, f, { images = false } = {}) {
   const createEngineService = await createTestService();
   const token = 'fixture-studio-service-approval-token';
   const service = createEngineService({ token, startup: { workspace: f.cwd, stateDir: join(f.cwd, '..', 'service-state'),
-    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY' },
+    model: { name: 'fixture-model', baseUrl: f.model.url, apiKeyEnv: 'MODEL_KEY', images },
     scope: { tenantId: 'local', workspaceId: 'fixture', userId: 'user', agentId: 'agent' } }, env: { MODEL_KEY: 'fixture-key' } });
   t.after(() => service.close());
   await new Promise(resolve => service.server.listen(0, '127.0.0.1', resolve));
   return createNativeEngineRuntime({ stateRoot: join(f.cwd, '..', 'studio-state'), env: {
     AGENTKIT_ENGINE_SERVICE_URL: 'http://127.0.0.1:' + service.server.address().port,
-    AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd,
+    AGENTKIT_ENGINE_SERVICE_TOKEN: token, AGENTKIT_ENGINE_SERVICE_WORKSPACE: f.cwd, AGENTKIT_ENGINE_SERVICE_MODEL: 'fixture-model',
   } });
 }
 
@@ -647,4 +646,79 @@ test('two workspace bindings isolate writes, model traffic and Run history even 
     assert.throws(() => createNativeEngineRuntime({ stateRoot, env: { ...env,
       AGENTKIT_ENGINE_SERVICE_WORKSPACES: JSON.stringify([alpha.binding, duplicate]) } }), { code: 'NATIVE_ENGINE_CONFIG_INVALID' });
   }
+});
+
+
+test('Native body previews reach Studio before completion and preserve exactly one final answer', { timeout: 15000,
+}, async t => {
+  const f = await setup(t, []);
+  const next = Promise.withResolvers(), finish = Promise.withResolvers();
+  t.after(() => { next.resolve(); finish.resolve(); });
+  let finished = false;
+  f.model.stream = async (request, response) => {
+    assert.equal(request.stream, true);
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    const send = delta => response.write(`data: ${JSON.stringify({ id: 'live-text', choices: [{ index: 0, delta }] })}\n\n`);
+    send({ role: 'assistant', content: 'First part. ' });
+    await next.promise;
+    send({ content: 'Second part.' });
+    await finish.promise;
+    finished = true;
+    response.end(`data: ${JSON.stringify({ id: 'live-text', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage })}\n\ndata: [DONE]\n\n`);
+  };
+  const runtime = await serviceRuntime(t, f), previews = [], finals = [];
+  for await (const chunk of runtime.stream({ ...f.options, signal: AbortSignal.timeout(12000) })) {
+    if (chunk.type === 'engine-text') {
+      assert.equal(finished, false, 'a terminal-only implementation would deadlock here');
+      previews.push(chunk);
+      if (chunk.delta === 'First part. ') next.resolve();
+      if (chunk.delta === 'Second part.') finish.resolve();
+    }
+    if (chunk.type === 'text') finals.push(chunk.text);
+  }
+  assert.deepEqual(previews.map(p => p.delta), ['First part. ', 'Second part.']);
+  assert.equal(previews[0].requestId, previews[1].requestId);
+  assert.notEqual(previews[0].cursor, previews[1].cursor);
+  assert.deepEqual(finals, ['First part. Second part.']);
+});
+
+
+test('Studio model capabilities come from the bound service and image inputs reach that exact model', async t => {
+  const { createHarnessServiceModelAdapter } = await import('../src/providers/native-engine-runtime.mjs');
+  const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
+  for (const images of [false, true]) {
+    const f = await setup(t, [final('Image received.')]);
+    const runtime = await serviceRuntime(t, f, { images });
+    const adapter = createHarnessServiceModelAdapter(class {}, ['fixture-model'], model => runtime.serviceModelInfo(model));
+    assert.deepEqual((await adapter.resolveModel('Harness', 'fixture-model')).modalities, images ? ['text', 'image'] : ['text']);
+    const run = collect(runtime.stream({ ...f.options, inputImages: [{ type: 'image_url', image_url: { url } }] }));
+    if (!images) {
+      await assert.rejects(run, { code: 'NATIVE_ENGINE_IMAGE_UNAVAILABLE' });
+      assert.equal(f.model.requests.length, 0);
+    } else {
+      assert.equal((await run).findLast(chunk => chunk.type === 'text').text, 'Image received.');
+      assert.ok(f.model.requests.some(request => request.messages.some(message => Array.isArray(message.content)
+        && message.content.some(part => part.type === 'image_url' && part.image_url.url === url))));
+    }
+  }
+});
+
+test('a committed provider backoff explains the wait before any retry actually starts', { timeout: 15000,
+}, async t => {
+  const f = await setup(t, [{ status: 429, headers: { 'retry-after': '1' }, body: { error: { code: 'rate_limit' } } }, final('Recovered without resending.')]);
+  const runtime = await serviceRuntime(t, f), events = [], started = Date.now();
+  for await (const chunk of runtime.stream({ ...f.options, signal: AbortSignal.timeout(12000) })) {
+    if (chunk.type !== 'engine-event') continue;
+    events.push(chunk.event);
+    if (chunk.event.kind === 'model.retry_scheduled') {
+      assert.equal(f.model.requests.length, 1);
+      assert.equal(chunk.event.httpStatus, 429);
+      assert.ok(chunk.event.retryAt >= started + 900);
+      assert.equal(events.some(event => event.kind === 'effect.prepared' && event.retry === true), false);
+    }
+  }
+  const scheduled = events.findIndex(event => event.kind === 'model.retry_scheduled');
+  const retry = events.findIndex(event => event.kind === 'effect.prepared' && event.retry === true);
+  assert.ok(scheduled >= 0 && retry > scheduled);
+  assert.equal(f.model.requests.length, 2);
 });
