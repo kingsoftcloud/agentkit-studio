@@ -177,9 +177,26 @@ EOF
     exit 2
   fi
 fi
-if [[ ! -d node_modules ]]; then
-  pnpm install --frozen-lockfile --store-dir "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-pnpm-store"
-fi
+store_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/agentkit-pnpm-store"
+for attempt in 1 2; do
+  # A stalled registry transfer must leave time for the actual test gate.
+  # The next attempt reuses only packages admitted into the pnpm store.
+  registry='https://registry.npmjs.org'
+  # The regional mirror is only a transfer fallback. The frozen lockfile still
+  # verifies every archive; neither package versions nor integrity checks change.
+  if [[ "$attempt" == 2 ]]; then registry='https://registry.npmmirror.com'; fi
+  if npm_config_network_concurrency=8 npm_config_fetch_retries=1 npm_config_fetch_timeout=60000 \
+      node ci/run-with-deadline.mjs --timeout-ms 210000 --kill-grace-ms 15000 -- \
+      pnpm install --frozen-lockfile --prefer-offline --reporter=append-only --store-dir "$store_dir" --registry="$registry"; then
+    break
+  else
+    status=$?
+    if [[ "$attempt" == 2 ]] || [[ "$status" != 124 ]]; then
+      exit "$status"
+    fi
+    echo 'Ezone dependency install timed out; retrying with the same frozen lockfile and store.' >&2
+  fi
+done
 bash ci/ezone-native-gate.sh
 
 if [[ "${RUN_REF_PARITY:-0}" == "1" ]]; then
