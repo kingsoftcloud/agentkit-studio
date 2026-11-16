@@ -16,8 +16,11 @@ const { createEngineService } = await import(new URL('engine-service.mjs',
 const a2aSpec = { local_name: 'research', binding_id: 'fixture-binding', space_id: 'fixture-space',
   target_agent_id: 'a2a-agent-research', expected_version_id: 'fixture-version', exposure: 'tool' };
 const a2aInput = { agent: 'research', message: 'Find the evidence.' };
+// This fixture crosses real HTTP, SQLite, and Host restart boundaries.
+// Bound each wait independently of the production request and approval budgets.
+const fixtureWaitMs = 20000;
 
-for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'unknown-remote-task', 'no-delegation']) test(`signed managed Run across restart: ${scenario}`, async t => {
+for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'unknown-remote-task', 'no-delegation']) test(`signed managed Run across restart: ${scenario}`, { timeout: 60000 }, async t => {
   const delegated = scenario !== 'no-delegation';
   const useA2a = delegated && scenario !== 'mcp';
   const interrupted = useA2a && scenario !== 'a2a';
@@ -181,18 +184,26 @@ for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'u
     origin = await listen(engine.server);
   }
   const headers = { authorization: 'Bearer ' + serviceToken, 'content-type': 'application/json' };
-  const post = (path, body) => fetch(origin + '/_agentkit/native-kernel/v1/' + path, {
-    method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(5000),
-  });
+  async function post(path, body, signal = AbortSignal.timeout(fixtureWaitMs)) {
+    try {
+      return await fetch(origin + '/_agentkit/native-kernel/v1/' + path, {
+        method: 'POST', headers, body: JSON.stringify(body), signal,
+      });
+    } catch (cause) {
+      if (!signal.aborted) throw cause;
+      throw new Error(`Managed fixture request timed out: ${path}`, { cause });
+    }
+  }
   const send = input => post('commands', { command: input, permit: issuer.issue(input) });
   const input = command({ session_id: sessionId, payload: { content: 'Use the bound guide and look up evidence.' } });
   const query = { tenant_id: target.tenantId, agent_instance_id: target.agentInstanceId, session_id: sessionId,
     authorization_ref: 'fixture-status' };
   async function waitForPhase(phase) {
-    const deadline = Date.now() + 6000;
+    const deadline = Date.now() + fixtureWaitMs;
     let last;
     while (Date.now() < deadline) {
-      const response = await post('status', { query, permit: issuer.issue(query, 'get_status') });
+      const response = await post('status', { query, permit: issuer.issue(query, 'get_status') },
+        AbortSignal.timeout(Math.max(1, deadline - Date.now())));
       assert.equal(response.status, 200);
       last = (await response.json()).runs[0]?.phase;
       if (last === phase) return;
@@ -219,7 +230,14 @@ for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'u
           if (event?.event_type === 'interaction.requested') return event;
         }
       }
-    } finally { await reader.cancel(); }
+    } catch (cause) {
+      if (cause?.name !== 'TimeoutError' && cause?.name !== 'AbortError') throw cause;
+      throw new Error('Managed fixture did not receive the approval event before its deadline', { cause });
+    } finally {
+      await reader.cancel().catch(error => {
+        if (error?.name !== 'TimeoutError' && error?.name !== 'AbortError') throw error;
+      });
+    }
   }
 
   await start();
@@ -265,7 +283,7 @@ for (const scenario of ['mcp', 'a2a', 'lost-host-reply', 'known-remote-task', 'u
     await start();
     assert.equal((await (await send(input)).json()).run_id, receipt.run_id);
     if (scenario === 'unknown-remote-task') {
-      const before = receiptReads, deadline = Date.now() + 5000;
+      const before = receiptReads, deadline = Date.now() + fixtureWaitMs;
       while (receiptReads < before + 2 && Date.now() < deadline) await delay(30);
       assert(receiptReads >= before + 2);
       await waitForPhase('awaiting_reconciliation');
