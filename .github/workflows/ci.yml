@@ -156,6 +156,10 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run build:official
+      - name: Install Studio dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          node scripts/build-mcp-client.mjs
       - name: Verify the business caller reaches MCP through the real Host
         run: node scripts/verify-managed-mcp-identity.mjs
         env:
