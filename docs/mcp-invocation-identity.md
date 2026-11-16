@@ -30,7 +30,7 @@ MCP 收到的调用身份字段含义如下：
 
 | 字段 | 类别 | 含义 | 缺省行为 |
 | --- | --- | --- | --- |
-| `userId` | 关联 | **平台主体** | 必定存在 |
+| `userId` | 关联 | **平台主体** | 解析到主体时转发；engine 进程内没有平台主体时缺省 |
 | `sessionId` | 关联 | **Native DSH 会话 ID** | 必定存在 |
 | `invocationId` | 关联 | **平台请求 ID** | 必定存在；未传 `InvocationId` 时是平台生成的 UUID |
 | `nativeSessionId` | 关联 | Runtime 内部 DSH 会话 ID | 必定存在 |

@@ -9,8 +9,8 @@ import { currentBusinessInvocation } from './business-invocation-context.mjs';
  * @param {string} [input.source] runtime label used when no RunAgent bound a
  *   business identity (`dsh-native` for Native, `codex` for Codex).
  */
-export function nativeMcpInvocation({ scope, agent, agentId, runId, callId, source = 'dsh-native' } = {}) {
-  const business = currentBusinessInvocation();
+export function nativeMcpInvocation({ scope, agent, agentId, runId, callId, source = 'dsh-native',
+  business = currentBusinessInvocation() } = {}) {
   const nativeSessionId = String(agent?.session?.id || ''), nativeUserId = String(scope?.userId || '');
   if (!business) return { source, sessionId: nativeSessionId, userId: nativeUserId,
     tenantId: scope?.tenantId, workspaceId: scope?.workspaceId, agentId, runId, callId };

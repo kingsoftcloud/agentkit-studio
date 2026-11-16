@@ -57,8 +57,12 @@ export function normalizeMcpInvocationIdentity(input) {
   const source = wire(input.source);
   const sessionId = wire(input.sessionId);
   const userId = wire(input.userId);
-  if (!SOURCES.has(source) || !sessionId || !userId) return null;
-  const identity = { v: 1, source, sessionId, userId };
+  // The Host supplies `source` and `sessionId`; the platform principal is only
+  // known when this runtime resolved one. A deployment without a platform
+  // principal still forwards the business caller instead of dropping the whole
+  // identity channel.
+  if (!SOURCES.has(source) || !sessionId) return null;
+  const identity = { v: 1, source, sessionId, ...(userId ? { userId } : {}) };
   for (const field of ['tenantId', 'workspaceId', 'agentId', 'runId', 'callId', 'nativeSessionId', 'invocationId',
     'businessUserId', 'businessSessionId', 'businessInvocationId']) {
     const value = wire(input[field]);

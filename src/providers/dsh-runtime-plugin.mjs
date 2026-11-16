@@ -8,6 +8,8 @@ export const name = 'agentkit-studio-dsh-runtime';
 export const inject = ['tools', 'skills', 'studioRuntimeBridge'];
 const AGENT_REQUEST_EVENT = ['agent', 'request'].join('/');
 import { bindDshAgentRoute, executeDshResourceTool } from '@kingsoftcloud/agentkit-studio/dsh-runtime';
+import { businessInvocationFor } from './business-invocation-context.mjs';
+import { nativeMcpInvocation } from './native-mcp-invocation.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { migrateLegacyCodexObservations } from './codex-observation.mjs';
 import { createDshPresentationTools } from './dsh-presentation-tools.mjs';
@@ -132,6 +134,12 @@ function registerMcpTools(ctx, contracts, config, bridge) {
         signal: exec?.signal,
         callId: exec?.callId,
         agent: exec?.agent,
+        // This plugin executes inside the engine process, where the RunAgent
+        // turn's async context no longer exists. Recover the business caller
+        // from the identity bound to this Session and forward it to MCP.
+        invocation: nativeMcpInvocation({ agent: exec?.agent, agentId: config.agentId,
+          runId: exec?.rootCallId, callId: exec?.callId,
+          business: businessInvocationFor(String(exec?.agent?.session?.id || '')) }),
       }, bridge)),
     }));
     return () => disposers.forEach(dispose => { try { dispose?.(); } catch {} });

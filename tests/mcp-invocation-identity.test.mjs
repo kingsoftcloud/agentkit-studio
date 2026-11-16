@@ -38,10 +38,13 @@ function mcpFetchRecorder(record = []) {
   return fetchImpl;
 }
 
-test('invocation identity needs both a visible Session and a trusted principal', () => {
+test('invocation identity needs a visible Session; the principal is forwarded when resolved', () => {
   assert.equal(normalizeMcpInvocationIdentity(undefined), null);
   assert.equal(normalizeMcpInvocationIdentity('dsh-native'), null);
-  assert.equal(normalizeMcpInvocationIdentity({ source: 'dsh-native', sessionId: 'session-1' }), null, 'a principal is required');
+  // A runtime that never resolved a platform principal still forwards the
+  // Session, because the business caller must reach MCP regardless.
+  assert.deepEqual({ ...normalizeMcpInvocationIdentity({ source: 'dsh-native', sessionId: 'session-1' }) },
+    { v: 1, source: 'dsh-native', sessionId: 'session-1' });
   assert.equal(normalizeMcpInvocationIdentity({ source: 'dsh-native', userId: 'user-1' }), null, 'a Session is required');
   assert.equal(normalizeMcpInvocationIdentity({ source: 'forged', sessionId: 'session-1', userId: 'user-1' }), null);
   assert.equal(normalizeMcpInvocationIdentity({ source: 'dsh-native', sessionId: 'session\n1', userId: 'user-1' }), null,

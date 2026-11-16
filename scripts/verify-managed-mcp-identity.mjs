@@ -205,10 +205,9 @@ try {
   await model?.close().catch(() => {});
   await mcp?.close().catch(() => {});
   if (result.workspace) await rm(result.workspace, { recursive: true, force: true }).catch(() => {});
-  if (values.report) {
-    await mkdir(dirname(resolve(values.report)), { recursive: true });
-    await writeFile(resolve(values.report), JSON.stringify(result, null, 2) + '\n');
-  }
+  const reportPath = resolve(values.report || join(repository, '.artifacts/managed-mcp-identity.json'));
+  await mkdir(dirname(reportPath), { recursive: true });
+  await writeFile(reportPath, JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result));
 }
 

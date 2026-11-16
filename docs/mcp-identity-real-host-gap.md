@@ -1,7 +1,7 @@
 # 真实 DSH Host 下的 MCP 业务身份缺口
 
-> 状态：**已复现，待修**。本文件记录 `scripts/verify-managed-mcp-identity.mjs` 在真实
-> DSH Host 上的失败结论。
+> 状态：**已修复**。`scripts/verify-managed-mcp-identity.mjs` 现在通过。
+> 本文件保留失败时的证据与根因，供回归参考。
 
 ## 结论
 
@@ -49,23 +49,51 @@ DEBUG-MCPFETCH] http://127.0.0.1:62476/mcp null    ← invocationScope.current()
 托管 `RunAgent` 的 manifest 声明 `resources.mcp_servers` 时，走的是后者，所以**当前实际
 部署路径不受益于本特性**。
 
-## 修复方向（未实施）
+## 根因（已确认）
 
-有两个可选方案，需要先定架构：
+MCP 工具由 **DSH core 的 ToolExecutionPipeline** 派发，链路是：
 
-1. **适配器兜底**：`callMcpTool` 在 `invocation` 缺省时回退到
-   `currentBusinessInvocation()`，用业务上下文补出 `businessUserId` /
-   `businessSessionId` / `businessInvocationId`。
-   - 优点：改动小，一处覆盖所有调用方。
-   - 代价：平台 `userId` / `sessionId` 在适配器里拿不到，需要一并设计来源；且
-     `AsyncLocalStorage` 在这个调用点是否仍然有效需要再验证（本次观测到的是空上下文，
-     说明要么调用方没传，要么 ALS 已跨出作用域——两者要先区分）。
-2. **DSH core 透传**：让 DSH core 的 MCP 执行器把 `invocation` 传给适配器。
-   - 优点：语义正确，适配器不猜。
-   - 代价：要改 DSH patch 系列，跨仓库协调。
+```
+DSH core ToolExecutionPipeline
+  → src/providers/dsh-runtime-plugin.mjs    execute(args, exec)
+  → src/host/runtime-bridge.mjs             executeResourceTool
+  → src/host/services/resource-tools.mjs    createBoundResourceToolExecutor
+  → src/local-resource-adapters.mjs         callMcpTool(..., { invocation })
+```
 
-**建议先做 1 的可行性验证**：如果 ALS 在这个调用点确实为空，说明还有一层异步上下文丢失，
-需要先把「谁在什么上下文里发出 MCP 请求」查清楚，再决定补哪里。
+`dsh-runtime-plugin.mjs` 调 `executeDshResourceTool` 时**没有传 `invocation`**，
+适配器于是拿到 `undefined`，`normalizeMcpInvocationIdentity(undefined)` 返回 `null`，
+身份通道被静默跳过。
+
+同时确认：这个插件执行在 **engine 进程**里，`RunAgent` 那轮的 `AsyncLocalStorage`
+已经不在了（`exec` 里只有 `token / callId / rootCallId / name / signal / agent /
+toolSet / deferContext / concludeTurn / arguments`，没有 `scope`）。
+
+## 修复
+
+1. `business-invocation-context.mjs` 增加**按原生 Session 绑定的身份注册表**：
+   `bindBusinessInvocation(sessionId, context)` / `businessInvocationFor(sessionId)`。
+   一个 Session 同时只允许一个活跃 Run，所以 Session id 是无歧义的键。
+2. `build-runtime-http.mjs` 在 RunAgent 执行期间注册，执行结束后释放。
+3. `dsh-runtime-plugin.mjs` 在派发 MCP 工具时用 `businessInvocationFor(exec.agent.session.id)`
+   取回身份，交给 `nativeMcpInvocation({ ..., business })` 组装。
+4. `normalizeMcpInvocationIdentity` 的**平台 `userId` 改为可选**：engine 进程内没有平台
+   主体时，仍然转发 `source` + `sessionId` + 业务字段，而不是把整个通道丢掉。
+
+修复后的实际线上内容：
+
+```json
+{
+  "v": 1, "source": "run-agent",
+  "sessionId": "runtime-e1b9446e…", "nativeSessionId": "runtime-e1b9446e…",
+  "businessUserId": "customer@example.com",
+  "businessSessionId": "order-session-42",
+  "businessInvocationId": "request-1001",
+  "invocationId": "request-1001"
+}
+```
+
+`authorization` 保持 `Bearer <mcp-credential>` 未被覆盖。
 
 ## 复现方式
 

@@ -51,3 +51,20 @@ export function runWithBusinessInvocation(context, invoke) {
 export function currentBusinessInvocation() {
   return storage.getStore() || null;
 }
+
+/** Async context does not cross the HTTP hop between the independent engine and
+ * this Host: the model's tool dispatch arrives as a new request whose
+ * `AsyncLocalStorage` is empty. Bind the turn's identity to its native Session
+ * for the duration of the run so the resource callback can recover it.
+ * One Session admits one active run, so the Session id is an unambiguous key. */
+const activeSessions = new Map();
+
+export function bindBusinessInvocation(sessionId, context) {
+  if (typeof sessionId !== 'string' || !sessionId || !context) return () => {};
+  activeSessions.set(sessionId, context);
+  return () => { if (activeSessions.get(sessionId) === context) activeSessions.delete(sessionId); };
+}
+
+export function businessInvocationFor(sessionId) {
+  return (typeof sessionId === 'string' && activeSessions.get(sessionId)) || null;
+}
