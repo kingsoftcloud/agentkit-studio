@@ -147,7 +147,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for patch in "${{ steps.dsh-pin.outputs.patches }}"/*.patch; do
+          for patch in "${{ github.workspace }}/${{ steps.dsh-pin.outputs.patches }}"/*.patch; do
             git -C .ci-dsh apply --whitespace=nowarn "$patch"
           done
       - name: Build the patched DSH host
