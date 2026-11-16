@@ -67,7 +67,10 @@ try {
   for (const label of supplement ? ['DELETED'] : ['ALPHA', 'BETA']) {
     stage = `create-${label}`;
     const agentName = `SIDEBAR_${label}_AGENT_${basename(scratch).slice(-6)}`;
-    const record = await call('agents/create-local', { name: agentName, runtimeType: 'harness', spec: { instructions: { system: 'Reply SIDEBAR_SEED_OK only. Do not use tools.' } } });
+    // Local Harness turns now belong to the independent engine service, which
+    // this gate does not deploy; seed the DSH native loop instead, which is the
+    // default authoring runtime and owns its own execution.
+    const record = await call('agents/create-local', { name: agentName, runtimeType: 'dsh-native', spec: { instructions: { system: 'Reply SIDEBAR_SEED_OK only. Do not use tools.' } } });
     const agentId = record.metadata.id;
     const admission = await call('agents/ensure-preset', { agentId });
     const { sessionId } = await running.ctx.sessionController.create({ cwd: scratch, agentPreset: admission.presetId });
@@ -90,7 +93,7 @@ try {
   assert.ok(report.sessions.every(row => list.items.some(item => item.sessionId === row.sessionId && item.blank === false)));
   report.passed = true;
 } catch (error) {
-  report.failure = { stage, code: String(error.code || 'ASSERTION_FAILED') };
+  report.failure = { stage, code: String(error.code || 'ASSERTION_FAILED'), message: String(error?.message || '').split('\n')[0].slice(0, 300) };
   process.exitCode = 1;
 } finally {
   await browser?.close();
