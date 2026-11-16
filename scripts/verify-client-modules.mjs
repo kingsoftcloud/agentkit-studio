@@ -15,7 +15,7 @@ const output = resolve(process.argv[3] || '.artifacts/refactor/stage-3/module-ad
 const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
 // A reviewed exception is explicit and cannot silently replace either the
 // baseline commit or its original compressed byte count.
-const budgetPath = resolve(process.argv[4] || 'docs/refactor-client-budget.json');
+const budgetPath = resolve(process.argv[4] || 'ci/refactor-client-budget.json');
 const budget = JSON.parse(await readFile(budgetPath, 'utf8'));
 if (budget.baselineCommit !== baseline.sourceCommit || budget.baselineGzipBytes !== baseline.clientGzipBytes
   || !budget.approval || !Number.isFinite(budget.maximumGrowthPercent) || budget.maximumGrowthPercent < 0) throw new Error('Invalid or mismatched client budget approval');

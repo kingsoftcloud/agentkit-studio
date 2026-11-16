@@ -24,7 +24,7 @@ export async function checkDshPin() {
   const [pkg, plugin, manifest, source, makefile, adapter, lockfile, landing] = await Promise.all([
     readJson('package.json'), readJson('studio.plugin.json'), readJson(`${dshPin.patchDirectory}/manifest.json`),
     readJson(dshPin.maintenanceSource), readText('Makefile'), readText('src/session-adapter.mjs'), readText('pnpm-lock.yaml'),
-    readText('docs/index.html'),
+    readText('docs-site/landing/index.html'),
   ]);
   check(Array.isArray(pkg.files) && pkg.files.includes('dsh-pin.json'), 'package.files must ship dsh-pin.json for runtime metadata');
   exact(pkg.engines?.dsh, dshPin.version, 'package.engines.dsh');
@@ -60,9 +60,9 @@ export async function checkDshPin() {
   check(lockfile.includes(`@deepseek-ai/dsh-experimental-agent-team@${dshPin.version}`), 'pnpm lockfile has no pinned agent-team package');
   // The published landing page is the first place a visitor sees the baseline, so
   // it must render the pin rather than a hand-copied string that drifts.
-  check(landing.includes('{{DSH_VERSION}}'), 'docs/index.html must render the DSH baseline from {{DSH_VERSION}}');
+  check(landing.includes('{{DSH_VERSION}}'), 'docs-site/landing/index.html must render the DSH baseline from {{DSH_VERSION}}');
   const hardcodedBaseline = /DSH\s*运行时\s*\d+\.\d+\.\d+(?:-[a-z0-9.]+)?/u.exec(landing);
-  check(!hardcodedBaseline, `docs/index.html hardcodes the DSH baseline (${hardcodedBaseline?.[0]}); use {{DSH_VERSION}}`);
+  check(!hardcodedBaseline, `docs-site/landing/index.html hardcodes the DSH baseline (${hardcodedBaseline?.[0]}); use {{DSH_VERSION}}`);
   return { version: dshPin.version, commit: dshPin.commit, ref: dshPin.ref, baseCommit: dshPin.baseCommit, patchDirectory: dshPin.patchDirectory, patchedTree: dshPin.patchedTree, maintenanceSource: dshPin.maintenanceSource };
 }
 

@@ -3,9 +3,9 @@
 // `next build` with `output: 'export'` emits the site into `out/`. Two things
 // the framework cannot do for us are handled here:
 //
-//   1. The hand-written landing page lives at `docs/index.html` (it is the
-//      marketing/download page, deliberately outside the documentation app).
-//      It is copied verbatim to the site root so `/` keeps its current design.
+//   1. The hand-written landing page lives at `docs-site/landing/index.html` (it
+//      is the marketing/download page, outside the documentation routes). It is
+//      copied verbatim to the site root so `/` keeps its current design.
 //   2. GitHub Pages needs `.nojekyll` (so `_next/` is served) and a `404.html`
 //      that sends readers back to the documentation index.
 //
@@ -19,7 +19,7 @@ import { join, resolve } from 'node:path';
 const root = process.cwd();
 const outDir = join(root, 'out');
 const repoRoot = resolve(root, '..');
-const landingPage = join(repoRoot, 'docs', 'index.html');
+const landingPage = join(root, 'landing', 'index.html');
 
 execSync('next build', {
   stdio: 'inherit',
@@ -49,7 +49,7 @@ if (existsSync(landingPage)) {
   if (unresolved) throw new Error(`unresolved landing page placeholders: ${[...new Set(unresolved)].join(', ')}`);
 
   writeFileSync(join(outDir, 'index.html'), landing);
-  console.log(`[build:static] copied docs/index.html (DSH ${dshPin.version}, plugin ${pkg.version})`);
+  console.log(`[build:static] copied docs-site/landing/index.html (DSH ${dshPin.version}, plugin ${pkg.version})`);
 } else {
   console.warn(`[build:static] WARNING: landing page not found at ${landingPage}`);
 }

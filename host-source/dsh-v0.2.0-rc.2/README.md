@@ -13,7 +13,7 @@ that descriptor by SHA-256. The bundle contains no upstream history before the
 prerequisite. Upstream code retains its [MIT license](LICENSE).
 
 Restore the branch into a new checkout, edit its commits, then export with the
-commands in [the maintenance guide](../../docs/refactor-patches.md). Git commands
+commands in [the maintenance guide](https://kingsoftcloud.github.io/agentkit-studio/docs/contributing/patches/). Git commands
 operate on the maintenance checkout; application builds still apply the generated
 patches to a clean fixed upstream checkout. This directory is repository-only and
 is excluded from the Studio npm package's `files` allowlist.

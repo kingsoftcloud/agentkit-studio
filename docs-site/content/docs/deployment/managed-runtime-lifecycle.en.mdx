@@ -146,6 +146,33 @@ Reusing one VersionId with different declaration bytes fails: a version is immut
 | One active run | A session with an active run returns 409 `RUNTIME_SESSION_BUSY` | `:193` |
 | Approval timeout | 2 minutes | `src/managed-runtime-approval.mjs:25` |
 
+## Managed Host endpoints
+
+A managed Host listens on a local HTTP port and the platform drives sessions through it. The surface splits into health/identity probes and the Actions under `/agentengine/api/v1/`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Readiness probe: 200 `ready`, 503 `stopping` |
+| `GET` | `/v1/agentkit/runtime` | Identity probe: AgentId, VersionId, manifest digest and runtime version |
+| `POST` | `/v1/responses`, `/runs` | Model run entry point (Responses transport) |
+| `POST` | `/runs/<runId>/cancel`, `/v1/responses/<id>/cancel` | Cancel one run |
+| `POST` | `/agentengine/api/v1/<Action>` | Session and history Actions (table below) |
+
+| Action | Required fields |
+| --- | --- |
+| `GetAgentUiBootstrap` | `Name`, `SessionId` |
+| `ListAgentModels` | `Name` |
+| `CreateSession` | `SessionId` |
+| `GetSession` | `SessionId` |
+| `ListSessions` | `Page`, `PageSize` |
+| `DeleteSession` | `SessionId` |
+| `CancelRun` | `SessionId`, `InvocationId`, `ResponseId`, `ClientToken` |
+| `SubmitInteraction` | `SessionId`, `RunId`, `InteractionId`, `ExpectedRevision`, `Action`, `Response`, `IdempotencyKey` |
+| `ListSessionMessages` | `SessionId`, `Limit`, `AfterSeqId`, `BeforeSeqId`, `HistoryEpoch`, `SnapshotSeqId`, `CursorSource`, `IncludeReasoning`, `IncludeToolEvents`, `IncludeAttachments` |
+| `ListSessionEvents` | As above, plus `EventTypes`, `EventOrder`, `Offset`, `CheckpointIds` |
+
+`AgentId` and `UserId` are always allowed; an unlisted field fails with `RUNTIME_ACTION_INPUT_UNSUPPORTED` and an unknown Action returns 404 `RUNTIME_ACTION_UNSUPPORTED` (`src/managed-runtime-actions.mjs:158-167`, `src/build-runtime-http.mjs:128-132`).
+
 ## Related pages
 
 <Cards>
