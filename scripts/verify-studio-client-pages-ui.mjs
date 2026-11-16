@@ -21,10 +21,16 @@ export async function verifyStudioClientPages(page) {
     const name = `UI_REFACTOR_AGENT_${suffix}`;
     await page.getByText('智能体', { exact: true }).first().click();
     await page.getByRole('button', { name: '我的智能体', exact: true }).click();
-    await page.getByRole('button', { name: '手动配置', exact: true }).click();
+    // The Agent list keeps 对话创建 as the primary action and groups the other
+    // create paths (手动配置 / 从专家模板创建) behind the 更多创建方式 menu, so the
+    // manual entry is only rendered once that menu opens.
+    await page.getByRole('button', { name: '更多创建方式', exact: true }).click();
+    await page.getByRole('menuitem', { name: '手动配置', exact: true }).click();
     await page.getByLabel('Agent ID', { exact: true }).fill(`ui-refactor-${suffix}`);
     await page.getByLabel('名称', { exact: true }).fill(name);
-    await page.getByLabel('运行时').selectOption('harness');
+    // The runtime is a radiogroup now; DSH Native is the default authoring
+    // runtime, and Star Harness creation stays paused for new Agents.
+    await page.getByRole('radio', { name: 'DSH Native Harness', exact: true }).click();
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic UI refactoring verification.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     const model = page.getByLabel('默认模型');
