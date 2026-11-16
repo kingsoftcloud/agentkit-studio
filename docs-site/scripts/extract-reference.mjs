@@ -563,7 +563,12 @@ function extractEnvironment() {
     experimental:
       sorted(entry.sites).length === 1 &&
       sorted(entry.sites)[0] === "src/providers/native-engine-runtime.mjs",
-  }));
+  }))
+    // Internal experimental knobs are not part of the public contract. Only the
+    // experimental native-engine process provider reads them, and that runtime is
+    // not documented in public (see STUDIO_RUNTIME_TYPES). Listing them here
+    // would advertise a configuration surface users must not touch.
+    .filter((entry) => !entry.experimental);
   const groups = new Map();
   for (const entry of entries) {
     if (!groups.has(entry.namespace)) groups.set(entry.namespace, []);
@@ -1380,8 +1385,8 @@ function pageIndex(lang) {
       "runtime-contract",
       T("运行时与实体契约", "Runtime and entity contract"),
       T(
-        "三种运行时的能力矩阵、实体标识与校验错误",
-        "Capability matrix, entity identifiers and validation codes of the three runtimes",
+        `${runtimeCount} 种运行时的能力矩阵、实体标识与校验错误`,
+        `Capability matrix, entity identifiers and validation codes of the ${runtimeCount} runtimes`,
       ),
       T(`${runtimeCount} runtime types`, `${runtimeCount} runtime types`),
       "src/runtime-contract.mjs",
@@ -1657,6 +1662,11 @@ function pageIndex(lang) {
 
 function pageRuntimeContract(lang) {
   const runtime = DATA.runtime;
+  // Derived, never hardcoded: adding a runtime to STUDIO_RUNTIME_TYPES must not
+  // require editing prose. The count and the list both come from the source.
+  const runtimeCount = runtime.types.length;
+  const runtimeList = runtime.types.map((type) => C(type)).join("、");
+  const runtimeListEn = runtime.types.map((type) => C(type)).join(", ");
   const constantRows = [
     [
       C("STUDIO_RUNTIME_CONTRACT_VERSION"),
@@ -1737,8 +1747,8 @@ function pageRuntimeContract(lang) {
         "",
         pick(
           T(
-            `**公开运行时只有三种。** ${C("native-engine")} 是内部实验值：${C("assertStudioRuntimeType()")} 接受它，但它不属于公开运行时，不出现在 Agent 表单、可移植运行包与部署里。运行时数量就是 **3**，不是 4；不要把它算成可选项。见[三种运行时](../concepts/runtimes.mdx)。`,
-            `**Exactly three public runtimes.** ${C("native-engine")} is an internal experimental value: ${C("assertStudioRuntimeType()")} accepts it, but it is not a public runtime and never appears in the Agent form, portable bundles or deployments. The count is **3**, not 4 — never treat it as a selectable option. See [the three runtimes](../concepts/runtimes.mdx).`,
+            `**公开运行时共 ${runtimeCount} 种**：${runtimeList}。${C("assertStudioRuntimeType()")} 只接受这些值，其余一律 ${C("RUNTIME_UNSUPPORTED")}。新增运行时只需改 ${C(cite(runtime.file, "STUDIO_RUNTIME_TYPES"))}，本页的计数与能力矩阵随之自动更新。见[运行时](../concepts/runtimes.mdx)。`,
+            `**There are ${runtimeCount} public runtimes**: ${runtimeListEn}. ${C("assertStudioRuntimeType()")} accepts only these and rejects everything else with ${C("RUNTIME_UNSUPPORTED")}. Adding a runtime only changes ${C(cite(runtime.file, "STUDIO_RUNTIME_TYPES"))}; this page's count and capability matrix follow automatically. See [runtimes](../concepts/runtimes.mdx).`,
           ),
           lang,
         ),
@@ -1843,8 +1853,8 @@ function pageRuntimeContract(lang) {
     lang,
     ["运行时与实体契约", "Runtime and entity contract"],
     [
-      `\`${runtime.version}\` 的三种运行时、能力矩阵、实体标识与校验错误码。`,
-      `The three runtimes, capability matrix, entity identifiers and validation codes of \`${runtime.version}\`.`,
+      `\`${runtime.version}\` 的 ${runtimeCount} 种运行时、能力矩阵、实体标识与校验错误码。`,
+      `The ${runtimeCount} runtimes, capability matrix, entity identifiers and validation codes of \`${runtime.version}\`.`,
     ],
     sections,
   );
@@ -3457,8 +3467,8 @@ const TOP_ERRORS = [
   ],
   [
     "RUNTIME_UNSUPPORTED",
-    "`runtime.type` 只接受三种公开值",
-    "`runtime.type` accepts only the three public values",
+    "`runtime.type` 不是 `STUDIO_RUNTIME_TYPES` 里的值时",
+    "`runtime.type` is not one of `STUDIO_RUNTIME_TYPES`",
   ],
   [
     "RUN_IDENTITY_INVALID",

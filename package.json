@@ -49,7 +49,7 @@
     "check": "node scripts/check-dsh-pin.mjs && node scripts/check-node-version.mjs && tsc -p tsconfig.contracts.json && node scripts/check-portability.mjs && node --check src/index.mjs && node --check src/client.js && node --check dist/client.js && node --check src/brand.js && node --check src/session-adapter.mjs && node --check src/host-remote.mjs && node --check src/agent-preset-admission.mjs && node scripts/verify-client-modules.mjs && node scripts/test-studio.mjs",
     "docs:dev": "pnpm --dir docs-site --ignore-workspace dev",
     "docs:build": "pnpm --dir docs-site --ignore-workspace build:static",
-    "docs:check": "node --test tests/docs-site-i18n.test.mjs",
+    "docs:check": "node --test tests/docs-site-i18n.test.mjs tests/docs-runtime-count.test.mjs && node docs-site/scripts/extract-reference.mjs --check",
     "build:client": "node scripts/build-client.mjs",
     "precheck": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",
     "pretest": "node scripts/verify-native-dependencies.mjs && node scripts/build-client.mjs && node scripts/build-mcp-client.mjs",

@@ -1,6 +1,6 @@
 ---
 title: "运行时与实体契约"
-description: "`agentkit.studio.runtime/v1` 的三种运行时、能力矩阵、实体标识与校验错误码。"
+description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、实体标识与校验错误码。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
@@ -15,7 +15,7 @@ description: "`agentkit.studio.runtime/v1` 的三种运行时、能力矩阵、�
 | `STUDIO_RUNTIME_TYPES` | `dsh-native` · `harness` · `codex` | 公开可路由的运行时类型 |
 | `STUDIO_CANONICAL_IDENTIFIERS` | `agentId` · `revision` · `buildId` · `sessionId` · `runId` | 跨实体唯一的标识字段名 |
 
-**公开运行时只有三种。** `native-engine` 是内部实验值：`assertStudioRuntimeType()` 接受它，但它不属于公开运行时，不出现在 Agent 表单、可移植运行包与部署里。运行时数量就是 **3**，不是 4；不要把它算成可选项。见[三种运行时](../concepts/runtimes.mdx)。
+**公开运行时共 3 种**：`dsh-native`、`harness`、`codex`。`assertStudioRuntimeType()` 只接受这些值，其余一律 `RUNTIME_UNSUPPORTED`。新增运行时只需改 `src/runtime-contract.mjs:STUDIO_RUNTIME_TYPES`，本页的计数与能力矩阵随之自动更新。见[运行时](../concepts/runtimes.mdx)。
 
 ## 能力矩阵
 

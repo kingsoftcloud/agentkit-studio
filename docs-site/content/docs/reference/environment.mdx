@@ -1,19 +1,19 @@
 ---
 title: "环境变量参考"
-description: "Studio 读取的 133 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
+description: "Studio 读取的 130 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 三档口径
 
-Studio 从进程环境读取 133 个变量名：其中 8 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
+Studio 从进程环境读取 130 个变量名：其中 8 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
 
 | 档位 | 标识 | 条数 | 含义 |
 | --- | --- | --- | --- |
-| 可配置 | `configurable` | 36 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
+| 可配置 | `configurable` | 34 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
 | 平台注入 | `platform` | 84 | 由容器、托管运行时或桌面外壳注入，手工设置通常会被覆盖或不生效。 |
-| 禁止修改 | `forbidden` | 13 | Studio 会读取，但值必须由凭证服务或设置界面持有；不要写进 shell profile、`.env` 或 CI 变量。 |
+| 禁止修改 | `forbidden` | 12 | Studio 会读取，但值必须由凭证服务或设置界面持有；不要写进 shell profile、`.env` 或 CI 变量。 |
 
 <Callout type="warn" title="凭证只从设置界面写入">
 标为「禁止修改」的变量由凭证服务或设置界面持有。把它们写进 shell profile、`.env` 或 CI 变量会绕过 Studio 的凭证边界，并在日志中出现。
@@ -23,7 +23,7 @@ Studio 从进程环境读取 133 个变量名：其中 8 个是直接 `process.e
 
 | 命名空间 | 条数 | 说明 |
 | --- | --- | --- |
-| `AGENTKIT` | 56 | Studio 自身的配置项。 |
+| `AGENTKIT` | 53 | Studio 自身的配置项。 |
 | `KSADK` | 30 | Skill、沙箱、记忆库与知识库的运行参数。 |
 | `AGENTENGINE` | 11 | AgentEngine 控制面注入的运行时身份与端点。 |
 | `OTEL` | 10 | OpenTelemetry 标准导出变量。 |
@@ -89,9 +89,6 @@ Studio 从进程环境读取 133 个变量名：其中 8 个是直接 `process.e
 | `AGENTKIT_ENGINE_SERVICE_MODEL` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
 | `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
 | `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ENTRY` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
-| `AGENTKIT_ENGINE_COMMAND` | 可配置 | `src/providers/native-engine-runtime.mjs` | 内部实验，非公开 |
-| `AGENTKIT_ENGINE_ARGS` | 可配置 | `src/providers/native-engine-runtime.mjs` | 内部实验，非公开 |
-| `AGENTKIT_ENGINE_MODEL_API_KEY` | 禁止修改 | `src/providers/native-engine-runtime.mjs` | 内部实验，非公开 |
 | `AGENTKIT_STUDIO_DEPLOYMENT_TYPE` | 平台注入 | `src/studio-deployments.mjs` | — |
 | `AGENTKIT_STUDIO_DESKTOP_VERSION` | 平台注入 | `src/studio-version.mjs` | — |
 | `AGENTKIT_STUDIO_DSH_VERSION` | 平台注入 | `src/studio-version.mjs` | — |
@@ -197,9 +194,9 @@ Studio 从进程环境读取 133 个变量名：其中 8 个是直接 `process.e
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| 环境变量名 | `133` | 改名即破坏性变更 |
+| 环境变量名 | `130` | 改名即破坏性变更 |
 | 直读 | `8` | `process.env.X` 字面量 |
-| Host 转发 | `31` | `*_ENV_NAMES` 常量数组声明 |
+| Host 转发 | `30` | `*_ENV_NAMES` 常量数组声明 |
 | 平台注入 | `84` | 手工设置会被覆盖 |
 
 ## 开发者入口

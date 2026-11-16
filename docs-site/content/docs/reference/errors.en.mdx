@@ -50,7 +50,7 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | Confirm `sessionId` belongs to this Host |
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:196` | `sessionId` must not be empty |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | Wait for the build to become available before downloading |
-| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:39` | `runtime.type` accepts only the three public values |
+| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:39` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
 | `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:42` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
 | `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:47` | Shrink the request body or switch to chunked upload |
 | `INVALID_QUERY` | `src/agent-catalog.mjs:10` | Check the query string types and enum values |

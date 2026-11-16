@@ -50,7 +50,7 @@ description: "198 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | 确认 `sessionId` 属于当前 Host |
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:196` | `sessionId` 不能为空 |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | 等构建进入可用状态再下载 |
-| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:39` | `runtime.type` 只接受三种公开值 |
+| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:39` | `runtime.type` 不是 `STUDIO_RUNTIME_TYPES` 里的值时 |
 | `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:42` | 补全 `agentId` / `sessionId` / `runId` / `buildId` |
 | `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:47` | 缩小请求体，或改用分片上传 |
 | `INVALID_QUERY` | `src/agent-catalog.mjs:10` | 检查查询串的类型与枚举值 |
