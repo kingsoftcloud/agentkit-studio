@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { hostFetch } from '../http-fetch.mjs';
 /** Trusted Host startup and scoped dependency composition. Domain services
  * own their stores; route modules own RPC and HTTP transport adapters.
@@ -218,12 +219,23 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   // The Native engine as its own process. Lazy like Codex: hosts without an
   // engine executable still load and report NATIVE_ENGINE_UNAVAILABLE on use.
   const { createNativeEngineRuntime, createHarnessServiceModelAdapter, HARNESS_SERVICE_MODEL_PROVIDER } = await import('../providers/native-engine-runtime.mjs');
+  const { engineServiceWorkspaces, canonicalEngineWorkspace } = await import('../providers/engine-service-workspaces.mjs');
+  const externalRoutes = engineServiceWorkspaces(runtimeEnv);
+  const starHarness = !managedRuntime && !portableRuntime
+    ? await import('./services/star-harness.mjs').then(({ createStarHarnessManager }) => createStarHarnessManager({
+      root: join(studioStoreDir, 'star-harness'), env: runtimeEnv, externalRoutes,
+      packageManager: ctx.get('profileContext')?.packageManager,
+      profile: id => models.profile(id), settings: () => models.settings(),
+      workspaceRegistry: () => ctx.get('workspaceRegistry'),
+      bundledVersion: createRequire(import.meta.url)('../../package.json').dependencies['@kingsoftcloud/agentkit-harness-node'],
+    })) : undefined;
+  if (starHarness) ctx.effect(() => () => starHarness.close(), 'agentkit-studio: Star Harness workers');
   const nativeEngineRuntime = createNativeEngineRuntime({ env: runtimeEnv, viewService: nativeManagedKernel?.remote,
-    stateRoot: join(studioStoreDir, 'native-engine') });
-  const resolveHarnessWorkspace = nativeEngineRuntime.usesService ? cwd => {
+    stateRoot: join(studioStoreDir, 'native-engine'), externalRoutes, starHarness });
+  const resolveHarnessWorkspace = cwd => {
     const route = nativeEngineRuntime.serviceWorkspace(cwd);
     return route && { ...route, modelSelection: managedRuntime?.harnessModelSelection ?? route.modelSelection };
-  } : undefined;
+  };
   let localRuntimeHandlerPromise;
   const localRuntimeHandler = async () => {
     if (!localRuntimeHandlerPromise) {
@@ -318,13 +330,12 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     );
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CODEX_PROVIDER], createCodexModelAdapter({ catalog: codexModels, runtime: dshRuntimeAdapter })), 'agentkit-studio: Codex model directory');
     llmCtx.effect(() => llmCtx.llm.registerAdapter([CLOUD_PROVIDER], createDeploymentModelAdapter({ agents: async () => (await deployments()).agents, runtime: dshRuntimeAdapter })), 'agentkit-studio: frozen cloud models');
-    const serviceModels = new Set(nativeEngineRuntime.serviceModels);
-    if (managedRuntime?.harnessModelSelection) serviceModels.add(managedRuntime.harnessModelSelection.model);
-    if (serviceModels.size) {
-      llmCtx.effect(() => llmCtx.llm.registerAdapter([HARNESS_SERVICE_MODEL_PROVIDER], createHarnessServiceModelAdapter(LlmAdapter, serviceModels,
-        model => nativeEngineRuntime.serviceModelInfo(model))),
-        'agentkit-studio: Harness model route');
-    }
+    const serviceModels = () => [
+      ...nativeEngineRuntime.serviceModels,
+      ...(managedRuntime?.harnessModelSelection ? [managedRuntime.harnessModelSelection.model] : []),
+    ];
+    llmCtx.effect(() => llmCtx.llm.registerAdapter([HARNESS_SERVICE_MODEL_PROVIDER], createHarnessServiceModelAdapter(LlmAdapter, serviceModels,
+      model => nativeEngineRuntime.serviceModelInfo(model))), 'agentkit-studio: Harness model route');
   });
   // Cordis exposes injected services through `get`; property access is only
   // available on typed service contexts and is absent in the plain plugin
@@ -364,7 +375,9 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
         skillConnection, agentRevision: config.agentRevision, buildId: config.buildId, skillDefinitions: config.skillDefinitions ?? [], a2aBindings: config.a2aBindings ?? [],
       });
       if (config.runtime !== 'native-engine') return create(workspaceRoot);
-      return createWorkspaceRoutedBuiltins({ create, defaultRoot: nativeEngineRuntime.serviceCatalogWorkspace ?? workspaceRoot, resolveHarnessWorkspace,
+      return createWorkspaceRoutedBuiltins({ create, defaultRoot: nativeEngineRuntime.serviceCatalogWorkspace ?? workspaceRoot,
+        resolveHarnessWorkspace: cwd => nativeEngineRuntime.usesService
+          ? resolveHarnessWorkspace(cwd) : { workspaceRoot: canonicalEngineWorkspace(cwd) },
         applicationPreviewAvailable: nativeEngineRuntime.applicationPreviewAvailable });
     }), 'agentkit-studio: Node builtin environment');
   }
@@ -438,6 +451,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
     resolveHarnessWorkspace,
+    requiresHarnessWorkspace: () => nativeEngineRuntime.usesService,
     strictResources,
     nativeEngineContract,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),
@@ -618,7 +632,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
     ...services, ...templateServices, studioTeams, teamTemplates, models, syncModelCredential, hostCompatibility, cloudExecutionModes,
     describeGlobalModelCredential: options => describeGlobalModelCredential({ ...options, env: runtimeEnv }),
     listCodexAgentModels, codexModels, portableBundles, getAdmission: () => presetAdmission,
-    getDshA2aControls: dshA2aControls,
+    getDshA2aControls: dshA2aControls, starHarness,
   });
   const dispatch = createControlPlaneDispatcher({ bridge, serverClientPromise, routes });
   await registerControlPlaneRoutes(ctx, { ...services, models, dispatch });

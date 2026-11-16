@@ -30,7 +30,7 @@ export async function selectSessionModel(remote, request = {}) {
 
 /** Admit a revision/build through the durable DSH APIs before native navigation. */
 export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote, writeConversationAgent, actions, isActive = () => true, console = globalThis.console }) {
-  let disposed = false;
+  let disposed = false, choosingWorkspace = false;
   const active = () => !disposed && isActive();
   const bindAgent = async (agentOrOptions, requestedBuildId = '') => {
     if (!active()) return;
@@ -41,10 +41,40 @@ export function createNativeSessionBinding({ navCtx, remote, layout, hostRemote,
     try {
       const current = options.workspaceFree === true ? undefined
         : Object.values(navCtx.sessions.list?.getSnapshot().byId ?? {}).find(session => session.retainedBy?.mainView > 0);
-      const cwd = options.cwd ?? current?.cwd;
-      const workspaceId = options.workspaceId ?? (options.cwd === undefined && current
+      let cwd = options.cwd ?? current?.cwd;
+      let workspaceId = options.workspaceId ?? (options.cwd === undefined && current
         ? navCtx.workspaces?.list.getSnapshot().items.find(workspace => workspace.sessionIds.includes(current.id))?.workspaceId : undefined);
-      const admission = value ? await hostRemote.ensureDshPreset(value, buildId, undefined, cwd) : null;
+      const admit = () => value ? hostRemote.ensureDshPreset(value, buildId, undefined, cwd) : null;
+      let admission;
+      try { admission = await admit(); }
+      catch (error) {
+        if (error?.code !== 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' || options.throwOnError || options.cwd !== undefined
+          || options.workspaceId !== undefined || typeof hostRemote.starHarnessStatus !== 'function') throw error;
+        if (!active() || choosingWorkspace) return;
+        choosingWorkspace = true;
+        try {
+          const status = await hostRemote.starHarnessStatus();
+          if (!active()) return;
+          const titles = new Map((status.workspaceChoices ?? []).map(({ path, title }) => [path, title]));
+          const choices = (status.workspaces ?? []).filter(item => item.external ? item.running : status.enabled).map(item => {
+            const title = titles.get(item.workspace);
+            return { value: item.workspace, label: title ? title + ' · ' + item.workspace : item.workspace };
+          });
+          if (!choices.length) {
+            const configure = await actions.confirm({ title: '选择 Star Harness 工作区',
+              detail: '请在插件页绑定并启用工作区，或启动已绑定的外部 Harness。', confirmLabel: '打开插件页' });
+            if (configure && active()) layout.selectPanel('plugins');
+            return;
+          }
+          const selected = await actions.confirm({ title: '选择 Star Harness 工作区',
+            detail: '新会话将在所选工作区运行。', choiceLabel: 'Star Harness 工作区',
+            choicePlaceholder: '选择已绑定的工作区', choices, confirmLabel: '开始对话' });
+          if (!active() || !choices.some(choice => choice.value === selected)) return;
+          cwd = selected;
+          workspaceId = navCtx.workspaces?.list.getSnapshot().items.find(workspace => workspace.path === cwd)?.workspaceId;
+          admission = await admit();
+        } finally { choosingWorkspace = false; }
+      }
       if (!active()) return;
       // Mount the admitted persona once, as part of creating the session.
       const sessionOptions = admission ? { agentPreset: admission.presetId } : {};

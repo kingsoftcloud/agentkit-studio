@@ -466,6 +466,11 @@ export function createProductClient(connection, { window = globalThis.window } =
             method: 'POST', body: JSON.stringify({ acceptHostPermissions: true }),
         }),
         uninstallDshPlugin: pluginName => bridgeAvailable() ? studioBridgeOperation('plugins/dsh-remove', { pluginName }) : request('/api/v1/plugin-ecosystems/dsh/plugins/' + encodeURIComponent(pluginName), { method: 'DELETE' }),
+        starHarnessStatus: (options = {}, signal) => studioBridgeOperation('star-harness/status', options, signal),
+        installStarHarness: version => studioBridgeOperation('star-harness/install', { version }),
+        enableStarHarness: enabled => studioBridgeOperation('star-harness/enable', { enabled }),
+        bindStarHarness: (workspace, profileId) => studioBridgeOperation('star-harness/bind', { workspace, profileId }),
+        unbindStarHarness: workspace => studioBridgeOperation('star-harness/unbind', { workspace }),
         codexPlugins: () => bridgeAvailable() ? studioBridgeOperation('plugins/codex-list', {}) : request('/api/v1/plugin-ecosystems/codex/plugins'),
         inspectCodexPlugin: pluginId => studioBridgeOperation('plugins/codex-inspect', { pluginId }),
         installCodexPlugin: (pluginId, marketplaceName) => bridgeAvailable() ? studioBridgeOperation('plugins/codex-install', { pluginId, marketplaceName }) : request('/api/v1/plugin-ecosystems/codex/plugins/' + encodeURIComponent(pluginId) + ':install', {

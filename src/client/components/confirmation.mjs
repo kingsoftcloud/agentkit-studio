@@ -22,6 +22,20 @@ export function createConfirmation({ document = globalThis.document } = {}) {
         detail.style.cssText = 'color:var(--dsw-alias-label-secondary,#676767);font-size:14px;line-height:1.6;margin:10px 0 0;white-space:pre-wrap';
         card.append(detail);
       }
+      let selection;
+      if (Array.isArray(options.choices) && options.choices.length) {
+        selection = document.createElement('select');
+        selection.setAttribute('aria-label', options.choiceLabel || '选择');
+        selection.style.cssText = 'display:block;width:100%;min-width:0;margin-top:14px;padding:8px;font:inherit;color:var(--dsw-alias-label-primary,#0d0d0d);background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l3,#d4d4d4);border-radius:var(--dsw-radius-md,8px)';
+        for (const { value, label } of [{ value: '', label: options.choicePlaceholder || '请选择' }, ...options.choices]) {
+          const item = document.createElement('option');
+          item.value = value;
+          item.textContent = label;
+          selection.append(item);
+        }
+        selection.value = '';
+        card.append(selection);
+      }
       const actions = document.createElement('div');
       actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:18px';
       const cancel = document.createElement('button');
@@ -31,7 +45,8 @@ export function createConfirmation({ document = globalThis.document } = {}) {
       const confirm = document.createElement('button');
       confirm.type = 'button';
       confirm.textContent = options.confirmLabel || '确定';
-      confirm.autofocus = true;
+      confirm.autofocus = !selection;
+      confirm.disabled = Boolean(selection);
       const danger = options.danger === true;
       confirm.setAttribute('data-confirmation-variant', danger ? 'danger' : 'primary');
       confirm.style.cssText = 'font:inherit;cursor:pointer;height:36px;padding:0 14px;border-radius:var(--dsw-radius-md,12px);border:.5px solid transparent;color:' + (danger ? 'var(--dsw-static-neutral-00,#fff)' : 'var(--dsw-alias-label-primary-foreground,#fff)') + ';background:' + (danger ? 'var(--dsw-alias-state-danger-primary,#c2402a)' : 'var(--dsw-alias-button-primary-fill,#0b0b0d)');
@@ -39,16 +54,20 @@ export function createConfirmation({ document = globalThis.document } = {}) {
       const settle = value => { if (settled) return; settled = true; pending.delete(cancelPending); overlay.remove(); document.removeEventListener('keydown', onKey); resolve(value); };
       const cancelPending = () => settle(false);
       pending.add(cancelPending);
-      const onKey = event => { if (event.key === 'Escape') settle(false); if (event.key === 'Enter') settle(true); };
+      const onKey = event => { if (event.key === 'Escape') settle(false); if (event.key === 'Enter' && !selection) settle(true); };
+      selection?.addEventListener('change', () => { confirm.disabled = !selection.value; });
       cancel.addEventListener('click', () => settle(false));
-      confirm.addEventListener('click', () => settle(true));
+      confirm.addEventListener('click', () => {
+        if (selection && !selection.value) return;
+        settle(selection ? selection.value : true);
+      });
       overlay.addEventListener('click', event => { if (event.target === overlay) settle(false); });
       document.addEventListener('keydown', onKey);
       actions.append(cancel, confirm);
       card.append(actions);
       overlay.append(card);
       document.body.append(overlay);
-      confirm.focus();
+      (selection || confirm).focus();
     });
   }
   return { confirm: confirmDialog, dispose() { closed = true; for (const cancel of [...pending]) cancel(); } };

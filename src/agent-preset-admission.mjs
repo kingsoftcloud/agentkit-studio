@@ -191,10 +191,11 @@ export function dshPresetEligibility(agent = {}, options = {}) {
  */
 export class DshPresetAdmission {
   /** @param {{getAgent: (id: string) => Promise<object>, getActiveModel?: () => Promise<object>, getModelSelection?: (agent: object) => Promise<object>, getToolContracts?: (agent: object) => Promise<object[]>, registry?: {register: Function}}} options */
-  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, reprobeDelaysMs, resolveHarnessWorkspace, nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
+  constructor({ getAgent, getActiveModel, getModelSelection, getToolContracts, getSkillDefinitions, getBasePlugins, registry, assertHostCompatible, strictResources = false, reprobeDelaysMs, resolveHarnessWorkspace, requiresHarnessWorkspace = () => Boolean(resolveHarnessWorkspace), nativeEngineContract = NATIVE_DSH_TURN_CONTRACT } = {}) {
     if (nativeEngineContract !== undefined && nativeEngineContract !== NATIVE_DSH_TURN_CONTRACT) throw new TypeError('Unsupported Native Harness engine contract');
     this.nativeEngineContract = nativeEngineContract;
     this.resolveHarnessWorkspace = resolveHarnessWorkspace;
+    this.requiresHarnessWorkspace = requiresHarnessWorkspace;
     this.assertHostCompatible = assertHostCompatible;
     // Strict deployments refuse to run a preset whose bound resources could not
     // be recovered; the default keeps the Agent conversational and only removes
@@ -331,7 +332,7 @@ export class DshPresetAdmission {
     const native = eligibility.local && ['harness', 'native-engine'].includes(eligibility.runtime);
     if (native && eligibility.runtime === 'harness') selectedNativeBuildContract(agent, this.nativeEngineContract);
     const route = native ? this.resolveHarnessWorkspace?.(cwd) : undefined;
-    if (native && this.resolveHarnessWorkspace && !route && (!allowUnavailableResources || requireModelSelection)) {
+    if (native && this.requiresHarnessWorkspace() && !route && (!allowUnavailableResources || requireModelSelection)) {
       throw Object.assign(new Error('当前工作区没有绑定独立 Harness，请选择已配置的工作区。'), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
     }
     if (native) {
