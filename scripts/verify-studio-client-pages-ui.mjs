@@ -163,13 +163,18 @@ export async function verifyStudioClientPages(page) {
     await editor.waitFor({ state: 'hidden', timeout: 10000 });
     assert.equal((await rpc('schedules/get', { taskId: task.taskId })).command.payload.content, 'Synthetic updated scheduled prompt.');
     phase = 'automation-pause-enable';
-    await taskCard.getByRole('button', { name: '暂停', exact: true }).click();
-    await taskCard.getByRole('button', { name: '启用', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal((await rpc('schedules/get', { taskId: task.taskId })).enabled, false);
-    await taskCard.getByRole('button', { name: '启用', exact: true }).click();
-    await taskCard.getByRole('button', { name: '暂停', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal((await rpc('schedules/get', { taskId: task.taskId })).enabled, true);
+    // Pause/enable is a single switch now (aria-label 启用自动化 <name>),
+    // not a pair of 暂停/启用 buttons.
+    const taskSwitch = taskCard.getByRole('switch', { name: `启用自动化 ${taskName}` });
+    const scheduleEnabled = async () => (await rpc('schedules/get', { taskId: task.taskId })).enabled;
+    await taskSwitch.click();
+    for (let attempt = 0; attempt < 50 && (await scheduleEnabled()) !== false; attempt++) await page.waitForTimeout(200);
+    assert.equal(await scheduleEnabled(), false, 'the switch must pause the automation');
+    await taskSwitch.click();
+    for (let attempt = 0; attempt < 50 && (await scheduleEnabled()) !== true; attempt++) await page.waitForTimeout(200);
+    assert.equal(await scheduleEnabled(), true, 'the switch must enable the automation again');
     phase = 'automation-delete';
+    await taskCard.hover();
     await taskCard.getByRole('button', { name: '删除', exact: true }).click();
     await page.getByRole('dialog').filter({ has: page.getByText('删除自动化', { exact: true }) }).getByRole('button', { name: '删除', exact: true }).click();
     await taskCard.waitFor({ state: 'hidden', timeout: 10000 });
