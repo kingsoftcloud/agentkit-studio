@@ -7,7 +7,6 @@ import { invariant } from '@kingsoftcloud/agentkit-harness-core';
 import { bindNativeContext } from '../../providers/native-context.mjs';
 import { hash } from './native-harness-bindings.mjs';
 import { dshModelRoute } from '../../agent-preset-admission.mjs';
-import { requestHeaders } from '../../model-profile-contract.mjs';
 
 /** One owner for model admission, compatibility fingerprints and frozen recovery. */
 export function createStudioNativeModelBinding({ descriptions, models, fetchImpl, original, capabilityCapsule,
@@ -74,15 +73,8 @@ export function createStudioNativeModelBinding({ descriptions, models, fetchImpl
       resolveProfile: async () => {
         const current = { ...await models.profile(id, { admittedModel: { profileId: profile.id, modelName: profile.modelName } }), modelName: profile.modelName };
         invariant(hash(descriptions.get(current)) === digest, 'studio_native_model_binding_changed');
-        // A gateway may gate model traffic behind its own header, so the
-        // profile's configured headers ride the native binding too. The
-        // harness adapters merge them under its own security headers
-        // (Authorization / x-api-key / Content-Type stay harness-owned), so a
-        // hand-edited config cannot replace the credential.
-        const headers = requestHeaders(current.headers);
         return { protocol: desc.protocol, baseUrl: current.baseUrl, apiKey: current.apiKey,
-          model: profile.modelName, parameters: desc.parameters,
-          ...(Object.keys(headers).length ? { headers } : {}) };
+          model: profile.modelName, parameters: desc.parameters };
       } }) };
   };
 }

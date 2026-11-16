@@ -1,0 +1,112 @@
+---
+title: DSH Native Harness
+description: 默认运行时的执行模型、该在什么时候选它、配置入口在哪、有哪些硬限制，以及失败时你会看到什么。
+status: new
+---
+
+**DSH Native Harness（`dsh-native`）把循环交给 DSH 本体执行，Studio 只在两侧做翻译。** DSH 继续拥有 Session 与对话渲染器，Studio 只把装配好的请求转成一次模型流，再把结果写回 DSH 文本块（`src/providers/dsh-runtime.mjs:4-9`）。
+
+## 执行模型
+
+| 环节 | 谁负责 | 依据 |
+| --- | --- | --- |
+| 组装请求 | DSH 原生循环 | `src/runtime-contract.mjs:21` |
+| 模型调用 | Studio 的 provider 桥 | `src/providers/dsh-runtime.mjs:5-9` |
+| 工具执行 | DSH 原生 ToolRegistry | `src/providers/dsh-runtime-plugin.mjs` |
+| 会话与转录 | DSH Session | `eventOwner: 'dsh-session'` |
+| 流式帧 | `dsh-agent/assistant-stream` | `streamOwner` |
+| 路由标识 | `agentkit-studio` | `src/providers/dsh-runtime.mjs:33` |
+
+一次请求的路径是：DSH 会话分派 → Studio 的 preset 作用域 → Agent 请求事件 → 模型流 → DSH 文本块。Studio 不维护第二个 tool loop，也不重试原生副作用。
+
+## 什么时候选它
+
+- **没有明确理由时选它。** 它是默认授权运行时（`src/authoring-defaults.mjs:4`），也是唯一不需要额外进程或外部服务的路径。
+- 需要 DSH 原生会话能力：历史重开、归档、搜索、原生列表全部直接可用。
+- 需要按原生请求重放（`replay`）：只有 DSH 侧能凭原生请求头重建路由。
+- 团队与专家会话需要走 DSH 原生 Agent Teams 时。
+
+**不要**在需要跨进程续跑（`resume`）或子任务（`child-tasks`）时选它——这两项不在它的能力集里（`src/runtime-contract.mjs:22`）。
+
+## 配置入口
+
+| 配置项 | 位置 | 说明 |
+| --- | --- | --- |
+| 运行时类型 | 创建 / 编辑 Agent → 运行时单选组 | 默认选中，选项文案为「本地原生循环，按需使用工具与资源。」（`src/client/pages/agent-form.mjs:9`） |
+| 模型与凭证 | 设置 → 模型与凭证 | 凭证只写 Host 侧，不回填表单 |
+| 工具 / MCP / Skill 绑定 | 创建 / 编辑 Agent → 绑定能力 | DSH Native 新建时默认清空已选工具（`src/client/pages/agent-form.mjs:83`） |
+| 执行策略 | 策略与确认步骤 | `read-only` / `workspace-write` / `danger-full-access`，默认 `workspace-write`（`src/execution-policy.mjs:8-10`） |
+
+```json
+{
+  "spec": {
+    "runtime": { "type": "dsh-native" },
+    "bindings": { "modelProfileId": "your-model-profile" }
+  }
+}
+```
+
+## 限制
+
+| 限制 | 表现 | 依据 |
+| --- | --- | --- |
+| 无 `resume` | 进程重启后不能从任意 Run 断点续跑，只能靠会话历史重开 | `src/runtime-contract.mjs:22` |
+| 无 `child-tasks` | 子任务由 DSH 原生 Agent Teams 提供，不是运行时能力 | 同上 |
+| 需要真实 Host 能力 | 缺少执行契约时直接拒绝，不回退到模型拦截器 | `src/runtime-contract.mjs:29-30` |
+| 冻结 Build 有外层时限 | 默认 15 分钟，可通过 `AGENTKIT_RUNTIME_TIMEOUT_MS` 调整（1000–86400000 毫秒） | `src/frozen-build-runtime.mjs:19-25` |
+| 运行时版本必须匹配 | 安装的 DSH 版本须等于 Studio 包声明版本 | `studio.plugin.json` 的 `requiredDsh` |
+
+<Callout type="warn" title="冻结运行时依赖 DSH 作用域">
+  配置好的冻结运行时随原生依赖作用域一起启停：依赖被替换时旧运行时会关闭并在依赖可用后启动新的。启动晚于作用域销毁时，监听器立即关闭（`src/host/frozen-runtime-lifecycle.mjs:4-19`）。
+</Callout>
+
+## 如何确认跑在 DSH Native 上
+
+| 检查点 | 期望值 | 依据 |
+| --- | --- | --- |
+| Agent 定义 | `spec.runtime.type === 'dsh-native'` | `src/authoring-defaults.mjs:4` |
+| 智能体列表徽标 | 显示 `DSH Native Harness`，色板为 `accent` | `src/client/theme.mjs:29`、`src/client/pages/overview.mjs:81` |
+| 编辑既有 Agent | 保留原运行时；只有新建且无原定义时才回落 `dsh-native` | `src/client/pages/agent-form.mjs:48` |
+| 会话历史 | 由 DSH 原生列表承载，选择 Agent 不过滤历史 | 无 Studio 侧过滤扩展 |
+
+<Callout type="info" title="新建时的工具清空是有意为之">
+  以 DSH Native 新建 Agent 时会清空已选工具（`src/client/pages/agent-form.mjs:83`）。这是为了避免把上一次编辑残留的绑定带进一个全新的原生循环——编辑既有 Agent 时不会触发。
+</Callout>
+
+## 从其他运行时迁回
+
+- **编辑不会自动改运行时。** 打开既有 Agent 时，`initialRuntime` 优先取 `originalSpec.runtime.type`，只有缺失时才回落默认值（`src/client/pages/agent-form.mjs:48`）。
+- **Star Harness 与 Codex 的 Run 账本不同。** 切换到 `dsh-native` 不会迁移已有的 Run 历史；旧会话仍按原运行时打开。
+
+## 失败形态
+
+| 错误码 | 触发条件 | 你能做什么 |
+| --- | --- | --- |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` 不是三种运行时之一 | 检查 Agent 定义里的 `spec.runtime.type` |
+| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` 缺失，或 `revision` 不是正整数 | 重新选择 Agent 或重开应用 |
+| `RUN_IDENTITY_MISMATCH` | 身份与路由绑定的 Agent / Session 不一致 | 关闭该会话重开，避免跨会话复用 |
+| `STUDIO_HOST_INCOMPATIBLE` | Host 缺少必需的执行契约 | 升级到匹配的 DSH 基线；管理路由仍可用 |
+| `STUDIO_PRESET_RESOURCES_UNAVAILABLE` | 严格模式下绑定资源恢复失败 | 修复绑定后重试，或关闭 `AGENTKIT_STRICT_RESOURCES` |
+| `STUDIO_PRESET_SCOPE_CLOSED` | preset 作用域已退役仍收到回调 | 重新打开会话；插件可能正在重载 |
+
+降级与重试的完整规则见[降级与重试](./degradation-retry.mdx)。
+
+## 相关页面
+
+<Cards>
+  <Card title="三运行时对照" href="/docs/deployment/runtimes-compare">横向比较五个维度</Card>
+  <Card title="降级与重试" href="/docs/deployment/degradation-retry">资源不可用时发生什么</Card>
+  <Card title="托管运行时生命周期" href="/docs/deployment/managed-runtime-lifecycle">把同一套语义搬到云端</Card>
+</Cards>
+
+## 源码依据
+
+| 结论 | 位置 |
+| --- | --- |
+| DSH 拥有循环，Studio 只翻译 | `src/providers/dsh-runtime.mjs:4-9` |
+| 路由常量 | `src/providers/dsh-runtime.mjs:33` |
+| 能力集与事件源 | `src/runtime-contract.mjs:20-24` |
+| 默认授权运行时 | `src/authoring-defaults.mjs:4` |
+| 执行策略枚举 | `src/execution-policy.mjs:8-11` |
+| 冻结运行时生命周期 | `src/host/frozen-runtime-lifecycle.mjs:1-19` |
+| 冻结运行时限 | `src/frozen-build-runtime.mjs:19-25` |

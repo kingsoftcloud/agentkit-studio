@@ -1,0 +1,114 @@
+---
+title: "配置参考"
+description: "四个配置文件的全部键：产品身份、插件清单、DSH 固定与模块补丁，含默认值与脱敏说明。"
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 四个配置文件
+
+Studio 的配置没有环境变量化的入口，全部落在这四个文件里；改配置等于改代码，走同一个 PR 评审。
+
+| 文件 | 作用 | schema |
+| --- | --- | --- |
+| `src/product.json` | 产品身份、文案、桌面打包输入 | `1` |
+| `studio.plugin.json` | 插件清单：版本、Host 要求、能力与贡献点 | — |
+| `dsh-pin.json` | DSH 基座固定：版本、提交、补丁目录 | `1` |
+| `cordis.patch.yml` | 在官方 DSH 基座之上启用/禁用/插入模块 | — |
+
+## `src/product.json`
+
+产品身份与打包输入。`copy` 是唯一的可选段，按 namespace 与 locale 贡献词条。
+
+| 键 | 值 | 说明 |
+| --- | --- | --- |
+| `schemaVersion` | 1 | 产品配置 schema 版本 |
+| `brand.name` | `AgentKit Studio` | 插件展示名与桌面标题 |
+| `brand.shortName` | `AgentKit` | 窄空间简称 |
+| `versionSources.plugin` | `package.json#version` | 插件版本唯一来源 |
+| `versionSources.desktop` | `explicit-build-version-or-dsh-version` | 桌面版本解析规则 |
+| `copy.<namespace>.<locale>.<key>` | object | 可选产品文案，支持 `{productName}` 模板 |
+| `desktop.appId` | `com.kingsoftcloud.agentkit-studio` | 桌面 App ID |
+| `desktop.pluginRoots` | `@kingsoftcloud/agentkit-studio` | 插件根包 |
+| `desktop.defaultBundles` | `@kingsoftcloud/agentkit-studio` | 新 Profile 默认启用 |
+| `desktop.updates.environment` | `production` | 更新环境 |
+| `desktop.updates.origin` | [release-origin] | 发行物 HTTPS 源（此处脱敏） |
+| `desktop.updates.channel` | `nightly` | 更新通道 |
+| `desktop.platforms.<platform>.icon` | path | 平台图标，相对 `src/` 解析 |
+| `desktop.platforms.<platform>.trayIcon` | path | 托盘图标 |
+
+## `studio.plugin.json`
+
+| 键 | 值 | 说明 |
+| --- | --- | --- |
+| `id` | `agentkit-studio` | 插件标识 |
+| `version` | `0.0.16` | 跟随 `package.json#version` |
+| `requiredHostApi` | `dsh-native/0.2.2-rc.1` | 所需 Host API 版本 |
+| `requiredDsh` | `0.2.2-rc.1` | 所需 DSH 版本 |
+| `requiredHostContract` | `1` | Host 契约号 |
+| `capabilities` | `studio.agent.catalog` · `studio.runtime.capabilities` · `studio.session.adapter` · `studio.workspace.dock` | 声明的能力 |
+| `contributes` | `route` · `resource` · `command` | 贡献点类型 |
+
+## `dsh-pin.json`
+
+DSH 基座固定。裸 commit SHA 与摘要值属于内部信息，本页统一替换为占位符，实际值以仓库文件为准。
+
+| 键 | 值 | 说明 |
+| --- | --- | --- |
+| `schemaVersion` | `1` | pin 文件 schema |
+| `repository` | `[dsh-repository]` | DSH 上游仓库（此处脱敏） |
+| `version` | `0.2.2-rc.1` | 固定的 DSH 版本 |
+| `ref` | `dsh-v0.2.2-rc.1` | 固定 tag |
+| `commit` | `[commit-sha]` | 固定提交，本页不展示裸 SHA |
+| `baseCommit` | `[commit-sha]` | 基线提交 |
+| `patchedTree` | `[commit-sha]` | 打补丁后的树对象 |
+| `hostContract` | `1` | Host 契约号 |
+| `nodeRange` | `>=24.9.0` | Node 版本下界 |
+| `patchDirectory` | `patches/dsh-v0.2.2-rc.1` | 补丁目录 |
+| `patchedSourceSha256` | `[sha256]` | 打补丁后源码摘要 |
+| `maintenanceSource` | `patches/dsh-v0.2.2-rc.1/source.json` | 维护清单 |
+
+## `cordis.patch.yml`
+
+共 10 个具名条目、2 个插入块。`disabled: true` 表示关掉官方模块，`false` 表示保留。
+
+| 条目 | disabled | 包名 | config | 位置 |
+| --- | --- | --- | --- | --- |
+| `ui-settings-account` | `true` | — | — | `cordis.patch.yml:2` |
+| `ui-settings-models` | `true` | — | — | `cordis.patch.yml:7` |
+| `ui-settings-general` | — | `@deepseek-ai/dsh-client-ui-settings-general` | `welcomeNoticeVersion=2026-08-13.1` | `cordis.patch.yml:12` |
+| `ui-sidebar-browser` | `false` | — | — | `cordis.patch.yml:19` |
+| `ui-brand-official` | `true` | — | — | `cordis.patch.yml:24` |
+| `time-context` | `false` | — | — | `cordis.patch.yml:27` |
+| `schedule` | `false` | — | — | `cordis.patch.yml:30` |
+| `ui-schedule` | `false` | — | — | `cordis.patch.yml:33` |
+| `ui-agent-preset` | `false` | — | — | `cordis.patch.yml:41` |
+| `ui-model-selection` | `false` | — | — | `cordis.patch.yml:54` |
+
+## 版本与兼容性
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| 产品 schema | `1` | 新增必填键是破坏性变更 |
+| 插件版本 | `0.0.16` | 与 `package.json#version` 一致 |
+| Host 契约 | `1` | 与 `dsh-pin.json#hostContract` 必须相同 |
+| DSH 版本 | `0.2.2-rc.1` | 固定，不跟随 npm 最新 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| 产品配置 | `src/product.json` |
+| 插件清单 | `studio.plugin.json` |
+| DSH 固定 | `dsh-pin.json` |
+| 模块补丁 | `cordis.patch.yml` |
+| 产品配置解析 | `scripts/product-config.mjs` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |
+| bundle-host.test.mjs | `tests/bundle-host.test.mjs` |
+| managed-runtime-host.test.mjs | `tests/managed-runtime-host.test.mjs` |
+| desktop-artifact-selection.test.mjs | `tests/desktop-artifact-selection.test.mjs` |
+| desktop-isolation.test.mjs | `tests/desktop-isolation.test.mjs` |

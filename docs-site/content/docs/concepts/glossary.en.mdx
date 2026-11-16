@@ -1,0 +1,122 @@
+---
+title: Glossary
+description: 56 terms in Chinese and English, one sentence each. One concept, one name; code is never translated.
+status: new
+---
+
+**This page is the only correct spelling of every AgentKit Studio term. One concept has exactly one name; API field names, enum values, and error codes are never translated.**
+
+Terms are grouped by theme. To find where a term is explained in full, see the last row of each group.
+
+## Naming rules
+
+| Rule | Meaning |
+| --- | --- |
+| Chinese first | Chinese prose gives Chinese with English in parentheses on first use, then Chinese only |
+| English first | English pages invert it: English with Chinese in parentheses, then English only |
+| Never translate | API field names, enum values, and error codes stay verbatim |
+| One name | Where a concept has historical aliases, only the name listed here survives |
+
+## Entities and lifecycle
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 智能体 | agent | `agentId` | A reusable capability configuration that holds only a pointer to its current revision. |
+| 修订版本 | revision | `revision` | An immutable snapshot of an agent, with the sequence number incremented on every save. |
+| Agent 构建 | build | `buildId` | A content-addressed runnable package that freezes one revision. |
+| 构建产物 | bundle | `agent-bundle.zip` | The ZIP a build produces, always containing the manifest, the spec, and a readme. |
+| 会话 | session | `sessionId` | A durable event journal owned by DSH; Studio never writes it. |
+| 一次运行 | run | `runId` | One turn, from `turn/start` to `turn/end`. |
+| 预设 | preset | `agentkit-studio-agent-…` | The name under which a revision is registered in the DSH run registry. |
+
+## Runtimes and execution
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 运行时类型 | runtime type | `runtime.type` | The value that decides whose execution model serves a run. |
+| DSH 原生 | DSH Native | `dsh-native` | The default runtime, executed by DSH itself. |
+| Star Harness | Star Harness | `harness` | The runtime executed by the KSADK Harness native kernel. |
+| Codex | Codex | `codex` | The runtime executed by the Codex App Server adapter. |
+| 执行策略 | execution policy | `read-only` / `workspace-write` / `danger-full-access` | The three-tier policy limiting where a run may write; default `workspace-write`. |
+| 权限模式 | permission mode | `permissionMode` | The execution-policy entry describing write scope. |
+| 审批策略 | approval policy | `ask` / `never` | Whether to stop and ask when an action needs confirmation. |
+| 原生权限策略 | native agent policy | `strict` / `loose` / `custom` | An extra tool constraint on a Star Harness agent; tightens only, never grants. |
+| 冻结运行时 | frozen runtime | — | Configuration locked at build time that the runtime may only obey. |
+| 无人值守执行 | unattended execution | — | A run with nobody available to approve; always read-only. |
+
+## Resources and credentials
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 资源绑定 | resource binding | `resources` | How external capability is attached to one revision. |
+| 资源种类 | resource kind | `model` / `mcp` / `skill` / `knowledge-base` / `memory-instance` | The five categories of bindable resource. |
+| 模型 | model | `model` | A switchable list of models, one of them default. |
+| MCP 服务 | MCP server | `mcp` | A process exposing tools over the MCP protocol. |
+| 技能 | Skill | `skill` | A set of operating instructions with bundled scripts. |
+| 技能空间 | Skill Space | `skill-space` | A cloud group of Skills the Host downloads on demand. |
+| 知识库 | knowledge base | `knowledge-base` | A cloud knowledge collection offering retrieval only. |
+| 记忆库 | memory | `memory-instance` | Storage supporting cross-session recall and write-back. |
+| 凭证引用 | credential reference | `env://<name>` | A value reference into Host credentials; the only legal way to write a credential. |
+| 资源检查 | resource check | `studio/resource-check` | A content-free evidence event recording a resource call's kind, action, and outcome. |
+| 降级 | degradation | `RESOURCE_UNAVAILABLE` | Keeping the conversation usable and dropping only the unavailable binding. |
+| 严格模式 | strict mode | — | Refusing to start when a resource is unavailable, instead of degrading. |
+
+## Sessions, workspaces, and events
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 工作区 | workspace | — | The directory a session is bound to, which sets the write boundary. |
+| 会话事件 | session event | 16 kinds | The standard events in a DSH session journal. |
+| 流帧 | stream frame | `start` / `chunk` / `end` | In-process delta frames never written to the durable journal. |
+| 瞬时帧 | transient frame | `assistant/live-chunk` | A client-only typewriter delta carrying a fractional sequence number. |
+| 可忽略事件 | ignorable event | `ksadk/*` | A fact the Host does not understand but preserves without breaking the UI. |
+| 序号 | sequence | `seq` | A monotonically increasing event position within a session. |
+| 会话契约 | session contract | `p1-session-contract-v0.1` | The version identifier of the session boundary between Studio and DSH. |
+
+## Experts and teams
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 专家模板 | expert template | `templateSource` | A prebuilt agent blueprint; the result is an ordinary agent. |
+| 专家团 | team | `teamId` | A multi-role collaboration unit owning one immutable blueprint. |
+| 团队运行 | team run | `teamRunId` | An execution instance of a team blueprint, owning a root session and child sessions. |
+| 团队模板契约 | team template contract | `agentkit.studio.team-template/v1` | The versioned contract for team blueprints. |
+| 召唤 | summon | — | The one-click orchestration that installs a template's dependencies before creating the agent. |
+| 模板广场 | template gallery | — | The entry point for choosing an expert template. |
+
+## Managed runtimes and deployment
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 托管运行时 | managed runtime | — | A resident execution environment running in the cloud. |
+| 清单声明 | manifest | `agentengine.dsh-manifest/v1` | The YAML document describing a managed runtime, capped at 900 KiB. |
+| 部署 | deployment | `dep_…` | The process of delivering an agent as a resident instance. |
+| 部署状态 | deployment state | 19 states | A deployment lifecycle state, including 9 polling and 7 attention states. |
+| 回滚 | rollback | — | Switching a deployment back to its previous working version. |
+| 受信任身份 | trusted identity | `x-agentengine-*` | Identity injected by the platform hop, read-only to the managed runtime. |
+
+## Configuration and governance
+
+| Chinese | English | Code / value | One-sentence definition |
+| --- | --- | --- | --- |
+| 宿主 | Host | — | The process running DSH, and the owner of sessions and credentials. |
+| 配置档案 | profile | `profileId` | A group of model and credential settings. |
+| 思考深度 | reasoning effort | — | The model's thinking budget. |
+| 下一句提示 | prompt prediction | — | The next-sentence suggestion in the input box. |
+| 控制协议 | control protocol | `/agentkit` | The 134 operations between Studio and the Host. |
+| 插件市场 | plugin market | — | The curated index inside the DSH plugin page. |
+| 启动检查 | start checks | — | The three self-checks before a first run: Host connection, model credential, and run targets. |
+
+## Related pages
+
+<Cards>
+  <Card title="Concepts overview" href="/en/docs/concepts">
+    The six core entities and the hard constraints between them.
+  </Card>
+  <Card title="The three runtimes" href="/en/docs/concepts/runtimes">
+    The three runtimes and the full capability matrix.
+  </Card>
+  <Card title="Runtime and entity contract" href="/en/docs/reference/runtime-contract">
+    The raw enumerations of the five identifiers and `agentkit.studio.runtime/v1`.
+  </Card>
+</Cards>

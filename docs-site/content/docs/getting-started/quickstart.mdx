@@ -1,0 +1,98 @@
+---
+title: 5 分钟快速开始
+description: 安装桌面端、配置模型凭证、创建第一个 Agent，并跑通一次真实对话。
+status: new
+---
+
+这一页只有一条路径：从零到一次成功的模型调用。全程不需要终端。
+
+<Steps>
+
+<Step>
+### 安装桌面端
+
+打开[下载页](https://kingsoftcloud.github.io/agentkit-studio/)，选择与你的平台匹配的安装包：
+
+| 平台 | 文件 | 说明 |
+| --- | --- | --- |
+| macOS（Apple Silicon） | `AgentKit-Studio-mac-arm64.dmg` | 签名并公证 |
+| Windows 11（x64） | `AgentKit-Studio-win-x64.exe` | NSIS 安装器 |
+
+<Callout type="warn" title="macOS 仅支持 Apple Silicon">
+  不提供 Intel（x64）安装包。Intel Mac 用户请改用**作为 DSH 插件**安装，或使用云托管运行时。
+</Callout>
+
+首次启动时，如果 macOS 提示「无法验证开发者」，到**系统设置 → 隐私与安全性**点「仍要打开」。
+Windows 的 SmartScreen 提示选择「更多信息 → 仍要运行」。
+</Step>
+
+<Step>
+### 配置模型与凭证
+
+首次启动会自动打开凭证引导。如果错过了，从 **设置 → 模型与凭证** 重新进入。
+
+1. 选择或新增一个模型供应商端点。
+2. 填入 API Key。
+3. 选择一个可用模型。
+
+<Callout type="info" title="凭证存在哪里">
+  API Key 只写入 Host 侧的凭证存储，不会进入 Agent 配置、浏览器表单回填或日志。
+  见[安全与公开边界](../contributing/security-boundary.mdx)。
+</Callout>
+</Step>
+
+<Step>
+### 创建第一个 Agent
+
+1. 打开 **智能体** 面板。
+2. 点 **更多创建方式** → **手动配置**。
+3. 按三步表单填写：
+
+| 步骤 | 你要决定什么 |
+| --- | --- |
+| 基本信息 | 名称、描述、系统提示词 |
+| 绑定能力 | 运行时类型（默认 **DSH Native Harness**）、模型、可选的 MCP / Skill / 知识库 / Memory |
+| 策略与确认 | 执行策略（默认 `workspace-write`）、审批规则、云记忆开关 |
+
+4. 点 **创建**。这会生成第一个**修订版本**（Revision）。
+</Step>
+
+<Step>
+### 发第一条消息
+
+在智能体列表里选中它，直接输入一句话，例如「列出当前工作区里的文件并说明它们在做什么」。
+
+你会看到：
+
+- **工具调用**按顺序展开，可以逐条查看参数与结果。
+- 底部显示本轮**用量与耗时**。
+- 如果 Agent 修改了文件，右侧会出现**文件变更卡片**，可以逐份对比。
+</Step>
+
+<Step>
+### 验证成功
+
+一次成功的运行需要同时满足三条：
+
+- 出现完整的最终回答（不是错误摘要）。
+- 工具调用有 `completed` 结果，没有 `RUNTIME_RUN_FAILED`。
+- 会话历史在刷新后仍然存在。
+
+任何一条不满足，去[排障](../help/troubleshooting.mdx)按错误码定位。
+</Step>
+
+</Steps>
+
+## 完成之后
+
+<Cards>
+  <Card title="理解核心概念" href="/docs/concepts">
+    为什么改配置不影响正在跑的会话？Revision 与 Build 到底冻结了什么？
+  </Card>
+  <Card title="绑定企业资源" href="/docs/guides/mcp-servers">
+    把 MCP Server、Skill、知识库挂到 Agent 上。
+  </Card>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">
+    让 Agent 7×24 常驻在线。
+  </Card>
+</Cards>

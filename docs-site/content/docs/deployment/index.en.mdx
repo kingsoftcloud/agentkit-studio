@@ -1,0 +1,100 @@
+---
+title: Runtimes and deployment
+description: Which process owns each of the three runtimes, the 19 states a managed runtime moves through, and whether a failed resource recovery degrades or refuses.
+status: new
+---
+
+**A runtime decides which process executes the model-and-tool loop.** Studio does not implement that loop; it routes an Agent revision to one of three runtimes and only owns session identity, resource binding and approval around the outside.
+
+## The three `runtime.type` values
+
+| `runtime.type` | UI name | Loop owner | Selectable when creating an Agent |
+| --- | --- | --- | --- |
+| `dsh-native` | DSH Native Harness | DSH native loop | Yes (default) |
+| `harness` | Star Harness | Harness native kernel | Only when editing an existing Agent |
+| `codex` | Codex Agent | Codex App Server | Yes |
+
+`STUDIO_RUNTIME_TYPES` holds exactly these three values (`src/runtime-contract.mjs:6`), and `ALLOWED_RUNTIME_TYPES`, which the creation form renders, is the same set (`src/client/theme.mjs:26`).
+
+<Callout type="warn" title="Star Harness must be installed before it can be selected">
+  For `harness`, `creatableRuntime` additionally requires `starHarnessReady`, which comes from `canCreate` on `star-harness/status` — that is, **installed + enabled + at least one usable workspace**, all three at once (`src/client/pages/agent-form.mjs:61-79`, `src/host/services/star-harness.mjs:150`). Before it is installed, the creation form lists only **DSH Native Harness** and **Codex Agent**; editing an existing Star Harness Agent is always allowed.
+</Callout>
+
+## Which one to pick
+
+| Your situation | Choice | Why |
+| --- | --- | --- |
+| You have no preference yet | `dsh-native` | Default authoring runtime (`src/authoring-defaults.mjs:4`), cheapest to assemble |
+| You need multi-role collaboration and a configurable tool loop | `harness` | Its capability set carries `child-tasks`, `resume` and `durable-receipts` (`src/runtime-contract.mjs:25-29`) |
+| The work is mostly editing code and running commands | `codex` | Separate process plus Codex App Server, sharing the DSH session (`src/providers/codex-runtime.mjs:1-8`) |
+| Always-on cloud, defined by a platform declaration | Managed runtime | See [managed runtime lifecycle](./managed-runtime-lifecycle.mdx) |
+
+## What this chapter covers
+
+<Cards>
+  <Card title="Runtime comparison" href="/en/docs/deployment/runtimes-compare">
+    Loop ownership, session ownership, Run persistence, Studio seam and capability set — compared in one table.
+  </Card>
+  <Card title="DSH Native Harness" href="/en/docs/deployment/dsh-native">
+    The default runtime: execution model, configuration entry points, limits and failure shapes.
+  </Card>
+  <Card title="Star Harness" href="/en/docs/deployment/agentkit-harness">
+    The Harness runtime, published as an npm plugin, with child tasks, resume and durable receipts.
+  </Card>
+  <Card title="Codex Agent" href="/en/docs/deployment/codex">
+    The Codex App Server adapter: ephemeral threads, sandbox and timeout budgets.
+  </Card>
+  <Card title="Managed runtime lifecycle" href="/en/docs/deployment/managed-runtime-lifecycle">
+    19 deployment states, the transition graph, and what you can do in each.
+  </Card>
+  <Card title="Degradation and retry" href="/en/docs/deployment/degradation-retry">
+    Degrade by default, refuse under strict mode; shipped behaviour and proposals kept apart.
+  </Card>
+</Cards>
+
+## How the runtime constrains deployment
+
+Choosing a runtime is not a purely local decision — it decides whether the Agent can enter a portable bundle and whether a platform declaration can drive it.
+
+| Runtime | Portable bundle / deployment | `framework` in a managed declaration | Source |
+| --- | :--: | --- | --- |
+| `dsh-native` | yes | `dsh-native` | `src/managed-runtime-manifest.mjs:11` |
+| `harness` | yes | `harness` | same |
+| `codex` | yes | `codex` | same |
+
+A managed declaration's `runtimes` allowlist is the same three-value set as `STUDIO_RUNTIME_TYPES` (`src/managed-runtime-manifest.mjs:11`), so a valid declaration can only land on one of the three runtimes.
+
+## The three paths have different failure semantics
+
+| Runtime | Who owns the Run ledger | Can it recover in place after a failure |
+| --- | --- | --- |
+| `dsh-native` | DSH Session | Only by reloading session history; no Run checkpoints |
+| `harness` | The Harness native Run ledger | Supports `resume`, so it can continue across processes |
+| `codex` | DSH Session | Only by reloading session history; cancellation is cooperative |
+
+This is why the real selection criterion is "who owns the state", not "whose feature list is longer" (see [runtime comparison](./runtimes-compare.mdx) for the full matrix).
+
+## Two deployment shapes
+
+| Shape | Entry point | State owner | Typical use |
+| --- | --- | --- | --- |
+| Local / desktop | Inside the DSH process | Local disk | Development and daily use |
+| Managed runtime | Platform YAML declaration | Platform VersionId | Always-on cloud hosting |
+
+The managed shape does not repackage Studio and does not edit an Agent inside its container: the declaration is owned by the platform version, so every Agent write inside the container returns `MANAGED_RUNTIME_READ_ONLY` (`src/managed-runtime-definition.mjs:79`).
+
+## Related chapters
+
+- Concepts: full definitions of `runtime.type` and the entity identifiers live in `reference/runtime-contract.mdx`.
+- Tasks: how to choose a runtime while creating an Agent is in `guides/create-agent.mdx`.
+- Deployment task: pushing an Agent to the cloud is in `guides/deploy-to-cloud.mdx`.
+
+## Source of truth
+
+| Claim | Location |
+| --- | --- |
+| Runtime enum and capability matrix | `src/runtime-contract.mjs:5-35` |
+| UI names | `src/client/theme.mjs:26-33` |
+| Creation form options | `src/client/pages/agent-form.mjs:28`, `:61-68` |
+| Default authoring runtime | `src/authoring-defaults.mjs:4` |
+| Managed declarations are read-only | `src/managed-runtime-definition.mjs:75-90` |

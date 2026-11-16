@@ -1,0 +1,143 @@
+---
+title: Version compatibility
+description: Plugin version × DSH baseline × minimum Node × supported platforms, plus why macOS ships Apple Silicon only.
+---
+
+**Confirm three things before upgrading: the plugin version matches, the DSH baseline is exactly equal, and Node has the security patch.** Any one failing means startup is refused.
+
+## Four-dimensional matrix
+
+| Plugin version | DSH baseline | `requiredHostApi` | Host contract | Minimum Node (runtime) | macOS | Windows | Browser |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **0.0.16** (current) | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.15 | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.14 | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.13 | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.2 | `0.2.0-rc.2` | `dsh-native/0.2.0-rc.2` | Not declared | `>=22.19.0` | ✅ arm64 | ✅ x64 | ✅ |
+
+Source: `studio.plugin.json:4-6`, `package.json#engines`, `dsh-pin.json:9`.
+
+<Callout type="info" title="Why 0.0.3–0.0.12 are missing">
+  Git carries exactly five tags: `v0.0.2`, `v0.0.13`, `v0.0.14`, `v0.0.15`, `v0.0.16`.
+  Intermediate baselines cannot be verified from source, so they are omitted — **absence beats a guess.**
+  See [release notes](./release-notes.mdx) for the user-visible changes in those versions.
+</Callout>
+
+## Three mandatory checks
+
+### 1. Plugin version
+
+```sh
+node -p "require('./package.json').version"
+node -p "require('./studio.plugin.json').version"
+```
+
+Both must match. `make release-check` enforces it.
+
+### 2. DSH baseline (exact equality)
+
+`requiredDsh` is a **string equality** comparison, not a version range:
+
+| Your DSH | `requiredDsh` | Result |
+| --- | --- | --- |
+| `0.2.2-rc.1` | `0.2.2-rc.1` | ✅ Pass |
+| `0.2.2` | `0.2.2-rc.1` | ❌ `STUDIO_HOST_INCOMPATIBLE` |
+| `0.2.1-rc.2` | `0.2.2-rc.1` | ❌ Same |
+| Unreadable | `0.2.2-rc.1` | ❌ Same (`actual: null`) |
+
+Source: `src/host/compatibility.mjs:25`. Details in [host compatibility](../ecosystem/host-compatibility.mdx).
+
+### 3. Node version
+
+There are **two different thresholds** here, and they are easy to confuse:
+
+| Threshold | Value | Used by | On violation |
+| --- | --- | --- | --- |
+| Minimum runtime | `>=24.9.0` | `package.json#engines`, `dsh-pin.json#nodeRange` | Install/startup fails |
+| Security baseline | 22.23.4+ / 24.22.1+ / 26.12.1+ | `scripts/node-version.mjs`, `make check:node` | Gate fails |
+| Repository default | `24.22.1` | `.node-version` | nvm/fnm switches to it |
+
+<Callout type="warn" title="Both thresholds must pass">
+  `engines` says `>=24.9.0`, but the security baseline requires 24.x to be at least `24.22.1`.
+  From source, both run: `>=24.9.0` alone fails `make check:node`.
+  The baseline comes from the October 2026 Node.js security releases (Brotli decoder RCE and TLS hostname verification fixes).
+  Source: `scripts/node-version.mjs:1-14`.
+</Callout>
+
+## Supported platforms
+
+| Platform | Architecture | Installer | Status | Update feed target |
+| --- | --- | --- | --- | --- |
+| macOS | **Apple Silicon (arm64)** | `.dmg` | ✅ Supported | `mac-arm64` |
+| macOS | Intel (x64) | — | ❌ **Not supported** | — |
+| Windows | x64 | `.exe` (NSIS) | ✅ Supported | `win-x64` |
+| Browser | — | npm package | ✅ Supported | — |
+
+> Documentation must **never** mention an Intel Mac installer filename. It appeared in historical docs and was wrong.
+
+### Why macOS is arm64 only
+
+| Reason | Detail |
+| --- | --- |
+| Only two feed targets | `RELEASE_FEED_TARGETS = ['mac-arm64', 'win-x64']` — no third target |
+| Three icon entries remain | `product.json` keeps a second macOS architecture's icon paths, but those only feed packaging input validation |
+| Signing and notarization cost | Each architecture needs independent signing and notarization; only arm64 is currently qualified |
+
+Source: `src/desktop-release-channels.mjs:49`, `src/product.json:34-38`, `scripts/product-config.mjs:50-54`.
+
+<Callout type="info" title="An icon is not an installer">
+  `product.json` lists a second macOS architecture's icon configuration, but there is **no** corresponding update feed.
+  If you cannot find that architecture's `.dmg` among release artifacts, that is expected.
+</Callout>
+
+## How the version numbers relate
+
+| Version | Value at 0.0.16 | How often it changes |
+| --- | --- | --- |
+| Plugin semver | `0.0.16` | Every release |
+| DSH baseline | `0.2.2-rc.1` | Follows DSH upgrades, infrequent |
+| Host contract | `1` | Only when the capability surface changes |
+| Desktop version | `0.2.2-rc.1.<YYYYMMDD>.<ordinal>` | Multiple builds per day |
+
+**The desktop version inherits the DSH version**, so it inherently carries an `-rc` suffix — which is exactly why the default
+channel must be `nightly`. See [desktop update channels](./desktop-update-channels.mdx).
+
+## Compatibility troubleshooting order
+
+<Steps>
+
+<Step>
+### Read the error code first
+
+`STUDIO_HOST_INCOMPATIBLE` carries `baseline`, `contract`, and `missingCapabilities` in `details`.
+</Step>
+
+<Step>
+### Then the baseline
+
+```sh
+node -e "import('@deepseek-ai/dsh-app-boot').then(m => console.log(m.getDshRuntimeVersion?.()))"
+```
+
+The output must equal `requiredDsh`. `undefined` means the DSH boot package is absent from the environment.
+</Step>
+
+<Step>
+### Then the contract number
+
+`details.contract.required` and `details.contract.actual` must be equal.
+</Step>
+
+<Step>
+### Finally the capabilities
+
+A non-empty `details.missingCapabilities` means the host version is right but services are not mounted — check that every official plugin loaded.
+</Step>
+
+</Steps>
+
+## Related
+
+- Probe details: [host compatibility](../ecosystem/host-compatibility.mdx)
+- Upgrade steps: [upgrade to v0.0.16](./upgrade-to-0.0.16.mdx)
+- Channel rules: [desktop update channels](./desktop-update-channels.mdx)

@@ -1,0 +1,491 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AgentKit Studio architecture",
+    "subtitle": "Five responsibilities, and only two physical channels between the browser and the Host",
+    "output": ".archify/arch-overview-en/overview.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "p-overview",
+      "type": "frontend",
+      "label": "Overview",
+      "sublabel": "workspace status",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        140,
+        76
+      ]
+    },
+    {
+      "id": "p-agents",
+      "type": "frontend",
+      "label": "Agents",
+      "sublabel": "my agents and templates",
+      "pos": [
+        352,
+        40
+      ],
+      "size": [
+        140,
+        76
+      ]
+    },
+    {
+      "id": "p-resources",
+      "type": "frontend",
+      "label": "Resources",
+      "sublabel": "models, tools, runtimes",
+      "pos": [
+        664,
+        40
+      ],
+      "size": [
+        140,
+        76
+      ]
+    },
+    {
+      "id": "p-operations",
+      "type": "frontend",
+      "label": "Operations",
+      "sublabel": "builds, deploys, traces",
+      "pos": [
+        820,
+        40
+      ],
+      "size": [
+        140,
+        76
+      ]
+    },
+    {
+      "id": "control",
+      "type": "backend",
+      "label": "Studio control plane",
+      "sublabel": "134 operations by domain",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        920,
+        74
+      ],
+      "tag": "/agentkit RPC"
+    },
+    {
+      "id": "d-agent",
+      "type": "database",
+      "label": "Agents and revisions",
+      "sublabel": "immutable revision",
+      "pos": [
+        40,
+        360
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "d-build",
+      "type": "database",
+      "label": "Build store",
+      "sublabel": "content-addressed",
+      "pos": [
+        196,
+        360
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "d-session",
+      "type": "database",
+      "label": "Session log",
+      "sublabel": "DSH owns transcript",
+      "pos": [
+        352,
+        360
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "d-resource",
+      "type": "database",
+      "label": "Resource catalog",
+      "sublabel": "MCP · skills · knowledge",
+      "pos": [
+        508,
+        360
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "d-deploy",
+      "type": "database",
+      "label": "Deployment store",
+      "sublabel": "19-state machine",
+      "pos": [
+        664,
+        360
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "d-observe",
+      "type": "database",
+      "label": "Automation and traces",
+      "sublabel": "schedules · channels · OTLP",
+      "pos": [
+        820,
+        360
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "r-native",
+      "type": "backend",
+      "label": "DSH Native",
+      "sublabel": "dsh-native · default",
+      "pos": [
+        40,
+        530
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "r-harness",
+      "type": "backend",
+      "label": "Star Harness",
+      "sublabel": "harness · independent",
+      "pos": [
+        352,
+        530
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "r-codex",
+      "type": "backend",
+      "label": "Codex Agent",
+      "sublabel": "codex · App Server",
+      "pos": [
+        664,
+        530
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "r-engine",
+      "type": "external",
+      "label": "Native engine",
+      "sublabel": "native-engine",
+      "pos": [
+        820,
+        530
+      ],
+      "size": [
+        140,
+        96
+      ],
+      "tag": "routable only"
+    },
+    {
+      "id": "k-dsh",
+      "type": "cloud",
+      "label": "DSH Host",
+      "sublabel": "sessions · native turns",
+      "pos": [
+        40,
+        700
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "k-store",
+      "type": "cloud",
+      "label": "Object storage",
+      "sublabel": "artifacts · update origin",
+      "pos": [
+        196,
+        700
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "k-harness",
+      "type": "cloud",
+      "label": "Independent Harness",
+      "sublabel": "native kernel · receipts",
+      "pos": [
+        352,
+        700
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "k-codex",
+      "type": "cloud",
+      "label": "Codex App Server",
+      "sublabel": "reasoning and tool loop",
+      "pos": [
+        664,
+        700
+      ],
+      "size": [
+        140,
+        96
+      ]
+    },
+    {
+      "id": "k-engine",
+      "type": "cloud",
+      "label": "AgentEngine",
+      "sublabel": "cloud control plane",
+      "pos": [
+        820,
+        700
+      ],
+      "size": [
+        140,
+        96
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "1. Browser UI: four panels, one shell, no URL router",
+      "wraps": [
+        "p-overview",
+        "p-agents",
+        "p-resources",
+        "p-operations"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "2. Studio control plane: every browser intent is an operation id",
+      "wraps": [
+        "control"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "3. Host service domains: state, persistence and policy live here",
+      "wraps": [
+        "d-agent",
+        "d-build",
+        "d-session",
+        "d-resource",
+        "d-deploy",
+        "d-observe"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "4. Runtime adapters: three creatable paths plus one routable-only path",
+      "wraps": [
+        "r-native",
+        "r-harness",
+        "r-codex",
+        "r-engine"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "5. External kernels: execution and durable state are owned outside Studio",
+      "wraps": [
+        "k-dsh",
+        "k-store",
+        "k-harness",
+        "k-codex",
+        "k-engine"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "p-overview",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c2",
+      "from": "p-agents",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c3",
+      "from": "p-resources",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c4",
+      "from": "p-operations",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c5",
+      "from": "control",
+      "to": "d-agent",
+      "label": "dispatch"
+    },
+    {
+      "id": "c6",
+      "from": "control",
+      "to": "d-build",
+      "label": "dispatch"
+    },
+    {
+      "id": "c7",
+      "from": "control",
+      "to": "d-session",
+      "label": "dispatch"
+    },
+    {
+      "id": "c8",
+      "from": "control",
+      "to": "d-resource",
+      "label": "dispatch"
+    },
+    {
+      "id": "c9",
+      "from": "control",
+      "to": "d-deploy",
+      "label": "dispatch"
+    },
+    {
+      "id": "c10",
+      "from": "control",
+      "to": "d-observe",
+      "label": "dispatch"
+    },
+    {
+      "id": "c11",
+      "from": "r-native",
+      "to": "k-dsh",
+      "label": "whole-turn delegation"
+    },
+    {
+      "id": "c12",
+      "from": "r-harness",
+      "to": "k-harness",
+      "label": "whole-turn delegation"
+    },
+    {
+      "id": "c13",
+      "from": "r-codex",
+      "to": "k-codex",
+      "label": "App Server"
+    },
+    {
+      "id": "c14",
+      "from": "r-engine",
+      "to": "k-engine"
+    },
+    {
+      "id": "c15",
+      "from": "d-build",
+      "to": "k-store",
+      "label": "artifacts",
+      "variant": "dashed"
+    },
+    {
+      "id": "c16",
+      "from": "d-deploy",
+      "to": "k-engine",
+      "label": "deploy",
+      "variant": "dashed"
+    },
+    {
+      "id": "c17",
+      "from": "d-agent",
+      "to": "r-native"
+    },
+    {
+      "id": "c18",
+      "from": "d-session",
+      "to": "r-harness"
+    },
+    {
+      "id": "c19",
+      "from": "d-resource",
+      "to": "r-codex"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to read this",
+      "items": [
+        "Solid lines are the operation channel: the browser calls an operation and the control plane dispatches it to a Host domain.",
+        "Dashed lines are the bypass: artifacts and deployments use HTTP prefixes and never touch the operation dispatcher."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Two physical channels",
+      "items": [
+        "/agentkit RPC: typed operation calls.",
+        "HTTP prefixes: model proxying, session streaming, deployment and artifact upload."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Where the boundary is",
+      "items": [
+        "Credentials stay in the Host; the browser gets capabilities and status.",
+        "native-engine is routable but never offered at creation."
+      ]
+    }
+  ]
+}

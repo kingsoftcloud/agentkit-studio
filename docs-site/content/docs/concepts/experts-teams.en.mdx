@@ -1,0 +1,158 @@
+---
+title: Experts and local teams
+description: Reusable agent blueprints and multi-role teams, and why their runtimes and member sources are narrowed.
+status: new
+---
+
+**An expert template is a reusable agent blueprint; a team is a unit of collaboration between several roles. Both reuse the same revision, build, and session semantics, but the runtimes and member sources they allow are deliberately narrowed.**
+
+This page covers each contract, its hard constraints, and why restrictions such as "a team role may not reference an ordinary agent" are design decisions rather than gaps.
+
+## Why templates and teams exist
+
+The cost of configuring an agent from scratch is not in the form; it is in the invisible decisions: which MCP servers to bind, which model to use, how memory should be written. A template freezes those decisions so reuse means "pick one" instead of "copy a configuration".
+
+Teams solve a different problem: **one task needs several roles working in parallel**. That cannot be done by creating several agents and relaying messages by hand, because the roles then share no session structure. A team run therefore owns its own root session plus child sessions.
+
+## Expert templates
+
+Template creation goes through the **same agent store and creation contract** as any other agent — not a special path. An agent created from a template is therefore identical in revision, build, and session semantics to one written by hand.
+
+### Source references lock four elements
+
+| Element | Purpose |
+| --- | --- |
+| Catalog | Which catalog the template came from (the built-in catalog is `studio-builtin`) |
+| `id` | Template identifier |
+| `version` | Template version |
+| `digest` | Content digest |
+
+A missing element returns `TEMPLATE_SOURCE_INVALID` asking you to choose the template again. The digest exists so that changing template content changes the digest, and an already-created agent never silently swaps its definition.
+
+### Extra validation a template brings
+
+| Check | Failure code |
+| --- | --- |
+| Name and role instructions are required | `AGENT_DEFINITION_REQUIRED` |
+| At least one model must be selected | `TEMPLATE_MODEL_REQUIRED` |
+| The chosen runtime must be in the template's allowlist | `TEMPLATE_RUNTIME_UNSUPPORTED` |
+| Template dependencies are not ready | `TEMPLATE_DEPENDENCIES_INCOMPLETE` |
+| The dependency install service is unavailable | `TEMPLATE_DEPENDENCIES_UNAVAILABLE` |
+| A required MCP has not connected successfully | `TEMPLATE_MCP_UNAVAILABLE` |
+| A chosen resource is no longer available | `TEMPLATE_RESOURCE_UNAVAILABLE` |
+| A required resource kind is missing | `TEMPLATE_BINDING_REQUIRED` |
+| A platform resource binding is invalid or duplicated | `TEMPLATE_BINDING_INVALID` |
+| DSH Native does not support tool bindings | `TEMPLATE_RESOURCE_UNSUPPORTED` |
+
+### Memory write policy
+
+Enabling long-term memory requires choosing a memory store first, otherwise `TEMPLATE_MEMORY_REQUIRED`. The write mode defaults to `explicit_only`; the local default provider (Star Harness with no cloud memory bound) additionally allows `off` and `candidate`, while any other provider allows only `candidate` and `explicit_only`. Any other value returns `TEMPLATE_MEMORY_POLICY_INVALID`. Note that `off` is legal only under the local default provider — it is a property of the provider, not of an "enabled" flag.
+
+## Team templates
+
+The team template contract is `agentkit.studio.team-template/v1`, and it validates far more strictly than a single agent:
+
+| Rule | Constraint | Failure code |
+| --- | --- | --- |
+| `kind` | Must be `team` | `TEAM_TEMPLATE_INVALID` |
+| Template ID | `^[a-z][a-z0-9-]*$` | `TEAM_TEMPLATE_INVALID` |
+| Version | Strict three-part `1.2.3` | `TEAM_TEMPLATE_INVALID` |
+| Role count | 2–9 | `TEAM_TEMPLATE_ROLE_INVALID` |
+| First role | Must be named `lead` | `TEAM_TEMPLATE_ROLE_INVALID` |
+| Role name | `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`, unique, never `lead` | `TEAM_TEMPLATE_ROLE_INVALID` |
+| Role source | Must lock `id`, `version`, and `digest` | `TEAM_TEMPLATE_ROLE_SOURCE_INVALID` |
+| Role runtime | DSH Native or Star Harness only | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
+| Role nesting | May not declare an ordinary subagent | `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` |
+| Role blueprint | Must carry system instructions and valid resource bindings | `TEAM_TEMPLATE_ROLE_SPEC_INVALID` |
+| Placeholder model | Names such as `one-team-model` are not real models | `TEAM_TEMPLATE_MODEL_INVALID` |
+
+<Callout type="warn" title="Roles may not reference an ordinary agent">
+  A role containing `agentId` or `source.kind === 'agent'` is rejected outright (`TEAM_TEMPLATE_ROLE_INVALID`). The reason is not laziness: an ordinary agent is editable, while a team role must lock onto an immutable template reference, or team runs cannot be reproduced.
+</Callout>
+
+The default model is resolved by the current Studio model profile; the template records only a recommendation. That way publishing a template never bakes a specific provider URL into a public artifact.
+
+## Team runs
+
+A team run maps one immutable blueprint onto a native DSH team run. It owns a **root session** plus **child sessions**, so role output never needs to be relayed by hand.
+
+| Item | Value |
+| --- | --- |
+| Team ID | `team-` plus 24 hex digits |
+| Team run ID | `teamrun-` plus 24 hex digits |
+| Member count | 1–8 |
+| Concurrent task limit | 256 |
+| Single message limit | 65536 bytes |
+| Member runtime | Local DSH Native or Star Harness only |
+| Task text limit | 32000 characters |
+
+Members must run locally, because cloud members and Codex members are not connected yet — going beyond returns `TEAM_AGENT_UNSUPPORTED` with "choose a local DSH Native or Harness expert".
+
+### Team run error codes
+
+| Error code | Trigger |
+| --- | --- |
+| `TEAM_ID_INVALID` | Team or run ID format is invalid |
+| `TEAM_REQUEST_INVALID` | Run request identifier is invalid |
+| `TEAM_TASK_INVALID` | Task is empty or longer than 32000 characters |
+| `TEAM_REVISION_CONFLICT` | The team was modified; reopen the editor |
+| `TEAM_PRESET_CONFLICT` | A role's run preset changed; start a new run |
+| `TEAM_RUN_NOT_FOUND` | Team run does not exist |
+| `TEAM_MEMBER_FAILED` | A member failed (carries the member error code) |
+| `TEAM_ROLE_SOURCE_MISSING` | A role has no source blueprint |
+| `TEAM_SOURCE_AGENT_MISSING` | A role's source expert no longer exists |
+| `TEAM_SNAPSHOT_MISSING` | An older team run's expert source is gone |
+| `TEAM_ROOT_UNAVAILABLE` | The team root session cannot be recovered |
+| `TEAM_RECOVERY_FAILED` | Native team recovery failed |
+| `TEAM_START_FAILED` | Team startup did not complete |
+| `TEAM_RUNTIME_UNAVAILABLE` | The official team service is not ready |
+| `TEAM_ROLE_UNAVAILABLE` | A role tool is unavailable |
+
+## Summon: install every dependency in one pass
+
+Summon is the one-click authoring orchestrator: it materializes the MCP and Skill dependencies a template declares, then hands off to the agent store. Two premises are non-negotiable: public unauthenticated MCPs may be materialized directly, but there is no silent OAuth account migration; and a dependency MCP must pass its probe, otherwise `TEMPLATE_MCP_UNAVAILABLE` is returned.
+
+Summon is interruptible: cancelling returns `TEMPLATE_CANCELLED`, an interrupted run returns `TEMPLATE_INTERRUPTED` (summon again to continue), and a closed Host returns `TEMPLATE_SERVICE_CLOSED`.
+
+## Experts versus teams
+
+| Dimension | Expert template | Team |
+| --- | --- | --- |
+| Produces | One agent | One team definition plus team runs |
+| Roles | None | 2–9 template roles / 1–8 run members |
+| Session structure | An independent session | A root session plus child sessions |
+| Allowed runtimes | Whatever the template declares | DSH Native and Star Harness only |
+| Referencing an ordinary agent | Not applicable | Forbidden |
+| Edit impact | Produces a new revision | Produces a new team revision |
+| Reproducibility via | `digest` | `digest` plus each role's `id`/`version`/`digest` |
+
+## Hard rules
+
+1. **A template locks references; it never copies configuration.** A different digest is a different template.
+2. **Team roles must be immutable template references**, never editable ordinary agents.
+3. **Teams run local runtimes only.** Cloud and Codex members are unimplemented — do not describe them as "for now".
+4. **`kind` and `lead` are structural constraints**, not naming conventions.
+5. **Summon never establishes authorization silently.** An MCP that needs authentication must be connected explicitly by you.
+
+## Related tasks
+
+<Cards>
+  <Card title="Create and edit an agent" href="/en/docs/guides/create-agent">
+    Create from an expert template and confirm you get an ordinary agent.
+  </Card>
+  <Card title="Run and debug sessions" href="/en/docs/guides/conversations">
+    Read a team run's root and child sessions.
+  </Card>
+  <Card title="Bind an MCP server" href="/en/docs/guides/mcp-servers">
+    Connect and probe the MCP a template depends on.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| Full schema of templates and team templates | [Template schemas](../reference/templates.mdx) |
+| `TEMPLATE_*` and `TEAM_*` error codes | [Errors](../reference/errors.mdx) |
+| Authoring and publishing expert templates | [Expert templates](../ecosystem/expert-templates.mdx) |
+| The eight `teams/*` operations | [Operations](../reference/operations.mdx) |

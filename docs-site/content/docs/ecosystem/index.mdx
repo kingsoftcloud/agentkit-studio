@@ -1,0 +1,104 @@
+---
+title: 生态与插件
+description: 写 DSH 插件、接入插件市场、发布专家模板、协商 Host 兼容性——这一章面向插件作者与平台维护者。
+---
+
+AgentKit Studio 不是封闭应用。它自身就是一个 DSH 插件，同时把 DSH 的插件生态、模板生态和 Host 兼容契约暴露给你。
+
+## 四个扩展面
+
+| 扩展面 | 你要解决的问题 | 去哪里 |
+| --- | --- | --- |
+| DSH 插件 | 写一个能在 DSH 宿主里加载的插件包 | [DSH 插件作者指南](./dsh-plugin-authoring.mdx) |
+| 插件市场 | 让插件出现在市场里，或自建远程索引 | [插件市场](./plugin-market.mdx) |
+| 专家模板 | 用 JSON 定义专家与专家团 | [专家模板](./expert-templates.mdx) |
+| Host 兼容 | 判断当前 Host 能否执行 Studio 能力 | [Host 兼容性](./host-compatibility.mdx) |
+
+## 产品里的入口
+
+| 界面 | 槽位与 id | 顺序 | 源码 |
+| --- | --- | --- | --- |
+| 插件市场 | `plugins.item` / `agentkit-dsh-plugin-market` | 50 | `src/client/dsh/mount.mjs:49` |
+| Codex 插件 | `plugins.item` / `agentkit-codex-plugin-market` | 90 | `src/client/dsh/mount.mjs:52` |
+| 专家目录 | 智能体面板内页 | — | `src/client/pages/expert-catalog.mjs` |
+| 模板广场 | 智能体面板内页 | — | `src/client/pages/template-square.mjs` |
+
+插件市场不新增侧边栏入口，也不建立第二个插件中心——它复用 DSH 官方「插件」页的同一个列表。
+
+<Callout type="info" title="市场只做元数据">
+  安装、启用/停用、更新、卸载全部由官方 DSH 插件管理器执行。Studio 的市场负责**发现与呈现**，
+  不负责写入 profile、不做兼容性判定、不加载运行时。
+  源码：`src/dsh-plugin-catalog.mjs:5-8`、`src/dsh-plugin-discovery.mjs:9-12`。
+</Callout>
+
+## 三个信任边界
+
+生态扩展最容易踩线的地方，是分不清「谁有权决定什么」。
+
+| 边界 | 谁能决定 | 不能做的事 |
+| --- | --- | --- |
+| 目录内容 | 远程索引可以描述「提供哪些插件、怎么展示」 | ❌ 不能声明 `expectedEntries` / `service` / `readinessNote`——这些探针留在内置目录里，否则远程文档可以诱导适配器调用任意的 Host 服务 |
+| 插件安装 | 官方 DSH 插件管理器 | ❌ 市场不能自己写 profile、不能自己执行安装 |
+| 能力探针 | Host 自己 | ❌ 远程文档不能声明「我确实加载成功了」 |
+
+源码：`src/dsh-plugin-catalog.mjs:10-13`、`src/dsh-plugin-discovery.mjs:9-12`。
+
+## 版本与身份
+
+一个 Studio 插件对外只想暴露一个身份，但实际有四个版本号同时存在：
+
+| 版本 | 值 | 来源 |
+| --- | --- | --- |
+| 插件版本 | `0.0.16` | `package.json#version` |
+| DSH 基线 | `0.2.2-rc.1` | `studio.plugin.json#requiredDsh` |
+| Host API | `dsh-native/0.2.2-rc.1` | `studio.plugin.json#requiredHostApi` |
+| Host 契约号 | `1` | `studio.plugin.json#requiredHostContract` |
+
+桌面应用还有第五个版本（`<dsh version>.<YYYYMMDD>.<ordinal>`），它**不是**插件 semver。完整的四维对照表在
+[版本兼容表](../releases/compatibility.mdx)。
+
+## 这一章怎么读
+
+<Cards>
+  <Card title="DSH 插件作者指南" href="/docs/ecosystem/dsh-plugin-authoring">
+    插件清单字段、4 个 capability、3 个 contribute，以及发布前的自检清单。
+  </Card>
+  <Card title="插件市场" href="/docs/ecosystem/plugin-market">
+    远程索引 JSON 的完整字段表、一个可复制的示例、缓存与降级规则。
+  </Card>
+  <Card title="专家模板" href="/docs/ecosystem/expert-templates">
+    team-template/v1 的字段表、角色蓝图约束、校验失败的错误码对照。
+  </Card>
+  <Card title="Host 兼容性" href="/docs/ecosystem/host-compatibility">
+    5 个能力探针、3 个功能闸门，以及被拒绝时的错误码。
+  </Card>
+</Cards>
+
+## 术语速查
+
+本章反复出现的几个词，先统一口径：
+
+| 术语 | 代码 / 值 | 一句话 |
+| --- | --- | --- |
+| 插件市场 | `plugins.item` 槽位 | DSH 官方插件页里的一行，负责**发现** |
+| 内置目录 | `DSH_CURATED_PLUGINS` | 随产品出厂的第一方条目，离线可用 |
+| 远程索引 | `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | 运维提供的 HTTPS JSON，刷新展示与追加插件 |
+| 能力探针 | `expectedEntries` / `service` | 只有内置条目能声明，用来验证「Host 真的加载了」 |
+| 专家团模板 | `agentkit.studio.team-template/v1` | `kind: "team"` 的多角色定义 |
+| 兼容契约 | `requiredHostContract: 1` | 能力面变更时递增的整数 |
+
+## 常见误解
+
+| 误解 | 事实 |
+| --- | --- |
+| 「装好插件就有市场里的全部能力」 | 市场列出的是**可安装**的包；是否可用取决于 Host 是否加载成功，见[就绪校验](./plugin-market.mdx#就绪校验) |
+| 「远程索引可以覆盖内置条目」 | 只能刷新展示字段与新插件；内置条目的探针字段不会被覆盖，见[合并语义](./plugin-market.mdx#合并语义) |
+| 「Codex 插件和 DSH 插件是同一套」 | 两条独立链路：`plugins/dsh-*` 与 `plugins/codex-*`，安装目标也不同 |
+| 「专家团就是几个 Agent 的列表」 | 专家团是 `kind: "team"` 的独立模板，角色只能引用不可变模板，不能引用普通 Agent |
+
+## 下一步
+
+从[DSH 插件作者指南](./dsh-plugin-authoring.mdx)开始。如果你只想配一个远程索引，直接去
+[插件市场](./plugin-market.mdx)；如果你要发布专家团，去[专家模板](./expert-templates.mdx)。
+
+Host 版本对不上的排查，先看[Host 兼容性](./host-compatibility.mdx)，再看[错误码](../reference/errors.mdx)。

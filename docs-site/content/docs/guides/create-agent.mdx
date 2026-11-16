@@ -1,0 +1,190 @@
+---
+title: 创建与编辑 Agent
+description: 用三步表单创建第一个 Agent，并理解保存为什么会产生新的修订版本，以及运行时为什么不可改。
+status: new
+---
+
+这一页走完「创建一个能跑的 Agent」。创建和编辑共用同一张表单，区别只在保存语义：新建产生修订版本 `r1`，编辑产生 `r{n+1}`。
+
+<Callout type="info" title="前置条件">
+  开始之前需要同时满足三条，缺任何一条都会在「绑定能力」步骤卡住：
+
+  1. 已经配置至少一个模型凭证，并且状态显示**已配置**。见[配置模型与凭证](./models-and-credentials.mdx)。
+  2. Host 已连接——智能体面板能列出已有的 Agent，而不是显示「Host 尚未连接」。
+  3. 你想好了 Agent 的用途描述。系统会在系统 Prompt 为空时用它兜底（`src/client/pages/agent-form.mjs:160`）。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 打开手动配置表单
+
+在**智能体**面板，有两个入口：
+
+- 点右上角**对话创建**，通过多轮对话完善提示词与资源绑定，确认草稿后创建。
+- 点**更多创建方式**（右侧下拉箭头）→ **手动配置**，直接进入三步表单。
+
+本页走手动配置。两种入口最终进入同一个表单组件，字段完全一致。
+
+<Callout type="info" title="界面位置">智能体面板右上角的「对话创建」按钮与「更多创建方式 → 手动配置」菜单。</Callout>
+</Step>
+
+<Step>
+### 第一步：基本信息
+
+| 字段 | 说明 | 默认 / 校验 |
+| --- | --- | --- |
+| 提示词模板（可选） | 折叠区，提供**通用助手**与**研究助手**两个起点 | 选模板会填充名称、描述、系统 Prompt |
+| Agent ID | 稳定标识 | 占位符 `local-agent`，保存时转小写 |
+| 名称 | 展示名 | 必填 |
+| 运行时 | 执行循环 | 默认 **DSH Native Harness**，创建后不可更改 |
+| 用途描述 | 一句话说明 | 留空时保存为「由 AgentKit Studio 本地创建」 |
+| 角色与系统 Prompt | 身份、边界、回答方式 | 留空时按「描述 → 模板」顺序兜底 |
+| 任务说明（可选） | 固定任务背景 | 云端 Agent 不显示此字段 |
+
+三种运行时的区别（`src/client/theme.mjs:28-33`）：
+
+| 运行时 | 界面显示 | 适合什么 |
+| --- | --- | --- |
+| `dsh-native` | DSH Native Harness | 本地原生循环，按需使用工具与资源 |
+| `harness` | Star Harness | 多角色协作与可配置的工具循环 |
+| `codex` | Codex Agent | 面向代码与工程任务 |
+
+<Callout type="warn" title="运行时是不可逆选择">
+  运行时的单选在编辑态被禁用，要换运行时只能新建 Agent。
+  新建时 Star Harness 会显示在选项里，但带「未开放」徽章且不可选中；编辑一个已经使用 Star Harness 的既有 Agent 时才可选（`src/client/pages/agent-form.mjs:61`、`:265-267`）。
+</Callout>
+
+**「下一步」什么时候可点**：Agent ID 与名称都非空。其他字段都不阻塞（`src/client/pages/agent-form.mjs:137-138`）。
+</Step>
+
+<Step>
+### 第二步：绑定能力
+
+**模型**（必填）
+
+- **默认模型**：新会话使用的模型，来自本地模型配置与模型网关合并后的目录。
+- **可用模型**：对话中可切换到的模型集合。默认模型始终在集合里——切换下拉时会自动把它加进列表（`src/client/pages/agent-form.mjs:289`）。
+
+目录读取失败时页面只显示已配置的模型档案，并给出 `MODEL_CATALOG_UNAVAILABLE` 警告；一条模型都读不到时才真正阻塞。
+
+**工具**，按运行时显示不同内容：
+
+| 运行时 | 界面行为 |
+| --- | --- |
+| DSH Native Harness | 只显示「使用 DSH Native 工具循环」，无需绑定工具 |
+| Star Harness | 「按能力组调整」快捷选择 + 「高级：调整工具范围」逐项勾选 |
+| Codex Agent | 直接列出工具选择器 |
+
+**MCP 服务**与**技能**：多选，留空表示不绑定。创建前先把 MCP Server 探测通过，否则目录里它是不可选状态，见[绑定 MCP Server](./mcp-servers.mdx)。
+
+**平台资源**：知识库、记忆库、Skill Center 各一个下拉。三项来自云端目录，没连上云端时下拉里只有「请先连接云端」。
+
+<Callout type="info" title="界面位置">「绑定能力」步骤的模型、工具、MCP 服务、技能与平台资源五个区块。</Callout>
+</Step>
+
+<Step>
+### 第三步：策略与确认
+
+**权限**——内容随运行时变化：
+
+| 运行时 | 显示 | 默认 |
+| --- | --- | --- |
+| Star Harness | 「Agent 工具约束」三选项 | `strict` |
+| DSH Native / Codex | 「权限：由当前运行端和 Host 管理」 | 不可改 |
+
+三个选项的含义：
+
+| 选项 | 行为 |
+| --- | --- |
+| 严格 | 写入和未知副作用需审批 |
+| 遵循会话与 Host 权限 | 完全交给会话与 Host 决定 |
+| 自定义 | 默认拒绝未知副作用，按逐工具规则覆盖 |
+
+选**自定义**时会出现逐工具规则输入框，格式是工具名到决策的 JSON 对象，决策只能是 `inherit`、`ask`、`deny`：
+
+```json
+{
+  "read_workspace_file": "inherit",
+  "save_crm": "ask"
+}
+```
+
+未列出的只读工具遵循 Host，其他工具拒绝。规则随 Agent 版本固定，会话权限与 Host 审批仍可进一步拒绝。
+
+<Callout type="info" title="两种「策略」不要混淆">
+  **Agent 工具约束**（本步骤）挂在修订版本上，只规定工具级别的 `inherit` / `ask` / `deny`。
+  **执行策略**（execution policy）是部署到云端时的权限上限，取值为 `read-only` / `workspace-write` / `danger-full-access`，
+  默认 `workspace-write`，并且只能向下收窄已部署运行时的上限（`src/execution-policy.mjs:10,29`）。它不在这个表单里。
+</Callout>
+
+**记忆**——「跨会话记忆」开关默认关闭。打开后出现记忆设置面板，详见[绑定知识库与 Memory](./knowledge-memory.mdx)。
+
+**子任务角色**——仅 Star Harness 显示，用于声明多角色协作。
+
+**确认配置**——只读摘要，逐项核对 Agent ID、名称、运行时、默认模型、可用模型数量、`N Tool · N MCP · N Skill`、平台资源数量、记忆来源与模板来源。
+
+<Callout type="info" title="界面位置">「策略与确认」步骤确认配置摘要的完整行项目。</Callout>
+</Step>
+
+<Step>
+### 保存
+
+- 新建时按钮是**创建 Agent**，保存中显示**保存中…**。
+- 编辑时按钮是**保存 Agent**，保存后创建新的配置版本，当前版本号在提示里（例如「当前 r3」）。
+
+保存会写成的 spec 里有三个固定值，理解它们可以少走弯路：
+
+- `security.toolPolicy` 恒为 `deny-by-default`。
+- Star Harness 额外获得 `process:host-user`；绑定了 MCP 时再追加 `network:mcp`。
+- DSH Native 与 Codex 不追加任何权限，保持默认拒绝集。
+
+<Callout type="warn" title="编辑不会影响正在跑的会话">
+  保存产生新的修订版本，已有会话和构建不会被自动切换。云端 Agent 的已有会话继续使用旧快照，新运行才使用更新后的组件绑定。
+</Callout>
+</Step>
+
+</Steps>
+
+## 成功后的样子
+
+保存成功后，智能体列表顶部出现一条状态提示：
+
+```text
+已创建 我的第一个 Agent（r1），可在运行中心构建。
+```
+
+编辑时提示以**已保存**开头，并带上新版本号。同时满足以下四条才算真的成功：
+
+- 列表里能看到该 Agent，状态不是失败。
+- 运行时标签与你在第一步选择的一致。
+- 打开编辑页，**绑定能力**步骤里默认模型已选中、可用模型数量与创建时一致。
+- 发一条消息能拿到完整回答，而不是错误摘要。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `AGENT_EXPECTED_REVISION_CONFLICT` | 另一个窗口已经保存了更新的版本 | 点**读取最新版本**，把未保存内容与最新版本逐项核对后重新保存 |
+| `AGENT_NOT_FOUND` | Agent 已被删除，或不在当前工作区 | 返回智能体列表刷新后重试 |
+| `AGENT_DEFINITION_REQUIRED` | 提交的 spec 为空 | 表单未加载完成就点了保存；等目录读完再操作 |
+| `AGENT_MUTATION_BUSY` | 同一 Agent 有并发写操作 | 等待当前操作结束后重试 |
+| `STUDIO_NATIVE_AGENT_POLICY_INVALID` | 逐工具规则不是合法 JSON，或决策值不在 `inherit` / `ask` / `deny` 里 | 修正 JSON；工具名需匹配 `^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$` |
+| `MODEL_CATALOG_UNAVAILABLE` | 模型网关目录读取失败 | 只显示已配置档案；到设置页检查凭证后重进表单 |
+| `AGENT_UPDATE_AUTHORITY_LOST` | 编辑期间 Agent 所有权发生变化 | 重新打开编辑页 |
+| `创建 Agent 失败` | 兜底文案，真实原因在 message 里 | 把 message 全文与错误码一起带进排障 |
+
+按错误码定位的完整流程见[排障](../help/troubleshooting.mdx)。
+
+## 相关参考
+
+| 你想知道 | 去哪里 |
+| --- | --- |
+| 修订版本与构建分别冻结什么 | [Agent · Revision · Build · Run](../concepts/agent-revision-build.mdx) |
+| 三种运行时的完整能力对照 | [三种运行时](../concepts/runtimes.mdx) |
+| 资源绑定的数据形状与互斥规则 | [资源与绑定](../concepts/resources.mdx) |
+| 原生 Agent 权限策略契约 | `src/native-agent-policy.mjs`（`agentkit.native-agent-policy/v1`） |
+| 创建表单源码 | `src/client/pages/agent-form.mjs`、`src/client/pages/agent-edit.mjs` |
+| 运行时默认值 | `src/authoring-defaults.mjs:4`、`src/client/theme.mjs:26-33` |

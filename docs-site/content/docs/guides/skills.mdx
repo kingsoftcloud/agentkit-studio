@@ -1,0 +1,184 @@
+---
+title: 绑定 Skill
+description: 写一份合法的 SKILL.md，扫描并导入本地 Skill，再把它绑定到 Agent 上。
+status: new
+---
+
+Skill 是给 Agent 复用的一段操作说明加上随附文件。这一页从「写一份合法的 `SKILL.md`」走到「Agent 会话里能读到它」。
+
+<Callout type="info" title="前置条件">
+  - 一个包含 `SKILL.md` 的目录。文件名必须是这个拼写，大小写不敏感但前缀必须匹配。
+  - 目录深度不超过 4 层（相对扫描根目录计算）。
+  - 以 `.` 开头的隐藏文件会被跳过，`.well-known` 除外。
+  - 如果 Skill 目录里有 `.py` / `.sh` / `.js` / `.ts` / `.ps1` 脚本，或者正文提到网络地址，导入时会被标记为需人工复核。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 写 SKILL.md
+
+`SKILL.md` 用 YAML frontmatter 声明身份，正文是给 Agent 读的说明。
+
+```markdown
+---
+name: release-notes
+description: 从提交记录生成发布说明草稿
+version: 1.0.0
+disable-model-invocation: false
+user-invocable: true
+---
+
+# 生成发布说明
+
+1. 读取 `git log` 的提交记录，按类型归类。
+2. 按「新增 / 修复 / 破坏性变更」三节输出。
+3. 每条都写清影响范围，不要只写标题。
+```
+
+| 字段 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `name` | 是 | — | 会被转成目录 slug：小写、非字母数字转 `-`、最长 64 字符 |
+| `description` | 是 | — | 一句话说明这个 Skill 做什么 |
+| `version` | 否 | `1.0.0` | 参与资源 ID |
+| `disable-model-invocation` | 否 | — | 设为 `true` 时模型不能主动调用，只能由用户触发 |
+| `user-invocable` | 否 | — | 设为 `false` 时用户不能手动触发 |
+
+<Callout type="warn" title="name 决定目录名">
+  `name` 会直接成为 `~/.agentkit/studio/skills/<slug>` 的目录名。
+  全是符号的名字会报 `SKILL_NAME_INVALID`，因为无法生成合法 slug。
+</Callout>
+</Step>
+
+<Step>
+### 打开扫描对话框
+
+进入 **资源库** → 资源类型选 **Skill** → 右上角 **扫描本地 Skill**。
+
+<Callout type="info" title="界面位置">资源库 Skill 页的「扫描本地 Skill」按钮与来源筛选下拉。</Callout>
+</Step>
+
+<Step>
+### 指定扫描目录
+
+**扫描目录（逗号分隔）**留空时，使用四个默认目录：
+
+```text
+~/skills
+~/.agents/skills
+~/.codex/skills
+~/.claude/skills
+```
+
+要扫别的目录就填写绝对路径，多个用逗号分隔。点**扫描**。
+
+扫描只读文件，不执行任何脚本。每个含 `SKILL.md` 的目录是一个候选，最多向下 4 层。
+
+候选列表每行显示：显示名称、路径、版本、文件数，以及三种状态之一：
+
+| 状态 | 含义 |
+| --- | --- |
+| 可导入 | 目录合法，同名目录还不存在 |
+| 已安装 | 目标目录已存在，导入会覆盖 |
+| 无效 | 缺少 `SKILL.md`，或 frontmatter 解析失败；悬停看诊断信息 |
+
+带脚本或网络标记的候选会额外显示**包含脚本或网络标记，需人工复核**。
+
+<Callout type="info" title="界面位置">扫描结果列表，包含三种状态与风险标记。</Callout>
+</Step>
+
+<Step>
+### 预览再导入
+
+点某一行的**预览**，只读查看该 Skill 的完整文件树与文件内容。这是导入前唯一能确认内容的机会——导入后文件会被复制到本机 Skill 存储。
+
+勾选需要的候选，点**导入选中 Skill**。
+
+- 导入成功后资源 ID 的格式是 `skill-<slug>-<version>`。
+- 冲突项会被覆盖前需要重新扫描确认。
+- 导入只表示「文件已保存到本机」，**不代表脚本依赖可用，也不代表 Agent 实际执行已验证**。
+
+<Callout type="info" title="界面位置">Skill 预览对话框的目录树与文件内容区。</Callout>
+</Step>
+
+<Step>
+### 绑定到 Agent
+
+打开 **智能体** → 选中目标 Agent → 编辑 → **绑定能力** 步骤 → **技能** 区块 → 点**绑定**，勾选一个或多个 Skill。
+
+- 支持多选，结果写进 `bindings.skills[]`。
+- 同一个资源 ID 即使重复出现也只加载一次。
+- 绑定后进入**策略与确认**步骤，确认摘要里能看到 `N Skill`。
+
+<Callout type="info" title="界面位置">「绑定能力」步骤的技能区块，含多选卡片与「N 已选择」计数。</Callout>
+</Step>
+
+<Step>
+### 可选：绑定云端 Skill Center
+
+云端 Skill 不在本地存储里，走**平台资源 → Skill Center**：
+
+1. 同一个步骤里的**平台资源**区块，找到 **Skill Center** 下拉。
+2. 选择一个云端 Skill Space。没连接云端时下拉只有「请先连接云端」。
+3. 绑定后的配置是 `selectionMode: discovery`、`includePublic: false`、`executionMode: outer-agent`。
+
+云端 Skill 在会话开始时由 Host 下载并解包。压缩包里必须有 `SKILL.md`，否则返回 `SKILL_MANIFEST_MISSING`。
+</Step>
+
+</Steps>
+
+## 运行时会看到什么
+
+绑定成功后，Agent 的系统上下文里会多出一段索引（`src/skill-files.mjs:7`）：
+
+```text
+已绑定的 Skill 文件：
+- release-notes: 从提交记录生成发布说明草稿
+  SKILL.md: "~/.agentkit/studio/skills/release-notes/SKILL.md"
+  资源目录: "~/.agentkit/studio/skills/release-notes"
+```
+
+关键约定：
+
+- **相对脚本路径相对于 Skill 的资源目录，不是当前工作区。** 这是最常见的误解来源。
+- 提示词要求 Agent 执行已绑定的脚本，而不是用临时重写代码替代。
+- 文件或依赖不可用时，Agent 必须如实报告，不能假装执行成功。
+- 正文按 12000 字符截断，优先注入索引。
+
+## 成功后的样子
+
+- 资源库 **已安装 / 已连接** 视图里能看到该 Skill，来源显示**本地导入**。
+- 点**查看文件**能看到目录树，并能逐个文件读取内容。
+- Agent 的「绑定能力」步骤里该 Skill 处于已勾选状态。
+- 会话里发一条匹配该 Skill 描述的消息，Agent 的回复引用了 `SKILL.md` 里的具体规则。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `SKILL_MANIFEST_INVALID` | `SKILL.md` 没有 frontmatter，或缺少 `name` / `description`，或 YAML 语法错误 | 补齐 `---` 包裹的 frontmatter 两个必填字段 |
+| `SKILL_NAME_INVALID` | `name` 无法生成合法 slug | 用字母数字加短横线，例如 `release-notes` |
+| `SKILL_MANIFEST_MISSING` | 云端 Skill 压缩包里没有 `SKILL.md` | 重新打包，确保根目录或子目录里有该文件 |
+| `SKILL_ALREADY_EXISTS` | 同名 Skill 已安装 | 预览确认后覆盖，或改 `name` |
+| `SKILL_CANDIDATE_NOT_FOUND` | 候选已被清理 | 重新扫描；发现会话 30 分钟后过期 |
+| `SKILL_DISCOVERY_TOKEN_INVALID` | 扫描结果已过期 | 重新点**扫描** |
+| `SKILL_DISCOVERY_PATH_INVALID` | 候选目录不在本次扫描记录里 | 重新扫描后再导入，不要复用旧对话框 |
+| `SKILL_NOT_INSTALLED` | 绑定的 Skill 在本机不存在 | 先导入，或从 Agent 上解绑 |
+| `SKILL_BINDING_INVALID` | 绑定 ID 为空或带前后空格 | 从资源库重新选择，不要手写 |
+| `SKILL_LOAD_AUTHORITY_CHANGED` | 加载期间 Skill 授权发生变化 | 重新发起会话 |
+| `SKILL_PREVIEW_PATH_INVALID` | 预览路径越出 Skill 目录 | 只预览目录树里列出的文件 |
+| `SKILL_SPACE_NOT_FOUND` | 云端 Skill Space 不存在或无权访问 | 检查云端连接与空间 ID |
+| `RESOURCE_ADAPTER_MISSING` | 绑定了解析不到适配器的资源 | 检查 Host 是否加载了对应资源适配器 |
+
+## 相关参考
+
+| 你想知道 | 去哪里 |
+| --- | --- |
+| Skill 与资源的绑定模型 | [资源与绑定](../concepts/resources.mdx) |
+| 扫描、导入与存储实现 | `src/skill-discovery.mjs` |
+| 运行时 Skill 投影与云端解包 | `src/skill-files.mjs` |
+| 绑定与加载顺序 | `src/skill-bindings.mjs` |
+| 五个 `skills/*` operation | [控制协议](../reference/operations.mdx) |
+| 绑定 MCP 与知识库 | [绑定 MCP Server](./mcp-servers.mdx)、[绑定知识库与 Memory](./knowledge-memory.mdx) |

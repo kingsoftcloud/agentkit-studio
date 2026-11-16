@@ -1,0 +1,180 @@
+---
+title: 常见问题
+description: 关于平台支持、模型凭证、运行时选择、资源绑定、云端能力与数据归属的高频疑问，每条都给源码依据。
+---
+
+按主题分组的短问答。每条都尽量给出源码位置，方便你自己核实。
+
+## 安装与平台
+
+<Accordions>
+<Accordion title="为什么没有 Intel Mac 的安装包？">
+
+macOS 只发布 **Apple Silicon（arm64）** 安装包，不提供也不计划提供 Intel（x64）版本。
+
+Intel Mac 请改用[作为 DSH 插件](../getting-started/install.mdx#c-作为-dsh-插件)在浏览器里使用——功能一致，只是没有桌面壳。
+
+</Accordion>
+<Accordion title="桌面端需要装 Node.js 吗？">
+
+不需要。桌面安装包自带运行时。只有[作为 DSH 插件](../getting-started/install.mdx#c-作为-dsh-插件)或[从源码运行](../getting-started/install.mdx#d-从源码运行)才需要 Node.js。
+
+</Accordion>
+<Accordion title="宿主版本必须完全一致吗？">
+
+是。`engines.dsh` 固定为 `0.2.2-rc.1`（`package.json:85`），宿主版本不匹配时插件会在启动阶段被拒绝加载，而不是降级运行。
+
+</Accordion>
+</Accordions>
+
+## 模型与凭证
+
+<Accordions>
+<Accordion title="API Key 存在哪里？会被写进 Agent 配置吗？">
+
+只存在 Host 侧的凭证存储里。Agent 配置里存的是**凭证引用**，不是密钥本身（`src/credential-ref.mjs`）。
+
+所以导出 Agent、复制模板、查看配置都不会带出密钥；浏览器表单回填与日志里也不会出现明文。
+
+</Accordion>
+<Accordion title="可以配多个模型吗？">
+
+可以。模型、Tool、MCP、Skill 都支持一个 Agent 绑定多个；**知识库、记忆库和 Skill Center 每类默认绑定一个**（`src/client/pages/resources.mjs:50`）。
+
+标记为「默认」的那个模型用于新会话。
+
+</Accordion>
+<Accordion title="编辑模型配置时切走，草稿为什么丢了？">
+
+因为编辑走的是**内存草稿**（源码注释里叫「方案 C」）：任何字段改动先进内存，只有点「保存配置」才落到 Host 存储。
+
+切走会有「未保存」提示，刷新或关窗会丢草稿。这不是 bug。
+
+</Accordion>
+</Accordions>
+
+## Agent 与运行时
+
+<Accordions>
+<Accordion title="三种运行时怎么选？">
+
+| 运行时 | 适合 |
+| --- | --- |
+| **DSH Native**（`dsh-native`） | 默认选择，由 DSH 宿主直接执行 |
+| **Star Harness**（`harness`） | 需要独立 Harness 服务的场景 |
+| **Codex**（`codex`） | 走 Codex App Server |
+
+**只有这三种。** 其中 `harness` 是唯一可插拔的：它由 ksadk-harness 的 npm 包提供，装好、启用并绑定工作区之后才会出现在 Agent 表单里，见[安装、升级与绑定 Star Harness](../guides/star-harness.mdx)。
+
+</Accordion>
+<Accordion title="改了 Agent 配置，为什么正在跑的会话没变？">
+
+因为正在跑的会话绑的是**修订版本**（Revision）——一个不可变快照。改动只影响下一轮或新建的会话。
+
+这也是为什么「冻结版本」能保证行为可复现：它锁的就是那个快照。
+
+</Accordion>
+<Accordion title="默认执行策略是什么？">
+
+`workspace-write`（`src/execution-policy.mjs:10`）。三档从轻到重：`read-only` → `workspace-write` → `danger-full-access`。
+
+请求的权限**只能收窄、不能放大**部署声明的上限（`execution-policy.mjs:28-33`）。
+
+</Accordion>
+</Accordions>
+
+## 资源绑定
+
+<Accordions>
+<Accordion title="资源库为什么不能直接改绑定关系？">
+
+资源库只负责**资源目录生命周期**：发现、导入、探测、查看、删除、状态刷新。
+
+**新增或变更 Agent 绑定**要在 Agent 创建页或编辑页完成（`src/client/pages/resources.mjs:50`）。这是刻意分开的——目录是全局的，绑定是版本化的。
+
+</Accordion>
+<Accordion title="「探测通过」等于能用吗？">
+
+不等于。探测只证明**连接建立、工具列表读取成功**。工具能不能完成任务，要在绑定的 Agent 里实际调用验证。
+
+MCP 的源码注释里写得很直白：移除配置只影响本机，删除云端 MCP 会清理云端资源。
+
+</Accordion>
+<Accordion title="Skill 显示「已导入」就是可用了吗？">
+
+不是。**本地已导入**只表示文件保存到了本机；**云端目录可见**表示绑定后由 Host 下载加载。
+
+两种状态都**不**代表脚本依赖或 Agent 实际执行已验证。
+
+</Accordion>
+</Accordions>
+
+## 云端与部署
+
+<Accordions>
+<Accordion title="为什么云端页面是空的？">
+
+两种常见原因：
+
+1. 没配云端 AK/SK —— 报 `CLOUD_CREDENTIALS_MISSING`，去 设置 → 模型与凭证 → 云端配置。
+2. 云端执行权限未启用 —— 报 `CLOUD_EXECUTION_MODE_UNAVAILABLE`，需要在部署侧显式开启。
+
+本地能跑通**不代表**云端资源可用。
+
+</Accordion>
+<Accordion title="能删除别人创建的托管 Runtime 吗？">
+
+不能。只支持删除经 AgentEngine API 创建的实例（`MANAGED_RUNTIME_REQUIRED`，`src/host/routes/agents.mjs:81`）；外部创建的实例请到控制台删除。
+
+</Accordion>
+</Accordions>
+
+## 数据、隐私与安全
+
+<Accordions>
+<Accordion title="Studio 会把我的会话上传吗？">
+
+不会。会话由 **DSH 宿主持久化**，Studio 只做**有界的只读投影**（`src/frozen-session-history.mjs:1-3`），从不写第二份存储。
+
+</Accordion>
+<Accordion title="历史里的密钥会显示出来吗？">
+
+不会。投影时会把私钥、`Bearer`/`Basic` 令牌、`sk-*`、`AKIA*`、Cookie 以及各类 `*_key`/`token`/`password` 字段替换成 `[已隐藏凭据]`（`src/dsh-history-display.mjs:10-21`）。
+
+<Callout type="warn" title="截图和终端输出不在此列">
+自动脱敏只作用于**界面渲染的历史**。贴 issue 前请自己遮住截图和命令输出里的凭证。
+</Callout>
+
+</Accordion>
+<Accordion title="数据存在哪些目录？">
+
+| 目录 | 环境变量 | 默认 |
+| --- | --- | --- |
+| Studio 数据根 | `AGENTKIT_HOME` | `~/.agentkit` |
+| DSH 宿主数据 | `DSH_HOME` | `~/.dsh` |
+| Codex 数据 | `CODEX_HOME` | `~/.codex` |
+| 插件发现缓存 | — | `~/.cache/agentkit-studio/` |
+
+卸载应用不会删这些目录，需要手动清理。详见[安装 · 卸载与清理](../getting-started/install.mdx#卸载与清理)。
+
+</Accordion>
+</Accordions>
+
+## 版本与更新
+
+<Accordions>
+<Accordion title="为什么有三个版本号？">
+
+- **AgentKit Studio 版本** —— 桌面应用版本
+- **Studio 插件版本** —— 产品功能与运行适配层版本
+- **DSH 宿主兼容版本** —— 固定宿主基线（`0.2.2-rc.1`），**不代表** Studio 产品版本
+
+（`src/client/pages/studio-settings.mjs:78-80`）
+
+</Accordion>
+</Accordions>
+
+## 还没解决
+
+- 按错误码查 → [排障](./troubleshooting.mdx)；确认是不是设计如此 → [已知限制](./known-limitations.mdx)
+- 要提 issue → [提 issue 需要什么](./index.mdx#提-issue-需要什么)

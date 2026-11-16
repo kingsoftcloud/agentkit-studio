@@ -1,5 +1,6 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := check
+.PHONY: docs-site-dev docs-site-build docs-site-check docs-site-preview
 
 # AgentKit Studio only ships the plugin. DSH_ROOT points at the official
 # DeepSeek Harness checkout and is never vendored into this repository.
@@ -318,6 +319,22 @@ desktop-package-win-x64-unsigned: desktop-package-preflight
 desktop-check-package:
 	@test "$$(uname -s)" = "Darwin" || (echo "macOS package checks must run on macOS" >&2; exit 2)
 	cd "$(DSH_ROOT)" && pnpm --filter @deepseek-ai/dsh-desktop run check:package
+
+# The public documentation site is a Fumadocs static export with its own
+# lockfile. `--ignore-workspace` keeps it out of the root pnpm workspace so the
+# plugin package never grows a React toolchain.
+docs-site-build:
+	cd docs-site && pnpm install --frozen-lockfile --ignore-workspace && \
+		NEXT_PUBLIC_BASE_PATH=/agentkit-studio pnpm build:static
+
+docs-site-dev:
+	cd docs-site && pnpm install --ignore-workspace && pnpm dev
+
+docs-site-check:
+	node --test tests/docs-site-i18n.test.mjs
+
+docs-site-preview: docs-site-build
+	cd docs-site && node scripts/preview.mjs 4321
 
 # CI intentionally does not require cloud keys, Codex credentials or a DSH
 # checkout. The real node-store probe is a separately enabled integration job.

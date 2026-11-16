@@ -1,0 +1,127 @@
+---
+title: Known limitations
+description: What this version explicitly does not support, supports only partially, or behaves in ways that are easy to misread — check here before filing a bug.
+---
+
+This page lists the **known boundaries** of the current version. If your problem appears here it does not need a bug report; if you want to push a boundary, the last section explains how.
+
+## Platform support
+
+| Platform | Architecture | Status | Notes |
+| --- | --- | --- | --- |
+| macOS 13+ | **Apple Silicon (arm64)** | ✅ Supported | `.dmg` / `.zip` are signed and notarized |
+| macOS | Intel (x64) | ❌ **Unsupported** | No Intel installer exists, and none is planned |
+| Windows 11 | x64 | ✅ Supported | `.exe` (NSIS) |
+| Browser | — | ✅ Supported | Loaded as a DSH plugin |
+
+<Callout type="warn" title="What Intel Mac users should do">
+No Intel (x64) installer exists. Any Intel installer filename that appeared in older documentation was wrong — do not troubleshoot against it.
+On Intel Macs use [the DSH plugin path](../getting-started/install.mdx#c-as-a-dsh-plugin) in the browser instead.
+</Callout>
+
+## Runtimes
+
+Studio supports **three** runtimes (`src/client/theme.mjs:26`):
+
+| Runtime | Value | Selectable in the Agent form |
+| --- | --- | --- |
+| DSH Native | `dsh-native` | ✅ Default |
+| Star Harness | `harness` | ✅ |
+| Codex | `codex` | ✅ |
+
+<Callout type="info" title="Star Harness must be installed first">
+`harness` is the only pluggable one of the three: it is delivered as npm packages from ksadk-harness, and until it is installed, enabled and bound to a usable workspace, the Agent creation form does not offer it (`src/client/pages/agent-form.mjs:61-79`, `src/host/services/star-harness.mjs:162`). See [installing, upgrading and binding Star Harness](../guides/star-harness.mdx).
+</Callout>
+
+In addition, the **in-process Harness is retired**:
+
+- `LOCAL_HARNESS_RETIRED` — "use a Native Harness session" (`src/host/routes/http.mjs:24`)
+- `STUDIO_LEGACY_HARNESS_RETIRED` — "this operation belongs to a retired in-process Harness session" (`src/host/routes/sessions.mjs:8`)
+
+Old in-process sessions cannot be restored; recreate them as native sessions.
+
+## Command execution and sandbox
+
+Execution policy has three tiers, lightest to heaviest (`src/execution-policy.mjs:8`):
+
+| Mode | Meaning |
+| --- | --- |
+| `read-only` | Read only |
+| `workspace-write` | Writable workspace (**cloud default**) |
+| `danger-full-access` | Full access |
+
+<Callout type="warn" title="The managed-runtime sandbox is not the layer you expect">
+The managed runtime container is already the confinement boundary (read-only root filesystem, dropped capabilities, one Agent per pod), and **Codex's bubblewrap sandbox cannot run inside that container at all**.
+So the managed runtime **defaults to `danger-full-access`**; the real isolation is the container, not an in-process sandbox (`src/portable-codex.mjs:50-56`).
+
+To narrow it, set `AGENTKIT_CODEX_SANDBOX` explicitly on the deployment side. A requested mode may only **narrow**, never widen, the deployment's declared ceiling (`src/execution-policy.mjs:28-33`).
+</Callout>
+
+In other words: **"the command sandbox passes everywhere" is not a true statement**. Local Codex uses its own sandbox; managed runtimes rely on the container boundary. Those are not the same guarantee.
+
+## Cloud capabilities
+
+Cloud features depend on the AgentEngine control plane and credentials. **A local run succeeding does not prove cloud resources are available.**
+
+| Limitation | Error code | Notes |
+| --- | --- | --- |
+| Cloud execution permission not enabled | `CLOUD_EXECUTION_MODE_UNAVAILABLE` | Must be enabled on the deployment side |
+| Image cannot switch permission | `CLOUD_EXECUTION_MODE_UNSUPPORTED` | Update the instance image version |
+| Image cannot accept images | `CLOUD_IMAGE_INPUT_UNAVAILABLE` | Cloud Agents receive no images; use a local Agent |
+| Only self-created managed runtimes are deletable | `MANAGED_RUNTIME_REQUIRED` | Only instances created through the AgentEngine API |
+
+The resource catalog has boundaries too:
+
+- The resource overview shows **only the first 200 entries per kind** (`RESOURCE_OVERVIEW_TRUNCATED`, `src/resource-catalog.mjs:87`); search the full catalog under "Models & tools".
+- "Runtime targets" may report "**not yet enabled**" — the host registered no matching capability; enable the official plugin in the plugin center.
+
+## Interface and navigation
+
+| Limitation | Impact |
+| --- | --- |
+| **No URL routing** | Cannot bookmark or share; Back leaves Studio; refresh returns to the default panel |
+| **No file diff view** | Only tool card arguments and results, or the conversation rewind preview |
+| **No per-turn token detail** | Statistics live under Operations → Observability |
+| **Legacy panel ids fall back to a placeholder** | A few historical entries show "preparing / waiting for host capability" (`src/client/pages/domain.mjs:7-15`) |
+| **`localStorage` stores preferences only** | Last tab selection, not navigation state |
+
+See [Interface tour · Why there is no URL](../getting-started/interface.mdx#why-there-is-no-url).
+
+## Data and storage
+
+| Limitation | Notes |
+| --- | --- |
+| Uninstalling does not delete data | Remove `~/.agentkit` and `~/.cache/agentkit-studio` manually |
+| `~/.dsh` / `~/.codex` are shared | They belong to the DSH host and Codex; confirm the whole environment is going away first |
+| Synced drives fail | Network home directories and synced folders reject file synchronization, so deployment records fail to write (`DEPLOYMENT_STORE_IO_FAILED`) |
+| Session log export caps at 8 MiB | Beyond that, use `/export` on the native session for a full ZIP |
+| History is a read-only projection | Studio never writes a second session store; credentials in history are replaced with `[redacted credential]` |
+
+## Versions and compatibility
+
+| Item | Status |
+| --- | --- |
+| Host version must **match exactly** | `engines.dsh = 0.2.2-rc.1` (`package.json:85`); a mismatch is refused at startup |
+| Product version and host version differ | All three numbers appear separately under Settings → AgentKit Studio → Version and updates |
+| `engines.node` uses a different scale than the security baseline | The former says `>=24.9.0`; the latter is a 22.23.4+ / 24.22.1+ / 26.12.1+ matrix. Local development uses 24.22.1 from `.node-version` |
+| `dist/` is not committed | Generated locally; `make dev` and `make pack` rebuild it |
+
+## These are not bugs
+
+| What looks like a problem | Actual behaviour |
+| --- | --- |
+| Start checks say confirmed, but tools still fail | "Confirmed" only means **configuration was read**, not that tool execution or model calls were verified |
+| A resource probe succeeds, but the Agent cannot use it | A probe only proves the connection and tool list were read |
+| Editing an Agent does not change a running session | A running session is bound to a **revision**; edits affect the next turn or a new session |
+| Leaving model settings loses the draft | Edits are an in-memory draft; only "Save" persists |
+| Session sequence numbers start at 1 | Public sequence = native sequence + 1, with `0` as the empty-history sentinel |
+
+## Pushing these limits
+
+In priority order:
+
+1. **Confirm it is not configuration** — run the three steps in the [Help overview](./index.mdx#do-these-three-things-first).
+2. **File an issue with the scenario** — include the six items from [what an issue needs](./index.mdx#what-an-issue-needs) and state the behaviour you expected.
+3. **Explain the impact** — "we need to pin a version inside the enterprise" is more persuasive than "please support Intel".
+
+For diagnosis, start from [Troubleshooting](./troubleshooting.mdx).

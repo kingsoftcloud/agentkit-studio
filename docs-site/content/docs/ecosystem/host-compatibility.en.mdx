@@ -1,0 +1,164 @@
+---
+title: Host compatibility
+description: How Studio decides whether the current DSH host can run a capability — five probes, three feature gates, baseline comparison, and the admission error code.
+status: new
+---
+
+**Before executing any native capability, Studio asks the host who it is.** No answer means refused — no guessing, no silent degradation.
+
+Admission checks three dimensions; all must pass:
+
+| Dimension | Compared | Variable |
+| --- | --- | --- |
+| Baseline | Whether the running DSH version is **exactly equal** to the manifest | `requiredDsh` |
+| Contract | Whether the compatibility contract version matches | `requiredHostContract` |
+| Capabilities | Whether the declared methods exist on host services | `capabilities` |
+
+Source: `src/host/compatibility.mjs:15-33`.
+
+## Manifest declarations
+
+```json
+{
+  "requiredDsh": "0.2.2-rc.1",
+  "requiredHostContract": 1,
+  "capabilities": [
+    "studio.agent.catalog",
+    "studio.runtime.capabilities",
+    "studio.session.adapter",
+    "studio.workspace.dock"
+  ]
+}
+```
+
+The baseline comes from `studio.plugin.json`; the actual version comes from DSH's public boot API `getDshRuntimeVersion()`.
+Source: `src/host/compatibility.mjs:53-71`.
+
+<Callout type="error" title="Display versions cannot authorize execution">
+  `AGENTKIT_STUDIO_DSH_VERSION` only affects what the UI shows. Setting it to the expected value **does not**
+  make a capability pass — the real version can only be read from the running DSH package. Unreadable means incompatible.
+  Source: `src/host/compatibility.mjs:55-62`.
+</Callout>
+
+## The five capability probes
+
+| Capability id | What is probed | Passes when |
+| --- | --- | --- |
+| `preset-composition` | Agent preset registry | `agentPresets.register` and `agentPresets.pluginsFor` are functions |
+| `agent-loop-origin` | Request origin detection | `isAgentLoopRequest` is a function |
+| `session-controller` | Session controller | `create`/`selectModel`/`resolveAgent`/`prompt`/`page`/`projections` |
+| `automation-policy` | Automation policy gate | `agents.withoutInitiator` + `permissionPresets.set` + `approval.setPolicy` |
+| `request-fingerprint` | Request fingerprinting | `promptFingerprintVersion === 1` and `prompt` is a function |
+
+Each probe returns `1` (present) or `0` (missing).
+Source: `src/host/compatibility.mjs:18-24`.
+
+<Callout type="warn" title="Probes never create sessions">
+  `inspect()` only reads service shapes — it does not call `create`, does not send requests, does not write disk.
+  Calling it repeatedly is safe, and it **must** be repeated: a previous Host or registry generation cannot vouch for a replacement.
+  Source: `src/host/compatibility.mjs:12-14`.
+</Callout>
+
+## The three feature gates
+
+| Feature | Required capabilities | Used for |
+| --- | --- | --- |
+| `agent-presets` | `preset-composition` + `agent-loop-origin` | Selecting an agent preset and composing it into a session |
+| `automation` | The two above + `session-controller` + `automation-policy` | Automation and scheduling |
+| `frozen-runtime` | The four above + `request-fingerprint` | Frozen runtime request budgets and replay |
+
+Features are **cumulative** over capabilities: `frozen-runtime` needs all five.
+Source: `src/host/compatibility.mjs:5-9`.
+
+## The inspection result
+
+```js
+const report = hostCompatibility.inspect();
+// {
+//   baseline: { required: '0.2.2-rc.1', actual: '0.2.2-rc.1', compatible: true },
+//   contract: { required: 1, actual: 1, compatible: true },
+//   capabilities: { 'preset-composition': 1, 'agent-loop-origin': 1, ... },
+//   features: {
+//     'agent-presets': { available: true, requiredCapabilities: {...}, missingCapabilities: [] },
+//     ...
+//   }
+// }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `baseline.compatible` | Result of a string equality check; `actual` being `null` means incompatible |
+| `contract.compatible` | Contract numbers are equal |
+| `features[x].available` | Baseline **and** contract **and** no missing capabilities |
+| `features[x].missingCapabilities` | Which capability ids are missing |
+
+Source: `src/host/compatibility.mjs:25-32`.
+
+## When admission fails
+
+Any failed feature gate throws the same error:
+
+```json
+{
+  "code": "STUDIO_HOST_INCOMPATIBLE",
+  "status": 503,
+  "message": "Studio frozen-runtime is unavailable: request-fingerprint. Install the compatible Studio Host.",
+  "details": {
+    "status": 503,
+    "feature": "frozen-runtime",
+    "baseline": { "required": "0.2.2-rc.1", "actual": "0.2.1-rc.2", "compatible": false },
+    "contract": { "required": 1, "actual": 1, "compatible": true },
+    "missingCapabilities": []
+  }
+}
+```
+
+### Three refusal reasons
+
+| Fragment in `message` | Meaning | Fix |
+| --- | --- | --- |
+| `DSH baseline` | Versions are not equal | Bring DSH to the version declared in `requiredDsh` |
+| `compatibility contract` | Contract numbers differ | Upgrade the Studio plugin to a version matching the contract |
+| Comma-separated capability ids | Service methods missing | Host version is right but services are not mounted — check that every plugin loaded |
+
+Source: `src/host/compatibility.mjs:34-43`.
+
+## Querying from outside
+
+| Entry point | Notes |
+| --- | --- |
+| `host/compatibility` operation | Returns the current result; requires authentication |
+| `window.__AGENTKIT_STUDIO__.hostCompatibility` | The same result injected into the browser document |
+| `hostCompatibility.inspect()` | Direct call inside the Host process |
+
+Neither external entry exposes credentials, filesystem paths, or session content.
+Source: `src/index.mjs:31-45`, `docs/host-compatibility.md`.
+
+## Startup vs execution
+
+| Moment | Behaviour |
+| --- | --- |
+| Host startup | Computes compatibility once and injects it into the browser document |
+| Before native execution | Each feature re-checks via `require(feature)`; a Host may restart services or swap registries, so the startup verdict goes stale |
+| Unknown feature name | Throws `TypeError: Unknown Studio Host feature: <name>` |
+
+Source: `src/host/compatibility.mjs:34-37`.
+
+## Troubleshooting checklist
+
+```sh
+node -p "require('./studio.plugin.json').requiredDsh"   # baseline declared by the manifest
+node -p "require('./dsh-pin.json').version"             # version pinned at packaging
+node -e "import('@deepseek-ai/dsh-app-boot').then(m => console.log(m.getDshRuntimeVersion?.()))"
+```
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| The first two lines disagree | Packaging used the wrong manifest | Re-align `studio.plugin.json` and `dsh-pin.json` |
+| The third line prints `undefined` | The DSH boot package is absent | No native capability is available; repair the DSH install |
+| `missingCapabilities` is non-empty | Host version is right but services are not mounted | Look the method up in the five-probe table and check that the official plugin is enabled |
+| Display version is right but admission fails | Only `AGENTKIT_STUDIO_DSH_VERSION` was changed | Display versions do not participate in authorization — see the callout above |
+
+## Related
+
+The DSH baseline and the other version numbers live in [version compatibility](../releases/compatibility.mdx), manifest fields in [DSH plugin authoring](./dsh-plugin-authoring.mdx), and every error code in the [error reference](../reference/errors.mdx).

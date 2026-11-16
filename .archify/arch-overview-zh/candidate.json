@@ -1,0 +1,491 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AgentKit Studio 系统架构",
+    "subtitle": "五层职责划分；浏览器与 Host 之间只有两条物理通道",
+    "output": ".archify/arch-overview-zh/overview.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "p-overview",
+      "type": "frontend",
+      "label": "总览",
+      "sublabel": "工作区状态",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        170,
+        76
+      ]
+    },
+    {
+      "id": "p-agents",
+      "type": "frontend",
+      "label": "智能体",
+      "sublabel": "我的智能体与模板广场",
+      "pos": [
+        408,
+        40
+      ],
+      "size": [
+        170,
+        76
+      ]
+    },
+    {
+      "id": "p-resources",
+      "type": "frontend",
+      "label": "资源库",
+      "sublabel": "模型、工具与运行资源",
+      "pos": [
+        776,
+        40
+      ],
+      "size": [
+        170,
+        76
+      ]
+    },
+    {
+      "id": "p-operations",
+      "type": "frontend",
+      "label": "运行中心",
+      "sublabel": "构建、部署与观测",
+      "pos": [
+        960,
+        40
+      ],
+      "size": [
+        160,
+        76
+      ]
+    },
+    {
+      "id": "control",
+      "type": "backend",
+      "label": "Studio 控制面",
+      "sublabel": "134 个 operation，按 domain 分派",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        1080,
+        74
+      ],
+      "tag": "/agentkit RPC"
+    },
+    {
+      "id": "d-agent",
+      "type": "database",
+      "label": "Agent 与修订版本",
+      "sublabel": "不可变 revision",
+      "pos": [
+        40,
+        360
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "d-build",
+      "type": "database",
+      "label": "构建存储",
+      "sublabel": "内容寻址 bundle",
+      "pos": [
+        224,
+        360
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "d-session",
+      "type": "database",
+      "label": "会话日志",
+      "sublabel": "DSH 拥有 transcript",
+      "pos": [
+        408,
+        360
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "d-resource",
+      "type": "database",
+      "label": "资源目录",
+      "sublabel": "MCP · Skill · 知识库",
+      "pos": [
+        592,
+        360
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "d-deploy",
+      "type": "database",
+      "label": "部署存储",
+      "sublabel": "19 状态机",
+      "pos": [
+        776,
+        360
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "d-observe",
+      "type": "database",
+      "label": "自动化与链路",
+      "sublabel": "调度 · 渠道 · OTLP",
+      "pos": [
+        960,
+        360
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "r-native",
+      "type": "backend",
+      "label": "DSH 原生",
+      "sublabel": "dsh-native · 默认",
+      "pos": [
+        40,
+        530
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "r-harness",
+      "type": "backend",
+      "label": "Star Harness",
+      "sublabel": "harness · 独立服务",
+      "pos": [
+        408,
+        530
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "r-codex",
+      "type": "backend",
+      "label": "Codex Agent",
+      "sublabel": "codex · App Server",
+      "pos": [
+        776,
+        530
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "r-engine",
+      "type": "external",
+      "label": "Native 引擎",
+      "sublabel": "native-engine",
+      "pos": [
+        960,
+        530
+      ],
+      "size": [
+        160,
+        96
+      ],
+      "tag": "仅路由"
+    },
+    {
+      "id": "k-dsh",
+      "type": "cloud",
+      "label": "DSH Host",
+      "sublabel": "会话 · 转录 · 原生轮次",
+      "pos": [
+        40,
+        700
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "k-store",
+      "type": "cloud",
+      "label": "对象存储",
+      "sublabel": "构建产物 · 更新源",
+      "pos": [
+        224,
+        700
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "k-harness",
+      "type": "cloud",
+      "label": "独立 Harness",
+      "sublabel": "原生内核 · 持久回执",
+      "pos": [
+        408,
+        700
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "k-codex",
+      "type": "cloud",
+      "label": "Codex App Server",
+      "sublabel": "推理与工具循环",
+      "pos": [
+        776,
+        700
+      ],
+      "size": [
+        160,
+        96
+      ]
+    },
+    {
+      "id": "k-engine",
+      "type": "cloud",
+      "label": "AgentEngine",
+      "sublabel": "云端控制面 · 托管运行时",
+      "pos": [
+        960,
+        700
+      ],
+      "size": [
+        160,
+        96
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "① 浏览器 UI：四个面板，一个外壳，没有 URL 路由",
+      "wraps": [
+        "p-overview",
+        "p-agents",
+        "p-resources",
+        "p-operations"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "② Studio 控制面：每个浏览器意图都是一个 operation id",
+      "wraps": [
+        "control"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "③ Host 服务域：状态、持久化与策略都在这一层",
+      "wraps": [
+        "d-agent",
+        "d-build",
+        "d-session",
+        "d-resource",
+        "d-deploy",
+        "d-observe"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "④ 运行时适配：三条可创建路径 + 一条仅路由路径",
+      "wraps": [
+        "r-native",
+        "r-harness",
+        "r-codex",
+        "r-engine"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "⑤ 外部内核：执行与持久状态由外部拥有",
+      "wraps": [
+        "k-dsh",
+        "k-store",
+        "k-harness",
+        "k-codex",
+        "k-engine"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "p-overview",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c2",
+      "from": "p-agents",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c3",
+      "from": "p-resources",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c4",
+      "from": "p-operations",
+      "to": "control",
+      "label": "operation",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c5",
+      "from": "control",
+      "to": "d-agent",
+      "label": "分派"
+    },
+    {
+      "id": "c6",
+      "from": "control",
+      "to": "d-build",
+      "label": "分派"
+    },
+    {
+      "id": "c7",
+      "from": "control",
+      "to": "d-session",
+      "label": "分派"
+    },
+    {
+      "id": "c8",
+      "from": "control",
+      "to": "d-resource",
+      "label": "分派"
+    },
+    {
+      "id": "c9",
+      "from": "control",
+      "to": "d-deploy",
+      "label": "分派"
+    },
+    {
+      "id": "c10",
+      "from": "control",
+      "to": "d-observe",
+      "label": "分派"
+    },
+    {
+      "id": "c11",
+      "from": "r-native",
+      "to": "k-dsh",
+      "label": "整轮委托"
+    },
+    {
+      "id": "c12",
+      "from": "r-harness",
+      "to": "k-harness",
+      "label": "整轮委托"
+    },
+    {
+      "id": "c13",
+      "from": "r-codex",
+      "to": "k-codex",
+      "label": "App Server"
+    },
+    {
+      "id": "c14",
+      "from": "r-engine",
+      "to": "k-engine"
+    },
+    {
+      "id": "c15",
+      "from": "d-build",
+      "to": "k-store",
+      "label": "产物",
+      "variant": "dashed"
+    },
+    {
+      "id": "c16",
+      "from": "d-deploy",
+      "to": "k-engine",
+      "label": "部署",
+      "variant": "dashed"
+    },
+    {
+      "id": "c17",
+      "from": "d-agent",
+      "to": "r-native"
+    },
+    {
+      "id": "c18",
+      "from": "d-session",
+      "to": "r-harness"
+    },
+    {
+      "id": "c19",
+      "from": "d-resource",
+      "to": "r-codex"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么读这张图",
+      "items": [
+        "实线是操作通道：浏览器调一个 operation，控制面按 domain 分派给 Host 服务。",
+        "虚线是旁路：构建产物与部署走 HTTP 前缀，不经过 operation 分派器。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "两条物理通道",
+      "items": [
+        "/agentkit RPC：有类型的 operation 调用。",
+        "HTTP 前缀：模型代理、会话流式、部署与产物上传。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "边界在哪",
+      "items": [
+        "凭证只留在 Host；浏览器拿到的是能力与状态。",
+        "native-engine 只可路由，创建表单不提供。"
+      ]
+    }
+  ]
+}

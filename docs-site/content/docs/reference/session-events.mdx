@@ -1,0 +1,108 @@
+---
+title: "会话事件"
+description: "16 个 DSH 会话事件与 3 个助手流帧：何时触发、如何配对、哪些会落库。"
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 事件词表
+
+Studio Host 投影消费 16 个 DSH 会话事件，另有 3 个进程内助手流帧。事件名是 DSH 的稳定词表，Studio 不新增、不改名。
+
+| 事件 | 家族 | 触发时机 | 源码 |
+| --- | --- | --- | --- |
+| `turn/start` | `turn` | 一轮开始：用户消息被接纳，模型轮次开始。 | `src/host/dsh-session-contract.mjs:3` |
+| `turn/end` | `turn` | 一轮结束：携带终态与用量。 | `src/host/dsh-session-contract.mjs:4` |
+| `step/start` | `step` | 一个 step 开始：模型一次输出到工具调用的边界。 | `src/host/dsh-session-contract.mjs:5` |
+| `step/end` | `step` | 一个 step 结束。 | `src/host/dsh-session-contract.mjs:6` |
+| `system/message` | `system` | 系统消息注入：策略、上下文或指令。 | `src/host/dsh-session-contract.mjs:7` |
+| `request/header` | `request` | 请求头：模型、路由与协议版本。 | `src/host/dsh-session-contract.mjs:8` |
+| `request/context` | `request` | 请求上下文：工作区、执行策略与冻结运行时。 | `src/host/dsh-session-contract.mjs:9` |
+| `user/message` | `user` | 用户消息。 | `src/host/dsh-session-contract.mjs:10` |
+| `assistant/message` | `assistant` | 助手消息：一轮的最终输出。 | `src/host/dsh-session-contract.mjs:11` |
+| `assistant/attempt` | `assistant` | 一次尝试：重试时同一轮会有多条。 | `src/host/dsh-session-contract.mjs:12` |
+| `tool/call` | `tool` | 工具调用请求，携带调用 id。 | `src/host/dsh-session-contract.mjs:13` |
+| `tool/result` | `tool` | 工具结果，用调用 id 与请求配对。 | `src/host/dsh-session-contract.mjs:14` |
+| `approval/asked` | `approval` | 审批请求：工具需要在执行前获得授权。 | `src/host/dsh-session-contract.mjs:15` |
+| `approval/decided` | `approval` | 审批决策：允许、拒绝或超时。 | `src/host/dsh-session-contract.mjs:16` |
+| `agent/inbox/spliced` | `agent` | Agent 收件箱被插入新事件（并发消息）。 | `src/host/dsh-session-contract.mjs:17` |
+| `agent-preset/selected` | `agent-preset` | 会话选中了某个 Agent 预设。 | `src/host/dsh-session-contract.mjs:18` |
+
+## 家族分布
+
+事件名以第一个斜杠分段。家族决定了投影层的处理顺序。
+
+| 家族 | 条数 | 事件 |
+| --- | --- | --- |
+| `turn` | 2 | `turn/start` `turn/end` |
+| `step` | 2 | `step/start` `step/end` |
+| `system` | 1 | `system/message` |
+| `request` | 2 | `request/header` `request/context` |
+| `user` | 1 | `user/message` |
+| `assistant` | 2 | `assistant/message` `assistant/attempt` |
+| `tool` | 2 | `tool/call` `tool/result` |
+| `approval` | 2 | `approval/asked` `approval/decided` |
+| `agent` | 1 | `agent/inbox/spliced` |
+| `agent-preset` | 1 | `agent-preset/selected` |
+
+## 助手流帧
+
+进程内的助手流只有三种帧，按 `start → chunk* → end` 顺序出现。它们不落库，只用于流式渲染。
+
+| 帧 | 源码 |
+| --- | --- |
+| `start` | `src/host/dsh-session-contract.mjs:22` |
+| `chunk` | `src/host/dsh-session-contract.mjs:22` |
+| `end` | `src/host/dsh-session-contract.mjs:22` |
+
+## 顺序与配对
+
+```text
+turn/start → request/header → request/context → step/start
+  → assistant/attempt → (tool/call → approval/asked → approval/decided → tool/result)*
+  → step/end → assistant/message → turn/end
+```
+
+| 事件 | 顺序规则 |
+| --- | --- |
+| `turn/start` | 一轮的唯一起点。 |
+| `turn/end` | 唯一保证出现的终止事件；缺失表示连接中断。 |
+| `step/start` | 一个 step 内至少一次 `assistant/attempt`。 |
+| `step/end` | 与 `step/start` 一一配对。 |
+| `system/message` | 可出现在任意位置，不改变轮次状态。 |
+| `request/header` | 紧跟 `turn/start`，每轮一次。 |
+| `request/context` | 紧跟 `request/header`。 |
+| `user/message` | 通常在一轮开头出现一次。 |
+| `assistant/message` | 每轮最多一条，取最后一次尝试。 |
+| `assistant/attempt` | 重试时同一轮会出现多条。 |
+| `tool/call` | 按调用 id 与 `tool/result` 配对。 |
+| `tool/result` | 必须在对应的 `tool/call` 之后。 |
+| `approval/asked` | 只在工具需要授权时出现。 |
+| `approval/decided` | 必须与 `approval/asked` 配对。 |
+| `agent/inbox/spliced` | 表示并发写入，投影需按序合并。 |
+| `agent-preset/selected` | 通常出现在一轮开始之前。 |
+
+## 版本与兼容性
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| 会话事件 | `16` | DSH 词表子集，不可自行扩展 |
+| 流帧 | `3` | `start` / `chunk` / `end` |
+| 家族数 | `10` | 按第一个斜杠分段 |
+| 持久化 | 仅会话事件 | 流帧不落库 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| 会话事件词表 | `src/host/dsh-session-contract.mjs` |
+| 运行时契约 | `src/runtime-contract.mjs` |
+| 会话适配 | `src/session-adapter.mjs` |
+| 原生轮次契约 | `packages/harness/src/native/dsh-turn-contract.ts` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |
+| runtime-contract.test.mjs | `tests/runtime-contract.test.mjs` |
+| session-adapter.test.mjs | `tests/session-adapter.test.mjs` |

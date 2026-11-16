@@ -1,0 +1,179 @@
+---
+title: Installation
+description: Pick a desktop installer, run Studio as a DSH plugin, or build from source — with system requirements, data directories and full uninstall steps.
+---
+
+AgentKit Studio ships in three forms. Choose by how you want to work, not by which file looks smaller:
+
+| Your situation | Path | Needs Node.js |
+| --- | --- | --- |
+| You just want the product | **A. macOS desktop** or **B. Windows desktop** | No |
+| You already run DeepSeek Harness and want Studio on top | **C. As a DSH plugin** | Yes |
+| You develop, debug patches, or verify real Host behavior | **D. From source** | Yes |
+
+<Callout type="info" title="Two versions, kept separate">
+The Studio product version and the DSH host version are different things. Studio `0.0.16` pins DSH host `0.2.2-rc.1` (`package.json:2-3,85`).
+After installing, **Settings → AgentKit Studio → Version and updates** shows all three version numbers independently (`src/client/pages/studio-settings.mjs:78-80`).
+</Callout>
+
+## System requirements
+
+| Platform | Architecture | Installer | Notes |
+| --- | --- | --- | --- |
+| macOS 13 or later | **Apple Silicon (arm64)** | `.dmg` | Signed and notarized |
+| Windows 11 | **x64** | `.exe` (NSIS) | Signed with a code-signing certificate |
+| Browser | — | npm package | Loaded as a DSH plugin |
+
+<Callout type="warn" title="macOS is Apple Silicon only">
+There is no Intel (x64) installer. Intel Macs cannot run the desktop app — use [as a DSH plugin](#c-as-a-dsh-plugin) instead.
+</Callout>
+
+## A. macOS (Apple Silicon)
+
+<Steps>
+<Step>
+### Download
+
+Get `AgentKit-Studio-mac-arm64.dmg` from the [download page](https://kingsoftcloud.github.io/agentkit-studio/); it always points at the newest build on the current release channel.
+The `.zip` in the same folder is an auto-update artifact; use the `.dmg` for manual installs.
+</Step>
+
+<Step>
+### Install
+
+Open the `.dmg` and drag AgentKit Studio into Applications. Do not run it from inside the `.dmg` — auto-update cannot write back into a read-only image.
+</Step>
+
+<Step>
+### First launch
+
+Open it from Applications or Launchpad. The installer is code-signed and notarized, so the "cannot verify developer" prompt should not appear.
+
+If it is still blocked: **System Settings → Privacy & Security**, then click "Open Anyway" at the bottom.
+</Step>
+
+<Step>
+### Confirm the version
+
+Open **Settings → AgentKit Studio** and check the three version numbers under "Version and updates".
+
+**Three version numbers**: AgentKit Studio version = the desktop app; Studio plugin version = product features and runtime adaptation layer; DSH host compatibility version = the pinned host baseline, which is not the Studio product version.
+</Step>
+</Steps>
+
+## B. Windows (x64)
+
+<Steps>
+<Step>
+### Download
+
+Download `AgentKit-Studio-win-x64.exe` (NSIS installer).
+</Step>
+
+<Step>
+### Run the installer
+
+Double-click it. When SmartScreen appears, choose **More info → Run anyway**.
+</Step>
+
+<Step>
+### Finish and launch
+
+Launch from the Start menu after installation. Windows has no Apple notarization step, but the certificate chain must still validate — inside corporate networks with a TLS-intercepting proxy, the first launch may fail. See [Known limitations](../help/known-limitations.mdx).
+</Step>
+</Steps>
+
+## C. As a DSH plugin
+
+This path mounts Studio onto an existing DeepSeek Harness and serves it in the browser.
+
+```sh
+# 1. Confirm the host version (must match the pinned DSH baseline)
+dsh --version   # expect 0.2.2-rc.1
+
+# 2. Install the plugin
+npm install @kingsoftcloud/agentkit-studio
+
+# 3. Enable agentkit-studio in the DSH plugin directory
+```
+
+<Callout type="warn" title="The host version must match">
+Studio declares `engines.dsh` as `0.2.2-rc.1` (`package.json:85`). On a mismatched host the plugin is refused at startup rather than degraded.
+</Callout>
+
+The plugin declares `route`, `resource` and `command` contributions (`studio.plugin.json:14-18`) and requires Host Contract version `1`.
+
+## D. From source
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+make setup DSH_ROOT=../deepseek-harness
+make dev   DSH_ROOT=../deepseek-harness
+```
+
+| Dependency | Version | Source |
+| --- | --- | --- |
+| Node.js | `24.22.1` | `.node-version` |
+| pnpm | `10.33.2` | `package.json:6` |
+| DSH source tree | the commit pinned in `dsh-pin.json` | must live outside this repository |
+
+<Callout type="info" title="Why .node-version wins">
+`engines.node` says `>=24.9.0`, while `scripts/node-version.mjs` maintains a security-baseline matrix (22.23.4+ / 24.22.1+ / 26.12.1+). The two are different scales — **local development uses 24.22.1 from `.node-version`**.
+</Callout>
+
+`dist/` is a local build artifact and is not tracked. `make dev` and `make web-dev` rebuild and install the plugin before launching.
+
+## Data directories
+
+Studio stores no user data in the repository. Everything lives under your home directory and can be redirected with environment variables:
+
+| Directory | Environment variable | Default | What is in it |
+| --- | --- | --- | --- |
+| Studio data root | `AGENTKIT_HOME` | `~/.agentkit` | Global configuration, Skills, authorization drafts |
+| DSH host data | `DSH_HOME` | `~/.dsh` | Sessions, transcripts, workspace bindings |
+| Codex data | `CODEX_HOME` | `~/.codex` | Codex runtime state |
+| Plugin discovery cache | — | `~/.cache/agentkit-studio/` | Plugin-market index cache; safe to delete |
+| Managed session registry | `AGENTKIT_MANAGED_SESSIONS` | `$AGENTKIT_HOME/managed-sessions` | Ownership records for cloud managed sessions |
+
+Configuration is layered: global configuration under `AGENTKIT_HOME` → the workspace's `.agentkit/config.yaml` → environment variables (`src/global-config.mjs:135-144`).
+
+<Callout type="warn" title="Keep these off synced drives">
+A failed deployment-record write reports that network home directories and synced folders reject file synchronization. Point `AGENTKIT_HOME` at local disk — not iCloud, OneDrive or an NFS home directory.
+</Callout>
+
+## Uninstall and clean up
+
+<Steps>
+<Step>
+### Remove the app
+
+- **macOS**: drag AgentKit Studio from Applications to the Trash.
+- **Windows**: Settings → Apps → AgentKit Studio → Uninstall.
+- **Plugin form**: `npm uninstall @kingsoftcloud/agentkit-studio` and remove the entry from the DSH plugin directory.
+</Step>
+
+<Step>
+### Clean up data (optional)
+
+Uninstalling the app does **not** delete data directories. Only run this after you are sure the session history is no longer needed:
+
+```sh
+rm -rf ~/.agentkit ~/.cache/agentkit-studio
+```
+
+<Callout type="error" title="~/.dsh and ~/.codex are shared">
+These two directories belong to the DSH host and Codex and may be used by other products. Delete them only when the whole DSH environment is going away.
+</Callout>
+</Step>
+
+<Step>
+### Confirm the cleanup
+
+After reinstalling, the first launch should show credential onboarding again rather than an existing session. If old sessions still appear, `DSH_HOME` points somewhere else.
+</Step>
+</Steps>
+
+## Next steps
+
+Once installed, run your first conversation with the [5-minute quickstart](./quickstart.mdx), or read the [interface tour](./interface.mdx) to understand the layout first.

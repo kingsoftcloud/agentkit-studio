@@ -1,0 +1,141 @@
+---
+title: Interface tour
+description: What the four panels, seven secondary tabs, two settings sections and the plugin page each do — plus why Studio has no URL you can bookmark.
+---
+
+Studio has exactly two navigation layers: **left-hand panels** and **secondary tabs inside a panel**. There is no third layer, and no routing to learn.
+
+<Callout type="info" title="Remember one thing">
+Studio is a product plugin inside the DSH host, and all interface state lives in memory. **There is no URL like `/agents/123`** — refreshing the browser returns you to the default panel.
+See [why there is no URL](#why-there-is-no-url).
+</Callout>
+
+## Global chrome
+
+Every panel shares the same chrome at the top (`src/client/components/shell.mjs:46-49`):
+
+| Element | Position | Notes |
+| --- | --- | --- |
+| Panel title | Top left | The active panel's `label` from `PANELS` |
+| Host status pill | Top right | Three states: **Host connected** / **Reading Host** / **Host pending** |
+| Page actions | Top right | The panel's own primary action |
+
+The status pill calls `health()` first and falls back to `bootstrap()`. It only shows "connected" when `health` succeeds **and** `workspaceReady !== false` (`shell.mjs:11-29`).
+
+## The four panels
+
+Panels are defined in `src/client/theme.mjs:19-24`; their order is the left navigation order:
+
+| Panel | Internal id | One-liner | Glyph |
+| --- | --- | --- | --- |
+| **Overview** | `overview` | Workspace status | ⌂ |
+| **Agents** | `agents` | My agents and the template gallery | ✦ |
+| **Resources** | `resource-hub` | Models, tools and runtime resources | ◈ |
+| **Operations** | `operations` | Builds, deployments and observability | ↗ |
+
+### Overview
+
+It answers "can I start working right now":
+
+| Block | What you can do | Source |
+| --- | --- | --- |
+| Credential banner | When no model credential is configured: "Configure a model credential to start chatting", with a jump to settings | `src/client/pages/overview.mjs:44` |
+| Create Agent | Three entries: **Conversational** (build the config with the AI), **Manual** (choose runtime and capabilities), **From template** (reuse an expert template) | `overview.mjs:45-49` |
+| Workspace | Four stat cards: Agents, Runtimes, Resources, Deliveries; **Agents / Resources / Deliveries** navigate on click | `overview.mjs:50-53` |
+| Start checks | A collapsible block that runs three checks and reports `confirmed` / `missing` / `unknown` | `overview.mjs:54` |
+
+Start checks are always the same three: **Host connection**, **model credential**, **runtime target catalog** (`src/client/state/start-checks.mjs:22-26`). Each has an 8-second timeout, and a timeout is reported as `unknown` rather than a failure.
+
+<Callout type="warn" title="What the three states mean">
+**Confirmed** = real configuration was read; **Missing** = definitely not configured; **Unknown** = unreadable (timeout, connection failure, catalog not provided).
+"Confirmed" does **not** mean tool execution or model calls were verified — the check panel repeats that sentence at the bottom.
+</Callout>
+
+### Agents
+
+Only three secondary tabs (`src/client/pages/agents.mjs:170`):
+
+| Tab | Contents |
+| --- | --- |
+| **Local** | Agents in the local workspace |
+| **Cloud** | Agents deployed to the cloud |
+| **Runtime targets** | Execution targets this host can offer |
+
+"Runtime targets" reads the runtime catalog, which has three page states: reading / catalog read / unavailable (`src/client/pages/runtime-catalog.mjs`). Each row also carries its own availability: "Not enabled" means the host registered no matching capability — install and enable the official plugin in the plugin center.
+
+### Resources
+
+The primary tabs are **six resource kinds** (`src/client/pages/resources.mjs:45-48`):
+
+| Resource kind | Secondary tabs | Notes |
+| --- | --- | --- |
+| Model | — | Model profiles and credential references |
+| MCP | Catalog / Installed | A successful probe only proves the connection and tool list were read |
+| Skill | Catalog / Installed | Imported locally ≠ available in the cloud ≠ dependencies verified |
+| Knowledge base | — | One binding per kind by default |
+| Memory | — | One binding per kind by default |
+| Runtime resources | — | Resources exposed by the runtime targets |
+
+<Callout type="info" title="The resource library does not own bindings">
+The resource library only owns the resource catalog lifecycle: discovery, import, probing, viewing, deletion and status refresh.
+**Adding or changing an Agent binding** happens on the Agent create or edit page.
+</Callout>
+
+### Operations
+
+Five secondary tabs (`src/client/pages/operations.mjs:23`):
+
+| Tab | What you see | Secondary view |
+| --- | --- | --- |
+| **Builds & deployments** | Build artifacts, deployment records, environments, logs | Filter: current Agent / all |
+| **Automation** | Scheduled and triggered runs | State: pending / running / needs attention / paused; scope: local / cloud deployment |
+| **Evaluation** | Evaluation runs and pass rates | Detail: cases / assertions |
+| **Observability** | Trace list and span detail | Detail: attributes / events / resource / trajectory / raw OTLP |
+| **Channels** | Remote channel bindings and approvals | Approvals: requester / channel / conversation / status |
+
+## Settings
+
+Studio **injects two sections** into the DSH settings dialog instead of building its own settings page (`src/client/dsh/mount.mjs:301-305`):
+
+| Settings section | Order | Contents |
+| --- | --- | --- |
+| **Models & credentials** | 190 | Model list, current model, default model, input capabilities, reasoning effort, API key, provider |
+| **AgentKit Studio** | 200 | Local runtime (session binding policy, default execution target, Studio Host, prompt prediction) + Version and updates (three version numbers, desktop update) |
+
+Editing under "Models & credentials" follows **option C**: every field change lands in an in-memory draft, and only "Save" writes to host storage. Navigating away shows an "unsaved" chip, and a refresh discards the draft (the `data-unsaved` branch in `src/client/pages/model-settings.mjs`).
+
+## Plugin page
+
+The **DSH plugin page** is the in-product plugin market (`src/client/pages/dsh-plugins.mjs`):
+
+- **15 categories**: All, Visual appearance, UI enhancements, Memory & context, Search & web, Image & media, Documents & office, Models & routing, Cost & usage, Productivity & notifications, Collaboration & workflow, Input & editing, Security & quality, Assistants, Other.
+- **4 sort orders**: Recommended, downloads, recently updated, name.
+- **Plugin states**: enabled, installable, disabled, partially loaded, load failed, configured, not installed, verification passed, verification failed, restart pending.
+- Installed plugins are managed in the second tab, separate from discovery.
+
+## Why there is no URL
+
+`page` is React state. Switching panels calls `onNavigate('studio-operations')` with a string (`src/client/pages/overview.mjs` and `src/client/operations-focus.mjs:14`), not `history.pushState`.
+
+| What you want | Reality |
+| --- | --- |
+| Bookmark one Agent | ❌ Not supported; find it in session history |
+| Share a deployment detail link | ❌ Not supported; screenshot or export instead |
+| Browser Back returns to the previous panel | ❌ Back leaves Studio |
+| Refresh returns to the same panel | ❌ You land on the default panel |
+
+Only a few interface preferences persist to `localStorage`:
+
+```text
+agentkit-studio:agents-view          # last secondary tab in the Agents panel
+agentkit-studio:resource-kind        # last resource kind in the library
+agentkit-studio:resource-library-view # catalog / installed
+agentkit-studio:resource-tab         # last tab in resource detail
+agentkit-studio.prompt-prediction.enabled # prompt prediction toggle
+```
+
+These are **preferences**, not navigation state — they only change the default selection next time you open the panel.
+
+## Next steps
+
+With the layout understood, read [your first conversation](./first-conversation.mdx) to see what actually happens during a run. When you hit an unfamiliar error code, check [troubleshooting](../help/troubleshooting.mdx).

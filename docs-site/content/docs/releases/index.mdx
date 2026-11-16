@@ -1,0 +1,118 @@
+---
+title: 发布与迁移
+description: 版本号怎么构成、发到哪个通道、升级要注意什么——从 v0.0.16 往回看每一个用户能感知的变化。
+---
+
+**Studio 同时有五个版本号，它们不同步是设计，不是 bug。** 这一章先讲清这个前提，否则升级判断一定会出错。
+
+## 五个版本号
+
+| 版本 | 当前值 | 谁在用 | 变了会怎样 |
+| --- | --- | --- | --- |
+| 插件版本 | `0.0.16` | `package.json#version`、npm 包 | 决定你装到哪个插件 |
+| DSH 基线 | `0.2.2-rc.1` | `studio.plugin.json#requiredDsh` | 与运行中的 DSH **精确相等**才放行 |
+| Host API | `dsh-native/0.2.2-rc.1` | `studio.plugin.json#requiredHostApi` | DSH 用它判断插件兼容 |
+| Host 契约号 | `1` | `studio.plugin.json#requiredHostContract` | 能力面变更时递增 |
+| 桌面版本 | `<DSH 版本>.<YYYYMMDD>.<序号>` | Electron 安装包与更新 feed | 决定更新能否落地 |
+
+源码：`package.json:2-3`、`studio.plugin.json:2-6`、`src/desktop-release-channels.mjs:14-16`。
+
+<Callout type="info" title="桌面版本不是插件版本">
+  桌面版本形如 `0.2.2-rc.1.20261116.1`。它由 DSH 版本 + 构建日期 + 当天序号拼成，
+  所以同一天多次构建会得到 `…20261116.1`、`…20261116.2`。插件 semver 不受它影响。
+</Callout>
+
+## 本章覆盖什么
+
+| 页面 | 回答什么问题 | 适合谁 |
+| --- | --- | --- |
+| [版本说明](./release-notes.mdx) | 每个版本改了什么 | 想快速知道「值不值得升」的人 |
+| [版本兼容表](./compatibility.mdx) | 插件版本 × DSH 基线 × 最低 Node × 支持平台 | 升级前做决策的人 |
+| [升级到 v0.0.16](./upgrade-to-0.0.16.mdx) | 破坏性变更与操作步骤 | 已经在用、要升上来的人 |
+| [桌面更新通道](./desktop-update-channels.mdx) | 4 个通道 × 2 个 feed 目标 × 2 种布局 | 运维与发布工程师 |
+
+## 渠道一眼看懂
+
+| 通道 | 类型 | 接受预发布版本 | 说明 |
+| --- | --- | --- | --- |
+| `nightly` | 原生 | ✅ | **产品默认通道** |
+| `latest` | 原生 | ❌ | GA 通道，只接三段式正式版本 |
+| `preview` | 兼容 | ✅ | 历史车道，每次发布自动镜像一份 |
+| `stable` | 兼容 | ❌ | 历史车道，与 `latest` 同比较规则 |
+
+源码：`src/desktop-release-channels.mjs:20-35,59`。
+
+**为什么默认是 `nightly`？** 固定的 DSH 版本带 `-rc.N` 后缀，而 Studio 桌面版本继承了它——
+所以每个 Studio 构建都是预发布版本，只有 `nightly` 这条原生车道接受它们。
+等 DSH 发布正式版、Studio 打出三段式版本，才可能在 `latest` 上发布。
+源码：`src/desktop-release-channels.mjs:51-58`。
+
+## 一次发布要过什么
+
+<Steps>
+
+<Step>
+### 源码门禁
+
+```sh
+make public-gate
+```
+
+源码审计、密钥扫描、补丁格式、包内容、DSH pin、完整测试。
+</Step>
+
+<Step>
+### 发布门禁
+
+```sh
+make release-check
+```
+
+在 `public-gate` 之上再加 package 内容校验、补丁 manifest、归档完整性。
+</Step>
+
+<Step>
+### 桌面产物
+
+```sh
+make desktop-package-preflight
+make desktop-package-mac-arm64
+make desktop-package-win-x64
+```
+
+预检先跑，避免签完名才发现版本与通道不匹配。
+</Step>
+
+<Step>
+### 签名与公证
+
+macOS 用 Keychain 里的签名身份，Windows 用 Certum 证书。
+签名失败不能绕过——更新链路只接受签名产物。
+</Step>
+
+<Step>
+### 发布 feed
+
+```sh
+node scripts/desktop-release.mjs publish
+```
+
+先发不可变资产，再推进 feed。顺序反了会让客户端拿到 404 的更新。
+</Step>
+
+</Steps>
+
+## 升级前必读
+
+| 你现在的版本 | 建议 |
+| --- | --- |
+| `0.0.16` 已是最新 | 无需操作 |
+| `0.0.15` | 读[升级到 v0.0.16](./upgrade-to-0.0.16.mdx)——有一个真实的破坏性变更 |
+| 更早 | 先升到 `0.0.15` 再升 `0.0.16`，不要一次跨多版 |
+| 不确定 | 先用[版本兼容表](./compatibility.mdx)确认 DSH 与 Node 基线 |
+
+## 相关
+
+- DSH 插件清单字段：[DSH 插件作者指南](../ecosystem/dsh-plugin-authoring.mdx)
+- Host 兼容性判定：[Host 兼容性](../ecosystem/host-compatibility.mdx)
+- 全部错误码：[错误码参考](../reference/errors.mdx)

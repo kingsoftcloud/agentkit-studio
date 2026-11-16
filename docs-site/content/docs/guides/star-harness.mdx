@@ -1,0 +1,205 @@
+---
+title: 安装、升级与绑定 Star Harness
+description: 在插件页安装并升级 Star Harness、绑定工作区与模型，然后在创建 Agent 时选中 `harness` 运行时。
+status: new
+---
+
+**Star Harness 是三种运行时里唯一需要单独安装的那个。** 它由 ksadk-harness 的 npm 包提供，不随安装包一起就位；
+先安装、启用并绑定一个工作区，创建 Agent 时才能选到 `harness`。
+
+<Callout type="info" title="前置条件">
+  - **本地 Host**。云端托管运行时与可移植运行包不提供本机管理，页面只显示「此 Studio 部署由管理员管理」。
+  - **Node.js 与 npm 可用**。安装过程会跑一次 `npm install` 拉取固定版本。
+  - 一个**已存在**的目录作为工作区，路径必须是规范的绝对路径。
+  - 至少配置一个模型 profile，绑定工作区时要选它。
+</Callout>
+
+## 为什么 Star Harness 要单独装
+
+三种运行时的就绪方式不同：
+
+| 运行时 | 怎么就绪 | 你要做什么 |
+| --- | --- | --- |
+| DSH 原生（`dsh-native`） | 随 Studio 就绪 | 什么都不用做，新建默认就是它 |
+| Codex（`codex`） | 需要官方 Codex 插件 | 在插件页安装并启用官方插件 |
+| Star Harness（`harness`） | 需要**安装 npm 包 + 工作区绑定** | 安装、启用、绑定工作区（本页） |
+
+Star Harness 多出来的「工作区」不是可选项：每个绑定的目录对应一份独立的运行状态，未绑定的目录会被明确拒绝，不会回落到别的项目。
+这也是为什么它需要一次性的安装与绑定，而不是像 DSH 原生那样开箱可用。
+
+<Callout type="info" title="依赖是单向的">
+  Studio 消费 `@kingsoftcloud/agentkit-harness-{core,node,ui}` 三个 npm 包，Harness 不反向依赖 Studio——所以升级 Harness 不需要 Studio 一起发版。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 打开插件页
+
+**插件 → Star Harness**。这一行由 Studio 注册进 DSH 的插件页（`src/client/dsh/mount.mjs:54-56`），排在「插件市场」和「Codex 插件」之后。
+
+页面顶部一行状态：
+
+| 显示 | 含义 |
+| --- | --- |
+| `未安装` | 还没装，下面是 **安装** 按钮 |
+| `已安装 <版本> · 已启用` | 装好且已启用，可以绑定工作区、创建 Agent |
+| `已安装 <版本> · 已停用` | 装好但停用，绑定关系保留，创建 Agent 时选不到 |
+| `此 Studio 部署由管理员管理。` | 当前部署不提供本机管理（云端托管 / 可移植运行包） |
+
+<Callout type="warn" title="停用之后选不到运行时">
+  停用不会删除版本，也不会解除工作区绑定，但 `canCreate` 会变成假，
+  于是「运行目标」页里的 Star Harness 变成**未启用**，创建 Agent 的表单也不再提供它。重新启用即可恢复。
+</Callout>
+</Step>
+
+<Step>
+### 检查可用版本
+
+点 **检查更新**。它会去 npm 读 `@kingsoftcloud/agentkit-harness-node` 的最新版本，并和随 Studio 发布的固定版本比较，取**较新**的那个作为推荐版本（`src/host/services/star-harness.mjs:159-160`）。
+
+两种失败会直接显示在页面上：
+
+| 提示 | 含义 | 处理 |
+| --- | --- | --- |
+| `暂时无法读取 npm 的最新版本。` | 注册表不可达（超时 6 秒） | 网络恢复后重试；已有版本仍可正常使用 |
+| 版本输入框为空且 **安装** 按钮置灰 | 既没有已装版本，也没有拿到推荐版本 | 先检查更新，或手工在版本框里填一个版本号 |
+
+版本号必须是三段数字（`1.2.3` 形式），否则直接报 `STAR_HARNESS_RELEASE_INVALID`。
+</Step>
+
+<Step>
+### 安装或升级
+
+版本输入框会自动填入推荐版本，留空即用推荐版本。按钮文案随状态变化：
+
+| 当前状态 | 按钮 | 行为 |
+| --- | --- | --- |
+| 未安装 | **安装** | 下载并安装推荐版本 |
+| 已安装，输入的是另一个版本 | **升级** | 下载并切换版本 |
+| 已安装，输入的就是当前版本 | **重新安装** | 重跑一次安装与校验 |
+
+点下去之后的状态文案是「正在安装 Star Harness…」或「正在升级 Star Harness…」。安装做三件事：
+
+1. 在临时目录里按固定依赖树跑 `npm install --ignore-scripts --save-exact`（超时 **180 秒**）。
+2. 用 `scripts/native-package-pins.json` 里的**逐文件摘要**校验整个包树，包括它的全部依赖。
+3. 起一个探针进程做握手（`probe`），确认这个版本真的能服务，然后才切换正在运行的工作区。
+
+<Callout type="info" title="为什么版本号不能随便填">
+  只有 Studio 随包「审阅」过的版本才能装——也就是 `native-package-pins.json` 里当前版本或 `previousRuntime`。
+  填别的版本会得到 `STAR_HARNESS_RELEASE_UNREVIEWED`：「此版本尚未由当前 Studio 校验。请先更新 Studio，再安装对应的 Star Harness 版本。」
+  这是为了不让你在公司网络里跑一个没人核对过的包。
+</Callout>
+</Step>
+
+<Step>
+### 启用
+
+装好之后点 **启用**。启用要求至少有一个可用的工作区绑定——没有就得到 `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE`（「请先为该工作区绑定并启用 Star Harness。」）。
+
+启用成功后的提示是「已启用，可在创建 Agent 时选择 Star Harness」。
+按钮变成 **停用**；停用会停掉所有工作区的 Harness 进程，但保留版本与绑定。
+</Step>
+
+<Step>
+### 绑定工作区
+
+在「工作区」小节填三样东西，然后点 **绑定工作区**：
+
+| 字段 | 说明 |
+| --- | --- |
+| 选择已有工作区 | 下拉列出注册表里已知的目录，选它等于自动填路径 |
+| 工作区绝对路径 | 手工填目录的绝对路径；必须是已存在的规范路径（会做 `realpath`） |
+| 工作区模型 | 从这个工作区要用的模型 profile 里选；默认项是 **Studio 默认模型** |
+
+绑定成功后提示「工作区已绑定。」，工作区出现在下面的列表里，每行显示：
+
+```text
+<工作区绝对路径>
+<模型名> · 运行中 · <版本>
+```
+
+状态三选一：**运行中**、**未运行**、**目录已失效**（目录被删或改名了）。
+
+<Callout type="warn" title="目录不能重叠">
+  工作区不能与已有绑定重叠，也不能与 Star Harness 自己的状态目录重叠，否则得到 `STAR_HARNESS_WORKSPACE_CONFLICT`。
+  嵌套目录（父目录与子目录同时绑定）同样会被拒绝——一个目录只有一个写入者。
+</Callout>
+</Step>
+
+<Step>
+### 在创建 Agent 时选中它
+
+回到 **智能体 → 更多创建方式 → 手动配置**，在「运行时」里选 **Star Harness**。
+
+可选的前提是 `canCreate` 为真，也就是**已安装 + 已启用 + 至少一个可用工作区**（`src/host/services/star-harness.mjs:174`）。
+三者缺一时按钮是禁用的，鼠标悬停会提示「在插件页安装并启用 Star Harness」。
+
+<Callout type="info" title="运行时在创建后不可更改">
+  Star Harness 也一样。要换运行时只能新建一个 Agent；编辑已有的 Star Harness Agent 不受安装状态影响。
+</Callout>
+</Step>
+
+<Step>
+### 解除绑定或停用
+
+- **解除绑定**：工作区行上的按钮，停掉该目录的 Harness 并删除绑定。目录本身不会被删。
+- **停用**：只停进程，保留版本与全部绑定，之后能一键恢复。
+- 标记为 **外部管理** 的工作区来自环境变量注入的路由，不能在这里解除绑定。
+
+<Callout type="error" title="任务运行中不能改版本">
+  有任何任务在跑（或上一次变更还没落地）时，版本与绑定操作都会被拒绝，页面提示「任务运行中。结束后可以更改版本或绑定。」，
+  错误码是 `STAR_HARNESS_BUSY`。等当前运行结束再操作，不要重复点击。
+</Callout>
+</Step>
+
+</Steps>
+
+## 成功后的样子
+
+四项同时满足：
+
+1. 插件页状态行是 `已安装 <版本> · 已启用`。
+2. 工作区列表里至少一行显示 **运行中**，且版本号与状态行的版本一致。
+3. **运行目标**页里 Star Harness 那行是 **可选**，不再是「未启用」。
+4. 新建一个 Star Harness Agent 并对话，能拿到模型回复——说明引擎握手与模型凭证都通了。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `STAR_HARNESS_RELEASE_UNREVIEWED` | 版本不在 Studio 审阅过的清单里 | 先更新 Studio；或回退到 `previousRuntime` 那个版本 |
+| `STAR_HARNESS_RELEASE_INVALID` | 版本号不是三段数字，或包树摘要校验失败 | 核对版本号；摘要失败就用 **重新安装** 覆盖 |
+| `STAR_HARNESS_NPM_MISSING` | 宿主找不到 npm | 装好 Node.js 与 npm 后重试 |
+| `STAR_HARNESS_DOWNLOAD_FAILED` | npm 下载失败（网络或版本不存在） | 检查 npm 网络与版本号 |
+| `STAR_HARNESS_VERSION_UNSUPPORTED` | 装了一个比当前更旧、又不是上一版本的版本 | 只升级到新版，或回退到「回退到 `<版本>`」按钮给的那个版本 |
+| `STAR_HARNESS_NOT_INSTALLED` | 还没装就想启用或绑定 | 先完成安装 |
+| `STAR_HARNESS_BUSY` | 有任务在跑，或上一次变更还没落地 | 等运行结束后重试 |
+| `STAR_HARNESS_CLOSED` | 管理服务已关闭 | 重启应用 |
+| `STAR_HARNESS_INVALID_REQUEST` | 参数无效（版本、启用值、路径格式不对） | 用界面上的控件，不要手工拼请求 |
+| `STAR_HARNESS_WORKSPACE_CONFLICT` | 目录与已有绑定或状态目录重叠 | 换一个不重叠的目录 |
+| `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | 目标工作区没有绑定，或没启用 | 先绑定工作区再启用 |
+| `STAR_HARNESS_MODEL_CHANGED` | 绑定后模型 profile 变了 | 重新绑定该工作区 |
+| `STAR_HARNESS_START_FAILED` | 引擎启动或握手失败（12 秒超时） | 看是否端口被占用或包被安全软件拦截；重新安装 |
+| `STAR_HARNESS_INCOMPATIBLE` | 该版本与当前 Studio 的协议或校验能力不匹配 | 升级 Studio，或换一个受支持的版本 |
+| `STAR_HARNESS_CONFIG_INVALID` | 本地设置文件损坏 | 修复或删除 `star-harness/settings.json` 后重新安装与绑定 |
+| `STAR_HARNESS_UNSUPPORTED` | 当前部署不提供本机管理 | 云端托管 / 可移植运行包请由管理员管理 |
+
+## 相关参考
+
+<Cards>
+  <Card title="三种运行时" href="/docs/concepts/runtimes">
+    三种运行时的归属、能力矩阵与执行策略。
+  </Card>
+  <Card title="创建与编辑 Agent" href="/docs/guides/create-agent">
+    在创建表单里选运行时，并确认选中后的能力差异。
+  </Card>
+  <Card title="运行时与实体契约" href="/docs/reference/runtime-contract">
+    `harness` 的 owner、事件所有者与五项能力。
+  </Card>
+  <Card title="已知限制" href="/docs/help/known-limitations">
+    哪些部署形态不提供本机 Star Harness 管理。
+  </Card>
+</Cards>

@@ -1,0 +1,123 @@
+---
+title: 降级与重试
+description: 绑定资源恢复失败时，默认降级继续对话、严格模式直接拒绝；以及哪些重试已经落地、哪些还只是提案。
+status: new
+---
+
+**资源恢复失败不是致命错误，而是一个策略选择。** 一个 MCP 抖动不应该让整个 Agent 不可用，所以默认行为是「降级继续」；需要「资源不全就不许跑」的部署可以显式开启严格模式。
+
+<Callout type="info" title="本页的写法约定">
+  每一节都标注了状态：**已实现**的结论可以指到 `src/**` 的行号；**提案**部分是设计意图，当前代码里**没有**对应实现，不要按它做集成。
+</Callout>
+
+## 两套策略（已实现）
+
+| 策略 | 开启方式 | 行为 | 依据 |
+| --- | --- | --- | --- |
+| 默认：降级运行 | 无需配置 | 恢复失败的绑定**不进工具集**，其余对话与模型照常 | `src/providers/dsh-runtime-plugin.mjs:219-233` |
+| 严格：拒绝运行 | `AGENTKIT_STRICT_RESOURCES=1` | 预设装配阶段直接失败，每轮请求拒绝执行 | `src/host/bootstrap.mjs:135` |
+
+严格模式的开关值接受 `1`、`true`、`yes`、`on`（大小写不敏感），其余值视为关闭（`src/host/bootstrap.mjs:135`）。
+
+```sh
+# 本地 Studio：进程环境变量
+AGENTKIT_STRICT_RESOURCES=1
+
+# 云端 Agent：Advanced.EnvironmentVariables 里加同名项
+```
+
+严格模式下抛出的错误码统一为 `STUDIO_PRESET_RESOURCES_UNAVAILABLE`，`message` 里带资源明细，格式为 `MCP/Tool <id>（<code>）` 或 `Skill <id>（<code>）`（`src/providers/dsh-runtime-plugin.mjs:224-233`）。
+
+## 降级后的重试探针（已实现）
+
+降级不是永久状态。Host 在降级时刻起按 **30 秒 → 2 分钟 → 10 分钟** 三个检查点重新探测：
+
+| 项 | 值 | 依据 |
+| --- | --- | --- |
+| 检查点 | `[30000, 120000, 600000]` 毫秒 | `src/agent-preset-admission.mjs:26` |
+| 语义 | 相对降级时刻的偏移，每次只等「与上一个检查点的差值」 | `:246` |
+| 严格模式 | **不重探**——它从不降级，也就不需要恢复路径 | `:240`、`:279` |
+| 恢复成功 | 写一条 `console.info`，把占位符合换成就绪注册 | `:277-280` |
+| 作用域销毁 | 计时器 `unref()`，不阻止进程退出 | `:252` |
+
+<Callout type="warn" title="探针只在降级后存在">
+  重探的前提是「注册表里有一个带 `resourcesUnavailable` 标记的占位符」。如果预设从来没有降级过，这条路径完全不会启动（`src/agent-preset-admission.mjs:241-242`）。
+</Callout>
+
+## MCP 连接级恢复（已实现）
+
+| 行为 | 说明 | 依据 |
+| --- | --- | --- |
+| single-flight 建连 | 首次并发连接共享同一个 promise，用 `generation` 代次防止旧连接覆盖新连接 | `src/local-resource-adapters.mjs:191-225` |
+| 凭据指纹隔离 | 连接缓存键包含 endpoint / transport / 命令 / 环境 / 排序后的 Header 的 SHA-256 | `:181-185` |
+| session 过期重放**一次** | 明确判定 session 失效时，退休旧连接、重建后重试，**最多一次** | `:274-296` |
+| 工具错误不重试 | `MCP_TOOL_FAILED` 是应用结果，不是传输失败，直接上抛 | `:290-291` |
+| 写操作不自动重试 | Memory 写入未确认时抛 `MEMORY_RESPONSE_UNKNOWN`，由用户刷新核对 | `:26` |
+| 重试分类 | `retryClass` 取 `pre_dispatch` / `session_expired` / `transport_ambiguous` | `:282`、`:296-297` |
+
+`retryClass` 的含义是：`pre_dispatch` 表示请求根本没发出去，`session_expired` 表示会话失效已重建，`transport_ambiguous` 表示传输中断但副作用未知——**最后一种不能盲目重放**。
+
+## 可观测（已实现）
+
+每次真实资源适配器调用都会追加一条 `studio/resource-check` 持久事件，且**不含内容**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `kind` | `skill` \| `skill-space` \| `knowledge-base` \| `memory-instance` | 资源种类 |
+| `resourceId` | 字符串 | 匹配 `^[A-Za-z0-9_.:-]{1,200}$` |
+| `action` | `load` \| `search` \| `recall` \| `write` | 动作 |
+| `status` | `succeeded` \| `failed` | 结果 |
+| `durationMs` / `hitCount` / `definitionCount` | 非负整数（可选） | 量化 |
+| `accepted` | 布尔（可选） | 是否被接受 |
+| `code` | 大写错误码（可选） | 匹配 `^[A-Z][A-Z0-9_]{0,100}$` |
+
+依据：`src/resource-checks.mjs:1-27`。白名单之外的字段一律丢弃——这条事件不会泄漏查询文本或返回内容。
+
+## 错误码分类（已实现）
+
+| 错误码 | 触发 | 是否可重试 |
+| --- | --- | --- |
+| `MCP_CONNECT_FAILED` | 建连失败 | 是（下次探测） |
+| `MCP_AUTH_FAILED` | HTTP 401 | 否，需更新凭证 |
+| `MCP_PERMISSION_DENIED` | HTTP 403 | 否，需修权限 |
+| `MCP_ENDPOINT_NOT_FOUND` | HTTP 404 | 否，检查 endpoint |
+| `MCP_TLS_FAILED` | 证书校验失败 | 否 |
+| `MCP_SESSION_EXPIRED` | 会话失效 | 是，自动重放一次 |
+| `MCP_TOOL_DISCOVERY_FAILED` | 工具目录拉取失败 | 是 |
+| `MCP_TOOL_FAILED` | 工具执行返回错误 | 否（应用结果） |
+| `MCP_CREDENTIAL_MISSING` | 声明的 Header 没有凭证 | 否，去 Host 设置配置 |
+| `MCP_JSON_CODEC_UNAVAILABLE` | 客户端缺少精确 JSON 解析接口 | 否 |
+| `MCP_AUTHORITY_INVALID` / `MCP_AUTHORITY_STALE` | 调用权限校验失败 / 已失效 | 否 |
+| `MEMORY_RESPONSE_UNKNOWN` | 记忆服务未确认结果 | 否，手动核对 |
+
+依据：`src/local-resource-adapters.mjs:95-126`、`:26`、`:65`。
+
+## 提案（尚未实现）
+
+<Callout type="warn" title="以下能力当前代码里不存在">
+  这些是设计意图，**没有**对应的实现、配置项或 API。不要按它们做集成，也不要写进验收记录。
+</Callout>
+
+| 提案 | 期望形态 | 当前状态 |
+| --- | --- | --- |
+| 手动重试入口 | 资源状态页提供「重试本次调用」按钮 | 只有自动重探；没有 `AGENTKIT_MCP_RETRY` 之类的开关 |
+| 幂等身份 | 每次资源调用带 `IdempotencyKey`，重放不会重复副作用 | 只有部署/构建/评测路径有 `idempotencyKey`；资源调用没有 |
+| 单一绝对 deadline | 一轮请求只有一个截止时间，而不是各层各自计时 | 目前是分层预算：Codex 空闲/流式、冻结运行 15 分钟、MCP 工具 60 秒 |
+| safe-read 恢复 | 只读工具可在不确定副作用时安全重放 | `readOnly: false` 且 `concurrentSafe: false` 是硬编码——未知外部效果永不获得 safe-read（`src/providers/native-dsh-tools.mjs:952-954`） |
+| 资源事件作为 UI 一等动作 | 资源检查事件驱动页面操作 | 事件已落地，但 UI 侧只读展示 |
+
+<Callout type="error" title="不要用「重试」掩盖未知副作用">
+  当 `retryClass` 为 `transport_ambiguous` 时，远端可能已经执行过。此时正确做法是对账（读回当前状态），而不是再发一次。这条约束在提案落地前就已经成立。
+</Callout>
+
+## 与传输层的关系（已实现）
+
+Host 侧的 `fetch` 固定走 Undici，而不是 Node 原生的 fetch——后者在 Node 22 上会在第一次 `web_fetch` 装载旧 dispatcher 后报 `UND_ERR_INVALID_ARG: invalid content-length header`。因此资源 RPC、模型发现、MCP 传输与 Host 创建的模型处理器共用同一个实现（`src/http-fetch.mjs:1-5`）。
+
+## 相关页面
+
+<Cards>
+  <Card title="托管运行时生命周期" href="/docs/deployment/managed-runtime-lifecycle">19 个部署状态与能力矩阵</Card>
+  <Card title="三运行时对照" href="/docs/deployment/runtimes-compare">哪个运行时走哪条恢复路径</Card>
+  <Card title="排障" href="/docs/help/troubleshooting">按错误码查处理方式</Card>
+</Cards>

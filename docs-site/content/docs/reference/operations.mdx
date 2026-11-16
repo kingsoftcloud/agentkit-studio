@@ -1,0 +1,235 @@
+---
+title: "控制协议"
+description: "139 个 operation id 的完整清单，按 25 个域分组，每条给出 Host 侧处理器位置。"
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 传输约定
+
+控制通道固定为 `/agentkit`，共 139 个 operation id，分布在 25 个域。
+
+| 约定 | 值 | 源码 |
+| --- | --- | --- |
+| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:144` |
+| 请求信封 | `{ operationId, payload }`，payload 必须是可序列化 JSON | `src/contracts/wire.mjs` |
+| 响应信封 | `{ ok: true, value }` 或 `{ ok: false, error }` | `src/contracts/wire.mjs` |
+| 取消 | 第四个参数 `AbortSignal`；取消后只回一个终态信封，不重试未知副作用 | `src/contracts/definitions.mjs:8` |
+| 幂等 | `list` / `get` / `status` / `*.history` 只读；其余按 operation 语义 | — |
+
+## 域摘要
+
+25 个域，按 operation 数量降序。`sessions` 与 `agents` 承担了大部分交互面。
+
+| 域 | 条数 | 说明 |
+| --- | --- | --- |
+| `host` | 2 | Host 发现与计算机操作入口。 |
+| `templates` | 6 | 专家模板的目录、准备、导出与召唤。 |
+| `platform` | 1 | 跨模板共享的平台资源视图。 |
+| `template-resources` | 3 | 模板声明资源的列出、准备与安装。 |
+| `template-workflows` | 6 | 模板工作流的启动、状态、取消与缓存。 |
+| `teams` | 8 | 专家团的保存、启动、状态、历史与停止。 |
+| `team-templates` | 2 | 专家团模板的列表与详情。 |
+| `sessions` | 24 | 会话导出、原生恢复、子任务、A2A、审批与命令输出。最大的一个域。 |
+| `agents` | 11 | Agent 的本地与云端生命周期、执行策略与会话视图。 |
+| `models` | 5 | 模型目录、凭证同步与 Codex 模型目录。 |
+| `resources` | 2 | 资源目录的列出与删除。 |
+| `mcp` | 4 | MCP Server 的创建、更新、探测与删除。 |
+| `credentials` | 1 | 凭证写入。 |
+| `settings` | 2 | 全局设置的读取与更新。 |
+| `skills` | 5 | Skill 的发现、预览、提交与安装预览。 |
+| `plugins` | 12 | DSH 与 Codex 插件的安装、启用、禁用与移除。 |
+| `star-harness` | 5 | 本机 Star Harness 的安装、启用与工作区绑定。只有 Studio 宿主所有者可调用。 |
+| `builds` | 4 | 构建创建、列出、下载与可移植导出。 |
+| `operations` | 2 | 长操作的列出与取消。 |
+| `schedules` | 8 | 计划任务的增删改查、手动触发与投递目标。 |
+| `traces` | 4 | 调用链概览、列表、详情与 OTLP 接收。 |
+| `evaluations` | 6 | 评测创建、查询、目标、评测集与导入。 |
+| `channels` | 4 | 渠道连接、更新与动作。 |
+| `server` | 1 | 服务端动作入口。 |
+| `deployments` | 11 | 部署的准备、创建、更新、对账、日志与删除。 |
+
+## 全量清单
+
+处理器一列是 Host 侧分发入口；括号里的说明表示该域由前缀匹配统一处理，或该 id 已退役。
+
+| 域 | operation id | 操作 | 处理器 |
+| --- | --- | --- | --- |
+| `host` | `host/compatibility` | 查询兼容性 | `src/host/routes/host.mjs:7` |
+| `host` | `host/computer` | 操作计算机 | `src/host/routes/host.mjs:9` |
+| `templates` | `templates/list` | 列出 | `src/host/routes/templates.mjs:8` |
+| `templates` | `templates/prepare` | 准备 | `src/host/routes/templates.mjs:12` |
+| `templates` | `templates/export` | 导出 | `src/host/routes/templates.mjs:15` |
+| `templates` | `templates/avatar` | 读取头像 | `src/host/routes/templates.mjs:11` |
+| `templates` | `templates/summon-plan` | 生成召唤计划 | `src/host/routes/templates.mjs:13` |
+| `templates` | `templates/summon` | 召唤 | `src/host/routes/templates.mjs:14` |
+| `platform` | `platform/resources` | 列出资源 | `src/host/routes/templates.mjs:19` |
+| `template-resources` | `template-resources/list` | 列出 | `src/host/routes/templates.mjs:10`（前缀分发） |
+| `template-resources` | `template-resources/prepare` | 准备 | `src/host/routes/templates.mjs:10`（前缀分发） |
+| `template-resources` | `template-resources/install` | 安装 | `src/host/routes/templates.mjs:10`（前缀分发） |
+| `template-workflows` | `template-workflows/start` | 启动 | `src/host/routes/templates.mjs:9`（前缀分发） |
+| `template-workflows` | `template-workflows/status` | 查询状态 | `src/host/routes/templates.mjs:9`（前缀分发） |
+| `template-workflows` | `template-workflows/cancel` | 取消 | `src/host/routes/templates.mjs:9`（前缀分发） |
+| `template-workflows` | `template-workflows/detail` | 读取详情 | `src/host/routes/templates.mjs:9`（前缀分发） |
+| `template-workflows` | `template-workflows/cache` | 读取缓存 | `src/host/routes/templates.mjs:9`（前缀分发） |
+| `template-workflows` | `template-workflows/clearCache` | 清空缓存 | `src/host/routes/templates.mjs:9`（前缀分发） |
+| `teams` | `teams/list` | 列出 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/save` | 保存 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/remove` | 移除 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/start` | 启动 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/status` | 查询状态 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/history` | 读取历史 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/resume` | 恢复 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `teams` | `teams/stop` | 停止 | `src/host/routes/templates.mjs:7`（前缀分发） |
+| `team-templates` | `team-templates/list` | 列出 | `src/host/routes/templates.mjs:6`（前缀分发） |
+| `team-templates` | `team-templates/detail` | 读取详情 | `src/host/routes/templates.mjs:6`（前缀分发） |
+| `sessions` | `sessions/export-log` | 导出转录 | `src/host/routes/sessions.mjs:16` |
+| `sessions` | `sessions/native-inject` | 注入原生事件 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-recovery-status` | 查询恢复状态 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-recovery-resume` | 恢复原生会话 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-recovery-reconcile` | 对账原生恢复 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-background-review` | 后台复核 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-resource-retire` | 回收原生资源 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-workspace-repair` | 修复工作区 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-conversation-status` | 查询对话状态 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-conversation-rewind` | 回退对话 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-conversation-workspace-preview` | 预览工作区 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-a2a-control` | 控制 A2A | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/dsh-a2a-history` | 读取 A2A 历史 | `src/host/routes/sessions.mjs:9` |
+| `sessions` | `sessions/dsh-a2a-control` | 控制 DSH A2A | `src/host/routes/sessions.mjs:9` |
+| `sessions` | `sessions/native-child-tasks` | 列出子任务 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-child-promote` | 提升子任务 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-child-send` | 向子任务发消息 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-child-cancel` | 取消子任务 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-child-history` | 读取子任务历史 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-child-result` | 读取子任务结果 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-child-file` | 读取子任务文件 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-command-output` | 读取命令输出 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-approval-status` | 查询审批状态 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `sessions` | `sessions/native-approval-decision` | 提交审批决策 | `src/host/routes/sessions.mjs:7`（已退役，抛 `STUDIO_LEGACY_HARNESS_RETIRED`） |
+| `agents` | `agents/list` | 列出 | `src/host/routes/agents.mjs:94` |
+| `agents` | `agents/create-local` | 创建本地 | `src/host/routes/agents.mjs:21` |
+| `agents` | `agents/update-cloud` | 更新云端 | `src/host/routes/agents.mjs:49` |
+| `agents` | `agents/ensure-preset` | 确保预设存在 | `src/host/routes/agents.mjs:123` |
+| `agents` | `agents/managed-delete` | 删除托管资源 | `src/host/routes/agents.mjs:67` |
+| `agents` | `agents/execution-policy` | 读取执行策略 | `src/host/routes/agents.mjs:97` |
+| `agents` | `agents/execution-policy-set` | 设置执行策略 | `src/host/routes/agents.mjs:107` |
+| `agents` | `agents/conversation-surface` | 读取对话视图 | `src/host/routes/agents.mjs:146` |
+| `agents` | `agents/local-get` | 读取本地 | `src/host/routes/agents.mjs:21` |
+| `agents` | `agents/update-local` | 更新本地 | `src/host/routes/agents.mjs:21` |
+| `agents` | `agents/local-delete` | 删除本地 | `src/host/routes/agents.mjs:8` |
+| `models` | `models/sync-credential` | 同步凭证 | `src/host/routes/models.mjs:4` |
+| `models` | `models/credential-status` | 查询凭证状态 | `src/host/routes/models.mjs:6` |
+| `models` | `models/create` | 创建 | `src/host/routes/models.mjs:8` |
+| `models` | `models/catalog` | 读取目录 | `src/host/routes/models.mjs:14` |
+| `models` | `models/codex` | 读取 Codex 目录 | `src/host/routes/models.mjs:18` |
+| `resources` | `resources/list` | 列出 | `src/host/routes/resources.mjs:8` |
+| `resources` | `resources/delete` | 删除 | `src/host/routes/resources.mjs:36` |
+| `mcp` | `mcp/create` | 创建 | `src/host/routes/resources.mjs:23` |
+| `mcp` | `mcp/update` | 更新 | `src/host/routes/resources.mjs:27` |
+| `mcp` | `mcp/probe` | 探测 | `src/host/routes/resources.mjs:32` |
+| `mcp` | `mcp/delete` | 删除 | `src/host/routes/resources.mjs:36` |
+| `credentials` | `credentials/put` | 写入 | `src/host/routes/credentials.mjs:2` |
+| `settings` | `settings/get` | 读取 | `src/host/routes/models.mjs:10` |
+| `settings` | `settings/update` | 更新 | `src/host/routes/models.mjs:12` |
+| `skills` | `skills/discover` | 发现 | `src/host/routes/skills.mjs:4` |
+| `skills` | `skills/preview-discovered` | 预览未提交项 | `src/host/routes/skills.mjs:4` |
+| `skills` | `skills/commit-discovered` | 提交已发现项 | `src/host/routes/skills.mjs:4` |
+| `skills` | `skills/list` | 列出 | `src/host/routes/skills.mjs:4` |
+| `skills` | `skills/preview-installed` | 预览已安装项 | `src/host/routes/skills.mjs:4` |
+| `plugins` | `plugins/dsh-list` | 列出 DSH 插件 | `src/host/routes/plugins.mjs:7` |
+| `plugins` | `plugins/dsh-discover` | 发现 DSH 插件 | `src/host/routes/plugins.mjs:9` |
+| `plugins` | `plugins/dsh-index-refresh` | 刷新远程索引 | `src/host/routes/plugins.mjs:11` |
+| `plugins` | `plugins/dsh-install` | 安装 DSH 插件 | `src/host/routes/plugins.mjs:13` |
+| `plugins` | `plugins/dsh-remove` | 移除 DSH 插件 | `src/host/routes/plugins.mjs:15` |
+| `plugins` | `plugins/dsh-enable` | 启用 DSH 插件 | `src/host/routes/plugins.mjs:17` |
+| `plugins` | `plugins/dsh-disable` | 禁用 DSH 插件 | `src/host/routes/plugins.mjs:17` |
+| `plugins` | `plugins/dsh-update` | 更新 DSH 插件 | `src/host/routes/plugins.mjs:21` |
+| `plugins` | `plugins/codex-list` | 列出 Codex 插件 | `src/host/routes/plugins.mjs:32` |
+| `plugins` | `plugins/codex-inspect` | 检查 Codex 插件 | `src/host/routes/plugins.mjs:32` |
+| `plugins` | `plugins/codex-install` | 安装 Codex 插件 | `src/host/routes/plugins.mjs:25` |
+| `plugins` | `plugins/codex-remove` | 移除 Codex 插件 | `src/host/routes/plugins.mjs:25` |
+| `star-harness` | `star-harness/status` | 查询状态 | `src/host/routes/star-harness.mjs:4` |
+| `star-harness` | `star-harness/install` | 安装 | `src/host/routes/star-harness.mjs:8` |
+| `star-harness` | `star-harness/enable` | 启用 | `src/host/routes/star-harness.mjs:9` |
+| `star-harness` | `star-harness/bind` | 绑定工作区 | `src/host/routes/star-harness.mjs:10` |
+| `star-harness` | `star-harness/unbind` | 解绑工作区 | `src/host/routes/star-harness.mjs:11` |
+| `builds` | `builds/create` | 创建 | `src/host/routes/builds.mjs:5` |
+| `builds` | `builds/list` | 列出 | `src/host/routes/builds.mjs:5` |
+| `builds` | `builds/download` | 下载 | `src/host/routes/builds.mjs:5` |
+| `builds` | `builds/export-portable` | 导出可移植包 | `src/host/routes/builds.mjs:5` |
+| `operations` | `operations/list` | 列出 | `src/host/routes/builds.mjs:5` |
+| `operations` | `operations/cancel` | 取消 | `src/host/routes/builds.mjs:5` |
+| `schedules` | `schedules/list` | 列出 | `src/host/routes/schedules.mjs:15` |
+| `schedules` | `schedules/create` | 创建 | `src/host/routes/schedules.mjs:19` |
+| `schedules` | `schedules/get` | 读取 | `src/host/routes/schedules.mjs:21` |
+| `schedules` | `schedules/update` | 更新 | `src/host/routes/schedules.mjs:23` |
+| `schedules` | `schedules/delete` | 删除 | `src/host/routes/schedules.mjs:25` |
+| `schedules` | `schedules/run` | 触发运行 | `src/host/routes/schedules.mjs:27` |
+| `schedules` | `schedules/occurrences` | 读取触发记录 | `src/host/routes/schedules.mjs:29` |
+| `schedules` | `schedules/delivery-targets` | 列出投递目标 | `src/host/routes/schedules.mjs:6` |
+| `traces` | `traces/overview` | 读取概览 | `src/host/routes/traces.mjs:10` |
+| `traces` | `traces/list` | 列出 | `src/host/routes/traces.mjs:21` |
+| `traces` | `traces/get` | 读取 | `src/host/routes/traces.mjs:23` |
+| `traces` | `traces/otlp` | 接收 OTLP | `src/host/routes/traces.mjs:25` |
+| `evaluations` | `evaluations/list` | 列出 | `src/host/routes/evaluations.mjs:9` |
+| `evaluations` | `evaluations/create` | 创建 | `src/host/routes/evaluations.mjs:19` |
+| `evaluations` | `evaluations/get` | 读取 | `src/host/routes/evaluations.mjs:11` |
+| `evaluations` | `evaluations/targets` | 列出目标 | `src/host/routes/evaluations.mjs:13` |
+| `evaluations` | `evaluations/evalsets` | 读取评测集 | `src/host/routes/evaluations.mjs:15` |
+| `evaluations` | `evaluations/import` | 导入 | `src/host/routes/evaluations.mjs:17` |
+| `channels` | `channels/connection` | 读取连接 | `src/host/routes/channels.mjs:9` |
+| `channels` | `channels/update` | 更新 | `src/host/routes/channels.mjs:11` |
+| `channels` | `channels/agent-update` | 更新 Agent 关联 | `src/host/routes/channels.mjs:13` |
+| `channels` | `channels/action` | 执行动作 | `src/host/routes/channels.mjs:15` |
+| `server` | `server/action` | 执行动作 | `src/host/routes/server.mjs:5` |
+| `deployments` | `deployments/prepare` | 准备 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/create` | 创建 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/prepareUpdate` | 预检更新 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/applyUpdate` | 应用更新 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/list` | 列出 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/get` | 读取 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/refresh` | 刷新 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/repairAccess` | 修复访问 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/reconcile` | 对账 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/logs` | 读取日志 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+| `deployments` | `deployments/remove` | 移除 | `src/host/routes/deployments.mjs:4`（前缀分发） |
+
+## 退役与仅契约的 id
+
+有 21 个 id 仍然保留在契约里，但 Host 分发会直接抛 `STUDIO_LEGACY_HARNESS_RETIRED`（`src/host/routes/sessions.mjs:8`）。这是**故意的**：老客户端拿到可识别的错误码，而不是 404。
+
+
+
+<Callout type="warn" title="不要依赖退役 id">
+`sessions/native-*` 属于已移除的进程内 Harness。新集成请改用对应运行时的原生会话接口，见[会话事件](./session-events.mdx)。
+</Callout>
+
+## 版本与兼容性
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| operation id 数 | `139` | 新增或删除都是破坏性变更 |
+| 域数 | `25` | 新增域需要同步本页与路由 |
+| 通道 | `/agentkit` | 客户端硬编码，不可配置 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| operation 列表 | `src/contracts/operations.mjs` |
+| wire 编解码 | `src/contracts/wire.mjs` |
+| operation 定义 | `src/contracts/definitions.mjs` |
+| Host 路由 | `src/host/routes/index.mjs` |
+| 客户端桥接 | `src/remote/control-client.mjs` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |
+| host-compatibility.test.mjs | `tests/host-compatibility.test.mjs` |
+| host-route-contracts.test.mjs | `tests/host-route-contracts.test.mjs` |
+| studio-wire-contracts.test.mjs | `tests/studio-wire-contracts.test.mjs` |
+| host-dispatcher.test.mjs | `tests/host-dispatcher.test.mjs` |
+| host-route-contracts.test.mjs | `tests/host-route-contracts.test.mjs` |
+| local-agent-edit-conflicts.test.mjs | `tests/local-agent-edit-conflicts.test.mjs` |

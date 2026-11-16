@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "插件市场流水线",
+    "subtitle": "两个来源、一次确定性合并、四层就绪校验；三条降级路径都不会让面板变空",
+    "output": ".archify/plugin-market-zh/market.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    {
+      "label": "来源"
+    },
+    {
+      "label": "加载"
+    },
+    {
+      "label": "合并"
+    },
+    {
+      "label": "校验"
+    },
+    {
+      "label": "呈现"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "curated",
+      "type": "database",
+      "label": "内置目录",
+      "sublabel": "DSH_CURATED_PLUGINS",
+      "tag": "离线可用",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "remote",
+      "type": "cloud",
+      "label": "远程索引",
+      "sublabel": "AGENTKIT_STUDIO_DSH_PLUGIN_INDEX",
+      "tag": "HTTPS JSON",
+      "stage": 0,
+      "row": 3
+    },
+    {
+      "id": "loader",
+      "type": "backend",
+      "label": "索引加载器",
+      "sublabel": "8 秒超时 · 512 KiB 上限",
+      "tag": "10 分钟缓存",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "merge",
+      "type": "backend",
+      "label": "mergeCatalogEntries",
+      "sublabel": "内置优先 · 远程只改展示字段",
+      "tag": "确定性合并",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "cache",
+      "type": "database",
+      "label": "上次成功文档",
+      "sublabel": "刷新失败时复用",
+      "tag": "stale 兜底",
+      "stage": 2,
+      "row": 4
+    },
+    {
+      "id": "readiness",
+      "type": "security",
+      "label": "四层就绪校验",
+      "sublabel": "expectedEntries · service 探针",
+      "tag": "准入",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "skipped",
+      "type": "external",
+      "label": "丢弃无效条目",
+      "sublabel": "计入 skipped 计数",
+      "tag": "不中断",
+      "stage": 1,
+      "row": 4
+    },
+    {
+      "id": "hint",
+      "type": "frontend",
+      "label": "降级提示",
+      "sublabel": "info.error.code",
+      "tag": "市场不清空",
+      "stage": 3,
+      "row": 4
+    },
+    {
+      "id": "panel",
+      "type": "frontend",
+      "label": "插件市场面板",
+      "sublabel": "ready · loaded · failed",
+      "tag": "渲染",
+      "stage": 4,
+      "row": 0
+    }
+  ],
+  "flows": [
+    {
+      "id": "curated-merge",
+      "from": "curated",
+      "to": "merge",
+      "label": "内置条目",
+      "classification": "随产品出厂",
+      "variant": "emphasis"
+    },
+    {
+      "id": "remote-loader",
+      "from": "remote",
+      "to": "loader",
+      "label": "HTTPS JSON",
+      "classification": "运维可配",
+      "variant": "default"
+    },
+    {
+      "id": "loader-merge",
+      "from": "loader",
+      "to": "merge",
+      "label": "远程条目",
+      "classification": "已规范化",
+      "variant": "default"
+    },
+    {
+      "id": "loader-cache",
+      "from": "loader",
+      "to": "cache",
+      "label": "成功后落缓存",
+      "classification": "10 分钟 TTL",
+      "variant": "dashed"
+    },
+    {
+      "id": "cache-merge",
+      "from": "cache",
+      "to": "merge",
+      "label": "stale 复用",
+      "classification": "失败降级",
+      "variant": "dashed"
+    },
+    {
+      "id": "loader-skipped",
+      "from": "loader",
+      "to": "skipped",
+      "label": "无效条目",
+      "classification": "字段非法",
+      "variant": "dashed"
+    },
+    {
+      "id": "merge-readiness",
+      "from": "merge",
+      "to": "readiness",
+      "label": "合并结果",
+      "classification": "内置优先",
+      "variant": "emphasis"
+    },
+    {
+      "id": "readiness-panel",
+      "from": "readiness",
+      "to": "panel",
+      "label": "ready / loaded",
+      "classification": "可展示",
+      "variant": "emphasis"
+    },
+    {
+      "id": "merge-hint",
+      "from": "merge",
+      "to": "hint",
+      "label": "fetch 失败",
+      "classification": "404 / 超时",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么读这张图",
+      "items": [
+        "实线是正常数据流：来源进来、合并、校验、渲染。",
+        "虚线是异步与降级：缓存写入、stale 复用、坏条目丢弃。",
+        "红色是失败提示：远程索引不可用时，面板仍展示内置目录并附一条 hint。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "内置永远赢",
+      "items": [
+        "远程只能追加新条目，或覆盖展示字段。",
+        "featured 与 experimental 取「或」：内置为 true 时远程关不掉。",
+        "expectedEntries、service、readinessNote、defaultEnabled 只从内置目录读取。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "三条降级路径",
+      "items": [
+        "刷新失败：复用上一次成功的文档，并标记 stale。",
+        "首次失败（无缓存）：回落到内置目录。",
+        "单条无效：计入 skipped 计数，整份文档照常加载。"
+      ]
+    }
+  ]
+}

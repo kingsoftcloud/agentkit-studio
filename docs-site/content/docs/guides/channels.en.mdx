@@ -1,0 +1,214 @@
+---
+title: Channels
+description: Configure a channel connection, attach local or cloud agents, finish pairing and session binding, and verify message traffic in one place.
+status: new
+---
+
+A channel answers two questions: **where messages come from, and where replies go**. It routes a WPS Collaboration, Feishu, or WeCom conversation
+to the agent you bound, then sends the answer back to the original conversation. The session itself still belongs to DSH; a channel is only an entry point.
+
+<Callout type="info" title="Prerequisites">
+  - A reachable Channel service **server URL** and **account id**.
+  - Local agent attachment additionally needs a **workspace id** and the **connector credential** (short-lived Connector JWT) issued to that agent.
+  - An application registered for Studio on the channel platform, with an **App ID** and **App secret**.
+</Callout>
+
+## What the channel connector does
+
+| Component | Responsibility |
+| --- | --- |
+| Connection configuration | Records the server URL, account, workspace, and credentials; decides which tenant messages route into |
+| Channel | One IM application plus one account plus one conversation policy, bound to one agent |
+| Pairing requests | The admission queue when a newcomer first talks to the bot |
+| Session binding | Which DSH session one IM conversation maps to |
+| Message records | The send/receive ledger used to confirm whether a reply left |
+
+Studio only manages and displays: **data comes from the Channel API, and the plugin keeps no second copy**. What you see here is the channel service's real state.
+
+## Steps
+
+<Steps>
+
+<Step>
+### Open Channels
+
+Go to **Operations → Channels**. The top-right badge reads **Connection configured** or **Not configured** — configure it first when it says the latter.
+
+<Callout type="info" title="The connection URL must be HTTPS/WSS">
+  A remote channel service accepts only `https://` or `wss://`. Plain `http://` or `ws://` is allowed only for `localhost`, `127.0.0.1`, and `[::1]`.
+  The URL must not carry a user name, password, query string, or fragment, or saving fails with `CHANNEL_URL_INVALID`.
+</Callout>
+</Step>
+
+<Step>
+### Fill in the connection configuration
+
+Expand **Connection configuration**, fill four fields, then choose **Save connection**:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| Channel service URL | Yes | For example `https://channel.example.com` |
+| Account id | Yes | Decides which account the channel data belongs to |
+| Workspace id | Optional | Used only for channel routing; it does **not** bind a local directory |
+| Service credential | Optional | Shows "Saved; leave blank to keep" once one exists |
+
+Credentials are never echoed back after saving, so leaving the field blank keeps the stored value.
+</Step>
+
+<Step>
+### Attach a local agent
+
+Under **Local agent attachment**, pick an agent, paste the **connector credential** issued to it, and choose **Enable connection**.
+
+The connection moves through `connecting` → `registering` → `connected` and normally completes within 10 seconds.
+Badge text per state:
+
+| State | Label |
+| --- | --- |
+| `connected` | Connected |
+| `connecting` | Connecting |
+| `registering` | Registering |
+| `reconnecting` | Reconnecting |
+| `stopped` | Disabled |
+| `unavailable` | Unavailable |
+| `error` | Connection failed |
+
+The failure reason appears inline:
+
+| Reason | Meaning |
+| --- | --- |
+| `authentication_failed` | Credential invalid or expired |
+| `connection_failed` | Cannot reach the channel service |
+| `protocol_error` | Channel protocol or identity mismatch |
+| `configuration_invalid` | The connection configuration is invalid |
+| `connection_replaced` | Another device replaced this connection |
+
+<Callout type="warn" title="Messages cannot be delivered while the device is offline">
+  A local agent runs on your device. With the app closed or the machine asleep, messages cannot reach it — for 24×7 operation, deploy the agent to the cloud
+  and bind the target under **Cloud deployment** in the channel.
+</Callout>
+</Step>
+
+<Step>
+### Add a channel
+
+Choose **Add channel** in the top-right and fill the dialog:
+
+| Field | Constraint |
+| --- | --- |
+| Bound agent | Two groups: **Local · keep the app running** and **Cloud deployment · runs continuously in the cloud** |
+| Channel type | `WPS Collaboration` / `Feishu` / `WeCom`; **immutable after creation** |
+| Channel account id | The account identifier on the channel platform; **immutable after creation** |
+| Application App ID | Issued by the channel platform for your Studio application |
+| Application App secret | Its key; never echoed after saving, and blank means keep the stored value while editing |
+| Direct message policy | `Pairing required` (`pairing`, newcomers go through pairing) or `Open` (`open`) |
+| Group policy | `Allowlist` (`allowlist`) or `Open` (`open`) |
+| Session scope | `Per user` (`per-peer`) or `Per group` (`per-group`) |
+| Enabled | A new channel is enabled right after creation |
+
+<Callout type="info" title="Session scope decides how context splits">
+  `per-peer` gives every direct-message user their own session; `per-group` gives one shared session per group.
+  Changing this affects which history a session owns — confirm how the group is used before switching.
+</Callout>
+</Step>
+
+<Step>
+### Scan to connect (Feishu / WeCom)
+
+**Scan to connect** appears on a row only for `feishu` and `wecom`. Opening it fetches a **connection URL**;
+open that URL in a browser to finish authorization.
+
+The URL comes from the Connector; **Studio neither generates nor stores QR content**. When the Host returns none, the dialog reports "The Host returned no connection URL".
+</Step>
+
+<Step>
+### Handle pairing requests
+
+Switch to the **Pairing requests** tab. Columns are requester, channel, conversation type, and state.
+
+- Rows in state `pending` offer **Approve** and **Reject**.
+- After approval the conversation appears under **Session bindings** and the bot starts answering normally.
+
+With nothing pending the table reads "No pending pairing requests".
+</Step>
+
+<Step>
+### Manage session bindings
+
+Switch to **Session bindings**; each row is one IM conversation:
+
+| Action | Effect |
+| --- | --- |
+| Edit session | Set the associated Session ID by hand; blank clears the association |
+| Take over | A human takes over; supply a reason (default "Handled manually"). The row then shows **Taken over** |
+| Release takeover | Hand the conversation back to the bot |
+| Unbind | Detach this IM conversation from the DSH session; irreversible |
+
+<Callout type="warn" title="The bot stays silent while a takeover is active">
+  Takeover signals "a human is handling this". Release it as soon as you are done, or the user will think the bot is broken.
+</Callout>
+</Step>
+
+<Step>
+### Verify message records
+
+Switch to **Message records**. The left side lists conversations (channel · count) and the right side shows bubbles:
+
+- Right-aligned bubbles are **outbound**, left-aligned are **inbound**; the time sits in the bottom-right corner.
+- A failed send carries an error line inside the bubble.
+
+Before any conversation exists the pane reads "Messages appear here after a channel is connected and a conversation happens". This view is read-only; you cannot send from here.
+</Step>
+
+</Steps>
+
+## Reconnection rules
+
+| Scenario | Behavior |
+| --- | --- |
+| Registration timeout | Disconnects and reconnects when no `register_ok` arrives within 10 seconds |
+| Disconnect | Exponential backoff starting at **1 second**, capped at **60 seconds** |
+| 401 / 403 | Enters `error` without retrying, reason `authentication_failed` |
+| Close code 4002 | Enters `error`, reason `connection_replaced` (the same agent connected from another device) |
+| Close code 1008 | Enters `error`, reason `authentication_failed` |
+| In-flight tasks at disconnect | Aborted; **never** replayed after reconnecting |
+| Per-task timeout | **300 seconds** by default; a task's `deadline` can cut it earlier |
+
+## What success looks like
+
+- The top badge reads **Connection configured** and the local agent row reads **Connected**.
+- The "Total channels" metric is greater than 0 and "Enabled" matches it.
+- **Session bindings** shows the conversation you just paired, with a real Session value rather than "Unassociated".
+- **Message records** shows one complete round trip with no error line on the outbound bubble.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `CHANNEL_URL_INVALID` | The server URL is not http(s), or a remote URL is plaintext or carries credentials/query | Use `https://` remotely; `http://` only for loopback |
+| `CHANNEL_CONFIG_INVALID` | The channel configuration file cannot be read | Check that the Host-side `channels.json` is readable |
+| `CHANNEL_NOT_CONFIGURED` | No server URL or account id yet | Save the connection configuration first |
+| `CHANNEL_AGENT_UNAVAILABLE` | The selected agent does not exist or is not locally created | Pick again from the dropdown |
+| `CHANNEL_CONNECTOR_CONFIG_REQUIRED` | Local attachment is missing the account, workspace id, or credential | All three are required |
+| `CHANNEL_ACCOUNT_MISMATCH` | The channel account does not match the cloud account of the current subaccount | Verify the account id in the connection configuration |
+| `CHANNEL_ACTOR_REQUIRED` | A cloud channel operation lacks a verified subaccount identity | Re-verify cloud identity |
+| `CHANNEL_PAIRING_UNAVAILABLE` | The pairing request does not exist or is not accessible | Refresh and retry |
+| `CHANNEL_LOCAL_OFFLINE` | The target local agent's channel connection is not enabled | Enable that agent's connection first |
+| `CHANNEL_PROXY_FAILED` | The channel service request did not complete (network or timeout) | Check the network and retry |
+| `CHANNEL_PROXY_ERROR` | The channel service returned a business error | Read `serviceCode` in the error |
+| `CHANNEL_RESPONSE_INVALID` | The channel service returned a response that violates the contract | Verify the server URL and version |
+| `CHANNEL_CATALOG_TOO_LARGE` | This agent has too many channel conversations | Clean up session bindings first |
+
+## Related
+
+<Cards>
+  <Card title="Automation and scheduling" href="/en/docs/guides/automation">
+    Deliver scheduled results into one of these conversations.
+  </Card>
+  <Card title="Run and debug a session" href="/en/docs/guides/conversations">
+    Which session a channel message finally lands in.
+  </Card>
+  <Card title="Environment reference" href="/en/docs/reference/environment">
+    Host-side directory switches such as `AGENTKIT_HOME`.
+  </Card>
+</Cards>

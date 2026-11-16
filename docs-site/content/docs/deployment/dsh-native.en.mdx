@@ -1,0 +1,112 @@
+---
+title: DSH Native Harness
+description: "The default runtime's execution model, when to choose it, where its configuration lives, its hard limits, and what you see when it fails."
+status: new
+---
+
+**DSH Native Harness (`dsh-native`) hands the loop to DSH itself; Studio only translates on both sides.** DSH keeps the Session and the conversation renderer, and Studio turns the assembled request into one model stream and writes the result back as DSH text chunks (`src/providers/dsh-runtime.mjs:4-9`).
+
+## Execution model
+
+| Stage | Owner | Source |
+| --- | --- | --- |
+| Request assembly | DSH native loop | `src/runtime-contract.mjs:21` |
+| Model call | Studio's provider bridge | `src/providers/dsh-runtime.mjs:5-9` |
+| Tool execution | DSH native ToolRegistry | `src/providers/dsh-runtime-plugin.mjs` |
+| Session and transcript | DSH Session | `eventOwner: 'dsh-session'` |
+| Streaming frames | `dsh-agent/assistant-stream` | `streamOwner` |
+| Route identity | `agentkit-studio` | `src/providers/dsh-runtime.mjs:33` |
+
+A request travels: DSH session dispatch → Studio preset scope → Agent request event → model stream → DSH text chunks. Studio keeps no second tool loop and does not retry native side effects.
+
+## When to choose it
+
+- **Choose it when you have no specific reason not to.** It is the default authoring runtime (`src/authoring-defaults.mjs:4`) and the only path that needs neither an extra process nor an external service.
+- You want native DSH session behaviour: history reload, archive, search and the native list all work directly.
+- You need native request replay (`replay`): only the DSH side can rebuild routing from native request headers.
+- Expert and team sessions must run on native DSH Agent Teams.
+
+Do **not** choose it when you need cross-process resume (`resume`) or child tasks (`child-tasks`); neither is in its capability set (`src/runtime-contract.mjs:22`).
+
+## Configuration entry points
+
+| Setting | Where | Notes |
+| --- | --- | --- |
+| Runtime type | Create / edit Agent → runtime radio group | Selected by default; the option reads "local native loop, uses tools and resources on demand" (`src/client/pages/agent-form.mjs:9`) |
+| Model and credentials | Settings → Models and credentials | Credentials stay on the Host side and are never echoed into the form |
+| Tool / MCP / Skill bindings | Create / edit Agent → capability bindings | Creating with DSH Native clears previously selected tools (`src/client/pages/agent-form.mjs:83`) |
+| Execution policy | Policy and confirmation step | `read-only` / `workspace-write` / `danger-full-access`, default `workspace-write` (`src/execution-policy.mjs:8-10`) |
+
+```json
+{
+  "spec": {
+    "runtime": { "type": "dsh-native" },
+    "bindings": { "modelProfileId": "your-model-profile" }
+  }
+}
+```
+
+## Limits
+
+| Limit | Effect | Source |
+| --- | --- | --- |
+| No `resume` | After a process restart you cannot resume from an arbitrary Run checkpoint; only session history reload is available | `src/runtime-contract.mjs:22` |
+| No `child-tasks` | Child tasks come from native DSH Agent Teams, not from the runtime | same |
+| Requires real Host capabilities | A missing execution contract is refused outright instead of falling back to a model interceptor | `src/runtime-contract.mjs:29-30` |
+| Frozen Builds have an outer deadline | 15 minutes by default, tunable via `AGENTKIT_RUNTIME_TIMEOUT_MS` (1000–86400000 ms) | `src/frozen-build-runtime.mjs:19-25` |
+| Runtime version must match | The installed DSH version must equal the version declared by the Studio package | `requiredDsh` in `studio.plugin.json` |
+
+<Callout type="warn" title="The frozen runtime follows the DSH scope">
+  The configured frozen runtime starts and stops with its native dependency scope: replacing a dependency closes the old runtime and starts a new one once dependencies are available. A startup that finishes after the scope is disposed closes its listener immediately (`src/host/frozen-runtime-lifecycle.mjs:4-19`).
+</Callout>
+
+## How to confirm you are on DSH Native
+
+| Check | Expected value | Source |
+| --- | --- | --- |
+| Agent definition | `spec.runtime.type === 'dsh-native'` | `src/authoring-defaults.mjs:4` |
+| Agent list badge | Shows `DSH Native Harness` with the `accent` tone | `src/client/theme.mjs:29`, `src/client/pages/overview.mjs:81` |
+| Editing an existing Agent | Keeps its original runtime; `dsh-native` is only the fallback when no definition exists | `src/client/pages/agent-form.mjs:48` |
+| Session history | Served by the native DSH list; selecting an Agent never filters history | No Studio-side filter extension |
+
+<Callout type="info" title="Clearing tools on create is deliberate">
+  Creating an Agent on DSH Native clears previously selected tools (`src/client/pages/agent-form.mjs:83`). That keeps a stale binding from a prior edit out of a brand-new native loop; editing an existing Agent does not trigger it.
+</Callout>
+
+## Migrating back from another runtime
+
+- **Editing never changes the runtime on its own.** Opening an existing Agent takes `initialRuntime` from `originalSpec.runtime.type` and only falls back to the default when it is missing (`src/client/pages/agent-form.mjs:48`).
+- **Star Harness and Codex own different Run ledgers.** Switching to `dsh-native` does not migrate existing Run history; old sessions keep opening on their original runtime.
+
+## Failure shapes
+
+| Code | Trigger | What you can do |
+| --- | --- | --- |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` is not one of the three runtimes | Check `spec.runtime.type` in the Agent definition |
+| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` missing, or `revision` is not a positive integer | Re-select the Agent or reopen the app |
+| `RUN_IDENTITY_MISMATCH` | The identity disagrees with the Agent / Session bound to the route | Close and reopen that session; never reuse it across sessions |
+| `STUDIO_HOST_INCOMPATIBLE` | The Host lacks a required execution contract | Upgrade to the matching DSH baseline; management routes stay available |
+| `STUDIO_PRESET_RESOURCES_UNAVAILABLE` | A bound resource failed to recover under strict mode | Fix the binding and retry, or turn off `AGENTKIT_STRICT_RESOURCES` |
+| `STUDIO_PRESET_SCOPE_CLOSED` | A callback arrives after the preset scope retired | Reopen the session; the plugin may be reloading |
+
+The full degradation and retry rules live in [degradation and retry](./degradation-retry.mdx).
+
+## Related pages
+
+<Cards>
+  <Card title="Runtime comparison" href="/en/docs/deployment/runtimes-compare">Compare the five dimensions side by side</Card>
+  <Card title="Degradation and retry" href="/en/docs/deployment/degradation-retry">What happens when a resource is unreachable</Card>
+  <Card title="Managed runtime lifecycle" href="/en/docs/deployment/managed-runtime-lifecycle">Carry the same semantics to the cloud</Card>
+</Cards>
+
+## Source of truth
+
+| Claim | Location |
+| --- | --- |
+| DSH owns the loop, Studio only translates | `src/providers/dsh-runtime.mjs:4-9` |
+| Route constant | `src/providers/dsh-runtime.mjs:33` |
+| Capability set and event source | `src/runtime-contract.mjs:20-24` |
+| Default authoring runtime | `src/authoring-defaults.mjs:4` |
+| Execution policy enum | `src/execution-policy.mjs:8-11` |
+| Frozen runtime lifetime | `src/host/frozen-runtime-lifecycle.mjs:1-19` |
+| Frozen runtime deadline | `src/frozen-build-runtime.mjs:19-25` |

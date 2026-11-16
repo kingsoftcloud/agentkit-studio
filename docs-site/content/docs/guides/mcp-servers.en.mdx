@@ -1,0 +1,212 @@
+---
+title: Bind an MCP server
+description: "Add an MCP server, store credentials as env:// references, probe tools, then bind it."
+status: new
+---
+
+An MCP server is the only path for an agent to call external systems. This page goes from "add a server" to "the agent can select its tools", touching exactly two places: **Resource library → MCP** and the **Bind capabilities** step of the agent form.
+
+<Callout type="info" title="Prerequisites">
+  - A reachable MCP service: an `http(s)` URL for HTTP / SSE, or an executable launch command for stdio.
+  - If the service needs authentication, have the credential value ready. Credentials are written only to the local credential service, never into the resource declaration.
+  - The resource library can read the Host resource catalog (it is not showing "resource catalog unavailable").
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Open the add-server dialog
+
+Go to **Resource library** → pick **MCP** in the resource-type tabs → click **Add MCP server** in the top-right corner.
+
+The resource library owns only the catalog lifecycle: discovery, import, probing, viewing, deletion, refresh. **Agent bindings are maintained on the agent creation or edit page**, not here.
+
+<Callout type="info" title="Where to look">The **Marketplace / Installed / Connected** sub-navigation and the **Add MCP server** button on the MCP tab.</Callout>
+</Step>
+
+<Step>
+### Pick a transport and fill in connection details
+
+| Transport | What to fill in | Validation |
+| --- | --- | --- |
+| `HTTP` | Service URL | Must be an `http(s)` URL; no embedded user info; no `${...}` |
+| `SSE` | Service URL | Same as above |
+| `stdio` | Launch command + command arguments | The command is required; arguments must be a string JSON array such as `["-y", "@acme/server"]` |
+
+Basic fields:
+
+| Field | Purpose | Example |
+| --- | --- | --- |
+| Display name | What the UI shows | Enterprise search |
+| Resource name | Stable identifier; slugified from the display name when empty | `enterprise-search` |
+| Version | Defaults to `1.0.0` | `1.0.0` |
+| Description | What this MCP provides | Full-text search over the enterprise knowledge base |
+
+<Callout type="warn" title="Never put credentials in the URL">
+  The service URL must not embed `user:pass@`, and `${...}` substitution is **not supported** — a URL containing `${` is rejected outright.
+  Use a header credential below when authentication is needed.
+</Callout>
+</Step>
+
+<Step>
+### Recognize from JSON (optional but recommended)
+
+The **Recognize MCP from JSON** block accepts configuration copied from mainstream clients:
+
+| Pasted shape | Example |
+| --- | --- |
+| `mcpServers` wrapper | Claude / Cursor `{"mcpServers": {"name": {...}}}` |
+| `servers` wrapper | VS Code `{"servers": {...}}` |
+| `mcp.servers` nesting | Configurations with an outer `mcp` |
+| Single descriptor | `{"url": "https://...", "headers": {...}}` |
+| Name-to-descriptor map | `{"name": {"command": "npx", "args": [...]}}` |
+| Array | `[{...}, {...}]` |
+
+After clicking **Recognize and fill**:
+
+- With multiple servers, a **Choose the MCP to import** dropdown appears so you can confirm one at a time.
+- The result shows transport, URL or command, credential headers, fixed headers, fixed environment variables, warnings, and errors.
+- **Custom authentication headers are converted into local credential references**; secrets never reach the resource declaration.
+- `mcp-protocol-version` is negotiated by the MCP client, so it is ignored with a warning.
+
+`${NAME}`, `${user_config.NAME}`, `${env:NAME}`, and `${input:api-key}` in the JSON are resolved into credential reference names.
+</Step>
+
+<Step>
+### Configure authentication headers and environment credential references
+
+Expand **Authentication headers / environment credential references (advanced)**. Both forms are equivalent; pick one.
+
+**Option 1: the environment reference input**
+
+```text
+API_KEY=env://SEARCH_API_KEY, X-KIP-Token=env://KIP_TOKEN
+```
+
+The format is `name=env://credential-name`, comma-separated.
+
+**Option 2: add rows one at a time**
+
+Fill in the **Header name** (HTTP/SSE) or environment variable name (stdio), then the **Credential name**, and click **Add**. For HTTP/SSE, use the two `Authorization` inputs above instead of this block.
+
+**Allowed header names** (case-insensitive) — only these six spellings can be saved:
+
+| Allowed header names |
+| --- |
+| `x-request-source` |
+| `x-skill-version` |
+| `x-*-client` (for example `x-acme-client`) |
+| `x-*-surface` |
+| `accept` |
+| `content-type` |
+
+Every other header name is rejected with `MCP_HEADER_REQUIRES_REFERENCE`. **A header value containing `${` is rejected with the same code** — header values may only be fixed public values, and secrets must go through credential references.
+
+**Sensitive-word rule for environment variable names**: when a name contains `TOKEN`, `SECRET`, `PASSWORD`, or `API_KEY` (case-insensitive), it must become a credential reference; otherwise you get `MCP_ENV_REQUIRES_REFERENCE`.
+
+**Credential reference syntax**: `env://<name>`, where the name must match `^[A-Za-z_][A-Za-z0-9_./:-]{0,127}$`. Anything else (a raw secret, or a bare name) returns `MCP_ENV_REF_INVALID`.
+
+<Callout type="warn" title="Why you cannot paste the secret directly">
+  The resource declaration is written to a public JSON record on disk (by default `~/.agentkit/studio/resources/mcp`; `AGENTKIT_HOME` changes the root).
+  Pasting the secret would persist it into a plaintext file. A legacy bare credential name is automatically prefixed with `env://`, and new writes accept explicit references only.
+</Callout>
+</Step>
+
+<Step>
+### Save and probe
+
+Click **Save and probe** (**Save changes and probe** when editing).
+
+Saving and probing are two phases in a fixed order:
+
+1. Write the resource declaration. A validation failure stops in the form and never creates a half-written resource.
+2. Have the Host make one real connection and persist the tool list into `contract.discoveredTools` and `health.tools`.
+
+The resource ID is generated by the Host and always has the form `mcp-local-` plus 16 hexadecimal characters.
+
+<Callout type="warn" title="A failed probe is not a failed save">
+  Failure reads "configuration saved, probe failed: …; retry after fixing and the same resource is updated."
+  The resource status is `error` and it **cannot be bound to an agent**. Fix the URL or credential and save again — no duplicate resource is created.
+</Callout>
+
+<Callout type="info" title="Where to look">The successful probe state after saving, and the tool count on the resource row.</Callout>
+</Step>
+
+<Step>
+### Bind it to an agent
+
+Open **Agents** → select the target agent → Edit → **Bind capabilities** step → **MCP servers** block → click **Bind**.
+
+- Only servers with status `ready` are selectable; `error` and `pending` are not.
+- Multi-select is supported; the result is written to `bindings.mcpServers[]`.
+- Continue to **Policy and confirmation** and the summary shows `N MCP`.
+
+Binding alone does not prove the tool can complete work. Real verification is sending a message that triggers a tool call.
+</Step>
+
+</Steps>
+
+## The managed-side resource declaration
+
+Deploying MCP into a managed runtime uses the `agentengine.resources/v1` contract (`src/managed-resource-contract.mjs:4`). These rules are stricter than the local store:
+
+| Rule | Constraint |
+| --- | --- |
+| Allowed fields | Only `knowledge_base` / `memory` / `skill_space` / `skill_spaces` / `mcp_servers` |
+| Count | At most **16** entries in `mcp_servers` |
+| Direct shape | `id` + `endpoint` + optional `transport` (`http` / `sse`) + optional `env_refs`; no other keys |
+| Reference shape | `id` + optional `region`; `id` matches `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`, `region` matches `^[a-z0-9][a-z0-9-]{0,63}$` |
+| `endpoint` | ≤ 2048 characters, printable ASCII, starts with `http(s)://`, contains no `\`, `?`, or `#`, no user info, port not `0` |
+| `env_refs` | At most **16** entries; names match `^[A-Za-z][A-Za-z0-9_-]{0,63}$`; de-duplicated case-insensitively |
+| `env_refs` values | Must match `^MCP_[A-Z0-9_]{1,124}$` **and** contain one of `KEY`, `TOKEN`, `SECRET`, `PASSWORD` |
+| Duplicate `id` | `id` values inside `mcp_servers` must be unique |
+
+**Blocked header names** (enforced additionally on the managed side):
+
+```text
+host  connection  content-length  transfer-encoding
+accept  content-type  mcp-protocol-version  mcp-session-id
+__proto__  constructor  prototype
+```
+
+Any violated rule returns `MANAGED_RESOURCE_INVALID`. Only explicitly declared credential names are forwarded into the managed Host child process; unreferenced environment variables are not inherited.
+
+## What success looks like
+
+- The resource row status is **Ready**, not **Error** or **Pending probe**.
+- The tool count is greater than zero; clicking **Tool list** shows the tool names and descriptions from the Host's last probe.
+- The server is selectable under **Bind capabilities → MCP servers** on the agent, and the confirmation summary shows the matching MCP count.
+- A message that needs the tool produces a tool call with a `completed` result.
+
+## Common errors
+
+| Error code | Cause | Fix |
+| --- | --- | --- |
+| `MCP_HEADER_REQUIRES_REFERENCE` | The header name is not on the allowlist, or the header value contains `${...}` | Use one of the six allowed names; move secrets into an `env://` reference |
+| `MCP_ENV_REQUIRES_REFERENCE` | An environment variable name contains `TOKEN` / `SECRET` / `PASSWORD` / `API_KEY` | Convert that variable into a credential reference |
+| `MCP_ENV_REF_INVALID` | The credential reference is not `env://<name>` | Write `env://SEARCH_API_KEY` with a name starting with a letter or underscore |
+| `MCP_NAME_MISSING` | Display name or resource name is empty | Fill in at least the display name |
+| `MCP_TRANSPORT_INVALID` | Transport is not `http` / `sse` / `stdio` | Pick from the dropdown rather than typing |
+| `MCP_ENDPOINT_INVALID` | HTTP/SSE is missing a valid `http(s)` URL | Complete the URL; remove embedded user info and `${}` |
+| `MCP_COMMAND_INVALID` | stdio is missing a launch command | Provide an executable command such as `npx` |
+| `MCP_ID_INVALID` | The resource ID is not `mcp-local-<16 hex>` | Do not hand-edit IDs; the Host generates them |
+| `MCP_NOT_FOUND` | The resource was deleted | Refresh the resource library and retry |
+| `MCP_PROBE_FAILED` | The probe failed overall | Fix the URL or credential using `health.error` |
+| `MCP_AUTH_FAILED` | The server rejected authentication | Verify the credential referenced by `env://` exists in the local credential service |
+| `MCP_TOOL_DISCOVERY_FAILED` | Connected, but the tool list could not be read | Confirm the server exposes tools; check server logs |
+| `MCP_PERMISSION_DENIED` | The session or Host refused this call | See [Approvals and permission policies](./approvals-permissions.mdx) |
+| `MANAGED_RESOURCE_INVALID` | The managed resource declaration violates the contract | Walk the two rule tables above item by item |
+
+## Related reference
+
+| What you want to know | Where to go |
+| --- | --- |
+| The MCP-server-to-agent binding model | [Resources and bindings](../concepts/resources.mdx) |
+| Local MCP store fields and validation | `src/local-mcp-store.mjs` |
+| Managed resource contract | `src/managed-resource-contract.mjs` |
+| How credential reference names are derived | `src/credential-ref.mjs` |
+| JSON recognition and header classification | `src/client/state/mcp-json-import.mjs` |
+| MCP panel source | `src/client/components/resource-dialogs.mjs` |
+| The four `mcp/*` operations | [Control protocol](../reference/operations.mdx) |

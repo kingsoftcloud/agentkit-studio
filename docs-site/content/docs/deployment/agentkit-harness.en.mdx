@@ -1,0 +1,136 @@
+---
+title: Star Harness
+description: Star Harness as an npm plugin — its execution model, the install/upgrade/bind lifecycle, and why it must be installed before it can be selected.
+status: new
+---
+
+**Star Harness (`harness`) hands the entire turn to the Harness native kernel, so DSH stops running the model-and-tool loop itself.** It has exactly one published form: `@kingsoftcloud/agentkit-harness-node` installed from npm. There is no separate process and no engine address for you to write — once you have installed it on the plugin page, enabled it and bound a workspace, the Agent form starts offering Star Harness.
+
+## Execution model
+
+| Stage | Owner | Source |
+| --- | --- | --- |
+| Model / tool loop | Harness native kernel | `owner: 'ksadk-harness'`, `execution: 'native-kernel'` |
+| Contract with Studio | `agentkit.native-dsh-turn/v1` | `contract` |
+| Event source | `native-run-store` | `eventOwner` |
+| Streaming | `native-model-port` | `streamOwner` |
+| Capabilities | `native-run`, `durable-receipts`, `tool-approval`, `cancel`, `resume`, `child-tasks` | `capabilities` |
+
+Source: `src/runtime-contract.mjs:25-29`.
+
+DSH supplies the whole-turn port (host contract `dsh.external-turn-host/v1`) and hands control to the Harness engine once per turn (`dsh.external-turn/v1`). Before taking over, the Harness package verifies the host exposes `claim`, `pending` and `resume` (`native/dsh-turn-ownership.mjs:47-52` in `@kingsoftcloud/agentkit-harness-node`).
+
+<Callout type="warn" title="It cannot use the ordinary stream seam">
+  In local mode, `harness` passing through DSH's stream adapter throws `STUDIO_NATIVE_TURN_REQUIRED` ("Native Harness requires the whole-turn execution port."). It must be served by the whole-turn port; it cannot be treated as one more model stream (`src/providers/dsh-runtime.mjs:591`).
+</Callout>
+
+## Dependency direction
+
+Studio depends on three Harness npm packages, pinned exactly:
+
+| Package | Version | Purpose |
+| --- | --- | --- |
+| `@kingsoftcloud/agentkit-harness-core` | `0.0.25` | Canonical values, invariants, kernel primitives |
+| `@kingsoftcloud/agentkit-harness-node` | `0.0.25` | Whole-turn contract, Run ownership, package integrity |
+| `@kingsoftcloud/agentkit-harness-ui` | `0.0.25` | Engine view adapter |
+
+Source: `package.json:133-135` (all three pinned, with no `^` or `~`).
+
+**Harness does not depend on Studio.** None of the three packages lists a `@kingsoftcloud/agentkit-studio*` entry in its `dependencies` — the dependency is one-way, so upgrading Harness does not require a Studio release.
+
+## Installation and lifecycle
+
+Star Harness is driven by the **"Star Harness management"** section of the plugin page, and its five operations map onto five control endpoints:
+
+| Operation | Endpoint | UI text |
+| --- | --- | --- |
+| Read status | `star-harness/status` | Installed `<version>` / Not installed, with "enabled / disabled" |
+| Install / upgrade | `star-harness/install` | "Install", "Upgrade", "Reinstall" |
+| Enable / disable | `star-harness/enable` | "Enable", "Disable" |
+| Bind workspace | `star-harness/bind` | "Bind workspace" |
+| Unbind | `star-harness/unbind` | "Unbind" |
+
+Source: `src/host/routes/star-harness.mjs:7-11`, `src/remote/control-client.mjs:469-473`, `src/client/pages/star-harness.mjs:64-112`.
+
+### Version rules
+
+| Rule | Behaviour | Source |
+| --- | --- | --- |
+| Version format | Must be three numeric segments `x.y.z` | `src/host/services/star-harness-release.mjs:14-15` |
+| Upgrade or roll back only | A target that is neither newer nor the previous version → `STAR_HARNESS_VERSION_UNSUPPORTED` | `src/host/services/star-harness.mjs:186-191` |
+| Rollback | A "Roll back to `<version>`" button appears when `previousVersion` exists | `src/client/pages/star-harness.mjs:88` |
+| Release verification | Only versions the current Studio has verified; otherwise `STAR_HARNESS_RELEASE_UNREVIEWED` | `src/host/services/star-harness-release.mjs:22-28` |
+| Package integrity | Per-file digests verified; dependency resolution may not escape the install directory | `:32-59` |
+| Registry | Pinned to `https://registry.npmjs.org` | `:12` |
+
+<Callout type="info" title="Why versions are verified first">
+  Studio confirms the Harness version was verified by the running Studio before installing it. Changing the Harness version changes a dependency pin, not Studio source — but an unverified version is refused outright instead of being installed and failing later.
+</Callout>
+
+### Workspace bindings
+
+One workspace maps to one model profile and its own isolated runtime state:
+
+| Rule | Behaviour | Source |
+| --- | --- | --- |
+| Absolute path required | A non-canonical absolute path → `STAR_HARNESS_INVALID_REQUEST` | `src/host/services/star-harness.mjs:212-217` |
+| No overlap | Overlap with an existing binding, the Star Harness state directory or an external Harness route → `STAR_HARNESS_WORKSPACE_CONFLICT` | `:71-72`, `:214-215` |
+| Model must be available | The selected model profile must exist and be enabled | `:216-217` |
+| Model drift | A changed model after binding → `STAR_HARNESS_MODEL_CHANGED`; rebind | `:61-64` |
+| Missing directory | A deleted workspace shows "directory no longer valid" and stops routing | `src/client/pages/star-harness.mjs:97`, `src/host/services/star-harness.mjs:132` |
+
+## When to choose it
+
+- You need **cross-process resume** (`resume`): of the three runtimes, only Star Harness has it.
+- You need **child tasks** (`child-tasks`) and durable receipts (`durable-receipts`): multi-role task decomposition depends on both.
+- You need tool approval as a first-class runtime capability (`tool-approval`).
+- You already run DeepSeek Harness and want the whole turn handed to the Harness kernel instead of the DSH native loop.
+
+When none of these apply, DSH Native is simpler — see [runtime comparison](./runtimes-compare.mdx).
+
+## Limits
+
+| Limit | Effect | Source |
+| --- | --- | --- |
+| **It must be installed before it can be selected** | Only "installed + enabled + at least one workspace" lets you create a new Agent | `src/client/pages/agent-form.mjs:79`, `src/host/services/star-harness.mjs:162`、`:174` |
+| Not installed | Enabling or binding before installing throws `STAR_HARNESS_NOT_INSTALLED` | `src/host/services/star-harness.mjs:14` |
+| No bound workspace | Enabling without a usable workspace → `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | `:15` |
+| No changes while busy | A running task or in-flight change → `STAR_HARNESS_BUSY` | `:11` |
+| One writer per ledger | The new worker takes over only after the old one stops; a failed cutover restores the previous version | `:95-125` |
+| Versions are pinned exactly | All three packages are `0.0.25`, with no floating range | `package.json:133-135` |
+| No standalone `persistence` entry | Durability is offered as `durable-receipts`, a different implementation from DSH's `persistence` | `src/runtime-contract.mjs:27` |
+
+<Callout type="warn" title="Star Harness and DSH Native own different Run ledgers">
+  Switching a runtime does not migrate Run history: old sessions keep opening on their original runtime. Star Harness Runs belong to the Harness ledger, while DSH Native Runs belong to the DSH session.
+</Callout>
+
+## Failure shapes
+
+| Code | Trigger | What you can do |
+| --- | --- | --- |
+| `STAR_HARNESS_NOT_INSTALLED` | Enabling or binding before installing | Install a verified version first |
+| `STAR_HARNESS_RELEASE_UNREVIEWED` | The requested version is not verified by this Studio | Upgrade Studio, or pick a verified version |
+| `STAR_HARNESS_VERSION_UNSUPPORTED` | The target is neither newer nor the previous version | Pick a newer version, or roll back |
+| `STAR_HARNESS_WORKSPACE_CONFLICT` | The workspace overlaps an existing binding or the state directory | Use a non-overlapping absolute path |
+| `STAR_HARNESS_MODEL_CHANGED` | The bound model profile changed | Rebind that workspace |
+| `STAR_HARNESS_BUSY` | A task is running or a change is in flight | Wait for the task, then change version or bindings |
+| `STAR_HARNESS_CONFIG_INVALID` | The local settings file cannot be read | Inspect `settings.json` in the Star Harness state directory |
+| `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | The workspace is unbound or disabled | Bind and enable the workspace first |
+| `STUDIO_NATIVE_TURN_REQUIRED` | `harness` reached the ordinary stream seam | Check whether the Host offers the whole-turn port; usually a DSH baseline mismatch |
+| `STAR_HARNESS_UNSUPPORTED` | The deployment is administrator-managed and offers no local management | Contact your administrator |
+
+Degradation and retry when a resource is unavailable is in [degradation and retry](./degradation-retry.mdx).
+
+## Source of truth
+
+| Claim | Location |
+| --- | --- |
+| Capability matrix and ownership | `src/runtime-contract.mjs:25-29` |
+| Whole-turn port requirement | `src/providers/dsh-runtime.mjs:591` |
+| Host capability check | `native/dsh-turn-ownership.mjs:47-52` in `agentkit-harness-node` |
+| Management service and state machine | `src/host/services/star-harness.mjs:21-251` |
+| Version verification and package integrity | `src/host/services/star-harness-release.mjs:14-61` |
+| Control endpoints | `src/host/routes/star-harness.mjs:7-11` |
+| Client interaction | `src/client/pages/star-harness.mjs:64-112` |
+| Creatability gate | `src/client/pages/agent-form.mjs:61-79` |
+| Three packages pinned | `package.json:133-135` |

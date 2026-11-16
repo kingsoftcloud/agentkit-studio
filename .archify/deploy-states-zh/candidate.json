@@ -1,0 +1,411 @@
+{
+  "schema_version": 3,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "部署状态机",
+    "subtitle": "19 个状态、26 条转移；四个 UNKNOWN 既不是成功也不是失败，先核对再动作",
+    "output": ".archify/deploy-states-zh/states.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "submit",
+        "label": "提交",
+        "focus": [
+          "prepared",
+          "uploading",
+          "uploaded"
+        ],
+        "note": "记录已建、运行包上传中"
+      },
+      {
+        "id": "progress",
+        "label": "进度",
+        "focus": [
+          "creating",
+          "provisioning",
+          "configuring",
+          "starting",
+          "updating",
+          "available-updating",
+          "deleting"
+        ],
+        "note": "平台正在做事，等就行"
+      },
+      {
+        "id": "attention",
+        "label": "需关注",
+        "focus": [
+          "token-pending",
+          "action-required",
+          "failed"
+        ],
+        "note": "卡住了，需要你处理"
+      },
+      {
+        "id": "terminal",
+        "label": "终态",
+        "focus": [
+          "ready",
+          "deleted"
+        ],
+        "note": "没有后续自动流转"
+      },
+      {
+        "id": "unknown",
+        "label": "未知",
+        "focus": [
+          "upload-unknown",
+          "create-unknown",
+          "update-unknown",
+          "delete-unknown"
+        ],
+        "note": "先核对，不要重试"
+      }
+    ]
+  },
+  "mainPath": [
+    "prepared",
+    "uploading",
+    "uploaded"
+  ],
+  "states": [
+    {
+      "id": "prepared",
+      "type": "start",
+      "label": "待提交",
+      "sublabel": "PREPARED",
+      "tag": "提交",
+      "step": "01"
+    },
+    {
+      "id": "uploading",
+      "type": "active",
+      "label": "上传运行包",
+      "sublabel": "UPLOADING",
+      "tag": "提交",
+      "step": "02"
+    },
+    {
+      "id": "uploaded",
+      "type": "active",
+      "label": "已上传",
+      "sublabel": "UPLOADED",
+      "tag": "提交",
+      "step": "03"
+    },
+    {
+      "id": "creating",
+      "type": "active",
+      "label": "创建中",
+      "sublabel": "CREATING",
+      "tag": "进度",
+      "step": "04"
+    },
+    {
+      "id": "provisioning",
+      "type": "active",
+      "label": "准备实例",
+      "sublabel": "PROVISIONING",
+      "tag": "进度",
+      "step": "05"
+    },
+    {
+      "id": "configuring",
+      "type": "active",
+      "label": "配置访问令牌",
+      "sublabel": "CONFIGURING",
+      "tag": "进度",
+      "step": "06"
+    },
+    {
+      "id": "token-pending",
+      "type": "waiting",
+      "label": "等待配置生效",
+      "sublabel": "TOKEN_PENDING",
+      "tag": "需关注",
+      "step": "07"
+    },
+    {
+      "id": "starting",
+      "type": "active",
+      "label": "启动中",
+      "sublabel": "STARTING",
+      "tag": "进度",
+      "step": "08"
+    },
+    {
+      "id": "ready",
+      "type": "success",
+      "label": "就绪",
+      "sublabel": "READY",
+      "tag": "终态",
+      "step": "09"
+    },
+    {
+      "id": "available-updating",
+      "type": "active",
+      "label": "入口可用 · 平台更新中",
+      "sublabel": "AVAILABLE_UPDATING",
+      "tag": "进度"
+    },
+    {
+      "id": "updating",
+      "type": "active",
+      "label": "切换版本 · 等待入口确认",
+      "sublabel": "UPDATING",
+      "tag": "进度"
+    },
+    {
+      "id": "action-required",
+      "type": "decision",
+      "label": "需要处理",
+      "sublabel": "ACTION_REQUIRED",
+      "tag": "需关注"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "失败",
+      "sublabel": "FAILED",
+      "tag": "需关注"
+    },
+    {
+      "id": "deleting",
+      "type": "active",
+      "label": "删除中",
+      "sublabel": "DELETING",
+      "tag": "进度"
+    },
+    {
+      "id": "deleted",
+      "type": "neutral",
+      "label": "已删除",
+      "sublabel": "DELETED",
+      "tag": "终态"
+    },
+    {
+      "id": "upload-unknown",
+      "type": "waiting",
+      "label": "上传结果待核对",
+      "sublabel": "UPLOAD_UNKNOWN",
+      "tag": "未知"
+    },
+    {
+      "id": "create-unknown",
+      "type": "waiting",
+      "label": "创建结果待核对",
+      "sublabel": "CREATE_UNKNOWN",
+      "tag": "未知"
+    },
+    {
+      "id": "update-unknown",
+      "type": "waiting",
+      "label": "更新结果待核对",
+      "sublabel": "UPDATE_UNKNOWN",
+      "tag": "未知"
+    },
+    {
+      "id": "delete-unknown",
+      "type": "waiting",
+      "label": "删除结果待核对",
+      "sublabel": "DELETE_UNKNOWN",
+      "tag": "未知"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t01",
+      "from": "prepared",
+      "to": "uploading",
+      "label": "提交"
+    },
+    {
+      "id": "t02",
+      "from": "uploading",
+      "to": "uploaded",
+      "label": "完成"
+    },
+    {
+      "id": "t03",
+      "from": "uploaded",
+      "to": "creating",
+      "label": "受理"
+    },
+    {
+      "id": "t04",
+      "from": "creating",
+      "to": "provisioning",
+      "label": "供给"
+    },
+    {
+      "id": "t05",
+      "from": "provisioning",
+      "to": "starting",
+      "label": "就绪"
+    },
+    {
+      "id": "t06",
+      "from": "starting",
+      "to": "ready",
+      "label": "可用"
+    },
+    {
+      "id": "t10",
+      "from": "uploading",
+      "to": "upload-unknown",
+      "label": "中断",
+      "variant": "security"
+    },
+    {
+      "id": "t11",
+      "from": "upload-unknown",
+      "to": "uploaded",
+      "label": "核对"
+    },
+    {
+      "id": "t12",
+      "from": "creating",
+      "to": "create-unknown",
+      "label": "超时",
+      "variant": "security"
+    },
+    {
+      "id": "t13",
+      "from": "create-unknown",
+      "to": "provisioning",
+      "label": "核对"
+    },
+    {
+      "id": "t14",
+      "from": "provisioning",
+      "to": "configuring",
+      "label": "写令牌"
+    },
+    {
+      "id": "t15",
+      "from": "configuring",
+      "to": "token-pending",
+      "label": "待生效"
+    },
+    {
+      "id": "t16",
+      "from": "token-pending",
+      "to": "starting",
+      "label": "生效"
+    },
+    {
+      "id": "t17",
+      "from": "starting",
+      "to": "token-pending",
+      "label": "未生效"
+    },
+    {
+      "id": "t20",
+      "from": "ready",
+      "to": "updating",
+      "label": "升级"
+    },
+    {
+      "id": "t21",
+      "from": "updating",
+      "to": "available-updating",
+      "label": "切换"
+    },
+    {
+      "id": "t22",
+      "from": "available-updating",
+      "to": "ready",
+      "label": "完成"
+    },
+    {
+      "id": "t23",
+      "from": "updating",
+      "to": "update-unknown",
+      "label": "未知",
+      "variant": "security"
+    },
+    {
+      "id": "t24",
+      "from": "update-unknown",
+      "to": "ready",
+      "label": "核对"
+    },
+    {
+      "id": "t30",
+      "from": "ready",
+      "to": "action-required",
+      "label": "需处理",
+      "variant": "security"
+    },
+    {
+      "id": "t32",
+      "from": "prepared",
+      "to": "failed",
+      "label": "拒绝",
+      "variant": "security"
+    },
+    {
+      "id": "t40",
+      "from": "ready",
+      "to": "deleting",
+      "label": "删除"
+    },
+    {
+      "id": "t41",
+      "from": "deleting",
+      "to": "delete-unknown",
+      "label": "中断",
+      "variant": "security"
+    },
+    {
+      "id": "t42",
+      "from": "delete-unknown",
+      "to": "deleted",
+      "label": "核对"
+    },
+    {
+      "id": "t43",
+      "from": "deleting",
+      "to": "deleted",
+      "label": "完成"
+    },
+    {
+      "id": "ready-deleted",
+      "from": "ready",
+      "to": "deleted",
+      "label": "直接删除"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么读这张图",
+      "items": [
+        "主路径从左到右：提交、上传、创建、供给、配置、启动、就绪。",
+        "分支挂在派生它的状态下方；回到更早状态的边画成上方的环。",
+        "状态名是 API 字符串，不翻译——它们会出现在响应里。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "UNKNOWN 不是失败",
+      "items": [
+        "四个 *_UNKNOWN 只表示平台没有确认结果，它既不是成功也不是失败。",
+        "唯一正确的动作是先核对（运行中心），不是重试。",
+        "把 UNKNOWN 当失败重试会重复提交一次付费操作。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "五组意图",
+      "items": [
+        "提交：记录已建、运行包上传中。",
+        "进度：平台正在做事，等就行。",
+        "需关注：卡住了，需要你处理。",
+        "终态：READY 与 DELETED，没有后续自动流转。",
+        "未知：先核对再决定。"
+      ]
+    }
+  ]
+}

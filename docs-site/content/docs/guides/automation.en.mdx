@@ -1,0 +1,200 @@
+---
+title: Automation and Scheduling
+description: Bind an agent to a one-time, interval, or Cron trigger, run it locally or in the cloud, and deliver results to a channel conversation.
+status: new
+---
+
+Automation answers one question: **run this by itself at the right time**. One prompt, one trigger rule, one target agent.
+It grants no new capability — it only decides when a sentence reaches an agent.
+
+<Callout type="info" title="Prerequisites">
+  - At least one agent. A local automation needs the app running; a cloud automation needs that agent deployed to the cloud.
+  - Delivering to a channel conversation additionally needs that cloud agent bound in [Channels](./channels.mdx) with at least one completed conversation with the bot.
+</Callout>
+
+## The two scheduling targets
+
+| Location | Runs in | After you close the app | Good for |
+| --- | --- | --- | --- |
+| Local | The Host process on this device | Does not run | Editing files and running commands in your workspace |
+| Cloud deployment | A managed cloud instance | Keeps following the schedule | Scheduled summaries, checks, and notifications |
+
+A status badge sits at the top of the page: **Scheduler running** means the trigger loop is up; **Scheduler not ready** means it is not (for example the Host just started, or no executor is available).
+Local and cloud share the same rule syntax; only the execution location and delivery capability differ.
+
+## Steps
+
+<Steps>
+
+<Step>
+### Open Automation
+
+Go to **Operations → Automation**. Choose **Local** or **Cloud deployment** at the top first — switching clears the current filters and any open editor.
+
+<Callout type="warn" title="The two locations are stored separately">
+  Local tasks and cloud tasks are two separate stores and cannot see each other. After switching, the list you see is independent; the tasks did not disappear.
+</Callout>
+</Step>
+
+<Step>
+### Create an automation
+
+Choose **New automation** in the top-right, or prefill from **Start from a common task**:
+
+| Template | Trigger | Example prompt |
+| --- | --- | --- |
+| Daily brief · weekdays 10:00 | `0 10 * * 1-5` | Summarize today's changes in the workspace |
+| Periodic check · every 30 minutes | Interval `1800` seconds | Check service status and explain any anomaly with a cause and a recommendation |
+| Weekly summary · Friday 17:00 | `0 17 * * 5` | Summarize this week's progress, risks, and todos |
+
+A template only prefills the name, prompt, and rule; **it does not** create the task.
+</Step>
+
+<Step>
+### Fill in the three fields
+
+| Field | Notes |
+| --- | --- |
+| Bound agent | The target agent. It cannot change while editing an existing task — create a new task to retarget |
+| Task name | The name shown in the list, for example "Daily work summary" |
+| Prompt sent when due | The exact sentence handed to the agent when the task fires |
+
+Both the name and the prompt are required; leaving either empty reports "Select an agent and fill in the task name and prompt".
+</Step>
+
+<Step>
+### Choose the trigger
+
+| Trigger | Parameter | Constraint |
+| --- | --- | --- |
+| Fixed interval | Interval in seconds | **At least 60**; anything below 60 or non-numeric is treated as 3600 |
+| Cron | Five-field expression (time zone `Asia/Shanghai`) | Exactly 5 fields; `*`, `,`, `-`, and `/` are supported |
+| Run once | Run time (local time) | Must be **in the future**, otherwise "Choose a future run time" |
+
+Cron examples:
+
+```text
+0 9 * * 1-5      weekdays at 09:00
+*/30 * * * *     every 30 minutes
+0 17 * * 5       Friday at 17:00
+```
+</Step>
+
+<Step>
+### Choose the result destination (cloud)
+
+A cloud automation can keep its result to the execution record, or send it to a channel conversation:
+
+| Option | Behavior |
+| --- | --- |
+| Execution record only | The result stays under "Execution records"; nothing is sent to any IM |
+| Send to a channel conversation | Pick one from the **Recipient conversation** dropdown |
+
+The dropdown lists only WPS Collaboration or Feishu conversations **bound to this cloud agent that already completed a conversation**, shown as `WPS · <channel account> · Group <conversation id>`.
+An empty list usually means no channel is bound, or you have not talked to the bot yet.
+
+<Callout type="info" title="A failed delivery never reruns the task">
+  Delivery is a separate step after execution. A delivery failure only marks a delivery state on the execution record; the agent is **not** run again.
+</Callout>
+</Step>
+
+<Step>
+### Save
+
+Choose **Create** (or **Save changes** while editing). Two success messages are possible:
+
+- Local: "Local automation created; keep the app running."
+- Cloud: "Cloud automation created; it keeps following the schedule after you close the app."
+</Step>
+
+<Step>
+### Manage day to day
+
+Each task row offers:
+
+| Action | Notes |
+| --- | --- |
+| Details | Task id, schedule, session mode, next run time, and the full prompt |
+| Execution records | Expand the last 8 runs with their states |
+| Edit | Opens the same form |
+| Run once | Runs immediately **without** changing the schedule |
+| Delete | Irreversible. For a cloud task only future triggers stop; already-triggered runs and deliveries continue |
+| Enable switch | Pause or resume. A paused task cannot "Run once" |
+
+The board view groups into four columns: **Scheduled**, **Running**, **Needs attention**, and **Paused / finished**.
+</Step>
+
+<Step>
+### Look at native DSH session automations
+
+Under the local tab there is a disclosure, "Native DSH session automations N · Expand". Those tasks are created by **`schedule_create` inside a conversation** and stored separately from Host agent automations.
+
+To create one, say this in a new session:
+
+```text
+Remind me to organize my work summary every day at 9
+```
+
+DSH calls `schedule_create`; refresh this page to see it. This surface is read-only — edit and delete in the original conversation.
+</Step>
+
+</Steps>
+
+## Scheduling semantics
+
+| Rule | Behavior |
+| --- | --- |
+| Scan interval | Due tasks are scanned every **30 seconds** |
+| Missed fire | Policy defaults to `skip`: the occurrence is skipped, never backfilled |
+| Concurrency per task | Not allowed. A new occurrence is skipped while the previous one is still running |
+| Single-instance ownership | One scheduler owns the store directory; a second process gets `SCHEDULER_OWNED` |
+| Crash recovery | On startup, occurrences left in `claimed` / `running` / `accepted` / `admitting` are marked failed with `AUTOMATION_OUTCOME_UNKNOWN`; the original call is **never replayed** |
+| Session mode | A new session per run (default), or continue an existing session |
+
+`AUTOMATION_OUTCOME_UNKNOWN` means "the original host was interrupted and the outcome is unconfirmed; verify in the original conversation". Nothing backfills it; a human must confirm.
+
+## What success looks like
+
+- The task badge reads **Enabled** and the row meta shows "Next run: `<time>`".
+- **Execution records** lists recent occurrences with state `succeeded` and a completion time.
+- A cloud delivery task shows "Channel delivery: delivered" in the execution record.
+- When the badge turns **Needs attention**, the latest run or delivery failed; expand the detail and read `errorCode` and `detail`.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `SCHEDULE_KIND_INVALID` | `kind` is not `once`, `interval`, or `cron` | Use one of the three triggers in the UI |
+| `SCHEDULE_SPEC_INVALID` | `once` lacks `at`, or `interval` lacks `everySeconds` | Supply the missing parameter |
+| `SCHEDULE_TIMEZONE_INVALID` | Invalid time zone | Use `Asia/Shanghai` |
+| `CRON_INVALID` | The Cron expression is not 5 fields | Rewrite it as five fields per the examples |
+| `TASK_ID_INVALID` | The task id does not match `^[a-z][a-z0-9-]{2,62}$` | Let the system generate it |
+| `SCHEDULE_NOT_FOUND` | The task does not exist | Refresh the list and retry |
+| `SCHEDULE_DISABLED` | "Run once" on a paused task | Enable it first |
+| `SCHEDULE_RUNNING` | The previous run of this task has not finished | Wait for it |
+| `SCHEDULER_CLOSED` | The scheduler is closed | Restart the app |
+| `SCHEDULER_OWNED` | Another host process owns the scheduler | Shut that process down |
+| `AUTOMATION_OUTCOME_UNKNOWN` | The original host was interrupted; outcome unconfirmed | Verify in the original conversation; nothing is replayed |
+| `AUTOMATION_RUN_FAILED` | The run adapter failed | Read `detail` on the execution record |
+| `delivery_target_unavailable` | The original channel or conversation is gone | Check bindings under Channels |
+| `delivery_target_changed` | The bot or recipient conversation changed | Pick the recipient conversation again |
+| `delivery_conversation_missing` | No conversation information yet | Talk to the bot once |
+| `result_text_missing_or_too_large` | No text to send this run, or it exceeds the limit | Tighten the prompt, or switch to "Execution record only" |
+| `delivery_outcome_unknown` | The sending process did not confirm | Verify in the recipient conversation; nothing resends automatically |
+
+## Related
+
+<Cards>
+  <Card title="Channels" href="/en/docs/guides/channels">
+    Bind a cloud agent and finish pairing so automation has somewhere to deliver.
+  </Card>
+  <Card title="Command reference" href="/en/docs/reference/commands">
+    Full parameters for `schedule_create` and friends.
+  </Card>
+  <Card title="Session events" href="/en/docs/reference/session-events">
+    Which session events one automation run produces.
+  </Card>
+  <Card title="Managed runtime" href="/en/docs/concepts/managed-runtime">
+    Why a cloud instance keeps running after you close the app.
+  </Card>
+</Cards>

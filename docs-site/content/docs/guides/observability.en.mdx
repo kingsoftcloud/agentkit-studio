@@ -1,0 +1,218 @@
+---
+title: Observability (OTel)
+description: "A managed runtime exports its session event stream as OTLP traces: configure endpoints, headers, and certificates, then confirm upload maps correctly."
+status: new
+---
+
+Observability turns one run into searchable traces: every turn, every model step, and every tool call is a span.
+Export uses standard **OTLP/HTTP JSON** against the platform-injected endpoint, and the Studio **Observability** page reads the same trace store.
+
+<Callout type="info" title="Prerequisites">
+  - The session runs on a **managed runtime**. An interactive desktop session never exports — it carries neither a platform identity nor the injected observability environment.
+  - The platform injected the observability variables. Without an endpoint the plugin registers nothing and the Host behaves exactly as before.
+</Callout>
+
+## The two export routes
+
+The **primary route** points at the main observability backend (Langfuse and similar) via `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, or `OTEL_EXPORTER_OTLP_ENDPOINT` plus `/v1/traces`.
+The **secondary route** points at Cloud Monitor via `CLOUD_MONITOR_OTLP_TRACES_ENDPOINT` (optional).
+Both routes are fed **at the same time**: each batch goes to each target, and one failing does not affect the other.
+
+## Environment variables
+
+### Routing and identity
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `AGENTENGINE_MANAGED_RUNTIME_NAME` | Either one | — | Managed runtime name; export turns on only when this or the next variable exists |
+| `AGENTENGINE_AGENT_ID` | Either one | — | Platform agent id |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Recommended | — | Full trace endpoint; highest priority |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | — | Base endpoint; `/v1/traces` is appended when the above is absent |
+| `OTEL_SERVICE_NAME` | Optional | `agentengine.dsh-observability` | Written to `service.name` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Optional | empty | Extra resource attributes as `k=v,k2=v2` |
+
+<Callout type="warn" title="Setting only one of the two disables export">
+  An endpoint without an identity, or an identity without an endpoint, exports nothing — both must be present.
+</Callout>
+
+### Headers
+
+| Variable | Notes |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Trace-specific headers; preferred |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Generic headers; fallback |
+| `CLOUD_MONITOR_OTLP_TRACES_HEADERS` | Secondary-route trace headers; preferred |
+| `CLOUD_MONITOR_OTLP_HEADERS` | Secondary-route generic headers |
+
+The format is comma-separated `k=v,k2=v2`, with percent-encoded values decoded first (`%20` and similar).
+Fragments with no key or no `=` are **skipped**, so one malformed fragment never discards the whole line.
+
+```sh
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS='Authorization=Bearer%20<token>,X-Scope=agentkit'
+```
+
+### Certificates
+
+When the primary route uses a private CA, point the standard OTel variables at a PEM file:
+
+| Variable | Notes |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` | Trace-specific certificate path; preferred |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE` | Generic certificate path; fallback |
+| `DSH_OTEL_CA_PEM_BASE64` | Legacy inline base64 PEM, used only when no file is mounted |
+
+<Callout type="warn" title="Certificates are appended, never substituted">
+  These certificates are **appended** after the platform trust roots rather than replacing them.
+  That keeps the publicly trusted CloudMonitor secondary route working while the primary route pins a private CA.
+  The runtime's `ca` option likewise never replaces the default certificate store.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Confirm injection on the managed runtime
+
+After deploying to the cloud, confirm all three variables are present inside the instance:
+
+```sh
+printenv | grep -E '^(AGENTENGINE_(MANAGED_RUNTIME_NAME|AGENT_ID)|OTEL_EXPORTER_OTLP)'
+```
+
+All three present means the platform injected the observability environment; a missing identity variable means you are not on a managed runtime, and nothing exports.
+</Step>
+
+<Step>
+### Add an endpoint and headers when needed
+
+If the platform injected only the identity and no endpoint, or you want to point at a different backend temporarily:
+
+```sh
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT='https://otel.example.test/v1/traces'
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS='Authorization=Bearer%20<token>'
+```
+
+Change environment variables only, never code. To disable export entirely, empty the endpoint variables — the plugin degrades to a no-op.
+For a private CA, mount the PEM file as described above instead of disabling verification.
+</Step>
+
+
+<Step>
+### Open the Observability page
+
+Go to **Operations → Observability**. When the top badge moves from "Reading" to **Trace store connected**, the backend is reachable.
+
+The summary row has four cards:
+
+| Card | Source |
+| --- | --- |
+| Run count | Total runs in the range (last 24 hours / last 7 days) |
+| Completion rate | Share of runs that completed |
+| Average duration | Runtime-reported average, in ms |
+| Token usage | Input plus output |
+
+Below them is a time-bucketed bar chart and an optional cloud statistics line (sessions / tokens / errors).
+</Step>
+
+<Step>
+### Find this run's trace
+
+Narrow with the four toolbar controls:
+
+| Control | Effect |
+| --- | --- |
+| Search box | Matches trace id, run, session, and agent together |
+| Time range | **24 hours** or **7 days** |
+| Agent filter | Pick one agent from the dropdown |
+| Status filter | All / in progress / completed / failed |
+
+The list holds **12 rows** per page: trace (name plus monospaced id), execution location (local / cloud · credentials retained locally), agent / run, status, duration, tokens, and start time.
+While any trace is `RUNNING`, `PENDING`, or `QUEUED` the list refreshes every **5 seconds**; polling pauses in the background.
+</Step>
+
+<Step>
+### Open trace detail
+
+Click any row. The detail dialog has seven tabs:
+
+| Tab | Content |
+| --- | --- |
+| Spans | Name, span id, duration, and status of each span; click one to select it |
+| Attributes | The selected span's attribute JSON |
+| Events | The selected span's event array |
+| Resource | `executionLocation`, provenance, and resource attributes |
+| Trajectory | The tool-call trajectory |
+| Model requests | Request-body statistics (below) |
+| Raw OTLP | Choose **Read OTLP** to fetch the JSON that was actually sent |
+
+The **Model requests** tab shows character and byte counts per request: total, tool-definition characters (with tool count), system prompt characters, and conversation characters.
+It is a **size statistic only**; the prompt body is never stored, and characters are not tokens.
+Only the newly run Codex Chat Completions proxy provides it; other records say "This record has no request-body statistics".
+</Step>
+
+<Step>
+### Confirm the export happened
+
+Verify three things in order:
+
+1. **The run is in the list** — status `SUCCEEDED` / `COMPLETED`, with non-empty duration and tokens.
+2. **Spans are nested** — `dsh.turn` at the top, a `chat` generation span beneath it, and `execute_tool <tool name>` spans beneath that.
+3. **Raw OTLP has content** — choose **Read OTLP**; `resourceSpans[0].scopeSpans[0].spans` is non-empty and `service.name` equals your configured value (default `agentengine.dsh-observability`).
+
+All three mean the export really left. If one fails, start with the "no traces" row below.
+</Step>
+
+<Step>
+### Export a session log
+
+**Export session** sits in the top-right of the detail dialog. It needs a `SessionId` on the trace, otherwise it reports "This trace has no Session ID, so the session log cannot be exported".
+The export is the complete event record — useful in a ticket.
+</Step>
+
+</Steps>
+
+## Span structure and export behavior
+
+| Span name | Produced on | Key attributes |
+| --- | --- | --- |
+| `dsh.turn` | Every turn (`turn/start` .. `turn/end`) | `dsh.turn.number`, `langfuse.session.id`, `dsh.turn.reason` |
+| `chat` | Every model step (`step/start` .. `step/end`), typed as a generation | `gen_ai.request.model`, `gen_ai.system`, `gen_ai.usage.*`, `dsh.step.number` |
+| `execute_tool <tool name>` | Every `tool/call` .. `tool/result`, plus Codex tool lifecycles | `gen_ai.tool.name`, `dsh.tool.call_id`, `error.type` |
+
+Every run also carries identity attributes: `agentengine.invocation_id`, `agentengine.run_id`, `agentengine.platform_session_id`, `agentengine.agent_id`, `agentengine.version_id`, and `agentengine.runtime_name`.
+When a run has a platform InvocationId, **the trace id is the 32 hex characters inside it**, so you can look the trace up directly in the backend.
+
+Export behavior: the buffer flushes every **3 seconds** (immediately on `step/end` and `turn/end`), each request times out after **5 seconds**, the buffer caps at **512** spans (oldest dropped), and failures log at most one line every **60 seconds**.
+
+**Prompts, model output, tool arguments, and tool results are never exported.** Only model name, provider, token usage, tool names, run identity, and error identity — a hard constraint in code, not a configuration option.
+
+## Common errors
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| The page shows "No traces yet" | The session is not on a managed runtime, or the endpoint/identity variables are missing | Check the three variables from step 1; a local session never appears |
+| The badge stays at "Reading" | The trace store is unreachable | Check the network and backend address, then choose **Reload** |
+| The list is empty while the backend has data | The time range or filters are too narrow | Widen to 7 days and clear the agent and status filters |
+| "Some observability data is temporarily unavailable" | One of the summary or list requests failed | Refresh; persistent failure means that sub-API is down |
+| Detail stays at "Reading spans…" | The trace detail request failed | Close and reopen the dialog; check the error if it persists |
+| **Export session** reports no Session ID | The trace carries no session identity | Export from another run of the same session |
+| **Model requests** shows no statistics | The record was not produced by the Codex Chat Completions proxy | Expected; it does not mean the request size was zero |
+| The primary route works while the secondary errors | A private CA only affected the secondary route's public trust chain | Append via the standard certificate variables instead of replacing the default store |
+
+## Related
+
+<Cards>
+  <Card title="Environment reference" href="/en/docs/reference/environment">
+    The full list of `OTEL_*` and `AGENTENGINE_*` variables.
+  </Card>
+  <Card title="Session events" href="/en/docs/reference/session-events">
+    Which 16 events the spans are translated from.
+  </Card>
+  <Card title="Run and debug a session" href="/en/docs/guides/conversations">
+    Diagnose a failed run from the conversation side.
+  </Card>
+  <Card title="Managed runtime" href="/en/docs/concepts/managed-runtime">
+    Why only a managed runtime injects the observability environment.
+  </Card>
+</Cards>

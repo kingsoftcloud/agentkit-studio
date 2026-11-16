@@ -1,0 +1,127 @@
+---
+title: 已知限制
+description: 当前版本明确不支持、只支持一部分、或行为容易误解的能力清单——先在这里确认，再判断是不是 bug。
+---
+
+这一页列出**当前版本已知的边界**。如果你遇到的问题在这里，那它不需要报 issue；如果你想推这些边界，文末写了怎么提。
+
+## 平台支持
+
+| 平台 | 架构 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| macOS 13+ | **Apple Silicon（arm64）** | ✅ 支持 | `.dmg` / `.zip` 已签名并公证 |
+| macOS | Intel（x64） | ❌ **不支持** | 不提供 Intel 安装包，也没有计划 |
+| Windows 11 | x64 | ✅ 支持 | `.exe`（NSIS） |
+| 浏览器 | — | ✅ 支持 | 作为 DSH 插件加载 |
+
+<Callout type="warn" title="Intel Mac 用户怎么办">
+不提供 Intel（x64）安装包。历史文档里出现过的 Intel 安装包文件名是错误信息，不要据此排查。
+Intel Mac 请改用[作为 DSH 插件](../getting-started/install.mdx#c-作为-dsh-插件)在浏览器里使用。
+</Callout>
+
+## 运行时
+
+Studio 支持**三种**运行时（`src/client/theme.mjs:26`）：
+
+| 运行时 | 值 | 能否在 Agent 表单里选 |
+| --- | --- | --- |
+| DSH 原生 | `dsh-native` | ✅ 默认 |
+| Star Harness | `harness` | ✅ |
+| Codex | `codex` | ✅ |
+
+<Callout type="info" title="Star Harness 必须先安装">
+`harness` 是三者里唯一可插拔的：它由 ksadk-harness 的 npm 包提供，没安装、没启用、或没有可用工作区时，Agent 创建表单不会放开这个选项（`src/client/pages/agent-form.mjs:61-79`、`src/host/services/star-harness.mjs:162`）。安装与绑定流程见[安装、升级与绑定 Star Harness](../guides/star-harness.mdx)。
+</Callout>
+
+另外，**进程内 Harness 已经退役**：
+
+- `LOCAL_HARNESS_RETIRED` —— 「请使用 Native Harness 会话。」（`src/host/routes/http.mjs:24`）
+- `STUDIO_LEGACY_HARNESS_RETIRED` —— 「此操作属于已退役的进程内 Harness 会话。」（`src/host/routes/sessions.mjs:8`）
+
+老的进程内会话不能恢复，只能重新创建为 Native 会话。
+
+## 命令执行与沙箱
+
+执行策略有三档，从轻到重（`src/execution-policy.mjs:8`）：
+
+| 模式 | 含义 |
+| --- | --- |
+| `read-only` | 只读 |
+| `workspace-write` | 可写工作区（**云端默认**） |
+| `danger-full-access` | 完全访问 |
+
+<Callout type="warn" title="托管运行时的沙箱并不是你想象的那一层">
+托管运行时容器本身已经是隔离边界（只读根文件系统、丢弃 capabilities、一个 Agent 一个 Pod），**Codex 的 bubblewrap 沙箱在容器里根本跑不起来**。
+所以托管运行时**默认落到 `danger-full-access`**，真正的隔离靠容器，而不是靠进程内沙箱（`src/portable-codex.mjs:50-56`）。
+
+需要收窄时，部署侧用 `AGENTKIT_CODEX_SANDBOX` 显式指定；请求的权限**只能收窄、不能放大**部署声明的上限（`src/execution-policy.mjs:28-33`）。
+</Callout>
+
+换句话说：**「命令沙箱全部通过」这个说法不成立**。本地 Codex 走自己的沙箱，托管运行时走容器边界，两者的保证不是同一件事。
+
+## 云端能力
+
+云端能力依赖 AgentEngine 控制面与凭证。**本地跑通不代表云端可用**。
+
+| 限制 | 错误码 | 说明 |
+| --- | --- | --- |
+| 云端执行权限未启用 | `CLOUD_EXECUTION_MODE_UNAVAILABLE` | 需要在部署侧显式开启 |
+| 镜像不支持切权限 | `CLOUD_EXECUTION_MODE_UNSUPPORTED` | 更新实例镜像版本 |
+| 镜像不支持图片输入 | `CLOUD_IMAGE_INPUT_UNAVAILABLE` | 云端 Agent 收不到图片，改用本地 Agent |
+| 只能删自己创建的托管 Runtime | `MANAGED_RUNTIME_REQUIRED` | 只支持删除经 AgentEngine API 创建的实例 |
+
+资源目录也有边界：
+
+- 资源总览**每类只展示前 200 项**（`RESOURCE_OVERVIEW_TRUNCATED`，`src/resource-catalog.mjs:87`）；完整目录要去「模型与工具」页搜索。
+- 「运行目标」可能显示「**该能力暂未开放**」——意味着 Host 没注册对应 capability，需要去插件中心启用官方插件。
+
+## 界面与导航
+
+| 限制 | 影响 |
+| --- | --- |
+| **没有 URL 路由** | 不能收藏、不能分享、后退会离开 Studio、刷新回默认面板 |
+| **没有文件 diff 视图** | 只能看工具卡片的参数/结果，或用「对话回退」预览文件回滚 |
+| **单轮不显示 token 明细** | 统计要去 运行中心 → 观测 |
+| **旧面板 id 会落到占位空态** | 少数历史入口显示「正在准备 / 等待 Host 能力」（`src/client/pages/domain.mjs:7-15`） |
+| **`localStorage` 只存偏好** | 存的是上次的标签页选择，不是导航状态 |
+
+详见[界面导览 · 为什么没有 URL](../getting-started/interface.mdx#为什么没有-url)。
+
+## 数据与存储
+
+| 限制 | 说明 |
+| --- | --- |
+| 卸载不删数据 | 必须手动删 `~/.agentkit` 与 `~/.cache/agentkit-studio` |
+| `~/.dsh` / `~/.codex` 共用 | 属于 DSH 宿主和 Codex，删之前确认整个环境都不需要 |
+| 同步盘会失败 | 网络主目录与同步盘拒绝文件同步，部署记录会写失败（`DEPLOYMENT_STORE_IO_FAILED`） |
+| 会话日志导出上限 8 MiB | 超过要用原生会话的 `/export` 导完整 ZIP |
+| 历史是只读投影 | Studio 从不写第二份会话存储；历史里的凭证会自动替换成 `[已隐藏凭据]` |
+
+## 版本与兼容
+
+| 项 | 现状 |
+| --- | --- |
+| 宿主版本必须**精确匹配** | `engines.dsh = 0.2.2-rc.1`（`package.json:85`），不匹配会在启动阶段被拒绝 |
+| 产品版本与宿主版本不同步 | 三个版本号在 设置 → AgentKit Studio → 版本与更新 里分开显示 |
+| `engines.node` 与安全基线口径不同 | 前者写 `>=24.9.0`，后者是 22.23.4+ / 24.22.1+ / 26.12.1+ 矩阵；本地统一用 `.node-version` 的 24.22.1 |
+| `dist/` 不入 Git | 本地生成，`make dev` / `make pack` 会自动重建 |
+
+## 这些不算 bug
+
+| 你以为的问题 | 实际行为 |
+| --- | --- |
+| 「启动检查」显示已确认，但工具还是失败 | 「已确认」只表示**配置读到了**，不代表工具执行或模型调用验证通过 |
+| 资源广场里探测通过，但 Agent 调不通 | 探测只证明连接与工具列表读取成功 |
+| 修改 Agent 配置后正在跑的会话没变 | 正在跑的会话绑的是**修订版本**，改动只影响下一轮或新会话 |
+| 切走模型设置丢了草稿 | 编辑是内存草稿，只有「保存配置」才落盘 |
+| 会话序号从 1 开始 | 公开序号 = 原生序号 + 1，`0` 是空历史哨兵 |
+
+## 想推动这些限制
+
+按优先级从高到低：
+
+1. **先确认不是配置问题** —— 跑一遍[帮助总览](./index.mdx#先做这三件事)里的三步。
+2. **开 issue 说明场景** —— 带上[提 issue 需要什么](./index.mdx#提-issue-需要什么)里的六项信息，并写清你期望的行为。
+3. **说清影响面** —— 「我要在企业内固定版本部署」比「希望支持 Intel」更有说服力。
+
+排障入口在[排障](./troubleshooting.mdx)。

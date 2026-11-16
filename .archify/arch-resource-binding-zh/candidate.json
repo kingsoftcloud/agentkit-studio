@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "资源绑定拓扑",
+    "subtitle": "五类绑定都挂在修订版本上；凭证只从 Host 流向供应商，永不回流浏览器",
+    "output": ".archify/arch-resource-binding-zh/overview.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "浏览器",
+      "sublabel": "资源库面板 · 只拿元数据",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        300,
+        76
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "智能体",
+      "sublabel": "只持有当前指向",
+      "pos": [
+        760,
+        40
+      ],
+      "size": [
+        300,
+        76
+      ]
+    },
+    {
+      "id": "revision",
+      "type": "database",
+      "label": "修订版本 Revision",
+      "sublabel": "五类绑定挂在这里，不在智能体上",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        1020,
+        96
+      ],
+      "tag": "不可变"
+    },
+    {
+      "id": "model",
+      "type": "database",
+      "label": "模型档案",
+      "sublabel": "model · 可多选",
+      "pos": [
+        40,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "database",
+      "label": "MCP 绑定",
+      "sublabel": "mcp_servers ≤ 16",
+      "pos": [
+        246,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "skill-space",
+      "type": "database",
+      "label": "技能空间",
+      "sublabel": "与 skill_spaces 互斥",
+      "pos": [
+        452,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "knowledge-base",
+      "type": "database",
+      "label": "知识库",
+      "sublabel": "knowledge_base",
+      "pos": [
+        658,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "memory",
+      "type": "database",
+      "label": "记忆库",
+      "sublabel": "memory",
+      "pos": [
+        864,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "credential",
+      "type": "security",
+      "label": "Host 凭据服务",
+      "sublabel": "解析 env:// 引用 · 明文不出这一层",
+      "pos": [
+        40,
+        620
+      ],
+      "size": [
+        1020,
+        76
+      ],
+      "tag": "env://<名称>"
+    },
+    {
+      "id": "gateway",
+      "type": "cloud",
+      "label": "模型网关",
+      "sublabel": "供应商端点",
+      "pos": [
+        40,
+        830
+      ],
+      "size": [
+        320,
+        84
+      ]
+    },
+    {
+      "id": "mcp-server",
+      "type": "external",
+      "label": "MCP 服务",
+      "sublabel": "HTTP 或 SSE",
+      "pos": [
+        390,
+        830
+      ],
+      "size": [
+        320,
+        84
+      ]
+    },
+    {
+      "id": "agentengine",
+      "type": "cloud",
+      "label": "AgentEngine",
+      "sublabel": "云端控制面",
+      "pos": [
+        740,
+        830
+      ],
+      "size": [
+        320,
+        84
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "凭证边界：明文只在这一侧，永不回流浏览器",
+      "wraps": [
+        "credential"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "browser",
+      "to": "revision",
+      "label": "只读"
+    },
+    {
+      "id": "c2",
+      "from": "agent",
+      "to": "revision",
+      "label": "指向"
+    },
+    {
+      "id": "c3",
+      "from": "revision",
+      "to": "model",
+      "label": "绑定"
+    },
+    {
+      "id": "c4",
+      "from": "revision",
+      "to": "mcp",
+      "label": "绑定"
+    },
+    {
+      "id": "c5",
+      "from": "revision",
+      "to": "skill-space",
+      "label": "绑定"
+    },
+    {
+      "id": "c6",
+      "from": "revision",
+      "to": "knowledge-base",
+      "label": "绑定"
+    },
+    {
+      "id": "c7",
+      "from": "revision",
+      "to": "memory",
+      "label": "绑定"
+    },
+    {
+      "id": "c8",
+      "from": "model",
+      "to": "credential",
+      "label": "档案凭证"
+    },
+    {
+      "id": "c9",
+      "from": "mcp",
+      "to": "credential",
+      "label": "env:// 引用"
+    },
+    {
+      "id": "c10",
+      "from": "skill-space",
+      "to": "credential",
+      "label": "平台连接"
+    },
+    {
+      "id": "c11",
+      "from": "knowledge-base",
+      "to": "credential",
+      "label": "平台连接"
+    },
+    {
+      "id": "c12",
+      "from": "memory",
+      "to": "credential",
+      "label": "平台连接"
+    },
+    {
+      "id": "c13",
+      "from": "credential",
+      "to": "gateway",
+      "label": "凭证明文",
+      "variant": "security"
+    },
+    {
+      "id": "c14",
+      "from": "credential",
+      "to": "mcp-server",
+      "label": "凭证明文",
+      "variant": "security"
+    },
+    {
+      "id": "c15",
+      "from": "credential",
+      "to": "agentengine",
+      "label": "凭证明文",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么读这张图",
+      "items": [
+        "五类绑定都挂在修订版本上，不挂在智能体上。",
+        "智能体只持有当前指向；换资源等于生成新的修订版本。",
+        "五条绑定各自独立解析，同一类可以有多个。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "互斥与上限",
+      "items": [
+        "skill_space 与 skill_spaces 不能同时出现。",
+        "skill_spaces 与 mcp_servers 各最多 16 项。",
+        "引用 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "凭证边界",
+      "items": [
+        "凭证写成 env://<名称>，明文只存在 Host 凭据服务里。",
+        "浏览器拿到的是连接元数据与最后一次探测契约，永远不是明文。",
+        "模型档案、MCP 引用、平台连接各自解析，互不代填。"
+      ]
+    }
+  ]
+}

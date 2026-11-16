@@ -1,0 +1,118 @@
+---
+title: Releases and migration
+description: How the five version numbers compose, which channel a build ships on, and what changes from v0.0.16 backwards — in user-visible terms.
+---
+
+**Studio carries five version numbers at once, and they are intentionally not in lockstep.** Start here, or every upgrade decision will go wrong.
+
+## The five version numbers
+
+| Version | Current value | Used by | What changes when it moves |
+| --- | --- | --- | --- |
+| Plugin version | `0.0.16` | `package.json#version`, the npm package | Which plugin you install |
+| DSH baseline | `0.2.2-rc.1` | `studio.plugin.json#requiredDsh` | Must be **exactly equal** to the running DSH |
+| Host API | `dsh-native/0.2.2-rc.1` | `studio.plugin.json#requiredHostApi` | DSH uses it to admit the plugin |
+| Host contract | `1` | `studio.plugin.json#requiredHostContract` | Increments when the capability surface changes |
+| Desktop version | `<DSH version>.<YYYYMMDD>.<ordinal>` | Electron installer and update feed | Determines whether an update can land |
+
+Source: `package.json:2-3`, `studio.plugin.json:2-6`, `src/desktop-release-channels.mjs:14-16`.
+
+<Callout type="info" title="Desktop versions are not plugin versions">
+  A desktop version looks like `0.2.2-rc.1.20261116.1` — DSH version, build date, and same-day ordinal.
+  Multiple builds in one day therefore become `…20261116.1`, `…20261116.2`, and so on. The plugin semver is unaffected.
+</Callout>
+
+## What this chapter covers
+
+| Page | Question it answers | For |
+| --- | --- | --- |
+| [Release notes](./release-notes.mdx) | What changed in each version | Anyone deciding "is it worth upgrading" |
+| [Version compatibility](./compatibility.mdx) | Plugin version × DSH baseline × minimum Node × supported platforms | Anyone making an upgrade decision |
+| [Upgrade to v0.0.16](./upgrade-to-0.0.16.mdx) | Breaking changes and steps | Anyone already running and moving up |
+| [Desktop update channels](./desktop-update-channels.mdx) | Four channels × two feed targets × two layouts | Operators and release engineers |
+
+## Channels at a glance
+
+| Channel | Kind | Accepts prerelease | Notes |
+| --- | --- | --- | --- |
+| `nightly` | Native | ✅ | **Product default** |
+| `latest` | Native | ❌ | GA lane; three-segment releases only |
+| `preview` | Compatibility | ✅ | Historical lane, mirrored on every publication |
+| `stable` | Compatibility | ❌ | Historical lane, same comparison rule as `latest` |
+
+Source: `src/desktop-release-channels.mjs:20-35,59`.
+
+**Why is `nightly` the default?** The pinned DSH version carries an `-rc.N` suffix, and the Studio desktop version inherits it —
+so every Studio build is a prerelease, and only the `nightly` native lane accepts those. Once DSH ships a stable release
+and Studio produces a three-segment version, publishing on `latest` becomes possible.
+Source: `src/desktop-release-channels.mjs:51-58`.
+
+## What a release must clear
+
+<Steps>
+
+<Step>
+### Source gate
+
+```sh
+make public-gate
+```
+
+Source audit, secret scan, patch format, package contents, DSH pin, and the full test suite.
+</Step>
+
+<Step>
+### Release gate
+
+```sh
+make release-check
+```
+
+Builds on `public-gate` with package content validation, patch manifest, and archive integrity.
+</Step>
+
+<Step>
+### Desktop artifacts
+
+```sh
+make desktop-package-preflight
+make desktop-package-mac-arm64
+make desktop-package-win-x64
+```
+
+Run the preflight first so a version/channel mismatch is caught before signing.
+</Step>
+
+<Step>
+### Signing and notarization
+
+macOS signs with a Keychain identity; Windows signs with the Certum certificate.
+Signing failures are not bypassable — the update path only accepts signed artifacts.
+</Step>
+
+<Step>
+### Publish the feed
+
+```sh
+node scripts/desktop-release.mjs publish
+```
+
+Immutable assets first, feed second. Reversing the order hands clients a 404 update.
+</Step>
+
+</Steps>
+
+## Before you upgrade
+
+| Your current version | Recommendation |
+| --- | --- |
+| `0.0.16` | Already current, nothing to do |
+| `0.0.15` | Read [upgrade to v0.0.16](./upgrade-to-0.0.16.mdx) — there is one real breaking change |
+| Older | Go to `0.0.15` first, then `0.0.16`; do not skip multiple versions |
+| Unsure | Use the [version compatibility table](./compatibility.mdx) to confirm DSH and Node baselines |
+
+## Related
+
+- DSH plugin manifest fields: [DSH plugin authoring](../ecosystem/dsh-plugin-authoring.mdx)
+- Host admission rules: [host compatibility](../ecosystem/host-compatibility.mdx)
+- All error codes: [error reference](../reference/errors.mdx)

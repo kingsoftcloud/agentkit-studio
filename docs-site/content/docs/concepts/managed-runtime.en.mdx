@@ -1,0 +1,160 @@
+---
+title: Managed runtime
+description: A resident cloud runtime described by a manifest, with a deliberately conservative capability surface.
+status: new
+---
+
+**A managed runtime is a resident execution environment in the cloud. It is described by a manifest, it packages no model and copies no Studio store, and its identity is rebuilt from a trusted platform hop rather than read from the request body.**
+
+A local session ends when its Host process exits; a managed runtime runs around the clock. But "resident" does not mean "more capable" — the managed surface declares a **conservative subset**. This page draws that boundary.
+
+## Why a separate runtime form exists
+
+| Dimension | Local run | Managed runtime |
+| --- | --- | --- |
+| Lifecycle | Tied to the Host process | Resident, scheduled by the platform |
+| Definition source | Local agent store plus a local build | One YAML manifest declaration |
+| Identity source | Local agent record | Platform-injected environment plus trusted headers |
+| Session storage | Local disk | Local disk (valid within one agent version) |
+| Capability surface | Complete | A conservative subset, below |
+
+A managed runtime **performs no local build** and produces no ZIP package. It projects a mounted declaration onto the existing DSH admission contract, and native session storage stays authoritative.
+
+## The manifest declaration
+
+The manifest format is `agentengine.dsh-manifest/v1`, capped at 900 KiB. It accepts exactly eight fields: `name`, `description`, `framework`, `artifact_type`, `runtime`, `model`, `prompt`, `resources`. One extra field raises `MANAGED_MANIFEST_FIELD_UNSUPPORTED`.
+
+| Rule | Constraint |
+| --- | --- |
+| Encoding | Must be valid UTF-8 YAML 1.2 |
+| Keys | Strings only; duplicate keys forbidden |
+| Aliases | YAML aliases forbidden (`maxAliasCount: 0`) |
+| Root | Must be a mapping, not a sequence or scalar |
+| `runtime` | May contain only `name` and `version` |
+| `artifact_type` | Must be `ManagedRuntime` |
+| Three must agree | `framework` and `runtime.name` equal the selected runtime; `runtime.version` equals the selected version |
+| Lengths | `name` ≤ 240, `model` ≤ 512, `description` ≤ 4096, `prompt` ≤ 900 KiB |
+| Control characters | Forbidden in every field except `prompt` |
+
+Disagreement among the three returns `MANAGED_RUNTIME_IDENTITY_MISMATCH` — the declaration names a runtime the platform is not launching, and nothing is auto-corrected. Other manifest codes: `MANAGED_MANIFEST_INVALID`, `MANAGED_MANIFEST_TOO_LARGE`, `MANAGED_RUNTIME_IDENTITY_INVALID`.
+
+The `resources` field follows the managed resource contract; the shape and exclusivity rules of the five kinds live in [Resources and bindings](./resources.mdx).
+
+## Identity: rebuilt from a trusted hop
+
+A managed runtime's identity **is not decided by the request body**. Four trusted headers are mandatory, and a missing one returns `RUNTIME_TRUSTED_IDENTITY_REQUIRED` (401):
+
+| Header | Meaning |
+| --- | --- |
+| `x-agentengine-identity-namespace` | Identity namespace |
+| `x-agentengine-business-tenant-id` | Business tenant |
+| `x-agentengine-subject-type` | Subject type (≤ 32 characters) |
+| `x-agentengine-subject-id` | Subject identifier (≤ 128 characters) |
+
+The four values are sorted in a fixed order, compacted to JSON, and hashed with SHA-256, producing a user identifier of `aeu_` plus the digest. Any oversized value or control character returns `RUNTIME_TRUSTED_IDENTITY_INVALID`.
+
+<Callout type="warn" title="Identity cannot be forged from the request body">
+  The platform hop has already authenticated the caller. A managed runtime does not read tenant or subject fields from the body — otherwise anyone who can send a request could claim any tenant.
+</Callout>
+
+## Host-side inputs
+
+| Input | Constraint | Failure code |
+| --- | --- | --- |
+| Platform AgentId and VersionId | Must be provided explicitly and match the identifier rule | `MANAGED_HOST_IDENTITY_INVALID` |
+| Declaration input versus package | Cannot specify a portable build or run package at the same time | `MANAGED_HOST_INPUT_CONFLICT` |
+| Model endpoint | Must be an HTTP(S) address with no embedded credentials, query string, or fragment | `MANAGED_HOST_MODEL_INVALID` |
+| Model credential | Must be injected by the platform | `MANAGED_HOST_MODEL_CREDENTIAL_MISSING` |
+| Codex API type | `responses` or `chat-completions` | `MANAGED_HOST_MODEL_INVALID` |
+
+The endpoint points at an OpenAI-compatible service, and the credential name is fixed as `AGENTKIT_MODEL_API_KEY`. The runtime **never caches or persists** a model key.
+
+## Capability surface: a conservative declaration
+
+The managed runtime exposes its capabilities explicitly. Unimplemented actions are marked unavailable rather than silently failing or returning an empty result:
+
+| Action | Supported | Note |
+| --- | :---: | --- |
+| `submit_interaction` | ✅ Native | The Host holds each approval as an Interaction record and settles it here |
+| `cancel` | ✅ Native | Cancel a run |
+| `stop_run` | ✅ | Stop the current run |
+| `pause` / `resume` | ❌ | `managed_surface_not_implemented` |
+| `steer` / `inject` | ❌ | Same |
+| `checkpoint` / `durable_restore` | ❌ | No checkpoints |
+| `goal` / `loop` / `plan` | ❌ | Same |
+| `resume_run` | ❌ | Stop only, no resume |
+| `background_run` | ❌ | Foreground runs only |
+
+Other declared capabilities:
+
+| Item | Value |
+| --- | --- |
+| Hosted chat format | `responses`, endpoint `/agentengine/api/v1/RunAgent`, version `v1` |
+| Cancel / interrupt | Cancel supported, interrupt not |
+| History read | `ksadk.history/v2`, session contract version `2`, epochs and snapshots supported |
+| Approval policy | Modes `ask` / `risk`, default `risk`, runtime override allowed |
+| Persistence backend | `dsh-native-disk` |
+| Shared across pods | No |
+| Effective scope | The same agent version |
+| Active run restore | No (history is readable; an unfinished run does not resume automatically) |
+| Attachments / workspace files | Neither supported |
+| Kernel session events | Not supported |
+
+"Effective scope is the same agent version" is an easy constraint to miss: session history is not readable across versions.
+
+## Execution policy
+
+A managed runtime's execution policy comes from the deployment declaration and has two explicit layers:
+
+| Item | Default | Ceiling |
+| --- | --- | --- |
+| Permission mode | `workspace-write` | `danger-full-access` |
+
+The exposed "allowed permission modes" is the **subset up to and including the ceiling**. A requested mode above the ceiling is clamped rather than rejected — see [The three runtimes](./runtimes.mdx).
+
+## The deployment state machine
+
+A deployment has 19 states, in three groups: polling states (9, continuously refreshed by the UI), attention states (7, requiring a person), and the remaining terminal or steady states.
+
+| State | Label | State | Label | State | Label |
+| --- | --- | --- | --- | --- | --- |
+| `PREPARED` | Ready to submit | `UPLOADING` | Uploading package | `UPLOAD_UNKNOWN` | Upload result unverified |
+| `UPLOADED` | Uploaded | `CREATING` | Creating | `CREATE_UNKNOWN` | Create result unverified |
+| `PROVISIONING` | Provisioning instance | `CONFIGURING` | Configuring access token | `TOKEN_PENDING` | Waiting for config to apply |
+| `STARTING` | Starting | `UPDATING` | Switching version | `UPDATE_UNKNOWN` | Update result unverified |
+| `READY` | Ready | `AVAILABLE_UPDATING` | Endpoint available, platform updating | `ACTION_REQUIRED` | Action required |
+| `FAILED` | Failed | `DELETING` | Deleting | `DELETE_UNKNOWN` | Delete result unverified |
+| `DELETED` | Deleted | | | | |
+
+The three `*_UNKNOWN` states (upload, create, update, delete) mean **outcome unknown**, not failure. They mean "the request was sent but no definite receipt arrived", and the response is verification rather than retry. `TOKEN_PENDING` is both a polling state and an attention state — it is waiting for platform configuration to take effect.
+
+## Hard rules
+
+1. **A manifest is never auto-corrected.** Disagreement is an error, never "the platform value silently wins".
+2. **Identity comes only from trusted headers.** Identity fields in the request body are never read.
+3. **Unimplemented actions must be marked unavailable**, never return an empty result that impersonates success.
+4. **Persistence crosses neither agent versions nor pods.**
+5. **Managed deployment accepts two runtimes only**: DSH Native and Codex.
+
+## Related tasks
+
+<Cards>
+  <Card title="Deploy to the cloud" href="/en/docs/guides/deploy-to-cloud">
+    From a local agent to a working manifest declaration.
+  </Card>
+  <Card title="Update and roll back a managed runtime" href="/en/docs/guides/update-rollback">
+    Use the state machine to decide when a retry is safe.
+  </Card>
+  <Card title="Observability (OTel)" href="/en/docs/guides/observability">
+    Connect a resident runtime to OpenTelemetry.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| The full 19-state enumeration and polling sets | [Deployment states](../reference/deployment-states.mdx) |
+| `MANAGED_*` and `RUNTIME_*` error codes | [Errors](../reference/errors.mdx) |
+| The environment variables the platform injects | [Environment](../reference/environment.mdx) |
+| Lifecycle and rollback details | [Managed runtime lifecycle](../deployment/managed-runtime-lifecycle.mdx) |

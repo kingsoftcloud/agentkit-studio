@@ -1,0 +1,550 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* ==========================================================================
+   AgentKit Studio documentation — design system
+   --------------------------------------------------------------------------
+   The documentation site and the marketing landing page (docs/index.html)
+   share one visual language: a near-black canvas, a blue → cyan → violet
+   gradient, and a mono face for anything you can type. Everything below is
+   expressed with Fumadocs design tokens so light and dark stay in sync.
+   ========================================================================== */
+
+@theme {
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'SF Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+}
+
+:root {
+  --ak-blue: #4d7cff;
+  --ak-blue-strong: #3b66e0;
+  --ak-cyan: #2fb6c2;
+  --ak-violet: #7c66e0;
+  --ak-gradient: linear-gradient(100deg, #4d7cff 0%, #2fb6c2 52%, #7c66e0 100%);
+  --ak-glow: 0 1px 0 rgb(255 255 255 / 0.6) inset, 0 10px 30px -12px rgb(77 124 255 / 0.35);
+
+  --fd-primary: #4d7cff;
+  --fd-primary-foreground: #ffffff;
+
+  color-scheme: light;
+}
+
+.dark,
+[data-theme='dark'] {
+  --ak-blue: #8fb0ff;
+  --ak-blue-strong: #a8c2ff;
+  --ak-cyan: #7ee7f2;
+  --ak-violet: #b6a6ff;
+  --ak-gradient: linear-gradient(100deg, #a8c2ff 0%, #7ee7f2 50%, #b6a6ff 100%);
+  --ak-glow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 18px 50px -24px rgb(126 231 242 / 0.35);
+
+  --fd-primary: #7ee7f2;
+  --fd-primary-foreground: #06101f;
+
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------- base --- */
+
+html {
+  scrollbar-gutter: stable;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--ak-blue) 26%, transparent);
+  color: inherit;
+}
+
+/* Thin, unobtrusive scrollbars — the sidebar gets long. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--fd-border) 90%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--fd-border) 90%, transparent);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--fd-muted-foreground) 45%, transparent);
+}
+
+/* Keyboard users must always see where they are. */
+:focus-visible {
+  outline: 2px solid var(--ak-blue);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------------------ wordmark --- */
+
+.ak-studio-gradient {
+  background: var(--ak-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  letter-spacing: -0.018em;
+}
+
+/* -------------------------------------------------------------- prose ---- */
+
+.fd-content {
+  font-size: 0.9688rem;
+  line-height: 1.78;
+}
+
+.fd-content :where(p, li) {
+  text-wrap: pretty;
+}
+
+.fd-content :where(h1, h2, h3, h4) {
+  text-wrap: balance;
+  letter-spacing: -0.021em;
+}
+
+.fd-content h2 {
+  margin-top: 3rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid color-mix(in oklab, var(--fd-border) 55%, transparent);
+}
+
+.fd-content h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.fd-content h3 {
+  margin-top: 2.25rem;
+}
+
+.fd-content a {
+  color: var(--ak-blue);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in oklab, var(--ak-blue) 35%, transparent);
+  text-underline-offset: 0.22em;
+  transition: text-decoration-color 160ms ease, color 160ms ease;
+}
+
+.fd-content a:hover {
+  color: var(--ak-blue-strong);
+  text-decoration-color: currentColor;
+}
+
+/* Inline code reads as a chip, not as a broken word. */
+.fd-content :not(pre) > code {
+  padding: 0.15em 0.4em;
+  border-radius: 5px;
+  border: 1px solid color-mix(in oklab, var(--ak-cyan) 22%, transparent);
+  background: color-mix(in oklab, var(--ak-cyan) 10%, transparent);
+  color: color-mix(in oklab, var(--ak-cyan) 72%, var(--fd-foreground));
+  font-size: 0.86em;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.dark .fd-content :not(pre) > code {
+  color: color-mix(in oklab, var(--ak-cyan) 62%, #ffffff);
+}
+
+/* Code blocks: quiet border, generous padding, no layout jump on scroll. */
+.fd-content pre {
+  border: 1px solid var(--fd-border);
+  border-radius: 14px;
+  box-shadow: var(--ak-glow);
+}
+
+.fd-content pre code {
+  font-size: 0.84rem;
+  line-height: 1.75;
+}
+
+/* Tables: the documentation is reference-heavy, so they must scan well. */
+.fd-content table {
+  width: 100%;
+  margin: 1.5rem 0;
+  border: 1px solid var(--fd-border);
+  border-radius: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: 0.9rem;
+}
+
+.fd-content thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in oklab, var(--fd-card) 92%, var(--fd-primary) 8%);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.fd-content tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--fd-card) 55%, transparent);
+}
+
+.fd-content tbody tr:hover {
+  background: color-mix(in oklab, var(--fd-primary) 7%, transparent);
+}
+
+.fd-content :where(th, td) {
+  padding: 0.66rem 0.95rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--fd-border) 70%, transparent);
+  vertical-align: top;
+}
+
+.fd-content tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.fd-content blockquote {
+  border-left: 2px solid var(--ak-cyan);
+  border-radius: 0 12px 12px 0;
+  background: color-mix(in oklab, var(--ak-cyan) 7%, transparent);
+  padding: 0.75rem 1.15rem;
+  color: var(--fd-muted-foreground);
+}
+
+.fd-content img {
+  border-radius: 12px;
+  border: 1px solid var(--fd-border);
+}
+
+.fd-content hr {
+  border-color: color-mix(in oklab, var(--fd-border) 70%, transparent);
+  margin: 3rem 0;
+}
+
+/* Lists need air; the default tight stack reads like a wall of text. */
+.fd-content :where(ul, ol) {
+  padding-left: 1.35rem;
+}
+.fd-content li {
+  margin: 0.42rem 0;
+}
+.fd-content li::marker {
+  color: color-mix(in oklab, var(--ak-blue) 65%, var(--fd-muted-foreground));
+}
+
+/* ------------------------------------------------------------- cards ----- */
+
+.fd-card {
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.fd-card:hover {
+  border-color: color-mix(in oklab, var(--ak-cyan) 55%, var(--fd-border));
+  box-shadow: 0 12px 32px -18px color-mix(in oklab, var(--ak-cyan) 60%, transparent);
+  transform: translateY(-1px);
+}
+
+/* -------------------------------------------------------------- hero ----- */
+
+.ak-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin: 1.25rem 0 2.5rem;
+  padding: clamp(1.75rem, 4.2vw, 3.25rem);
+  border: 1px solid color-mix(in oklab, var(--fd-border) 92%, var(--ak-blue) 8%);
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse 70% 96% at 2% 8%, color-mix(in oklab, var(--ak-blue) 34%, transparent), transparent 62%),
+    radial-gradient(ellipse 62% 82% at 98% 2%, color-mix(in oklab, var(--ak-cyan) 26%, transparent), transparent 62%),
+    radial-gradient(ellipse 80% 74% at 62% 120%, color-mix(in oklab, var(--ak-violet) 30%, transparent), transparent 66%),
+    linear-gradient(160deg, color-mix(in oklab, var(--ak-blue) 8%, var(--fd-card)) 0%, var(--fd-card) 58%);
+  box-shadow: var(--ak-glow);
+}
+
+/* A faint technical grid keeps the gradient from looking like a blur. */
+.ak-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--fd-border) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--fd-border) 55%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 92% 70% at 50% 0%, #000 12%, transparent 78%);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.ak-hero h1 {
+  margin: 0 0 0.85rem;
+  font-size: clamp(1.95rem, 4.1vw, 3rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.ak-hero p {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--fd-muted-foreground);
+  font-size: 1.02rem;
+  line-height: 1.8;
+  text-wrap: pretty;
+}
+
+.ak-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.85rem;
+}
+
+.ak-hero-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.62rem 1.12rem;
+  border: 1px solid var(--fd-border);
+  border-radius: 11px;
+  color: var(--fd-foreground);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.ak-hero-actions a:hover {
+  border-color: color-mix(in oklab, var(--ak-cyan) 60%, var(--fd-border));
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+.ak-hero-actions a[data-primary='true'] {
+  border-color: transparent;
+  background: var(--ak-gradient);
+  color: #06101f;
+  box-shadow: 0 12px 28px -14px color-mix(in oklab, var(--ak-blue) 85%, transparent);
+}
+
+.ak-hero-actions a[data-primary='true']:hover {
+  box-shadow: 0 16px 34px -14px color-mix(in oklab, var(--ak-blue) 95%, transparent);
+}
+
+/* ----------------------------------------------------------- diagrams ---- */
+
+/* Architecture diagrams.
+   Archify bakes the theme into the pixels, so each diagram ships a light and a
+   dark capture and CSS shows the matching one. Clicking opens a lightbox with
+   wheel zoom and drag-to-pan (components/diagram.tsx). */
+.ak-diagram {
+  position: relative;
+  margin: 2rem 0;
+  padding: 0;
+}
+
+.ak-diagram-img {
+  display: block;
+  width: 100%;
+  min-width: 680px;
+  height: auto;
+  border-radius: 18px;
+  border: 1px solid var(--fd-border);
+  background: var(--fd-card);
+  box-shadow: var(--ak-glow);
+  cursor: zoom-in;
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.ak-diagram-img:hover {
+  border-color: color-mix(in oklab, var(--ak-cyan) 55%, var(--fd-border));
+  box-shadow: 0 16px 40px -22px color-mix(in oklab, var(--ak-blue) 70%, transparent);
+}
+
+.ak-diagram-dark {
+  display: none;
+}
+
+.dark .ak-diagram-light {
+  display: none;
+}
+
+.dark .ak-diagram-dark {
+  display: block;
+}
+
+.ak-diagram-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--fd-border);
+  background: color-mix(in oklab, var(--fd-card) 82%, transparent);
+  color: var(--fd-muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.5;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.ak-diagram:hover .ak-diagram-hint {
+  opacity: 1;
+}
+
+@media (max-width: 700px) {
+  .ak-diagram-img {
+    min-width: 560px;
+  }
+  .ak-diagram-hint {
+    display: none;
+  }
+}
+
+/* Lightbox ---------------------------------------------------------------- */
+
+.ak-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in oklab, #04060a 88%, transparent);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+.ak-lightbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px clamp(12px, 3vw, 28px);
+  border-bottom: 1px solid rgb(255 255 255 / 0.12);
+  color: #eef1f7;
+  font-size: 13px;
+}
+
+.ak-lightbox-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.82;
+}
+
+.ak-lightbox-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.ak-lightbox-controls button {
+  min-width: 38px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06);
+  color: #eef1f7;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.ak-lightbox-controls button:hover {
+  background: rgb(255 255 255 / 0.14);
+  border-color: rgb(255 255 255 / 0.32);
+}
+
+.ak-lightbox-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+
+.ak-lightbox-stage[data-zoomed='true'] {
+  cursor: grab;
+}
+
+.ak-lightbox-stage[data-zoomed='true']:active {
+  cursor: grabbing;
+}
+
+.ak-lightbox-stage img {
+  max-width: min(96vw, 1800px);
+  max-height: calc(100vh - 130px);
+  border-radius: 12px;
+  user-select: none;
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform 60ms linear;
+}
+
+.ak-lightbox-hint {
+  margin: 0;
+  padding: 10px 16px 16px;
+  text-align: center;
+  color: rgb(255 255 255 / 0.55);
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------- navigation ---- */
+
+/* The sidebar group label is a section heading, not a link. */
+.fd-sidebar .fd-accordion-trigger,
+[data-sidebar] .fd-accordion-trigger {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* ------------------------------------------------------------ print ------ */
+
+@media print {
+  .fd-sidebar,
+  .fd-toc,
+  [data-sidebar],
+  [data-toc],
+  header {
+    display: none !important;
+  }
+  .fd-content {
+    max-width: none;
+  }
+  .fd-content a {
+    text-decoration: underline;
+  }
+  .fd-content a[href^='http']::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.78em;
+    color: #555;
+  }
+}

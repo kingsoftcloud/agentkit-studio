@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Plugin market pipeline",
+    "subtitle": "Two sources, one deterministic merge, four readiness layers — and three degradation paths that never empty the panel",
+    "output": ".archify/plugin-market-en/market.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    {
+      "label": "Sources"
+    },
+    {
+      "label": "Load"
+    },
+    {
+      "label": "Merge"
+    },
+    {
+      "label": "Check"
+    },
+    {
+      "label": "Render"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "curated",
+      "type": "database",
+      "label": "Built-in catalog",
+      "sublabel": "DSH_CURATED_PLUGINS",
+      "tag": "works offline",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "remote",
+      "type": "cloud",
+      "label": "Remote index",
+      "sublabel": "AGENTKIT_STUDIO_DSH_PLUGIN_INDEX",
+      "tag": "HTTPS JSON",
+      "stage": 0,
+      "row": 3
+    },
+    {
+      "id": "loader",
+      "type": "backend",
+      "label": "Index loader",
+      "sublabel": "8s timeout · 512 KiB cap",
+      "tag": "10 min cache",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "merge",
+      "type": "backend",
+      "label": "mergeCatalogEntries",
+      "sublabel": "built-in wins · remote refreshes copy",
+      "tag": "deterministic",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "cache",
+      "type": "database",
+      "label": "Last good document",
+      "sublabel": "reused when refresh fails",
+      "tag": "stale fallback",
+      "stage": 2,
+      "row": 4
+    },
+    {
+      "id": "readiness",
+      "type": "security",
+      "label": "Four readiness layers",
+      "sublabel": "expectedEntries · service probes",
+      "tag": "admission",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "skipped",
+      "type": "external",
+      "label": "Dropped rows",
+      "sublabel": "counted as skipped",
+      "tag": "never aborts",
+      "stage": 1,
+      "row": 4
+    },
+    {
+      "id": "hint",
+      "type": "frontend",
+      "label": "Degradation hint",
+      "sublabel": "info.error.code",
+      "tag": "market stays full",
+      "stage": 3,
+      "row": 4
+    },
+    {
+      "id": "panel",
+      "type": "frontend",
+      "label": "Plugin market panel",
+      "sublabel": "ready · loaded · failed",
+      "tag": "render",
+      "stage": 4,
+      "row": 0
+    }
+  ],
+  "flows": [
+    {
+      "id": "curated-merge",
+      "from": "curated",
+      "to": "merge",
+      "label": "built-in rows",
+      "classification": "ships with product",
+      "variant": "emphasis"
+    },
+    {
+      "id": "remote-loader",
+      "from": "remote",
+      "to": "loader",
+      "label": "HTTPS JSON",
+      "classification": "operator config",
+      "variant": "default"
+    },
+    {
+      "id": "loader-merge",
+      "from": "loader",
+      "to": "merge",
+      "label": "remote rows",
+      "classification": "normalized",
+      "variant": "default"
+    },
+    {
+      "id": "loader-cache",
+      "from": "loader",
+      "to": "cache",
+      "label": "write on success",
+      "classification": "10 min TTL",
+      "variant": "dashed"
+    },
+    {
+      "id": "cache-merge",
+      "from": "cache",
+      "to": "merge",
+      "label": "stale reuse",
+      "classification": "failure fallback",
+      "variant": "dashed"
+    },
+    {
+      "id": "loader-skipped",
+      "from": "loader",
+      "to": "skipped",
+      "label": "invalid rows",
+      "classification": "bad field",
+      "variant": "dashed"
+    },
+    {
+      "id": "merge-readiness",
+      "from": "merge",
+      "to": "readiness",
+      "label": "merged catalog",
+      "classification": "built-in first",
+      "variant": "emphasis"
+    },
+    {
+      "id": "readiness-panel",
+      "from": "readiness",
+      "to": "panel",
+      "label": "ready / loaded",
+      "classification": "renderable",
+      "variant": "emphasis"
+    },
+    {
+      "id": "merge-hint",
+      "from": "merge",
+      "to": "hint",
+      "label": "fetch failed",
+      "classification": "404 / timeout",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to read this",
+      "items": [
+        "Solid lines are the normal path: sources in, merge, check, render.",
+        "Dashed lines are async and degraded: cache writes, stale reuse, dropped rows.",
+        "Rose is the failure hint: when the remote index is unreachable, the panel still shows the built-in catalog plus one hint."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Built-in always wins",
+      "items": [
+        "Remote rows may only append new entries or refresh presentation fields.",
+        "featured and experimental combine with OR: a remote row cannot un-feature a built-in one.",
+        "expectedEntries, service, readinessNote and defaultEnabled are read only from the built-in catalog."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Three degradation paths",
+      "items": [
+        "Refresh fails: reuse the last successful document and flag it stale.",
+        "First failure with no cache: fall back to the built-in catalog.",
+        "One invalid row: counted as skipped while the rest of the document still loads."
+      ]
+    }
+  ]
+}

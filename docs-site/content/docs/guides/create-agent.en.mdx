@@ -1,0 +1,190 @@
+---
+title: Create and edit an agent
+description: Build your first agent with the three-step form, and see why saving creates a revision.
+status: new
+---
+
+This page gets a runnable agent created. Creating and editing share one form; only the save semantics differ — creating produces revision `r1`, editing produces `r{n+1}`.
+
+<Callout type="info" title="Prerequisites">
+  Three things must be true before you start. Missing any one of them blocks the **Bind capabilities** step:
+
+  1. At least one model credential is configured and shows **Configured**. See [Configure models and credentials](./models-and-credentials.mdx).
+  2. The Host is connected — the Agents panel lists existing agents instead of showing "Host not connected".
+  3. You know what the agent is for. The system prompt falls back to the purpose description when it is empty (`src/client/pages/agent-form.mjs:160`).
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Open the manual configuration form
+
+In the **Agents** panel there are two entry points:
+
+- Click **Chat to create** in the top-right corner to refine prompts and resource bindings over several turns, then confirm the draft.
+- Click **More ways to create** (the chevron on the right) → **Manual configuration** to go straight to the three-step form.
+
+This page covers manual configuration. Both entries render the same form component with identical fields.
+
+<Callout type="info" title="Where to look">The **Chat to create** button and the **More ways to create → Manual configuration** menu in the Agents panel.</Callout>
+</Step>
+
+<Step>
+### Step 1: Basic information
+
+| Field | Purpose | Default / validation |
+| --- | --- | --- |
+| Prompt template (optional) | Collapsed section offering **General assistant** and **Research assistant** starting points | Selecting one fills in name, description, and system prompt |
+| Agent ID | Stable identifier | Placeholder `local-agent`; lowercased on save |
+| Name | Display name | Required |
+| Runtime | Execution loop | Defaults to **DSH Native Harness**; immutable after creation |
+| Purpose | One-line description | Saved as "created locally by AgentKit Studio" when empty |
+| Role and system prompt | Identity, boundaries, answer style | Falls back to purpose, then template |
+| Task description (optional) | Fixed task background | Hidden for cloud agents |
+
+How the three runtimes differ (`src/client/theme.mjs:28-33`):
+
+| Runtime | UI label | Best for |
+| --- | --- | --- |
+| `dsh-native` | DSH Native Harness | A local native loop that uses tools and resources on demand |
+| `harness` | Star Harness | Multi-role collaboration with a configurable tool loop |
+| `codex` | Codex Agent | Code and engineering tasks |
+
+<Callout type="warn" title="The runtime choice is irreversible">
+  The runtime radio group is disabled in edit mode, so switching runtimes means creating a new agent.
+  Star Harness is visible for new agents but carries an "unavailable" badge and cannot be selected; it becomes selectable only when editing an existing Star Harness agent (`src/client/pages/agent-form.mjs:61`, `:265-267`).
+</Callout>
+
+**When Next becomes clickable**: both Agent ID and name are non-empty. No other field blocks it (`src/client/pages/agent-form.mjs:137-138`).
+</Step>
+
+<Step>
+### Step 2: Bind capabilities
+
+**Models** (required)
+
+- **Default model**: used by new sessions, drawn from the merged local profile and model gateway catalog.
+- **Available models**: the set a conversation can switch to. The default model is always included — switching the dropdown adds it to the list automatically (`src/client/pages/agent-form.mjs:289`).
+
+If the catalog read fails, the page shows only configured profiles and warns with `MODEL_CATALOG_UNAVAILABLE`. It blocks only when not a single model is readable.
+
+**Tools**, varying by runtime:
+
+| Runtime | UI behavior |
+| --- | --- |
+| DSH Native Harness | Only shows "Uses the DSH Native tool loop"; nothing to bind |
+| Star Harness | **Adjust by capability group** shortcuts plus **Advanced: adjust tool scope** for per-item selection |
+| Codex Agent | A plain tool picker |
+
+**MCP servers** and **Skills**: multi-select; leaving them empty means unbound. Probe an MCP server before creating an agent, otherwise it stays unselectable in the catalog — see [Bind an MCP server](./mcp-servers.mdx).
+
+**Platform resources**: one dropdown each for knowledge base, memory instance, and Skill Center. All three come from the cloud catalog; without a cloud connection the dropdowns only offer "connect to the cloud first".
+
+<Callout type="info" title="Where to look">The five blocks of the **Bind capabilities** step — models, tools, MCP servers, skills, and platform resources.</Callout>
+</Step>
+
+<Step>
+### Step 3: Policy and confirmation
+
+**Permissions** — content depends on the runtime:
+
+| Runtime | What is shown | Default |
+| --- | --- | --- |
+| Star Harness | **Agent tool policy** with three options | `strict` |
+| DSH Native / Codex | "Permissions: managed by the current runtime and Host" | Not editable |
+
+What the three options mean:
+
+| Option | Behavior |
+| --- | --- |
+| Strict | Writes and unknown side effects require approval |
+| Follow session and Host permissions | Delegated entirely to the session and Host |
+| Custom | Unknown side effects denied by default, overridden per tool |
+
+Choosing **Custom** reveals a per-tool rule box: a JSON object mapping tool names to decisions, where decisions are only `inherit`, `ask`, or `deny`:
+
+```json
+{
+  "read_workspace_file": "inherit",
+  "save_crm": "ask"
+}
+```
+
+Unlisted read-only tools follow the Host; every other tool is denied. Rules are fixed to the agent revision, and session permissions plus Host approval can still refuse further.
+
+<Callout type="info" title="Two different policies — do not confuse them">
+  The **agent tool policy** (this step) lives on the revision and only assigns per-tool `inherit` / `ask` / `deny`.
+  The **execution policy** is the permission ceiling when deployed to the cloud: `read-only` / `workspace-write` / `danger-full-access`,
+  defaulting to `workspace-write`, and it can only narrow the deployed runtime's ceiling (`src/execution-policy.mjs:10,29`). It is not part of this form.
+</Callout>
+
+**Memory** — the **Cross-session memory** switch is off by default. Turning it on reveals the memory settings panel; see [Bind knowledge bases and Memory](./knowledge-memory.mdx).
+
+**Sub-task roles** — Star Harness only, used to declare multi-role collaboration.
+
+**Confirm configuration** — a read-only summary: Agent ID, name, runtime, default model, available-model count, `N Tool · N MCP · N Skill`, platform resource count, memory source, and template source.
+
+<Callout type="info" title="Where to look">The full row list of the **Confirm configuration** summary in step 3.</Callout>
+</Step>
+
+<Step>
+### Save
+
+- On create the button reads **Create agent**, showing **Saving…** while in flight.
+- On edit it reads **Save agent**; saving creates a new configuration revision, and the notice names the current one (for example "currently r3").
+
+Three values are fixed in the saved spec, and knowing them saves a detour:
+
+- `security.toolPolicy` is always `deny-by-default`.
+- Star Harness additionally receives `process:host-user`, plus `network:mcp` when any MCP server is bound.
+- DSH Native and Codex receive no extra permission and keep the deny-by-default set.
+
+<Callout type="warn" title="Editing does not affect running sessions">
+  Saving produces a new revision; existing sessions and builds are not switched automatically. For a cloud agent, existing sessions keep the old snapshot and only new runs use the updated component bindings.
+</Callout>
+</Step>
+
+</Steps>
+
+## What success looks like
+
+A notice appears at the top of the Agents list:
+
+```text
+已创建 我的第一个 Agent（r1），可在运行中心构建。
+```
+
+On edit the notice starts with **saved** and includes the new revision number. Four conditions must hold:
+
+- The agent appears in the list and its status is not failed.
+- The runtime badge matches what you picked in step 1.
+- Reopening the editor shows the default model selected in **Bind capabilities** and the same available-model count.
+- Sending a message returns a complete answer rather than an error summary.
+
+## Common errors
+
+| Error code | Cause | Fix |
+| --- | --- | --- |
+| `AGENT_EXPECTED_REVISION_CONFLICT` | Another window already saved a newer revision | Click **Load latest version**, compare your unsaved content item by item, then save again |
+| `AGENT_NOT_FOUND` | The agent was deleted or is outside this workspace | Refresh the Agents list and retry |
+| `AGENT_DEFINITION_REQUIRED` | The submitted spec is empty | You saved before the form finished loading; wait for the catalog |
+| `AGENT_MUTATION_BUSY` | Concurrent writes to the same agent | Wait for the in-flight operation, then retry |
+| `STUDIO_NATIVE_AGENT_POLICY_INVALID` | Per-tool rules are not valid JSON, or a decision is outside `inherit` / `ask` / `deny` | Fix the JSON; tool names must match `^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$` |
+| `MODEL_CATALOG_UNAVAILABLE` | The model gateway catalog failed to load | Only configured profiles are shown; check credentials in Settings and reopen the form |
+| `AGENT_UPDATE_AUTHORITY_LOST` | Ownership changed during editing | Reopen the editor |
+| `创建 Agent 失败` | Generic fallback; the real cause is in `message` | Take the full message and error code to troubleshooting |
+
+For the full by-code workflow, see [Troubleshooting](../help/troubleshooting.mdx).
+
+## Related reference
+
+| What you want to know | Where to go |
+| --- | --- |
+| What a revision and a build freeze | [Agent · Revision · Build · Run](../concepts/agent-revision-build.mdx) |
+| The full capability comparison of the three runtimes | [The three runtimes](../concepts/runtimes.mdx) |
+| The shape of a resource binding and its exclusivity rules | [Resources and bindings](../concepts/resources.mdx) |
+| The native agent policy contract | `src/native-agent-policy.mjs` (`agentkit.native-agent-policy/v1`) |
+| Creation form source | `src/client/pages/agent-form.mjs`, `src/client/pages/agent-edit.mjs` |
+| Runtime defaults | `src/authoring-defaults.mjs:4`, `src/client/theme.mjs:26-33` |

@@ -1,7 +1,7 @@
 import { DEFAULT_KSYUN_BASE_URL, DEFAULT_KSYUN_MODEL, DSH_MODEL_CREDENTIAL, DSH_MODEL_SETTINGS_NS, modelCredentialName, modelProfileId } from '../dsh/model-bridge.mjs';
 import { BRAND as DEFAULT_BRAND } from '../theme.mjs';
 import { normalizeModelEndpoint } from '../../model-endpoint.mjs';
-import { headerEntryProblem, modelRuntimeOptions, requestHeaders } from '../../model-profile-contract.mjs';
+import { modelRuntimeOptions } from '../../model-profile-contract.mjs';
 import { reasoningProfileFor, studioReasoning } from '../../model-reasoning.mjs';
 import { leaseDocumentResource } from '../dsh/document-resource.mjs';
 import modelSettingsStyles from '../styles/model-settings.css.mjs';
@@ -44,62 +44,6 @@ export function modelSettingsDraftKeys() { return [...modelDrafts.keys()]; }
 
 const profileKey = (profile, index) => String(profile?.id || profile?.credentialName || index || 'default');
 const cloudSnapshot = source => Object.fromEntries(CLOUD_FIELDS.map(key => [key, String(source?.[key] ?? '')]));
-
-/** 高级段里的请求预算：表单按文本编辑，契约里必须是大于 0 的整数。 */
-const BUDGET_KEYS = ['maxOutputTokens', 'contextWindow', 'requestTimeoutMs'];
-let headerRowSequence = 0;
-const headerRowId = () => `ms-header-${++headerRowSequence}`;
-
-/*
- * `profile.headers` 在存储里是普通对象，在编辑区是有序的键值行。两种形状都
- * 能渲染，所以草稿、撤销、重新读取都不会让编辑器丢掉行；行 id 只用于列表 key。
- */
-const headerRows = value => Array.isArray(value) ? value
-  : value && typeof value === 'object'
-    ? Object.entries(value).map(([name, item]) => ({ id: `ms-header:${name}`, name, value: String(item ?? '') }))
-    : [];
-
-/**
- * 行 → 存储里的普通对象；空行与无法表示的行在保存时被丢弃。请求头名称大小写
- * 不敏感，重复名称只保留最后一条，避免把两个「同名」请求头发给网关。
- */
-const headerRecord = rows => {
-  const record = {};
-  const entries = requestHeaders(Object.fromEntries(headerRows(rows)
-    .map(row => [String(row?.name ?? '').trim(), String(row?.value ?? '')])));
-  for (const [name, value] of Object.entries(entries)) {
-    const duplicate = Object.keys(record).find(key => key.toLowerCase() === name.toLowerCase());
-    if (duplicate) delete record[duplicate];
-    record[name] = value;
-  }
-  return Object.keys(record).length ? record : undefined;
-};
-
-/** 当前行为什么还不能原样保存（'' 表示可以）；只报告名称，不回显值。 */
-const headerRowProblem = rows => {
-  const seen = new Set();
-  for (const row of headerRows(rows)) {
-    const name = String(row?.name ?? '').trim(), value = String(row?.value ?? '');
-    if (!name && !value) continue;
-    if (!name || !value) return '请求头名称和值都需要填写，空行在保存时会被丢弃';
-    const problem = headerEntryProblem(name, value);
-    if (problem) return problem;
-    if (seen.has(name.toLowerCase())) return `请求头「${name}」重复，保存时只保留最后一条`;
-    seen.add(name.toLowerCase());
-  }
-  return '';
-};
-
-const budgetInteger = value => {
-  const text = String(value ?? '').trim();
-  if (!text) return undefined;
-  const number = Number(text);
-  if (!Number.isSafeInteger(number) || number <= 0) throw new Error('最大输出 Token、上下文窗口与请求超时必须为大于 0 的整数');
-  return number;
-};
-
-/** 比较用的同一套归一化：非法草稿保留原文本，这样字段仍然是「未保存」。 */
-const budgetDraft = value => { try { return budgetInteger(value); } catch { return String(value ?? ''); } };
 
 /** JSON with recursively sorted object keys, so a field-order change never reads as an edit. */
 const stableString = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
@@ -248,27 +192,7 @@ export function createModelSettingsSection({
     const isNewProfile = (profile, index) => Boolean(profile) && !savedProfile(profileKey(profile, index));
     // Capability discovery (模型目录识别出的 input) is derived metadata, not an
     // edit: reading the catalog must not by itself raise the unsaved chip.
-    // 预算字段在编辑区是文本、请求头是键值行；比较前统一归一化，这样「输出了
-    // 同样的数字」不会被误判成未保存，而清空预算或删掉最后一条请求头仍然是改动。
-    const editableProfile = ({ input: _input, inputCapability: _inputCapability, ...profile }) => {
-      const fields = { ...profile };
-      for (const key of BUDGET_KEYS) if (fields[key] !== undefined) fields[key] = budgetDraft(fields[key]);
-      return { ...fields, headers: headerRecord(profile.headers) };
-    };
-    /** The runtime contract a save persists: integers and one plain header record. */
-    const runtimeOptions = profile => {
-      const options = modelRuntimeOptions(profile);
-      for (const key of BUDGET_KEYS) {
-        if (options[key] === undefined) continue;
-        const value = budgetInteger(options[key]);
-        // 留空的预算沿用网关默认值：字段整个消失，而不是存一个空值。
-        if (value === undefined) delete options[key]; else options[key] = value;
-      }
-      if (options.headers !== undefined) delete options.headers;
-      const headers = headerRecord(profile.headers);
-      if (headers) options.headers = headers;
-      return options;
-    };
+    const editableProfile = ({ input: _input, inputCapability: _inputCapability, ...profile }) => profile;
     /** A profile is edited when it differs from the last configuration the Host confirmed. */
     const isDirtyProfile = (profile, index) => {
       if (!profile) return false;
@@ -295,17 +219,6 @@ export function createModelSettingsSection({
       rememberDraft(form.profiles[index], index, fields);
       setForm(current => ({ ...current, profiles: current.profiles.map((profile, cursor) => cursor === index ? { ...profile, ...fields } : profile) }));
     };
-    // 请求头行也只活在内存草稿里：保存时才归一化成 `profile.headers` 的普通
-    // 对象，空行与非法名称被丢弃；删掉最后一行即移除该字段。
-    const updateHeaderRows = (index, mutate) => {
-      const profile = form.profiles[index];
-      if (!profile) return;
-      setProfile(index, 'headers', mutate(headerRows(profile.headers)));
-    };
-    const addHeaderRow = () => updateHeaderRows(selectedIndex, rows => [...rows, { id: headerRowId(), name: '', value: '' }]);
-    const setHeaderRow = (rowIndex, key, value) => updateHeaderRows(selectedIndex,
-      rows => rows.map((row, cursor) => cursor === rowIndex ? { ...row, [key]: value } : row));
-    const removeHeaderRow = rowIndex => updateHeaderRows(selectedIndex, rows => rows.filter((_, cursor) => cursor !== rowIndex));
     // Keep the historical ‘添加提供商或模型’ wording in source for older surface checks; the visible action is now ‘添加模型’.
     const addProfile = () => {
       const id = `profile-${Date.now()}`;
@@ -398,7 +311,7 @@ export function createModelSettingsSection({
           onSaved?.();
           return;
         }
-        const rawProfiles = form.profiles.map((profile, index) => ({ ...runtimeOptions(profile),
+        const rawProfiles = form.profiles.map((profile, index) => ({ ...modelRuntimeOptions(profile),
           ...(typeof profile.displayName === 'string' ? { displayName: profile.displayName } : {}),
           id: modelProfileId(profile, index), provider: profile.provider.trim() || 'ksyun', modelName: profile.modelName.trim(), baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider), credentialName: modelCredentialName(profile, index), enabled: profile.enabled !== false, default: profile.default === true, codexApi: profile.codexApi || 'responses', input: profile.input || ['text'], ...(profile.reasoningEfforts ? { reasoningEfforts: true, defaultReasoningEffort: profile.defaultReasoningEffort || reasoningProfileFor(profile.provider).default } : {}) }));
         const activeDefaultIndex = rawProfiles.findIndex(profile => profile.enabled !== false && profile.default);
@@ -467,18 +380,12 @@ export function createModelSettingsSection({
     const profileCatalogKey = profile => String(profile.id || profile.credentialName || 'default');
     const catalogItemsFor = profile => modelCatalogs[profileCatalogKey(profile)] || [];
     const connectionFor = profile => connectionStatus[profileCatalogKey(profile)] || {};
-    const candidateFor = profile => {
-      // 尚未保存的请求头也要随探测一起发送，否则「先填 Key 再读目录」的流程会在
-      // 按 Header 鉴权的网关上失败。
-      const headers = headerRecord(profile.headers);
-      return {
-        provider: profile.provider || 'custom',
-        baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider),
-        modelName: String(profile.modelName || '').trim(),
-        apiKey: String(profile.apiKey || '').trim(),
-        ...(headers ? { headers } : {}),
-      };
-    };
+    const candidateFor = profile => ({
+      provider: profile.provider || 'custom',
+      baseUrl: normalizeModelEndpoint(profile.baseUrl, profile.provider),
+      modelName: String(profile.modelName || '').trim(),
+      apiKey: String(profile.apiKey || '').trim(),
+    });
     const readModelCatalog = async index => {
       const profile = form.profiles[index];
       if (!profile) return;
@@ -641,55 +548,6 @@ export function createModelSettingsSection({
         ? `实际发送 reasoning_effort=${reasoningWire}。${reasoningHint(reasoningCapability)}`
         : `不启用时不写入任何思考档位；模型不支持 reasoning_effort 时保持此项为空。${reasoningHint(reasoningCapability)}`));
 
-    // 「请求预算与请求头」默认收起：只有需要覆盖网关默认值的模型才展开配置。
-    // 预算留空即沿用网关默认值；请求头是「名称 → 值」的可重复行，值可能是凭证，
-    // 所以只写进本机配置，不进入日志、提示或未保存快照。
-    const budgetInput = (label, key, placeholder) => h('label', { className: 'ms-field' },
-      h('span', { className: 'ms-label' }, label),
-      h('input', {
-        className: 'ms-input',
-        'aria-label': label,
-        inputMode: 'numeric',
-        autoComplete: 'off',
-        value: selected[key] === undefined || selected[key] === null ? '' : String(selected[key]),
-        placeholder,
-        onChange: event => setProfile(selectedIndex, key, event.target.value),
-      }));
-    const advancedHeaders = headerRows(selected.headers);
-    const advancedHeaderProblem = headerRowProblem(advancedHeaders);
-    const requestBudget = h('details', { className: 'ms-advanced', 'data-model-request-budget': true },
-      h('summary', null, '请求预算与请求头'),
-      h('div', { className: 'ms-grid ms-grid-3' },
-        budgetInput('最大输出 Token', 'maxOutputTokens', '例如：8192'),
-        budgetInput('上下文窗口', 'contextWindow', '例如：128000'),
-        budgetInput('请求超时（ms）', 'requestTimeoutMs', '例如：110000')),
-      h('p', { className: 'ms-hint' }, '留空沿用网关默认值；这些预算与请求头只作用于当前模型配置，不改变其他模型。'),
-      h('div', { className: 'ms-headers', 'data-model-headers': true },
-        h('div', { className: 'ms-headers-head' },
-          h('span', { className: 'ms-label' }, '自定义请求头'),
-          h('span', { className: 'ms-meta' }, advancedHeaders.length ? `${advancedHeaders.length} 条` : '未配置')),
-        advancedHeaders.length
-          ? advancedHeaders.map((row, index) => h('div', { key: row.id, className: 'ms-header-row', 'data-model-header-row': index },
-            h('input', {
-              className: 'ms-input', 'aria-label': `请求头名称 ${index + 1}`, value: row.name,
-              placeholder: '例如：X-Gateway-Token', autoComplete: 'off', spellCheck: false,
-              onChange: event => setHeaderRow(index, 'name', event.target.value),
-            }),
-            h('input', {
-              className: 'ms-input', 'aria-label': `请求头值 ${index + 1}`, value: row.value,
-              placeholder: '值只保存在本机配置', autoComplete: 'off', spellCheck: false,
-              onChange: event => setHeaderRow(index, 'value', event.target.value),
-            }),
-            h('button', {
-              type: 'button', className: 'ms-btn', 'data-size': 'sm', 'data-variant': 'danger',
-              'aria-label': `删除请求头 ${index + 1}`, onClick: () => removeHeaderRow(index),
-            }, '删除')))
-          : h('p', { className: 'ms-hint' }, '还没有自定义请求头。'),
-        h('div', { className: 'ms-actions' },
-          h('button', { type: 'button', className: 'ms-btn', 'data-size': 'sm', 'data-model-add-header': true, onClick: addHeaderRow }, '＋ 添加请求头'),
-          advancedHeaderProblem ? h('p', { role: 'alert', className: 'ms-note', 'data-tone': 'danger' }, advancedHeaderProblem) : null),
-        h('p', { className: 'ms-hint' }, '请求头随「读取模型」一起发送；配置的 Authorization 优先于 API Key，值不会写入日志。')));
-
     const detail = h('article', {
       className: 'ms-detail',
       'data-model-profile-card': selected.id || selectedIndex,
@@ -799,8 +657,7 @@ export function createModelSettingsSection({
                   setProfile(selectedIndex, 'parameters', parameters);
                 },
               }, h('option', { value: 'default' }, '服务默认'), h('option', { value: 'enabled' }, '开启'), h('option', { value: 'disabled' }, '关闭')))),
-          h('p', { className: 'ms-hint' }, '连接协议只影响 Codex 运行时；思考模式需要服务支持，界面只展示模型实际返回的思考。')),
-        requestBudget));
+          h('p', { className: 'ms-hint' }, '连接协议只影响 Codex 运行时；思考模式需要服务支持，界面只展示模型实际返回的思考。'))));
 
     const modelPanel = mode !== 'cloud' ? h('section', { className: 'ms-model' },
       h('div', { className: 'ms-intro' },

@@ -1,0 +1,97 @@
+---
+title: 5-minute quickstart
+description: Install the desktop app, configure model credentials, create your first agent, and run a real conversation.
+status: new
+---
+
+One path only: from nothing to a successful model call. No terminal required.
+
+<Steps>
+
+<Step>
+### Install the desktop app
+
+Open the [download page](https://kingsoftcloud.github.io/agentkit-studio/) and pick the package for your platform:
+
+| Platform | File | Notes |
+| --- | --- | --- |
+| macOS (Apple Silicon) | `AgentKit-Studio-mac-arm64.dmg` | Signed and notarized |
+| Windows 11 (x64) | `AgentKit-Studio-win-x64.exe` | NSIS installer |
+
+<Callout type="warn" title="Apple Silicon only">
+  There is no Intel (x64) build. Intel Mac users should use a managed cloud runtime or a
+  supported environment.
+</Callout>
+
+On first launch, if macOS reports that the developer cannot be verified, open
+**System Settings → Privacy & Security** and choose **Open Anyway**. On Windows, use
+**More info → Run anyway** in the SmartScreen prompt.
+</Step>
+
+<Step>
+### Configure models and credentials
+
+The credential guide opens automatically on first launch. If you dismissed it, go to
+**Settings → Models and credentials**.
+
+1. Select or add a model provider endpoint.
+2. Paste the API key.
+3. Pick a model.
+</Step>
+
+<Step>
+### Create your first agent
+
+1. Open the **Agents** panel.
+2. Choose **More ways to create** → **Manual configuration**.
+3. Complete the three-step form:
+
+| Step | What you decide |
+| --- | --- |
+| Basics | Name, description, system prompt |
+| Capabilities | Runtime type (defaults to **DSH Native Harness**), model, optional MCP / skills / knowledge base / memory |
+| Policy and confirmation | Execution policy (defaults to `workspace-write`), approval rules, cloud memory toggle |
+
+4. Choose **Create**. This produces the first **revision**.
+</Step>
+
+<Step>
+### Send the first message
+
+Select the agent in the list and type a request, for example
+"List the files in the current workspace and explain what they do".
+
+You will see:
+
+- **Tool calls** expand in order, each with its arguments and result.
+- **Token usage and duration** for the turn at the bottom.
+- If the agent changed files, a **file change card** appears on the right so you can diff each one.
+</Step>
+
+<Step>
+### Verify success
+
+A successful run satisfies all three:
+
+- A complete final answer is rendered (not an error summary).
+- Tool calls report `completed`; there is no `RUNTIME_RUN_FAILED`.
+- The conversation still exists after a refresh.
+
+If any check fails, use [Troubleshooting](../help/troubleshooting.mdx) to look up the error code.
+</Step>
+
+</Steps>
+
+## What next
+
+<Cards>
+  <Card title="Understand the concepts" href="/en/docs/concepts">
+    Why edits never affect a running session, and what a revision or build actually freezes.
+  </Card>
+  <Card title="Bind enterprise resources" href="/en/docs/guides/mcp-servers">
+    Attach MCP servers, skills, and knowledge bases to an agent.
+  </Card>
+  <Card title="Deploy to the cloud" href="/en/docs/guides/deploy-to-cloud">
+    Keep the agent online around the clock.
+  </Card>
+</Cards>

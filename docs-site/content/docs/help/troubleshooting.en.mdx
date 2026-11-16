@@ -1,0 +1,126 @@
+---
+title: Troubleshooting
+description: Locate a problem through symptom, error code, cause and fix — covering the seventy-odd most frequent error codes in the Studio source tree.
+---
+
+Every Studio error code comes from a `code: '...'` literal under `src/**`, so you can search the source directly. This page groups codes by **where they surface**; each code appears exactly once.
+
+<Callout type="info" title="First confirm it really is an error code">
+The text on screen is sometimes prose, and the code lives inside a collapsed detail. Expand the tool card, or open a trace under **Operations → Observability** to get the raw `code` and HTTP status.
+</Callout>
+
+## Models & credentials
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Sending fails immediately, asking for a key | `MODEL_CREDENTIAL_MISSING` | The model profile has no usable API key (`src/model-service.mjs:71,116`) | Settings → Models & credentials, select the model, enter the key, save |
+| A model is selected but requests go nowhere | `MODEL_NOT_FOUND` | The profile is missing, disabled, or absent from the gateway catalog (`model-service.mjs:61`) | Re-pick the default model; in gateway mode refresh the catalog first |
+| Saving reports an invalid endpoint | `MODEL_ENDPOINT_INVALID` | The service address is not a valid URL (`src/model-endpoint.mjs:9`) | Add `https://` and the host name |
+| Same step, but the error is about the protocol | `MODEL_URL_INVALID` | Only `https:` endpoints are accepted (`model-service.mjs:37`) | Use an HTTPS endpoint; local debugging goes through a localhost proxy |
+| The model list is empty after saving | `MODEL_PROFILE_INVALID` | One of model name, model ID or credential reference is invalid (`model-service.mjs:34`) | Click "Read model catalog" and pick from it instead of typing |
+| A duplicate name is rejected | `MODEL_PROFILE_EXISTS` | The model resource name is taken (`model-service.mjs:41`) | Choose a different name |
+| "Read model catalog" fails | `MODEL_CATALOG_FAILED` | The catalog endpoint returned a non-2xx status (`model-service.mjs:89`) | Check endpoint, key and egress policy; the message includes the status |
+| Cloud resource pages are empty | `CLOUD_CREDENTIALS_MISSING` | No cloud AK/SK configured (`src/server-client.mjs:361,462,519`) | Settings → Models & credentials → cloud credentials |
+| Request rejected with 413 | `REQUEST_TOO_LARGE` | The model request body exceeds 16 MiB (`src/model-proxy-handler.mjs:47`) | Fewer attachments, shorter history, or split the turn |
+| The answer stops halfway | `UPSTREAM_STREAM_TRUNCATED` | The upstream stream closed without a completion marker (`model-proxy-handler.mjs:150`) | Retry; if it persists, check proxy and gateway idle timeouts |
+| A compatible endpoint asks for history again | `STATELESS_INPUT_REQUIRED` | That endpoint does not keep a remote response ID (`model-proxy-handler.mjs:55`) | Send the full conversation history every turn |
+| Selecting a Codex model is refused | `CODEX_AGENT_REQUIRED` | No Codex Agent is bound (`src/providers/dsh-runtime.mjs:585`) | Bind the Codex runtime on the Agent first |
+
+## Agents & builds
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Sending in a session fails | `STUDIO_AGENT_REQUIRED` | The session has no bound Agent (`dsh-runtime.mjs:604`) | Select an Agent in the Agents panel, then send |
+| The send button does nothing | `STUDIO_INPUT_REQUIRED` | Empty input with no image (`dsh-runtime.mjs:605`) | Type text or attach an image |
+| Saving after an edit reports "not found" | `AGENT_NOT_FOUND` | The local Agent was deleted or the ID drifted (`src/host/routes/agents.mjs:13`) | Refresh the Agents list and reselect |
+| A request is missing a parameter | `INVALID_AGENT_ID` | `AgentId` is empty (`agents.mjs:52`) | Enter through the list, not by hand-building URLs or commands |
+| Deployment or run is refused | `BUILD_NOT_READY` | The Agent has no runnable build yet (`src/host-remote.mjs:166`) | Create a build and wait for it to finish |
+| Frozen sessions cannot be created | `STUDIO_PRESET_RUNTIME_UNSUPPORTED` | The current runtime has no DSH native session adapter (`src/agent-preset-admission.mjs:161`) | Switch to the `dsh-native` runtime before freezing |
+| An old session will not open | `DSH_PRESET_ROUTE_UNAVAILABLE` | The session's original Agent preset is unavailable (`agent-preset-admission.mjs:343`) | Rebind the runtime; do not try to restore a deleted preset |
+| An MCP tool call fails | `STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED` | The session's MCP tool schema engine is unavailable (`src/providers/dsh-runtime-plugin.mjs:209`) | "Rebind this session's MCP tools" |
+| The model calls a tool that does not exist | `TOOL_NOT_FOUND` | The DSH Tool is unregistered or outside the Agent's bindings (`dsh-runtime-plugin.mjs:173`) | Bind the Tool on the Agent edit page, or adjust the prompt |
+
+## Runtimes
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Nothing responds at all | `HOST_CONNECTION_MISSING` | Studio local tasks need a connected Studio host (`src/remote/control-client.mjs:144`) | Check the status pill; restart the host and retry |
+| The plugin is refused at load | `STUDIO_HOST_INCOMPATIBLE` | The host version misses `engines.dsh` (`src/host/compatibility.mjs:40`) | Upgrade to the pinned DSH baseline `0.2.2-rc.1` |
+| Managed sessions will not start | `NATIVE_ENGINE_UNAVAILABLE` | Managed native Harness needs an independent service binding (`src/host/bootstrap.mjs:406`) | Configure and start the separate Harness service |
+| "No independent Harness bound" | `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | This workspace has no independent Harness binding (`agent-preset-admission.mjs:335`) | Switch to a configured workspace |
+| Harness configuration error | `NATIVE_ENGINE_CONFIG_INVALID` | One of workspace, service address, credentials or preview address is invalid (`src/providers/engine-service-workspaces.mjs:57`) | Verify all four |
+| The native engine needs a model | `NATIVE_ENGINE_MODEL_UNAVAILABLE` | It needs a model with a configured endpoint (`dsh-runtime.mjs:629`) | Bind a gateway model on the Agent |
+| A turn ends as failed | `DSH_TURN_FAILED` | The runtime did not finish this turn (`src/dsh-history-display.mjs:6`) | Retry; if it persists, check model and tool connections |
+| An old in-process session operation | `LOCAL_HARNESS_RETIRED` | The in-process Harness is retired (`src/host/routes/http.mjs:24`) | Use a native Harness session |
+| Same, different entry point | `STUDIO_LEGACY_HARNESS_RETIRED` | The operation belongs to a retired in-process Harness session (`src/host/routes/sessions.mjs:8`) | Recreate the session as native |
+| A frozen build will not run | `RUNTIME_MODEL_UNAVAILABLE` | The frozen model has no usable runtime route (`src/frozen-build-runtime.mjs:72`) | Rebuild so the model enters the frozen binding |
+| A frozen build reports a model mismatch | `RESPONSES_FROZEN_MODEL_MISMATCH` | The requested model is not in the frozen binding (`frozen-build-runtime.mjs:88`) | Send with the model bound at freeze time |
+| The host lacks a capability | `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` | Frozen runtimes need a DSH host that supports request fingerprints (`frozen-build-runtime.mjs:58`) | Upgrade the host |
+| Automation will not run | `AUTOMATION_SERVICE_UNAVAILABLE` | The DSH service automation needs is not running (`src/native-automation-runner.mjs:32`) | Start the service named in the message |
+| Automation hangs | `AUTOMATION_TIMEOUT` | The automation run timed out (`native-automation-runner.mjs:85`) | Shorten the task or split it |
+
+## Star Harness
+
+The five `star-harness/*` operations manage the **local** Star Harness (the `harness` runtime): installing it, enabling it and binding workspaces. They are owner-only; a non-owner caller gets `STAR_HARNESS_OWNER_REQUIRED` immediately.
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Install does nothing | `STAR_HARNESS_NOT_INSTALLED` | Enable or bind was called before installing (`src/host/services/star-harness.mjs:14`) | Install Star Harness from the plugin page first, then enable it |
+| Install cannot find npm | `STAR_HARNESS_NPM_MISSING` | The Studio host process cannot find `npm` (`star-harness-release.mjs:72`) | Install Node.js and npm, and make sure `npm` is on the `PATH` the host was started with |
+| Install hangs on download | `STAR_HARNESS_DOWNLOAD_FAILED` | The download from the npm registry failed (`star-harness-release.mjs:138`) | Check the network and proxy; confirm the version exists in the registry |
+| Install reports an integrity failure | `STAR_HARNESS_RELEASE_INVALID` | The version is invalid, or the downloaded digest does not match (`star-harness-release.mjs:80`) | Reinstall; if it keeps failing the local cache is corrupt — delete the Star Harness state directory and retry |
+| Installed but will not start | `STAR_HARNESS_START_FAILED` | The child process failed to start or the protocol handshake timed out (`star-harness-release.mjs:225`) | Read the child's stderr in the host log; confirm the port and workspace directory are writable |
+| This version is not reviewed | `STAR_HARNESS_RELEASE_UNREVIEWED` | No review record for this version in the current Studio (`star-harness-release.mjs:28`) | Update Studio first, then install the matching version |
+| Version is incompatible | `STAR_HARNESS_INCOMPATIBLE` | Engine protocol version, package name or capability set does not match (`star-harness-release.mjs:168`) | Switch to a version Studio has reviewed; never hand-edit `pins` |
+| Version is rejected | `STAR_HARNESS_VERSION_UNSUPPORTED` | It is neither newer nor the previous rollback version (`star-harness.mjs:191`) | Pick a newer version, or roll back to the previous one |
+| Version format is rejected | `STAR_HARNESS_INVALID_REQUEST` | The version is not three-part semver, or an argument has the wrong type (`star-harness.mjs:13`) | Use `x.y.z`; pick from the list instead of typing |
+| Workspace binding is rejected | `STAR_HARNESS_WORKSPACE_CONFLICT` | The directory overlaps an existing binding, an external Harness or the Star Harness state directory (`star-harness.mjs:71`) | Pick a directory that neither nests nor overlaps |
+| Bound workspace will not start | `STAR_HARNESS_MODEL_CHANGED` | The model profile the workspace was bound to has changed (`star-harness.mjs:65`) | Unbind and rebind with a currently available model profile |
+| Changing version during a run is rejected | `STAR_HARNESS_BUSY` | A task is running, or a change is being applied (`star-harness.mjs:11`) | Wait for the current task to finish or cancel it; do not click repeatedly while running |
+| Management service is closed | `STAR_HARNESS_CLOSED` | The host is shutting down and the management service was released (`star-harness.mjs:12`) | Restart the Studio host |
+| Local settings cannot be read | `STAR_HARNESS_CONFIG_INVALID` | `settings.json` is missing, corrupt or has the wrong field types (`star-harness.mjs:41`) | Delete `settings.json` under the Star Harness state directory and rebind |
+| It says you lack permission | `STAR_HARNESS_OWNER_REQUIRED` | A non-owner principal called `star-harness/*` (`src/host/routes/http.mjs:65`) | Operate as the Studio host owner |
+| This deployment is unsupported | `STAR_HARNESS_UNSUPPORTED` | The deployment did not mount the local Star Harness manager (`src/host/routes/star-harness.mjs:6`) | Use an independent Harness service; local management exists only on desktop and source runs |
+
+## Resources
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| MCP binding reports a duplicate | `MCP_BINDING_AMBIGUOUS` | Duplicate MCP binding alias on the same Agent version (`src/host/services/resource-tools.mjs:17`) | Use a unique alias |
+| The model cannot call an MCP tool | `MCP_RESOURCE_NOT_BOUND` | The MCP is not bound to the current Agent version (`resource-tools.mjs:16`) | Rebind on the Agent edit page |
+| A Skill download is refused | `SKILL_DOWNLOAD_URL_INVALID` | The download URL is not HTTPS (`src/providers/native-skill-service.mjs:288`) | Use HTTPS; localhost is dev-only |
+| A cloud Skill fails to load | `SKILL_MANIFEST_MISSING` | The cloud Skill has no `SKILL.md` (`src/skill-files.mjs:35`) | Repackage and upload |
+| A Skill call expires mid-run | `SKILL_AUTHORIZATION_EXPIRED` | The Skill Service request authorization expired (`native-skill-service.mjs:152`) | Re-send that turn |
+| The tool catalog returns nothing | `RESOURCE_CATALOG_TOO_LARGE` | The catalog is too large and asked to narrow the range (`src/native-tool-catalog.mjs:56`) | Add a search keyword |
+| The resource overview shows only part | `RESOURCE_OVERVIEW_TRUNCATED` | The overview shows only the first 200 entries per kind (`src/resource-catalog.mjs:87`) | Search the full catalog under Models & tools |
+| A managed resource request is refused | `MANAGED_RESOURCE_PERMIT_REQUIRED` | The managed memory request lacks trusted business authorization (`src/managed-resource-context.mjs:4`) | Re-send from an authorized entry point |
+| A managed runtime cannot be deleted | `MANAGED_RUNTIME_REQUIRED` | Only ManagedRuntimes created through the AgentEngine API can be deleted (`agents.mjs:81`) | Delete externally created instances in the console |
+| Deleted, but it is still in the cloud | `MANAGED_RUNTIME_DELETE_UNCONFIRMED` | The cloud did not confirm deletion (`agents.mjs:86`) | Refresh the cloud list and retry if needed |
+| Writing deployment records fails | `DEPLOYMENT_STORE_IO_FAILED` | The record directory is not writable (synced folders, network home, security software — `src/deployment-store.mjs:16`) | Point `AGENTKIT_HOME` at local disk |
+
+## Cloud & deployment
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Cloud resource pages are empty | `CLOUD_CONFIGURATION_REQUIRED` | Cloud credentials are not configured (`src/remote/control-client.mjs:439`) | Configure them, then refresh the resource catalog |
+| Switching execution permission is refused | `CLOUD_EXECUTION_MODE_UNAVAILABLE` | Cloud execution permission is not enabled yet (`agents.mjs:112`) | Enable it on the deployment side first |
+| Same, image unsupported | `CLOUD_EXECUTION_MODE_UNSUPPORTED` | The current cloud image cannot switch execution permission (`agents.mjs:115`) | Update the instance image version |
+| Permission exceeds the range | `CLOUD_EXECUTION_MODE_DENIED` | The requested permission exceeds the deployment declaration (`agents.mjs:118`) | Clamp to the declared ceiling |
+| Invalid permission value | `CLOUD_EXECUTION_MODE_INVALID` | Not one of `read-only` / `workspace-write` / `danger-full-access` (`src/cloud-execution-modes.mjs:42`) | Use an enum value |
+| Sending images to the cloud fails | `CLOUD_IMAGE_INPUT_UNAVAILABLE` | The cloud image does not accept image input (`dsh-runtime.mjs:834`) | Use a local Agent for images |
+| Answers change between reads | `CLOUD_STREAM_ITEM_CHANGED` | Content of a finished cloud message changed (`dsh-runtime.mjs:480`) | Trust the final snapshot; file an issue if it recurs |
+| An update stalls midway | `DEPLOYMENT_UPDATE_INTERRUPTED` | The update was interrupted before reaching the cloud (`src/deployment-rollouts.mjs:167`) | Refresh, reconcile the instance state, then re-check the version |
+
+## Sessions & history
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Opening a session reports not found | `SESSION_NOT_FOUND` | The session was deleted or belongs to another host (`src/host/routes/sessions.mjs:27`) | Re-enter from the Agents panel |
+| Export is refused | `SESSION_EXPORT_TOO_LARGE` | The session log exceeds 8 MiB (`sessions.mjs:29`) | Use `/export` on the native session for a full ZIP |
+| Export is unavailable | `SESSION_EXPORT_UNAVAILABLE` | DSH session persistence is unavailable (`sessions.mjs:23`) | Check permissions on the host's persistence directory |
+| Images will not open | `STUDIO_IMAGE_ATTACHMENT_UNAVAILABLE` | Session images cannot be read (`src/providers/dsh-messages.mjs:29`) | Confirm the DSH attachment service is enabled |
+| Approval state cannot be read | no fixed code | The native approval RPC failed (`src/client/dsh/native-approval.mjs`) | Refresh as prompted, then reconcile the native run state |
+
+## Still stuck
+
+Open an issue with the six items listed in [Help overview](./index.mdx#what-an-issue-needs). If the answer is "that is not supported yet", read [Known limitations](./known-limitations.mdx) first.

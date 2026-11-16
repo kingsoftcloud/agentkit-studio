@@ -1,0 +1,151 @@
+---
+title: Sessions and workspaces
+description: A session is a DSH-owned event journal; a workspace is the directory that bounds what it may write.
+status: new
+---
+
+**A session is a durable event journal owned by DSH; a workspace is the directory that session is bound to. The first answers where history lives, the second answers what the agent may write.**
+
+These two concepts are often merged into "a session is one conversation", yet their lifecycle, ownership, and failure modes differ. This page takes them separately and then shows where they meet on a single run.
+
+## Why they must stay separate
+
+| Question | Governed by session | Governed by workspace |
+| --- | --- | --- |
+| Does history survive a page refresh? | ✅ The journal is persisted by the Host | — |
+| Which files may the agent change? | — | ✅ The directory boundary sets the write scope |
+| Do two sessions of one agent contaminate each other? | ❌ Independent event sequences | ❌ They may point at different directories |
+| Can work continue on another machine? | Depends on the persistence backend | Depends on whether the directory travels |
+
+Conflating them produces one classic mistake: assuming a new session means a new working directory. **A new session opens a new event sequence; the directory is fixed by the workspace binding.**
+
+## Session: the journal belongs to DSH
+
+Studio does not own the transcript. It does four things only: validate identity, project one proven message shape, preserve unsupported facts as ignorable events, and serve paginated windows.
+
+<Callout type="info" title="Ownership boundary">
+  The durable journal, node assembler, remote channel, and renderer all belong to DSH. Studio's session adapter is a narrow boundary, not a second store.
+</Callout>
+
+### The 16 event types
+
+| Category | Events |
+| --- | --- |
+| Turn | `turn/start`, `turn/end` |
+| Step | `step/start`, `step/end` |
+| Messages | `system/message`, `user/message`, `assistant/message`, `assistant/attempt` |
+| Tools | `tool/call`, `tool/result` |
+| Approval | `approval/asked`, `approval/decided` |
+| Requests | `request/header`, `request/context` |
+| Orchestration | `agent/inbox/spliced`, `agent-preset/selected` |
+
+Besides events there are 3 in-process stream frames: `start`, `chunk`, `end`. Frames are deltas, not events, and never enter the durable journal.
+
+### The canonical event envelope
+
+Every event must carry all of these fields; missing one keeps it out of the projection:
+
+| Field | Constraint |
+| --- | --- |
+| `event_id` | Non-empty string |
+| `event_type` | Non-empty string |
+| `run_id` | Non-empty string |
+| `scope_id` | Non-empty string |
+| `seq` | Non-negative safe integer |
+| `timestamp` | Non-negative finite number |
+| `schema_version` | Must equal `2` |
+
+Conflicts are rejected rather than overwritten: the same `event_id` twice with different content raises "event changed during replay"; two different `event_id`s claiming one `seq` also raise. A byte-identical duplicate is idempotent and skipped.
+
+### Official versus ignorable types
+
+11 events are "official" and render as normal chat nodes. Every other type is prefixed with `ksadk/` and marked ignorable — facts the Host does not understand are preserved without breaking the conversation UI. That rule lets new events land before the renderer knows them.
+
+There is also a dedicated guard: **events that arrive after their run has ended** (history paging and reconnect tails arrive out of order) are demoted to ignorable types. Otherwise a late event would be projected into the chat and read as the model speaking after it finished.
+
+## Transient frames: client-only, never journaled
+
+Unfinished assistant messages need live deltas. They are expressed as `assistant/live-chunk` frames carrying a **fractional sequence number** (`seq + 0.5`), meaning "sits between two durable events".
+
+| Trait | Durable event | Transient frame |
+| --- | --- | --- |
+| Enters the journal | ✅ | ❌ Never |
+| Appears in snapshot responses | ✅ | Only in the client window |
+| Sequence number | Integer | Fractional (`n + 0.5`) |
+| Purpose | Source of truth | Typewriter effect |
+
+The line is hard: journaling a transient frame would replay duplicated text after a reconnect.
+
+## Session identity and versions
+
+| Item | Value |
+| --- | --- |
+| Session contract | `p1-session-contract-v0.1` |
+| History contract version | `2` |
+| Persistence backend | `dsh-native-disk` |
+| Shared across pods | No |
+| Active run restorable | No (history is readable; an unfinished turn does not resume automatically) |
+| Invalid session ID | `RUNTIME_SESSION_ID_INVALID` |
+| Session ID conflict | `RUNTIME_SESSION_ID_CONFLICT` |
+
+Session ownership belongs to **agent state**, not deployment-version state. Updating a deployment version therefore never makes existing sessions disappear — the session directory sits outside the version directory.
+
+## Workspace: a directory boundary
+
+A workspace is simply the current directory a session is bound to. It defaults to the Host process's working directory and can be overridden by an environment variable. It is not an abstraction; it is a real path boundary:
+
+| Scenario | Behavior |
+| --- | --- |
+| Default | The Host process working directory |
+| Set by environment variable | Resolved to an absolute path, which becomes the boundary |
+| A local Star Harness session with no workspace route | `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE`, asking you to pick a configured workspace |
+| Execution policy `read-only` | All writes refused |
+| Execution policy `workspace-write` | Writes inside the workspace allowed |
+| Execution policy `danger-full-access` | Writes outside the workspace allowed |
+
+The workspace also carries a **state-root isolation** rule: the roots for command state, A2A state, browser state, and so on may be neither the workspace itself, nor inside it, nor a parent of it. State is sharded by agent, workspace digest, and session, so two sessions of two agents never share read-before-edit state.
+
+## Where the two concepts meet
+
+A single run needs both sides:
+
+| Participant | Provides | If missing |
+| --- | --- | --- |
+| Session | `sessionId`, event sequence, history paging | The run cannot be located |
+| Workspace | Current directory, write boundary | Tools cannot execute |
+| Revision | `agentId`, `revision` | No definition to run |
+| Build | `buildId` | No reproducibility |
+
+All four sources are required for a legal run — see [Agent · Revision · Build · Run](./agent-revision-build.mdx).
+
+## Hard rules
+
+1. **Studio never writes the session journal.** It projects DSH events; writing the journal is DSH's job.
+2. **Transient frames never enter the journal.** Fractional sequence numbers exist for client ordering only.
+3. **`schema_version` must equal 2.** Other versions are rejected instead of inferred.
+4. **Non-official event types must be ignorable.** Unknown facts are preserved without breaking the UI.
+5. **A workspace is a path boundary, not a namespace.** Changing the directory changes the boundary.
+6. **State roots and the workspace must not contain each other**, or read-before-edit state pollutes the workspace.
+
+## Related tasks
+
+<Cards>
+  <Card title="Run and debug sessions" href="/en/docs/guides/conversations">
+    Read tool calls, file changes, and per-turn usage one by one.
+  </Card>
+  <Card title="Approvals and permission policy" href="/en/docs/guides/approvals-permissions">
+    Narrow workspace writes with execution policy.
+  </Card>
+  <Card title="Your first conversation" href="/en/docs/getting-started/first-conversation">
+    Get one session running and confirm history survives a refresh.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| Fields of the 16 events and 3 stream frames | [Session events](../reference/session-events.mdx) |
+| `RUNTIME_*` and `SESSION_*` error codes | [Errors](../reference/errors.mdx) |
+| The 24 `sessions/*` operations | [Operations](../reference/operations.mdx) |
+| Workspace and execution-policy environment variables | [Environment](../reference/environment.mdx) |

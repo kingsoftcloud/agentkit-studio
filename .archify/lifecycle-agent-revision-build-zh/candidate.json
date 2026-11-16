@@ -1,0 +1,94 @@
+{
+  "schema_version": 3,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Agent · 修订版本 · 构建 · 会话 · 一次运行",
+    "subtitle": "五层各自冻结在不同层次上；编辑 Agent 只追加新修订版本，正在跑的会话不受影响",
+    "output": ".archify/lifecycle-agent-revision-build-zh/overview.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "mainPath": ["agent", "revision", "build", "session", "run"],
+  "states": [
+    {
+      "id": "agent",
+      "type": "start",
+      "label": "智能体",
+      "sublabel": "agentId · 只持有当前指向",
+      "tag": "配置",
+      "step": "01"
+    },
+    {
+      "id": "revision",
+      "type": "active",
+      "label": "修订版本",
+      "sublabel": "revision · 不可变快照",
+      "tag": "只增不改",
+      "step": "02"
+    },
+    {
+      "id": "build",
+      "type": "decision",
+      "label": "构建",
+      "sublabel": "buildId · 内容寻址",
+      "tag": "冻结",
+      "step": "03"
+    },
+    {
+      "id": "session",
+      "type": "waiting",
+      "label": "会话",
+      "sublabel": "sessionId · DSH 拥有日志",
+      "tag": "持久",
+      "step": "04"
+    },
+    {
+      "id": "run",
+      "type": "success",
+      "label": "一次运行",
+      "sublabel": "runId · 一个 turn",
+      "tag": "五标识齐全",
+      "step": "05"
+    }
+  ],
+  "transitions": [
+    { "id": "t1", "from": "agent", "to": "revision", "label": "保存" },
+    { "id": "t2", "from": "revision", "to": "build", "label": "固化" },
+    { "id": "t3", "from": "build", "to": "session", "label": "绑定" },
+    { "id": "t4", "from": "session", "to": "run", "label": "跑一个 turn" },
+    {
+      "id": "t-edit",
+      "from": "revision",
+      "to": "revision",
+      "label": "编辑 → 修订版本 n+1",
+      "note": "旧序号的原文件永不被改写；并发编辑要带 expectedRevision",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么读这张图",
+      "items": [
+        "从左到右是唯一一条正常路径：配置保存成修订版本，修订版本固化成构建，构建绑定出会话，会话里跑出一次运行。",
+        "虚线自环是编辑动作：保存只会追加一个新的修订版本序号，不会覆盖任何已存在的快照。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "五个标识缺一不可",
+      "items": [
+        "一次运行的完整身份是 agentId、revision、buildId、sessionId、runId 五个字段。",
+        "缺任何一个都直接拒绝，不会降级成「部分身份」；没有构建的智能体仍能对话，只是没有可复现的运行身份。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "运行中的会话不受影响",
+      "items": [
+        "正在跑的会话绑的是当时那个修订版本，不是「智能体」这个对象。",
+        "所以改模型、加 MCP、改提示词都只影响下一轮或新会话——这不是缺少热更新，而是可复现性的前提。"
+      ]
+    }
+  ]
+}

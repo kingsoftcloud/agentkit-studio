@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'yaml';
 import { normalizeModelEndpoint } from './model-endpoint.mjs';
-import { HEADER_LIMITS, headerEntryProblem, modelRuntimeOptions } from './model-profile-contract.mjs';
+import { modelRuntimeOptions } from './model-profile-contract.mjs';
 import { reasoningProfileFor } from './model-reasoning.mjs';
 
 const FIELDS = {
@@ -26,13 +26,6 @@ const MODEL_ALIASES = {
 };
 const record = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const scalar = x => typeof x === 'string' || typeof x === 'number' ? String(x).trim() : '';
-
-/** An emptied header form removes the field instead of freezing `{}` into the config. */
-function withoutEmptyHeaders(profile) {
-  if (!record(profile) || !record(profile.headers) || Object.keys(profile.headers).length) return profile;
-  const { headers: _headers, ...rest } = profile;
-  return rest;
-}
 
 export class ConfigurationError extends Error {
   constructor(message) { super(message); this.code = 'CONFIGURATION_INVALID'; }
@@ -102,25 +95,6 @@ function nativeModelOptions(profile) {
   if (profile.parameters !== undefined) {
     if (!record(profile.parameters)) throw new ConfigurationError('模型参数格式无效');
     result.parameters = structuredClone(profile.parameters);
-  }
-  if (profile.headers !== undefined) {
-    // Request headers reach a gateway verbatim, so a hand-edited config file is
-    // validated before it is persisted or frozen into an execution: a bad name
-    // or a CR/LF value is refused instead of being sent upstream.
-    if (!record(profile.headers)) throw new ConfigurationError('请求头格式无效');
-    const entries = Object.entries(profile.headers);
-    if (entries.length > HEADER_LIMITS.count) throw new ConfigurationError('请求头格式无效');
-    const seen = new Set();
-    for (const [name, value] of entries) {
-      if (headerEntryProblem(name, value)) throw new ConfigurationError('请求头格式无效');
-      // Header names are case-insensitive: two spellings of one header would be
-      // merged into a single ambiguous wire value, so the contract keeps one.
-      if (seen.has(name.toLowerCase())) throw new ConfigurationError('请求头格式无效');
-      seen.add(name.toLowerCase());
-    }
-    // An empty record means “no custom headers”: drop the field instead of
-    // freezing an empty object into the user's configuration file.
-    if (entries.length) result.headers = Object.fromEntries(entries.map(([name, value]) => [name, value.trim()]));
   }
   return modelRuntimeOptions(result);
 }
@@ -203,7 +177,7 @@ export function createGlobalConfiguration({ env = process.env, home = homedir(),
       patch = { ...patch,
         ...(typeof patch.modelBaseUrl === 'string' ? { modelBaseUrl: normalizeModelEndpoint(patch.modelBaseUrl, patch.modelProvider) } : {}),
         ...(Array.isArray(patch.modelProfiles) ? { modelProfiles: patch.modelProfiles.map(profile => record(profile)
-          ? withoutEmptyHeaders({ ...profile, baseUrl: profile.baseUrl ? normalizeModelEndpoint(profile.baseUrl, profile.provider) : '' }) : profile) } : {}),
+          ? { ...profile, baseUrl: profile.baseUrl ? normalizeModelEndpoint(profile.baseUrl, profile.provider) : '' } : profile) } : {}),
       };
     } catch (error) { return Promise.reject(error); }
     for (const [key, value] of Object.entries(patch)) {

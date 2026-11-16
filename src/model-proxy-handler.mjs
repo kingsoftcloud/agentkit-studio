@@ -6,8 +6,7 @@ import { responsesToChat, chatToResponses, createResponsesStreamTransformer } fr
 import { readSse } from './sse.mjs';
 import { prepareCodexProxyRequest } from './codex-proxy-tools.mjs';
 import { createModelIdleDeadline } from './model-idle-deadline.mjs';
-import { requestHeaders } from './model-profile-contract.mjs';
-import { applyReasoningFallback, dropCarrierlessReasoningTurns, dropOrphanToolReceipts, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeEmptyAssistantTurns, normalizeReasoningContent, studioReasoningFallbackWire } from './model-reasoning.mjs';
+import { applyReasoningFallback, isReasoningEffortRejection, isReasoningReplayRejection, logReasoningFallback, normalizeReasoningContent, studioReasoningFallbackWire } from './model-reasoning.mjs';
 
 /**
  * Bounded provider identifiers from a rejected-request body.
@@ -30,26 +29,6 @@ export function upstreamErrorIdentifiers(detail) {
   return identifiers;
 }
 
-/**
- * Outbound headers for one profile.
- *
- * A configured `Authorization` (or any other header) is an explicit operator
- * choice — a gateway may take its credential in a different header — so it
- * wins over the API-key default. `Content-Type` stays proxy-owned: the body is
- * always JSON and a hand-edited config must not be able to describe it
- * otherwise.
- * @param {object} profile - the resolved model profile.
- * @returns {Record<string, string>} headers for the upstream request.
- */
-export function upstreamRequestHeaders(profile) {
-  const configured = requestHeaders(profile?.headers);
-  const headers = { ...configured, 'Content-Type': 'application/json' };
-  if (!Object.keys(configured).some(name => name.toLowerCase() === 'authorization')) {
-    headers.Authorization = `Bearer ${profile?.apiKey}`;
-  }
-  return headers;
-}
-
 export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, codexTools = false, onRequestMetrics, onReasoningFallback = logReasoningFallback, upstreamApi = 'chat-completions', idleTimeoutMs = 120000 }) {
   if (!['chat-completions', 'responses'].includes(upstreamApi)) throw new TypeError('Unsupported model proxy API');
   return async (request, response) => {
@@ -60,13 +39,8 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
     const controller = new AbortController();
     const disconnect = () => { if (!response.writableEnded) controller.abort(); };
     response.on('close', disconnect);
-    let deadline;
+    const deadline = createModelIdleDeadline({ signal: controller.signal, timeoutMs: idleTimeoutMs });
     try {
-      // The profile is resolved before the body is read so its request budget
-      // bounds the idle deadline itself: a slow gateway must not outlive the
-      // timeout the operator configured for this model.
-      const profile = await models.profile(decodeURIComponent(match[1]));
-      deadline = createModelIdleDeadline({ signal: controller.signal, timeoutMs: profile.requestTimeoutMs ?? idleTimeoutMs });
       const chunks = []; let size = 0;
       for await (const chunk of request) {
         size += chunk.length;
@@ -75,25 +49,12 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         deadline.touch();
       }
       const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const profile = await models.profile(decodeURIComponent(match[1]));
       const nativeResponses = upstreamApi === 'responses';
       const convert = match[2] === 'responses' && !nativeResponses;
       if (convert && input.previous_response_id) throw Object.assign(new Error('请传入完整对话历史；此兼容端点不保存远端 Response ID'), { status: 400, code: 'STATELESS_INPUT_REQUIRED' });
       const toolContext = convert && codexTools ? prepareCodexProxyRequest(input) : undefined;
       const body = convert ? responsesToChat(toolContext?.request || input) : input;
-      // History is built upstream of this proxy (DSH's Responses projection,
-      // Codex's own replay, the Responses-to-Chat conversion here), and each of
-      // them can leave an assistant turn with neither text nor tool calls. No
-      // gateway accepts that shape — Kspmas answers `400 Invalid assistant
-      // message: content or tool_calls must be set` — and the turn carries no
-      // information, so drop it rather than burn a round-trip on a retry that
-      // cannot repair it.
-      normalizeEmptyAssistantTurns(body);
-      // The same history can lose an assistant call while keeping its tool
-      // receipt, which a gateway refuses with `400 Messages with role 'tool'
-      // must be a response to a preceding message with 'tool_calls'`. A
-      // receipt without its call cannot be interpreted, so the orphan never
-      // leaves the proxy either.
-      dropOrphanToolReceipts(body);
       // Reasoning items are forwarded exactly as Codex emitted them: the same
       // request works when Codex reaches this gateway directly, so the proxy
       // must not rewrite the item shape up front. A provider that refuses the
@@ -103,14 +64,6 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
       // different profile route to use a different model/credential pair.
       // An unbound native Codex provider may let Codex select its default model.
       if (!nativeResponses || profile.modelName) body.model = profile.modelName;
-      // A configured output budget is the operator's declaration, named per
-      // protocol. It replaces the client's own value (Codex derives one from its
-      // config) only when the profile sets it, so an unconfigured profile keeps
-      // forwarding exactly what the client asked for.
-      if (profile.maxOutputTokens) {
-        if (nativeResponses) body.max_output_tokens = profile.maxOutputTokens;
-        else body.max_tokens = profile.maxOutputTokens;
-      }
       if (body.stream && !nativeResponses) body.stream_options = { ...body.stream_options, include_usage: true };
       let serialized = JSON.stringify(body);
       if (onRequestMetrics) {
@@ -124,9 +77,8 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
           conversationChars: messages.filter(message => !['system', 'developer'].includes(message.role)).reduce((sum, message) => sum + chars(message), 0) });
       }
       const upstreamUrl = `${profile.baseUrl}/${nativeResponses ? 'responses' : 'chat/completions'}`;
-      const headers = upstreamRequestHeaders(profile);
       const requestUpstream = serializedBody => fetchImpl(upstreamUrl, {
-        method: 'POST', headers,
+        method: 'POST', headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' },
         body: serializedBody, signal: deadline.signal, redirect: 'error',
       });
       let upstream = await requestUpstream(serialized);
@@ -155,14 +107,10 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
           upstreamBodyConsumed = false;
         } else if (nativeResponses && isReasoningReplayRejection(upstream.status, detail)) {
           // Codex reaches this gateway directly without any rewrite, so
-          // reasoning items are forwarded unchanged. Only a provider that
-          // actually refuses the replayed turn justifies a repair, and then it
-          // is repaired in one pass: a turn carrying nothing but reasoning is
-          // illegal on this wire (magpie → 星流 prefill answers the
-          // assistant-message rule for it), so its reasoning items are dropped;
-          // a turn that carries text or a call keeps them, minus the optional
-          // `content` field when the provider rejects that field.
-          if (normalizeReasoningContent(body) + dropCarrierlessReasoningTurns(body) > 0) {
+          // reasoning items are forwarded unchanged. Only when a provider
+          // refuses the optional `content` field do we retry once with it
+          // removed, keeping reasoning continuity intact otherwise.
+          if (normalizeReasoningContent(body) > 0) {
             serialized = JSON.stringify(body);
             upstream = await requestUpstream(serialized);
             deadline.touch();
@@ -213,6 +161,6 @@ export function createModelProxyHandler({ models, admit, fetchImpl = hostFetch, 
         response.writeHead(error.status || (code === 'INVALID_JSON' || code === 'UNSUPPORTED_TOOL_TYPE' ? 400 : 502), { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(value));
       } else response.end(`event: error\ndata: ${JSON.stringify({ type: 'error', ...value.error })}\n\n`);
-    } finally { deadline?.dispose(); response.off('close', disconnect); }
+    } finally { deadline.dispose(); response.off('close', disconnect); }
   };
 }

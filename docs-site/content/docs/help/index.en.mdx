@@ -1,0 +1,107 @@
+---
+title: Help
+description: Which page to open when something breaks, and what information to include so an issue can be triaged in one pass.
+---
+
+The rest of the documentation explains how things work. This chapter explains **what to do when they don't**.
+
+## Three routes
+
+| Your situation | Go to |
+| --- | --- |
+| "Is this how it is supposed to behave?" | [FAQ](./faq.mdx) |
+| An **error code** appeared, or an operation keeps failing | [Troubleshooting](./troubleshooting.mdx) |
+| "This isn't a bug, you just haven't built it" | [Known limitations](./known-limitations.mdx) |
+
+## Find your stage
+
+| Where you got stuck | Start here | Common error-code prefixes |
+| --- | --- | --- |
+| Cannot install or open | [Installation](../getting-started/install.mdx) → [Known limitations](./known-limitations.mdx) | — |
+| Opens but nothing works | Start checks on the Overview | `HOST_CONNECTION_MISSING`, `STUDIO_HOST_INCOMPATIBLE` |
+| Cannot configure a model | [Troubleshooting · Models & credentials](./troubleshooting.mdx#models--credentials) | `MODEL_*`, `CLOUD_CREDENTIALS_MISSING` |
+| Cannot create an Agent | [Troubleshooting · Agents & builds](./troubleshooting.mdx#agents--builds) | `AGENT_*`, `BUILD_*`, `STUDIO_PRESET_*` |
+| Sending a message does nothing | [Troubleshooting · Runtimes](./troubleshooting.mdx#runtimes) | `NATIVE_ENGINE_*`, `RUNTIME_*`, `DSH_TURN_FAILED` |
+| Cannot bind a resource | [Troubleshooting · Resources](./troubleshooting.mdx#resources) | `MCP_*`, `SKILL_*`, `MANAGED_RESOURCE_*` |
+| Deployment fails | [Troubleshooting · Cloud & deployment](./troubleshooting.mdx#cloud--deployment) | `CLOUD_*`, `DEPLOYMENT_*` |
+| Session history looks wrong | [Troubleshooting · Sessions & history](./troubleshooting.mdx#sessions--history) | `SESSION_*`, `STUDIO_LEGACY_HARNESS_RETIRED` |
+
+## Do these three things first
+
+Before reading further, these three steps resolve most problems:
+
+<Steps>
+<Step>
+### Run start checks
+
+**Overview → Start checks** runs three checks and reports three states (`src/client/state/start-checks.mjs:22-26`):
+
+| Result | Meaning |
+| --- | --- |
+| Confirmed | Real configuration was read |
+| Missing | Definitely not configured; follow the prompt |
+| Unknown | Unreadable (timeout / connection failure) — **not** "not configured" |
+
+Each check has an 8-second timeout. If all three are "unknown", the host is not connected at all — fix the connection first.
+</Step>
+
+<Step>
+### Confirm the versions
+
+**Settings → AgentKit Studio → Version and updates** shows three version numbers (`src/client/pages/studio-settings.mjs:78-80`):
+
+- **AgentKit Studio version** — the desktop app
+- **Studio plugin version** — product features and runtime adaptation layer
+- **DSH host compatibility version** — the pinned host baseline
+
+These are three different things. Include all three in any issue.
+</Step>
+
+<Step>
+### Reproduce once
+
+Restart Studio and reproduce from a clean state. If it only happens "after a few turns", it is most likely session history or runtime state — note which turn it was.
+</Step>
+</Steps>
+
+## What an issue needs
+
+An issue without details only costs a round trip. Provide:
+
+| Information | Where to get it |
+| --- | --- |
+| All three version numbers | Settings → AgentKit Studio → Version and updates |
+| Platform and architecture | macOS (Apple Silicon) / Windows (x64) |
+| The exact error code | The card's error text, or a trace under observability |
+| Reproduction steps | Which panel, what you clicked, what you typed |
+| Operations records | Operations → Observability → the matching trace's spans and events |
+| Local or cloud | Local host, or a cloud managed runtime |
+
+<Callout type="warn" title="Never paste credentials">
+Redact API keys, AK/SK pairs, cookies and private addresses from screenshots and logs.
+Studio automatically replaces common credential shapes in history with `[redacted credential]` (`src/dsh-history-display.mjs:10-21`), but **screenshots and terminal output are not covered**.
+</Callout>
+
+## Self-check commands
+
+For plugin or source installs:
+
+```sh
+# Plugin form: confirm the host version
+dsh --version
+
+# Source form: run the gate
+pnpm install --frozen-lockfile
+make check
+
+# Check whether Node meets the security baseline
+node scripts/check-node-version.mjs
+```
+
+`make check` covers syntax, portability, source size, contracts and product-surface checks (`Makefile:71-72`). When it fails, the path it prints is where the problem is.
+
+## Related
+
+- [Your first conversation](../getting-started/first-conversation.mdx) — confirm what a healthy run looks like
+- [Interface tour](../getting-started/interface.mdx) — confirm you are in the right panel
+- [Security and public boundary](../contributing/security-boundary.mdx) — what counts as internal information

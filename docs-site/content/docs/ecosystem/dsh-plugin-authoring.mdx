@@ -1,0 +1,177 @@
+---
+title: DSH 插件作者指南
+description: 写一个能被 DSH 宿主加载、被 Studio 插件市场发现的插件包：清单字段、能力声明、发布与自检。
+status: new
+---
+
+**一个 DSH 插件 = 一个 npm 包 + 一份清单。** 清单声明它要求宿主提供什么，包本身提供实现。
+DSH 侧负责加载、依赖解析与生命周期；Studio 侧只负责让它在市场里可被发现。
+
+## 插件包的最小形状
+
+| 你要提供 | 说明 | Studio 自己的例子 |
+| --- | --- | --- |
+| 包名 | 必须能通过 `PACKAGE_SPEC` 校验，支持 scope | `@kingsoftcloud/agentkit-studio` |
+| 版本 | semver | `0.0.16` |
+| `exports` 入口 | 至少一个，指向 ESM 模块 | 14 个入口，见 `package.json#exports` |
+| 清单文件 | DSH 用来判断能否加载 | `studio.plugin.json` |
+| `keywords` | 市场靠它检索 | `dsh-plugin` |
+
+<Callout type="warn" title="包名不是随便起的">
+  `id` 与 `installSpec` 都要匹配 `src/dsh-plugin-catalog.mjs:21` 的
+  `^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9.^~<>=*+-]+)?$`。
+  大小写、下划线以外的符号都会让条目被**静默丢弃**——市场不会报错，只是看不到你。
+</Callout>
+
+## 清单字段
+
+```json
+{
+  "id": "agentkit-studio",
+  "version": "0.0.16",
+  "requiredHostApi": "dsh-native/0.2.2-rc.1",
+  "requiredDsh": "0.2.2-rc.1",
+  "requiredHostContract": 1,
+  "capabilities": [
+    "studio.agent.catalog",
+    "studio.runtime.capabilities",
+    "studio.session.adapter",
+    "studio.workspace.dock"
+  ],
+  "contributes": ["route", "resource", "command"]
+}
+```
+
+| 字段 | 类型 | 必填 | 作用 | 不满足时 |
+| --- | --- | --- | --- | --- |
+| `id` | string | ✅ | 插件身份，全局唯一 | 加载失败 |
+| `version` | semver | ✅ | 与 `package.json` 必须一致 | 打包门禁失败 |
+| `requiredHostApi` | string | ✅ | 要求的 Host API 命名空间 | 拒绝加载 |
+| `requiredDsh` | string | ✅ | 要求的 DSH 版本，**必须精确相等** | `STUDIO_HOST_INCOMPATIBLE` |
+| `requiredHostContract` | number | ✅ | 兼容契约版本号 | 同上 |
+| `capabilities` | string[] | ✅ | 你对外提供的能力名 | 下游探针失败 |
+| `contributes` | string[] | ✅ | 你向宿主贡献的扩展点类型 | 扩展点不挂载 |
+
+`requiredDsh` 是**精确相等**比较，不是 `>=`。写 `0.2.2` 拿不到 `0.2.2-rc.1` 的授权。
+源码：`src/host/compatibility.mjs:25`。
+
+## 四个 capability 与三个 contribute
+
+| capability | 含义 | 探针 |
+| --- | --- | --- |
+| `studio.agent.catalog` | 提供 Agent 目录 | `agentPresets.register` / `pluginsFor` |
+| `studio.runtime.capabilities` | 提供运行时能力查询 | 见 [Host 兼容性](./host-compatibility.mdx) |
+| `studio.session.adapter` | 提供会话适配 | `sessionController.create` 等 6 个方法 |
+| `studio.workspace.dock` | 提供工作区停靠 | 挂载时检查 |
+
+| contribute | 你注册什么 | 宿主怎么用 |
+| --- | --- | --- |
+| `route` | 控制协议路由 | 通过 `/agentkit` 通道分发 operation |
+| `resource` | 资源种类 | 进入资源目录与绑定选择器 |
+| `command` | 命令 | 进入 Host 命令表 |
+
+源码：`studio.plugin.json:7-17`。
+
+## 模块入口
+
+```js
+// src/index.mjs
+export const name = 'agentkit-studio';
+export const inject = ['connection', 'webServer', 'credentials'];
+
+export async function apply(ctx) {
+  // 在这里挂载 Host 服务、注册路由、注入文档
+}
+```
+
+`inject` 声明你依赖的宿主服务。**不要在 `apply` 之前 `ctx.get()`**——Cordis 只在提供该服务的插件激活后才暴露它。
+拿到服务要延迟到真正使用的时刻。源码：`src/index.mjs:16-43`。
+
+## 让市场能发现你
+
+| 渠道 | 机制 | 来源 |
+| --- | --- | --- |
+| npm 检索 | 包 `keywords` 含 `dsh-plugin` | `src/dsh-plugin-discovery.mjs:22` |
+| GitHub 检索 | 仓库 `topic: dsh-plugin` | `src/dsh-plugin-discovery.mjs:24` |
+| 内置目录 / 远程索引 | 提 PR 到 `DSH_CURATED_PLUGINS`，或由运维配置 `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | `src/dsh-plugin-catalog.mjs:112` |
+
+内置目录只有**第一方**条目能声明 `expectedEntries` / `service` / `readinessNote`。
+第三方插件走 npm 或 GitHub 检索，市场会显示「Host 已加载该插件；Studio 没有它的能力探针」。
+源码：`src/studio-plugins.mjs:100-104`。
+
+## 发布前自检
+
+<Steps>
+
+<Step>
+### 版本一致性
+
+```sh
+node -p "require('./package.json').version"
+node -p "require('./studio.plugin.json').version"
+```
+
+两者必须相同。`make release-check` 会校验这一点。
+</Step>
+
+<Step>
+### exports 可解析
+
+```sh
+node -e "for (const [k,v] of Object.entries(require('./package.json').exports)) console.log(k, '->', v)"
+```
+
+每个相对入口都必须真实存在——DSH 会逐个解析。
+</Step>
+
+<Step>
+### 清单可加载
+
+```sh
+node -e "console.log(require('./studio.plugin.json'))"
+```
+
+清单必须是合法 JSON，`requiredDsh` 必须等于你实际验证过的 Host 版本。
+</Step>
+
+<Step>
+### 包内容干净
+
+```sh
+make public-gate
+```
+
+`public-gate` 会跑源码审计、密钥扫描、补丁格式与包内容检查。
+</Step>
+
+</Steps>
+
+## 就绪状态
+
+装好之后，市场会给出六种之一的状态：
+
+| 状态 | 含义 | 你要做什么 |
+| --- | --- | --- |
+| `not-installed` | 尚未安装 | 点安装 |
+| `disabled` | 已安装但未启用 | 点启用 |
+| `loaded` | Host 已加载，但没有能力探针 | 无（第三方插件的正常状态） |
+| `ready` | 能力行与服务探针全部通过 | 无 |
+| `failed` | 加载失败或探针失败 | 看 `note` 里的具体方法名 |
+| `not-configured` | 未配置能力验证清单 | 无 |
+
+源码：`src/studio-plugins.mjs:96-115`。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `STUDIO_HOST_INCOMPATIBLE` | `requiredDsh` 与运行中的 DSH 不相等 | 升级 Host 或改清单 |
+| `DSH_PLUGIN_NOT_FOUND` | 包名解析不到 | 检查包名与 registry |
+| `DSH_PLUGIN_NOT_USABLE` | 已安装但无法加载 | 看 Host 日志里的加载错误 |
+| `DSH_PLUGIN_INSPECTION_REFUSED` | 检查快照被拒绝 | 减小快照体积，见 `CHANGELOG` 0.0.14 |
+| `DSH_PLUGIN_OPERATION_FAILED` | 变更未生效 | 读 `details.error.diagnostic` |
+| `SERVICE_UNAVAILABLE` | 宿主服务不存在 | 确认 Host 版本 ≥ 清单要求 |
+
+## 相关
+
+远程索引字段与示例见[插件市场](./plugin-market.mdx)，能力协商细节见 [Host 兼容性](./host-compatibility.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。

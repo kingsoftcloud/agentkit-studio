@@ -1,0 +1,53 @@
+---
+title: 入门
+description: 从下载安装到跑通第一次真实对话，这一章只需要 5 分钟。
+status: new
+---
+
+AgentKit Studio 有两种用法，先确认你要哪一种：
+
+<Tabs items={['桌面端（推荐）', '作为 DSH 插件', '从源码开发']}>
+  <Tab value="桌面端（推荐）">
+    从[下载页](https://kingsoftcloud.github.io/agentkit-studio/)获取最新的签名安装包（exe / dmg），
+    双击即可使用。适合绝大多数用户，不需要 Node.js、pnpm 或任何构建工具。
+  </Tab>
+  <Tab value="作为 DSH 插件">
+    在已有的 DeepSeek Harness 环境里安装 `@kingsoftcloud/agentkit-studio`，
+    把 Studio 的能力挂到你自己的 Host 上。适合已经有 DSH 工作流的团队。
+  </Tab>
+  <Tab value="从源码开发">
+    参与开发、调试补丁或验证真实 Host 行为时使用。需要 Node.js 24 与 pnpm 10。
+    见[贡献指南](../contributing/index.mdx)。
+  </Tab>
+</Tabs>
+
+## 这一章有什么
+
+<Cards>
+  <Card title="5 分钟快速开始" href="/docs/getting-started/quickstart">
+    安装 → 配模型 → 建 Agent → 发第一条消息。一条最短路径。
+  </Card>
+  <Card title="安装" href="/docs/getting-started/install">
+    macOS 与 Windows 的分平台说明、系统要求、数据目录与卸载方式。
+  </Card>
+  <Card title="第一次对话" href="/docs/getting-started/first-conversation">
+    看懂界面上发生了什么：工具调用、文件交付、运行记录与中断恢复。
+  </Card>
+</Cards>
+
+## 开始之前
+
+| 你需要 | 说明 |
+| --- | --- |
+| macOS 13+（Apple Silicon）或 Windows 11（x64） | macOS 为签名并公证的 DMG；Windows 为 NSIS 安装器 |
+| 一个模型供应商的 API Key | 支持任意 OpenAI 兼容端点，或使用组织内配置的模型网关 |
+| 可选：云端凭证 | 只有「把 Agent 部署到云端」时才需要 |
+
+<Callout type="warn" title="云端能力需要控制面">
+  部署、托管运行时、知识库、记忆库依赖 AgentEngine 控制面与凭证。本地能跑通不代表云端资源可用——
+  详见[产品与云端的关系](../concepts/managed-runtime.mdx)。
+</Callout>
+
+## 下一步
+
+从[快速开始](./quickstart.mdx)开始。如果你更想先理解产品模型，去[核心概念](../concepts/index.mdx)。

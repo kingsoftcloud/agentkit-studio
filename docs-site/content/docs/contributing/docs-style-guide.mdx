@@ -1,0 +1,157 @@
+---
+title: 文档写作规范
+description: "本站的写作契约：页面骨架、双语 1:1、链接与组件规则、术语表、写作禁令，以及提交前必须通过的自检命令。"
+status: new
+---
+
+本站是产品的一部分，不是它的附属品。**违反这一页规则的改动会被 CI 挡住**——
+`tests/docs-site-i18n.test.mjs` 会校验双语结构、链接可达性与公开边界。
+
+## 内容必须重写，不是搬运
+
+仓库里的历史 `docs/*.md` **不是素材，是反例**。它们整体落后于当前代码，并且混入了大量内部
+实现记录。可以用它做**话题清单**，但不要复制它的段落、句子、表格或结构。
+
+| 允许 | 禁止 |
+| --- | --- |
+| 把历史文档当成「还可以写哪些主题」的清单 | 复制历史文档的段落、句子、表格 |
+| 从 `src/**`、`scripts/**`、`Makefile`、`package.json` 推导事实 | 凭记忆或凭旧文档写参数、默认值、枚举 |
+| 用下面的页面骨架组织内容 | 换个说法把旧文档重写一遍 |
+
+**每条事实都要能指到源码位置。** 如果一个结论找不到 `path:line`，删掉它。
+
+## 页面骨架
+
+所有页面从 frontmatter 开始，正文**从 `##` 开始**——`title` 已经是 H1，不要再写一级标题。
+
+```yaml
+---
+title: 页面标题          # 必填，与 H1 语义一致
+description: 一句话说明   # 必填，≤ 160 字，进 <meta description> 与 OG 图
+status: new              # 可选：new | beta | deprecated，渲染为侧边栏徽章
+---
+```
+
+不同页型用不同骨架：
+
+| 页型 | 骨架 |
+| --- | --- |
+| 概念页 | 一句话定义 → 为什么需要它 → 与相邻概念的关系 → 关键规则 → 相关任务 → 相关参考 |
+| 任务指南 | 适用版本与前置条件（Callout）→ 步骤（`<Steps>`，每步可复制）→ 成功的样子 → 常见错误表 → 相关参考 |
+| 参考页 | 一句话说明契约 → 字段 / 枚举表 → 约束与默认值 → 版本与兼容性 → 源码入口 |
+| 排障页 | 症状 → 错误码 → 原因 → 处理，四列组织 |
+| 贡献页 | 前置条件 → 可复制命令 → 失败定位 → 下一步（本页就是这种） |
+
+## 双语 1:1
+
+英文页是中文页的**孪生**，不是节选。
+
+| 规则 | 判定 |
+| --- | --- |
+| 文件名 | 每个 `foo.mdx` 必须有 `foo.en.mdx`，反之亦然 |
+| 导航 | `meta.json` 与 `meta.en.json` 的 `pages` 顺序必须完全一致，标题必须翻译 |
+| 标题结构 | 中英页面的 `##` / `###` / `####` 数量与层级必须逐项相同 |
+| 内容 | 英文不是机翻；术语按下方术语表，API 字段名与枚举值永远保持原样 |
+
+<Callout type="error" title="英文回退是被禁止的">
+  `lib/i18n.ts` 里 `fallbackLanguage: null`。缺少翻译会让构建失败，而不是在英文 URL 上渲染中文。
+  这是有意的：静默回退是翻译文档最常见的腐烂方式。
+</Callout>
+
+## 链接规范
+
+| 场景 | 写法 | 例子 |
+| --- | --- | --- |
+| 正文 Markdown 链接 | 相对当前文件、**带 `.mdx`** | `[快速开始](../getting-started/quickstart.mdx)` |
+| 跨章节 | 相对路径回到章节根 | `[概念](../concepts/index.mdx)` |
+| `<Card href>` | 绝对路径：中文 `/docs/...`，英文 `/en/docs/...` | `href="/docs/concepts"` |
+| 锚点 | 直接 `#小节` | `[见下](#配置)` |
+| 外部链接 | 完整 URL | `https://github.com/...` |
+
+- 不要写 `./quickstart`（缺 `.mdx`，路由不会解析）。
+- 不要写 `./quickstart.html`。
+- 不要写 `docs/quickstart.mdx`（会被当成仓库路径）。
+- 英文页的 Markdown 链接同样写中文源路径，运行时按当前语言解析。
+
+## 组件
+
+```mdx
+<Callout type="info" title="可选标题">说明文字</Callout>
+<Callout type="warn">风险提示</Callout>
+<Callout type="error">会导致失败的操作</Callout>
+
+<Steps>
+<Step>### 步骤标题
+步骤内容
+</Step>
+</Steps>
+
+<Tabs items={['macOS', 'Windows']}>
+  <Tab value="macOS">内容</Tab>
+  <Tab value="Windows">内容</Tab>
+</Tabs>
+
+<Cards>
+  <Card title="标题" href="/docs/concepts">描述</Card>
+</Cards>
+```
+
+- **能用表格就不用卡片**；能用文字就不用图。
+- 代码块必须标语言：` ```sh `、` ```json `、` ```ts `、` ```text `。
+- 命令行用 `sh`；Windows 差异单独给一个 `powershell` 块，不要在正文里提一句。
+- 图表用 ` ```mermaid `，不要贴图片。
+
+## 术语表
+
+同一个概念只允许一个名字。英文术语首次出现时给「中文（English）」，之后统一用中文；英文页反之。
+**API 字段名、枚举值、错误码永远不翻译。**
+
+| 中文 | English | 代码 / 值 |
+| --- | --- | --- |
+| 智能体 | agent | `agentId` |
+| 修订版本 | revision | `revision` |
+| 构建 | build | `buildId` |
+| 会话 | session | `sessionId` |
+| 一次运行 | run | `runId` |
+| 运行时类型 | runtime type | `runtime.type` |
+| DSH 原生 | DSH Native | `dsh-native` |
+| Star Harness | Star Harness | `harness` |
+| Codex | Codex | `codex` |
+| 资源绑定 | resource binding | `resources` |
+| 托管运行时 | managed runtime | — |
+| 冻结运行时 | frozen runtime | — |
+| 专家模板 | expert template | — |
+| 专家团 | team | `teamId` |
+| 工作区 | workspace | — |
+| 思考深度 | reasoning effort | — |
+| 执行策略 | execution policy | `read-only` / `workspace-write` / `danger-full-access` |
+
+## 写作禁令
+
+| 禁止 | 为什么 |
+| --- | --- |
+| 「需要注意的是」「简单来说」「强大的」「一站式」「无缝的」 | 填充词，删掉不损失信息 |
+| 未完成的占位标记（待办 / 待定 / 待修复） | 未完成内容不进发布站，CI 会拦 |
+| 未实现的能力（四页空态、提案里的设计） | 要么标 `status: beta`，要么不写 |
+| 内网域名、私有 IP、凭证、个人绝对路径 | 见[安全与公开边界](./security-boundary.mdx) |
+| Intel macOS 安装包名 | 产品只支持 Apple Silicon，这类信息是错的 |
+
+## 提交前自检
+
+在 `docs-site/` 目录下运行：
+
+```sh
+# 1. 双语成对：输出应为空
+ls content/docs/**/*.mdx | sed 's/\.en\.mdx$//; s/\.mdx$//' | sort | uniq -c | awk '$1 != 1'
+
+# 2. 没有残留的未完成标记
+grep -rniE '\b(todo|tbd|fixme)\b' content/docs || true
+
+# 3. 没有个人绝对路径与私钥块
+grep -rnE '/(Users|home)/|-----BEGIN' content/docs || true
+
+# 4. 相对链接都带 .mdx
+grep -rnE '\]\(\./[^)]*[^x]\)' content/docs || true
+```
+
+四条命令都没有输出，就说明结构、边界与链接都合规。完整的门禁说明见[门禁与验证](./gates.mdx)。

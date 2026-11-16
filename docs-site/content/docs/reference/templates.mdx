@@ -1,0 +1,93 @@
+---
+title: "模板 Schema"
+description: "`agentkit.studio.team-template/v1` 的字段约束、拒绝形状与 7 个 `TEAM_TEMPLATE_*` 错误码。"
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 契约常量
+
+专家团模板契约标识为 `agentkit.studio.team-template/v1`。它描述的是「目录里的模板」到 `TeamDefinition` 之间的归一化边界。
+
+| 常量 | 值 | 说明 |
+| --- | --- | --- |
+| `TEAM_TEMPLATE_CONTRACT` | `agentkit.studio.team-template/v1` | 契约版本 |
+| `TEAM_TEMPLATE_RUNTIMES` | `dsh-native` · `harness` | 角色可用的运行时 |
+| `TEAM_PLACEHOLDER_MODELS` | `one-team-model` | 占位模型，校验时拒绝 |
+| `TEAM_DEFAULT_MODEL` | `[内部模型代号，见源码]` | 内部模型代号，本页脱敏 |
+
+## 字段约束
+
+`validateTeamTemplate()` 是唯一入口。下面的长度上限由校验器里的 `requiredText` / `optionalText` 调用抽出，与实现同源。
+
+| 字段 | 上限 | 单位 |
+| --- | --- | --- |
+| `instructions` | 16000 | 字符 |
+| `roles[].instructions` | 8000 | 字符 |
+| `roles[].template.id` | 256 | 字符 |
+| `roles[].template.digest` | 256 | 字符 |
+| `roles[].model / defaultModel` | 256 | 字符 |
+| `id` | 128 | 字符 |
+| `name` | 120 | 字符 |
+| `roles[].label` | 80 | 字符 |
+| `roles[].template.version` | 64 | 字符 |
+| `roles[].name` | 64 | 字符 |
+
+此外还有格式约束：
+
+| 字段 | 类型 / 正则 | 约束 |
+| --- | --- | --- |
+| `kind` | `"team"` | 固定值，其他值直接拒绝 |
+| `id` | `^[a-z][a-z0-9-]*$` | 小写字母开头，只含小写字母、数字与短横线 |
+| `version` | `^\d+\.\d+\.\d+$` | 严格三段 semver |
+| `roles` | array | 2–9 个角色，`roles[0].name` 必须是 `lead` |
+| `roles[].name` | `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$` | 短横线分段，全员唯一 |
+| `roles[].template.version` | semver | 缺省回退到专家团 `version` |
+
+## 拒绝的形状
+
+| 输入 | 规则 | 改法 |
+| --- | --- | --- |
+| `roles[].agentId` | 角色不能引用普通 Agent | 改用不可变的 `template` 引用 |
+| `roles[].source.kind` | 值为 `agent` 时被拒绝 | 同上 |
+| `subAgents` / `sub_agents` | 角色不能再声明嵌套 subagent | 在专家团层组合角色 |
+| `roles[].template` | 缺少 `id` 或 `digest` | 补上内容锁 |
+| 占位模型 | `one-team-model` | 必须换成真实模型 profile |
+| `runtime.type` | `dsh-native` · `harness` | 只有这两种运行时可用 |
+
+## 错误码
+
+| 错误码 | 位置 | 含义 |
+| --- | --- | --- |
+| `TEAM_TEMPLATE_INVALID` | `src/team-template-contract.mjs:21` | 专家团角色与模板。 |
+| `TEAM_TEMPLATE_MODEL_INVALID` | `src/team-template-contract.mjs:32` | 专家团角色与模板。 |
+| `TEAM_TEMPLATE_ROLE_SOURCE_INVALID` | `src/team-template-contract.mjs:38` | 专家团角色与模板。 |
+| `TEAM_TEMPLATE_ROLE_INVALID` | `src/team-template-contract.mjs:58` | 专家团角色与模板。 |
+| `TEAM_TEMPLATE_ROLE_SPEC_INVALID` | `src/team-template-contract.mjs:92` | 专家团角色与模板。 |
+| `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` | `src/team-template-contract.mjs:94` | 专家团角色与模板。 |
+| `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` | `src/team-template-contract.mjs:95` | 专家团角色与模板。 |
+
+## 版本与兼容性
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| 契约 | `agentkit.studio.team-template/v1` | 新增必填字段是破坏性变更 |
+| 角色数 | 2–9 | 单个专家团的上限 |
+| 运行时 | `dsh-native` · `harness` | `codex` 不能作为团队角色运行时 |
+| 错误码 | `7` | 全部以 `TEAM_TEMPLATE_` 或 `TEAM_` 开头 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| 模板契约与校验 | `src/team-template-contract.mjs` |
+| 模板目录 | `src/template-catalog-source.mjs` |
+| 专家团运行时 | `src/studio-team-runtime.mjs` |
+| 模板召唤 | `src/team-template-summon.mjs` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |
+| team-template-contract.test.mjs | `tests/team-template-contract.test.mjs` |
+| team-template-summon.test.mjs | `tests/team-template-summon.test.mjs` |

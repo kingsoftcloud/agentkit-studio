@@ -1,0 +1,169 @@
+---
+title: Expert templates
+description: Define expert teams with agentkit.studio.team-template/v1 — field tables, role blueprint constraints, validation error codes, publishing and summon flows.
+status: new
+---
+
+**An expert template is JSON, not code.** A team template describes who composes the team, what instructions each role carries, and which resources it may bind. Studio validates it, then hands it to DSH Agent Teams to run.
+
+| Concept | What it is | Contract |
+| --- | --- | --- |
+| Expert template | A configuration snapshot of one preset agent | Follows Agent Revision semantics, see [core concepts](../concepts/agent-revision-build.mdx) |
+| Team template | A multi-role collaboration unit | `agentkit.studio.team-template/v1` (this page) |
+
+This page covers team templates only — they are the one template type with its own schema contract.
+
+## Top-level fields
+
+| Field | Type | Required | Constraint | Source |
+| --- | --- | --- | --- | --- |
+| `kind` | string | ✅ | Must be exactly `"team"` | `team-template-contract.mjs:52` |
+| `id` | string | ✅ | `/^[a-z][a-z0-9-]*$/`, ≤128 chars | `:53-54` |
+| `version` | string | ✅ | Strict `\d+\.\d+\.\d+` (no `-rc` suffix) | `:54` |
+| `name` | string | ✅ | ≤120 chars | `:55` |
+| `instructions` | string | ✅ | ≤16000 chars, team-level collaboration instructions | `:56` |
+| `roles` | array | ✅ | **2–9** entries, and `roles[0].name` must be `lead` | `:57-58` |
+| `defaultModel` / `model` | string | — | ≤256 chars; must not be a placeholder | `:80` |
+| `contract` | string | — | Defaults to `agentkit.studio.team-template/v1` | `:83` |
+| `catalogId` | string | — | Catalog ownership, optional | `:48` |
+
+<Callout type="warn" title="A team starts at two roles">
+  `roles.length < 2` fails immediately. With a single role you do not need a team — use an ordinary expert template.
+  Source: `team-template-contract.mjs:58`.
+</Callout>
+
+## Role fields
+
+| Field | Type | Required | Constraint | Source |
+| --- | --- | --- | --- | --- |
+| `name` | string | ✅ | `/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/`, ≤64 chars, unique within the team | `:61-62` |
+| `label` | string | — | ≤80 chars; defaults to `name` | `:65` |
+| `instructions` | string | — | ≤8000 chars | `:66-67` |
+| `agentPreset` / `agentPresetId` | string | — | ≤256 chars | `:68` |
+| `model` / `modelId` / `modelProfileId` | string | — | ≤256 chars; must not be a placeholder | `:69` |
+| `template.id` | string | ✅ | ≤256 chars, points at an immutable template | `:40` |
+| `template.version` | string | ✅ | semver, ≤64; falls back to the team `version` | `:45-47` |
+| `template.digest` | string | ✅ | ≤256 chars, the content lock | `:46` |
+| `template.catalogId` | string | — | Falls back to the team `catalogId` | `:48` |
+
+### Two hard rules for role names
+
+| Rule | On violation | Source |
+| --- | --- | --- |
+| Only the **first** role may be named `lead` | `TEAM_TEMPLATE_ROLE_INVALID` | `:62` |
+| Role names must be unique | `TEAM_TEMPLATE_ROLE_INVALID` | `:62` |
+
+### Roles may not reference plain agents
+
+```json
+{
+  "name": "writer",
+  "agentId": "ar-12345"
+}
+```
+
+This fails with `TEAM_TEMPLATE_ROLE_INVALID`: "role 'writer' must not reference a plain agent; use an immutable template reference instead."
+
+**Why?** A plain agent is mutable — its Revision advances. A team needs reproducible members, so it may only reference
+immutable templates carrying a `digest`. Source: `team-template-contract.mjs:63`.
+
+## Role blueprint (role spec)
+
+The `template` field points at an agent definition; that definition's `spec` is validated again by `validateTeamRoleSpec`:
+
+| Field | Constraint | On violation |
+| --- | --- | --- |
+| `runtime.type` | Only `dsh-native` or `harness` | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
+| `subAgents` / `sub_agents` | Forbidden | `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` |
+| `instructions.system` | Must be a non-empty string | `TEAM_TEMPLATE_ROLE_SPEC_INVALID` |
+| `bindings` | Must be an object (not an array) | `TEAM_TEMPLATE_ROLE_SPEC_INVALID` |
+| `bindings.modelProfileId` / `modelProfileIds[]` | Must not be a placeholder | `TEAM_TEMPLATE_MODEL_INVALID` |
+
+<Callout type="error" title="Codex is out of scope for teams">
+  `TEAM_TEMPLATE_RUNTIMES` has exactly two values: `dsh-native` and `harness`.
+  Even though the Studio agent form offers `codex`, team roles cannot use it.
+  Source: `team-template-contract.mjs:4,9,94`.
+</Callout>
+
+## Placeholder models
+
+Templates must not keep placeholders, otherwise a summoned team runs against a fake model:
+
+| Placeholder | Checked where | Error code |
+| --- | --- | --- |
+| `one-team-model` | Team `defaultModel` / `model` | `TEAM_TEMPLATE_MODEL_INVALID` |
+| `one-team-model` | Role `model` and friends | `TEAM_TEMPLATE_MODEL_INVALID` |
+| `one-team-model` | Catalog audit recursively scans any key containing `model` | `TEAM_TEMPLATE_PLACEHOLDER_MODEL` |
+
+Source: `team-template-contract.mjs:16,30-34`, `team-template-audit.mjs:20-35,56`.
+
+## Complete example
+
+```json
+{
+  "kind": "team",
+  "id": "release-crew",
+  "version": "1.2.0",
+  "name": "Release crew",
+  "instructions": "lead splits the release checklist; writer produces release notes; reviewer signs off before merge.",
+  "defaultModel": "model-profile-prod",
+  "roles": [
+    { "name": "lead", "label": "Lead", "instructions": "Split work, delegate, and summarise.",
+      "template": { "id": "agent/team-lead", "version": "1.0.0", "digest": "sha256:9f2c…" } },
+    { "name": "writer", "label": "Writer", "instructions": "Turn changes into release notes.",
+      "template": { "id": "agent/tech-writer", "version": "1.0.0", "digest": "sha256:4ab7…" } },
+    { "name": "reviewer", "label": "Reviewer", "instructions": "Check facts and links.",
+      "template": { "id": "agent/reviewer", "version": "1.0.0", "digest": "sha256:77e1…" } }
+  ]
+}
+```
+
+## Validation error code reference
+
+| Error code | Trigger | Fix |
+| --- | --- | --- |
+| `TEAM_TEMPLATE_INVALID` | `kind !== "team"`; `id` / `version` / `name` / `instructions` empty or too long | Walk the top-level field table |
+| `TEAM_TEMPLATE_ROLE_INVALID` | Role count outside 2–9; `lead` not first; duplicate or malformed name; role references a plain agent | Adjust the `roles` array |
+| `TEAM_TEMPLATE_ROLE_SOURCE_INVALID` | `template` missing, not an object, missing `id` or `digest`, or `version` is not semver | Fill in `template.id` / `.version` / `.digest` |
+| `TEAM_TEMPLATE_MODEL_INVALID` | A model field is the placeholder | Use a real model profile id |
+| `TEAM_TEMPLATE_ROLE_SPEC_INVALID` | Role blueprint is not an object; missing `instructions.system`; `bindings` is not an object | Fix the role definition |
+| `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` | `runtime.type` is neither `dsh-native` nor `harness` | Change the runtime |
+| `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` | A role declares `subAgents` / `sub_agents` | Remove the nested declaration |
+| `TEAM_TEMPLATE_PLACEHOLDER_MODEL` | Catalog audit found a leftover placeholder | Replace every model field |
+| `TEAM_ROLE_DEFINITION_MISSING` | Role template definition not found (error when `requireRoleDefinitions`, else warning) | Publish the role template first |
+| `TEAM_ROLE_DEFINITION_KIND_INVALID` | Role template `kind` is not `agent` | Use an agent definition |
+| `TEAM_ROLE_NOT_TEAM_ONLY` | Role template is not marked `teamRoleOnly: true` | Add the marker |
+| `TEAM_TEMPLATE_NONE` (warning) | The catalog contains no `kind=team` template | Not an error, informational |
+
+Source: `team-template-contract.mjs`, `team-template-audit.mjs:51-74`.
+
+## Audit
+
+Run a catalog audit before publishing; it **never mutates input**, only returns a report:
+
+```js
+import { auditTeamTemplateCatalog } from './src/team-template-audit.mjs';
+const report = auditTeamTemplateCatalog({
+  items,                        // Catalog listing items
+  definitions,                  // Role template definitions (Map or plain object)
+  requireRoleDefinitions: true, // Escalate a missing definition to an error
+});
+// report: { ok, teamCount, errors[], warnings[] }, each issue { code, message, path? }
+```
+
+Source: `team-template-audit.mjs:42-74`.
+
+## Publishing and summoning
+
+| Operation | Purpose |
+| --- | --- |
+| `team-templates/list` / `team-templates/detail` | List and read team templates |
+| `templates/summon-plan` / `templates/summon` | Build a summon plan (no persist) and execute the summon |
+| `template-workflows/{start,status,cancel,detail,cache,clearCache}` | Progress, cancellation, and cache for long tasks |
+
+Summon states: `running` → `succeeded` / `failed` / `cancelled`; after a process restart a read returns `interrupted`.
+Source: `src/template-workflows.mjs:17-35`.
+
+## Related
+
+How experts and teams run is covered in [experts and local teams](../concepts/experts-teams.mdx), the machine-readable field definitions in the [template schema reference](../reference/templates.mdx), and every error code in the [error reference](../reference/errors.mdx).

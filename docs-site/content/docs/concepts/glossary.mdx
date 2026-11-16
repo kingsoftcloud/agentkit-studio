@@ -1,0 +1,122 @@
+---
+title: 术语表
+description: 52 条中英对照术语，每条一句话定义。同一个概念只允许一个名字，API 字段名与枚举值永远不翻译。
+status: new
+---
+
+**这一页是 AgentKit Studio 全部术语的唯一正确写法。同一个概念只允许一个名字；API 字段名、枚举值、错误码永远不翻译。**
+
+术语按主题分组。想查某个词在哪一页讲透，看每组最后一行指向的页面。
+
+## 命名规则
+
+| 规则 | 说明 |
+| --- | --- |
+| 中文优先 | 中文正文首次出现时给中文加括号英文，之后统一用中文 |
+| 英文优先 | 英文页反之：英文加括号中文，之后统一用英文 |
+| 不翻译 | API 字段名、枚举值、错误码保持原样 |
+| 单一名字 | 同一概念有多个历史别名时，只保留这一页列出的那个 |
+
+## 实体与生命周期
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 智能体 | agent | `agentId` | 一份可复用的能力配置，只持有当前的修订版本指向。 |
+| 修订版本 | revision | `revision` | Agent 的不可变快照，每次保存序号加一。 |
+| Agent 构建 | build | `buildId` | 把某个修订版本固化成的内容寻址运行包。 |
+| 构建产物 | bundle | `agent-bundle.zip` | 构建生成的 ZIP，固定包含 manifest、spec 与说明三件。 |
+| 会话 | session | `sessionId` | DSH 拥有的持久事件日志，Studio 不写它。 |
+| 一次运行 | run | `runId` | 一个 turn，从 `turn/start` 到 `turn/end`。 |
+| 预设 | preset | `agentkit-studio-agent-…` | 把某个修订版本注册进 DSH 运行注册表的名字。 |
+
+## 运行时与执行
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 运行时类型 | runtime type | `runtime.type` | 决定一次运行由谁的执行模型负责。 |
+| DSH 原生 | DSH Native | `dsh-native` | 默认运行时，由 DSH 自己执行。 |
+| Star Harness | Star Harness | `harness` | 由 KSADK Harness 原生内核执行的运行时。 |
+| Codex | Codex | `codex` | 由 Codex App Server 适配器执行的运行时。 |
+| 执行策略 | execution policy | `read-only` / `workspace-write` / `danger-full-access` | 限制运行能写哪里的三档策略，默认 `workspace-write`。 |
+| 权限模式 | permission mode | `permissionMode` | 执行策略里描述写入范围的那一项。 |
+| 审批策略 | approval policy | `ask` / `never` | 遇到需要确认的动作时是否停下来询问。 |
+| 原生权限策略 | native agent policy | `strict` / `loose` / `custom` | Star Harness Agent 的额外工具约束，只收紧不授予。 |
+| 冻结运行时 | frozen runtime | — | 构建时锁定、运行时只能照做的配置。 |
+| 无人值守执行 | unattended execution | — | 没有人工可以审批的运行，固定只读。 |
+
+## 资源与凭证
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 资源绑定 | resource binding | `resources` | 把外部能力挂到某个修订版本上的方式。 |
+| 资源种类 | resource kind | `model` / `mcp` / `skill` / `knowledge-base` / `memory-instance` | 可绑定资源的五个分类。 |
+| 模型 | model | `model` | 一段可切换的模型列表，其中一个为默认。 |
+| MCP 服务 | MCP server | `mcp` | 通过 MCP 协议对外暴露工具的进程。 |
+| 技能 | Skill | `skill` | 一份操作说明与随附脚本。 |
+| 技能空间 | Skill Space | `skill-space` | 云端的一组 Skill，由宿主按需下载加载。 |
+| 知识库 | knowledge base | `knowledge-base` | 云端知识集合，只提供检索能力。 |
+| 记忆库 | memory | `memory-instance` | 支持跨会话召回与写入的存储。 |
+| 凭证引用 | credential reference | `env://<name>` | 指向宿主凭证的值引用，唯一合法的凭证写法。 |
+| 资源检查 | resource check | `studio/resource-check` | 无内容的资源调用证据事件，只记种类、动作与结果。 |
+| 降级 | degradation | `RESOURCE_UNAVAILABLE` | 资源不可用时保留对话、只摘掉不可用的绑定。 |
+| 严格模式 | strict mode | — | 资源不可用时拒绝启动，而不是降级运行。 |
+
+## 会话、工作区与事件
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 工作区 | workspace | — | 会话绑定的目录，决定写入边界。 |
+| 会话事件 | session event | 16 种 | DSH 会话日志里的标准事件。 |
+| 流帧 | stream frame | `start` / `chunk` / `end` | 进程内的增量帧，不写进持久日志。 |
+| 瞬时帧 | transient frame | `assistant/live-chunk` | 只给客户端的打字机增量，带分数序号。 |
+| 可忽略事件 | ignorable event | `ksadk/*` | 宿主不认识但被保留下来、不影响界面的事实。 |
+| 序号 | sequence | `seq` | 会话内单调递增的事件位置。 |
+| 会话契约 | session contract | `p1-session-contract-v0.1` | Studio 与 DSH 之间会话边界的版本标识。 |
+
+## 专家与团队
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 专家模板 | expert template | `templateSource` | 预置的 Agent 蓝图，创建后是普通 Agent。 |
+| 专家团 | team | `teamId` | 多角色协作单元，拥有一份不可变蓝图。 |
+| 团队运行 | team run | `teamRunId` | 一份团队蓝图的执行实例，拥有根会话与子会话。 |
+| 团队模板契约 | team template contract | `agentkit.studio.team-template/v1` | 专家团蓝图的版本化契约。 |
+| 召唤 | summon | — | 一键把模板依赖装齐再创建 Agent 的编排动作。 |
+| 模板广场 | template gallery | — | 可选专家模板的入口。 |
+
+## 托管与部署
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 托管运行时 | managed runtime | — | 跑在云端的常驻运行环境。 |
+| 清单声明 | manifest | `agentengine.dsh-manifest/v1` | 描述托管运行时的 YAML 文档，上限 900 KiB。 |
+| 部署 | deployment | `dep_…` | 把 Agent 交付成常驻实例的过程。 |
+| 部署状态 | deployment state | 19 个 | 部署的生命周期状态，含 9 个轮询态与 7 个需关注态。 |
+| 回滚 | rollback | — | 把部署切回上一个可用版本。 |
+| 受信任身份 | trusted identity | `x-agentengine-*` | 由平台跳注入、托管运行时只读不写的身份。 |
+
+## 配置与治理
+
+| 中文 | English | 代码 / 值 | 一句话定义 |
+| --- | --- | --- | --- |
+| 宿主 | Host | — | 运行 DSH 的进程，会话与凭证的持有者。 |
+| 配置档案 | profile | `profileId` | 一组模型与凭证配置。 |
+| 思考深度 | reasoning effort | — | 模型的思考预算。 |
+| 下一句提示 | prompt prediction | — | 输入框里的下一句预测。 |
+| 控制协议 | control protocol | `/agentkit` | Studio 与宿主之间的 134 个 operation。 |
+| 插件市场 | plugin market | — | DSH 插件页内的精选索引。 |
+| 启动检查 | start checks | — | 首次运行前的三项自检：宿主连接、模型凭证、运行目标目录。 |
+
+## 相关页面
+
+<Cards>
+  <Card title="概念总览" href="/docs/concepts">
+    六个核心实体与它们之间的硬性约束。
+  </Card>
+  <Card title="三种运行时" href="/docs/concepts/runtimes">
+    三种运行时与完整能力矩阵。
+  </Card>
+  <Card title="运行时与实体契约" href="/docs/reference/runtime-contract">
+    五个标识与 `agentkit.studio.runtime/v1` 的原始枚举。
+  </Card>
+</Cards>

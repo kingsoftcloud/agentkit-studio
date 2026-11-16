@@ -1,0 +1,107 @@
+---
+title: Codex Agent
+description: "The Codex App Server adapter's execution model, configuration surface, timeout budgets and sandbox limits, and when it refuses to start."
+status: new
+---
+
+**Codex Agent (`codex`) gives each turn its own ephemeral Codex thread, while DSH remains the owner of the visible session and its history.** Studio does not pretend a Codex Agent is an OpenAI-compatible gateway model; it keeps the same `codex app-server --stdio` protocol boundary as the official Codex provider (`src/providers/codex-runtime.mjs:3-8`).
+
+## Execution model
+
+| Stage | Owner | Source |
+| --- | --- | --- |
+| Model / tool loop | Codex App Server | `execution: 'codex-app-server'` |
+| Adapter | In-process, Studio | `owner: 'studio'` |
+| Contract | `studio.codex.adapter/v1` | `contract` |
+| Event source | `studio-codex-adapter` | `eventOwner` |
+| Streaming | `codex-turn/item` | `streamOwner` |
+| Session and history | DSH Session | One ephemeral thread per turn |
+| Model provider id | `agentkit-studio-codex` | `src/providers/codex-models.mjs:4` |
+
+Source: `src/runtime-contract.mjs:30-34`.
+
+A new thread starts every turn, so **permissions, sandbox and reasoning effort apply to that turn only** and are never written into user configuration (`src/providers/codex-runtime.mjs:169-178`).
+
+## When to choose it
+
+- The work is editing code, running commands and reading repository diffs — Codex's tool set and sandbox model are built for exactly that.
+- You want Codex approval semantics (`approvalPolicy`) rather than DSH tool approval.
+- Your team already runs the official Codex provider and wants to reuse the same CLI and app server.
+- You need native-request replay (`replay`) while still staying on the DSH session.
+
+When the work is not coding, DSH Native is lighter (see [runtime comparison](./runtimes-compare.mdx)).
+
+## Configuration entry points
+
+### Executable resolution order
+
+1. `AGENTKIT_CODEX_BIN` (explicit path wins)
+2. `@openai/codex/bin/codex.js` (resolved from the package)
+3. On Windows, the native binary is preferred so a GUI child process does not flash a console window
+
+Source: `src/providers/codex-command.mjs:29-42`.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AGENTKIT_CODEX_MODEL` | — | Default model |
+| `AGENTKIT_CODEX_APPROVAL_POLICY` | `never` | Approval policy |
+| `AGENTKIT_CODEX_SANDBOX` | — | Sandbox mode |
+| `AGENTKIT_CODEX_REASONING_SUMMARY` | Readable summary | Reasoning summary; a readable text form is requested by default |
+| `AGENTKIT_CODEX_TIMEOUT_MS` | `0` (no total deadline) | Total turn budget |
+| `AGENTKIT_CODEX_IDLE_TIMEOUT_MS` | `600000` (10 min, min 10000) | Idle budget |
+| `AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS` | `900000` (15 min, min 1000) | SSE silence budget |
+| `AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS` | Stream budget + 60 s | Loopback model proxy silence budget |
+| `AGENTKIT_CODEX_MODEL_API_KEY` | — | Injected into the child env only; never argv or user config |
+| `AGENTKIT_MANAGED_CODEX_API` | `responses` | `responses` or `chat-completions` in the managed shape |
+
+Source: `src/providers/codex-runtime.mjs:132-160`, `:189`, `src/managed-runtime-host.mjs:32-42`, `src/managed-runtime-definition.mjs:22-23`.
+
+<Callout type="info" title="Why the default budgets exceed Codex's own">
+  Codex aborts a round after 300 seconds of SSE silence, while a managed business turn may keep streaming reasoning and report output far longer. Studio therefore pins a 15-minute per-round silence budget and keeps it deployment-tunable, and lets the loopback model proxy budget sit slightly above Codex's so the proxy never cuts a still-live upstream first (`src/providers/codex-runtime.mjs:146-158`).
+</Callout>
+
+## Limits
+
+| Limit | Effect | Source |
+| --- | --- | --- |
+| Workspace must be absolute | A relative path throws `CODEX_WORKSPACE_INVALID` | `src/providers/codex-runtime.mjs:165-166` |
+| A Codex Agent must be bound | Using a Codex model unbound throws `CODEX_AGENT_REQUIRED` | `src/providers/dsh-runtime.mjs:588` |
+| A DSH workspace is required | A session without `cwd` throws `CODEX_WORKSPACE_UNAVAILABLE` | `src/providers/dsh-runtime.mjs:620-621` |
+| The model needs a gateway address | A provider without a Codex interface throws `CODEX_MODEL_PROVIDER_UNAVAILABLE` | `src/providers/dsh-runtime.mjs:625-627` |
+| The official provider is required | Missing or disabled throws `CODEX_PROVIDER_UNAVAILABLE` | `src/providers/dsh-runtime.mjs:630-634` |
+| No total deadline by default | `AGENTKIT_CODEX_TIMEOUT_MS=0` means only idle budgets bound the turn | `src/providers/codex-runtime.mjs:144` |
+| Invalid sandbox degrades | An invalid sandbox mode falls back to the runtime default instead of reaching Codex | `src/providers/codex-runtime.mjs:174` |
+
+### Sandbox and approval
+
+Sandbox values share the execution-policy enum: `read-only`, `workspace-write`, `danger-full-access` (`src/execution-policy.mjs:8`). The managed default is `workspace-write` with a ceiling of `danger-full-access` (`src/execution-policy.mjs:10-11`), and a request may only narrow that ceiling, never exceed it (`src/execution-policy.mjs:29-33`).
+
+In `chat-completions` mode `web_search` is explicitly disabled — hosted Responses tools have no Chat Completions equivalent (`src/providers/codex-runtime.mjs:186-187`).
+
+## Failure shapes
+
+| Code | Trigger | What you can do |
+| --- | --- | --- |
+| `CODEX_AGENT_REQUIRED` | A Codex model was selected without binding a Codex Agent | Set the Agent's runtime to Codex Agent first |
+| `CODEX_WORKSPACE_INVALID` | The working directory is not an absolute path | Use an absolute path |
+| `CODEX_WORKSPACE_UNAVAILABLE` | The DSH session supplied no workspace | Re-select the workspace and reopen the session |
+| `CODEX_INPUT_INVALID` | Neither text nor image input was provided | Type something before sending |
+| `CODEX_MODEL_PROVIDER_UNAVAILABLE` | The current model provider has no Codex interface | Add the gateway address in model settings |
+| `CODEX_PROVIDER_UNAVAILABLE` | The Codex App Server provider is not registered | Install and enable the official Codex provider |
+| `CODEX_RUNTIME_FAILED` | Internal app-server failure | Check the operations log; one retry is reasonable |
+
+Codex cancellation is cooperative: a local cancellation acknowledgement does not mean a remote tool stopped (the matrix in `src/runtime-contract.mjs:30-34` declares `cancel` but no hard kill). Resource degradation rules are in [degradation and retry](./degradation-retry.mdx).
+
+## Source of truth
+
+| Claim | Location |
+| --- | --- |
+| Protocol boundary and thread ownership | `src/providers/codex-runtime.mjs:1-8` |
+| Configuration resolution | `src/providers/codex-runtime.mjs:127-160` |
+| Per-turn overrides and sandbox fallback | `src/providers/codex-runtime.mjs:165-190` |
+| Executable resolution | `src/providers/codex-command.mjs:29-42` |
+| Model provider id | `src/providers/codex-models.mjs:4` |
+| Route failure branches | `src/providers/dsh-runtime.mjs:588-634` |
+| Execution policy enum and narrowing | `src/execution-policy.mjs:8-33` |

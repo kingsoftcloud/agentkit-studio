@@ -1,0 +1,180 @@
+---
+title: 升级到 v0.0.16
+description: 从 v0.0.15 升到 v0.0.16 的破坏性变更、操作步骤与回滚方式——进程内 Harness 被移除是唯一需要动手的变更。
+status: new
+---
+
+**只有一件事必须动手：如果你的部署依赖进程内 Harness，它已经不存在了。** 其余变更升级即生效。
+
+## 变更概览
+
+| 类别 | 变更 | 需要你做什么 |
+| --- | --- | --- |
+| ⚠️ 破坏性 | 移除生产进程内 Harness | 配置独立 Harness 服务，或接受原生会话不可用 |
+| ⚠️ 破坏性 | 删除旧 `sessions/native-*` 控制入口 | 迁移集成到新入口 |
+| ⚠️ 破坏性 | npm 包不再内联 Harness Core/Node/UI | 显式声明依赖 |
+| ⚠️ 破坏性 | 本地进程 launcher 不再随包发布 | 不要依赖包内 launcher |
+| 行为 | 未绑定目录明确拒绝，不回落 | 补齐工作区绑定 |
+| 行为 | 多工作区各自连接独立 Harness | 配置 `AGENTKIT_ENGINE_SERVICE_WORKSPACES` |
+| 界面 | 「手动配置」移入 **更多创建方式** 菜单 | 无 |
+| 界面 | 运行时选择从下拉框改为单选组 | 无 |
+| 修复 | 已发送图片在缩略图/放大/历史刷新后保留 | 无 |
+| 修复 | 纯回答轮次耗时改用已提交起止时间 | 无 |
+
+## 第一步：前置检查
+
+```sh
+node -p "require('./package.json').version"                        # 当前插件版本
+node -p "require('./studio.plugin.json').requiredDsh"              # 目标 DSH 基线
+node -e "import('@deepseek-ai/dsh-app-boot').then(m => console.log(m.getDshRuntimeVersion?.()))"
+node -v                                                            # Node 版本
+```
+
+| 检查项 | 通过条件 | 不通过的后果 |
+| --- | --- | --- |
+| 当前版本 | `0.0.16`（已最新）或 `0.0.15` | 更早的版本先升到 `0.0.15`，不要跨多版 |
+| DSH 基线 | 第三行输出 **精确等于** `0.2.2-rc.1` | 升级后启动即 `STUDIO_HOST_INCOMPATIBLE` |
+| Node 运行时 | `>=24.9.0` | 安装或启动失败 |
+| Node 安全补丁 | 24.x ≥ `24.22.1`；22.x ≥ `22.23.4`；26.x ≥ `26.12.1` | `make check:node` 失败 |
+
+<Callout type="warn" title="两套 Node 门槛都要过">
+  `engines` 写 `>=24.9.0`，但安全基线要求 24.x 至少到 `24.22.1`。
+  只装安装包不需要 Node；从源码构建时两个门槛都会检查。见[版本兼容表](./compatibility.mdx)。
+</Callout>
+
+## 第二步：处理进程内 Harness
+
+<Steps>
+
+<Step>
+### 判断你有没有用到
+
+如果你**没有**显式配置独立 Harness 服务，之前的原生会话走的就是进程内 Harness。升级后这条路没有了。
+
+```sh
+env | grep -E "AGENTKIT_ENGINE_SERVICE" || echo "未配置独立 Harness"
+```
+</Step>
+
+<Step>
+### 配置单个独立 Harness
+
+```sh
+export AGENTKIT_ENGINE_SERVICE_URL="http://127.0.0.1:8789"
+export AGENTKIT_ENGINE_SERVICE_TOKEN="<your-token>"
+export AGENTKIT_ENGINE_SERVICE_WORKSPACE="/opt/workspaces/default"
+```
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `AGENTKIT_ENGINE_SERVICE_URL` | ✅ | 服务地址 |
+| `AGENTKIT_ENGINE_SERVICE_TOKEN` | ✅ | 令牌通过 `tokenEnv` 间接读取，不写值 |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | ✅ | **绝对路径**，必须是真实目录 |
+| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | — | 自定义 CA |
+| `AGENTKIT_ENGINE_SERVICE_MODEL` | — | 模型名，缺省 `Harness` |
+| `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN` / `_ENTRY` | — | 应用预览，仅接受 `http://127.0.0.1:<port>/` |
+
+源码：`src/providers/engine-service-workspaces.mjs:24-32`。
+</Step>
+
+<Step>
+### 或者配置多工作区
+
+```sh
+export AGENTKIT_ENGINE_SERVICE_WORKSPACES='[
+  { "workspace": "/opt/workspaces/alpha", "endpoint": "http://127.0.0.1:8789",
+    "tokenEnv": "ALPHA_HARNESS_TOKEN", "model": "Harness" },
+  { "workspace": "/opt/workspaces/beta",  "endpoint": "http://127.0.0.1:8790",
+    "tokenEnv": "BETA_HARNESS_TOKEN" }
+]'
+```
+
+<Callout type="error" title="两个变量互斥">
+  `AGENTKIT_ENGINE_SERVICE_WORKSPACES` 与 `AGENTKIT_ENGINE_SERVICE_URL` **同时设置会直接失败**，
+  抛 `NATIVE_ENGINE_CONFIG_INVALID`。二选一。源码：`src/providers/engine-service-workspaces.mjs:22-23,56-58`。
+</Callout>
+
+多工作区还有四条校验，任一不满足都是 `NATIVE_ENGINE_CONFIG_INVALID`：
+`workspace` 必须是绝对路径且能 `realpath` 到真实目录；两个工作区不能互相包含；`endpoint` 不能重复；令牌不能重复。
+</Step>
+
+<Step>
+### 旧会话不会自动恢复
+
+进程内 Harness 创建的会话升级后不可恢复，调用相关入口会得到：
+
+```json
+{ "code": "STUDIO_LEGACY_HARNESS_RETIRED", "message": "请用独立 Harness 新建会话。" }
+```
+
+**新建**会话即可。源码：`src/providers/dsh-runtime-plugin.mjs:207`、`src/host/routes/sessions.mjs:8`。
+</Step>
+
+</Steps>
+
+## 第三步：升级
+
+<Tabs items={['桌面端', 'npm 插件', '从源码']}>
+  <Tab value="桌面端">
+    从 GitHub Releases 下载与平台匹配的安装包覆盖安装：macOS（Apple Silicon）用 `.dmg`，Windows 11（x64）用 `.exe`（NSIS）。
+  </Tab>
+  <Tab value="npm 插件">
+    ```sh
+    pnpm add @kingsoftcloud/agentkit-studio@0.0.16
+    ```
+
+    本版本移除了 `bundledDependencies`，Harness Core/Node/UI 需要你自己声明。
+  </Tab>
+  <Tab value="从源码">
+    ```sh
+    git fetch --tags
+    git checkout v0.0.16
+    pnpm install --frozen-lockfile
+    make check
+    make release-check
+    ```
+  </Tab>
+</Tabs>
+
+## 第四步：验证
+
+| 检查 | 期望 |
+| --- | --- |
+| 版本三方一致 | `package.json`、`studio.plugin.json` 都是 `0.0.16`；DSH 输出 `0.2.2-rc.1` |
+| 创建入口 | 在**智能体**面板，创建按钮是分段控件 + **更多创建方式** 菜单，点开后**手动配置**才是完整表单 |
+| 运行时选择 | 是**单选组**，不是下拉框 |
+| 图片保留 | 带图片的消息刷新历史后图片还在 |
+| 耗时准确 | 纯回答轮次显示个位数秒，不被网络拉长 |
+| 失败可读 | 失败轮次能展开看到完整原因，不只一行摘要 |
+| 工作区隔离 | 在两个已绑定不同 Harness 的工作区之间切换，模型、工作目录、历史都跟着切换 |
+
+源码：`src/client/pages/agents.mjs:176`、`src/client/pages/agent-form.mjs:264-268`。
+
+## 回滚
+
+```sh
+pnpm add @kingsoftcloud/agentkit-studio@0.0.15
+```
+
+回滚是安全的：`0.0.16` 没有迁移持久化格式，Agent、Revision、Build、Session 的数据形状不变。
+
+<Callout type="warn" title="回滚后旧会话仍然不可用">
+  进程内 Harness 的会话在 `0.0.16` 里已经被退役，回滚到 `0.0.15` 不会把它们变回来。
+  transcript 仍在，但无法通过退役入口恢复执行。
+</Callout>
+
+## 常见问题
+
+| 症状 | 错误码 | 处理 |
+| --- | --- | --- |
+| 启动即失败 | `STUDIO_HOST_INCOMPATIBLE` | 检查 DSH 是否精确等于 `0.2.2-rc.1` |
+| 原生会话报错 | `STUDIO_LEGACY_HARNESS_RETIRED` | 配置独立 Harness 后**新建**会话 |
+| Harness 配置被拒 | `NATIVE_ENGINE_CONFIG_INVALID` | 检查两个变量是否互斥、workspace 是否真实绝对目录 |
+| 找不到创建入口 | — | 入口在 **更多创建方式** 菜单里 |
+| 依赖装不上 | — | 本版本不再内联 Harness 包，自行声明依赖 |
+
+## 相关
+
+- 完整变更列表：[版本说明](./release-notes.mdx)
+- 四维兼容表：[版本兼容表](./compatibility.mdx)
+- 通道与 feed：[桌面更新通道](./desktop-update-channels.mdx)

@@ -1,0 +1,202 @@
+---
+title: 绑定知识库与 Memory
+description: 绑定云端知识库、选择本地或云记忆来源、配置召回与写入，让 Agent 跨会话记住事实。
+status: new
+---
+
+知识库与 Memory 是两件事：**知识库**是只读检索，**Memory** 是可写的长期记忆。两者都在 Agent 表单的「绑定能力」和「策略与确认」两步里配置。
+
+<Callout type="info" title="前置条件">
+  - 已经连接云端控制面。没连上时，平台资源下拉里只有「请先连接云端」。
+  - 云端的知识库与记忆库实例已创建，并且当前账号有访问权限。
+  - 本地记忆（DSH Native 的本地记忆）不需要云端绑定，但只在 **Star Harness** 运行时可用。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 绑定知识库
+
+打开 **智能体** → 选中目标 Agent → 编辑 → **绑定能力** 步骤 → 滚到**平台资源**区块 → **知识库** 下拉 → 选一个知识库。
+
+绑定后的配置是固定的，不能手改：
+
+| 字段 | 值 |
+| --- | --- |
+| `retrieval.mode` | `tool`（只读检索，通过工具调用触发） |
+| `retrieval.topK` | `5` |
+| `retrieval.maxChars` | `16000` |
+| `required` | `true`（由代码固定，不可关） |
+
+只有可用的实例能被选中：资源被停用或从云端消失时，`platformBinding` 直接抛 `PLATFORM_RESOURCE_UNAVAILABLE`，不会写入一个指向空资源的绑定。
+
+**知识库每类只能绑一个。** 再选一个会替换掉前一个。
+
+<Callout type="info" title="界面位置">「绑定能力」步骤的平台资源区块，知识库下拉已选中一个实例。</Callout>
+</Step>
+
+<Step>
+### 绑定记忆库
+
+同一个**平台资源**区块里，**记忆库** 下拉 → 选一个记忆库实例。
+
+记忆库的配置比知识库简单：只有 `binding`，没有 `retrieval`。它决定 `memory.providerRef` 是否走云：
+
+| 是否绑定记忆库 | 记忆来源 | `providerRef` |
+| --- | --- | --- |
+| 否 | 本地记忆 | `local-default` |
+| 是 | 云记忆库 | `binding://platform-memory-instance` |
+
+<Callout type="warn" title="失效的资源会阻塞保存">
+  如果之前绑定的资源在云端被删除了，下拉里会出现一条灰色选项「（当前不可用，请重新选择）」，
+  并显示红色提示「检测到已失效的平台资源」。**必须重新选择或清空后才能保存。**
+</Callout>
+</Step>
+
+<Step>
+### 打开跨会话记忆
+
+切到**策略与确认**步骤 → **记忆** 小节 → 打开**跨会话记忆**。
+
+关闭时不要跳过这一节：关闭只是把 `memory.enabled` 设为 `false`，**不会**改变已有的 provider、scopes、recall、write、rollout 配置。重新打开会回到原来的设置。
+</Step>
+
+<Step>
+### 选择记忆来源
+
+打开后出现**记忆设置**面板。第一行是来源二选一：
+
+| 来源 | 何时出现 | 说明 |
+| --- | --- | --- |
+| 本地记忆 | 运行时是 Star Harness 且不是编辑云端 Agent | 自带本地记忆，无需绑定云记忆库 |
+| 云记忆库 | 所有非云端编辑路径 | 绑定云端记忆库，由 AICP 召回与写入 |
+
+选**本地记忆**时会自动剔除已绑定的记忆库实例，避免留下悬空引用。选**云记忆库**但还没绑定记忆库时，保存会被拦下并提示「启用云记忆前，请在「绑定能力」步骤选择记忆库。」
+
+<Callout type="info" title="界面位置">「记忆设置」面板的来源二选一控件与后续字段。</Callout>
+</Step>
+
+<Step>
+### 配置本地召回（仅本地记忆）
+
+| 字段 | 默认 | 范围 | 说明 |
+| --- | --- | --- | --- |
+| 本地召回 | 开启 | 开关 | 关闭后不再自动召回已有事实 |
+| 召回最大 token | `1600` | 0–100000 | 注入上下文的召回预算 |
+| 召回条数 | `8` | 1–64 | 最多返回几条 |
+| 最低相似度 | `0.45` | 0–1，步长 0.05 | 低于该分数不返回 |
+
+<Callout type="warn" title="召回是词项覆盖率，不是语义相关度">
+  本地召回的置信度按词项覆盖率计算。它对「同义词换一种说法」不敏感，对「关键词完全没出现」必然漏召回。
+  需要语义检索时用云记忆库。
+</Callout>
+
+`recall.enabled` 与 `memory.enabled` **相互独立**：可以关掉写入但保留召回。
+</Step>
+
+<Step>
+### 配置记忆写入
+
+**记忆写入方式**三选一：
+
+| 取值 | 界面文案 | 行为 |
+| --- | --- | --- |
+| `off` | 不提取记忆候选 | 完全不提取。仅本地记忆路径提供该选项 |
+| `explicit_only` | 仅在我明确要求时记住 | 只有你明确说「记住这个」才写入 |
+| `candidate` | 每轮完成后提取可用记忆 | 每轮结束自动提取候选 |
+
+新建 Agent 默认 `explicit_only`，编辑已有 Agent 默认 `candidate`。
+
+**两个刷新点**（默认都开启）：
+
+| 开关 | 时机 |
+| --- | --- |
+| 压缩前刷新 | 在上下文压缩前提取记忆候选 |
+| 轮次后刷新 | 在本轮完成后提取当前用户消息中的候选 |
+
+**使用模型自动提炼记忆**（默认关闭）：按累计的新对话提炼长期事实与偏好，会产生额外模型用量。打开后可以设置**累计用户字符数**（默认 `64`，范围 1–100000）。
+
+<Callout type="warn" title="自动提炼有调用上限">
+  每个任务最多调用 5 次模型。窗口太短时只会累计，不发起模型调用，也不推进游标。
+  运行与子任务面板可以查看状态和额外用量。
+</Callout>
+
+**记忆写入开关**（rollout）三选一，默认 `shadow`：
+
+| 取值 | 界面文案 | 行为 |
+| --- | --- | --- |
+| `off` | 关闭写入 | 不写入记忆库，已写入的事实仍可召回 |
+| `shadow` | 仅评估（shadow） | 只评估候选策略，不写入记忆库 |
+| `enabled` | 实际写入 | 真正写入，请确认后再开启 |
+
+<Callout type="warn" title="shadow 不会写任何东西">
+  默认值就是 `shadow`。想让 Agent 真的记住事实，必须显式改成 `enabled`。
+  这也是「明明开了记忆但它什么都不记得」的最常见原因。
+</Callout>
+</Step>
+
+<Step>
+### 保存并验证
+
+点**创建 Agent** 或**保存 Agent**。回到**策略与确认**步骤，确认摘要里的**记忆**一行显示正确的来源：
+
+- `本地记忆` 或 `云记忆库` —— 记忆已启用。
+- `未启用` —— `memory.enabled` 为 `false`。
+
+保存后发两条消息验证：第一条说一个事实并要求记住，第二条在新会话里问这个事实。
+</Step>
+
+</Steps>
+
+## 云端 Agent 的差异
+
+编辑来源为 `agentengine-server` 或 `agentengine-managed-runtime` 的 Agent 时，行为不同：
+
+| 项目 | 云端 Agent |
+| --- | --- |
+| 绑定能力步骤 | 只保存知识库、记忆库、Skill Center 三类云端 ComponentConfig |
+| 模型、MCP、本地 Skill、Tool | 由 AgentEngine Runtime 自身管理，界面不提供 |
+| 跨会话记忆开关 | 禁用，并提示「云端 Agent 的记忆由 AgentEngine Server 管理记忆库绑定」 |
+| 记忆写入方式 | 只有 `explicit_only` 与 `candidate`，没有 `off` |
+| 保存语义 | 调用 AgentEngine `UpdateAgent`；已有会话继续用旧快照，新运行用新绑定 |
+
+## 成功后的样子
+
+- **平台资源**区块的知识库、记忆库下拉都显示已选中的实例名称。
+- **确认配置**摘要的记忆行不是「未启用」。
+- 第二个会话里问第一个会话说过的事实，Agent 能复述出来——这是记忆真的生效的唯一判据。
+- 问一个知识库里存在、但模型不可能自己知道的问题，Agent 会发起检索工具调用再回答。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `PLATFORM_RESOURCE_UNAVAILABLE` | 选中的实例已被停用或从云端消失 | 重新选择；失效项会显示为灰色「当前不可用」 |
+| `INVALID_RESOURCE_KIND` | 资源类型不在 `knowledge-base` / `memory-instance` / `skill-space` 里 | 用界面下拉选择，不要手写类型 |
+| `MANAGED_RESOURCE_INVALID` | 资源引用不符合 `agentengine.resources/v1`（`id` 匹配 `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`，`region` 匹配 `^[a-z0-9][a-z0-9-]{0,63}$`） | 从下拉重新选择，不要手写 ID |
+| `MANAGED_RESOURCE_MEMORY_UNBOUND` | 记忆已启用但没绑定记忆库实例 | 回到「绑定能力」选择记忆库，或把来源改为本地记忆 |
+| `MEMORY_BINDING_SKIPPED` | 记忆绑定被跳过（资源不可用） | 检查记忆库实例是否存在、是否有权限 |
+| `MEMORY_SERVICE_UNAVAILABLE` | 记忆服务不可达 | 检查云端连接与控制面地址 |
+| `MEMORY_WRITE_FAILED` | 写入记忆失败 | 检查 rollout 是否为 `shadow`；`shadow` 不写入 |
+| `MEMORY_WRITE_AUTHORITY_LOST` | 写入期间授权失效 | 重新发起会话 |
+| `MEMORY_RECALL_SKIPPED` | 召回被跳过 | 检查本地召回是否关闭、运行时是否为 Star Harness |
+| `MEMORY_DURABLE_WRITER_UNAVAILABLE` | 持久化写入器不可用 | 重启 Host 后重试 |
+| `MEMORY_PARTITION_MISMATCH` | 记忆分区与当前用户或 Agent 不匹配 | 确认没有跨账号复用记忆库 |
+| `MEMORY_OUTCOME_UNKNOWN` / `MEMORY_RESPONSE_UNKNOWN` | 写入结果未确认 | 不要盲目重试；先查看运行记录 |
+| `MANAGED_RESOURCE_ACCESS_REVOKED` | 资源访问授权被收回 | 重新授权后重新保存 |
+| `MANAGED_RESOURCE_SERVER_UNAVAILABLE` | AgentEngine 控制面不可达 | 检查网络与控制面地址 |
+| `启用云记忆前，请在「绑定能力」步骤选择记忆库。` | 来源选了云记忆库但没有实例 | 二选一：绑定记忆库，或改回本地记忆 |
+
+## 相关参考
+
+| 你想知道 | 去哪里 |
+| --- | --- |
+| 资源与绑定 | [资源与绑定](../concepts/resources.mdx) |
+| 托管运行时生命周期 | [托管运行时](../concepts/managed-runtime.mdx) |
+| 记忆配置的内存模型 | `src/client/state/agent-memory-config.mjs` |
+| 托管资源契约 | `src/managed-resource-contract.mjs` |
+| 平台资源选择器 | `src/client/pages/platform-resource-picker.mjs` |
+| 权限与审批 | [审批与权限策略](./approvals-permissions.mdx) |
+| 记忆相关的 21 个错误码 | [错误码](../reference/errors.mdx) |

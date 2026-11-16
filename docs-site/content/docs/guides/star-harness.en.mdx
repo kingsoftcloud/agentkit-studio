@@ -1,0 +1,205 @@
+---
+title: Install, Upgrade, and Bind Star Harness
+description: Install and upgrade Star Harness on the plugin page, bind a workspace and model, then pick the `harness` runtime when creating an Agent.
+status: new
+---
+
+**Star Harness is the only one of the three runtimes you install separately.** It is delivered as npm packages from ksadk-harness and does not ship with the installer;
+install it, enable it, and bind a workspace before the Agent form offers `harness`.
+
+<Callout type="info" title="Prerequisites">
+  - A **local Host**. Cloud managed runtimes and portable bundles do not offer local management, so the page only reports "This Studio deployment is administrator-managed".
+  - **Node.js and npm available.** Installation runs one `npm install` for the pinned version.
+  - An **existing** directory to use as a workspace; the path must be canonical and absolute.
+  - At least one model profile configured, because binding a workspace selects one.
+</Callout>
+
+## Why Star Harness needs its own install
+
+The three runtimes become ready in three different ways:
+
+| Runtime | How it becomes ready | What you do |
+| --- | --- | --- |
+| DSH Native (`dsh-native`) | Ready with Studio | Nothing; it is the default for new agents |
+| Codex (`codex`) | Needs the official Codex plugin | Install and enable the official plugin on the plugin page |
+| Star Harness (`harness`) | Needs **the npm package installed plus a workspace binding** | Install, enable, and bind a workspace (this page) |
+
+The extra "workspace" step is not optional: each bound directory gets its own isolated runtime state, and an unbound directory is refused outright rather than falling back to another project.
+That is why it needs a one-time install and binding instead of working out of the box like DSH Native.
+
+<Callout type="info" title="The dependency is one-way">
+  Studio consumes the three `@kingsoftcloud/agentkit-harness-{core,node,ui}` npm packages, and Harness does not depend on Studio in return — so upgrading Harness does not require a Studio release.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Open the plugin page
+
+Go to **Plugins → Star Harness**. Studio registers this row into the DSH plugin page (`src/client/dsh/mount.mjs:54-56`), after "Plugin market" and "Codex plugins".
+
+The page's top line has four possible shapes:
+
+| Display | Meaning |
+| --- | --- |
+| `Not installed` | Not installed yet; the button below reads **Install** |
+| `Installed <version> · Enabled` | Installed and enabled; you can bind workspaces and create agents |
+| `Installed <version> · Disabled` | Installed but disabled; bindings are kept and the Agent form will not offer it |
+| `This Studio deployment is administrator-managed.` | The current deployment does not offer local management (cloud managed runtime or portable bundle) |
+
+<Callout type="warn" title="Disabling hides the runtime">
+  Disabling deletes neither the version nor the workspace bindings, but `canCreate` becomes false,
+  so Star Harness shows as **Not enabled** on the Run targets page and the Agent form stops offering it. Re-enable it to restore.
+</Callout>
+</Step>
+
+<Step>
+### Check the available version
+
+Choose **Check for updates**. It reads the latest version of `@kingsoftcloud/agentkit-harness-node` from npm, compares it with the version bundled with Studio, and recommends whichever is **newer** (`src/host/services/star-harness.mjs:159-160`).
+
+Two failures surface right on the page:
+
+| Message | Meaning | Fix |
+| --- | --- | --- |
+| `The latest npm version is temporarily unavailable.` | The registry is unreachable (6-second timeout) | Retry once the network recovers; an installed version keeps working |
+| The version box is empty and **Install** is disabled | Neither an installed version nor a recommended one | Check for updates first, or type a version into the box |
+
+A version must be three numeric segments (`1.2.3`); anything else fails with `STAR_HARNESS_RELEASE_INVALID`.
+</Step>
+
+<Step>
+### Install or upgrade
+
+The version box is prefilled with the recommended version; leaving it empty uses that version. The button label tracks the state:
+
+| Current state | Button | Behavior |
+| --- | --- | --- |
+| Not installed | **Install** | Download and install the recommended version |
+| Installed, a different version typed | **Upgrade** | Download and switch versions |
+| Installed, the current version typed | **Reinstall** | Rerun installation and verification |
+
+The status text while it runs is "Installing Star Harness…" or "Upgrading Star Harness…". Installation does three things:
+
+1. Runs `npm install --ignore-scripts --save-exact` in a temporary directory against the pinned dependency tree (timeout **180 seconds**).
+2. Verifies the whole package tree, including every dependency, against the **per-file digests** in `scripts/native-package-pins.json`.
+3. Starts a probe process and handshakes it (`probe`) to prove the version can serve, then switches the running workspaces.
+
+<Callout type="info" title="Why you cannot type an arbitrary version">
+  Only versions Studio has "reviewed" — the current one in `native-package-pins.json` or its `previousRuntime` — can be installed.
+  Anything else fails with `STAR_HARNESS_RELEASE_UNREVIEWED`: "This version has not been verified by the current Studio. Update Studio first, then install the matching Star Harness version."
+  This keeps an unvetted package from running inside your corporate network.
+</Callout>
+</Step>
+
+<Step>
+### Enable it
+
+Once installed, choose **Enable**. Enabling requires at least one usable workspace binding; without one you get `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` ("Bind and enable Star Harness for this workspace first.").
+
+A successful enable reports "Enabled; you can now select Star Harness when creating an Agent".
+The button then reads **Disable**; disabling stops every workspace's Harness process but keeps the version and the bindings.
+</Step>
+
+<Step>
+### Bind a workspace
+
+In the **Workspaces** section fill three fields, then choose **Bind workspace**:
+
+| Field | Notes |
+| --- | --- |
+| Choose an existing workspace | The dropdown lists directories known to the registry; picking one fills the path |
+| Workspace absolute path | Type the directory yourself; it must exist and canonicalize (`realpath`) |
+| Workspace model | Pick the model profile this workspace uses; the default entry is **Studio default model** |
+
+A successful bind reports "Workspace bound." and the workspace appears in the list below, one line each:
+
+```text
+<workspace absolute path>
+<model name> · Running · <version>
+```
+
+The state is one of three: **Running**, **Not running**, or **Directory is no longer valid** (deleted or renamed).
+
+<Callout type="warn" title="Directories must not overlap">
+  A workspace must not overlap an existing binding or Star Harness's own state directory, otherwise you get `STAR_HARNESS_WORKSPACE_CONFLICT`.
+  Nested directories (binding both a parent and a child) are refused too — one directory has exactly one writer.
+</Callout>
+</Step>
+
+<Step>
+### Select it when creating an Agent
+
+Go back to **Agents → More creation options → Manual configuration** and choose **Star Harness** under Runtime.
+
+It is selectable only when `canCreate` is true — that is, **installed + enabled + at least one usable workspace** (`src/host/services/star-harness.mjs:174`).
+When any of the three is missing the button is disabled and hovering reports "Install and enable Star Harness on the plugin page".
+
+<Callout type="info" title="The runtime cannot change after creation">
+  The same rule applies to Star Harness. Create a new agent to switch runtimes; editing an existing Star Harness agent is unaffected by the install state.
+</Callout>
+</Step>
+
+<Step>
+### Unbind or disable
+
+- **Unbind** — the button on a workspace row; stops that directory's Harness process and removes the binding. The directory itself is never deleted.
+- **Disable** — stops processes only, keeping the version and every binding, so you can restore with one click.
+- Workspaces marked **Externally managed** come from environment-injected routes and cannot be unbound here.
+
+<Callout type="error" title="You cannot change the version while a task runs">
+  While any task is running (or a previous change has not settled), version and binding operations are refused, and the page reports "A task is running. You can change the version or bindings after it finishes."
+  The error code is `STAR_HARNESS_BUSY`. Wait for the run to finish instead of clicking again.
+</Callout>
+</Step>
+
+</Steps>
+
+## What success looks like
+
+All four criteria hold at once:
+
+1. The plugin page status line reads `Installed <version> · Enabled`.
+2. At least one workspace row reads **Running**, with a version identical to the status line.
+3. Star Harness reads **Selectable** on the **Run targets** page instead of "Not enabled".
+4. Create a Star Harness agent and converse with it: the model answers, proving both the engine handshake and the model credential work.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `STAR_HARNESS_RELEASE_UNREVIEWED` | The version is not in Studio's reviewed list | Update Studio; or fall back to the `previousRuntime` version |
+| `STAR_HARNESS_RELEASE_INVALID` | The version is not three numeric segments, or the package tree digest failed | Verify the version; on a digest failure use **Reinstall** to overwrite |
+| `STAR_HARNESS_NPM_MISSING` | The host cannot find npm | Install Node.js and npm, then retry |
+| `STAR_HARNESS_DOWNLOAD_FAILED` | npm download failed (network or missing version) | Check npm connectivity and the version |
+| `STAR_HARNESS_VERSION_UNSUPPORTED` | An older version that is neither current nor the previous one | Upgrade only, or roll back to the version the "Roll back to `<version>`" button offers |
+| `STAR_HARNESS_NOT_INSTALLED` | Trying to enable or bind before installing | Complete the installation first |
+| `STAR_HARNESS_BUSY` | A task is running, or a previous change has not settled | Retry after the run finishes |
+| `STAR_HARNESS_CLOSED` | The management service is closed | Restart the app |
+| `STAR_HARNESS_INVALID_REQUEST` | Invalid parameters (version, enabled flag, or path shape) | Use the controls; do not hand-craft requests |
+| `STAR_HARNESS_WORKSPACE_CONFLICT` | The directory overlaps an existing binding or the state directory | Pick a non-overlapping directory |
+| `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | The target workspace is unbound or disabled | Bind the workspace, then enable |
+| `STAR_HARNESS_MODEL_CHANGED` | The model profile changed after binding | Rebind that workspace |
+| `STAR_HARNESS_START_FAILED` | The engine failed to start or handshake (12-second timeout) | Check for a port conflict or an antivirus block; reinstall |
+| `STAR_HARNESS_INCOMPATIBLE` | The version's protocol or verification capabilities do not match this Studio | Upgrade Studio, or install a supported version |
+| `STAR_HARNESS_CONFIG_INVALID` | The local settings file is corrupt | Repair or delete `star-harness/settings.json`, then reinstall and rebind |
+| `STAR_HARNESS_UNSUPPORTED` | This deployment offers no local management | Have an administrator manage it for cloud managed runtimes or portable bundles |
+
+## Related
+
+<Cards>
+  <Card title="The three runtimes" href="/en/docs/concepts/runtimes">
+    Ownership, the capability matrix, and execution policy for all three runtimes.
+  </Card>
+  <Card title="Create and edit an Agent" href="/en/docs/guides/create-agent">
+    Pick a runtime in the creation form and confirm how capabilities differ.
+  </Card>
+  <Card title="Runtime and entity contract" href="/en/docs/reference/runtime-contract">
+    The owner, event owner, and five capabilities of `harness`.
+  </Card>
+  <Card title="Known limitations" href="/en/docs/help/known-limitations">
+    Which deployment shapes offer no local Star Harness management.
+  </Card>
+</Cards>

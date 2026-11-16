@@ -1,0 +1,161 @@
+---
+title: 第一次对话
+description: 一次运行里界面上具体会出现什么——工具调用卡片、审批请求、文件改动、用量与耗时，以及失败轮次和刷新后的历史。
+---
+
+这一页只讲一件事：**你按下发送之后，界面上到底发生了什么**。
+
+<Callout type="info" title="前置条件">
+已经装好并能打开 Studio，并且在 **设置 → 模型与凭证** 里配置了至少一个模型。没配好时，总览顶部会显示「先配置一个模型凭证，即可开始对话」。
+</Callout>
+
+## 发送第一条消息
+
+<Steps>
+<Step>
+### 选中一个 Agent
+
+从 **智能体** 面板的「本地」标签里选一个。还没创建过的话，用总览的 **手动配置** 或 **从模板开始**。
+
+<Callout type="warn" title="没绑定 Agent 会直接报错">
+在会话里发消息时如果没绑定 Agent，会拿到 `STUDIO_AGENT_REQUIRED`（「请先绑定 Agent，再发送消息」，`src/providers/dsh-runtime.mjs:604`）。
+</Callout>
+</Step>
+
+<Step>
+### 输入并发送
+
+输入一句话，按发送。空输入会被拦下并提示 `STUDIO_INPUT_REQUIRED`（「请输入文字或添加图片后发送」，`src/providers/dsh-runtime.mjs:605`）。
+</Step>
+
+<Step>
+### 看着它跑
+
+接下来的内容全部由 DSH 原生会话事件驱动。Studio **不**另存一份会话——它只是把 DSH 的事件投影成界面（`src/dsh-history-display.mjs:1`）。
+</Step>
+</Steps>
+
+## 一次运行的时序
+
+DSH 会发出一组固定的事件类型（`src/host/dsh-session-contract.mjs:2-19`，共 16 种）。界面上你实际能看到的是这几种：
+
+| 事件 | 你看到什么 |
+| --- | --- |
+| `turn/start` | 新一轮开始，过程区出现 |
+| `user/message` | 你的输入落到对话里 |
+| `tool/call` | 出现一张**工具调用卡片**（默认折叠） |
+| `tool/result` | 卡片摘要不再显示「正在执行」，可以展开看结果 |
+| `approval/asked` | 弹出**审批请求**，等你点允许或拒绝 |
+| `approval/decided` | 审批结果写回，卡片继续 |
+| `assistant/message` | 最终回答 |
+| `turn/end` | 本轮结束 |
+
+<Callout type="info" title="公开序号 = 原生序号 + 1">
+Studio 投影历史时把 DSH 原生序号整体加一，`0` 保留为空历史的哨兵值（`src/frozen-session-history.mjs:2-3`）。所以你看到的序号从 `1` 开始，这是刻意的。
+</Callout>
+
+## 工具调用卡片
+
+每张卡片是一个 `<details>`（`src/client/dsh/native-tool-view.mjs:33-40`）：
+
+| 区域 | 内容 |
+| --- | --- |
+| 摘要行 | **中文工具名** · 关键参数（`path` / `query` / `name` / `directory` 之一，截断到 180 字符）· 失败时追加「**· 未完成**」 |
+| 展开后 | 「**调用参数**」原始 JSON + 「**执行结果**」文本（最高 360px，超出可滚动） |
+| 无输出时 | 结果区显示「**无文本结果**」 |
+| 还没结束时 | 结果区显示「**正在执行**」 |
+
+工具名有固定的中文标题映射，例如 `read_workspace_file` → 读取文件、`write_workspace_file` → 写入文件、`apply_workspace_patch` → 应用文件补丁、`rewind_workspace_files` → 恢复文件（完整 16 项见 `native-tool-view.mjs:1-10`）。
+
+## 工具没成功时
+
+错误码会被翻译成一句可读的话，同时用 `role="alert"` 呈现（`native-tool-view.mjs:11-17,37`）：
+
+| 工具返回的错误码 | 界面文案 |
+| --- | --- |
+| `permission_denied` | 未获准执行此操作，请检查 Agent 规则和会话权限。 |
+| `invalid_path` | 路径超出可访问范围或不可用，请选择工作区内的文件。 |
+| `tool_not_found` | 当前 Agent 未绑定此工具。 |
+| `deferred_tool_not_loaded_or_not_deferred` | 该工具尚未加载或未绑定。请使用已绑定的工具；需要更多能力时编辑 Agent 配置。 |
+| `artifact_not_available` | 当前任务没有此工件的读取授权，请通过产生结果的原工具继续读取。 |
+| 其它 | 工具未成功执行，请展开查看原始结果。 |
+
+## 审批请求
+
+当 Agent 要执行需要授权的操作，会弹出原生审批（`src/client/dsh/native-approval.mjs`）：
+
+| 元素 | 说明 |
+| --- | --- |
+| 标题 | 「原生待审批：[工具名]」 |
+| 授权范围 | 「请求一次性授权」——只对这一次生效 |
+| 确认勾选 | 「我已核对这次操作及其影响」 |
+| 按钮 | 「确认允许一次」/「拒绝」/「返回」 |
+
+<Callout type="warn" title="审批失败不会静默">
+读取失败会提示「原生审批状态读取失败，请刷新。」；请求已过期会提示「审批请求已失效，请刷新后核对。」；决定没送达会提示「审批决定未送达，请刷新核对原生运行状态。」
+</Callout>
+
+## 文件改动
+
+Agent 改文件走的是**工作区工具**：`write_workspace_file`、`edit_workspace_file`、`apply_workspace_patch`、`delete_workspace_file` 等。它们和别的工具一样以卡片形式出现，展开能看到参数与结果。
+
+一轮结束时，只要有文件改动就会在对话末尾出现**变更卡片**：单个文件显示为一行卡片，多个文件显示为可折叠的列表（默认展开前 4 行），右侧标注新增/删除行数。点卡片标题会在**右侧边栏**打开该轮的 review，逐文件查看 diff；鼠标悬停 500 ms 也会预览第一处差异。
+
+<Callout type="info" title="卡片与工具结果的分工">
+  变更卡片只回答「这一轮改了什么」，不替代工具卡片。要追某个改动是怎么发生的（谁调的、参数是什么、失败重试了几次），展开对应的工具卡片。
+</Callout>
+
+## 用量与耗时
+
+单轮对话里不显示 token 明细。要按运行看统计，去 **运行中心 → 观测**：
+
+| 指标 | 位置 |
+| --- | --- |
+| 平均耗时 | 观测总览卡「平均耗时」，单位毫秒（`src/client/pages/observability.mjs:108`） |
+| Token 用量 | 观测总览卡「Token 用量」，输入与输出合计（`observability.mjs:109`） |
+| 每次运行的耗时 / Tokens | Trace 列表的「耗时」「Tokens」两列（`observability.mjs:167,168`） |
+
+<Callout type="info" title="字符数不是 Token 数">
+观测页明确写着：字符数反映请求体大小，**不等于** Token 用量；这里只保存统计，不保存原始请求体。
+</Callout>
+
+## 失败轮次
+
+一轮失败时，运行时会给出一个稳定的失败摘要：
+
+```text
+DSH_TURN_FAILED
+运行时本次任务未完成，请重试；若仍失败，请检查模型和工具连接。
+```
+
+（`src/dsh-history-display.mjs:6`）
+
+失败的轮次**不会从历史里消失**，也不会被重写成成功。重新发起时是一轮新的、带新序号的运行。按错误码定位见[排障](../help/troubleshooting.mdx)。
+
+## 刷新后历史还在吗
+
+在。历史由 DSH 宿主持久化，Studio 每次只做**有界的只读投影**（`src/frozen-session-history.mjs:1-3`），从不写第二份存储。
+
+投影会做几件事：
+
+| 行为 | 说明 |
+| --- | --- |
+| 白名单事件 | 只投影 `turn/*`、`user/message`、`assistant/message`、`tool/call`、`tool/result` 等公开事件 |
+| 按轮分组 | 以 `turn/start` 和 `turn/end` 为一组，空轮次不返回 |
+| 脱敏 | 私钥、`Bearer`/`Basic` 令牌、`sk-*`、`AKIA*`、Cookie、各类 `*_key`/`token`/`password` 字段一律替换成 `[已隐藏凭据]`（`src/dsh-history-display.mjs:10-21`） |
+| 附件 | 只展示 ID、大小、文件名与尺寸，**不自动访问**附件内容 |
+
+## 对话回退
+
+跑歪了可以回退。会话里的「**对话回退**」折叠区（`src/client/dsh/native-conversation.mjs`）：
+
+1. 展开后读取可回退的用户输入列表。
+2. 选一条，点「回退到这条输入之前」——**后续对话移出当前分支，工作区文件保留**。
+3. 想连文件一起回退，点「预览同时回退文件」，会列出「删除：」和「恢复：」的文件清单。
+4. 确认「确认回退对话和文件」。
+
+有任务在跑时会先提示「回退将先停止需要移除的任务」；存在不安全文件时以 `role="alert"` 单独列出，不会静默跳过。
+
+## 下一步
+
+跑通一次之后，去[核心概念](../concepts/index.mdx)理解为什么改配置不影响正在跑的会话；要绑定企业资源，看[资源与绑定](../concepts/resources.mdx)。

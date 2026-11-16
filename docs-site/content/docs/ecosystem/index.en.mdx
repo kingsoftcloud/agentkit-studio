@@ -1,0 +1,104 @@
+---
+title: Ecosystem and plugins
+description: Write DSH plugins, publish to the market, ship expert templates, negotiate Host compatibility — for plugin authors and platform maintainers.
+---
+
+AgentKit Studio is not a closed app. It runs as a DSH plugin itself, and it exposes the DSH plugin ecosystem, the template ecosystem, and the Host compatibility contract to you.
+
+## Four extension surfaces
+
+| Surface | The problem you are solving | Go to |
+| --- | --- | --- |
+| DSH plugin | Write a plugin package that a DSH host can load | [DSH plugin authoring](./dsh-plugin-authoring.mdx) |
+| Plugin market | Make your plugin discoverable, or host your own remote index | [Plugin market](./plugin-market.mdx) |
+| Expert templates | Define experts and expert teams as JSON | [Expert templates](./expert-templates.mdx) |
+| Host compatibility | Decide whether the current Host can execute Studio capabilities | [Host compatibility](./host-compatibility.mdx) |
+
+## Where it shows up in the product
+
+| Surface | Slot and id | Order | Source |
+| --- | --- | --- | --- |
+| Plugin market | `plugins.item` / `agentkit-dsh-plugin-market` | 50 | `src/client/dsh/mount.mjs:49` |
+| Codex plugins | `plugins.item` / `agentkit-codex-plugin-market` | 90 | `src/client/dsh/mount.mjs:52` |
+| Expert catalog | Inner page of the Agents panel | — | `src/client/pages/expert-catalog.mjs` |
+| Template square | Inner page of the Agents panel | — | `src/client/pages/template-square.mjs` |
+
+The market adds no sidebar entry and no second plugin center — it reuses the same list on the official DSH **Plugins** page.
+
+<Callout type="info" title="The market is metadata only">
+  Install, enable/disable, update, and uninstall are all executed by the official DSH plugin manager.
+  The Studio market owns **discovery and presentation** — not profile writes, not compatibility decisions,
+  not runtime loading. Source: `src/dsh-plugin-catalog.mjs:5-8`, `src/dsh-plugin-discovery.mjs:9-12`.
+</Callout>
+
+## Three trust boundaries
+
+The easiest way to get ecosystem work wrong is to blur who is allowed to decide what.
+
+| Boundary | Who decides | What must not happen |
+| --- | --- | --- |
+| Catalog content | A remote index may describe *which plugins to offer and how to present them* | ❌ It must not declare `expectedEntries` / `service` / `readinessNote` — those probes stay built-in, otherwise a remote document could make the adapter call arbitrary Host services |
+| Plugin installation | The official DSH plugin manager | ❌ The market must not write profiles or run installers itself |
+| Capability probes | The Host | ❌ A remote document must not assert "and it really loaded" |
+
+Source: `src/dsh-plugin-catalog.mjs:10-13`, `src/dsh-plugin-discovery.mjs:9-12`.
+
+## Versions and identity
+
+A Studio plugin presents one identity but carries four version numbers at once:
+
+| Version | Value | Source |
+| --- | --- | --- |
+| Plugin version | `0.0.16` | `package.json#version` |
+| DSH baseline | `0.2.2-rc.1` | `studio.plugin.json#requiredDsh` |
+| Host API | `dsh-native/0.2.2-rc.1` | `studio.plugin.json#requiredHostApi` |
+| Host contract | `1` | `studio.plugin.json#requiredHostContract` |
+
+The desktop app carries a fifth version (`<dsh version>.<YYYYMMDD>.<ordinal>`), and it is **not** the plugin semver.
+The full four-dimensional matrix is in [version compatibility](../releases/compatibility.mdx).
+
+## How to read this chapter
+
+<Cards>
+  <Card title="DSH plugin authoring" href="/en/docs/ecosystem/dsh-plugin-authoring">
+    Manifest fields, four capabilities, three contributions, and the pre-publish checklist.
+  </Card>
+  <Card title="Plugin market" href="/en/docs/ecosystem/plugin-market">
+    The complete remote index field table, a copy-paste example, and cache/degradation rules.
+  </Card>
+  <Card title="Expert templates" href="/en/docs/ecosystem/expert-templates">
+    The team-template/v1 field table, role blueprint constraints, and validation error codes.
+  </Card>
+  <Card title="Host compatibility" href="/en/docs/ecosystem/host-compatibility">
+    Five capability probes, three feature gates, and the error code you get when admission fails.
+  </Card>
+</Cards>
+
+## Glossary
+
+A few terms recur throughout this chapter; here is the single agreed spelling:
+
+| Term | Code / value | In one line |
+| --- | --- | --- |
+| Plugin market | `plugins.item` slot | One row on the official DSH Plugins page, responsible for **discovery** |
+| Built-in catalog | `DSH_CURATED_PLUGINS` | First-party rows that ship with the product and work offline |
+| Remote index | `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | An operator-provided HTTPS JSON that refreshes presentation and appends plugins |
+| Capability probe | `expectedEntries` / `service` | Declarable only by built-in rows, used to verify "the Host really loaded it" |
+| Team template | `agentkit.studio.team-template/v1` | A multi-role definition with `kind: "team"` |
+| Compatibility contract | `requiredHostContract: 1` | An integer that increments when the capability surface changes |
+
+## Common misconceptions
+
+| Misconception | Reality |
+| --- | --- |
+| "Installing the plugin gives me everything the market lists" | The market lists **installable** packages; availability depends on whether the Host loaded them — see [readiness checks](./plugin-market.mdx#readiness-checks) |
+| "A remote index can override built-in entries" | It can refresh presentation fields and append new plugins; built-in probe fields are never overridden — see [merge semantics](./plugin-market.mdx#merge-semantics) |
+| "Codex plugins and DSH plugins are the same pipeline" | Two separate paths: `plugins/dsh-*` and `plugins/codex-*`, with different install targets |
+| "A team is just a list of agents" | A team is a `kind: "team"` template whose roles may only reference immutable templates, never plain agents |
+
+## Next
+
+Start with [DSH plugin authoring](./dsh-plugin-authoring.mdx). If you only need a remote index, jump to
+[plugin market](./plugin-market.mdx); if you are shipping a team, go to [expert templates](./expert-templates.mdx).
+
+For Host version mismatches, read [host compatibility](./host-compatibility.mdx), then the [error codes](../reference/errors.mdx).

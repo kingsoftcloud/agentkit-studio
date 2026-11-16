@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "skills": {
+    "archify": {
+      "source": "archify.si",
+      "sourceUrl": "https://archify.si",
+      "sourceType": "well-known",
+      "computedHash": "1cebae96d2e38bfd0588b82202900f8462dba03922e2ab841e959fcee961df5f",
+      "wellKnownDigest": "sha256:48c55f9b59cda383ea63741318995e3adffaeb483cefdc721665322065b47a2d"
+    }
+  }
+}

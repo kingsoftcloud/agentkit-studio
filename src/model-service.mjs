@@ -4,7 +4,6 @@ import { syncGlobalModelCredential } from './model-credential-sync.mjs';
 import { studioReasoning } from './model-reasoning.mjs';
 import { createHash } from 'node:crypto';
 import { modelCatalogLimits, admitModelCapabilities } from '@kingsoftcloud/agentkit-harness-core/model-capabilities';
-import { requestHeaders } from './model-profile-contract.mjs';
 
 function inputModalities(model = {}) {
   // KSPMAS/OpenAI-compatible gateways expose capabilities under
@@ -81,21 +80,12 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
       baseUrl: baseUrl.replace(/\/$/, ''), apiKey: key };
   }
   async function gatewayModels(selected, refresh = false) {
-    // A gateway can gate `/models` behind its own header, so the profile's
-    // configured request headers reach the catalog read. Configuration wins
-    // over the credential-derived Authorization: an explicitly configured
-    // header is the caller's intent. With no headers configured the request is
-    // byte-for-byte the same as before, and the cache key only grows when
-    // headers exist so unrelated profiles keep sharing one catalog.
-    const configured = requestHeaders(selected.headers);
-    const fingerprint = Object.keys(configured).length
-      ? '\0' + JSON.stringify(Object.entries(configured).sort(([left], [right]) => left.localeCompare(right))) : '';
-    const key = createHash('sha256').update(selected.baseUrl + '\0' + selected.apiKey + fingerprint).digest('hex');
+    const key = createHash('sha256').update(selected.baseUrl + '\0' + selected.apiKey).digest('hex');
     const cached = catalogs.get(key);
     if (!refresh && cached && cached.expires > Date.now()) return cached.items;
     if (pendingCatalogs.has(key)) return pendingCatalogs.get(key);
     const operation = (async () => {
-    const response = await fetchImpl(`${selected.baseUrl}/models`, { headers: { Authorization: `Bearer ${selected.apiKey}`, ...configured }, signal: AbortSignal.timeout(15000), redirect: 'error' });
+    const response = await fetchImpl(`${selected.baseUrl}/models`, { headers: { Authorization: `Bearer ${selected.apiKey}` }, signal: AbortSignal.timeout(15000), redirect: 'error' });
     if (!response.ok) throw Object.assign(new Error(`读取模型目录失败（${response.status}）`), { code: 'MODEL_CATALOG_FAILED' });
     const data = await response.json();
     const items = (data.data || data.models || []).filter(item => typeof item.id === 'string').map(item => ({ id: item.id, name: item.name || item.id, input: modelInput(item),
@@ -128,9 +118,7 @@ export function createModelService({ configuration, credentials, fetchImpl = hos
     try { url = new URL(baseUrl); } catch { /* validated below */ }
     if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
       throw Object.assign(new Error('模型 API 地址无效'), { code: 'MODEL_URL_INVALID', status: 400 });
-    // Probe with the headers the form is about to save, so a header-gated
-    // gateway can be read before the profile is persisted.
-    const items = await gatewayModels({ baseUrl: url.href.replace(/\/$/, ''), apiKey, ...(candidate.headers ? { headers: candidate.headers } : {}) }, true);
+    const items = await gatewayModels({ baseUrl: url.href.replace(/\/$/, ''), apiKey }, true);
     const modelName = String(candidate.modelName || '').trim();
     return {
       provider,

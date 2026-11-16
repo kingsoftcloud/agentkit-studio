@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Deployment main path",
+    "subtitle": "Seven steps from submission to ready, plus the three exits you can fall out of",
+    "output": ".archify/deploy-main-en/main.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "happy",
+      "label": "Happy path"
+    },
+    {
+      "id": "outcome",
+      "label": "Outcome and exits",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "prepared",
+    "uploading",
+    "uploaded",
+    "creating",
+    "provisioning",
+    "starting",
+    "ready"
+  ],
+  "nodes": [
+    {
+      "id": "prepared",
+      "lane": "happy",
+      "col": 0,
+      "type": "frontend",
+      "label": "PREPARED",
+      "sublabel": "ready to submit",
+      "tag": "start",
+      "width": 128
+    },
+    {
+      "id": "uploading",
+      "lane": "happy",
+      "col": 1,
+      "type": "frontend",
+      "label": "UPLOADING",
+      "sublabel": "uploading bundle",
+      "width": 128
+    },
+    {
+      "id": "uploaded",
+      "lane": "happy",
+      "col": 2,
+      "type": "frontend",
+      "label": "UPLOADED",
+      "sublabel": "uploaded",
+      "width": 128
+    },
+    {
+      "id": "creating",
+      "lane": "happy",
+      "col": 3,
+      "type": "backend",
+      "label": "CREATING",
+      "sublabel": "creating",
+      "width": 128
+    },
+    {
+      "id": "provisioning",
+      "lane": "happy",
+      "col": 4,
+      "type": "backend",
+      "label": "PROVISIONING",
+      "sublabel": "provisioning",
+      "width": 128
+    },
+    {
+      "id": "starting",
+      "lane": "happy",
+      "col": 5,
+      "type": "backend",
+      "label": "STARTING",
+      "sublabel": "starting",
+      "width": 128
+    },
+    {
+      "id": "ready",
+      "lane": "outcome",
+      "col": 5,
+      "type": "cloud",
+      "label": "READY",
+      "sublabel": "serving",
+      "tag": "terminal",
+      "width": 128
+    },
+    {
+      "id": "failed",
+      "lane": "outcome",
+      "col": 0,
+      "type": "security",
+      "label": "FAILED",
+      "sublabel": "failed",
+      "width": 128
+    },
+    {
+      "id": "upload-unknown",
+      "lane": "outcome",
+      "col": 1,
+      "type": "messagebus",
+      "label": "UPLOAD_UNKNOWN",
+      "sublabel": "upload unconfirmed",
+      "width": 160
+    },
+    {
+      "id": "create-unknown",
+      "lane": "outcome",
+      "col": 3,
+      "type": "messagebus",
+      "label": "CREATE_UNKNOWN",
+      "sublabel": "create unconfirmed",
+      "width": 160
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "from": "prepared",
+      "to": "uploading",
+      "label": "submit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e2",
+      "from": "uploading",
+      "to": "uploaded",
+      "label": "done"
+    },
+    {
+      "id": "e3",
+      "from": "uploaded",
+      "to": "creating",
+      "label": "accepted"
+    },
+    {
+      "id": "e4",
+      "from": "creating",
+      "to": "provisioning",
+      "label": "provision"
+    },
+    {
+      "id": "e5",
+      "from": "provisioning",
+      "to": "starting",
+      "label": "serving"
+    },
+    {
+      "id": "e6",
+      "from": "starting",
+      "to": "ready",
+      "label": "live",
+      "variant": "emphasis"
+    },
+    {
+      "id": "x1",
+      "from": "prepared",
+      "to": "failed",
+      "label": "rejected",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "x2",
+      "from": "uploading",
+      "to": "upload-unknown",
+      "label": "interrupted",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "x3",
+      "from": "creating",
+      "to": "create-unknown",
+      "label": "timeout",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to use this",
+      "items": [
+        "Find your current state here first: it tells you whether to wait or act.",
+        "Updates, rollbacks, deletion and every other state live in the full state tree on the next diagram."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Three exits",
+      "items": [
+        "FAILED: this attempt is over. Fix the cause and create again; it does not retry in place.",
+        "UPLOAD_UNKNOWN / CREATE_UNKNOWN: the outcome is unknown. Reconcile before you act."
+      ]
+    }
+  ]
+}

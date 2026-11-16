@@ -1,0 +1,119 @@
+---
+title: Agent · Revision · Build · Run
+description: An agent is a pointer, a revision is immutable, a build is content-addressed, and a run is one turn.
+status: new
+---
+
+**An agent is an editable configuration pointer, a revision is one immutable snapshot of it, a build freezes a revision into a content-addressed runnable package, and a run is a single turn executed against a build.**
+
+Each layer answers one question and no layer can replace another. This page covers what each freezes, why the split is necessary, and which operations break reproducibility.
+
+<Diagram src="/assets/agentkit-lifecycle.en.png" alt="Lifecycle of Agent, immutable Revision, content-addressed Build, Session and Run, showing that editing appends a new Revision while running sessions stay put" />
+
+*How to read this: each stage freezes at a different level. Editing an Agent only appends a new Revision, and a running session stays bound to the old one — this is not a missing hot reload, it is the precondition for "one revision plus one engine always yields the same run identity".*
+
+## Why these cannot collapse into one layer
+
+With only an "agent" concept, two requirements cannot both hold:
+
+| Requirement | Consequence of one layer |
+| --- | --- |
+| Editing configuration must not affect sessions already running | You must choose: forbid editing, or let in-flight sessions drift |
+| The same configuration must rebuild into the same artifact | Build IDs can only carry timestamps, so every rerun is a "new version" |
+
+Splitting the layers satisfies both, at the cost of always knowing which layer you are editing. This table is the answer:
+
+| Layer | What you change | Affects | Does not affect |
+| --- | --- | --- | --- |
+| Agent | Name, description, which snapshot it points at | The list and future edits | Existing revisions and builds |
+| Revision | Prompt, runtime, resource bindings | The next build | Builds already produced |
+| Build | The artifact itself | Runs started from it | Runs already finished |
+| Run | One conversation | Nothing | Nothing (finished the moment it ends) |
+
+## Agent: a current pointer and nothing more
+
+A local agent ID looks like `ar-local-` followed by 16 hex digits; any other shape is rejected (`INVALID_AGENT_ID`). Revision 1 is written the moment the agent is created, so **there is no such thing as an unsaved agent**.
+
+The agent record holds two things: metadata (name, description, revision sequence number, timestamps) and which snapshot it currently points at. It stores no history — history lives in the revisions directory.
+
+## Revision: append-only
+
+Every save writes a new revision number. Files for older numbers are never rewritten. The rules have concrete consequences:
+
+- **Overwrites are rejected.** If the target revision file exists with different content, the result is `AGENT_REVISION_CONFLICT`. This is a hard failure, not a warning.
+- **Concurrent edits carry an expected number.** When `expectedRevision` does not match the current value, the result is `AGENT_EXPECTED_REVISION_CONFLICT` with both `expectedRevision` and `actualRevision`, so you can decide whether to reload or give up. An invalid number is `INVALID_EXPECTED_AGENT_REVISION`.
+- **Publication per agent is serialized.** The lock waits at most 5 seconds, then returns `AGENT_MUTATION_BUSY` ("the agent is being updated, retry shortly").
+- **Lost authority is explicit.** If the caller stops holding write authority after an asynchronous wait, the result is `AGENT_UPDATE_AUTHORITY_LOST` rather than a silent write into a stale state.
+- **Crash semantics are conservative.** The revision is written first, the pointer second. A crash between the two leaves an immutable revision for explicit recovery, never a silent replacement.
+
+<Callout type="warn" title="A revision is a sequence number, not a version">
+  It is a positive integer starting at 1, with no major/minor semantics. Comparing revision numbers across agents means nothing.
+</Callout>
+
+## Build: content-addressed, therefore idempotent
+
+A build ID looks like `build_` followed by 20 hex digits, derived from the first 20 characters of the manifest's SHA-256. The same revision plus the same execution engine **always produces the same ID** — rebuilding is idempotent and never invents a "new version".
+
+| Rule | Behavior |
+| --- | --- |
+| Two bundle formats | `agentkit.agent-bundle/v1` for everything except Star Harness; `v2` for Star Harness, because the execution engine is frozen too |
+| Exactly three entries | `agent-bundle/manifest.json`, `agent-bundle/spec.json`, `agent-bundle/README.md` |
+| Execution engine swapped | `BUILD_ENGINE_BINDING_CHANGED`; a new engine may not interpret an old package |
+| Download ceiling | Over 4 MiB returns `BUILD_DOWNLOAD_TOO_LARGE` |
+| Tampered artifact | The manifest/spec correspondence is re-verified; a mismatch returns `BUILD_ARTIFACT_INVALID` |
+| Artifact missing | `BUILD_NOT_FOUND` |
+
+Other build errors: `BUILD_AGENT_ID_INVALID` (agent ID format), `BUILD_REVISION_INVALID` (revision is not a positive integer, or disagrees with the agent definition), `BUILD_DEFINITION_INVALID` (no valid agent definition), `BUILD_ID_INVALID` (build ID format).
+
+A successful build always ends in status `SUCCEEDED`. **There is no partial success** — a package is either completely usable or absent.
+
+## Run: one turn, five identifiers
+
+A complete run identity needs all five fields: `agentId`, `revision`, `buildId`, `sessionId`, `runId`. Any missing field returns `RUN_IDENTITY_INVALID`; `revision` must be a positive integer starting at 1.
+
+When a run is bound to a concrete route (a session tab, for instance), `agentId` and `sessionId` are additionally checked against that route; a mismatch returns `RUN_IDENTITY_MISMATCH`. This guards against triggering session B's run from session A's view.
+
+Runs are driven by DSH session events: `turn/start` opens a turn, `turn/end` closes it, and `step/start`, `tool/call` and `tool/result` in between all share one `runId`. The vocabulary lives in [Sessions and workspaces](./sessions-workspaces.mdx).
+
+## Frozen runtime: what a build locks down
+
+A Star Harness build additionally freezes its execution engine (`agentkit.build-engine/v1`), so "upgrading the engine" is a new build rather than a configuration change. The runtime itself has two fixed budgets:
+
+| Item | Default | Ceiling | Out-of-range behavior |
+| --- | --- | --- | --- |
+| Per-run timeout | 15 minutes | 24 hours | A non-positive-integer or sub-1-second value falls back to the default instead of silently becoming 0 |
+| Host capability | Must support request fingerprints | — | Otherwise `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` |
+| Frozen model route | Must resolve | — | Otherwise `RUNTIME_MODEL_UNAVAILABLE` |
+
+"Frozen" means: whatever model routes the build recorded are the only routes the runtime may use. Models available outside the build are never selected.
+
+## Hard rules
+
+1. **A revision is append-only.** Overwriting is an error, not a policy.
+2. **A build ID depends only on content.** Same input, same ID; a different ID means genuinely different content.
+3. **All five run identity fields are mandatory.** Missing any one is an error with no degraded form.
+4. **Swapping the execution engine requires a new build.** An old package is never interpreted by a new engine.
+5. **Editing only ever creates a new revision.** No existing revision is ever "updated".
+
+## Related tasks
+
+<Cards>
+  <Card title="Create and edit an agent" href="/en/docs/guides/create-agent">
+    From an empty form to the first revision and the first build.
+  </Card>
+  <Card title="Run and debug sessions" href="/en/docs/guides/conversations">
+    Locate one specific turn with its runId.
+  </Card>
+  <Card title="Deploy to the cloud" href="/en/docs/guides/deploy-to-cloud">
+    Promote a local build into a resident managed runtime.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| The five identifiers and the full `agentkit.studio.runtime/v1` shape | [Runtime and entity contract](../reference/runtime-contract.mdx) |
+| Parameters of the four `builds/*` operations | [Operations](../reference/operations.mdx) |
+| `BUILD_*`, `AGENT_*` and `RUN_*` error codes | [Errors](../reference/errors.mdx) |
+| The 16 session events and 3 stream frames | [Session events](../reference/session-events.mdx) |

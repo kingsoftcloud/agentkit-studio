@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Resource binding topology",
+    "subtitle": "All five bindings live on the revision; credentials flow only from the Host to the provider, never back to the browser",
+    "output": ".archify/arch-resource-binding-en/overview.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Browser",
+      "sublabel": "resource library · metadata only",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        300,
+        76
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Agent",
+      "sublabel": "holds only a pointer",
+      "pos": [
+        760,
+        40
+      ],
+      "size": [
+        300,
+        76
+      ]
+    },
+    {
+      "id": "revision",
+      "type": "database",
+      "label": "Revision",
+      "sublabel": "five bindings live here, not on the agent",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        1020,
+        96
+      ],
+      "tag": "immutable"
+    },
+    {
+      "id": "model",
+      "type": "database",
+      "label": "Model profiles",
+      "sublabel": "model · multi-select",
+      "pos": [
+        40,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "database",
+      "label": "MCP bindings",
+      "sublabel": "mcp_servers ≤ 16",
+      "pos": [
+        246,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "skill-space",
+      "type": "database",
+      "label": "Skill spaces",
+      "sublabel": "exclusive with skill_spaces",
+      "pos": [
+        452,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "knowledge-base",
+      "type": "database",
+      "label": "Knowledge base",
+      "sublabel": "knowledge_base",
+      "pos": [
+        658,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "memory",
+      "type": "database",
+      "label": "Memory",
+      "sublabel": "memory",
+      "pos": [
+        864,
+        370
+      ],
+      "size": [
+        196,
+        96
+      ]
+    },
+    {
+      "id": "credential",
+      "type": "security",
+      "label": "Host credential service",
+      "sublabel": "resolves env:// references · plaintext stays here",
+      "pos": [
+        40,
+        620
+      ],
+      "size": [
+        1020,
+        76
+      ],
+      "tag": "env://<name>"
+    },
+    {
+      "id": "gateway",
+      "type": "cloud",
+      "label": "Model gateway",
+      "sublabel": "provider endpoint",
+      "pos": [
+        40,
+        830
+      ],
+      "size": [
+        320,
+        84
+      ]
+    },
+    {
+      "id": "mcp-server",
+      "type": "external",
+      "label": "MCP server",
+      "sublabel": "HTTP or SSE",
+      "pos": [
+        390,
+        830
+      ],
+      "size": [
+        320,
+        84
+      ]
+    },
+    {
+      "id": "agentengine",
+      "type": "cloud",
+      "label": "AgentEngine",
+      "sublabel": "cloud control plane",
+      "pos": [
+        740,
+        830
+      ],
+      "size": [
+        320,
+        84
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Credential boundary: plaintext never leaves this side",
+      "wraps": [
+        "credential"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "browser",
+      "to": "revision",
+      "label": "read-only"
+    },
+    {
+      "id": "c2",
+      "from": "agent",
+      "to": "revision",
+      "label": "pointer"
+    },
+    {
+      "id": "c3",
+      "from": "revision",
+      "to": "model",
+      "label": "binding"
+    },
+    {
+      "id": "c4",
+      "from": "revision",
+      "to": "mcp",
+      "label": "binding"
+    },
+    {
+      "id": "c5",
+      "from": "revision",
+      "to": "skill-space",
+      "label": "binding"
+    },
+    {
+      "id": "c6",
+      "from": "revision",
+      "to": "knowledge-base",
+      "label": "binding"
+    },
+    {
+      "id": "c7",
+      "from": "revision",
+      "to": "memory",
+      "label": "binding"
+    },
+    {
+      "id": "c8",
+      "from": "model",
+      "to": "credential",
+      "label": "profile credential"
+    },
+    {
+      "id": "c9",
+      "from": "mcp",
+      "to": "credential",
+      "label": "env:// reference"
+    },
+    {
+      "id": "c10",
+      "from": "skill-space",
+      "to": "credential",
+      "label": "platform connection"
+    },
+    {
+      "id": "c11",
+      "from": "knowledge-base",
+      "to": "credential",
+      "label": "platform connection"
+    },
+    {
+      "id": "c12",
+      "from": "memory",
+      "to": "credential",
+      "label": "platform connection"
+    },
+    {
+      "id": "c13",
+      "from": "credential",
+      "to": "gateway",
+      "label": "plaintext",
+      "variant": "security"
+    },
+    {
+      "id": "c14",
+      "from": "credential",
+      "to": "mcp-server",
+      "label": "plaintext",
+      "variant": "security"
+    },
+    {
+      "id": "c15",
+      "from": "credential",
+      "to": "agentengine",
+      "label": "plaintext",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to read this",
+      "items": [
+        "All five bindings live on the revision, not on the agent.",
+        "The agent holds only a pointer; swapping a resource produces a new revision.",
+        "The five bindings resolve independently, and one kind may carry several."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Exclusivity and limits",
+      "items": [
+        "skill_space and skill_spaces cannot both appear.",
+        "skill_spaces and mcp_servers allow at most 16 entries each.",
+        "A reference ID matches ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Credential boundary",
+      "items": [
+        "Credentials are written as env://<name>; plaintext exists only in the Host credential service.",
+        "The browser receives connection metadata and the last probe contract, never plaintext.",
+        "Model profiles, MCP references and platform connections resolve separately and never stand in for each other."
+      ]
+    }
+  ]
+}

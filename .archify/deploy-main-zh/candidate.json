@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "部署主路径",
+    "subtitle": "从提交到就绪的七步，以及三处会掉出去的出口",
+    "output": ".archify/deploy-main-zh/main.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "happy",
+      "label": "正常路径"
+    },
+    {
+      "id": "outcome",
+      "label": "就绪与出口",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "prepared",
+    "uploading",
+    "uploaded",
+    "creating",
+    "provisioning",
+    "starting",
+    "ready"
+  ],
+  "nodes": [
+    {
+      "id": "prepared",
+      "lane": "happy",
+      "col": 0,
+      "type": "frontend",
+      "label": "PREPARED",
+      "sublabel": "待提交",
+      "tag": "起点",
+      "width": 128
+    },
+    {
+      "id": "uploading",
+      "lane": "happy",
+      "col": 1,
+      "type": "frontend",
+      "label": "UPLOADING",
+      "sublabel": "上传运行包",
+      "width": 128
+    },
+    {
+      "id": "uploaded",
+      "lane": "happy",
+      "col": 2,
+      "type": "frontend",
+      "label": "UPLOADED",
+      "sublabel": "已上传",
+      "width": 128
+    },
+    {
+      "id": "creating",
+      "lane": "happy",
+      "col": 3,
+      "type": "backend",
+      "label": "CREATING",
+      "sublabel": "创建中",
+      "width": 128
+    },
+    {
+      "id": "provisioning",
+      "lane": "happy",
+      "col": 4,
+      "type": "backend",
+      "label": "PROVISIONING",
+      "sublabel": "准备实例",
+      "width": 128
+    },
+    {
+      "id": "starting",
+      "lane": "happy",
+      "col": 5,
+      "type": "backend",
+      "label": "STARTING",
+      "sublabel": "启动中",
+      "width": 128
+    },
+    {
+      "id": "ready",
+      "lane": "outcome",
+      "col": 5,
+      "type": "cloud",
+      "label": "READY",
+      "sublabel": "就绪",
+      "tag": "终态",
+      "width": 128
+    },
+    {
+      "id": "failed",
+      "lane": "outcome",
+      "col": 0,
+      "type": "security",
+      "label": "FAILED",
+      "sublabel": "失败",
+      "width": 128
+    },
+    {
+      "id": "upload-unknown",
+      "lane": "outcome",
+      "col": 1,
+      "type": "messagebus",
+      "label": "UPLOAD_UNKNOWN",
+      "sublabel": "上传结果待核对",
+      "width": 160
+    },
+    {
+      "id": "create-unknown",
+      "lane": "outcome",
+      "col": 3,
+      "type": "messagebus",
+      "label": "CREATE_UNKNOWN",
+      "sublabel": "创建结果待核对",
+      "width": 160
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "from": "prepared",
+      "to": "uploading",
+      "label": "提交",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e2",
+      "from": "uploading",
+      "to": "uploaded",
+      "label": "完成"
+    },
+    {
+      "id": "e3",
+      "from": "uploaded",
+      "to": "creating",
+      "label": "受理"
+    },
+    {
+      "id": "e4",
+      "from": "creating",
+      "to": "provisioning",
+      "label": "供给"
+    },
+    {
+      "id": "e5",
+      "from": "provisioning",
+      "to": "starting",
+      "label": "就绪"
+    },
+    {
+      "id": "e6",
+      "from": "starting",
+      "to": "ready",
+      "label": "可用",
+      "variant": "emphasis"
+    },
+    {
+      "id": "x1",
+      "from": "prepared",
+      "to": "failed",
+      "label": "拒绝",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "x2",
+      "from": "uploading",
+      "to": "upload-unknown",
+      "label": "中断",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "x3",
+      "from": "creating",
+      "to": "create-unknown",
+      "label": "超时",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么用这张图",
+      "items": [
+        "先在这张图里找到当前状态，判断该等还是该动。",
+        "升级、回滚、删除与其余状态见下一页的全状态树。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "三个出口",
+      "items": [
+        "FAILED：本次尝试终止，修因后重建，不能原地重试。",
+        "UPLOAD_UNKNOWN / CREATE_UNKNOWN：结果未知，先核对再动作。"
+      ]
+    }
+  ]
+}

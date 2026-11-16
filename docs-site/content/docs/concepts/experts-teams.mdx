@@ -1,0 +1,158 @@
+---
+title: 专家与本地团队
+description: 专家模板是可复用的 Agent 蓝图，专家团是多角色协作单元。两者复用同一套修订版本、构建与会话语义，但约束完全不同。
+status: new
+---
+
+**专家模板（expert template）是一份可复用的 Agent 蓝图；专家团（team）是多个角色协作的单元。它们复用同一套「修订版本 + 构建 + 会话」语义，但适用的运行时和成员来源被刻意收紧。**
+
+这一页讲清两者的契约、各自的硬约束，以及为什么「专家团不能引用普通 Agent」这类限制不是缺陷而是设计。
+
+## 为什么需要模板与团队
+
+从零配一个 Agent 的成本不在表单，而在那些看不见的决定：绑哪些 MCP、用哪个模型、记忆怎么写。模板把这些决定预先固化，让复用变成「选一个」而不是「复制一份配置」。
+
+团队解决的是另一个问题：**一个任务需要多个角色分工**。它不能靠「建多个 Agent 然后人肉转述」实现，因为那样角色之间没有共享的会话结构。团队运行因此拥有自己的根会话与子会话。
+
+## 专家模板
+
+模板创建走的是**同一个 Agent 存储与创建契约**——不是一条特殊路径。这意味着模板创建出来的 Agent 与手写 Agent 在修订版本、构建、会话上完全一致。
+
+### 来源引用必须锁全四个要素
+
+| 要素 | 作用 |
+| --- | --- |
+| 目录 | 模板来自哪个目录（内置目录是 `studio-builtin`） |
+| `id` | 模板标识 |
+| `version` | 模板版本 |
+| `digest` | 内容摘要 |
+
+缺任何一个都返回 `TEMPLATE_SOURCE_INVALID`，提示重新选择模板。摘要的作用是：模板内容变了，摘要就变，已创建的 Agent 不会在无感知的情况下换了定义。
+
+### 模板带来的额外校验
+
+| 校验 | 失败码 |
+| --- | --- |
+| 名称与角色指令必填 | `AGENT_DEFINITION_REQUIRED` |
+| 必须选中至少一个模型 | `TEMPLATE_MODEL_REQUIRED` |
+| 所选运行时必须在模板声明的白名单内 | `TEMPLATE_RUNTIME_UNSUPPORTED` |
+| 模板依赖未就绪 | `TEMPLATE_DEPENDENCIES_INCOMPLETE` |
+| 依赖安装服务不可用 | `TEMPLATE_DEPENDENCIES_UNAVAILABLE` |
+| 依赖的 MCP 尚未连接成功 | `TEMPLATE_MCP_UNAVAILABLE` |
+| 所选资源已不可用 | `TEMPLATE_RESOURCE_UNAVAILABLE` |
+| 必填资源类别缺失 | `TEMPLATE_BINDING_REQUIRED` |
+| 平台资源绑定无效或重复 | `TEMPLATE_BINDING_INVALID` |
+| DSH 原生不支持 Tool 绑定 | `TEMPLATE_RESOURCE_UNSUPPORTED` |
+
+### 记忆的写入策略
+
+启用长期记忆前必须先选一个记忆库，否则返回 `TEMPLATE_MEMORY_REQUIRED`。写入模式默认 `explicit_only`；本地默认提供者（Star Harness 且未绑云端记忆库）额外允许 `off` 与 `candidate`，其他提供者只允许 `candidate` 与 `explicit_only`。其他值返回 `TEMPLATE_MEMORY_POLICY_INVALID`。注意 `off` 只在本地默认提供者下合法——它是提供者的属性，不是「记忆开关」的属性。
+
+## 专家团模板
+
+团队模板的契约是 `agentkit.studio.team-template/v1`，它的校验比单 Agent 严格得多：
+
+| 规则 | 约束 | 失败码 |
+| --- | --- | --- |
+| `kind` | 必须是 `team` | `TEAM_TEMPLATE_INVALID` |
+| 模板 ID | `^[a-z][a-z0-9-]*$` | `TEAM_TEMPLATE_INVALID` |
+| 版本 | 严格三段式 `1.2.3` | `TEAM_TEMPLATE_INVALID` |
+| 角色数量 | 2–9 个 | `TEAM_TEMPLATE_ROLE_INVALID` |
+| 第一个角色 | 必须叫 `lead` | `TEAM_TEMPLATE_ROLE_INVALID` |
+| 角色标识 | `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`，不可重复，不可叫 `lead` | `TEAM_TEMPLATE_ROLE_INVALID` |
+| 角色来源 | 必须锁定 `id`、`version`、`digest` | `TEAM_TEMPLATE_ROLE_SOURCE_INVALID` |
+| 角色运行时 | 只能是 DSH 原生或 Star Harness | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
+| 角色嵌套 | 不能再声明普通 subagent | `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` |
+| 角色蓝图 | 必须有系统指令与合法资源绑定 | `TEAM_TEMPLATE_ROLE_SPEC_INVALID` |
+| 占位模型 | `one-team-model` 之类的占位名不能当真模型 | `TEAM_TEMPLATE_MODEL_INVALID` |
+
+<Callout type="warn" title="角色不能引用普通 Agent">
+  角色里出现 `agentId` 或 `source.kind === 'agent'` 会被直接拒绝（`TEAM_TEMPLATE_ROLE_INVALID`）。原因不是偷懒：普通 Agent 可以被编辑，而团队角色必须锁定到不可变的模板引用上，否则团队运行无法复现。
+</Callout>
+
+默认模型由当前 Studio 的模型档案解析，模板里只写「推荐值」。这样发布模板时不需要把一个具体供应商地址烘进公开模板。
+
+## 团队运行
+
+团队运行（TeamRun）把一份不可变蓝图映射成 DSH 原生的团队运行。它拥有一个**根会话**加若干**子会话**，所以角色的产出不需要靠人肉转述。
+
+| 项 | 值 |
+| --- | --- |
+| 团队 ID | `team-` 加 24 位十六进制 |
+| 团队运行 ID | `teamrun-` 加 24 位十六进制 |
+| 成员数量 | 1–8 |
+| 并发任务上限 | 256 |
+| 单条消息上限 | 65536 字节 |
+| 成员运行时 | 只能是本地 DSH 原生或 Star Harness |
+| 任务文本上限 | 32000 字 |
+
+成员必须使用本地运行时，因为云端成员与 Codex 成员尚未接入——越界返回 `TEAM_AGENT_UNSUPPORTED`，提示「请选用本机 DSH Native 或 Harness 专家」。
+
+### 团队运行的错误码
+
+| 错误码 | 触发场景 |
+| --- | --- |
+| `TEAM_ID_INVALID` | 团队或运行 ID 格式无效 |
+| `TEAM_REQUEST_INVALID` | 运行请求标识无效 |
+| `TEAM_TASK_INVALID` | 任务为空或超过 32000 字 |
+| `TEAM_REVISION_CONFLICT` | 团队已被修改，需重新打开编辑 |
+| `TEAM_PRESET_CONFLICT` | 角色的运行预设已变化，需新建运行 |
+| `TEAM_RUN_NOT_FOUND` | 团队运行不存在 |
+| `TEAM_MEMBER_FAILED` | 某个成员执行失败（附成员错误码） |
+| `TEAM_ROLE_SOURCE_MISSING` | 角色缺少来源蓝图 |
+| `TEAM_SOURCE_AGENT_MISSING` | 角色的来源专家不存在 |
+| `TEAM_SNAPSHOT_MISSING` | 旧团队运行的专家来源已不存在 |
+| `TEAM_ROOT_UNAVAILABLE` | 无法恢复团队根会话 |
+| `TEAM_RECOVERY_FAILED` | 原生团队恢复失败 |
+| `TEAM_START_FAILED` | 团队启动未完成 |
+| `TEAM_RUNTIME_UNAVAILABLE` | 官方团队服务尚未就绪 |
+| `TEAM_ROLE_UNAVAILABLE` | 角色工具不可用 |
+
+## 召唤：一次性把依赖装齐
+
+召唤（summon）是一键创作编排：它把模板声明的 MCP 与 Skill 依赖物化好，再交给 Agent 存储创建。两条前提不能跳：公开的未认证 MCP 可以直接物化，但不做静默 OAuth 账号迁移；依赖的 MCP 必须探测通过，否则返回 `TEMPLATE_MCP_UNAVAILABLE`。
+
+召唤可中断：取消返回 `TEMPLATE_CANCELLED`，被中断返回 `TEMPLATE_INTERRUPTED`（可重新召唤继续），宿主关闭返回 `TEMPLATE_SERVICE_CLOSED`。
+
+## 专家与团队的差异
+
+| 维度 | 专家模板 | 专家团 |
+| --- | --- | --- |
+| 产物 | 一个 Agent | 一份团队定义 + 团队运行 |
+| 角色 | 无 | 2–9 个模板角色 / 1–8 个运行成员 |
+| 会话结构 | 独立会话 | 根会话 + 子会话 |
+| 允许的运行时 | 模板声明什么就支持什么 | 只有 DSH 原生与 Star Harness |
+| 引用普通 Agent | 不适用 | 禁止 |
+| 编辑影响 | 生成新修订版本 | 生成新团队修订版本 |
+| 可复现性靠 | `digest` | `digest` + 每个角色的 `id/version/digest` |
+
+## 硬规则
+
+1. **模板只锁定引用，不复制配置**。`digest` 变了就是另一份模板。
+2. **团队角色必须是不可变的模板引用**，不能指向可编辑的普通 Agent。
+3. **团队只跑本地运行时**。云端与 Codex 成员是未实现能力，不要写成「暂时」。
+4. **`kind` 与 `lead` 是结构约束**，不是命名约定。
+5. **召唤不静默建立授权**。需要认证的 MCP 必须由你显式完成连接。
+
+## 相关任务
+
+<Cards>
+  <Card title="创建与编辑 Agent" href="/docs/guides/create-agent">
+    从专家模板创建，并确认生成的是普通 Agent。
+  </Card>
+  <Card title="运行与调试会话" href="/docs/guides/conversations">
+    读团队运行的根会话与子会话。
+  </Card>
+  <Card title="绑定 MCP Server" href="/docs/guides/mcp-servers">
+    把模板依赖的 MCP 连接并探测通过。
+  </Card>
+</Cards>
+
+## 相关参考
+
+| 你要查的东西 | 去哪一页 |
+| --- | --- |
+| 模板与团队模板的完整 Schema | [模板 Schema](../reference/templates.mdx) |
+| `TEMPLATE_*`、`TEAM_*` 错误码 | [错误码](../reference/errors.mdx) |
+| 专家模板编写与发布 | [专家模板](../ecosystem/expert-templates.mdx) |
+| 8 个 `teams/*` operation | [控制协议](../reference/operations.mdx) |

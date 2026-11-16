@@ -382,10 +382,6 @@ export default String.raw`
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-[data-studio-model-settings] .ms-grid-3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 /* Fields */
 [data-studio-model-settings] .ms-field {
   display: grid;
@@ -767,41 +763,6 @@ export default String.raw`
   margin-bottom: var(--ms-space-3);
 }
 
-/* The advanced section may hold more than one disclosure; they stay siblings. */
-[data-studio-model-settings] .ms-advanced + .ms-advanced {
-  margin-top: var(--ms-space-3);
-}
-
-/*
- * Custom request headers: one row per header, name and value on one line with
- * its own remove action. Rows are the editing shape of the profile header
- * record; the hint explains that empty rows never reach the configuration file.
- */
-[data-studio-model-settings] .ms-headers {
-  display: grid;
-  gap: var(--ms-space-2);
-  min-width: 0;
-  margin-top: var(--ms-space-3);
-}
-
-[data-studio-model-settings] .ms-headers-head {
-  display: flex;
-  align-items: center;
-  gap: var(--ms-space-2);
-}
-
-[data-studio-model-settings] .ms-header-row {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
-  align-items: center;
-  gap: var(--ms-space-2);
-  min-width: 0;
-}
-
-[data-studio-model-settings] .ms-header-row > .ms-btn {
-  white-space: nowrap;
-}
-
 /* Cloud credentials sit below the model panel on a quieter layer. */
 [data-studio-model-settings] .ms-cloud {
   display: grid;
@@ -918,17 +879,8 @@ export default String.raw`
     padding: var(--ms-space-4);
   }
 
-  [data-studio-model-settings] .ms-grid-2,
-  [data-studio-model-settings] .ms-grid-3 {
+  [data-studio-model-settings] .ms-grid-2 {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  [data-studio-model-settings] .ms-header-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  [data-studio-model-settings] .ms-header-row > .ms-input:first-child {
-    grid-column: 1 / -1;
   }
 
   [data-studio-model-settings] .ms-status-meta {

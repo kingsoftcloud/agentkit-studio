@@ -1,0 +1,133 @@
+---
+title: 三种运行时
+description: 运行时类型决定一次运行由谁的执行模型负责。三种运行时各自的能力差异、Star Harness 为什么必须先安装，以及执行策略如何限制写入范围。
+status: new
+---
+
+**运行时类型（`runtime.type`）决定一次运行由谁的执行模型负责。只有三种：DSH 原生、Star Harness、Codex**（`src/runtime-contract.mjs:6` 的 `STUDIO_RUNTIME_TYPES`）。
+
+这一页讲清三种运行时各自的归属与能力、Star Harness 为什么必须先安装才能选、以及运行时之外那一层「执行策略」如何限制写入范围。
+
+## 为什么运行时不是「引擎选项」
+
+把运行时理解成「换个模型后端」会立刻遇到矛盾：同一份 Agent 定义，在三个运行时上的可用能力根本不同——有的支持重放，有的支持子任务，有的两者都不支持。这不是配置差异，是执行归属差异。
+
+| 你想做的事 | 需要的前提 |
+| --- | --- |
+| 重放一次历史运行 | 运行时支持 `replay`（Codex 与 DSH 原生支持，Star Harness 不支持） |
+| 让 Agent 拆出子任务 | 运行时支持 `child-tasks`（只有 Star Harness 支持） |
+| 从历史事件恢复未完成的 turn | 运行时支持 `resume`（只有 Star Harness 支持） |
+| 把 Agent 部署成常驻托管运行时 | 运行时可托管（只有 DSH 原生与 Codex 可以） |
+
+所以选运行时不是风格偏好，它决定了后面能做哪些事。**运行时在创建时锁定，之后不能改**——换运行时只能新建一个 Agent。
+
+## Star Harness 必须先安装
+
+三种运行时里只有 Star Harness 是**可插拔的**：它由三个独立的 npm 包提供（`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`，当前 `0.0.25`），Studio 单向依赖它，它不反向依赖 Studio。
+
+所以「新建 Agent 时能不能选 Star Harness」是一个**状态判断**，不是常量：
+
+| 条件 | 含义 |
+| --- | --- |
+| 已安装 | 插件页装过经过摘要校验的发布包 |
+| 已启用 | 当前部署允许使用该运行时 |
+| 至少一个可用工作区 | 绑定了工作区，或存在外部托管的工作区路由 |
+
+三条同时满足时 `canCreate` 为真（`src/host/services/star-harness.mjs:162`），表单才会放开 Star Harness 选项（`src/client/pages/agent-form.mjs:79`）。任一不满足，运行时会渲染成「未开放」徽章且不可选中（`:265-267`）。
+
+<Callout type="info" title="安装与升级">
+  安装、升级、回退与工作区绑定都在**插件页 → Star Harness** 里完成，见[安装、升级与绑定 Star Harness](../guides/star-harness.mdx)。
+</Callout>
+
+<Callout type="warn" title="Star Harness 的两个历史别名已废弃">
+  历史文档里 Star Harness 还叫过 AgentKit Harness 与 Native Harness。**两个别名都已废弃**，统一写 **Star Harness**（`harness`）。
+</Callout>
+
+## 三个正式运行时
+
+| 项 | DSH 原生 | Star Harness | Codex |
+| --- | --- | --- | --- |
+| 值 | `dsh-native` | `harness` | `codex` |
+| 界面名称 | DSH Native Harness | Star Harness | Codex Agent |
+| 执行归属 | DSH 自己 | KSADK Harness 原生内核 | Studio 内的 Codex App Server 适配器 |
+| 执行模型 | `native` | `native-kernel` | `codex-app-server` |
+| 契约 | `agentkit.studio.runtime/v1` | DSH 原生 turn 契约 | `studio.codex.adapter/v1` |
+| 事件所有者 | DSH 会话 | 原生 run store | Studio Codex 适配器 |
+| 流所有者 | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
+| 新建默认 | **是** | 条件可创建（见上节） | 否 |
+
+<Diagram src="/assets/agentkit-runtime-ownership.png" alt="三种运行时（三列）在模型与工具循环、会话转录、持久运行状态与 Studio 接缝上的归属矩阵" />
+
+*读图要点：执行者不是转录所有者——同一个运行时里，「谁在跑模型循环」和「谁在保存事件日志」是两个不同实体。三列里只有 `cancel` 是三者共有的能力，其余能力都属于某一个实现，不能靠配置打开。*
+
+## 能力矩阵
+
+| 能力 | DSH 原生 | Star Harness | Codex |
+| --- | :---: | :---: | :---: |
+| `session` | ✅ | — | ✅ |
+| `session-events` | ✅ | — | — |
+| `stream` | ✅ | — | ✅ |
+| `cancel` | ✅ | ✅ | ✅ |
+| `replay` | ✅ | — | ✅ |
+| `persistence` | ✅ | — | — |
+| `build-binding` | ✅ | — | ✅ |
+| `native-run` | — | ✅ | — |
+| `durable-receipts` | — | ✅ | — |
+| `tool-approval` | — | ✅ | — |
+| `resume` | — | ✅ | — |
+| `child-tasks` | — | ✅ | — |
+
+只有 `cancel` 是三个运行时都支持的。能力项不是功能开关，不能通过配置打开——它是运行时实现的一部分。
+
+## 运行时之外的硬规则
+
+| 规则 | 允许的值 | 越界结果 |
+| --- | --- | --- |
+| 创建 Agent | 3 个正式值 | `RUNTIME_UNSUPPORTED` |
+| 专家团角色 | 仅 DSH 原生、Star Harness | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
+| 专家团成员（运行时） | 仅本地 DSH 原生、Star Harness | `TEAM_AGENT_UNSUPPORTED` |
+| 托管部署 | 仅 DSH 原生、Codex | 不出现在可部署列表 |
+| 托管清单声明 | 3 个正式值 | `MANAGED_RUNTIME_IDENTITY_MISMATCH` |
+
+「专家团不含 Codex 成员」与「托管部署不含 Star Harness」是两条独立限制，不要合并成一句「部分场景受限」。
+
+## 执行策略：限制写入范围的那一层
+
+运行时决定谁执行，执行策略决定**执行时能写哪里**。两者是正交的。
+
+| 模式 | 排名 | 含义 | 默认 |
+| --- | --- | --- | --- |
+| `read-only` | 0 | 只读，不写工作区 | 无人值守运行的默认值 |
+| `workspace-write` | 1 | 可写工作区 | **是**（云执行默认） |
+| `danger-full-access` | 2 | 完全访问 | 是上限，不是默认 |
+
+排名从最小权限到最大权限。三条硬规则：
+
+1. **只能收窄，不能放宽**。请求的模式如果超出部署声明的上限，会被夹到上限值，而不是报错——这是为了让策略变更不影响已经发出的请求。
+2. **上限默认是最高**。云执行的默认模式是 `workspace-write`，默认上限是 `danger-full-access`，所以默认情况下三种模式都可选。
+3. **无人值守一律只读**。无人值守的执行策略是 `read-only` 加 `approvalPolicy: never`，且审批来源标记为运行时策略——没有人工可以批准，所以只能只读。
+
+除权限模式外，策略里还有一个「审批策略」，取值只能是 `ask` 或 `never`。Star Harness 的 Agent 还额外带一份原生权限策略（模式 `strict` / `loose` / `custom`），它**只增加工具约束，不会授予任何宿主能力**。新建的 Star Harness Agent 默认是 `strict`。
+
+## 相关任务
+
+<Cards>
+  <Card title="创建与编辑 Agent" href="/docs/guides/create-agent">
+    在创建表单里选运行时，并确认选中后的能力差异。
+  </Card>
+  <Card title="审批与权限策略" href="/docs/guides/approvals-permissions">
+    把执行策略从默认值调整成生产可用的配置。
+  </Card>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">
+    托管运行时只接受其中两个值。
+  </Card>
+</Cards>
+
+## 相关参考
+
+| 你要查的东西 | 去哪一页 |
+| --- | --- |
+| 能力矩阵的原始枚举与契约版本 | [运行时与实体契约](../reference/runtime-contract.mdx) |
+| `RUNTIME_*` 错误码 | [错误码](../reference/errors.mdx) |
+| 三个运行时的部署形态对照 | [三运行时对照](../deployment/runtimes-compare.mdx) |
+| 执行策略相关环境变量 | [环境变量](../reference/environment.mdx) |

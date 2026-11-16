@@ -1,0 +1,94 @@
+{
+  "schema_version": 3,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Agent · Revision · Build · Session · Run",
+    "subtitle": "Five layers freeze at different levels; editing an Agent only appends a revision, and a running session stays put",
+    "output": ".archify/lifecycle-agent-revision-build-en/overview.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "mainPath": ["agent", "revision", "build", "session", "run"],
+  "states": [
+    {
+      "id": "agent",
+      "type": "start",
+      "label": "Agent",
+      "sublabel": "agentId · current pointer only",
+      "tag": "config",
+      "step": "01"
+    },
+    {
+      "id": "revision",
+      "type": "active",
+      "label": "Revision",
+      "sublabel": "revision · immutable snapshot",
+      "tag": "append-only",
+      "step": "02"
+    },
+    {
+      "id": "build",
+      "type": "decision",
+      "label": "Build",
+      "sublabel": "buildId · content-addressed",
+      "tag": "frozen",
+      "step": "03"
+    },
+    {
+      "id": "session",
+      "type": "waiting",
+      "label": "Session",
+      "sublabel": "sessionId · DSH owns the log",
+      "tag": "durable",
+      "step": "04"
+    },
+    {
+      "id": "run",
+      "type": "success",
+      "label": "Run",
+      "sublabel": "runId · one turn",
+      "tag": "five ids",
+      "step": "05"
+    }
+  ],
+  "transitions": [
+    { "id": "t1", "from": "agent", "to": "revision", "label": "save" },
+    { "id": "t2", "from": "revision", "to": "build", "label": "freeze" },
+    { "id": "t3", "from": "build", "to": "session", "label": "bind" },
+    { "id": "t4", "from": "session", "to": "run", "label": "run a turn" },
+    {
+      "id": "t-edit",
+      "from": "revision",
+      "to": "revision",
+      "label": "edit → revision n+1",
+      "note": "An existing revision file is never rewritten; concurrent edits must send expectedRevision",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to read this",
+      "items": [
+        "Left to right is the single happy path: configuration is saved into a revision, the revision is frozen into a build, the build is bound to a session, and the session produces one run.",
+        "The dashed self-loop is the edit action: saving only appends a new revision number and never overwrites an existing snapshot."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Five identities, all required",
+      "items": [
+        "A run's full identity is agentId, revision, buildId, sessionId and runId.",
+        "A missing field is a hard rejection, never a degraded partial identity; an Agent without a build can still converse, it simply has no reproducible run identity."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "A running session is unaffected",
+      "items": [
+        "A running session is bound to the revision it started on, not to the Agent object.",
+        "Swapping a model, adding an MCP server or editing the prompt therefore only affects the next turn or a new session — this is not a missing hot reload, it is what makes reproducibility possible."
+      ]
+    }
+  ]
+}

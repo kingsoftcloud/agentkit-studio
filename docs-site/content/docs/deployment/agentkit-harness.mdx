@@ -1,0 +1,136 @@
+---
+title: Star Harness
+description: Star Harness 作为 npm 插件的执行模型、安装升级与工作区绑定的完整生命周期，以及它为什么必须先装好才能被选中。
+status: new
+---
+
+**Star Harness（`harness`）把整个 turn 交给 Harness 原生内核，DSH 不再自己跑模型与工具循环。** 它只有一种发布形态：从 npm 安装 `@kingsoftcloud/agentkit-harness-node`。没有独立进程，也没有需要你手写的引擎地址——你在插件页装好、启用、绑定工作区之后，Agent 表单才会出现 Star Harness 这个选项。
+
+## 执行模型
+
+| 环节 | 归属 | 依据 |
+| --- | --- | --- |
+| 模型 / 工具循环 | Harness 原生内核 | `owner: 'ksadk-harness'`、`execution: 'native-kernel'` |
+| Studio 与它的契约 | `agentkit.native-dsh-turn/v1` | `contract` |
+| 事件源 | `native-run-store` | `eventOwner` |
+| 流式 | `native-model-port` | `streamOwner` |
+| 能力集 | `native-run`、`durable-receipts`、`tool-approval`、`cancel`、`resume`、`child-tasks` | `capabilities` |
+
+依据：`src/runtime-contract.mjs:25-29`。
+
+DSH 侧提供整轮端口（宿主契约 `dsh.external-turn-host/v1`），每轮由它把控制权交给 Harness 引擎（`dsh.external-turn/v1`）。Harness 包在接管前会校验宿主具备 `claim`、`pending`、`resume` 三个方法（`@kingsoftcloud/agentkit-harness-node` 的 `native/dsh-turn-ownership.mjs:47-52`）。
+
+<Callout type="warn" title="不能走普通流式接缝">
+  `harness` 在本地模式下经过 DSH 的流式适配器会直接抛 `STUDIO_NATIVE_TURN_REQUIRED`（「Native Harness requires the whole-turn execution port.」）。它必须由整轮端口承接，不能被当成「一条普通的模型流」（`src/providers/dsh-runtime.mjs:591`）。
+</Callout>
+
+## 依赖方向
+
+Studio 单向依赖 Harness 的 npm 包，版本精确锁定：
+
+| 包 | 版本 | 用途 |
+| --- | --- | --- |
+| `@kingsoftcloud/agentkit-harness-core` | `0.0.25` | 规范值、不变量、内核原语 |
+| `@kingsoftcloud/agentkit-harness-node` | `0.0.25` | 整轮 turn 契约、Run 归属、包完整性校验 |
+| `@kingsoftcloud/agentkit-harness-ui` | `0.0.25` | 引擎视图适配器 |
+
+依据：`package.json:133-135`（三个包都精确锁定，不用 `^` 或 `~`）。
+
+**Harness 不依赖 Studio。** 三个包的 `dependencies` 里没有任何 `@kingsoftcloud/agentkit-studio*` 条目——依赖是单向的，所以升级 Harness 不需要 Studio 一起发版。
+
+## 安装与生命周期
+
+Star Harness 由**插件页里的「Star Harness 管理」**驱动，五个操作对应五个控制端点：
+
+| 操作 | 端点 | 界面文案 |
+| --- | --- | --- |
+| 读取状态 | `star-harness/status` | 已安装 `<version>` / 未安装，附「已启用 / 已停用」 |
+| 安装 / 升级 | `star-harness/install` | 「安装」「升级」「重新安装」 |
+| 启停 | `star-harness/enable` | 「启用」「停用」 |
+| 绑定工作区 | `star-harness/bind` | 「绑定工作区」 |
+| 解除绑定 | `star-harness/unbind` | 「解除绑定」 |
+
+依据：`src/host/routes/star-harness.mjs:7-11`、`src/remote/control-client.mjs:469-473`、`src/client/pages/star-harness.mjs:64-112`。
+
+### 版本规则
+
+| 规则 | 表现 | 依据 |
+| --- | --- | --- |
+| 版本格式 | 必须是 `x.y.z` 三段数字 | `src/host/services/star-harness-release.mjs:14-15` |
+| 只能升或回退 | 想切到既不是「更新」也不是「上一版」的版本 → `STAR_HARNESS_VERSION_UNSUPPORTED` | `src/host/services/star-harness.mjs:186-191` |
+| 回退 | 有 `previousVersion` 时出现「回退到 `<版本>`」按钮 | `src/client/pages/star-harness.mjs:88` |
+| 出厂校验 | 只接受当前 Studio 已核验的版本，否则 `STAR_HARNESS_RELEASE_UNREVIEWED` | `src/host/services/star-harness-release.mjs:22-28` |
+| 包完整性 | 逐文件核对摘要，依赖解析不得逃出安装目录 | `:32-59` |
+| 注册表 | 固定 `https://registry.npmjs.org` | `:12` |
+
+<Callout type="info" title="为什么版本要校验">
+  Studio 会先确认这个 Harness 版本被当前 Studio 核验过，再安装。换 Harness 版本改的是依赖版本号，不涉及 Studio 源码——但没被核验的版本会明确拒绝，而不是装上再炸。
+</Callout>
+
+### 工作区绑定
+
+一个工作区对应一个模型配置和一份独立的运行状态：
+
+| 规则 | 表现 | 依据 |
+| --- | --- | --- |
+| 必须绝对路径 | 非规范绝对路径 → `STAR_HARNESS_INVALID_REQUEST` | `src/host/services/star-harness.mjs:212-217` |
+| 不得重叠 | 与已有绑定、Star Harness 状态目录或外部 Harness 路由重叠 → `STAR_HARNESS_WORKSPACE_CONFLICT` | `:71-72`、`:214-215` |
+| 模型必须可用 | 选择的模型配置必须存在且启用 | `:216-217` |
+| 模型漂移 | 绑定后模型变了 → `STAR_HARNESS_MODEL_CHANGED`，需重新绑定 | `:61-64` |
+| 目录失效 | 工作区被删后显示「目录已失效」，且不再参与路由 | `src/client/pages/star-harness.mjs:97`、`src/host/services/star-harness.mjs:132` |
+
+## 什么时候选它
+
+- 需要**跨进程续跑**（`resume`）：三条运行时里只有 Star Harness 具备。
+- 需要**子任务**（`child-tasks`）与持久回执（`durable-receipts`）：多角色任务分解依赖这两项。
+- 需要工具审批作为运行时一等能力（`tool-approval`）。
+- 你已经在用 DeepSeek Harness，希望整轮交给 Harness 内核而不是 DSH 原生循环。
+
+不需要这些时选 DSH Native 更省事（见[三运行时对照](./runtimes-compare.mdx)）。
+
+## 限制
+
+| 限制 | 表现 | 依据 |
+| --- | --- | --- |
+| **必须先装好才能选** | 只有「已安装 + 已启用 + 至少一个工作区」才允许新建 Agent | `src/client/pages/agent-form.mjs:79`、`src/host/services/star-harness.mjs:162`、`:174` |
+| 未安装 | 安装或启用前抛 `STAR_HARNESS_NOT_INSTALLED` | `src/host/services/star-harness.mjs:14` |
+| 未绑定工作区 | 启用时若无可用工作区 → `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | `:15` |
+| 忙时不可变更 | 有任务运行或正在变更 → `STAR_HARNESS_BUSY` | `:11` |
+| 一次只允许一个写入者 | 新 worker 必须在旧 worker 停止后接管；切换失败回滚原版本 | `:95-125` |
+| 版本精确锁定 | 三个包均为 `0.0.25`，不接受浮动范围 | `package.json:133-135` |
+| 无独立 `persistence` 项 | 持久化以 `durable-receipts` 形态提供，与 DSH 的 `persistence` 不是同一实现 | `src/runtime-contract.mjs:27` |
+
+<Callout type="warn" title="Star Harness 与 DSH Native 的 Run 账本不同">
+  切换运行时不迁移已有的 Run 历史：旧会话仍按原运行时打开。Star Harness 的 Run 由 Harness 账本拥有，DSH Native 的 Run 由 DSH 会话拥有。
+</Callout>
+
+## 失败形态
+
+| 错误码 | 触发条件 | 你能做什么 |
+| --- | --- | --- |
+| `STAR_HARNESS_NOT_INSTALLED` | 尚未安装就启用或绑定 | 先安装一个已核验的版本 |
+| `STAR_HARNESS_RELEASE_UNREVIEWED` | 指定版本未被当前 Studio 核验 | 升级 Studio，或改成已核验版本 |
+| `STAR_HARNESS_VERSION_UNSUPPORTED` | 目标版本既不是新版也不是上一版 | 选择更新版本，或回退到上一版 |
+| `STAR_HARNESS_WORKSPACE_CONFLICT` | 工作区与已有绑定或状态目录重叠 | 换一个不重叠的绝对路径 |
+| `STAR_HARNESS_MODEL_CHANGED` | 绑定的模型配置已变化 | 重新绑定该工作区 |
+| `STAR_HARNESS_BUSY` | 有任务在跑或正在变更 | 等任务结束再改版本或绑定 |
+| `STAR_HARNESS_CONFIG_INVALID` | 本地设置文件无法读取 | 检查 Star Harness 状态目录的 `settings.json` |
+| `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | 该工作区未绑定或未启用 | 先绑定并启用工作区 |
+| `STUDIO_NATIVE_TURN_REQUIRED` | `harness` 走进了普通流式接缝 | 检查 Host 是否提供整轮端口；通常是 DSH 基线不匹配 |
+| `STAR_HARNESS_UNSUPPORTED` | 该部署由管理员托管，不提供本机管理 | 联系管理员 |
+
+资源不可用时的降级与重试见[降级与重试](./degradation-retry.mdx)。
+
+## 源码依据
+
+| 结论 | 位置 |
+| --- | --- |
+| 能力矩阵与归属 | `src/runtime-contract.mjs:25-29` |
+| 整轮端口要求 | `src/providers/dsh-runtime.mjs:591` |
+| 宿主能力校验 | `agentkit-harness-node` 的 `native/dsh-turn-ownership.mjs:47-52` |
+| 管理服务与状态机 | `src/host/services/star-harness.mjs:21-251` |
+| 版本核验与包完整性 | `src/host/services/star-harness-release.mjs:14-61` |
+| 控制端点 | `src/host/routes/star-harness.mjs:7-11` |
+| 客户端交互 | `src/client/pages/star-harness.mjs:64-112` |
+| 可创建门控 | `src/client/pages/agent-form.mjs:61-79` |
+| 三个包精确锁定 | `package.json:133-135` |
