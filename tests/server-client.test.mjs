@@ -359,6 +359,37 @@ test('streamAction uses its longer runtime timeout instead of the JSON action ti
   assert.equal(response.status, 200);
 });
 
+test('streamAction does not pass a 200 JSON Action error to the SSE parser', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    fetchImpl: async () => new Response(JSON.stringify({ Code: 409, RequestId: 'run-req-1', Error: { Message: 'runtime is not ready' } }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }),
+  });
+  await assert.rejects(
+    () => client.streamAction('RunAgent', { AgentId: 'a1', SessionId: 's1', Stream: true }),
+    error => error instanceof AgentEngineError
+      && error.code === 'SERVER_ACTION_FAILED'
+      && error.status === 409
+      && error.requestId === 'run-req-1',
+  );
+});
+
+test('streamAction rejects a successful HTTP response without an SSE content type', async () => {
+  const client = createAgentEngineClient({
+    configuration: configuration({ cloudServerUrl: 'http://127.0.0.1:8789', cloudServiceToken: 'local-token' }),
+    fetchImpl: async () => new Response('gateway closed the stream', {
+      status: 200, headers: { 'content-type': 'text/plain' },
+    }),
+  });
+  await assert.rejects(
+    () => client.streamAction('RunAgent', { AgentId: 'a1', SessionId: 's1', Stream: true }),
+    error => error instanceof AgentEngineError
+      && error.code === 'SERVER_INVALID_RESPONSE'
+      && error.status === 200,
+  );
+});
+
 test('streamAction falls back when KOP returns an XML inner-account denial', async () => {
   const urls = [];
   const client = createAgentEngineClient({
