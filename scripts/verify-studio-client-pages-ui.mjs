@@ -21,10 +21,16 @@ export async function verifyStudioClientPages(page) {
     const name = `UI_REFACTOR_AGENT_${suffix}`;
     await page.getByText('智能体', { exact: true }).first().click();
     await page.getByRole('button', { name: '我的智能体', exact: true }).click();
-    await page.getByRole('button', { name: '手动配置', exact: true }).click();
+    // The Agent list keeps 对话创建 as the primary action and groups the other
+    // create paths (手动配置 / 从专家模板创建) behind the 更多创建方式 menu, so the
+    // manual entry is only rendered once that menu opens.
+    await page.getByRole('button', { name: '更多创建方式', exact: true }).click();
+    await page.getByRole('menuitem', { name: '手动配置', exact: true }).click();
     await page.getByLabel('Agent ID', { exact: true }).fill(`ui-refactor-${suffix}`);
     await page.getByLabel('名称', { exact: true }).fill(name);
-    await page.getByLabel('运行时').selectOption('harness');
+    // The runtime is a radiogroup now; DSH Native is the default authoring
+    // runtime, and Star Harness creation stays paused for new Agents.
+    await page.getByRole('radio', { name: 'DSH Native Harness', exact: true }).click();
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic UI refactoring verification.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     const model = page.getByLabel('默认模型');
@@ -38,7 +44,8 @@ export async function verifyStudioClientPages(page) {
     await model.selectOption(modelIds[0]);
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     await page.getByRole('button', { name: '创建 Agent', exact: true }).click();
-    const row = page.getByRole('row').filter({ hasText: name });
+    // The Agent list renders ordinary rows as articles now, not table rows.
+    const row = page.locator('[data-studio-agent-card]').filter({ hasText: name });
     await row.waitFor({ state: 'visible', timeout: 30000 });
     const local = await page.evaluate(async query => {
       const response = await fetch('/agentkit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'agents/list', payload: { query, source: 'local', page: 1, limit: 10 }, rpcId: 'ui-list' }) });
@@ -50,7 +57,11 @@ export async function verifyStudioClientPages(page) {
     checks.push({ name: 'create-agent-via-migrated-form', passed: true });
 
     phase = 'edit-bindings';
-    await row.getByRole('button', { name: '编辑 Agent', exact: true }).click();
+    // Editing moved into the row's 更多操作 menu when the list was restyled;
+    // the row actions only become clickable while the card is hovered.
+    await row.hover();
+    await row.getByRole('button', { name: /^更多操作 / }).click();
+    await page.getByRole('menuitem', { name: '编辑 Agent', exact: true }).click();
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic updated prompt.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     await model.selectOption(modelIds[1]);
@@ -69,7 +80,11 @@ export async function verifyStudioClientPages(page) {
     checks.push({ name: 'edit-prompt-and-model-binding-durable-revision', passed: true });
 
     phase = 'native-binding';
-    await row.getByRole('button', { name: '绑定到新会话', exact: true }).click();
+    // The row action that binds the Agent to a new native conversation is the
+    // plain 对话 button now; the previous 绑定到新会话 label is gone. It stays
+    // invisible (opacity/pointer-events) until the card is hovered.
+    await row.hover();
+    await row.getByRole('button', { name: '对话', exact: true }).click();
     await page.locator('.studio-agent-trigger').filter({ hasText: name }).waitFor({ state: 'visible', timeout: 30000 });
     checks.push({ name: 'created-agent-opens-official-native-session', passed: true, sentToModel: false });
 
@@ -110,8 +125,10 @@ export async function verifyStudioClientPages(page) {
     const builds = await rpc('builds/list', { agentId: local[0].id });
     const build = builds.items.find(item => item.id === buildId);
     assert.ok(buildId && build); assert.equal(build.revision, saved.revision); assert.equal(build.status, 'SUCCEEDED');
-    await page.getByRole('region', { name: '云端部署', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByRole('region', { name: '部署记录', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    // The deployment view now renders numbered form sections (构建 / 部署 /
+    // 云端实例) instead of role=region landmarks.
+    await page.locator('[data-delivery-section="deploy"]').waitFor({ state: 'visible', timeout: 10000 });
+    await page.locator('[data-delivery-section="records"]').waitFor({ state: 'visible', timeout: 10000 });
     checks.push({ name: 'create-real-local-build-and-view-deployment', passed: true, revision: build.revision, cloudMutation: false });
 
     phase = 'automation-crud';
@@ -146,13 +163,18 @@ export async function verifyStudioClientPages(page) {
     await editor.waitFor({ state: 'hidden', timeout: 10000 });
     assert.equal((await rpc('schedules/get', { taskId: task.taskId })).command.payload.content, 'Synthetic updated scheduled prompt.');
     phase = 'automation-pause-enable';
-    await taskCard.getByRole('button', { name: '暂停', exact: true }).click();
-    await taskCard.getByRole('button', { name: '启用', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal((await rpc('schedules/get', { taskId: task.taskId })).enabled, false);
-    await taskCard.getByRole('button', { name: '启用', exact: true }).click();
-    await taskCard.getByRole('button', { name: '暂停', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal((await rpc('schedules/get', { taskId: task.taskId })).enabled, true);
+    // Pause/enable is a single switch now (aria-label 启用自动化 <name>),
+    // not a pair of 暂停/启用 buttons.
+    const taskSwitch = taskCard.getByRole('switch', { name: `启用自动化 ${taskName}` });
+    const scheduleEnabled = async () => (await rpc('schedules/get', { taskId: task.taskId })).enabled;
+    await taskSwitch.click();
+    for (let attempt = 0; attempt < 50 && (await scheduleEnabled()) !== false; attempt++) await page.waitForTimeout(200);
+    assert.equal(await scheduleEnabled(), false, 'the switch must pause the automation');
+    await taskSwitch.click();
+    for (let attempt = 0; attempt < 50 && (await scheduleEnabled()) !== true; attempt++) await page.waitForTimeout(200);
+    assert.equal(await scheduleEnabled(), true, 'the switch must enable the automation again');
     phase = 'automation-delete';
+    await taskCard.hover();
     await taskCard.getByRole('button', { name: '删除', exact: true }).click();
     await page.getByRole('dialog').filter({ has: page.getByText('删除自动化', { exact: true }) }).getByRole('button', { name: '删除', exact: true }).click();
     await taskCard.waitFor({ state: 'hidden', timeout: 10000 });
