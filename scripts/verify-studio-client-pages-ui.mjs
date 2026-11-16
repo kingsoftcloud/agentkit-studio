@@ -57,7 +57,9 @@ export async function verifyStudioClientPages(page) {
     checks.push({ name: 'create-agent-via-migrated-form', passed: true });
 
     phase = 'edit-bindings';
-    // Editing moved into the row's 更多操作 menu when the list was restyled.
+    // Editing moved into the row's 更多操作 menu when the list was restyled;
+    // the row actions only become clickable while the card is hovered.
+    await row.hover();
     await row.getByRole('button', { name: /^更多操作 / }).click();
     await page.getByRole('menuitem', { name: '编辑 Agent', exact: true }).click();
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic updated prompt.');
@@ -79,7 +81,9 @@ export async function verifyStudioClientPages(page) {
 
     phase = 'native-binding';
     // The row action that binds the Agent to a new native conversation is the
-    // plain 对话 button now; the previous 绑定到新会话 label is gone.
+    // plain 对话 button now; the previous 绑定到新会话 label is gone. It stays
+    // invisible (opacity/pointer-events) until the card is hovered.
+    await row.hover();
     await row.getByRole('button', { name: '对话', exact: true }).click();
     await page.locator('.studio-agent-trigger').filter({ hasText: name }).waitFor({ state: 'visible', timeout: 30000 });
     checks.push({ name: 'created-agent-opens-official-native-session', passed: true, sentToModel: false });
