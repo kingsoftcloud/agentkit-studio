@@ -422,7 +422,8 @@ export class DshPresetAdmission {
             message: String(error?.message || '').slice(0, 240), ...(id ? { id } : {}) };
           unavailableResources.push(entry);
           console.warn('[agentkit-studio] preset resource snapshot unavailable during recovery:', eligibility.presetId,
-            entry.code, entry.id ? `(${kind}:${entry.id})` : `(${kind})`, this.strictResources ? '| strict' : '| degraded');
+            entry.code, entry.id ? `(${kind}:${entry.id})` : `(${kind})`, this.strictResources ? '| strict' : '| degraded',
+            entry.message || '');
           return [];
         }
       };

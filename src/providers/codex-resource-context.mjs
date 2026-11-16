@@ -4,6 +4,7 @@ import { codexPresentationBindings } from './dsh-presentation-tools.mjs';
 import { harnessServiceHostBindings } from './dsh-node-builtin-catalog.mjs';
 import { nativeAgentPolicyFromSpec } from '../native-agent-policy.mjs';
 import { nativeHostToolCallId } from './native-engine-runtime.mjs';
+import { nativeMcpInvocation } from './native-mcp-invocation.mjs';
 
 export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise, augmentContext }) {
   return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService, runtimeRecord } = {}) => {
@@ -141,7 +142,13 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
         if (binding.tool._source === 'dsh') {
           return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal, agent });
         }
-        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal });
+        // One composition shared with the Native path so the two runtimes cannot
+        // drift apart; Codex labels its own source and forwards the call id.
+        // `runId` is intentionally absent: this scope has no DSH Run, and a
+        // correlation id is never fabricated from the invocation id.
+        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal,
+          invocation: nativeMcpInvocation({ scope: { userId }, agent: { session: { id: sessionId } },
+            agentId, callId, source: 'codex' }) });
       },
     };
     return augmentContext ? augmentContext(context, record.spec?.bindings || record.bindings || {}) : context;

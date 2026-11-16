@@ -110,6 +110,80 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify service approvals and acceptance with the locked npm Harness
         run: node --test tests/native-engine-runtime.test.mjs tests/native-host-approval.test.mjs tests/star-harness-release.test.mjs
+  managed-mcp-identity:
+    name: managed-mcp-business-identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read and validate repository DSH pin
+        id: dsh-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-dsh-pin.mjs
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { dshPin } from './scripts/dsh-pin.mjs'
+          console.log(`ref=${dshPin.ref}`)
+          console.log(`commit=${dshPin.commit}`)
+          console.log(`patches=${dshPin.patchDirectory}`)
+          NODE
+      - uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.dsh-pin.outputs.ref }}
+          path: .ci-dsh
+          persist-credentials: false
+      - name: Confirm the DSH checkout is the pinned commit
+        shell: bash
+        run: test "$(git -C .ci-dsh rev-parse HEAD)" = "${{ steps.dsh-pin.outputs.commit }}"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.28.5
+          package_json_file: .ci-dsh/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - run: node scripts/check-node-version.mjs
+      - name: Apply the pinned DSH patch series
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in "${{ steps.dsh-pin.outputs.patches }}"/*.patch; do
+            git -C .ci-dsh apply --whitespace=nowarn "$GITHUB_WORKSPACE/$patch"
+          done
+      - name: Build the patched DSH host
+        working-directory: .ci-dsh
+        timeout-minutes: 25
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build:official
+      - name: Install Studio dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify the pinned Studio native dependencies
+        run: pnpm build:harness
+      - name: Build the native MCP client required by the Host
+        run: pnpm build:mcp
+      - name: Build the Studio client bundle required by the real Host
+        run: pnpm build:client
+      - name: Move the built DSH out of the Studio workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a .ci-dsh "$RUNNER_TEMP/ci-dsh"
+          rm -rf .ci-dsh
+      - name: Verify the business caller reaches MCP through the real Host
+        run: node scripts/verify-managed-mcp-identity.mjs --report .artifacts/managed-mcp-identity.json
+        env:
+          AGENTKIT_DSH_INSTALLATION: ${{ runner.temp }}/ci-dsh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-mcp-identity-report
+          path: .artifacts/managed-mcp-identity.json
+          if-no-files-found: ignore
   patched-host:
     name: patched-dsh-host
     runs-on: ${{ matrix.os }}

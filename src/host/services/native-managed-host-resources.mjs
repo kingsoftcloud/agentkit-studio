@@ -4,6 +4,8 @@ import { codexToolBindings, prepareLocalResourceContext } from '../../local-runt
 import { nativeAgentPolicyDecision, nativeAgentPolicyFromSpec } from '../../native-agent-policy.mjs';
 import { engineHostTools, nativeHostToolCallId } from '../../providers/native-engine-runtime.mjs';
 import { MANAGED_SESSION_DELIVERY_LIMIT } from './native-managed-session-delivery.mjs';
+import { businessInvocationFor } from '../../providers/business-invocation-context.mjs';
+import { nativeMcpInvocation } from '../../providers/native-mcp-invocation.mjs';
 
 const PATH = '/_agentkit/managed-host/v1';
 const CONTRACT = 'agentkit.managed-host-resources/v1';
@@ -176,7 +178,12 @@ export function registerStudioManagedHostResources(ctx, { scope, token, resolveB
     }
     try {
       signal.throwIfAborted();
-      const content = await resources.adapter.callMcpTool(route._resourceId, route.name, args, { signal });
+      // The engine reaches this Host over a separate HTTP request, so the
+      // RunAgent turn's async context is gone. Recover the business caller from
+      // the identity bound to this Session and forward it to the MCP server.
+      const content = await resources.adapter.callMcpTool(route._resourceId, route.name, args, { signal,
+        invocation: nativeMcpInvocation({ scope, agent: current.agent, agentId: scope.agentId, runId, callId,
+          business: businessInvocationFor(sessionId) }) });
       return { status: 'ok', content: content ?? null };
     } catch {
       return { status: 'uncertain', content: { code: 'managed_host_mcp_outcome_unknown' } };

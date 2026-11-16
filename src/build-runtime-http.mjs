@@ -7,6 +7,7 @@ import { createRuntimeResponsesStream } from './runtime-responses-stream.mjs';
 import { redactDiagnosticText } from '@kingsoftcloud/agentkit-harness-core/error-presentation';
 import { HOSTED_HARNESS_VIEW_PATH } from './harness-view-presentation.mjs';
 import { ENGINE_VIEW_HEADERS } from './host/routes/native-engine-view.mjs';
+import { bindBusinessInvocation, runWithBusinessInvocation } from './providers/business-invocation-context.mjs';
 
 const hash = value => createHash('sha256').update(value).digest();
 const identity = value => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -164,7 +165,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         || (input.stream !== undefined && typeof input.stream !== 'boolean'))) throw fail('RUNTIME_INPUT_INVALID');
       if (isResponses) {
         if (isHostedRun) input = await hosted.responsesInput(input, req.headers);
-        else if (platformActions) input = await platformActions.parseResponses(input, req.headers, responses, AbortSignal.timeout(30000));
+        else if (platformActions) input = await platformActions.parseResponses(input, req.headers, responses, AbortSignal.timeout(30000), { runAgent: action === 'RunAgent' });
         else input = responses.parse(input, req.headers);
       }
       if (input.hosted && hosted) await hosted.prepareRun(input);
@@ -255,12 +256,30 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
       }
       const invoke = () => runner({ agentId, buildId, sessionId, occurrenceId: runId, input: input.input,
         ...(input.images?.length ? { images: input.images } : {}),
+        ...(input.businessInvocation ? { businessInvocation: input.businessInvocation } : {}),
         ...(savedResponse ? { requireReplay: true } : {}), ...(isResponses ? { model: input.model } : {}),
         ...(approvalRun ? { approvalPolicy: approvalRun.policy } : {}),
         signal: abort.signal,
         ...(requestedMode || declaredPolicy?.permissionMode ? { permissionMode: requestedMode || declaredPolicy.permissionMode } : {}),
         ...(input.stream || projection ? { onFrame: frame => { if (!abort.signal.aborted && !savedResponse) { if (projection) projection.frame(frame); else emit(frame.kind === 'assistant' ? 'dsh.assistant' : 'dsh.event', frame.value); } } } : {}) });
-      const result = withResourceContext ? await withResourceContext({ headers: req.headers, subjectDigest: input.principalDigest, signal: abort.signal }, invoke) : await invoke();
+      // Business caller identity is a private Runtime context. It is not part
+      // of the DSH prompt, persisted user message, model options, or response
+      // body; only the MCP boundary reads it while this RunAgent is executing.
+      const invokeWithBusinessIdentity = () => runWithBusinessInvocation(input.businessInvocation, invoke);
+      // The independent engine calls back for MCP tools over its own HTTP
+      // request, which does not inherit this async context. Bind the turn's
+      // business identity to its Session for exactly the duration of the run.
+      const releaseBusinessBinding = bindBusinessInvocation(sessionId, input.businessInvocation);
+      let result;
+      try {
+        result = withResourceContext
+          ? await withResourceContext({ headers: req.headers, subjectDigest: input.principalDigest, signal: abort.signal }, invokeWithBusinessIdentity)
+          : await invokeWithBusinessIdentity();
+      } finally {
+        // The engine may fail or be cancelled before the runner resolves. The
+        // Session registry must never outlive this turn in either case.
+        releaseBusinessBinding();
+      }
       if (abort.signal.aborted) throw abort.signal.reason;
       await platformActions?.flushRun(input);
       abort.signal.throwIfAborted();
