@@ -35,7 +35,7 @@ MCP 收到的调用身份字段含义如下：
 | `invocationId` | 关联 | **平台请求 ID** | 必定存在；未传 `InvocationId` 时是平台生成的 UUID |
 | `nativeSessionId` | 关联 | Runtime 内部 DSH 会话 ID | 必定存在 |
 | `agentId` | 关联 | 当前托管 Agent | 必定存在 |
-| `runId` / `callId` | 关联 | 本轮 Run 与本次 MCP 调用 | 必定存在 |
+| `runId` / `callId` | 关联 | 本轮 Run 与本次 MCP 调用 | Native/DSH 路径两者都在；Codex 路径转发 `callId`，`runId` 由 Codex 运行时提供时才出现 |
 | `businessUserId` | 业务归属 | **业务用户 ID** | 未传 `RunAgent.UserId` 则**不出现** |
 | `businessSessionId` | 业务归属 | **业务会话 ID** | 未传 `RunAgent.SessionId` 则**不出现**，绝不用平台会话兜底 |
 | `businessInvocationId` | 业务归属 | **业务请求 ID** | 未传 `InvocationId` 时等于平台请求 ID |
@@ -47,9 +47,16 @@ MCP 端因此可以这样判断：
   调用方声明过**，不存在就表示调用方没有提供业务身份，不要拿平台 ID 反推。
 
 `businessUserId` 和 `businessSessionId` 只存在于 Runtime 当前请求的 `AsyncLocalStorage` 上下文，
-不写入 DSH prompt、模型 options 或 transcript。身份**只能**由 Host 绑定：模型生成的工具参数里即使
-出现 `userId`、`businessUserId`、`_meta`，也不会被采纳为调用身份（见
-`tests/mcp-invocation-identity.test.mjs` 的伪造用例）。
+不写入 DSH prompt、模型 options 或 transcript。身份**只能**由 Host 绑定：
+
+- 业务私有字段只由 `RunAgent` 动作的 `responsesInput()` 铸造。直连 `/v1/responses` 的调用方即使
+  在 body 里写 `__agentkit_business_user_id` 也不会被采纳，其 `session_id` 也不会变成业务会话。
+- 模型生成的工具参数里即使出现 `userId`、`businessUserId`、`_meta`，同样不会被采纳。
+- 资源侧预配置的 `x-agentkit-*` 请求头一律被清除后重写，不会以 Host 身份送到 MCP Server。
+
+回归证据见 `tests/mcp-invocation-identity.test.mjs`（伪造、并发、Header 清理）与
+`tests/native-mcp-dispatch-authority.test.mjs`（真实 Native Kernel + SQLite + 生产 MCP 适配器 +
+本地 HTTP peer 的端到端断言）。
 
 ## 传递通道
 

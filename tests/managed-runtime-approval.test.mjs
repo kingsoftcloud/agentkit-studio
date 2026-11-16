@@ -276,6 +276,21 @@ test('without the opt-in, MCP bindings keep accepting callers that never send Us
   assert.equal(typeof seen.businessDigest, 'string', 'the named session still separates replay fingerprints');
 });
 
+test('a direct Responses caller cannot claim a business identity', async t => {
+  let seen = 'unset';
+  const api = await httpFixture(t, { mcp: true, onRun: async () => { seen = currentBusinessInvocation(); } });
+  // The private RunAgent sidecar is Host authority: a direct /v1/responses
+  // caller must not be able to mint one, and its public session_id is not a
+  // business session.
+  const response = await fetch(`${api.base}/v1/responses`, { method: 'POST', headers: api.headers('alice'),
+    body: JSON.stringify({ input: 'hello', session_id: 'platform-session', request_id: 'direct-1',
+      __agentkit_business_user_id: 'forged@example.com', __agentkit_business_session_id: 'forged-session' }) });
+  assert.equal(response.status, 200);
+  await response.text();
+  assert.equal(seen.userId, undefined);
+  assert.equal(seen.sessionId, undefined);
+});
+
 test('omitting RunAgent SessionId never substitutes the platform session', async t => {
   const seen = [];
   const service = await createMcpLoopbackService({ transport: 'http', getCredential: () => 'loopback-token',

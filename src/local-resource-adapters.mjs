@@ -137,10 +137,11 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
   // HTTP request re-reads the live invocation so two Sessions sharing one
   // connection cannot observe each other's identity.
   const invocationScope = createMcpInvocationScope();
-  const mcpFetch = (url, init) => {
-    const identity = invocationScope.current();
-    return identity ? fetchImpl(url, { ...(init || {}), headers: applyMcpInvocationHeaders(init?.headers, identity) }) : fetchImpl(url, init);
-  };
+  // Always rewrite the Host identity headers, including when this turn has no
+  // identity: a resource that pre-configures `x-agentkit-*` must not reach the
+  // server under the live turn's name.
+  const mcpFetch = (url, init) => fetchImpl(url, { ...(init || {}),
+    headers: applyMcpInvocationHeaders(init?.headers, invocationScope.current()) });
   let nextGeneration = 0;
   const cloudSkillSpaces = new Map();
   let closed = false;

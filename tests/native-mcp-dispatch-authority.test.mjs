@@ -12,6 +12,7 @@ import { fixture, scope, digest } from './fixtures/native-core.mjs';
 import { SqliteRunStore } from '@kingsoftcloud/agentkit-harness-node/native/sqlite-store';
 import { createNativeDshTools } from '../src/providers/native-dsh-tools.mjs';
 import { createLocalResourceAdapters } from '../src/local-resource-adapters.mjs';
+import { normalizeBusinessInvocation, runWithBusinessInvocation } from '../src/providers/business-invocation-context.mjs';
 import { nativeDshBatchPeer } from './fixtures/native-dsh-batch-peer.mjs';
 
 test('a production Native preset rejects a ToolRegistry without the monotonic guard', t => {
@@ -193,4 +194,74 @@ for (const driftAt of ['pre-execute', 'around-dispatch']) test(`a bound third-pa
   kernel.start(data.snapshot, data.config);
   await kernel.runUntilIdle(scope, 'run');
   assert.equal(denied, true); assert.equal(effects, 0);
+});
+
+/** Actual Native kernel + SQLite + production MCP adapter + local HTTP peer.
+ * This is the real DSH Host path: only the model and the ToolRegistry policy
+ * stage are controlled doubles, exactly like the authority tests above. */
+test('a real Native turn forwards the RunAgent business caller to the MCP server', async t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-business-identity-'))), workspaceRoot = join(root, 'workspace');
+  mkdirSync(workspaceRoot); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const store = new SqliteRunStore(join(root, 'runs.sqlite')); t.after(() => store.close());
+  const observed = [];
+  const http = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const message = JSON.parse(raw);
+    if (message.method === 'notifications/initialized') { res.writeHead(202); res.end(); return; }
+    let result;
+    if (message.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} },
+      serverInfo: { name: 'business-identity-peer', version: '1' } };
+    else if (message.method === 'tools/call') {
+      observed.push({ meta: message.params?._meta, headers: req.headers });
+      result = { content: [{ type: 'text', text: 'Committed MCP business effect' }] };
+    } else { res.writeHead(400); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'business-identity' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  http.listen(0, '127.0.0.1'); await once(http, 'listening');
+  t.after(async () => { http.closeAllConnections(); await new Promise(resolve => http.close(resolve)); });
+  const adapters = createLocalResourceAdapters({ credentials: { resolve: async () => ({ value: 'local-test-only' }) } });
+  t.after(() => adapters.close());
+  const binding = { resourceId: 'bound-crm', server: { transport: 'streamable-http',
+    endpointUrl: `http://127.0.0.1:${http.address().port}/mcp`, envRefs: { Authorization: 'env://LOCAL_TEST' } } };
+  const registry = new Map(), agent = { session: { id: 'session' } };
+  const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
+    register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
+    execute: async input => {
+      const tool = registry.get(input.name);
+      try { const value = await tool.execute(input.arguments, input);
+        return { isError: false, content: tool.output.render(input.arguments, value) }; }
+      catch (error) { return { isError: true, content: [{ type: 'text', text: error.code || error.message }] }; }
+    },
+  }) };
+  const gateway = createNativeDshTools({ ctx, config: { agentId: scope.agentId, toolBindings: ['save_crm'],
+    toolContracts: [{ name: 'save_crm', executor: 'mcp', resourceId: 'bound-crm', parameters: { type: 'object', properties: {} } }] },
+    workspaceRoot, stateDir: join(root, 'state'), executeMcpTool: async input => adapters.callMcpTool(binding,
+      input.name, input.arguments, { signal: input.signal, resultFormat: input.resultFormat,
+        assertCurrent: input.assertCurrent, invocation: input.invocation }) }); t.after(() => gateway.close());
+  const tools = gateway.definitions(agent, [...registry.values()]), data = fixture({ tools });
+  data.snapshot.sessionId = 'session';
+  let models = 0;
+  const kernel = new NativeKernel({ store, owner: 'business-identity-worker', digest, ports: { ...gateway.forAgent(agent, { scope, store }),
+    model: { generate: async () => ++models === 1 ? { kind: 'tool_calls', text: '', usage: emptyUsage(),
+      toolCalls: [{ callId: 'save-crm', name: 'save_crm', arguments: {} }] }
+      : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] } } } });
+  kernel.start(data.snapshot, data.config);
+  const business = normalizeBusinessInvocation({ userId: 'customer@example.com',
+    sessionId: 'order-session-42', requestId: 'request-1001' });
+  assert.equal((await runWithBusinessInvocation(business, () => kernel.runUntilIdle(scope, 'run'))).phase, 'completed');
+  assert.equal(observed.length, 1);
+  const meta = observed[0].meta['io.agentkit.studio/invocation'];
+  // Platform and native identity are preserved; business attribution is added.
+  assert.equal(meta.userId, 'user');
+  assert.equal(meta.sessionId, 'session');
+  assert.equal(meta.businessUserId, 'customer@example.com');
+  assert.equal(meta.businessSessionId, 'order-session-42');
+  assert.equal(meta.businessInvocationId, 'request-1001');
+  assert.equal(observed[0].headers['x-agentkit-user-id'], 'user');
+  assert.equal(observed[0].headers['x-agentkit-session-id'], 'session');
+  assert.equal(observed[0].headers['x-agentkit-business-user-id'], 'customer@example.com');
+  assert.equal(observed[0].headers['x-agentkit-business-session-id'], 'order-session-42');
+  assert.equal(observed[0].headers.authorization, 'Bearer local-test-only', 'MCP credentials stay untouched');
 });

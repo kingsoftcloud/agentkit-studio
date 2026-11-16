@@ -22,7 +22,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 /** Reverse-DNS key for MCP `_meta`; unknown keys are legal per the MCP spec. */
 export const MCP_INVOCATION_META_KEY = 'io.agentkit.studio/invocation';
-export const MCP_INVOCATION_CONTRACT = 'agentkit.studio-mcp-invocation/v1';
 
 const SOURCES = new Set(['dsh-native', 'codex', 'harness', 'run-agent']);
 // Header values are restricted to printable ASCII: a principal that is not
@@ -73,12 +72,15 @@ export function mcpInvocationMeta(identity) {
   return { [MCP_INVOCATION_META_KEY]: identity };
 }
 
-/** Per-request HTTP headers; an existing caller header with the same name is
- * replaced, because identity headers are Host authority, not resource config. */
+/** Per-request HTTP headers. Identity headers are Host authority, never resource
+ * configuration: every one of them is dropped before the current identity is
+ * written, so a resource that pre-configures `x-agentkit-*` cannot smuggle a
+ * forged identity when the live turn has none. */
 export function applyMcpInvocationHeaders(headers, identity) {
   const next = new Headers(headers instanceof Headers ? headers : headers || undefined);
+  for (const header of Object.values(FIELD_HEADERS)) next.delete(header);
   for (const [field, header] of Object.entries(FIELD_HEADERS)) {
-    if (identity[field]) next.set(header, identity[field]);
+    if (identity?.[field]) next.set(header, identity[field]);
   }
   return next;
 }

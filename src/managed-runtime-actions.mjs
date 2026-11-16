@@ -143,22 +143,23 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
   }
   return {
     setRunControl: value => { cancelSession = value.cancelSession; cancelRun = value.cancelRun; },
-    async parseResponses(payload, headers, responses, signal) {
+    async parseResponses(payload, headers, responses, signal, { runAgent = false } = {}) {
       const owner = principal(headers);
-      const rawBusinessUserId = payload?.[BUSINESS_USER_INPUT] ?? (requiresBusinessIdentity ? payload?.user : undefined);
+      // Business identity is Host authority: `responsesInput()` mints these
+      // private fields for the RunAgent action only. A direct `/v1/responses`
+      // caller cannot claim a business user or session, and the public
+      // `session_id` is never relabelled as a business session.
+      const rawBusinessUserId = runAgent ? payload?.[BUSINESS_USER_INPUT] : undefined;
       const businessUserId = rawBusinessUserId === undefined ? undefined : businessInvocationId(rawBusinessUserId);
       if (rawBusinessUserId !== undefined && !businessUserId) throw runtimeError('RUNTIME_BUSINESS_USER_ID_INVALID');
-      // These private fields are produced only by responsesInput for the
-      // RunAgent compatibility action. Strip them before the public Responses
-      // contract validates the payload; they never reach DSH or the model.
-      const rawBusinessSessionId = payload?.[BUSINESS_SESSION_INPUT];
+      const rawBusinessSessionId = runAgent ? payload?.[BUSINESS_SESSION_INPUT] : undefined;
       const publicPayload = payload && typeof payload === 'object'
         ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== BUSINESS_USER_INPUT && key !== BUSINESS_SESSION_INPUT))
         : payload;
-      const businessSessionId = rawBusinessSessionId ?? publicPayload?.session_id;
-      const inputPayload = publicPayload && typeof publicPayload === 'object'
-        ? Object.fromEntries(Object.entries(publicPayload).filter(([key]) => key !== BUSINESS_SESSION_INPUT))
-        : publicPayload;
+      const businessSessionId = rawBusinessSessionId;
+      // `publicPayload` already dropped both private fields, so the public
+      // Responses contract sees only its own keys.
+      const inputPayload = publicPayload;
       const approvalInput = approvalResponseItem(inputPayload?.input);
       if (approvalInput) {
         const platformId = inputPayload?.session_id ?? inputPayload?.conversation;
@@ -174,7 +175,7 @@ export async function createManagedRuntimeActions({ ctx, runtime, admit, model, 
           userId: record.businessUserId, sessionId: record.businessSessionId, requestId: decided.requestId,
           agentId: runtime.identity.agentId, nativeSessionId: record.nativeSessionId,
         });
-        if (requiresBusinessIdentity && !businessInvocation?.userId) throw runtimeError('RUNTIME_BUSINESS_ID_REQUIRED');
+        if (requiresBusinessIdentity && (!businessInvocation?.userId || !businessInvocation?.sessionId)) throw runtimeError('RUNTIME_BUSINESS_ID_REQUIRED');
         return { ...decided, input: '', approval: approvalInput, platformSession: record, principalDigest: owner.digest, businessInvocation };
       }
       const input = responses.parse(inputPayload, headers, { principal: owner.key });

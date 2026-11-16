@@ -165,7 +165,7 @@ export async function startBuildRuntimeHttp({ agentId, buildId, managedIdentity,
         || (input.stream !== undefined && typeof input.stream !== 'boolean'))) throw fail('RUNTIME_INPUT_INVALID');
       if (isResponses) {
         if (isHostedRun) input = await hosted.responsesInput(input, req.headers);
-        else if (platformActions) input = await platformActions.parseResponses(input, req.headers, responses, AbortSignal.timeout(30000));
+        else if (platformActions) input = await platformActions.parseResponses(input, req.headers, responses, AbortSignal.timeout(30000), { runAgent: action === 'RunAgent' });
         else input = responses.parse(input, req.headers);
       }
       if (input.hosted && hosted) await hosted.prepareRun(input);
