@@ -10,11 +10,21 @@ const options = { skip: process.platform === 'win32' ? 'Ezone uses POSIX process
 function fixture(t, leader) {
   const root = mkdtempSync(join(tmpdir(), 'ci-deadline-'));
   const worker = join(root, 'worker.mjs'), parent = join(root, 'parent.mjs'), heartbeat = join(root, 'heartbeat');
-  writeFileSync(worker, `import{writeFileSync}from'node:fs';process.on('SIGTERM',()=>{});let n=0;setInterval(()=>writeFileSync(process.argv[2],process.pid+':'+(++n)),10);`);
+  // A worker can be killed mid-write. Publish complete heartbeats atomically.
+  writeFileSync(worker, `import{renameSync,writeFileSync}from'node:fs';
+    process.on('SIGTERM',()=>{});
+    const heartbeat=process.argv[2], staging=heartbeat+'.next';
+    let n=0;
+    setInterval(()=>{writeFileSync(staging,process.pid+':'+(++n));renameSync(staging,heartbeat);},10);`);
   writeFileSync(parent, `import{spawn}from'node:child_process';import{existsSync}from'node:fs';
     process.on('SIGTERM',()=>{});spawn(process.execPath,[${JSON.stringify(worker)},${JSON.stringify(heartbeat)}],{stdio:'ignore'});${leader}`);
   t.after(() => {
-    if (existsSync(heartbeat)) { const pid = Number(readFileSync(heartbeat, 'utf8').split(':')[0]); try { process.kill(pid, 'SIGKILL'); } catch {} }
+    if (existsSync(heartbeat)) {
+      const pid = Number(readFileSync(heartbeat, 'utf8').split(':')[0]);
+      if (Number.isSafeInteger(pid) && pid > 1) {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
+    }
     rmSync(root, { recursive: true, force: true });
   });
   return { parent, heartbeat };
