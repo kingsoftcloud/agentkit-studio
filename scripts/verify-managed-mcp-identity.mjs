@@ -149,7 +149,7 @@ try {
   const port = await freePort();
   const plan = await prepareManagedRuntimeHost({ manifest, state, installation: installRoot,
     env: { PATH: process.env.PATH, HOME: home, AGENTKIT_USER_HOME: home, AGENTKIT_WORKSPACE_ROOT: cwd,
-      OPENAI_BASE_URL: model.url, AGENTKIT_MODEL_API_KEY: 'fixture-key',
+      OPENAI_BASE_URL: model.url, AGENTKIT_MODEL_API_KEY: 'fixture-key', AGENTKIT_MANAGED_CODEX_API: 'chat-completions',
       AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: String(port),
       AGENTENGINE_AGENT_ID: 'ar-identity-gate', AGENTENGINE_AGENT_VERSION_ID: 'v1',
       AGENTENGINE_MANAGED_RUNTIME_NAME: 'dsh-native', AGENTENGINE_MANAGED_RUNTIME_VERSION: 'studio-identity.1',
@@ -194,6 +194,8 @@ try {
   if (response.status !== 200) throw fail('RUN_AGENT_FAILED', `RunAgent returned ${response.status}: ${logs.join('').slice(-2000)}`);
 
   result.hostLogs = logs.join('').slice(-4000);
+  result.modelRequestCount = model.requests.length;
+  if (!model.requests.length) throw fail('MODEL_NOT_CALLED', 'The model fixture was never called');
   if (!mcp.observed.length) throw fail('MCP_NOT_CALLED', 'The MCP server was never called');
   // Distinguish "the Host executed the tool without the identity channel" from
   // "the identity reached the server but was wrong" — they need different fixes.
