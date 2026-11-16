@@ -107,6 +107,8 @@ async function assembleInstallation(root) {
   await symlink(cli, join(modules, '@deepseek-ai/dsh'), 'dir').catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });
+  // A symlinked package fails the installation digest, which only accepts real
+  // files. Materialize the published surface instead of linking the checkout.
   await symlink(repository, join(modules, '@kingsoftcloud/agentkit-studio'), 'dir').catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });

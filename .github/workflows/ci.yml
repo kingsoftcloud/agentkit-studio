@@ -134,12 +134,12 @@ jobs:
         with:
           repository: deepseek-ai/deepseek-harness
           ref: ${{ steps.dsh-pin.outputs.ref }}
-          path: .ci-dsh
+          path: ${{ runner.temp }}/ci-dsh
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 11.28.5
-          package_json_file: .ci-dsh/package.json
+          package_json_file: ${{ runner.temp }}/ci-dsh/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: '24.22.1'
@@ -148,10 +148,10 @@ jobs:
         run: |
           set -euo pipefail
           for patch in "${{ github.workspace }}/${{ steps.dsh-pin.outputs.patches }}"/*.patch; do
-            git -C .ci-dsh apply --whitespace=nowarn "$patch"
+            git -C "${{ runner.temp }}/ci-dsh" apply --whitespace=nowarn "$patch"
           done
       - name: Build the patched DSH host
-        working-directory: .ci-dsh
+        working-directory: ${{ runner.temp }}/ci-dsh
         timeout-minutes: 25
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
@@ -163,7 +163,7 @@ jobs:
       - name: Verify the business caller reaches MCP through the real Host
         run: node scripts/verify-managed-mcp-identity.mjs
         env:
-          AGENTKIT_DSH_INSTALLATION: ${{ github.workspace }}/.ci-dsh
+          AGENTKIT_DSH_INSTALLATION: ${{ runner.temp }}/ci-dsh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
