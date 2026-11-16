@@ -28,7 +28,7 @@ function runtimeRecords(root) {
     return record.contract === DSH_SKILL_E2B_RUNTIME ? [{ file, record }] : [];
   }) : [];
 }
-function setup(t, { script, peer: peerOptions = {}, ...extra } = {}) {
+function setup(t, { script, peer: peerOptions = {}, timeoutSeconds = 15, ...extra } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-skill-e2b-'))), workspaceRoot = join(root, 'workspace'), pkg = join(root, 'skill');
   mkdirSync(workspaceRoot); mkdirSync(join(pkg, 'scripts'), { recursive: true });
   const content = '---\nname: alpha\ndescription: Alpha task\n---\n# Alpha\n';
@@ -43,7 +43,7 @@ function setup(t, { script, peer: peerOptions = {}, ...extra } = {}) {
   let loads = 0;
   const config = { ctx: { sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) } }, agentId: 'agent', agentRevision: 3,
     workspaceRoot, stateDir, skillDefinitions: [runtimeSkill({ name: 'alpha', content, path: join(pkg, 'SKILL.md') })],
-    env: { KSADK_SANDBOX_BACKEND: 'local_process', KSADK_SKILL_RUNTIME_BACKEND: 'e2b', KSADK_SKILL_RUNTIME_TIMEOUT: '15',
+    env: { KSADK_SANDBOX_BACKEND: 'local_process', KSADK_SKILL_RUNTIME_BACKEND: 'e2b', KSADK_SKILL_RUNTIME_TIMEOUT: String(timeoutSeconds),
       KSADK_SKILL_RUNTIME_TEMPLATE_ID: 'node-skill-template', E2B_API_URL: 'https://e2b.fixture.invalid', E2B_DOMAIN: 'fixture.invalid', E2B_API_KEY: 'secret-do-not-persist' },
     loadSdk: async () => { loads++; return peer.sdk; }, ...extra };
   const ports = [], open = options => { const port = createDshNodeSkillWorkflowTools({ ...config, ...options }); ports.push(port); return port; };
@@ -132,9 +132,13 @@ test('unconfirmed cleanup and a proven script failure preserve original outcomes
 });
 
 test('same call ID in other Sessions/Agents is separate; revision and endpoint changes cannot reuse the old receipt', async t => {
-  const h = setup(t), first = await h.run(), second = await h.run(h.args, h.execution(h.args, 'call', 'other'));
+  const h = setup(t, { timeoutSeconds: 45 });
+  const first = await h.run();
+  assert.equal(first.status, 'ok', canonical(first));
+  const second = await h.run(h.args, h.execution(h.args, 'call', 'other'));
+  assert.equal(second.status, 'ok', canonical(second));
   const third = await h.run(h.args, h.execution(), h.open({ agentId: 'other-agent' }));
-  assert.equal(second.status, 'ok'); assert.equal(third.status, 'ok');
+  assert.equal(third.status, 'ok', canonical(third));
   assert.equal(new Set([first, second, third].map(result => result.content.runtime_id)).size, 3);
   assert.equal(h.peer.calls.filter(call => call.method === 'create').length, 3);
   const count = h.peer.calls.length;

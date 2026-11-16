@@ -1,6 +1,7 @@
 // A real independent Host process used by the SIGKILL boundary tests.
 import { prepareNativeA2AHost } from '../../src/providers/native-a2a-host.mjs';
 import { spec, scope } from './native-a2a-internal-peer.mjs';
+import { once } from 'node:events';
 import { join } from 'node:path';
 process.once('message', async input => {
   const factory = prepareNativeA2AHost({ env: input.env, bindings: [spec] });
@@ -22,6 +23,7 @@ process.once('message', async input => {
     const result = ['get', 'subscribe'].includes(input.action) ? await owner.control.execute({ kind: input.action, commandId: 'explicit-after-crash',
       operation_locator: request.identity, authority: { user: 'approved' }, signal }) : await owner.invocation.dispatch({ request, signal });
     process.send({ type: 'result', pid: process.pid, result });
+    if (input.holdAfterDispatch) await once(process, 'disconnect');
   } catch (error) { process.send({ type: 'error', code: error.code, message: error.message }); process.exitCode = 1; }
-  finally { owner.close(); await factory.close(); process.disconnect(); }
+  finally { owner.close(); await factory.close(); if (process.connected) process.disconnect(); }
 });
