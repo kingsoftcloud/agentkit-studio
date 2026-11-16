@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 修复经 magpie 等严格网关时的 `400 Invalid assistant message: content or tool_calls must be set`：Responses 线只接受「带文本的 assistant 消息」或「带工具调用」的轮次，而重放的 `reasoning` 项会在模型上一轮没有产出文本与工具调用时形成只有推理的轮次。代理现在把这种轮次的 `reasoning` 项整体丢弃（有文本或工具调用的轮次保持原样，推理连续性不变），并顺手丢弃既无文本也无工具调用的空 assistant 轮次；两者都只在网关拒绝后重试一次。此前「去掉 `content: null` 再重试」的修复对这类请求是无效的（重试体同样被拒）。同一条链路上还会出现 `400 Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`（历史里只剩工具回执、对应调用已被裁掉）：代理现在同样在发送前丢弃孤立回执，回执与调用按 `call_id` 顺序配对。
+
 ## 0.0.16 - 2026-11-16
 
 - 升级 Studio Harness 到 0.0.23：原生消息保留已发送图片与纯图片消息（缩略图、放大、历史刷新），纯回答的每轮耗时改用已提交起止时间；新增转发事件唤醒与浏览器绘制合并，真实模型正文更新可测量。
