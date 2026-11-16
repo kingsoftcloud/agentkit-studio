@@ -71,11 +71,13 @@ function modelServer() {
 /** Minimal MCP peer: records the identity the Host actually puts on the wire. */
 function mcpServer() {
   const observed = [];
+  const received = [];
   const server = createServer(async (req, res) => {
     if (req.method !== 'POST') { res.writeHead(405).end(); return; }
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const message = JSON.parse(raw);
+    received.push({ method: message.method, params: message.params });
     if (message.method === 'notifications/initialized') { res.writeHead(202).end(); return; }
     let payload;
     if (message.method === 'initialize') {
@@ -91,7 +93,7 @@ function mcpServer() {
     res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'business-identity' });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: payload }));
   });
-  return new Promise(done => server.listen(0, '127.0.0.1', () => done({ observed,
+  return new Promise(done => server.listen(0, '127.0.0.1', () => done({ observed, received,
     url: `http://127.0.0.1:${server.address().port}/mcp`,
     close: () => new Promise(closed => { server.closeAllConnections(); server.close(closed); }) })));
 }
@@ -195,6 +197,7 @@ try {
 
   result.hostLogs = logs.join('').slice(-4000);
   result.modelRequestCount = model.requests.length;
+  result.mcpMethods = mcp.received.map(item => item.method);
   if (!model.requests.length) throw fail('MODEL_NOT_CALLED', 'The model fixture was never called');
   if (!mcp.observed.length) throw fail('MCP_NOT_CALLED', 'The MCP server was never called');
   // Distinguish "the Host executed the tool without the identity channel" from
