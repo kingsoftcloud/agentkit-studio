@@ -1,4 +1,5 @@
 import { ALLOWED_RUNTIME_TYPES as DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND as DEFAULT_BRAND, RUNTIME_LABELS as DEFAULT_RUNTIME_LABELS } from '../theme.mjs';
+import { requestManualAgentCreate } from '../state/agent-create-intent.mjs';
 
 export function createOverviewPage({
   ui: { React: { createElement: h, useEffect, useState }, EmptyState, Metric, Pill, SectionHeading, StartChecks, buttonStyle, ALLOWED_RUNTIME_TYPES = DEFAULT_ALLOWED_RUNTIME_TYPES, BRAND = DEFAULT_BRAND, RUNTIME_LABELS = DEFAULT_RUNTIME_LABELS },
@@ -44,7 +45,7 @@ export function createOverviewPage({
       h('h3', { className: 'studio-group-title' }, '创建 Agent'),
       h('div', { className: 'studio-start-cards' },
         h('button', { type: 'button', className: 'studio-start-card', 'data-primary': true, onClick: () => window.dispatchEvent(new CustomEvent('agentkit-studio:open-authoring')) }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '✦'), h('strong', null, '对话创建'), h('small', null, '和 AI 一起完善配置')),
-        h('button', { type: 'button', className: 'studio-start-card', onClick: () => onNavigate?.('agents') }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '+'), h('strong', null, '手动配置'), h('small', null, '选择运行时与能力')),
+        h('button', { type: 'button', className: 'studio-start-card', onClick: () => { onNavigate?.('agents'); requestManualAgentCreate(window); } }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '+'), h('strong', null, '手动配置'), h('small', null, '选择运行时与能力')),
         h('button', { type: 'button', className: 'studio-start-card', onClick: () => onNavigate?.('experts') }, h('span', { className: 'studio-tile', 'aria-hidden': 'true' }, '◈'), h('strong', null, '从模板开始'), h('small', null, '复用专家模板'))),
       h('h3', { className: 'studio-group-title', title: '在同一个工作区管理 Agent、运行时、资源和交付版本。对话与工作台会话由底层运行时统一承载。' }, '工作区'),
       h('div', { className: 'studio-stats studio-panel' }, [
