@@ -44,7 +44,8 @@ export async function verifyStudioClientPages(page) {
     await model.selectOption(modelIds[0]);
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     await page.getByRole('button', { name: '创建 Agent', exact: true }).click();
-    const row = page.getByRole('row').filter({ hasText: name });
+    // The Agent list renders ordinary rows as articles now, not table rows.
+    const row = page.locator('[data-studio-agent-card]').filter({ hasText: name });
     await row.waitFor({ state: 'visible', timeout: 30000 });
     const local = await page.evaluate(async query => {
       const response = await fetch('/agentkit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'agents/list', payload: { query, source: 'local', page: 1, limit: 10 }, rpcId: 'ui-list' }) });
@@ -56,7 +57,9 @@ export async function verifyStudioClientPages(page) {
     checks.push({ name: 'create-agent-via-migrated-form', passed: true });
 
     phase = 'edit-bindings';
-    await row.getByRole('button', { name: '编辑 Agent', exact: true }).click();
+    // Editing moved into the row's 更多操作 menu when the list was restyled.
+    await row.getByRole('button', { name: /^更多操作 / }).click();
+    await page.getByRole('menuitem', { name: '编辑 Agent', exact: true }).click();
     await page.getByPlaceholder('描述 Agent 的身份、边界和回答方式', { exact: true }).fill('Synthetic updated prompt.');
     await page.getByRole('button', { name: '下一步', exact: true }).click();
     await model.selectOption(modelIds[1]);
