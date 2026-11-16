@@ -1,0 +1,188 @@
+---
+title: Deploy to the Cloud
+description: "Turn a successful build into a managed cloud instance: pick a spec, run the check, confirm creation, then read deployment states and unconfirmed outcomes."
+status: new
+---
+
+A cloud deployment turns one **successful build's frozen version** into a 7×24 managed runtime instance.
+The instance keeps its own id, spec, and persistent disk, so conversation history survives a rebuild.
+
+<Callout type="info" title="Prerequisites">
+  - At least one **locally created** agent with a `SUCCEEDED` build.
+  - **Subaccount** AK/SK configured. A primary account cannot create cloud resources.
+  - A connected AgentEngine Server; without one the deploy section reports "cloud publishing unavailable" and only bundle export works.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Open Build and deploy
+
+Go to **Operations → Build and deploy**. The page numbers three steps:
+
+| Step | Number | Purpose |
+| --- | --- | --- |
+| Build | 1 | Freeze the current prompt, models, and resource bindings |
+| Deploy | 2 | Create or update the cloud instance |
+| Cloud instances | 3 | Deployment records and operations |
+
+Step 2 stays dimmed with "You can deploy after a successful build" until a build succeeds.
+</Step>
+
+<Step>
+### Select the agent and build
+
+1. Pick a target in the top-right **Target agent** selector.
+2. Choose a `SUCCEEDED` version in the **Frozen version** dropdown; failed versions are not selectable.
+
+<Callout type="warn" title="Only the latest built revision deploys directly">
+  When the current revision differs from the latest successful build, step 1 reports "Configuration updated to `r<n>`".
+  Rebuild first, or you will deploy the previous configuration.
+</Callout>
+</Step>
+
+<Step>
+### Choose the deployment target
+
+The **Deploy to** dropdown has two options:
+
+| Option | Behavior |
+| --- | --- |
+| Update the current instance of "`<instance>`" | Reuses the existing instance id, spec, and disk, switching only the frozen version |
+| Create a new cloud instance | Creates a new instance with the spec chosen below, and a new instance id and bill |
+
+When updating an existing instance, **Runtime image** becomes a switch: "Use the currently recommended runtime image". Turn it off to target a different image version.
+</Step>
+
+<Step>
+### Choose the instance spec
+
+When creating an instance, the CPU-to-memory ratio must be **1:2, 1:4, or 1:8**:
+
+| Group (ratio) | Cores | Example |
+| --- | --- | --- |
+| General · 1:2 | 1 / 2 / 4 / 8 / 16 | Default 2 cores → 4 GB |
+| More memory · 1:4 | 1 / 2 / 4 / 8 / 16 | 2 cores → 8 GB |
+| More memory · 1:8 | 1 / 2 / 4 / 8 / 16 | 2 cores → 16 GB |
+
+When updating an existing instance the spec is read-only and shows the current value.
+</Step>
+
+<Step>
+### Confirm conversation storage
+
+Storage is a fixed **20 GiB persistent disk** mounted at `/home/node` in the runtime container. Agent state, conversation history, **and the workspace** all live under that directory and survive an instance rebuild.
+
+<Callout type="warn" title="Billed per day; back up before deleting">
+  The disk is billed per day. Back up anything you need before deleting an instance — the directory does not come back.
+  A temporary-storage option no longer exists: it only changed the daily bill while an instance rebuild silently dropped conversation history.
+</Callout>
+</Step>
+
+<Step>
+### Run the deployment check
+
+Choose **Check deployment** (or **Check update** for an existing instance). The check is read-only, creates no cloud resources, and returns a **deployment check result** panel:
+
+| Row | Content |
+| --- | --- |
+| Deployment location | Environment (`pre-online` renders as "pre-production") · region |
+| Instance spec | CPU cores / memory GB · 1 instance |
+| Conversation storage | `20 GiB · /home/node` |
+| Runtime | Runtime type · current image version |
+| Target runtime image | Image version · digest — the deployment identity to verify before an upgrade |
+| Bound resources | N models · N MCPs · N skills · N cloud resources |
+| Operator | Subaccount user name, or "Primary account" |
+
+The check verifies three things: **the frozen version**, **resource credentials**, and **deployment location and quota**. If any fails, the check fails and you never reach the confirm button.
+
+Do not skip the warnings below it; they concern billing and irreversible operations, for example "One replica is created at the selected spec; actual billing follows the platform".
+</Step>
+
+<Step>
+### Confirm creation
+
+Choose **Confirm creating the cloud instance**. The page reports "Deployment submitted; progress updates automatically" and the record appears under step 3.
+
+<Callout type="error" title="Never create again when the submit outcome is unconfirmed">
+  If the page reports "Submit outcome unconfirmed; keep this page open and reconcile the deployment record", do **not** refresh and retry creation.
+  Use **Reconcile creation result** on that record in step 3 to reconcile with the same request identity; retrying really does create a second instance.
+</Callout>
+</Step>
+
+</Steps>
+
+## The 10 deployment states you care about
+
+The list refreshes every **5 seconds** and pauses polling while the page is in the background. There are 19 states in total; day to day you only need these 10:
+
+| State | Label | Meaning | What to do |
+| --- | --- | --- | --- |
+| `PREPARED` | Pending submit | The record exists but is not submitted | Nothing |
+| `UPLOADING` | Uploading runtime bundle | The frozen bundle is uploading | Wait |
+| `CREATING` | Creating | The platform is creating the cloud agent | Wait |
+| `PROVISIONING` | Preparing instance | The instance exists and is being prepared | Wait |
+| `CONFIGURING` | Configuring access token | The access token is being written | Wait |
+| `TOKEN_PENDING` | Waiting for configuration | The token is written and pending | If it stays here for minutes, use **Repair access configuration** |
+| `STARTING` | Starting | The endpoint is up and version probing is running | Wait |
+| `READY` | Ready | The instance is usable | Choose **Start conversation** |
+| `ACTION_REQUIRED` | Action required | A human must step in; the instance may still be running | Read the failure code under **Details** first |
+| `FAILED` | Failed | Creation failed | Read `code` and `message` under **Details** |
+
+Look up the rest as needed: `UPLOADED` (uploaded, awaiting creation), `AVAILABLE_UPDATING` (endpoint up, platform updating — chat is fine, do not upgrade now), `DELETING` (deleting), `DELETED` (deleted; only visible with "Show deleted" enabled).
+
+## Handling `*_UNKNOWN` states
+
+The four `_UNKNOWN` states mean the platform **did not confirm the outcome of the last write**. They never advance on their own and need a human to reconcile:
+
+| State | Label | Action |
+| --- | --- | --- |
+| `UPLOAD_UNKNOWN` | Upload outcome unconfirmed | Choose **Reconcile creation result**; creation continues once the bundle is confirmed |
+| `CREATE_UNKNOWN` | Creation outcome unconfirmed | Choose **Reconcile creation result**. **Never** create again — reconciliation claims the instance that already exists |
+| `UPDATE_UNKNOWN` | Update outcome unconfirmed | Choose **Refresh status** to trigger version probing; a passing probe moves it to `READY` |
+| `DELETE_UNKNOWN` | Delete outcome unconfirmed | Choose **Refresh status**; it settles on `DELETED` once the cloud record is gone |
+
+These four, together with `ACTION_REQUIRED`, `FAILED`, and `TOKEN_PENDING`, count as "needs attention". When another agent has such records, the list header reports "N deployments of other agents need attention"; choose **View all** to widen the scope.
+
+## What success looks like
+
+- The record shows `READY` with a green tone.
+- **Start conversation** appears on the row (only for `READY` and `AVAILABLE_UPDATING`).
+- Expanding **Details** shows the cloud agent, runtime, runtime image (with digest), build, and conversation storage.
+- **Logs** returns runtime output, or "No logs yet" when the instance has produced none.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `CLOUD_SUBACCOUNT_REQUIRED` | The current identity is not a verified subaccount, or it differs from the deployment record | Update cloud credentials in settings; the primary account is never used as a substitute |
+| `DEPLOYMENT_AGENT_UNSUPPORTED` | The target is not a locally created agent build | Deploy locally created agents only |
+| `DEPLOYMENT_RESOURCE_INVALID` | The CPU-to-memory ratio is not 1:2, 1:4, or 1:8 | Pick from the spec dropdown |
+| `DEPLOYMENT_TYPE_INVALID` | Invalid deployment type | Start the deployment from the UI instead of hand-crafting requests |
+| `KS3_BUCKET_REQUIRED` | The account default bucket cannot be determined | Verify cloud identity, or set an explicit KS3 bucket in advanced settings |
+| `MCP_CREDENTIAL_MISSING` | A bound MCP lacks valid credentials | Fill in the MCP credentials and re-run the check |
+| `DEPLOYMENT_ENV_CONFLICT` | Multiple MCPs produced conflicting credential env vars | Remove the duplicate MCP binding |
+| `MANAGED_RUNTIME_MODEL_INVALID` | The bundle has no default model | Set a model on the agent and rebuild |
+| `DEPLOYMENT_ACCOUNT_CHANGED` | Cloud credentials or environment differ from the record | Switch back to the original configuration before managing it |
+| `DEPLOYMENT_CREATE_UNCONFIRMED` | Creation is not confirmed yet | **Reconcile creation result** first; never create again |
+| `DEPLOYMENT_PROVENANCE_MISMATCH` | The cloud agent does not match the frozen deployment record | Stop managing it and verify the instance provenance |
+| `DEPLOYMENT_RECORD_CORRUPT` | The local deployment record is corrupt | Keep the file and reconcile against the cloud; never resubmit creation |
+
+## Related
+
+<Cards>
+  <Card title="Managed runtime update and rollback" href="/en/docs/guides/update-rollback">
+    How to move a `READY` instance to a new version or back to a historical one.
+  </Card>
+  <Card title="Deployment state machine" href="/en/docs/reference/deployment-states">
+    The full list of 19 states and their legal transitions.
+  </Card>
+  <Card title="Managed runtime" href="/en/docs/concepts/managed-runtime">
+    Where a managed runtime ends and a local one begins.
+  </Card>
+  <Card title="Automation and scheduling" href="/en/docs/guides/automation">
+    Make the cloud instance run on a schedule by itself.
+  </Card>
+</Cards>

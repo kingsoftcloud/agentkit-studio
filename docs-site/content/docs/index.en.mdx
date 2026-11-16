@@ -1,0 +1,62 @@
+---
+title: AgentKit Studio Documentation
+description: Everything you need to build, run, deploy, and observe enterprise agents on DeepSeek Harness.
+---
+
+<div className="ak-hero">
+  <h1>Hand the idea to an agent</h1>
+  <p>AgentKit Studio is a product plugin for DeepSeek Harness (DSH): author agents, bind enterprise resources, run native conversations, and deploy agents to the cloud from one workbench. This documentation covers everything from the first minute to production operations.</p>
+  <div className="ak-hero-actions">
+    <a data-primary="true" href="./getting-started/quickstart/">5-minute quickstart →</a>
+    <a href="./concepts/">Core concepts</a>
+    <a href="./reference/">Reference</a>
+  </div>
+</div>
+
+## Start here
+
+<Cards>
+  <Card title="5-minute quickstart" href="/en/docs/getting-started/quickstart">
+    Install the desktop app, configure a model, create your first agent, and run a real conversation.
+  </Card>
+  <Card title="Core concepts" href="/en/docs/concepts">
+    Agent, revision, build, run, session, resource binding — the six words that explain the product.
+  </Card>
+  <Card title="Guides" href="/en/docs/guides">
+    Task-oriented playbooks: bind MCP servers, deploy to the cloud, configure approvals, wire telemetry.
+  </Card>
+  <Card title="Reference" href="/en/docs/reference">
+    CLI, configuration, environment variables, error codes, template schemas — generated from code.
+  </Card>
+</Cards>
+
+## Documentation map
+
+| Section | What you will find | Who it is for |
+| --- | --- | --- |
+| [Getting started](./getting-started/index.mdx) | Install, quickstart, first conversation | Anyone opening the product for the first time |
+| [Concepts](./concepts/index.mdx) | Product model, three runtimes, resources, glossary | Anyone deciding which capability to use |
+| [Guides](./guides/index.mdx) | Step-by-step playbooks with verification | Developers and operators who use it daily |
+| [Reference](./reference/index.mdx) | Contracts, enums, error codes, commands | Integrators, plugin authors, on-call |
+| [Runtimes and deployment](./deployment/index.mdx) | Runtime comparison, managed runtime lifecycle, degradation | Owners of shipping and reliability |
+| [Ecosystem and plugins](./ecosystem/index.mdx) | DSH plugin authoring, plugin market, expert templates | Anyone extending the product |
+| [Releases and migration](./releases/index.mdx) | Release notes, compatibility, upgrade steps | Anyone tracking versions |
+| [Help](./help/index.mdx) | FAQ, troubleshooting, known limitations | Anyone who is stuck |
+| [Contributing](./contributing/index.mdx) | Dev environment, gates, patch governance, writing style | Contributors |
+
+## What the product does
+
+<Cards>
+  <Card title="Agent authoring">Multi-step form, immutable revisions, frozen runtime configuration.</Card>
+  <Card title="Three runtimes">DSH Native, Star Harness, and Codex, with an explicit capability matrix.</Card>
+  <Card title="Resource bindings">MCP servers, skills, knowledge bases, and memory bound to a revision.</Card>
+  <Card title="Cloud deployment">24×7 managed runtimes with 19 observable, rollback-able deployment states.</Card>
+  <Card title="Experts and teams">Expert templates and local teams sharing the same revision semantics.</Card>
+  <Card title="Plugin ecosystem">DSH plugin market, Codex plugins, remote index, and readiness checks.</Card>
+</Cards>
+
+<Callout type="info" title="Docs ship with the product">
+  This site publishes automatically from the `main` branch. The &quot;last updated&quot; stamp comes from Git,
+  and prose is reviewed in the same pull request as the code — there is no window where the docs
+  describe a product that no longer exists.
+</Callout>

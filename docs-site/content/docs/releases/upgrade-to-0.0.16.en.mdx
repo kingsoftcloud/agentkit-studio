@@ -1,0 +1,180 @@
+---
+title: Upgrade to v0.0.16
+description: Breaking changes, steps, and rollback for v0.0.15 → v0.0.16 — removing the in-process Harness is the only change that needs hands-on work.
+status: new
+---
+
+**Only one thing needs hands-on work: if your deployment relied on the in-process Harness, it is gone.** Everything else applies on upgrade.
+
+## Change overview
+
+| Kind | Change | What you must do |
+| --- | --- | --- |
+| ⚠️ Breaking | Production in-process Harness removed | Configure a standalone Harness service, or accept that native sessions are unavailable |
+| ⚠️ Breaking | Old `sessions/native-*` control routes deleted | Migrate integrations to the new routes |
+| ⚠️ Breaking | The npm package no longer inlines Harness Core/Node/UI | Declare the dependencies explicitly |
+| ⚠️ Breaking | Local-process launchers no longer ship in the package | Do not depend on an in-package launcher |
+| Behaviour | Unbound directories are refused instead of falling back | Complete the workspace binding |
+| Behaviour | Each workspace connects to its own Harness | Configure `AGENTKIT_ENGINE_SERVICE_WORKSPACES` |
+| UI | "Manual configuration" moved into the **More ways to create** menu | None |
+| UI | Runtime selection is a radio group, not a dropdown | None |
+| Fix | Sent images survive thumbnails, the lightbox, and history refresh | None |
+| Fix | Answer-only turn durations use committed start/end times | None |
+
+## Step 1: Pre-flight
+
+```sh
+node -p "require('./package.json').version"                        # current plugin version
+node -p "require('./studio.plugin.json').requiredDsh"              # target DSH baseline
+node -e "import('@deepseek-ai/dsh-app-boot').then(m => console.log(m.getDshRuntimeVersion?.()))"
+node -v                                                            # Node version
+```
+
+| Check | Passes when | Cost of failure |
+| --- | --- | --- |
+| Current version | `0.0.16` (current) or `0.0.15` | Older versions must reach `0.0.15` first — do not skip |
+| DSH baseline | The third line prints **exactly** `0.2.2-rc.1` | Startup fails with `STUDIO_HOST_INCOMPATIBLE` |
+| Node runtime | `>=24.9.0` | Install or startup fails |
+| Node security patch | 24.x ≥ `24.22.1`; 22.x ≥ `22.23.4`; 26.x ≥ `26.12.1` | `make check:node` fails |
+
+<Callout type="warn" title="Both Node thresholds must pass">
+  `engines` says `>=24.9.0`, but the security baseline requires 24.x to be at least `24.22.1`.
+  A packaged installer needs no Node; building from source checks both. See [version compatibility](./compatibility.mdx).
+</Callout>
+
+## Step 2: Deal with the in-process Harness
+
+<Steps>
+
+<Step>
+### Determine whether you used it
+
+If you **never** configured a standalone Harness service, native sessions previously ran on the in-process Harness. That path no longer exists.
+
+```sh
+env | grep -E "AGENTKIT_ENGINE_SERVICE" || echo "no standalone Harness configured"
+```
+</Step>
+
+<Step>
+### Configure a single standalone Harness
+
+```sh
+export AGENTKIT_ENGINE_SERVICE_URL="http://127.0.0.1:8789"
+export AGENTKIT_ENGINE_SERVICE_TOKEN="<your-token>"
+export AGENTKIT_ENGINE_SERVICE_WORKSPACE="/opt/workspaces/default"
+```
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `AGENTKIT_ENGINE_SERVICE_URL` | ✅ | Service address |
+| `AGENTKIT_ENGINE_SERVICE_TOKEN` | ✅ | Tokens are read indirectly through `tokenEnv`, never written inline |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | ✅ | **Absolute path**, must be a real directory |
+| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | — | Custom CA |
+| `AGENTKIT_ENGINE_SERVICE_MODEL` | — | Model name, defaults to `Harness` |
+| `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN` / `_ENTRY` | — | App preview; only accepts `http://127.0.0.1:<port>/` |
+
+Source: `src/providers/engine-service-workspaces.mjs:24-32`.
+</Step>
+
+<Step>
+### Or configure multiple workspaces
+
+```sh
+export AGENTKIT_ENGINE_SERVICE_WORKSPACES='[
+  { "workspace": "/opt/workspaces/alpha", "endpoint": "http://127.0.0.1:8789",
+    "tokenEnv": "ALPHA_HARNESS_TOKEN", "model": "Harness" },
+  { "workspace": "/opt/workspaces/beta",  "endpoint": "http://127.0.0.1:8790",
+    "tokenEnv": "BETA_HARNESS_TOKEN" }
+]'
+```
+
+<Callout type="error" title="The two variables are mutually exclusive">
+  Setting both `AGENTKIT_ENGINE_SERVICE_WORKSPACES` and `AGENTKIT_ENGINE_SERVICE_URL` **fails immediately**
+  with `NATIVE_ENGINE_CONFIG_INVALID`. Pick one. Source: `src/providers/engine-service-workspaces.mjs:22-23,56-58`.
+</Callout>
+
+Multiple workspaces add four more validations, each failing with `NATIVE_ENGINE_CONFIG_INVALID`:
+`workspace` must be absolute and `realpath` to a real directory; two workspaces must not contain each other;
+`endpoint` must be unique; tokens must be unique.
+</Step>
+
+<Step>
+### Old sessions do not come back
+
+Sessions created by the in-process Harness are not recoverable after the upgrade; the related routes return:
+
+```json
+{ "code": "STUDIO_LEGACY_HARNESS_RETIRED", "message": "Start a new session with the standalone Harness." }
+```
+
+Just **create a new** session. Source: `src/providers/dsh-runtime-plugin.mjs:207`, `src/host/routes/sessions.mjs:8`.
+</Step>
+
+</Steps>
+
+## Step 3: Upgrade
+
+<Tabs items={['Desktop', 'npm plugin', 'From source']}>
+  <Tab value="Desktop">
+    Download the installer for your platform from GitHub Releases and install over the existing app:
+    `.dmg` for macOS (Apple Silicon), `.exe` (NSIS) for Windows 11 (x64).
+  </Tab>
+  <Tab value="npm plugin">
+    ```sh
+    pnpm add @kingsoftcloud/agentkit-studio@0.0.16
+    ```
+
+    This release removed `bundledDependencies`, so you must declare Harness Core/Node/UI yourself.
+  </Tab>
+  <Tab value="From source">
+    ```sh
+    git fetch --tags
+    git checkout v0.0.16
+    pnpm install --frozen-lockfile
+    make check
+    make release-check
+    ```
+  </Tab>
+</Tabs>
+
+## Step 4: Verify
+
+| Check | Expected |
+| --- | --- |
+| Three versions agree | `package.json` and `studio.plugin.json` both `0.0.16`; DSH prints `0.2.2-rc.1` |
+| Create entry | In the **Agents** panel the create button is a segmented control plus a **More ways to create** menu; **Manual configuration** inside it is the full form |
+| Runtime selection | A **radio group**, not a dropdown |
+| Images survive | A message with an image still shows it after a history refresh |
+| Accurate duration | An answer-only turn reports single-digit seconds, not one stretched by the network |
+| Readable failures | A failed turn expands to the full reason, not just a one-line summary |
+| Workspace isolation | Switching between two workspaces bound to different Harnesses moves model, working directory, and history together |
+
+Source: `src/client/pages/agents.mjs:176`, `src/client/pages/agent-form.mjs:264-268`.
+
+## Rollback
+
+```sh
+pnpm add @kingsoftcloud/agentkit-studio@0.0.15
+```
+
+Rollback is safe: `0.0.16` introduced no persistence migration, and the Agent, Revision, Build, and Session shapes are unchanged.
+
+<Callout type="warn" title="Old sessions stay unavailable after rollback">
+  Sessions owned by the in-process Harness were retired in `0.0.16`; rolling back to `0.0.15` does not revive them.
+  Their transcripts remain, but the retired routes cannot resume execution.
+</Callout>
+
+## Common problems
+
+| Symptom | Error code | Fix |
+| --- | --- | --- |
+| Startup fails immediately | `STUDIO_HOST_INCOMPATIBLE` | DSH must be exactly `0.2.2-rc.1` |
+| Native session errors | `STUDIO_LEGACY_HARNESS_RETIRED` | Configure a standalone Harness, then **create a new** session |
+| Harness config rejected | `NATIVE_ENGINE_CONFIG_INVALID` | Check the two variables are exclusive and workspace is a real absolute directory |
+| Cannot find the create entry | — | It lives under **More ways to create** |
+| Dependencies will not install | — | This release no longer inlines Harness packages; declare them yourself |
+
+## Related
+
+The full change list is in [release notes](./release-notes.mdx), the four-dimensional matrix in [version compatibility](./compatibility.mdx), and channels and feeds in [desktop update channels](./desktop-update-channels.mdx).

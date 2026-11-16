@@ -1,0 +1,212 @@
+---
+title: 绑定 MCP Server
+description: "添加 MCP Server、用 env:// 引用保存凭证、通过探测拿到工具清单，再绑定到 Agent。"
+status: new
+---
+
+MCP Server 是 Agent 调用外部系统的唯一入口。这一页从「添加一个 Server」走到「Agent 里能选中它的工具」，中途只碰两个地方：**资源库 → MCP** 和 **Agent 表单的「绑定能力」步骤**。
+
+<Callout type="info" title="前置条件">
+  - 一个可访问的 MCP 服务：HTTP / SSE 需要 `http(s)` 地址，stdio 需要可执行的启动命令。
+  - 如果服务需要认证，先在 Host 侧准备好凭证值。凭证只写进本机凭证服务，不写进资源声明。
+  - 资源库页面能读到 Host 资源清单（不是「资源目录不可用」）。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 打开添加 MCP Server
+
+进入 **资源库** → 顶部资源类型选 **MCP** → 右上角 **添加 MCP Server**。
+
+资源库只负责资源目录的生命周期：发现、导入、探测、查看、删除、刷新。**Agent 绑定关系在 Agent 创建页或编辑页维护**，不在这里。
+
+<Callout type="info" title="界面位置">资源库 MCP 页的「资源广场 / 已安装 / 已连接」子导航与「添加 MCP Server」按钮。</Callout>
+</Step>
+
+<Step>
+### 选择传输方式并填写连接信息
+
+| 传输方式 | 需要填写 | 校验 |
+| --- | --- | --- |
+| `HTTP` | 服务地址 | 必须是 `http(s)` URL；不能内嵌用户名或密码；不能含 `${...}` |
+| `SSE` | 服务地址 | 同上 |
+| `stdio` | 启动命令 + 命令参数 | 启动命令不能为空；命令参数必须是字符串 JSON 数组，例如 `["-y", "@acme/server"]` |
+
+基础字段：
+
+| 字段 | 说明 | 示例 |
+| --- | --- | --- |
+| 显示名称 | 界面上看到的名称 | 企业搜索 |
+| 资源名称 | 稳定标识；留空时由显示名称生成 slug | `enterprise-search` |
+| 版本 | 默认 `1.0.0` | `1.0.0` |
+| 说明 | 这个 MCP 提供什么能力 | 企业知识库全文检索 |
+
+<Callout type="warn" title="地址里不要放凭证">
+  服务地址不能内嵌 `user:pass@`，也**不支持** `${...}` 变量替换——地址里带 `${` 会直接被拒绝。
+  需要认证时用下面的 Header 凭证。
+</Callout>
+</Step>
+
+<Step>
+### 从 JSON 识别（可选但推荐）
+
+区块**从 JSON 识别 MCP** 支持直接粘贴主流客户端的配置：
+
+| 粘贴形状 | 例子 |
+| --- | --- |
+| `mcpServers` 包装 | Claude / Cursor 的 `{"mcpServers": {"name": {...}}}` |
+| `servers` 包装 | VS Code 的 `{"servers": {...}}` |
+| `mcp.servers` 嵌套 | 带外层 `mcp` 的配置 |
+| 单个服务描述 | 直接是 `{"url": "https://...", "headers": {...}}` |
+| 名称到描述的对象映射 | `{"name": {"command": "npx", "args": [...]}}` |
+| 数组 | `[{...}, {...}]` |
+
+点**识别并填充**后：
+
+- 识别到多个时出现**选择要导入的 MCP**下拉，逐个确认。
+- 识别结果里显示传输方式、地址或命令、认证 Header、固定 Header、固定环境变量、警告与错误。
+- **自定义认证 Header 会转成本机凭证引用**，密钥不写入资源目录。
+- `mcp-protocol-version` 由 MCP 客户端协商，粘贴时会被忽略并给一条警告。
+
+JSON 里的 `${NAME}`、`${user_config.NAME}`、`${env:NAME}`、`${input:api-key}` 会被解析成凭证引用名。
+</Step>
+
+<Step>
+### 配置认证 Header 与环境变量凭证
+
+展开**认证 Header / 环境变量凭证（进阶）**。两种填法等价，选一种即可：
+
+**方式一：环境变量引用输入框**
+
+```text
+API_KEY=env://SEARCH_API_KEY, X-KIP-Token=env://KIP_TOKEN
+```
+
+格式是 `名称=env://凭证名`，多个用逗号分隔。
+
+**方式二：逐行添加**
+
+填 **Header 名称**（HTTP/SSE）或环境变量名（stdio），再填**凭证名称**，点**添加**。HTTP/SSE 的 `Authorization` 请用上方的两个输入框，不要走这里。
+
+**Header 名白名单**（不区分大小写）——只有这六种写法能保存：
+
+| 允许的 Header 名 |
+| --- |
+| `x-request-source` |
+| `x-skill-version` |
+| `x-*-client`（例如 `x-acme-client`） |
+| `x-*-surface` |
+| `accept` |
+| `content-type` |
+
+其他 Header 名一律拒绝，错误码 `MCP_HEADER_REQUIRES_REFERENCE`。**Header 值里出现 `${` 同样被拒绝**，同一个错误码——Header 值只能是固定公共值，密钥必须走凭证引用。
+
+**环境变量名的敏感词规则**：环境变量名里含 `TOKEN`、`SECRET`、`PASSWORD`、`API_KEY`（不区分大小写）时，必须改成凭证引用，否则返回 `MCP_ENV_REQUIRES_REFERENCE`。
+
+**凭证引用语法**：`env://<名称>`，名称需匹配 `^[A-Za-z_][A-Za-z0-9_./:-]{0,127}$`。不符合这个格式（例如直接写密钥、写裸名称）返回 `MCP_ENV_REF_INVALID`。
+
+<Callout type="warn" title="为什么不能直接写密钥">
+  资源声明会被写成磁盘上的公开 JSON 记录（默认 `~/.agentkit/studio/resources/mcp`，可用 `AGENTKIT_HOME` 改根目录）。
+  直接写密钥等于把密钥持久化到明文文件里。存量记录里的裸凭证名会被自动补成 `env://` 前缀，新写入只接受显式引用。
+</Callout>
+</Step>
+
+<Step>
+### 保存并探测
+
+点**保存并探测**（编辑时是**保存修改并探测**）。
+
+保存与探测是两个阶段，顺序固定：
+
+1. 先写资源声明。校验失败直接停在表单里，不会创建半成品。
+2. 再让 Host 真实连接一次，把工具清单写进 `contract.discoveredTools` 与 `health.tools`。
+
+资源 ID 由 Host 生成，格式固定为 `mcp-local-` 加 16 位十六进制。
+
+<Callout type="warn" title="探测失败不等于保存失败">
+  失败时提示「配置已保存，探测失败：…。修改后重试会更新同一资源。」
+  此时资源状态是 `error`，**不能绑定到 Agent**。修正地址或凭证后重新保存并探测即可，不会产生重复资源。
+</Callout>
+
+<Callout type="info" title="界面位置">保存后的探测成功状态，以及资源行上的工具数量。</Callout>
+</Step>
+
+<Step>
+### 绑定到 Agent
+
+打开 **智能体** → 选中目标 Agent → 编辑 → **绑定能力** 步骤 → **MCP 服务** 区块 → 点**绑定**。
+
+- 只能选到状态为 `ready` 的 Server；`error` 与 `pending` 不可选。
+- 支持多选，绑定结果写进 `bindings.mcpServers[]`。
+- 绑定后进入**策略与确认**步骤，确认摘要里能看到 `N MCP`。
+
+绑定本身不验证工具能否完成任务。真正的验证是在会话里发一条会触发工具调用的消息。
+</Step>
+
+</Steps>
+
+## 托管侧的资源声明
+
+把 MCP 部署到托管运行时，走的是 `agentengine.resources/v1` 契约（`src/managed-resource-contract.mjs:4`）。这一层的规则比本地 store 更严：
+
+| 规则 | 约束 |
+| --- | --- |
+| 字段集合 | 只允许 `knowledge_base` / `memory` / `skill_space` / `skill_spaces` / `mcp_servers` |
+| 条数 | `mcp_servers` 最多 **16** 条 |
+| 直连形状 | `id` + `endpoint` + 可选 `transport`（`http` / `sse`）+ 可选 `env_refs`；不能有其他键 |
+| 引用形状 | `id` + 可选 `region`；`id` 匹配 `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`，`region` 匹配 `^[a-z0-9][a-z0-9-]{0,63}$` |
+| `endpoint` | ≤ 2048 字符、可打印 ASCII、`http(s)://` 开头、不含 `\` `?` `#`、不能有用户名密码、端口不能为 `0` |
+| `env_refs` | 最多 **16** 条；名匹配 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`；大小写不敏感去重 |
+| `env_refs` 的值 | 必须匹配 `^MCP_[A-Z0-9_]{1,124}$`，**并且**包含 `KEY`、`TOKEN`、`SECRET`、`PASSWORD` 之一 |
+| 重复 `id` | `mcp_servers` 内 `id` 不能重复 |
+
+**禁止的 Header 名**（托管侧额外拦截）：
+
+```text
+host  connection  content-length  transfer-encoding
+accept  content-type  mcp-protocol-version  mcp-session-id
+__proto__  constructor  prototype
+```
+
+任一规则不满足都返回 `MANAGED_RESOURCE_INVALID`。只有显式声明的凭证名会被转发进托管 Host 的子进程；未引用的环境变量不会继承。
+
+## 成功后的样子
+
+- 资源行的状态是**就绪**，不是**异常**或**待探测**。
+- 资源行的工具数量大于 0；点**工具清单**能看到由 Host 最近一次探测得到的工具名与描述。
+- 在 Agent 的「绑定能力 → MCP 服务」里可以勾选它，确认摘要显示对应的 MCP 数量。
+- 会话里发一条需要该工具的消息，工具调用有 `completed` 结果。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `MCP_HEADER_REQUIRES_REFERENCE` | Header 名不在白名单里，或 Header 值含 `${...}` | 改用允许的六个名字；密钥改成 `env://` 引用 |
+| `MCP_ENV_REQUIRES_REFERENCE` | 环境变量名含 `TOKEN` / `SECRET` / `PASSWORD` / `API_KEY` | 该变量改成凭证引用 |
+| `MCP_ENV_REF_INVALID` | 凭证引用不是 `env://<名称>` 格式 | 写成 `env://SEARCH_API_KEY`，名称以字母或下划线开头 |
+| `MCP_NAME_MISSING` | 显示名称或资源名称为空 | 至少填写显示名称 |
+| `MCP_TRANSPORT_INVALID` | 传输方式不在 `http` / `sse` / `stdio` 里 | 从下拉里选，不要手写 |
+| `MCP_ENDPOINT_INVALID` | HTTP/SSE 缺少合法的 `http(s)` 地址 | 补全地址；去掉内嵌账号密码和 `${}` |
+| `MCP_COMMAND_INVALID` | stdio 缺少启动命令 | 填写可执行命令，例如 `npx` |
+| `MCP_ID_INVALID` | 资源 ID 不是 `mcp-local-<16 位十六进制>` | 不要手改 ID；新建资源由 Host 生成 |
+| `MCP_NOT_FOUND` | 资源已被删除 | 刷新资源库后重试 |
+| `MCP_PROBE_FAILED` | 探测整体失败 | 按 `health.error` 里的信息修地址或凭证 |
+| `MCP_AUTH_FAILED` | 服务端拒绝了认证 | 检查 `env://` 引用的凭证是否已写入本机凭证服务 |
+| `MCP_TOOL_DISCOVERY_FAILED` | 连上了但读不到工具清单 | 确认该 Server 暴露了工具；检查服务端日志 |
+| `MCP_PERMISSION_DENIED` | 会话或 Host 拒绝了本次调用 | 见[审批与权限策略](./approvals-permissions.mdx) |
+| `MANAGED_RESOURCE_INVALID` | 托管侧资源声明不符合契约 | 对照上面两张规则表逐项检查 |
+
+## 相关参考
+
+| 你想知道 | 去哪里 |
+| --- | --- |
+| MCP Server 与 Agent 的绑定关系模型 | [资源与绑定](../concepts/resources.mdx) |
+| 本地 MCP store 的字段与校验 | `src/local-mcp-store.mjs` |
+| 托管资源契约 | `src/managed-resource-contract.mjs` |
+| 凭证引用名的派生规则 | `src/credential-ref.mjs` |
+| JSON 识别与 Header 分类 | `src/client/state/mcp-json-import.mjs` |
+| MCP 面板源码 | `src/client/components/resource-dialogs.mjs` |
+| `mcp/*` 四个 operation | [控制协议](../reference/operations.mdx) |

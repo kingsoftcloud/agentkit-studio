@@ -1,0 +1,105 @@
+---
+title: Release notes
+description: "From v0.0.16 backwards, what each release changes in terms you can observe — organised by \"what you will notice\", not by commit log."
+---
+
+**Read only the part you care about.** Every entry is phrased as "what you will notice"; implementation details stay in code.
+
+## Version overview
+
+| Version | Date | In one line | Breaking |
+| --- | --- | --- | --- |
+| [0.0.16](#v0016) | 2026-11-16 | Image messages survive, per-workspace Harness, in-process Harness removed | ⚠️ Yes |
+| [0.0.15](#v0015) | 2026-11-16 | A standalone Harness service takes over execution; UI unified on the DSH design system | Yes |
+| [0.0.14](#v0014) | 2026-11-10 | The plugin market becomes discovery; desktop updates stop advancing one version at a time | No |
+| [0.0.13](#v0013-and-earlier) | — | Personal assistant runtime removed; Studio returns to being a generic DSH plugin | ⚠️ Yes |
+| [0.0.12](#v0013-and-earlier) | — | DSH baseline moves to `0.2.2-rc.1`; prompt prediction | Yes |
+| 0.0.11 and earlier | — | Desktop plugin alignment and cloud-instance tolerance | — |
+
+## v0.0.16
+
+### What you will notice
+
+- **Images stop disappearing.** Sent images survive thumbnails, the lightbox, and a history refresh; image-only messages render too.
+- **Turn durations are accurate.** Answer-only turns use committed start/end times instead of network jitter.
+- **Each workspace talks to its own Harness.** Switching between Alpha and Beta keeps model, working directory, and history separate.
+- **Entry copy changed.** "Manual configuration" now lives under **More ways to create**; runtime selection is a radio group, not a dropdown.
+- **Process output is collapsed by default.** Failed turns show a neutral summary; expand for the full reason. Usage is pinned under the composer.
+
+### Breaking changes
+
+| Change | Impact | What to do |
+| --- | --- | --- |
+| In-process Harness removed | Custom deployments relying on in-process execution fail | Use a standalone Harness service or an explicit external command |
+| Old `sessions/native-*` control routes deleted | Integrations calling them get `STUDIO_LEGACY_HARNESS_RETIRED` | Migrate to the new routes |
+| Three `bundledDependencies` removed | The npm package no longer inlines Harness Core/Node/UI | Declare the dependencies explicitly |
+| `publishConfig.executableFiles` removed | Local-process launchers no longer ship in the package | Do not depend on an in-package launcher |
+| Unbound directories are refused | No fallback to another project | Complete the workspace binding |
+
+Full steps in [upgrade to v0.0.16](./upgrade-to-0.0.16.mdx).
+
+## v0.0.15
+
+| What you will notice | Details |
+| --- | --- |
+| Tasks reach the standalone service | Native sessions, Team roles, and bound A2A tasks all execute there; the desktop reconnects to the original Run |
+| Unified interface | The agent form collapses to three steps; resource library, delivery, and operations share DSH design tokens |
+| New agents default to DSH Native | Star Harness is hidden from creation (editing existing Star Harness agents still works) |
+| Denser MCP resource page | "Auth headers / environment credentials" folds into an advanced section that auto-expands for custom headers |
+| Light-theme buttons are readable | Primary button hover no longer flips the white label to a light background |
+| Deployment details show image tags | Update checks split into current and target image (tag + digest) |
+
+Internal changes you will not operate directly: managed Codex timeout variables added to the env whitelist, the Hosted UI session
+registry moved to agent scope, frozen-host MCP turn budget raised to 15 minutes (adjustable via `AGENTKIT_RUNTIME_TIMEOUT_MS`),
+and the browser bundle size became a gate.
+
+## v0.0.14
+
+| What you will notice | Details |
+| --- | --- |
+| The plugin market can discover | Aggregates npm `keywords:dsh-plugin` and GitHub `topic:dsh-plugin` with category filters, download/star sorting, detail cards, one-click install |
+| Updates no longer hop version by version | Every publication mirrors the same feed onto the compatibility lane, so historical installs jump straight to the newest release |
+| Long sessions compress less often | The model context window reads `context_length` from the model gateway `/v1/models` instead of a fixed 128000 |
+| Incompatibility is explained | When a cloud image catalog declares an unimplemented capability, only that image is retired and the latest compatible one is used |
+| Cloud Codex runs full-access by default | The container is already the isolation boundary; Codex's own sandbox cannot start on a read-only rootfs. Narrow it with `AGENTKIT_CODEX_SANDBOX` |
+| Partially unavailable resources still chat | Degraded operation is the default; `AGENTKIT_STRICT_RESOURCES=1` restores fail-closed |
+
+## v0.0.13 and earlier
+
+| Version | Change |
+| --- | --- |
+| 0.0.13 | Personal assistant runtime, Host routes, and contracts removed; Studio is a generic DSH plugin again, with a plugin-purity gate |
+| 0.0.12 | DSH baseline moves to `dsh-v0.2.2-rc.1`; prompt prediction added |
+| 0.0.11 | Desktop startup alignment stops copying runtime plugins into the profile and resolves `app.asar` directly |
+| 0.0.8 | Deleted cloud instances are treated as expired and local bindings are cleaned up; personal assistant creation uses the productised deployment action |
+| 0.0.7 | Falls back to the local configuration record when cloud instance details are unavailable, with an explanation |
+| 0.0.6 | Personal assistant settings can be configured online; saving submits a platform update |
+| 0.0.2 | Cloud personal assistant onboarding, Windows NSIS packaging, and certificate signing |
+| 0.0.1 | Initial release: agent authoring, resource binding, native conversations, deployment, automation, channels |
+
+## Index by concern
+
+| You care about | Version | Key change |
+| --- | --- | --- |
+| Images and multimodal | 0.0.16 | Sent images survive thumbnails, the lightbox, and history refresh |
+| Multi-workspace isolation | 0.0.16 | Each workspace connects to its own Harness; unbound directories are refused |
+| Execution architecture | 0.0.15 / 0.0.16 | 0.0.15 introduced the standalone service; 0.0.16 removed the in-process one |
+| Plugin ecosystem | 0.0.14 | The market turns from a mirror into a discovery surface |
+| Long-session stability | 0.0.14 | The context window reads from the model gateway instead of a fixed 128000 |
+| UI consistency | 0.0.15 | Unified on DSH design tokens; the agent form collapses to three steps |
+| Resource degradation | 0.0.14 | Degraded operation by default; `AGENTKIT_STRICT_RESOURCES=1` restores fail-closed |
+
+## Should you upgrade?
+
+| Your situation | Recommendation |
+| --- | --- |
+| You run a custom in-process Harness | Read [upgrade to v0.0.16](./upgrade-to-0.0.16.mdx) first |
+| You only author agents locally | Upgrade directly; no breaking impact |
+| You rely on the plugin market | 0.0.14 or later, where discovery exists |
+| You need multi-workspace isolation | Requires 0.0.16 |
+
+## Related
+
+- Four-dimensional version matrix: [version compatibility](./compatibility.mdx)
+- Upgrade steps: [upgrade to v0.0.16](./upgrade-to-0.0.16.mdx)
+- Update channel rules: [desktop update channels](./desktop-update-channels.mdx)

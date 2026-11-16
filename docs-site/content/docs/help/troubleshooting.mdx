@@ -1,0 +1,103 @@
+---
+title: 排障
+description: 按「症状 → 错误码 → 原因 → 处理」四条定位问题，覆盖 Studio 源码中最高频的四十余个错误码。
+---
+
+Studio 的错误码全部来自 `src/**` 里的 `code: '...'` 字面量，可以直接在源码里搜。这一页按**出错位置**分组，同一个错误码只出现一次。
+
+<Callout type="info" title="先确认错误码是不是真的错误码">
+界面上的错误文案有时是自然语言，错误码在被折叠的详情里。展开工具卡片、或到 **运行中心 → 观测** 看 Trace，能拿到原始 `code` 与 HTTP 状态。
+</Callout>
+
+## 模型与凭证
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| 发消息立刻失败，提示去配 Key | `MODEL_CREDENTIAL_MISSING` | 模型配置没有可用的 API Key（`src/model-service.mjs:71,116`） | 设置 → 模型与凭证，选中模型填 Key 后保存 |
+| 选了模型但请求打到空 | `MODEL_NOT_FOUND` | 模型配置不存在、已停用，或不在网关目录中（`model-service.mjs:61`） | 在「默认模型」里重选；网关模式先刷新模型目录 |
+| 保存模型时报地址无效 | `MODEL_ENDPOINT_INVALID` | 服务地址不是合法 URL（`src/model-endpoint.mjs:9`） | 补全 `https://` 与主机名 |
+| 同上，但报的是协议 | `MODEL_URL_INVALID` | 只接受 `https:` 端点（`model-service.mjs:37`） | 换成 HTTPS 端点，本地调试用 localhost 代理 |
+| 保存后模型列表为空 | `MODEL_PROFILE_INVALID` | 模型名称、模型 ID 或凭证引用三者有一项无效（`model-service.mjs:34`） | 重新「读取模型目录」，从目录里选而不是手打 |
+| 想重名保存被拒 | `MODEL_PROFILE_EXISTS` | 模型资源名称已被占用（`model-service.mjs:41`） | 换一个名称 |
+| 「读取模型目录」失败 | `MODEL_CATALOG_FAILED` | 目录接口返回非 2xx（`model-service.mjs:89`） | 检查端点、Key 与出网策略；错误文案带状态码 |
+| 云端资源页空 | `CLOUD_CREDENTIALS_MISSING` | 没配云端 AK/SK（`src/server-client.mjs:361,462,519`） | 设置 → 模型与凭证 → 云端配置，填 AK/SK |
+| 请求被 413 拒绝 | `REQUEST_TOO_LARGE` | 模型请求体超过 16 MiB（`src/model-proxy-handler.mjs:47`） | 减少附件、缩短历史，或拆成多轮 |
+| 回答只出了一半就断 | `UPSTREAM_STREAM_TRUNCATED` | 上游模型流没返回完成标记就断开（`model-proxy-handler.mjs:150`） | 重试；持续出现时检查代理/网关的空闲超时 |
+| 兼容端点要求重传历史 | `STATELESS_INPUT_REQUIRED` | 该端点不保存远端 Response ID（`model-proxy-handler.mjs:55`） | 客户端必须每轮传完整对话历史 |
+| 选 Codex 模型被拒 | `CODEX_AGENT_REQUIRED` | 没有绑定 Codex Agent（`src/providers/dsh-runtime.mjs:585`） | 先在 Agent 上绑定 Codex 运行时，再选模型 |
+
+## Agent 与构建
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| 会话里发消息失败 | `STUDIO_AGENT_REQUIRED` | 当前会话没有绑定 Agent（`dsh-runtime.mjs:604`） | 从智能体面板选中一个 Agent 再发 |
+| 发送按钮点了没反应 | `STUDIO_INPUT_REQUIRED` | 输入为空且没有图片（`dsh-runtime.mjs:605`） | 输入文字或附加图片 |
+| 编辑后保存报「不存在」 | `AGENT_NOT_FOUND` | 本地 Agent 已被删除或 ID 漂移（`src/host/routes/agents.mjs:13`） | 刷新智能体列表后重选 |
+| 请求缺参数 | `INVALID_AGENT_ID` | `AgentId` 为空（`agents.mjs:52`） | 从列表进入，不要手拼 URL 或命令 |
+| 部署/运行被拒 | `BUILD_NOT_READY` | Agent 还没有可运行的 Build（`src/host-remote.mjs:166`） | 先创建 Build 并等它完成 |
+| 冻结会话创建失败 | `STUDIO_PRESET_RUNTIME_UNSUPPORTED` | 当前 runtime 没有 DSH 原生会话适配器（`src/agent-preset-admission.mjs:161`） | 换成 `dsh-native` 运行时再冻版本 |
+| 老会话打不开 | `DSH_PRESET_ROUTE_UNAVAILABLE` | 会话原有的 Agent 运行预设不可用（`agent-preset-admission.mjs:343`） | 重新绑定运行时；不要试图恢复已删除的预设 |
+| MCP 工具调用失败 | `STUDIO_NATIVE_MCP_SCHEMA_ENGINE_REQUIRED` | 会话的 MCP 工具 schema 引擎不可用（`src/providers/dsh-runtime-plugin.mjs:209`） | 「请重新绑定当前会话的 MCP 工具」 |
+| 模型要调一个不存在的工具 | `TOOL_NOT_FOUND` | DSH Tool 未注册，或不在当前 Agent 绑定范围（`dsh-runtime-plugin.mjs:173`） | 在 Agent 编辑页补绑该 Tool，或改提示词 |
+
+## 运行时
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| 全程无响应 | `HOST_CONNECTION_MISSING` | Studio 本地任务需要已连接的 Studio Host（`src/remote/control-client.mjs:144`） | 看右上角状态胶囊；重启 Host 后重试 |
+| 插件加载被拒 | `STUDIO_HOST_INCOMPATIBLE` | 宿主版本不满足 `engines.dsh`（`src/host/compatibility.mjs:40`） | 升级到固定的 DSH 基线 `0.2.2-rc.1` |
+| 托管会话起不来 | `NATIVE_ENGINE_UNAVAILABLE` | 托管 Native Harness 需要独立服务绑定（`src/host/bootstrap.mjs:406`） | 配置并启动独立的 Harness 服务 |
+| 报「没有绑定独立 Harness」 | `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | 当前工作区没绑定独立 Harness（`agent-preset-admission.mjs:335`） | 换到已配置的工作区 |
+| Harness 配置报错 | `NATIVE_ENGINE_CONFIG_INVALID` | 工作区、服务地址、凭据或预览地址有一项无效（`src/providers/engine-service-workspaces.mjs:57`） | 逐项核对四项配置 |
+| Native 引擎要模型 | `NATIVE_ENGINE_MODEL_UNAVAILABLE` | 需要已配置接口地址的模型（`dsh-runtime.mjs:629`） | 在 Agent 上绑定网关模型 |
+| 一轮跑完是失败 | `DSH_TURN_FAILED` | 运行时本轮未完成（`src/dsh-history-display.mjs:6`） | 重试；持续失败看模型与工具连接 |
+| 老的进程内会话操作 | `LOCAL_HARNESS_RETIRED` | 进程内 Harness 已退役（`src/host/routes/http.mjs:24`） | 改用 Native Harness 会话 |
+| 同上，另一入口 | `STUDIO_LEGACY_HARNESS_RETIRED` | 该操作属于已退役的进程内 Harness 会话（`src/host/routes/sessions.mjs:8`） | 重新创建 Native 会话 |
+| 冻结版本跑不动 | `RUNTIME_MODEL_UNAVAILABLE` | 冻结模型没有可用的运行时路由（`src/frozen-build-runtime.mjs:72`） | 重新构建，让模型进入冻结绑定 |
+| 冻结版本报模型不符 | `RESPONSES_FROZEN_MODEL_MISMATCH` | 请求的模型不在冻结绑定中（`frozen-build-runtime.mjs:88`） | 用冻结时绑定的模型发请求 |
+| 宿主能力不足 | `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` | 冻结运行时需要支持请求指纹的 DSH 宿主（`frozen-build-runtime.mjs:58`） | 升级宿主 |
+| 自动化跑不起来 | `AUTOMATION_SERVICE_UNAVAILABLE` | 自动化需要的 DSH 服务未启动（`src/native-automation-runner.mjs:32`） | 按提示启动对应服务 |
+| 自动化卡住 | `AUTOMATION_TIMEOUT` | 自动化运行超时（`native-automation-runner.mjs:85`） | 缩短任务或拆成多步 |
+
+## 资源
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| MCP 绑定报重复 | `MCP_BINDING_AMBIGUOUS` | 同一 Agent 版本的 MCP 绑定别名重复（`src/host/services/resource-tools.mjs:17`） | 改别名，保证唯一 |
+| 模型调 MCP 工具失败 | `MCP_RESOURCE_NOT_BOUND` | MCP 未绑定到当前 Agent 版本（`resource-tools.mjs:16`） | 在 Agent 编辑页重新绑定 |
+| Skill 下载被拒 | `SKILL_DOWNLOAD_URL_INVALID` | 下载地址不是 HTTPS（`src/providers/native-skill-service.mjs:288`） | 改 HTTPS；开发环境才允许 localhost |
+| 云端 Skill 加载失败 | `SKILL_MANIFEST_MISSING` | 云端 Skill 缺 `SKILL.md`（`src/skill-files.mjs:35`） | 重新打包并上传 |
+| Skill 调用中途失效 | `SKILL_AUTHORIZATION_EXPIRED` | Skill Service 请求授权过期（`native-skill-service.mjs:152`） | 重新发起该轮请求 |
+| 工具目录搜不出结果 | `RESOURCE_CATALOG_TOO_LARGE` | 目录过大，被要求缩小范围（`src/native-tool-catalog.mjs:56`） | 加关键词缩小搜索 |
+| 资源总览只显示一部分 | `RESOURCE_OVERVIEW_TRUNCATED` | 总览只展示该类前 200 项（`src/resource-catalog.mjs:87`） | 去「模型与工具」页搜索完整目录 |
+| 托管资源请求被拒 | `MANAGED_RESOURCE_PERMIT_REQUIRED` | 托管记忆请求缺少可信业务授权（`src/managed-resource-context.mjs:4`） | 从带授权的入口重发 |
+| 删不掉托管 Runtime | `MANAGED_RUNTIME_REQUIRED` | 只支持删除经 AgentEngine API 创建的 ManagedRuntime（`agents.mjs:81`） | 到控制台删除外部创建的实例 |
+| 删除后云端还在 | `MANAGED_RUNTIME_DELETE_UNCONFIRMED` | 云端未确认删除（`agents.mjs:86`） | 刷新云端列表核对，必要时重试 |
+| 部署记录写失败 | `DEPLOYMENT_STORE_IO_FAILED` | 记录目录不可写（同步盘、网络主目录、安全软件拦截，`src/deployment-store.mjs:16`） | 把 `AGENTKIT_HOME` 指向本机磁盘 |
+
+## 云端与部署
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| 云资源页空 | `CLOUD_CONFIGURATION_REQUIRED` | 云端凭证未配置（`src/remote/control-client.mjs:439`） | 配置云端凭证后刷新资源目录 |
+| 切执行权限被拒 | `CLOUD_EXECUTION_MODE_UNAVAILABLE` | 云端执行权限尚未启用（`agents.mjs:112`） | 先在部署侧开启该权限 |
+| 同上，镜像不支持 | `CLOUD_EXECUTION_MODE_UNSUPPORTED` | 当前云端镜像不支持切换执行权限（`agents.mjs:115`） | 更新实例镜像版本 |
+| 权限超范围 | `CLOUD_EXECUTION_MODE_DENIED` | 请求的权限超出部署声明范围（`agents.mjs:118`） | 收敛到部署声明的上限内 |
+| 权限值非法 | `CLOUD_EXECUTION_MODE_INVALID` | 不是 `read-only`/`workspace-write`/`danger-full-access`（`src/cloud-execution-modes.mjs:42`） | 用枚举值 |
+| 云端发图失败 | `CLOUD_IMAGE_INPUT_UNAVAILABLE` | 云端镜像尚不支持图片输入（`dsh-runtime.mjs:834`） | 改用本地 Agent 处理图片 |
+| 回答内容前后不一致 | `CLOUD_STREAM_ITEM_CHANGED` | 云端已结束的消息内容发生变化（`dsh-runtime.mjs:480`） | 以最终快照为准；不断重放则报 issue |
+| 更新卡在中间 | `DEPLOYMENT_UPDATE_INTERRUPTED` | 更新在提交云端前中断（`src/deployment-rollouts.mjs:167`） | 刷新确认原实例状态后重新检查版本 |
+
+## 会话与历史
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| 打开会话报不存在 | `SESSION_NOT_FOUND` | Session 已被删除或不属于当前 Host（`src/host/routes/sessions.mjs:27`） | 回智能体面板重新进入 |
+| 导出被拒 | `SESSION_EXPORT_TOO_LARGE` | 会话日志超过 8 MiB（`sessions.mjs:29`） | 从原生会话用 `/export` 导出完整 ZIP |
+| 导出不可用 | `SESSION_EXPORT_UNAVAILABLE` | DSH Session 持久化不可用（`sessions.mjs:23`） | 检查 Host 的持久化目录权限 |
+| 图片打不开 | `STUDIO_IMAGE_ATTACHMENT_UNAVAILABLE` | 无法读取会话图片（`src/providers/dsh-messages.mjs:29`） | 确认 DSH 附件服务已启用 |
+| 审批状态读不到 | 无固定码 | 原生审批 RPC 失败（`src/client/dsh/native-approval.mjs`） | 按提示「刷新」后重新核对原生运行状态 |
+
+## 还是没解决
+
+带上[帮助总览](./index.mdx#提-issue-需要什么)里列的六项信息开 issue。如果是「这本来就不支持」，先看[已知限制](./known-limitations.mdx)。

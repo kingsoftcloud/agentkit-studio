@@ -1,0 +1,130 @@
+---
+title: The three runtimes
+description: Three creatable runtime values, one routable-only value, their capability matrix, and execution policy.
+status: new
+---
+
+**A runtime type (`runtime.type`) decides whose execution model serves a run. There are three official values — DSH Native, Star Harness, and Codex — plus `native-engine`, which can only be selected by routing and never at creation.**
+
+This page covers each value's ownership and capabilities, the `native-engine` trap, and the execution-policy layer that constrains what a run may write.
+
+## Why a runtime is not an "engine option"
+
+Reading a runtime as "a different model backend" runs into an immediate contradiction: the same agent definition exposes different capabilities on the three runtimes — some support replay, some support child tasks, some neither. That is a difference in execution ownership, not in configuration.
+
+| What you want to do | What it requires |
+| --- | --- |
+| Replay a past run | The runtime supports `replay` (Codex and DSH Native do; Star Harness does not) |
+| Have the agent split out child tasks | The runtime supports `child-tasks` (Star Harness only) |
+| Resume an unfinished turn from history | The runtime supports `resume` (Star Harness only) |
+| Deploy the agent as a resident managed runtime | The runtime is deployable (DSH Native and Codex only) |
+
+Choosing a runtime is therefore not a style preference; it decides what you can do later. **The runtime is locked at creation and cannot be changed** — switching runtimes means creating a new agent.
+
+## The 3+1 trap
+
+This is the easiest place in the documentation to get wrong, because two different lists are both correct:
+
+| List | How many values | Who uses it |
+| --- | --- | --- |
+| Runtimes the type assertion accepts | **4** (including `native-engine`) | The routing layer: a local session may be routed onto a separate engine process |
+| Runtimes the creation form lists | **3** | The UI shows all three, but Star Harness carries an "unavailable" badge and cannot be selected for a new agent |
+
+The assertion accepts 4 because a local Star Harness session is routed onto the `native-engine` process when conditions allow. The creation form lists only 3 because the experimental `native-engine` path has not reached creatable status.
+
+Among the three visible values, **Star Harness cannot be selected for a new agent**: its button carries an "unavailable" badge and is `disabled` (`src/client/pages/agent-form.mjs:265-267`). Editing an existing Star Harness agent makes it selectable, because `creatableRuntime` admits `editing` (`src/client/pages/agent-form.mjs:61`).
+
+<Callout type="warn" title="So four supported runtimes is wrong">
+  The form shows 3 runtimes and only 2 of them can be selected for a new agent. `native-engine` is a routable value, not an option. Writing "4" sends readers looking for a fourth choice that is not in the form.
+</Callout>
+
+Historical documentation used two aliases for this runtime — AgentKit Harness and Native Harness. **Both are retired.** Write **Star Harness** (`harness`).
+
+## The three official runtimes
+
+| Item | DSH Native | Star Harness | Codex |
+| --- | --- | --- | --- |
+| Value | `dsh-native` | `harness` | `codex` |
+| UI name | DSH Native Harness | Star Harness | Codex Agent |
+| Execution owner | DSH itself | The KSADK Harness native kernel | The Codex App Server adapter inside Studio |
+| Execution model | `native` | `native-kernel` | `codex-app-server` |
+| Contract | `agentkit.studio.runtime/v1` | The DSH native turn contract | `studio.codex.adapter/v1` |
+| Event owner | DSH session | The native run store | The Studio Codex adapter |
+| Stream owner | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
+| Default for new agents | **Yes** | No | No |
+
+<Diagram src="/assets/agentkit-runtime-ownership.en.png" alt="Ownership matrix for the three runtimes across the model and tool loop, session transcript, durable run state and Studio seam" />
+
+*How to read this: the executor is not the transcript owner — within one runtime, "who runs the model loop" and "who persists the event log" are different entities. Across all four lanes only `cancel` is shared; every other capability belongs to one implementation and cannot be enabled by configuration.*
+
+## Capability matrix
+
+| Capability | DSH Native | Star Harness | Codex |
+| --- | :---: | :---: | :---: |
+| `session` | ✅ | — | ✅ |
+| `session-events` | ✅ | — | — |
+| `stream` | ✅ | — | ✅ |
+| `cancel` | ✅ | ✅ | ✅ |
+| `replay` | ✅ | — | ✅ |
+| `persistence` | ✅ | — | — |
+| `build-binding` | ✅ | — | ✅ |
+| `native-run` | — | ✅ | — |
+| `durable-receipts` | — | ✅ | — |
+| `tool-approval` | — | ✅ | — |
+| `resume` | — | ✅ | — |
+| `child-tasks` | — | ✅ | — |
+
+Only `cancel` is supported by all three. Capability entries are not feature flags and cannot be switched on by configuration — they are part of each runtime's implementation.
+
+## Hard rules beyond the runtime
+
+| Rule | Allowed values | Out-of-range result |
+| --- | --- | --- |
+| Creating an agent | The 3 official values | `RUNTIME_UNSUPPORTED` |
+| Team template roles | DSH Native and Star Harness only | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
+| Team run members (runtime) | Local DSH Native and Star Harness only | `TEAM_AGENT_UNSUPPORTED` |
+| Managed deployment | DSH Native and Codex only | Never appears in the deployable list |
+| Managed manifest declaration | The 3 official values | `MANAGED_RUNTIME_IDENTITY_MISMATCH` |
+
+"Teams exclude Codex members" and "managed deployments exclude Star Harness" are two independent restrictions. Do not merge them into "some scenarios are limited".
+
+## Execution policy: the layer that limits writes
+
+The runtime decides who executes; execution policy decides **where execution may write**. The two are orthogonal.
+
+| Mode | Rank | Meaning | Default |
+| --- | --- | --- | --- |
+| `read-only` | 0 | Read only, no workspace writes | The unattended-run default |
+| `workspace-write` | 1 | May write the workspace | **Yes** (cloud execution default) |
+| `danger-full-access` | 2 | Full access | A ceiling, not a default |
+
+The ranking runs from least to most privileged. Three hard rules:
+
+1. **Narrowing only, never widening.** A requested mode above the deployed ceiling is clamped to the ceiling rather than rejected — so a policy change does not break requests already in flight.
+2. **The ceiling defaults to the maximum.** Cloud execution defaults to `workspace-write` with a ceiling of `danger-full-access`, so all three modes are selectable by default.
+3. **Unattended means read-only.** The unattended execution policy is `read-only` with `approvalPolicy: never` and approval source marked as a runtime policy — nobody can approve, so only reading is possible.
+
+Besides the permission mode, a policy also carries an approval policy whose only values are `ask` and `never`. A Star Harness agent additionally carries a native permission policy (mode `strict`, `loose`, or `custom`) that **only adds tool constraints and never grants a Host capability**. New Star Harness agents default to `strict`.
+
+## Related tasks
+
+<Cards>
+  <Card title="Create and edit an agent" href="/en/docs/guides/create-agent">
+    Pick a runtime in the creation form and confirm how the capabilities differ.
+  </Card>
+  <Card title="Approvals and permission policy" href="/en/docs/guides/approvals-permissions">
+    Move execution policy from its default to a production setting.
+  </Card>
+  <Card title="Deploy to the cloud" href="/en/docs/guides/deploy-to-cloud">
+    The managed runtime accepts only two of the three values.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| The raw capability enumeration and contract versions | [Runtime and entity contract](../reference/runtime-contract.mdx) |
+| `RUNTIME_*` error codes | [Errors](../reference/errors.mdx) |
+| How the three runtimes differ in deployment form | [Runtimes compared](../deployment/runtimes-compare.mdx) |
+| Execution-policy environment variables | [Environment](../reference/environment.mdx) |

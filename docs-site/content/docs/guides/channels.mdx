@@ -1,0 +1,214 @@
+---
+title: 渠道（Channels）
+description: 配置渠道连接、接入本地或云端 Agent、完成配对与会话绑定，并在一个地方核对消息收发。
+status: new
+---
+
+渠道（channel）解决的是「**消息从哪来、回到哪去**」：把 WPS 协作、飞书或企业微信里的对话，
+路由到你绑定的 Agent，再把回答发回原会话。会话本身仍由 DSH 拥有，渠道只是一个入口。
+
+<Callout type="info" title="前置条件">
+  - 一个可用 Channel 服务的**服务地址**与**账号 ID**。
+  - 本地 Agent 接入还需要**工作区 ID** 和平台签发给该 Agent 的**连接凭证**（短期 Connector JWT）。
+  - 渠道侧要为 Studio 创建一个应用，拿到 **App ID** 和 **App Secret**。
+</Callout>
+
+## 渠道连接器在做什么
+
+| 组件 | 职责 |
+| --- | --- |
+| 连接配置 | 记录服务地址、账号、工作区与凭证，决定消息能路由到哪个租户 |
+| 渠道 | 一个 IM 应用 + 一个账号 + 一套会话策略，绑到一个 Agent |
+| 配对请求 | 陌生人与机器人首次对话时的准入队列 |
+| 会话绑定 | 一个 IM 会话对应哪个 DSH 会话 |
+| 消息记录 | 收发流水，用来确认「发出去了没有」 |
+
+Studio 只做管理与展示：**数据通过 Channel API 读取，插件内不复制一套存储**。所以这里看到的就是渠道服务的真实状态。
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 打开 Channels
+
+**运行中心 → Channels**。右上角徽章显示 **连接已配置** 或 **待配置**——待配置时先做下一步。
+
+<Callout type="info" title="连接地址必须是 HTTPS/WSS">
+  远程渠道服务只接受 `https://` 或 `wss://`。只有 `localhost` / `127.0.0.1` / `[::1]` 允许 `http://` 或 `ws://`。
+  地址里不能带用户名、密码、查询串或锚点，否则保存时报 `CHANNEL_URL_INVALID`。
+</Callout>
+</Step>
+
+<Step>
+### 填写连接配置
+
+展开 **连接配置** 折叠区，填四项后点 **保存连接**：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| Channel 服务地址 | 是 | 例如 `https://channel.example.com` |
+| 账号 ID | 是 | 决定渠道数据归属哪个账号 |
+| 工作区 ID | 可选 | 仅用于渠道路由，**不会**绑定本地文件目录 |
+| 服务凭证 | 可选 | 已保存过则显示「已保存，留空保留」 |
+
+保存后凭证不会回显；只改其他字段时留空即可。
+</Step>
+
+<Step>
+### 接入本地 Agent
+
+在 **本地 Agent 接入** 区选一个 Agent，填入平台签发给它的**连接凭证**，点 **启用连接**。
+
+连接会经历 `connecting` → `registering` → `connected` 三个状态，正常在 10 秒内完成。
+状态徽章与错误文案：
+
+| 状态 | 界面文案 |
+| --- | --- |
+| `connected` | 已连接 |
+| `connecting` | 连接中 |
+| `registering` | 注册中 |
+| `reconnecting` | 正在重连 |
+| `stopped` | 已停用 |
+| `unavailable` | 暂不可用 |
+| `error` | 连接失败 |
+
+失败原因会直接显示在行内：
+
+| 原因 | 含义 |
+| --- | --- |
+| `authentication_failed` | 凭证无效或已过期 |
+| `connection_failed` | 无法连接渠道服务 |
+| `protocol_error` | 渠道协议或身份不匹配 |
+| `configuration_invalid` | 连接配置无效 |
+| `connection_replaced` | 连接已被另一设备替换 |
+
+<Callout type="warn" title="设备离线时消息交不出去">
+  本地 Agent 在自己的设备上执行。应用关掉或设备睡眠时，消息无法交给它——需要常驻请把 Agent 部署到云端，
+  然后在渠道里绑定「云端部署」分组下的目标。
+</Callout>
+</Step>
+
+<Step>
+### 新增渠道
+
+点右上角 **新增渠道**，在弹窗里填：
+
+| 字段 | 约束 |
+| --- | --- |
+| 绑定 Agent | 两个分组：**本地 · 需要保持应用运行**、**云端部署 · 由云端持续运行** |
+| 渠道类型 | `WPS 协作` / `飞书` / `企业微信`；**创建后不可修改** |
+| 渠道账号 ID | 渠道侧的账号标识；**创建后不可修改** |
+| 应用 App ID | 渠道平台给 Studio 应用签发的 ID |
+| 应用 App Secret | 对应密钥；保存后不回显，编辑时留空表示保留 |
+| 私聊策略 | `需配对`（`pairing`，陌生人先走配对）或 `开放`（`open`） |
+| 群聊策略 | `白名单`（`allowlist`）或 `开放`（`open`） |
+| 会话范围 | `按用户`（`per-peer`）或 `按群聊`（`per-group`） |
+| 启用 | 新渠道创建后即启用 |
+
+<Callout type="info" title="会话范围决定上下文怎么切">
+  `per-peer` 让每个私聊用户各自一个会话；`per-group` 让一个群共享一个会话。
+  改这一项会影响历史上下文的归属，改之前先确认群里的用法。
+</Callout>
+</Step>
+
+<Step>
+### 扫码连接（飞书 / 企业微信）
+
+渠道行上的 **扫码连接** 只对 `feishu` 和 `wecom` 出现。点开后会读取一条**连接地址**，
+在浏览器里打开它完成授权即可。
+
+地址由 Connector 返回；**Studio 不生成也不保存二维码内容**。如果 Host 没返回地址，弹窗会提示「Host 未返回连接地址」。
+</Step>
+
+<Step>
+### 处理配对请求
+
+切到 **配对请求** 页签。列是申请人、渠道、会话类型、状态。
+
+- 状态 `pending` 的行有 **通过** 和 **拒绝**。
+- 通过后，这个 IM 会话进入 **会话绑定** 列表，机器人开始正常应答。
+
+没有待处理项时显示「没有待处理的配对请求」。
+</Step>
+
+<Step>
+### 管理会话绑定
+
+切到 **会话绑定** 页签，每行对应一个 IM 会话：
+
+| 操作 | 作用 |
+| --- | --- |
+| 编辑会话 | 手工指定关联的 Session ID；留空表示取消关联 |
+| 接管 | 由人工接手，输入接管原因（默认「人工处理」）；接管后行上显示 **已接管** |
+| 释放接管 | 把会话交还机器人 |
+| 解除绑定 | 断开这个 IM 会话与 DSH 会话的关联，不可撤销 |
+
+<Callout type="warn" title="接管期间机器人不答">
+  接管是「人工在处理」的信号。处理完请及时 **释放接管**，否则用户会觉得机器人没反应。
+</Callout>
+</Step>
+
+<Step>
+### 核对消息记录
+
+切到 **消息记录** 页签。左侧是会话列表（渠道 · 条数），右侧是气泡：
+
+- 气泡靠右是**发送**，靠左是**接收**，右下角是时间。
+- 发送失败的气泡会带一行错误信息。
+
+还没有任何会话时显示「渠道接入并产生对话后，消息会出现在这里」。这里只读，不能从这里发消息。
+</Step>
+
+</Steps>
+
+## 连接器的重连规则
+
+| 场景 | 行为 |
+| --- | --- |
+| 注册超时 | 10 秒内没收到 `register_ok` 就断开重连 |
+| 断线 | 指数退避重连，从 **1 秒**起，最长 **60 秒** |
+| 401 / 403 | 直接进入 `error`，不重连，原因 `authentication_failed` |
+| 关闭码 4002 | 进入 `error`，原因 `connection_replaced`（同一 Agent 在另一台设备上连上了） |
+| 关闭码 1008 | 进入 `error`，原因 `authentication_failed` |
+| 断线时的在途任务 | 全部中止，**不会**在重连后重放 |
+| 单任务超时 | 默认 **300 秒**，可用任务上的 `deadline` 提前截止 |
+
+## 成功后的样子
+
+- 顶部徽章是 **连接已配置**，本地 Agent 行徽章是 **已连接**。
+- 统计卡里「渠道总数」大于 0 且「已启用」计数与之一致。
+- **会话绑定** 里能看到刚配对的 IM 会话，Session 列不是「未关联」。
+- **消息记录** 里能看到一轮完整的收发，发送气泡没有错误行。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `CHANNEL_URL_INVALID` | 服务地址不是 http(s)，或远程地址用了明文、带了用户名/密码/查询串 | 远程用 `https://`；本机才允许 `http://` |
+| `CHANNEL_CONFIG_INVALID` | 渠道配置文件无法读取 | 检查 Host 侧 `channels.json` 是否可读 |
+| `CHANNEL_NOT_CONFIGURED` | 还没填服务地址或账号 ID | 先保存连接配置 |
+| `CHANNEL_AGENT_UNAVAILABLE` | 选的 Agent 不存在或不是本地创建的 | 从下拉里重新选择 |
+| `CHANNEL_CONNECTOR_CONFIG_REQUIRED` | 本地 Agent 接入缺账号、工作区 ID 或连接凭证 | 三项都要填 |
+| `CHANNEL_ACCOUNT_MISMATCH` | 渠道账号与当前子账号所属的云端账号不一致 | 核对连接配置里的账号 ID |
+| `CHANNEL_ACTOR_REQUIRED` | 云端渠道操作缺少已核验的子账号身份 | 重新核验云端身份 |
+| `CHANNEL_PAIRING_UNAVAILABLE` | 配对请求不存在或不可访问 | 刷新列表后重试 |
+| `CHANNEL_LOCAL_OFFLINE` | 目标本地 Agent 的渠道连接未启用 | 先启用该 Agent 的连接 |
+| `CHANNEL_PROXY_FAILED` | 渠道服务请求未完成（网络或超时） | 检查网络后重试 |
+| `CHANNEL_PROXY_ERROR` | 渠道服务返回了业务错误 | 看错误里的 `serviceCode` |
+| `CHANNEL_RESPONSE_INVALID` | 渠道服务返回不符合合同的响应 | 核对服务地址与版本 |
+| `CHANNEL_CATALOG_TOO_LARGE` | 该 Agent 的渠道会话过多 | 先整理会话绑定 |
+
+## 相关参考
+
+<Cards>
+  <Card title="自动化与调度" href="/docs/guides/automation">
+    把定时执行的结果投递到这里的某个会话。
+  </Card>
+  <Card title="运行与调试会话" href="/docs/guides/conversations">
+    渠道进来的消息最终落在哪个会话。
+  </Card>
+  <Card title="环境变量参考" href="/docs/reference/environment">
+    `AGENTKIT_HOME` 等 Host 侧目录开关。
+  </Card>
+</Cards>

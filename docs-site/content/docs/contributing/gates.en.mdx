@@ -1,0 +1,140 @@
+---
+title: Gates and verification
+description: What each of the three gate layers runs — make check, make release-check, and the CI public-gate job — plus required checks and failure localization.
+status: new
+---
+
+AgentKit Studio does not gate once; it gates in three layers. **The earlier a layer fails, the cheaper
+the fix**: `make check` concludes locally in seconds, `make release-check` covers the release package
+and the security surface, and the CI `public-gate` job re-runs the same set under an isolated identity.
+
+## The three-layer model
+
+| Layer | Entry point | Runs on | Covers | Typical duration |
+| --- | --- | --- | --- | --- |
+| 1 | `make check` | Local | Static contracts, portability, client gate, full unit suite | Seconds to minutes |
+| 2 | `make release-check` | Local | Public surface, history, secrets, patch series, packed artifact | Minutes |
+| 3 | `ci/run-public-gate.sh` | CI | Re-runs layer 2 as a dedicated UID, plus browser and concurrency constraints | Bounded by a 35-minute timeout |
+
+`make release-check` and `make ci` are both aliases of `public-gate` — **layers 2 and 3 run the same
+target chain**. The difference is execution identity and CI environment preparation.
+
+```sh
+# Layer 1: local, seconds to minutes
+make check
+
+# Layer 2: local, including the security surface and packaging
+make release-check
+
+# Layer 3: on CI, run by ci/run-public-gate.sh as a dedicated user
+make public-gate
+```
+
+## Layer 1: make check
+
+`make check` expands to `pnpm check`, with `precheck` lifecycle hooks around it.
+
+### What it runs
+
+| Order | Command | What it verifies |
+| --- | --- | --- |
+| 1 | `node scripts/check-dsh-pin.mjs` | The pinned baseline agrees across `package.json`, `studio.plugin.json`, the patch manifest, `pnpm-lock.yaml`, and `Makefile` |
+| 2 | `node scripts/check-node-version.mjs` | The runtime meets the security baseline |
+| 3 | `tsc -p tsconfig.contracts.json` | Contract types |
+| 4 | `node scripts/check-portability.mjs` | No personal absolute paths or `file:///` URLs in version-controlled files |
+| 5 | `node --check …` × 7 | Entry-point syntax: `src/index.mjs`, `src/client.js`, `dist/client.js`, `src/brand.js`, `src/session-adapter.mjs`, `src/host-remote.mjs`, `src/agent-preset-admission.mjs` |
+| 6 | `node scripts/verify-client-modules.mjs` | Browser artifact architecture and size budget |
+| 7 | `node scripts/test-studio.mjs` | Every `*.test.mjs` under `tests/`, `tests/native-host/integration/`, and `packages/expert-catalog/test/` |
+
+The client gate (step 6) deserves its own explanation. It reads the committed
+`scripts/client-module-baseline.json` and `docs/refactor-client-budget.json` and judges the real
+`.artifacts/client/metafile.json` and `dist/client.js`: the module graph is acyclic, no Node-only input
+leaks into the browser bundle, React stays host-provided instead of bundled, private properties were not
+renamed by accident, exactly one module registration point exists, and gzip size stays within the
+approved growth budget. **The budget files are version-controlled source** — otherwise this gate could
+never fail in CI.
+
+### When to run it
+
+- At least once before committing any change.
+- For docs-only changes `make public-surface-audit` is enough locally, but CI still runs the full `public-gate`.
+- Contract changes (the 134 operations in `src/contracts/operations.mjs`) must update their tests;
+  otherwise the type check in step 3 fails first.
+
+## Layer 2: make release-check
+
+### What it runs
+
+| Order | Target | What it verifies |
+| --- | --- | --- |
+| 1 | `make public-surface-audit` | Content red lines across all tracked and non-ignored files (see [Security and public boundary](./security-boundary.mdx)) |
+| 2 | `node scripts/public-history-audit.mjs` | **Every historical blob and historical path** reachable from the public branch |
+| 3 | `make secret-scan` | Gitleaks 8.30.1, run twice: history and snapshot |
+| 4 | `make dsh-pin-check` | Pinned baseline consistency (the full form of layer 1 step 1) |
+| 5 | `make patch-manifest-check` | Patch manifest: id, category, risk, dependencies, digests, verification matrix |
+| 6 | `make patch-source-check` | Export is bound to the `source.json` descriptor and the bundle digest |
+| 7 | `make check` | All of layer 1 |
+| 8 | `make patch-format-check` | Every `.patch` is a valid unified diff |
+| 9 | `make pack` | Pack the release tarball into `.artifacts/` |
+| 10 | `node scripts/check-package.mjs …` | No development content, complete exports, pinned native dependencies, no credential-looking values |
+| 11 | `git diff --check` | Whitespace and conflict markers |
+
+The order is deliberate: the security surface (1–3) precedes the build (9); patches (5–6, 8) bracket
+the tests (7); packaging (9–10) is last. A single failure therefore localizes to exactly one of
+"security / patch / code / package".
+
+## Layer 3: the public-gate CI job
+
+The `public-gate` job in `.github/workflows/ci.yml` runs on `ubuntu-24.04` with a 35-minute timeout and
+ultimately calls `ci/run-public-gate.sh`. That script does not simply forward; it does four things:
+
+1. **Creates a dedicated system user** `agentkit-ci`. On Linux, `RLIMIT_NPROC` is per UID, and a shared
+   Actions user cannot represent an isolated execution owner — concurrent Node workers would consume
+   each other's quota.
+2. **Prepares a private temporary root**: `TMPDIR`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME` all point
+   into it, and it installs the verified Gitleaks binary there.
+3. **Grants the narrowest traversal**: `o+x` on parents only (no directory listing), restoring each
+   original mode on exit.
+4. **Runs `make public-gate` as that user**, pinning `AGENTKIT_TEST_CONCURRENCY=1` and the browser path.
+
+`ci/run-with-deadline.mjs` is the matching process-group owner: it gives the entire installer process
+group one deadline, then escalates `SIGTERM` → grace period → `SIGKILL` so a leftover child cannot
+scramble the next retry.
+
+## Which checks a pull request must pass
+
+| Check | Workflow | Required for PRs | Notes |
+| --- | --- | --- | --- |
+| `public-gate` | `ci.yml` | **Yes** | The heaviest layer; 35-minute timeout |
+| `secret-scan` | `secret-patterns.yml` | **Yes** | Public surface audit plus Gitleaks |
+| `patched-dsh-host` | `ci.yml` | Required in the merge queue | Builds a patched real DSH host and runs the frozen-host and native-turn proofs |
+| `native-engine-integration` | `ci.yml` | Recommended | Service approvals and native engine acceptance |
+| Forge Ref Parity | `ref-parity.yml` | No | Manually dispatched; verifies the mirror matches GitHub `main` |
+
+`main` moves through the merge queue. Queue entries re-run the same required checks as pull requests
+(`public-gate`, `patched-dsh-host`), so do not bypass the queue with a direct push; if an entry fails,
+fix the pull request and re-enqueue it.
+
+## Localizing a failure
+
+| Error fragment | Layer | Look at first |
+| --- | --- | --- |
+| `DSH pin mismatch` | 1 | Whether `dsh-pin.json`, `package.json`, `studio.plugin.json`, and the lockfile were updated together |
+| `Node.js … 低于安全基线` | 1 | Your local Node version against `.node-version` |
+| `发现不可分发的个人路径或 file URL` | 1 | Replace absolute paths with relative paths or placeholders |
+| `client-module` / `sizePassed: false` | 1 | Whether a new dependency entered the browser bundle; use the budget approval path, never edit the baseline |
+| `forbidden public path` / `internal-service-host` | 2 | See [Security and public boundary](./security-boundary.mdx) |
+| `patch manifest:` | 2 | Patch manifest fields; editing a patch must go through [Patch governance](./patches.mdx) |
+| `generated patch differs` | 2 | Someone edited a `.patch` inside the checkout; re-export it |
+| `package integrity` / `Missing Studio export` | 2 | The `files` and `exports` allowlists in `package.json` |
+| `Gitleaks 8.30.1 is required` | 3 | Install the pinned version with `ci/install-gitleaks.sh` |
+
+## Related gates
+
+- **`make doctor`**: read-only diagnostics answering "which part of my environment is wrong"; resets nothing.
+- **`make verify-patched-host`**: builds the patched host and writes an acceptance report.
+- **`make ref-parity`**: read-only comparison between the mirror branch and GitHub `main`; writes no remote.
+- **`ci/verify-public-web.mjs`**: runs real browser assertions against a synthetic loopback model service, never an external provider.
+
+For the full command list see `Makefile` and the `scripts/` directory. For the four patch
+targets see [Patch governance](./patches.mdx).

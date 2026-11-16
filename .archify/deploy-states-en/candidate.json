@@ -1,0 +1,411 @@
+{
+  "schema_version": 3,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Deployment state machine",
+    "subtitle": "19 states and 26 transitions; the four UNKNOWN states are neither success nor failure — reconcile before acting",
+    "output": ".archify/deploy-states-en/states.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "submit",
+        "label": "Submit",
+        "focus": [
+          "prepared",
+          "uploading",
+          "uploaded"
+        ],
+        "note": "record created, bundle uploading"
+      },
+      {
+        "id": "progress",
+        "label": "Progress",
+        "focus": [
+          "creating",
+          "provisioning",
+          "configuring",
+          "starting",
+          "updating",
+          "available-updating",
+          "deleting"
+        ],
+        "note": "the platform is working; wait"
+      },
+      {
+        "id": "attention",
+        "label": "Attention",
+        "focus": [
+          "token-pending",
+          "action-required",
+          "failed"
+        ],
+        "note": "stuck; a person must act"
+      },
+      {
+        "id": "terminal",
+        "label": "Terminal",
+        "focus": [
+          "ready",
+          "deleted"
+        ],
+        "note": "no further automatic transition"
+      },
+      {
+        "id": "unknown",
+        "label": "Unknown",
+        "focus": [
+          "upload-unknown",
+          "create-unknown",
+          "update-unknown",
+          "delete-unknown"
+        ],
+        "note": "reconcile first; never retry"
+      }
+    ]
+  },
+  "mainPath": [
+    "prepared",
+    "uploading",
+    "uploaded"
+  ],
+  "states": [
+    {
+      "id": "prepared",
+      "type": "start",
+      "label": "PREPARED",
+      "sublabel": "awaiting submit",
+      "tag": "submit",
+      "step": "01"
+    },
+    {
+      "id": "uploading",
+      "type": "active",
+      "label": "UPLOADING",
+      "sublabel": "uploading bundle",
+      "tag": "submit",
+      "step": "02"
+    },
+    {
+      "id": "uploaded",
+      "type": "active",
+      "label": "UPLOADED",
+      "sublabel": "uploaded",
+      "tag": "submit",
+      "step": "03"
+    },
+    {
+      "id": "creating",
+      "type": "active",
+      "label": "CREATING",
+      "sublabel": "creating",
+      "tag": "progress",
+      "step": "04"
+    },
+    {
+      "id": "provisioning",
+      "type": "active",
+      "label": "PROVISIONING",
+      "sublabel": "provisioning",
+      "tag": "progress",
+      "step": "05"
+    },
+    {
+      "id": "configuring",
+      "type": "active",
+      "label": "CONFIGURING",
+      "sublabel": "configuring token",
+      "tag": "progress",
+      "step": "06"
+    },
+    {
+      "id": "token-pending",
+      "type": "waiting",
+      "label": "TOKEN_PENDING",
+      "sublabel": "awaiting token",
+      "tag": "attention",
+      "step": "07"
+    },
+    {
+      "id": "starting",
+      "type": "active",
+      "label": "STARTING",
+      "sublabel": "starting",
+      "tag": "progress",
+      "step": "08"
+    },
+    {
+      "id": "ready",
+      "type": "success",
+      "label": "READY",
+      "sublabel": "ready",
+      "tag": "terminal",
+      "step": "09"
+    },
+    {
+      "id": "available-updating",
+      "type": "active",
+      "label": "AVAILABLE_UPDATING",
+      "sublabel": "reachable · updating",
+      "tag": "progress"
+    },
+    {
+      "id": "updating",
+      "type": "active",
+      "label": "UPDATING",
+      "sublabel": "switching version",
+      "tag": "progress"
+    },
+    {
+      "id": "action-required",
+      "type": "decision",
+      "label": "ACTION_REQUIRED",
+      "sublabel": "needs attention",
+      "tag": "attention"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "FAILED",
+      "sublabel": "failed",
+      "tag": "attention"
+    },
+    {
+      "id": "deleting",
+      "type": "active",
+      "label": "DELETING",
+      "sublabel": "deleting",
+      "tag": "progress"
+    },
+    {
+      "id": "deleted",
+      "type": "neutral",
+      "label": "DELETED",
+      "sublabel": "deleted",
+      "tag": "terminal"
+    },
+    {
+      "id": "upload-unknown",
+      "type": "waiting",
+      "label": "UPLOAD_UNKNOWN",
+      "sublabel": "upload unconfirmed",
+      "tag": "unknown"
+    },
+    {
+      "id": "create-unknown",
+      "type": "waiting",
+      "label": "CREATE_UNKNOWN",
+      "sublabel": "create unconfirmed",
+      "tag": "unknown"
+    },
+    {
+      "id": "update-unknown",
+      "type": "waiting",
+      "label": "UPDATE_UNKNOWN",
+      "sublabel": "update unconfirmed",
+      "tag": "unknown"
+    },
+    {
+      "id": "delete-unknown",
+      "type": "waiting",
+      "label": "DELETE_UNKNOWN",
+      "sublabel": "delete unconfirmed",
+      "tag": "unknown"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t01",
+      "from": "prepared",
+      "to": "uploading",
+      "label": "submit"
+    },
+    {
+      "id": "t02",
+      "from": "uploading",
+      "to": "uploaded",
+      "label": "done"
+    },
+    {
+      "id": "t03",
+      "from": "uploaded",
+      "to": "creating",
+      "label": "accepted"
+    },
+    {
+      "id": "t04",
+      "from": "creating",
+      "to": "provisioning",
+      "label": "provision"
+    },
+    {
+      "id": "t05",
+      "from": "provisioning",
+      "to": "starting",
+      "label": "ready"
+    },
+    {
+      "id": "t06",
+      "from": "starting",
+      "to": "ready",
+      "label": "reachable"
+    },
+    {
+      "id": "t10",
+      "from": "uploading",
+      "to": "upload-unknown",
+      "label": "interrupted",
+      "variant": "security"
+    },
+    {
+      "id": "t11",
+      "from": "upload-unknown",
+      "to": "uploaded",
+      "label": "confirm"
+    },
+    {
+      "id": "t12",
+      "from": "creating",
+      "to": "create-unknown",
+      "label": "timeout",
+      "variant": "security"
+    },
+    {
+      "id": "t13",
+      "from": "create-unknown",
+      "to": "provisioning",
+      "label": "confirm"
+    },
+    {
+      "id": "t14",
+      "from": "provisioning",
+      "to": "configuring",
+      "label": "token"
+    },
+    {
+      "id": "t15",
+      "from": "configuring",
+      "to": "token-pending",
+      "label": "pending"
+    },
+    {
+      "id": "t16",
+      "from": "token-pending",
+      "to": "starting",
+      "label": "active"
+    },
+    {
+      "id": "t17",
+      "from": "starting",
+      "to": "token-pending",
+      "label": "inactive"
+    },
+    {
+      "id": "t20",
+      "from": "ready",
+      "to": "updating",
+      "label": "upgrade"
+    },
+    {
+      "id": "t21",
+      "from": "updating",
+      "to": "available-updating",
+      "label": "switch"
+    },
+    {
+      "id": "t22",
+      "from": "available-updating",
+      "to": "ready",
+      "label": "done"
+    },
+    {
+      "id": "t23",
+      "from": "updating",
+      "to": "update-unknown",
+      "label": "unknown",
+      "variant": "security"
+    },
+    {
+      "id": "t24",
+      "from": "update-unknown",
+      "to": "ready",
+      "label": "confirm"
+    },
+    {
+      "id": "t30",
+      "from": "ready",
+      "to": "action-required",
+      "label": "action",
+      "variant": "security"
+    },
+    {
+      "id": "t32",
+      "from": "prepared",
+      "to": "failed",
+      "label": "rejected",
+      "variant": "security"
+    },
+    {
+      "id": "t40",
+      "from": "ready",
+      "to": "deleting",
+      "label": "delete"
+    },
+    {
+      "id": "t41",
+      "from": "deleting",
+      "to": "delete-unknown",
+      "label": "interrupted",
+      "variant": "security"
+    },
+    {
+      "id": "t42",
+      "from": "delete-unknown",
+      "to": "deleted",
+      "label": "confirm"
+    },
+    {
+      "id": "t43",
+      "from": "deleting",
+      "to": "deleted",
+      "label": "done"
+    },
+    {
+      "id": "ready-deleted",
+      "from": "ready",
+      "to": "deleted",
+      "label": "delete directly"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to read this",
+      "items": [
+        "The main path runs left to right: submit, upload, create, provision, configure, start, ready.",
+        "Branches hang below the state that spawns them; edges back to an earlier state are drawn as loops above.",
+        "State names are API strings and are never translated — they appear verbatim in responses."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "UNKNOWN is not failure",
+      "items": [
+        "The four *_UNKNOWN states only mean the platform returned no confirmed outcome — neither success nor failure.",
+        "The only correct action is to reconcile in the operations centre, not to retry.",
+        "Retrying an UNKNOWN as if it failed submits a paid operation twice."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Five intent groups",
+      "items": [
+        "Submit: the record exists and the bundle is uploading.",
+        "Progress: the platform is working; wait.",
+        "Attention: stuck; a person must act.",
+        "Terminal: READY and DELETED, with no further automatic transition.",
+        "Unknown: reconcile before deciding."
+      ]
+    }
+  ]
+}

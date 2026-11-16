@@ -1,0 +1,161 @@
+---
+title: Your first conversation
+description: What appears on screen during a run — tool call cards, approval requests, file changes, usage and duration, plus failed turns and history after a refresh.
+---
+
+This page covers exactly one thing: **what happens on screen after you press send**.
+
+<Callout type="info" title="Prerequisites">
+Studio is installed and opens, and at least one model is configured under **Settings → Models & credentials**. Without that, the Overview shows "Configure a model credential to start chatting" at the top.
+</Callout>
+
+## Sending your first message
+
+<Steps>
+<Step>
+### Select an Agent
+
+Pick one under the **Local** tab of the **Agents** panel. If you have not created any yet, use **Manual** or **From template** on the Overview.
+
+<Callout type="warn" title="Sending without a bound Agent fails immediately">
+Sending a message with no bound Agent returns `STUDIO_AGENT_REQUIRED` ("bind an Agent before sending", `src/providers/dsh-runtime.mjs:604`).
+</Callout>
+</Step>
+
+<Step>
+### Type and send
+
+Type a sentence and press send. Empty input is rejected with `STUDIO_INPUT_REQUIRED` ("enter text or attach an image before sending", `src/providers/dsh-runtime.mjs:605`).
+</Step>
+
+<Step>
+### Watch it run
+
+Everything that follows is driven by native DSH session events. Studio keeps **no** second copy of the session — it only projects DSH events onto the interface (`src/dsh-history-display.mjs:1`).
+</Step>
+</Steps>
+
+## The timeline of one run
+
+DSH emits a fixed vocabulary of event types (`src/host/dsh-session-contract.mjs:2-19`, 16 in total). These are the ones you can actually see:
+
+| Event | What you see |
+| --- | --- |
+| `turn/start` | A new turn begins and the process area appears |
+| `user/message` | Your input lands in the conversation |
+| `tool/call` | A **tool call card** appears, collapsed by default |
+| `tool/result` | The summary stops saying "running" and the card can be expanded |
+| `approval/asked` | An **approval request** appears, waiting for allow or deny |
+| `approval/decided` | The decision is written back and the card continues |
+| `assistant/message` | The final answer |
+| `turn/end` | The turn ends |
+
+<Callout type="info" title="Public sequence = native sequence + 1">
+When projecting history Studio shifts native DSH sequence numbers up by one, keeping `0` as the empty-history sentinel (`src/frozen-session-history.mjs:2-3`). Sequence numbers you see start at `1` by design.
+</Callout>
+
+## Tool call cards
+
+Each card is a `<details>` element (`src/client/dsh/native-tool-view.mjs:33-40`):
+
+| Area | Contents |
+| --- | --- |
+| Summary line | **Localized tool name** · key argument (`path` / `query` / `name` / `directory`, truncated to 180 characters) · "**· incomplete**" appended on failure |
+| Expanded | "**Call arguments**" as raw JSON, then "**Result**" text (max 360px, scrolls beyond that) |
+| No output | The result area shows "**no text result**" |
+| Not finished | The result area shows "**running**" |
+
+Tool names have a fixed localized title map, for example `read_workspace_file` → read file, `write_workspace_file` → write file, `apply_workspace_patch` → apply file patch, `rewind_workspace_files` → restore files (all 16 in `native-tool-view.mjs:1-10`).
+
+## When a tool fails
+
+Error codes are translated into one readable sentence and rendered with `role="alert"` (`native-tool-view.mjs:11-17,37`):
+
+| Error code returned by the tool | Interface text |
+| --- | --- |
+| `permission_denied` | Not permitted to perform this operation; check the Agent rules and session permissions. |
+| `invalid_path` | The path is outside the accessible range or unavailable; choose a file inside the workspace. |
+| `tool_not_found` | This tool is not bound to the current Agent. |
+| `deferred_tool_not_loaded_or_not_deferred` | The tool is not loaded or not bound. Use a bound tool; edit the Agent configuration for more capabilities. |
+| `artifact_not_available` | This task has no read authorization for that artifact; continue reading through the tool that produced it. |
+| anything else | The tool did not complete; expand the card for the raw result. |
+
+## Approval requests
+
+When an Agent needs authorization for an operation, a native approval prompt appears (`src/client/dsh/native-approval.mjs`):
+
+| Element | Notes |
+| --- | --- |
+| Title | "Native approval pending: [tool name]" |
+| Scope | "Requesting one-time authorization" — this run only |
+| Confirmation | "I have reviewed this operation and its impact" |
+| Buttons | "Confirm allow once" / "Deny" / "Back" |
+
+<Callout type="warn" title="Approval failures are never silent">
+A read failure reports "native approval state could not be read, please refresh"; an expired request reports "the approval request is no longer valid, refresh and reconcile"; an undelivered decision reports "the approval decision was not delivered, refresh and reconcile the native run state".
+</Callout>
+
+## File changes
+
+Agents change files through **workspace tools**: `write_workspace_file`, `edit_workspace_file`, `apply_workspace_patch`, `delete_workspace_file` and friends. They appear as ordinary cards, and expanding one shows arguments and results.
+
+When a turn changes files, a **change card** appears at the end of the conversation: one row for a single file, or a folded list (first 4 rows) with added/deleted line counts for several. Choosing the card header opens that turn's review in the **right sidebar**, file by file; hovering for 500 ms previews the first difference.
+
+<Callout type="info" title="Cards answer what, tools answer how">
+  The change card only says what a turn touched. To trace how a change happened — which call, which arguments, how many retries — expand the matching tool card.
+</Callout>
+
+## Usage and duration
+
+Token detail is not shown inside a single turn. For per-run statistics go to **Operations → Observability**:
+
+| Metric | Location |
+| --- | --- |
+| Average duration | Observability overview card "Average duration", in milliseconds (`src/client/pages/observability.mjs:108`) |
+| Token usage | Observability overview card "Token usage", input plus output (`observability.mjs:109`) |
+| Per-run duration / tokens | The "Duration" and "Tokens" columns in the trace list (`observability.mjs:167,168`) |
+
+<Callout type="info" title="Character count is not token count">
+The observability page states it explicitly: character count reflects request body size and is **not** the token count; only statistics are stored, never raw request bodies.
+</Callout>
+
+## Failed turns
+
+When a turn fails the runtime produces a stable failure summary:
+
+```text
+DSH_TURN_FAILED
+The runtime did not finish this task. Retry; if it still fails, check the model and tool connections.
+```
+
+(`src/dsh-history-display.mjs:6`)
+
+A failed turn **stays** in history and is never rewritten as a success. Retrying starts a new turn with a new sequence number. For per-code diagnosis see [troubleshooting](../help/troubleshooting.mdx).
+
+## Does history survive a refresh
+
+Yes. History is persisted by the DSH host, and Studio only makes a **bounded read-only projection** of it (`src/frozen-session-history.mjs:1-3`). It never writes a second store.
+
+The projection does three things:
+
+| Behaviour | Notes |
+| --- | --- |
+| Event allowlist | Only public events are projected: `turn/*`, `user/message`, `assistant/message`, `tool/call`, `tool/result` |
+| Grouping by turn | Groups run from `turn/start` to `turn/end`; empty turns are not returned |
+| Redaction | Private keys, `Bearer`/`Basic` tokens, `sk-*`, `AKIA*`, cookies and any `*_key`/`token`/`password` field are replaced with `[redacted credential]` (`src/dsh-history-display.mjs:10-21`) |
+| Attachments | Only ID, size, file name and dimensions are shown; attachment contents are **never** fetched automatically |
+
+## Conversation rewind
+
+If a run goes sideways you can rewind. The "**Conversation rewind**" section in a session (`src/client/dsh/native-conversation.mjs`):
+
+1. Expand it to load the list of rewindable user inputs.
+2. Pick one and click "Rewind to before this input" — **later conversation moves off the current branch, and workspace files are kept**.
+3. To rewind files too, click "Preview file rewind as well"; it lists the files to "delete:" and "restore:".
+4. Confirm with "Confirm conversation and file rewind".
+
+When tasks are still running it first warns "rewind will stop the tasks that need removing"; unsafe files are listed separately with `role="alert"` rather than silently skipped.
+
+## Next steps
+
+Once a run succeeds, read the [core concepts](../concepts/index.mdx) to understand why editing configuration does not affect a running session; to bind enterprise resources, see [resources and bindings](../concepts/resources.mdx).

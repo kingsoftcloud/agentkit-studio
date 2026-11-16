@@ -1,0 +1,123 @@
+---
+title: Degradation and retry
+description: How resource bindings, MCP sessions, and model calls recover from failure — and which recovery paths are proposals rather than shipped behaviour.
+status: new
+---
+
+**A failed resource recovery is a policy choice, not a fatal error.** One flaky MCP server must not take the whole Agent down, so the default behaviour is "degrade and keep going"; a deployment that would rather refuse a turn than run with fewer tools can opt into strict mode.
+
+<Callout type="info" title="How this page is written">
+  Every section is labelled. **Shipped** claims point at a line in `src/**`. **Proposal** sections describe design intent with **no** implementation in the current code — do not integrate against them.
+</Callout>
+
+## The two strategies (shipped)
+
+| Strategy | How to enable | Behaviour | Source |
+| --- | --- | --- | --- |
+| Default: degrade | Nothing to configure | A binding that failed to recover **is left out of the tool set**; the rest of the conversation and the model continue | `src/providers/dsh-runtime-plugin.mjs:219-233` |
+| Strict: refuse | `AGENTKIT_STRICT_RESOURCES=1` | Preset assembly fails outright and every turn is rejected | `src/host/bootstrap.mjs:135` |
+
+The strict switch accepts `1`, `true`, `yes` or `on`, case-insensitively; anything else counts as off (`src/host/bootstrap.mjs:135`).
+
+```sh
+# Local Studio: process environment variable
+AGENTKIT_STRICT_RESOURCES=1
+
+# Cloud Agent: the same key under Advanced.EnvironmentVariables
+```
+
+Under strict mode the error code is always `STUDIO_PRESET_RESOURCES_UNAVAILABLE`, and `message` carries the resource detail in the form `MCP/Tool <id>（<code>）` or `Skill <id>（<code>）` (`src/providers/dsh-runtime-plugin.mjs:224-233`).
+
+## Reprobe schedule after degradation (shipped)
+
+Degradation is not permanent. The Host re-probes at **30 seconds → 2 minutes → 10 minutes** from the moment of degradation:
+
+| Item | Value | Source |
+| --- | --- | --- |
+| Checkpoints | `[30000, 120000, 600000]` ms | `src/agent-preset-admission.mjs:26` |
+| Semantics | Offsets from degradation; each timer waits only the gap to the previous checkpoint | `:246` |
+| Strict mode | **Never re-probes** — it never degrades, so it needs no recovery path | `:240`, `:279` |
+| Recovery | Logs a `console.info` and swaps the placeholder for a ready registration | `:277-280` |
+| Scope teardown | Timers are `unref()`ed so they never block process exit | `:252` |
+
+<Callout type="warn" title="The probe only exists after a degradation">
+  A re-probe requires a placeholder carrying `resourcesUnavailable` in the registry. If the preset never degraded, this entire path never starts (`src/agent-preset-admission.mjs:241-242`).
+</Callout>
+
+## MCP connection recovery (shipped)
+
+| Behaviour | Detail | Source |
+| --- | --- | --- |
+| Single-flight connect | Concurrent first connects share one promise; a `generation` counter stops a stale connection from overwriting a new one | `src/local-resource-adapters.mjs:191-225` |
+| Credential fingerprint isolation | The cache key hashes endpoint, transport, command, environment and sorted headers | `:181-185` |
+| Session expiry replays **once** | On a definite session failure, retire the old connection, rebuild, and retry at most once | `:274-296` |
+| Tool errors are not retried | `MCP_TOOL_FAILED` is an application result, not a transport failure, and propagates | `:290-291` |
+| Writes are never auto-retried | An unconfirmed memory write throws `MEMORY_RESPONSE_UNKNOWN` and asks you to verify | `:26` |
+| Retry classification | `retryClass` is `pre_dispatch`, `session_expired` or `transport_ambiguous` | `:282`, `:296-297` |
+
+`retryClass` means: `pre_dispatch` never left the process, `session_expired` was rebuilt after a dead session, and `transport_ambiguous` was interrupted with **unknown side effects** — the last one must never be replayed blindly.
+
+## Observability (shipped)
+
+Every real resource adapter call appends one durable, content-free `studio/resource-check` event:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `kind` | `skill` \| `skill-space` \| `knowledge-base` \| `memory-instance` | Resource kind |
+| `resourceId` | string | Matches `^[A-Za-z0-9_.:-]{1,200}$` |
+| `action` | `load` \| `search` \| `recall` \| `write` | Action |
+| `status` | `succeeded` \| `failed` | Outcome |
+| `durationMs` / `hitCount` / `definitionCount` | non-negative integer (optional) | Quantities |
+| `accepted` | boolean (optional) | Whether it was accepted |
+| `code` | upper-case code (optional) | Matches `^[A-Z][A-Z0-9_]{0,100}$` |
+
+Source: `src/resource-checks.mjs:1-27`. Anything outside that allowlist is dropped — this event never leaks query text or returned content.
+
+## Error classification (shipped)
+
+| Code | Trigger | Retryable |
+| --- | --- | --- |
+| `MCP_CONNECT_FAILED` | Connection failed | Yes (next probe) |
+| `MCP_AUTH_FAILED` | HTTP 401 | No, update credentials |
+| `MCP_PERMISSION_DENIED` | HTTP 403 | No, fix permissions |
+| `MCP_ENDPOINT_NOT_FOUND` | HTTP 404 | No, check the endpoint |
+| `MCP_TLS_FAILED` | Certificate verification failed | No |
+| `MCP_SESSION_EXPIRED` | Session expired | Yes, replayed once automatically |
+| `MCP_TOOL_DISCOVERY_FAILED` | Tool catalogue fetch failed | Yes |
+| `MCP_TOOL_FAILED` | Tool returned an error | No (application result) |
+| `MCP_CREDENTIAL_MISSING` | A declared header has no credential | No, configure it in Host settings |
+| `MCP_JSON_CODEC_UNAVAILABLE` | Client lacks the exact JSON parser contract | No |
+| `MCP_AUTHORITY_INVALID` / `MCP_AUTHORITY_STALE` | Invocation authority failed or went stale | No |
+| `MEMORY_RESPONSE_UNKNOWN` | Memory service did not confirm | No, verify by hand |
+
+Source: `src/local-resource-adapters.mjs:95-126`, `:26`, `:65`.
+
+## Proposals (not implemented)
+
+<Callout type="warn" title="None of the following exists in the code today">
+  These are design intentions with **no** implementation, configuration key or API. Do not integrate against them and do not record them as accepted.
+</Callout>
+
+| Proposal | Intended shape | Current state |
+| --- | --- | --- |
+| Manual retry entry point | A "retry this call" action on the resource status page | Only automatic re-probes exist; there is no `AGENTKIT_MCP_RETRY`-style switch |
+| Idempotency identity | Every resource call carries an `IdempotencyKey` so replay cannot duplicate side effects | Only deployment, build and evaluation paths carry one; resource calls do not |
+| Single absolute deadline | One deadline per turn instead of per-layer timers | Today budgets are layered: Codex idle/stream, 15-minute frozen runtime, 60-second MCP tool |
+| safe-read recovery | Read-only tools may be replayed when side effects are uncertain | `readOnly: false` and `concurrentSafe: false` are hard-coded — unknown external effects never earn safe-read (`src/providers/native-dsh-tools.mjs:952-954`) |
+| Resource events as first-class UI actions | Resource check events drive page actions | The event ships, but the UI only displays it |
+
+<Callout type="error" title="Never mask unknown side effects with a retry">
+  When `retryClass` is `transport_ambiguous`, the remote side may already have executed. The correct response is to reconcile — read the current state back — not to send the call again. That constraint already holds before any of the proposals land.
+</Callout>
+
+## Relationship to the transport layer (shipped)
+
+Host-side `fetch` is pinned to Undici rather than Node's native fetch: on Node 22 the native path fails with `UND_ERR_INVALID_ARG: invalid content-length header` once the first `web_fetch` installs the legacy dispatcher. Resource RPC, model discovery, MCP transports and the Host-created model handler therefore share one implementation (`src/http-fetch.mjs:1-5`).
+
+## Related pages
+
+<Cards>
+  <Card title="Managed runtime lifecycle" href="/en/docs/deployment/managed-runtime-lifecycle">19 deployment states and the capability matrix</Card>
+  <Card title="Runtime comparison" href="/en/docs/deployment/runtimes-compare">Which runtime takes which recovery path</Card>
+  <Card title="Troubleshooting" href="/en/docs/help/troubleshooting">Look up an error code</Card>
+</Cards>

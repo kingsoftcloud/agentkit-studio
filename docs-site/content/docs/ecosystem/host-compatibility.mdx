@@ -1,0 +1,164 @@
+---
+title: Host 兼容性
+description: Studio 如何判断当前 DSH 宿主能否执行能力：5 个能力探针、3 个功能闸门、基线比较与被拒绝时的错误码。
+status: new
+---
+
+**Studio 在执行任何原生能力之前先问一次宿主「你是谁」。** 问不到就拒绝，不猜、不降级。
+
+兼容性判定有三个维度，全部通过才放行：
+
+| 维度 | 比什么 | 变量 |
+| --- | --- | --- |
+| 基线 | 运行中的 DSH 版本是否**精确等于**清单声明 | `requiredDsh` |
+| 契约 | 兼容契约版本号是否相等 | `requiredHostContract` |
+| 能力 | 宿主服务上是否存在约定的方法 | `capabilities` |
+
+源码：`src/host/compatibility.mjs:15-33`。
+
+## 清单声明
+
+```json
+{
+  "requiredDsh": "0.2.2-rc.1",
+  "requiredHostContract": 1,
+  "capabilities": [
+    "studio.agent.catalog",
+    "studio.runtime.capabilities",
+    "studio.session.adapter",
+    "studio.workspace.dock"
+  ]
+}
+```
+
+基线来自 `studio.plugin.json`，实际版本来自 DSH 的公开启动 API `getDshRuntimeVersion()`。
+源码：`src/host/compatibility.mjs:53-71`。
+
+<Callout type="error" title="显示版本不能授权执行">
+  `AGENTKIT_STUDIO_DSH_VERSION` 只影响界面展示。把它改成期望值**不会**让能力通过——
+  真实版本只能从运行中的 DSH 包读取。读不到就按不兼容处理。
+  源码：`src/host/compatibility.mjs:55-62`。
+</Callout>
+
+## 五个能力探针
+
+| 能力 id | 探测什么 | 通过条件 |
+| --- | --- | --- |
+| `preset-composition` | Agent 预设注册表 | `agentPresets.register` 与 `agentPresets.pluginsFor` 都是函数 |
+| `agent-loop-origin` | 请求来源判定 | `isAgentLoopRequest` 是函数 |
+| `session-controller` | 会话控制器 | `create`/`selectModel`/`resolveAgent`/`prompt`/`page`/`projections` 六个方法齐全 |
+| `automation-policy` | 自动化策略闸门 | `agents.withoutInitiator` + `permissionPresets.set` + `approval.setPolicy` |
+| `request-fingerprint` | 请求指纹 | `promptFingerprintVersion === 1` 且 `prompt` 是函数 |
+
+每个探针返回 `1`（通过）或 `0`（缺失）。
+源码：`src/host/compatibility.mjs:18-24`。
+
+<Callout type="warn" title="探针不创建会话">
+  `inspect()` 只读服务形状，不调用 `create`、不发请求、不写磁盘。
+  重复调用是安全的——而且**必须**重复调用：上一代 Host 或注册表的检查结果不能替新宿主背书。
+  源码：`src/host/compatibility.mjs:12-14`。
+</Callout>
+
+## 三个功能闸门
+
+| 功能 | 需要的能力 | 用在哪 |
+| --- | --- | --- |
+| `agent-presets` | `preset-composition` + `agent-loop-origin` | 选择 Agent 预设、把预设组合进会话 |
+| `automation` | 上面两个 + `session-controller` + `automation-policy` | 自动化与调度 |
+| `frozen-runtime` | 上面四个 + `request-fingerprint` | 冻结运行时的请求预算与重放 |
+
+功能是能力的**累积**：`frozen-runtime` 需要全部五个。
+源码：`src/host/compatibility.mjs:5-9`。
+
+## 判定结果
+
+```js
+const report = hostCompatibility.inspect();
+// {
+//   baseline: { required: '0.2.2-rc.1', actual: '0.2.2-rc.1', compatible: true },
+//   contract: { required: 1, actual: 1, compatible: true },
+//   capabilities: { 'preset-composition': 1, 'agent-loop-origin': 1, ... },
+//   features: {
+//     'agent-presets': { available: true, requiredCapabilities: {...}, missingCapabilities: [] },
+//     ...
+//   }
+// }
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `baseline.compatible` | 字符串相等比较的结果；`actual` 为 `null` 即不兼容 |
+| `contract.compatible` | 契约号相等 |
+| `features[x].available` | 基线 **且** 契约 **且** 无缺失能力 |
+| `features[x].missingCapabilities` | 缺哪些能力 id |
+
+源码：`src/host/compatibility.mjs:25-32`。
+
+## 被拒绝时
+
+任何功能闸门失败都抛同一个错误：
+
+```json
+{
+  "code": "STUDIO_HOST_INCOMPATIBLE",
+  "status": 503,
+  "message": "Studio frozen-runtime is unavailable: request-fingerprint. Install the compatible Studio Host.",
+  "details": {
+    "status": 503,
+    "feature": "frozen-runtime",
+    "baseline": { "required": "0.2.2-rc.1", "actual": "0.2.1-rc.2", "compatible": false },
+    "contract": { "required": 1, "actual": 1, "compatible": true },
+    "missingCapabilities": []
+  }
+}
+```
+
+### 三条拒绝原因
+
+| `message` 里出现的片段 | 含义 | 处理 |
+| --- | --- | --- |
+| `DSH baseline` | 版本不相等 | 把 DSH 升到 `requiredDsh` 声明的版本 |
+| `compatibility contract` | 契约号不相等 | 升级 Studio 插件到匹配契约号的版本 |
+| 逗号分隔的能力 id 列表 | 服务方法缺失 | 宿主版本对但服务没挂载——检查插件是否全部加载 |
+
+源码：`src/host/compatibility.mjs:34-43`。
+
+## 从外部查询
+
+| 入口 | 说明 |
+| --- | --- |
+| `host/compatibility` operation | 返回当前检查结果，需要认证 |
+| `window.__AGENTKIT_STUDIO__.hostCompatibility` | 浏览器文档里注入的同一份结果 |
+| `hostCompatibility.inspect()` | Host 进程内直接调用 |
+
+两个外部入口**都不暴露**凭证、文件系统路径或会话内容。
+源码：`src/index.mjs:31-45`、`docs/host-compatibility.md`。
+
+## 启动时 vs 执行时
+
+| 时机 | 行为 |
+| --- | --- |
+| Host 启动 | 计算一次兼容性，注入到浏览器文档 |
+| 原生执行前 | 每个功能各自再查一次（`require(feature)`）；Host 可能重启服务或换注册表，启动时的结论会过期 |
+| 未知功能名 | 抛 `TypeError: Unknown Studio Host feature: <name>` |
+
+源码：`src/host/compatibility.mjs:34-37`。
+
+## 排查清单
+
+```sh
+node -p "require('./studio.plugin.json').requiredDsh"   # 清单声明的基线
+node -p "require('./dsh-pin.json').version"             # 打包时固定的版本
+node -e "import('@deepseek-ai/dsh-app-boot').then(m => console.log(m.getDshRuntimeVersion?.()))"
+```
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 前两行不一致 | 打包时用了错误的清单 | 重新对齐 `studio.plugin.json` 与 `dsh-pin.json` |
+| 第三行输出 `undefined` | 运行环境里没有 DSH 启动包 | 所有原生能力都不可用，修复 DSH 安装 |
+| `missingCapabilities` 非空 | 宿主版本对但服务没挂载 | 对照「五个能力探针」表找到缺的方法，检查官方插件是否启用 |
+| 显示版本正确但检查失败 | 只改了 `AGENTKIT_STUDIO_DSH_VERSION` | 显示版本不参与授权，见上方 Callout |
+
+## 相关
+
+DSH 基线与其他版本号见[版本兼容表](../releases/compatibility.mdx)，插件清单字段见 [DSH 插件作者指南](./dsh-plugin-authoring.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。

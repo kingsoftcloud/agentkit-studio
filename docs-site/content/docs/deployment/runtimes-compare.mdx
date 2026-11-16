@@ -1,0 +1,120 @@
+---
+title: 三运行时对照
+description: 用 loop 归属、会话归属、Run 持久状态、Studio 接缝、能力集五个维度，横向比较 DSH Native、Star Harness 与 Codex。
+status: new
+---
+
+三个运行时的差别不在「谁更聪明」，而在**哪一侧拥有状态**。下面的对照全部来自 `src/runtime-contract.mjs` 的能力矩阵，没有一条来自产品文案。
+
+## 五个维度横向对照
+
+| 维度 | DSH Native Harness | Star Harness | Codex Agent |
+| --- | --- | --- | --- |
+| **model/tool loop 归属** | DSH 原生循环（`owner: 'dsh'`） | 独立 Harness 进程（`owner: 'ksadk-harness'`，`execution: 'native-kernel'`） | Codex App Server（`owner: 'studio'`，`execution: 'codex-app-server'`） |
+| **会话 / transcript 归属** | DSH Session，事件源 `dsh-session` | 原生 Run 存储，事件源 `native-run-store` | DSH Session，事件源 `studio-codex-adapter` |
+| **流式归属** | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
+| **Run 持久状态** | DSH 原生持久化 + `replay` | 持久回执（`durable-receipts`）+ `resume` | DSH 原生持久化 + `replay` |
+| **Studio 接缝** | 原生执行直通，Studio 只做资源与模型投影 | 协议客户端 `agentkit.engine/v1` 或 `agentkit.native-dsh-turn/v1` | 进程内适配器 + 临时 Codex thread |
+| **能力集** | `session`、`session-events`、`stream`、`cancel`、`replay`、`persistence`、`build-binding` | `native-run`、`durable-receipts`、`tool-approval`、`cancel`、`resume`、`child-tasks` | `session`、`stream`、`cancel`、`replay`、`build-binding` |
+| **契约版本** | `agentkit.studio.runtime/v1` | `agentkit.native-dsh-turn/v1` | `studio.codex.adapter/v1` |
+
+依据：`src/runtime-contract.mjs:19-35`。
+
+## 从能力集能直接读出的差异
+
+| 能力 | DSH Native | Star Harness | Codex | 含义 |
+| --- | :--: | :--: | :--: | --- |
+| `session` | 有 | 有（`native-run`） | 有 | 三者都产出可见会话 |
+| `cancel` | 有 | 有 | 有 | 都能中断当前轮 |
+| `replay` | 有 | 无 | 有 | 只有 DSH 侧能按原生请求重放 |
+| `persistence` / `durable-receipts` | `persistence` | `durable-receipts` | 无独立项 | 落盘保证的形态不同 |
+| `resume` | 无 | **有** | 无 | 只有 Star Harness 支持跨进程续跑 |
+| `child-tasks` | 无 | **有** | 无 | 只有 Star Harness 有子任务模型 |
+
+<Callout type="info" title="「无」不是缺陷，是边界">
+  `resume` 与 `child-tasks` 缺失意味着 DSH Native 与 Codex 的 Run 由 DSH 会话生命周期托管；Star Harness 自己拥有 Run 账本，所以它必须自带恢复语义。选型时看你要的是「会话连续」还是「Run 可恢复」。
+</Callout>
+
+## 可创建性矩阵
+
+| 运行时 | `ALLOWED_RUNTIME_TYPES` | 新建表单 | 编辑既有 Agent | 进入便携包 / 部署 |
+| --- | :--: | :--: | :--: | :--: |
+| `dsh-native` | 是 | 是（默认） | 是 | 是 |
+| `codex` | 是 | 是 | 是 | 是 |
+| `harness` | 是 | **显示但不可选** | 是 | 是 |
+| `native-engine` | **否** | 否 | 否 | **否** |
+
+依据：`src/client/theme.mjs:26`、`src/client/pages/agent-form.mjs:28`、`:61`。
+
+<Callout type="warn" title="Star Harness 当前不可新建">
+  `creatableRuntime` 在 `editing` 为假时返回 `false`，而 `allowHarnessRuntime` 没有任何调用方传 `true`（`src/client/pages/agent-form.mjs:28`、`:61`）。按钮仍然渲染出来，但带「未开放」徽章且 `disabled`（`:265-267`）。已有 Star Harness Agent 仍可编辑与运行，新建 Agent 时无法选中它。
+</Callout>
+
+## `runtime.type` 字段
+
+<TypeTable
+  type={{
+    'runtime.type': {
+      description: '执行该修订版本循环的运行时。写入后由 DSH 会话路由读取，不随模型选择变化。',
+      type: "'dsh-native' | 'harness' | 'codex' | 'native-engine'",
+      default: "'dsh-native'",
+    },
+    'runtime.contract': {
+      description: '该运行时对应的能力矩阵契约版本，由运行时自身声明。',
+      type: 'string',
+    },
+    'spec.bindings': {
+      description: '模型、工具、MCP、Skill 与策略绑定。托管声明会覆盖本地创作默认值。',
+      type: 'object',
+    },
+  }}
+/>
+
+默认值来自 `STUDIO_DEFAULT_AUTHORING_RUNTIME = 'dsh-native'`（`src/authoring-defaults.mjs:4`）。
+
+## Run 身份的四个必填项
+
+无论选哪条路径，一次 Run 都必须能解析出同一组标识，否则在路由前就被拒绝：
+
+| 字段 | 必填 | 校验 |
+| --- | :--: | --- |
+| `agentId` | 是 | 非空字符串 |
+| `sessionId` | 是 | 非空字符串 |
+| `runId` | 是 | 非空字符串 |
+| `revision` | 是 | 匹配 `^\d+$` 且 ≥ 1 |
+| `buildId` | 是 | 非空字符串 |
+
+缺失任一项抛 `RUN_IDENTITY_INVALID`；与路由绑定的 `agentId` / `sessionId` 不一致抛 `RUN_IDENTITY_MISMATCH`（`src/runtime-contract.mjs:43-64`）。
+
+## 切换运行时
+
+| 操作 | 行为 | 依据 |
+| --- | --- | --- |
+| 编辑既有 Agent | 保留原运行时，不自动切换 | `src/client/pages/agent-form.mjs:48` |
+| 新建时选 DSH Native | 清空已选工具，避免残留绑定进入全新原生循环 | `:83` |
+| 新建时想选 Star Harness | 不可用——`creatableRuntime` 只在 `editing` 为真时放行 | `:61` |
+| 切到 `native-engine` | 不可用——不在 `ALLOWED_RUNTIME_TYPES` 内 | `src/client/theme.mjs:26` |
+
+切换运行时不会迁移已有的 Run 历史：旧会话仍按原运行时打开。
+
+## 运行目标是否就绪
+
+「启动检查」里的**运行目标目录**一行只统计 `ALLOWED_RUNTIME_TYPES` 内的类型，并用界面名展示：
+
+| 检查结果 | 含义 | 依据 |
+| --- | --- | --- |
+| `confirmed` | Host 返回了至少一个受支持的运行目标 | `src/client/state/start-checks.mjs:21-24` |
+| `missing` | Host 尚未登记任何受支持的运行目标 | 同上 |
+| `unknown` | 目录读取失败，或旧 RPC 只给了默认原生条目 | `:20`、`:23` |
+
+<Callout type="info" title="旧连接的回退不算目录">
+  旧版 RPC 载体只返回一个 `source: 'dsh'` 的默认原生条目，那不是真实的运行目标目录。Studio 把它判为 `unknown` 而不是 `confirmed`，以免把「连接降级」显示成「运行时就绪」（`src/client/state/start-checks.mjs:20`）。
+</Callout>
+
+## 相关页面
+
+<Cards>
+  <Card title="DSH Native Harness" href="/docs/deployment/dsh-native">默认运行时的执行模型与限制</Card>
+  <Card title="Star Harness" href="/docs/deployment/agentkit-harness">独立 Harness 进程的配置入口</Card>
+  <Card title="Codex Agent" href="/docs/deployment/codex">Codex App Server 适配层</Card>
+</Cards>

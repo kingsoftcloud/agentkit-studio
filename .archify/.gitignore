@@ -1,0 +1,4 @@
+# Archify 产物（HTML 渲染 + 门禁回执）是构建副产物；候选 JSON 才是源。
+**/*.html
+**/*.json
+!**/candidate.json

@@ -1,0 +1,155 @@
+---
+title: Desktop update channels
+description: Four channels × two feed targets × two layouts — how updates ship, why nightly is the default, and what the compatibility lane does.
+---
+
+**A release is not one file; it is a matrix of eight feed keys.** A client only trusts the channel sealed into its own `app-update.yml`, and that cannot be changed remotely — so every publication must maintain several lanes at once.
+
+## Channels (4)
+
+| Channel | Kind | Accepts prerelease | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `nightly` | Native | ✅ | **Yes** | Product default lane, `allowPrerelease = true` |
+| `latest` | Native | ❌ | — | GA lane; three-segment releases only |
+| `preview` | Compatibility | ✅ | — | Historical lane, mirrored on every publication |
+| `stable` | Compatibility | ❌ | — | Historical lane, same comparison rule as `latest` |
+
+Source: `src/desktop-release-channels.mjs:20-26,59`.
+
+### Why nightly is the default
+
+| Fact | Consequence |
+| --- | --- |
+| The pinned DSH version carries an `-rc.N` suffix | The desktop version `<DSH version>.<date>.<ordinal>` inherits it |
+| Every Studio build is therefore a prerelease | `latest` / `stable` reject it |
+| The DSH update coordinator sets `allowPrerelease = channel === 'nightly'` | Only `nightly` accepts prereleases |
+
+Source: `src/desktop-release-channels.mjs:10-16,51-58`.
+
+<Callout type="error" title="A prerelease feed on latest breaks updates for every client">
+  The DSH update coordinator throws on a prerelease version in the `latest` lane, and the client cannot even
+  run an update check. Packaging therefore refuses up front: `assertChannelSupportsVersion` fails while the plan is built.
+  Source: `src/desktop-release-channels.mjs:108-124`.
+</Callout>
+
+## Feed targets (2)
+
+| Target | Platform | Channel metadata filename |
+| --- | --- | --- |
+| `mac-arm64` | macOS Apple Silicon | `<channel>-mac.yml` |
+| `win-x64` | Windows x64 | `<channel>.yml` |
+
+Source: `src/desktop-release-channels.mjs:49,127-134`.
+
+<Callout type="warn" title="There is no third target">
+  `RELEASE_FEED_TARGETS` has exactly two entries. `product.json` lists a second macOS architecture's icon
+  configuration, but that only feeds packaging input validation — there is **no** corresponding feed.
+</Callout>
+
+## Feed layouts (2)
+
+| Layout | Object root | Allowed binary prefixes | Purpose |
+| --- | --- | --- | --- |
+| `studio` | `studio/` | `/studio/` | Current canonical layout |
+| `legacy` | `dsh-desk/` | `/studio/` or `/dsh-desk/bin/` | Historical `dsh-desk/feeds/...` entry |
+
+Source: `src/desktop-release-feed.mjs:25-42`.
+
+Layout and binary location are validated **separately**: a `legacy` feed legitimately points at the canonical
+`studio/<version>/` bytes, while feeds written by pre-Studio builds point at `dsh-desk/bin/...`. Both prefixes are accepted.
+
+## The eight feed keys
+
+```text
+<object root>/feeds/<target>/<channel metadata filename>
+```
+
+| Target | Native lanes (`studio` layout) | Compatibility lanes (`legacy` layout) |
+| --- | --- | --- |
+| `mac-arm64` | `studio/feeds/mac-arm64/{nightly,latest}-mac.yml` | `dsh-desk/feeds/mac-arm64/{preview,stable}-mac.yml` |
+| `win-x64` | `studio/feeds/win-x64/{nightly,latest}.yml` | `dsh-desk/feeds/win-x64/{preview,stable}.yml` |
+
+Source: `src/desktop-release-feed.mjs:71-76`.
+
+## Artifact paths
+
+macOS publication layout:
+
+| Asset | Path |
+| --- | --- |
+| DMG | `studio/<version>/AgentKit-Studio-mac-arm64.dmg` |
+| ZIP (incremental) | `studio/<version>/AgentKit-Studio-mac-arm64.zip` |
+| ZIP (full) | `studio/<version>/full/AgentKit-Studio-mac-arm64.zip` |
+| Blockmap | `studio/<version>/AgentKit-Studio-mac-arm64.zip.blockmap` |
+| Feed | `studio/feeds/mac-arm64/<channel>-mac.yml` |
+| Release record | `studio/feeds/mac-arm64/mac-arm64-release.json` |
+
+Source: `src/desktop-release-metadata.mjs:16-32`.
+
+<Callout type="info" title="Two publication modes">
+  `mode` is either `incremental` or `full`. Full mode places the ZIP under `full/` while the blockmap
+  still points at the version root — differential and full updates share one metadata document.
+</Callout>
+
+## Compatibility mirroring
+
+After every successful publication, the same feed **bytes** are copied onto the compatibility lane:
+
+| Property | Value |
+| --- | --- |
+| Compatibility lane | `preview` (`COMPATIBILITY_RELEASE_CHANNELS`) |
+| Copy method | Byte-for-byte; no re-signing, no binary re-upload |
+| Idempotency | Records `unchanged` when already identical; no duplicate upload |
+| Purpose | Historical installs jump **straight** to the newest release instead of first hopping to whatever version the lane froze at |
+
+Source: `src/desktop-release-feed.mjs:82-220`, `src/desktop-release-channels.mjs:35-46`.
+
+Mirror evidence is recorded in the publication report with fixed fields: `version`, `sourceChannel`,
+`targetChannel`, `targetLayout`, `objectKey`, `feedUrl`, `feedBytes`, `feedSha512`, `status`.
+`status` is either `updated` or `unchanged`. Source: `src/desktop-release-feed.mjs:82-101`.
+
+## Release flow
+
+```sh
+make desktop-package-preflight            # 1. refuse invalid channel × version
+make desktop-package-mac-arm64            # 2. package; artifacts land in .artifacts/
+make desktop-package-win-x64
+node scripts/desktop-release.mjs publish  # 3. immutable assets first, then advance the feed
+```
+
+| Order | Action | Why it cannot be reversed |
+| --- | --- | --- |
+| 1 | Preflight | Calls `assertChannelSupportsVersion`: `latest` / `stable` with a prerelease version fails immediately |
+| 2 | Package | Artifacts land in `.artifacts/` |
+| 3 | Upload DMG / ZIP / blockmap | **URLs are immutable**, so re-uploading is harmless |
+| 4 | Advance the feed | The feed is the only mutable object — an absolute URL to an immutable binary plus the digest `electron-updater` checks; reversing hands clients a 404 |
+| 5 | Mirror the compatibility lane | The publisher writes the same feed bytes onto `preview` automatically |
+
+## Configuration
+
+| Setting | Location | Current value |
+| --- | --- | --- |
+| Default environment | `product.json#desktop.updates.environment` | `production` |
+| Default channel | `product.json#desktop.updates.channel` | `nightly` |
+| Update origin | `product.json#desktop.updates.origin` | Injected by the build (never documented) |
+| Allowed environments | `scripts/product-config.mjs:47` | `production` / `test` |
+
+## Common errors
+
+| Error | Cause | Fix |
+| --- | --- | --- |
+| `channel is required` | Empty channel | Pass `--channel` or keep the product default |
+| `channel must be one of …` | Channel is not one of the four | Use `nightly` / `latest` / `preview` / `stable` |
+| `latest channel requires a stable three-segment version` | Prerelease on a stable lane | Ship on `nightly` |
+| `feed layout must be one of …` | Layout is neither `studio` nor `legacy` | Check `--compat-layouts` |
+| `feed target must be one of …` | Target is neither `mac-arm64` nor `win-x64` | Check `--target` |
+| `Studio storage must be an HTTPS origin` | Update origin is not a bare HTTPS origin | Remove path / query / credentials |
+| `release metadata does not identify its signed ZIP` | Filename in the feed does not match | Regenerate metadata |
+
+Source: `src/desktop-release-channels.mjs:77-124`, `src/desktop-release-feed.mjs:51-68`, `src/desktop-release-metadata.mjs:4-13`.
+
+## Related
+
+- Platform support matrix: [version compatibility](./compatibility.mdx)
+- Upgrade steps: [upgrade to v0.0.16](./upgrade-to-0.0.16.mdx)
+- What changed: [release notes](./release-notes.mdx)

@@ -1,0 +1,145 @@
+---
+title: 命令参考
+description: 56 个 make 目标与 99 个校验脚本的完整清单，含依赖关系、平台支持与源码位置。
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 命令入口
+
+仓库有两个执行面：`Makefile` 的 56 个目标（默认目标 `check`），以及 `scripts/` 下的 99 个校验脚本。
+
+| 入口 | 条数 | 什么时候用 |
+| --- | --- | --- |
+| `make <target>` | 56 | 日常开发、打包、门禁；目标带依赖与平台检查 |
+| `node scripts/verify-*.mjs` | 99 | 单点校验；门禁目标内部也是调它们 |
+| `node scripts/*.mjs` | 203 | 构建、发布、代码生成等非校验脚本 |
+
+<Callout type="info" title="先看依赖">
+`make` 目标大多有前置依赖（例如 `web-dev` 依赖 `profile-install`）。直接跑依赖链比手动按顺序敲命令安全。
+</Callout>
+
+## 平台支持
+
+桌面端只发布 macOS arm64 与 Windows x64 构建。仓库里另有 2 个面向 Intel Mac 的遗留目标，不属于受支持路径，因此不在下面的清单里。
+
+| 平台 | 架构 | 状态 |
+| --- | --- | --- |
+| `macOS` | `arm64` | 受支持，发布 `.dmg` |
+| `Windows` | `x64` | 受支持，发布 NSIS `.exe` |
+| `macOS` | `Intel` | **不受支持**，文档与发布物里都不出现 |
+
+## make 目标
+
+全部 56 个受支持目标，按定义顺序。空依赖显示为 `—`。
+
+| 目标 | 依赖 | 说明 | 位置 |
+| --- | --- | --- | --- |
+| `make setup` | — | 初始化开发环境：装依赖、打补丁、构建 Host、安装插件 | `Makefile:43` |
+| `make dev` | — | 启动本地开发服务器 | `Makefile:53` |
+| `make doctor` | — | 检查工具链、Host 修订、构建产物与已装插件 | `Makefile:56` |
+| `make cloud-identity` | — | 验证云端身份配置 | `Makefile:62` |
+| `make check` | — | 默认门禁：lint、类型与单元测试 | `Makefile:72` |
+| `make dsh-pin-check` | — | 校验 `dsh-pin.json` 与宿主一致 | `Makefile:75` |
+| `make client-module-gate` | — | 客户端模块边界门禁 | `Makefile:80` |
+| `make client-build` | — | 构建客户端产物 | `Makefile:84` |
+| `make test` | — | 运行单元测试 | `Makefile:87` |
+| `make public-surface-audit` | — | 审计公开边界与敏感信息 | `Makefile:90` |
+| `make secret-scan` | — | 扫描凭证泄漏 | `Makefile:95` |
+| `make public-gate` | — | 公开边界总门禁 | `Makefile:100` |
+| `make ref-parity` | — | 校验两条分支的引用一致性 | `Makefile:113` |
+| `make pack` | — | 打出插件 tarball | `Makefile:118` |
+| `make release-check` | `public-gate` | 发布前总检查 | `Makefile:122` |
+| `make runtime-source-stage` | — | 暂存运行时源码 | `Makefile:127` |
+| `make patch-format-check` | — | 校验补丁格式 | `Makefile:131` |
+| `make patch-manifest-check` | — | 校验补丁清单 | `Makefile:135` |
+| `make patch-source-check` | — | 校验补丁源码 | `Makefile:141` |
+| `make patch-source-verify` | — | 校验补丁源码摘要 | `Makefile:144` |
+| `make patch-source-import` | — | 导入补丁源码 | `Makefile:147` |
+| `make patch-source-export` | — | 导出补丁源码 | `Makefile:151` |
+| `make verify-patched-host` | — | 验证打补丁后的 Host | `Makefile:155` |
+| `make dsh-bootstrap` | — | 拉取并构建 DSH 基座 | `Makefile:162` |
+| `make profile-install` | `pack` | 把插件装进目标 Profile | `Makefile:176` |
+| `make profile-check` | — | 检查 Profile 状态 | `Makefile:196` |
+| `make patch-check` | — | 校验补丁能否应用 | `Makefile:203` |
+| `make patch-apply` | `patch-check` | 应用补丁 | `Makefile:210` |
+| `make verify-dsh` | — | 验证 DSH 基座 | `Makefile:213` |
+| `make verify-dsh-lifecycle` | — | 验证 DSH 生命周期 | `Makefile:218` |
+| `make verify-dsh-live-runtime` | — | 用真实运行时验证 DSH | `Makefile:222` |
+| `make verify-studio-plugin-lifecycle` | — | 验证插件生命周期 | `Makefile:227` |
+| `make verify-studio-desktop-dev` | — | 验证桌面开发运行时 | `Makefile:231` |
+| `make verify-desktop-update` | — | 验证桌面更新 | `Makefile:235` |
+| `make verify-desktop-differential` | — | 差分验证桌面产物 | `Makefile:240` |
+| `make verify-desktop-artifact` | — | 验证桌面安装包 | `Makefile:244` |
+| `make verify-dsh-sdk` | — | 验证 DSH SDK 契约 | `Makefile:248` |
+| `make web-build` | `client-build` | 构建 Web 客户端 | `Makefile:254` |
+| `make web-dev` | `profile-install` | 构建并启动 Web 开发环境 | `Makefile:260` |
+| `make web-start` | `web-dev` | 启动已构建的 Web 客户端 | `Makefile:265` |
+| `make desktop-build` | `client-build` | 构建桌面产物 | `Makefile:269` |
+| `make desktop-dev` | — | 构建并启动桌面开发运行时 | `Makefile:275` |
+| `make desktop-start` | `client-build` | 启动已构建的桌面运行时 | `Makefile:279` |
+| `make desktop-package-preflight` | `pack` | 桌面打包预检 | `Makefile:284` |
+| `make desktop-package-mac-arm64` | `desktop-package-preflight` | 打 macOS arm64 签名安装包 | `Makefile:291` |
+| `make desktop-package-mac-arm64-unsigned` | `desktop-package-preflight` | 打 macOS arm64 未签名包 | `Makefile:296` |
+| `make desktop-package-mac-arm64-dir` | `desktop-package-preflight` | 打 macOS arm64 目录形态（不装包） | `Makefile:300` |
+| `make desktop-package-win-x64` | `desktop-package-preflight` | 打 Windows x64 安装包 | `Makefile:313` |
+| `make desktop-package-win-x64-unsigned` | `desktop-package-preflight` | 打 Windows x64 未签名包 | `Makefile:316` |
+| `make desktop-check-package` | — | 检查桌面安装包 | `Makefile:319` |
+| `make docs-site-build` | — | 静态导出文档站 | `Makefile:326` |
+| `make docs-site-dev` | — | 本地起文档站开发服务器 | `Makefile:330` |
+| `make docs-site-check` | — | 文档站门禁：双语、链接与生成器 | `Makefile:333` |
+| `make docs-site-preview` | `docs-site-build` | 预览已导出的文档站 | `Makefile:336` |
+| `make ci` | `public-gate` | CI 总入口 | `Makefile:341` |
+| `make clean` | — | 清理构建产物与临时目录 | `Makefile:343` |
+
+## 校验脚本
+
+`scripts/verify-*.mjs` 共 99 个（顶层 98 个，另有 1 个在子目录），按文件名第二段分成 22 个家族。每个脚本的具体用途写在文件头注释里。
+
+| 家族 | 条数 | 脚本 | 验收什么 |
+| --- | --- | --- | --- |
+| `studio` | 39 | `verify-studio-catalog-ui.mjs` `verify-studio-client-pages-ui.mjs` `verify-studio-client-state-ui.mjs` `verify-studio-desktop-dev.mjs` `verify-studio-dsh-a2a-controls.mjs` `verify-studio-frozen-host.mjs` `verify-studio-host-startup.mjs` `verify-studio-http-scope.mjs` `verify-studio-native-a2a-busy-cancel.mjs` `verify-studio-native-a2a-inbound.mjs` `verify-studio-native-a2a-recovery.mjs` `verify-studio-native-a2a.mjs` `verify-studio-native-background.mjs` `verify-studio-native-child-a2a-recovery.mjs` `verify-studio-native-child-write-recovery.mjs` `verify-studio-native-children-web.mjs` `verify-studio-native-children.mjs` `verify-studio-native-e2b.mjs` `verify-studio-native-harness.mjs` `verify-studio-native-managed-a2a.mjs` `verify-studio-native-managed-children.mjs` `verify-studio-native-managed-crash.mjs` `verify-studio-native-management-web.mjs` `verify-studio-native-memory-web.mjs` `verify-studio-native-portable-runtime.mjs` `verify-studio-native-portable.mjs` `verify-studio-native-response-crash.mjs` `verify-studio-native-sidebar-ui.mjs` `verify-studio-native-sidebar-web.mjs` `verify-studio-native-skill-workflow.mjs` `verify-studio-native-vision.mjs` `verify-studio-node-builtins.mjs` `verify-studio-onboarding-ui.mjs` `verify-studio-persistence.mjs` `verify-studio-plugin-lifecycle.mjs` `verify-studio-product-profiles.mjs` `verify-studio-route-failures-ui.mjs` `verify-studio-startup-states.mjs` `verify-studio-team-host.mjs` | Studio 插件与桌面产品的端到端验收 |
+| `native` | 17 | `verify-native-codex-cli.mjs` `verify-native-dependencies.mjs` `verify-native-dsh-browser.mjs` `verify-native-dsh-numeric.mjs` `verify-native-dsh-output.mjs` `verify-native-dsh-turn.mjs` `verify-native-durable-approval.mjs` `verify-native-full-page.mjs` `verify-native-mcp-package.mjs` `verify-native-memory-browser.mjs` `verify-native-model-surface.mjs` `verify-native-owned-recovery.mjs` `verify-native-python-syntax-package.mjs` `verify-native-real-model.mjs` `verify-native-studio-install.mjs` `verify-native-thinking-browser.mjs` `verify-native-thinking-view.mjs` | 原生引擎、原生工具与原生会话 |
+| `dsh` | 9 | `verify-dsh-codex-tool-cards.mjs` `verify-dsh-lifecycle.mjs` `verify-dsh-live-runtime.mjs` `verify-dsh-node-store.mjs` `verify-dsh-plugin-market.mjs` `verify-dsh-product-presentation.mjs` `verify-dsh-runtime-adapter.mjs` `verify-dsh-runtime-retry.mjs` `verify-dsh-sdk-node-store.mjs` | DSH 基座、补丁与生命周期 |
+| `desktop` | 6 | `verify-desktop-artifact.mjs` `verify-desktop-client-source.mjs` `verify-desktop-differential.mjs` `verify-desktop-installed-update.mjs` `verify-desktop-module-graph.mjs` `verify-desktop-update-inputs.mjs` | 桌面运行时与安装包 |
+| `codex` | 5 | `verify-codex-command-events.mjs` `verify-codex-configured-model.mjs` `verify-codex-long-task.mjs` `verify-codex-plugins.mjs` `verify-codex-signing.mjs` | Codex App Server 与插件 |
+| `a2a` | 4 | `verify-a2a-host-decisions.mjs` `verify-a2a-observation-view.mjs` `verify-a2a-question-wait.mjs` `verify-a2a-session-events.mjs` | Agent-to-Agent 控制面 |
+| `windows` | 4 | `verify-windows-app-ui.mjs` `verify-windows-coexistence.mjs` `verify-windows-official-dsh.mjs` `verify-windows-online-update.mjs` | Windows 发布与更新 |
+| `agent` | 1 | `verify-agent-manifest.mjs` | Agent 目录 |
+| `agentengine` | 1 | `verify-agentengine-responses.mjs` | AgentEngine 控制面对接 |
+| `bundle` | 1 | `verify-bundle-host.mjs` | 可移植运行包 |
+| `client` | 1 | `verify-client-modules.mjs` | 客户端构建与模块图 |
+| `container` | 1 | `verify-container-bundle.mjs` | 容器部署环境 |
+| `deployed` | 1 | `verify-deployed-bundle.mjs` | 已部署运行时 |
+| `host` | 1 | `verify-host-dependency-lifecycle.mjs` | Host 路由与分发 |
+| `independent` | 1 | `verify-independent-workspace-host.mjs` | 原生引擎独立性 |
+| `ks3` | 1 | `verify-ks3-multipart.mjs` | KS3 存储 |
+| `macos` | 1 | `verify-macos-onboarding.mjs` | macOS 发布 |
+| `packaged` | 1 | `verify-packaged-drag-region.mjs` | 打包产物 |
+| `patched` | 1 | `verify-patched-dsh-host.mjs` | 打补丁后的 Host |
+| `portable` | 1 | `verify-portable-codex.mjs` | 可移植资源与凭证 |
+| `team` | 1 | `verify-team-template-catalog.mjs` | 专家团运行时 |
+| `verification/verify` | 1 | `verification/verify-assistant-deliverable-boundary.mjs` | — |
+
+## 版本与兼容性
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| make 目标 | `56` | 新增即更新本页，否则 `--check` 失败 |
+| 默认目标 | `check` | `make` 不带参数时执行 |
+| 校验脚本 | `99` | 门禁目标复用它们 |
+| 排除目标 | `2` | 面向 Intel Mac 的遗留目标，不对外发布 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| 目标定义 | `Makefile` |
+| 校验脚本 | `scripts/` |
+| 开发者体验 | `scripts/development-doctor.mjs` |
+| 文档站构建 | `docs-site/scripts/build-static.mjs` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |

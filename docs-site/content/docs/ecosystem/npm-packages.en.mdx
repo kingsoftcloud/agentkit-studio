@@ -1,0 +1,180 @@
+---
+title: npm packages
+description: The five packages we publish to npm — install commands, engine requirements, integrity checks, and how to verify an install.
+status: new
+---
+
+**Studio's primary distribution is the desktop installer; the npm packages are the path into an existing DSH environment.** The five split into three kinds: the product plugin itself, three standalone Harness packages, and one expert catalog.
+
+## The five packages
+
+| Package | Version | Purpose | Source |
+| --- | --- | --- | --- |
+| `@kingsoftcloud/agentkit-studio` | `0.0.16` | The product plugin (DSH plugin) | `package.json:2-3` |
+| `@kingsoftcloud/agentkit-harness-core` | `0.0.23` | Standalone Harness execution core | `package.json:133` |
+| `@kingsoftcloud/agentkit-harness-node` | `0.0.23` | Node adapter layer | `package.json:134` |
+| `@kingsoftcloud/agentkit-harness-ui` | `0.0.23` | Harness task UI | `package.json:135` |
+| `@kingsoftcloud/agentkit-expert-catalog` | `0.0.1` | Expert template catalog | `packages/expert-catalog/package.json:2-3` |
+
+<Callout type="info" title="The three Harness packages are dependencies, not separate installs">
+  `agentkit-harness-*` are declared in `agentkit-studio`'s `dependencies` (`package.json:133-135`), so installing
+  Studio pulls them in. Install them individually only when you need to pin a version or develop Harness in its own repo.
+</Callout>
+
+## Install
+
+<Tabs items={['DSH plugin manager (recommended)', 'pnpm', 'Desktop app']}>
+  <Tab value="DSH plugin manager (recommended)">
+    Find the entry in **Agents panel → Plugins → Plugin market** and click install, or pass a spec on the Host side:
+
+    ```sh
+    AGENTKIT_DSH_HOME=/tmp/isolated-dsh pnpm verify-dsh-plugin-market --execute --all
+    ```
+
+    `--execute` really writes to the profile. An isolated `AGENTKIT_DSH_HOME` or `DSH_HOME` is **required**,
+    otherwise the script refuses to run. Source: `scripts/verify-dsh-plugin-market.mjs:21-29`.
+  </Tab>
+  <Tab value="pnpm">
+    ```sh
+    pnpm add @kingsoftcloud/agentkit-studio@0.0.16
+    ```
+
+    The package is `private: false` with `publishConfig.access: public`, served from the public npm registry
+    (`package.json:4,160-163`).
+  </Tab>
+  <Tab value="Desktop app">
+    Just install the packaged app — the plugin is already bundled. macOS ships Apple Silicon only; Windows uses an
+    NSIS installer. See [version compatibility](../releases/compatibility.mdx).
+  </Tab>
+</Tabs>
+
+## Engine and peer requirements
+
+| Declaration | Value | Location |
+| --- | --- | --- |
+| `engines` | `node >=24.9.0`, `dsh 0.2.2-rc.1` | `package.json:86-89` |
+| `peerDependencies` | `@deepseek-ai/cordis ^4.1.0` | `package.json:127-129` |
+| `packageManager` / `license` | `pnpm@10.33.2` / `Apache-2.0` | `package.json:6,172` |
+
+<Callout type="warn" title="The expert catalog's engines differ from the main package">
+  `@kingsoftcloud/agentkit-expert-catalog` declares `node: "^22.23.4 || >=24.22.1"`
+  (`packages/expert-catalog/package.json:7`), stricter than the main package's `>=24.9.0`.
+  Its peer `@deepseek-ai/cordis ^4.0.4` is also one minor version behind.
+</Callout>
+
+## Package contents allowlist
+
+`files` decides what lands in the npm package (`package.json:25-45`). Understanding it explains "installed but something is missing":
+
+| Category | Contents |
+| --- | --- |
+| Source | `src`, `packages/expert-catalog/src` |
+| Build output | `dist` (including `dist/client.js`, produced by `prepack`) |
+| Manifests and contracts | `studio.plugin.json`, `dsh-pin.json`, `cordis.patch.yml` |
+| Assets and docs | `assets`, `third-party/ZCode-LICENSE`, `THIRD_PARTY_NOTICES.md`, `README.md`, `CHANGELOG.md` |
+| Ops scripts | Six under `scripts/`: `start-agent-bundle`, `verify-agent-manifest`, `start-agent-manifest`, `native-package-pins.json`, `native-package-integrity`, `verify-native-dependencies` |
+
+`dist/` is gitignored but **must** be in `files` — otherwise the installed package has no browser bundle.
+`prepack` runs `verify-native-dependencies.mjs && build-client.mjs && build-mcp-client.mjs` first (`package.json:56`).
+
+## How the Host mounts it
+
+The package reaches the Host through two manifests; both are required:
+
+| File | Role | Key fields |
+| --- | --- | --- |
+| `studio.plugin.json` | Declares identity, Host baseline, capabilities, contributions | `id: agentkit-studio`, `requiredHostApi: dsh-native/0.2.2-rc.1`, `requiredDsh: 0.2.2-rc.1`, `requiredHostContract: 1`, four `capabilities`, three `contributes` |
+| `cordis.patch.yml` | Inserts the plugin into the DSH composition graph | Trailing `insert: - id: agentkit-studio, name: '@kingsoftcloud/agentkit-studio'` |
+
+Three more `package.json` blocks tell the DSH frontend how to load it: `dsh.bundle.patch` points at `./cordis.patch.yml`
+(`:123-125`), `dsh.client.inject` declares 13 `@deepseek-ai/dsh-*` packages (`:92-105`), and `dsh.client.external`
+externalizes 14 dependencies (`:107-121`).
+
+Source: `studio.plugin.json:1-18`, `cordis.patch.yml:58-60`.
+
+## Integrity verification
+
+The three Harness packages carry **per-file SHA-256 digests**, not just a top-level integrity:
+
+```json
+{
+  "schemaVersion": "agentkit.native-registry-pins/v2",
+  "packages": {
+    "@kingsoftcloud/agentkit-harness-core": {
+      "version": "0.0.23",
+      "integrity": "sha512-68nKhUhrJp1uB3qkTDrKoELpEMlfVy8LBrK6Ddya5nqJb2RK6uuTrKVWQKJBcMJV2bGy9tGdTLS3U71GynxBtQ==",
+      "files": { "dist/capability-profile.mjs": "d9c394b03a34d0032d829e3f13f58d87f5132db5a3a02bdbc2281c4af9a2f5fc" }
+    }
+  }
+}
+```
+
+Shape: `schemaVersion` + `packages` (three packages) + `dependencyPackages` (transitive dependencies).
+Each package has `version`, `integrity` (sha512) and `files` (per-file sha256).
+Source: `scripts/native-package-pins.json:1-3`.
+
+```sh
+# Verify installed dependencies match the digests
+pnpm build:harness        # = node scripts/verify-native-dependencies.mjs
+```
+
+A digest mismatch means the package was replaced or the version drifted — **do not bypass it**; reinstall.
+
+## Verifying an install
+
+```sh
+node -e "console.log(require('@kingsoftcloud/agentkit-studio/package.json').version)"  # 1. manifest resolves
+pnpm verify-dsh-plugin-market --execute --all   # 2. Host compatibility + capability probes
+pnpm verify-studio-plugin-lifecycle             # 3. install/enable/disable/update/uninstall
+make check && make release-check                # 4. full gate
+```
+
+| Step | What it proves | Source |
+| --- | --- | --- |
+| 1 | The package version matches expectations | `package.json:3` |
+| 2 | Boots a real DSH Host, loads the Studio adapter, and runs `expectedEntries` + `service` probes for each curated plugin | `scripts/verify-dsh-plugin-market.mjs:15-40` |
+| 3 | All five lifecycle actions take effect against a real Host | `package.json:61` |
+| 4 | DSH pin, Node version, contract types, portability, and the full test suite | `package.json:49` |
+
+## The personal assistant plugin is published separately
+
+`@kingsoftcloud/agentkit-personal-assistant` is **not** a Studio dependency and is not a built-in capability.
+
+It appears in `scripts/check-dsh-plugin-purity.mjs:13` as a **forbidden dependency** — that rule keeps Studio a
+generic DSH plugin and prevents the personal assistant runtime from creeping back into the main package.
+
+| Fact | Meaning |
+| --- | --- |
+| Absent from `package.json` `dependencies` | Installing Studio does not bring it along |
+| Present in the purity gate's `forbidden` list | Any PR introducing it fails |
+| Requires a separate install | Install it from its own release channel, and track the DSH baseline yourself |
+
+Source: `scripts/check-dsh-plugin-purity.mjs:9-17`.
+
+## Publishing
+
+The npm package is published by GitHub Actions using **Trusted Publishing (OIDC)**; no token lives in the repo:
+
+| Step | Detail |
+| --- | --- |
+| Trigger / runner | `release: published` or manual `workflow_dispatch`; `ubuntu-24.04`, Node 22, pnpm `10.33.2` |
+| Prerequisite / build | `pnpm install --frozen-lockfile` → `pnpm test` → `npm run prepack` |
+| Idempotency | Exits early when the version is already published |
+| Publish | Exchanges the GitHub OIDC token for a short-lived npm token, then `pnpm publish --access public --no-git-checks --ignore-scripts` |
+
+Source: `.github/workflows/publish-npm.yml:1-65`.
+
+## Common failures
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `EBADENGINE` or immediate exit | Node below `24.9.0` | Upgrade Node, see [version compatibility](../releases/compatibility.mdx) |
+| `STUDIO_HOST_INCOMPATIBLE` | DSH is not `0.2.2-rc.1` | Align the DSH version exactly |
+| No UI / plugin fails to load | `dist/client.js` missing, or `cordis.patch.yml` not applied | Confirm `files` includes `dist` and `dsh.bundle.patch` points at the file; reinstall to trigger `prepack` |
+| Digest verification fails | Package replaced or version drifted | Reinstall; never edit `native-package-pins.json` to bypass |
+| `Cannot find module '@deepseek-ai/cordis'` | Peer unmet | Install `^4.1.0` (`^4.0.4` for the expert catalog) |
+| Personal assistant features missing | It is a separate package | Install it separately, see the section above |
+
+## Related
+
+The field-by-field manifest reference is in [DSH plugin authoring](./dsh-plugin-authoring.mdx), curated market plugins in [plugin market](./plugin-market.mdx), and Host version negotiation in [host compatibility](./host-compatibility.mdx).

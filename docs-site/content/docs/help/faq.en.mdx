@@ -1,0 +1,180 @@
+---
+title: FAQ
+description: Frequent questions about platform support, model credentials, runtimes, resource bindings, cloud capabilities and data ownership — each with its source.
+---
+
+Short questions and answers grouped by topic. Every answer points at the source so you can verify it yourself.
+
+## Installation and platforms
+
+<Accordions>
+<Accordion title="Why is there no Intel Mac installer?">
+
+macOS ships **Apple Silicon (arm64)** installers only. No Intel (x64) build exists, and none is planned.
+
+On Intel Macs use [the DSH plugin path](../getting-started/install.mdx#c-as-a-dsh-plugin) in the browser — same features, no desktop shell.
+
+</Accordion>
+<Accordion title="Does the desktop app need Node.js?">
+
+No. The desktop installer bundles its runtime. Only [the DSH plugin path](../getting-started/install.mdx#c-as-a-dsh-plugin) or [building from source](../getting-started/install.mdx#d-from-source) needs Node.js.
+
+</Accordion>
+<Accordion title="Must the host version match exactly?">
+
+Yes. `engines.dsh` is pinned to `0.2.2-rc.1` (`package.json:85`); on a mismatch the plugin is refused at startup rather than degraded.
+
+</Accordion>
+</Accordions>
+
+## Models and credentials
+
+<Accordions>
+<Accordion title="Where is the API key stored? Does it end up in the Agent configuration?">
+
+Only in host-side credential storage. The Agent configuration stores a **credential reference**, not the secret (`src/credential-ref.mjs`).
+
+Exporting an Agent, copying a template or reading the configuration therefore never leaks the key, and no plaintext appears in browser form back-fill or logs.
+
+</Accordion>
+<Accordion title="Can I configure more than one model?">
+
+Yes. Models, Tools, MCPs and Skills all support multiple bindings per Agent; **knowledge bases, memory and Skill Center default to one binding per kind** (`src/client/pages/resources.mjs:50`).
+
+Whichever model is marked "default" is used for new sessions.
+
+</Accordion>
+<Accordion title="Why do I lose my draft when I navigate away from model settings?">
+
+Because editing uses an **in-memory draft** (the source comments call it "option C"): every field change lands in memory, and only "Save" writes to host storage.
+
+Navigating away shows an "unsaved" chip, and refreshing or closing the window discards the draft. That is not a bug.
+
+</Accordion>
+</Accordions>
+
+## Agents and runtimes
+
+<Accordions>
+<Accordion title="Which runtime should I choose?">
+
+| Runtime | Best for |
+| --- | --- |
+| **DSH Native** (`dsh-native`) | The default; executed directly by the DSH host |
+| **Star Harness** (`harness`) | Cases that need an independent Harness service |
+| **Codex** (`codex`) | Goes through the Codex App Server |
+
+There is also `native-engine` (native engine, separate process), which is **not in the creatable list** — see [known limitations](./known-limitations.mdx#runtimes).
+
+</Accordion>
+<Accordion title="I changed the Agent configuration, but the running session did not change. Why?">
+
+A running session is bound to a **revision** — an immutable snapshot. Edits only affect the next turn or a new session.
+
+That is also why freezing a version makes behaviour reproducible: it locks that snapshot.
+
+</Accordion>
+<Accordion title="What is the default execution policy?">
+
+`workspace-write` (`src/execution-policy.mjs:10`). Three tiers, lightest to heaviest: `read-only` → `workspace-write` → `danger-full-access`.
+
+A requested mode can only **narrow**, never widen, the deployment's declared ceiling (`execution-policy.mjs:28-33`).
+
+</Accordion>
+</Accordions>
+
+## Resource bindings
+
+<Accordions>
+<Accordion title="Why can't the resource library change bindings directly?">
+
+The resource library only owns the **resource catalog lifecycle**: discovery, import, probing, viewing, deletion and status refresh.
+
+**Adding or changing Agent bindings** happens on the Agent create or edit page (`src/client/pages/resources.mjs:50`). The split is deliberate — the catalog is global, bindings are versioned.
+
+</Accordion>
+<Accordion title="Does a successful probe mean the resource works?">
+
+No. A probe only proves the **connection was established and the tool list was read**. Whether a tool can finish a task must be verified by calling it from the bound Agent.
+
+The MCP source comment is blunt: removing the configuration only affects this machine, while deleting a cloud MCP cleans up the cloud resource.
+
+</Accordion>
+<Accordion title="Does “imported locally” mean the Skill is usable?">
+
+No. **Imported locally** only means the files were saved on this machine; **visible in the cloud catalog** means the host downloads and loads it after binding.
+
+Neither state proves the script's dependencies were resolved or that the Agent executed it successfully.
+
+</Accordion>
+</Accordions>
+
+## Cloud and deployment
+
+<Accordions>
+<Accordion title="Why are the cloud pages empty?">
+
+Two common causes:
+
+1. No cloud AK/SK configured — reports `CLOUD_CREDENTIALS_MISSING`; go to Settings → Models & credentials → cloud credentials.
+2. Cloud execution permission not enabled — reports `CLOUD_EXECUTION_MODE_UNAVAILABLE`; it must be enabled on the deployment side.
+
+A local run succeeding does **not** mean cloud resources are available.
+
+</Accordion>
+<Accordion title="Can I delete a managed runtime someone else created?">
+
+No. Only instances created through the AgentEngine API can be deleted (`MANAGED_RUNTIME_REQUIRED`, `src/host/routes/agents.mjs:81`); delete externally created instances in the console.
+
+</Accordion>
+</Accordions>
+
+## Data, privacy and security
+
+<Accordions>
+<Accordion title="Does Studio upload my conversations?">
+
+No. Sessions are **persisted by the DSH host**, and Studio only makes a **bounded read-only projection** of them (`src/frozen-session-history.mjs:1-3`). It never writes a second store.
+
+</Accordion>
+<Accordion title="Will credentials show up in history?">
+
+No. Projection replaces private keys, `Bearer`/`Basic` tokens, `sk-*`, `AKIA*`, cookies and any `*_key`/`token`/`password` field with `[redacted credential]` (`src/dsh-history-display.mjs:10-21`).
+
+<Callout type="warn" title="Screenshots and terminal output are not covered">
+Automatic redaction only applies to **rendered history**. Redact credentials in screenshots and command output yourself before filing an issue.
+</Callout>
+
+</Accordion>
+<Accordion title="Which directories hold my data?">
+
+| Directory | Environment variable | Default |
+| --- | --- | --- |
+| Studio data root | `AGENTKIT_HOME` | `~/.agentkit` |
+| DSH host data | `DSH_HOME` | `~/.dsh` |
+| Codex data | `CODEX_HOME` | `~/.codex` |
+| Plugin discovery cache | — | `~/.cache/agentkit-studio/` |
+
+Uninstalling the app does not delete these directories; clean them up manually. See [installation · uninstall and clean up](../getting-started/install.mdx#uninstall-and-clean-up).
+
+</Accordion>
+</Accordions>
+
+## Versions and updates
+
+<Accordions>
+<Accordion title="Why are there three version numbers?">
+
+- **AgentKit Studio version** — the desktop app
+- **Studio plugin version** — product features and runtime adaptation layer
+- **DSH host compatibility version** — the pinned host baseline (`0.2.2-rc.1`), **not** the Studio product version
+
+(`src/client/pages/studio-settings.mjs:78-80`)
+
+</Accordion>
+</Accordions>
+
+## Still stuck
+
+- Look up an error code → [Troubleshooting](./troubleshooting.mdx); or confirm it is by design → [Known limitations](./known-limitations.mdx)
+- File an issue → [what an issue needs](./index.mdx#what-an-issue-needs)

@@ -16,6 +16,21 @@ For a source-linked plugin, run `pnpm build:client` before loading it in DSH.
 Normal checks, tests and packing run this build through their lifecycle hooks.
 The package allowlist deliberately includes `dist/` even though Git ignores it.
 
+## Documentation
+
+The public site lives in `docs-site/` (Fumadocs, bilingual). Every page has a
+Chinese `page.mdx` and an English `page.en.mdx`; `node --test
+tests/docs-site-i18n.test.mjs` enforces the 1:1 pairing, navigation parity, and
+link integrity, and runs as part of `make check`.
+
+```sh
+make docs-site-dev     # local dev server
+make docs-site-check   # bilingual parity and link gate
+make docs-site-build   # static export used by GitHub Pages
+```
+
+Read `docs-site/AUTHORING.md` before writing or restructuring a page.
+
 ## Local validation
 
 Run the smallest relevant checks first, then the complete package gate for changes that affect the product surface or release package:
@@ -37,7 +52,7 @@ commit; their own client bundle is never the expected signed artifact.
 Host patches are generated from the pinned maintenance branch archived in
 `host-source/`. Restore it with `make patch-source-import`, edit and test the
 maintenance commits, then run `make patch-source-export` and
-`make patch-source-verify`. See [the maintenance guide](docs/refactor-patches.md)
+`make patch-source-verify`. See [the patch governance guide](https://kingsoftcloud.github.io/agentkit-studio/docs/contributing/patches/)
 for the checkout variables and metadata requirements. Direct patch edits fail the
 build's source synchronization gate.
 

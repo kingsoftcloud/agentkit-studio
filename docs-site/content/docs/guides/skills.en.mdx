@@ -1,0 +1,184 @@
+---
+title: Bind a skill
+description: Write a valid SKILL.md, scan and import a local skill, then bind it to an agent.
+status: new
+---
+
+A skill is a reusable set of operating instructions plus bundled files. This page goes from "write a valid `SKILL.md`" to "the agent reads it during a session".
+
+<Callout type="info" title="Prerequisites">
+  - A directory containing `SKILL.md`. The filename must use exactly this spelling; matching is case-insensitive but the prefix must match.
+  - At most 4 directory levels deep, counted from the scan root.
+  - Dot-prefixed hidden files are skipped, except `.well-known`.
+  - If the skill directory contains `.py` / `.sh` / `.js` / `.ts` / `.ps1` scripts, or the body mentions network addresses, the import is flagged for human review.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Write SKILL.md
+
+`SKILL.md` declares its identity in YAML frontmatter; the body is the instructions the agent reads.
+
+```markdown
+---
+name: release-notes
+description: Draft release notes from commit history
+version: 1.0.0
+disable-model-invocation: false
+user-invocable: true
+---
+
+# Generate release notes
+
+1. Read the `git log` commits and group them by type.
+2. Emit three sections: Added / Fixed / Breaking changes.
+3. State the blast radius for every entry instead of just a title.
+```
+
+| Field | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `name` | Yes | — | Becomes the directory slug: lowercased, non-alphanumerics to `-`, at most 64 characters |
+| `description` | Yes | — | One line describing what the skill does |
+| `version` | No | `1.0.0` | Participates in the resource ID |
+| `disable-model-invocation` | No | — | When `true`, the model cannot invoke it; only the user can |
+| `user-invocable` | No | — | When `false`, the user cannot trigger it manually |
+
+<Callout type="warn" title="name determines the directory">
+  `name` becomes the directory name under `~/.agentkit/studio/skills/<slug>`.
+  A name made only of symbols fails with `SKILL_NAME_INVALID` because no valid slug can be generated.
+</Callout>
+</Step>
+
+<Step>
+### Open the scan dialog
+
+Go to **Resource library** → pick **Skill** → click **Scan local skills** in the top-right corner.
+
+<Callout type="info" title="Where to look">The **Scan local skills** button and the source filter dropdown on the Skill tab.</Callout>
+</Step>
+
+<Step>
+### Choose scan directories
+
+Leaving **Scan directories (comma-separated)** empty uses four default directories:
+
+```text
+~/skills
+~/.agents/skills
+~/.codex/skills
+~/.claude/skills
+```
+
+To scan elsewhere, enter absolute paths separated by commas, then click **Scan**.
+
+Scanning only reads files and never executes a script. Every directory containing `SKILL.md` is a candidate, up to 4 levels deep.
+
+Each candidate row shows the display name, path, version, file count, and one of three statuses:
+
+| Status | Meaning |
+| --- | --- |
+| Importable | The directory is valid and no directory with the same name exists |
+| Installed | The destination directory already exists; importing overwrites |
+| Invalid | `SKILL.md` is missing or the frontmatter failed to parse; hover for diagnostics |
+
+Candidates with scripts or network markers additionally show **contains scripts or network markers, human review required**.
+
+<Callout type="info" title="Where to look">The scan result list with all three statuses and the risk marker.</Callout>
+</Step>
+
+<Step>
+### Preview, then import
+
+Click **Preview** on a row to read that skill's full file tree and file contents. This is the only chance to verify content before importing — importing copies the files into the local skill store.
+
+Check the candidates you want and click **Import selected skills**.
+
+- A successful import produces a resource ID of the form `skill-<slug>-<version>`.
+- A conflicting entry needs a re-scan before it is overwritten.
+- Importing only means "files are saved locally" — it **does not mean script dependencies work, and does not mean the agent has been verified to execute it**.
+
+<Callout type="info" title="Where to look">The skill preview dialog with the directory tree and file content pane.</Callout>
+</Step>
+
+<Step>
+### Bind it to an agent
+
+Open **Agents** → select the target agent → Edit → **Bind capabilities** step → **Skills** block → click **Bind** and check one or more skills.
+
+- Multi-select is supported; the result is written to `bindings.skills[]`.
+- A repeated resource ID is loaded only once.
+- Continue to **Policy and confirmation** and the summary shows `N Skill`.
+
+<Callout type="info" title="Where to look">The Skills block in the **Bind capabilities** step with multi-select cards and the "N selected" counter.</Callout>
+</Step>
+
+<Step>
+### Optional: bind a cloud Skill Center
+
+Cloud skills live outside the local store and go through **Platform resources → Skill Center**:
+
+1. In the same step, find the **Skill Center** dropdown under **Platform resources**.
+2. Select a cloud Skill Space. Without a cloud connection the dropdown only offers "connect to the cloud first".
+3. The resulting configuration is `selectionMode: discovery`, `includePublic: false`, `executionMode: outer-agent`.
+
+Cloud skills are downloaded and unpacked by the Host when a session starts. The archive must contain `SKILL.md`, otherwise you get `SKILL_MANIFEST_MISSING`.
+</Step>
+
+</Steps>
+
+## What the runtime sees
+
+After a successful binding, the agent's system context gains an index (`src/skill-files.mjs:7`):
+
+```text
+已绑定的 Skill 文件：
+- release-notes: 从提交记录生成发布说明草稿
+  SKILL.md: "~/.agentkit/studio/skills/release-notes/SKILL.md"
+  资源目录: "~/.agentkit/studio/skills/release-notes"
+```
+
+Key conventions:
+
+- **Relative script paths are relative to the skill's resource directory, not the current workspace.** This is the most common source of confusion.
+- The prompt requires the agent to execute the bound script rather than substitute freshly written code.
+- When a file or dependency is unavailable, the agent must report it honestly instead of pretending it succeeded.
+- The body is truncated at 12000 characters, and the index is injected first.
+
+## What success looks like
+
+- The skill appears under **Installed / Connected** in the resource library with source **Local import**.
+- Clicking **View files** shows the directory tree and lets you read each file.
+- The skill is checked in the agent's **Bind capabilities** step.
+- A message matching the skill description produces a reply that cites concrete rules from `SKILL.md`.
+
+## Common errors
+
+| Error code | Cause | Fix |
+| --- | --- | --- |
+| `SKILL_MANIFEST_INVALID` | `SKILL.md` has no frontmatter, is missing `name` / `description`, or has invalid YAML | Add both required fields inside `---` fences |
+| `SKILL_NAME_INVALID` | `name` cannot produce a valid slug | Use letters, digits, and hyphens, for example `release-notes` |
+| `SKILL_MANIFEST_MISSING` | The cloud skill archive has no `SKILL.md` | Repackage so the file exists at the root or in a subdirectory |
+| `SKILL_ALREADY_EXISTS` | A skill with the same name is installed | Preview and overwrite, or change `name` |
+| `SKILL_CANDIDATE_NOT_FOUND` | The candidate was cleaned up | Re-scan; discovery sessions expire after 30 minutes |
+| `SKILL_DISCOVERY_TOKEN_INVALID` | The scan result expired | Click **Scan** again |
+| `SKILL_DISCOVERY_PATH_INVALID` | The candidate directory is not in this scan's records | Re-scan before importing; do not reuse an old dialog |
+| `SKILL_NOT_INSTALLED` | The bound skill does not exist locally | Import it first, or unbind it from the agent |
+| `SKILL_BINDING_INVALID` | The binding ID is empty or has surrounding whitespace | Select from the resource library instead of typing |
+| `SKILL_LOAD_AUTHORITY_CHANGED` | Skill authority changed while loading | Start a new session |
+| `SKILL_PREVIEW_PATH_INVALID` | The preview path escapes the skill directory | Only preview files listed in the tree |
+| `SKILL_SPACE_NOT_FOUND` | The cloud Skill Space is missing or inaccessible | Check the cloud connection and the space ID |
+| `RESOURCE_ADAPTER_MISSING` | A bound resource has no resolvable adapter | Verify the Host loaded the matching resource adapter |
+
+## Related reference
+
+| What you want to know | Where to go |
+| --- | --- |
+| The skill-to-resource binding model | [Resources and bindings](../concepts/resources.mdx) |
+| Scan, import, and storage implementation | `src/skill-discovery.mjs` |
+| Runtime skill projection and cloud unpacking | `src/skill-files.mjs` |
+| Binding and load ordering | `src/skill-bindings.mjs` |
+| The five `skills/*` operations | [Control protocol](../reference/operations.mdx) |
+| Binding MCP servers and knowledge bases | [Bind an MCP server](./mcp-servers.mdx), [Bind knowledge bases and Memory](./knowledge-memory.mdx) |

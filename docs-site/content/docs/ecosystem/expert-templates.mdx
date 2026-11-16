@@ -1,0 +1,171 @@
+---
+title: 专家模板
+description: 用 agentkit.studio.team-template/v1 定义专家团：字段表、角色蓝图约束、校验失败的错误码对照、发布与召唤流程。
+status: new
+---
+
+**专家模板是 JSON，不是代码。** 一个专家团模板描述「谁组成这个团队、每个角色有什么指令、能绑什么资源」，
+由 Studio 校验后交给 DSH Agent Teams 运行。
+
+| 概念 | 是什么 | 契约 |
+| --- | --- | --- |
+| 专家模板 | 单个预置 Agent 的配置快照 | 走 Agent 的 Revision 语义，见[核心概念](../concepts/agent-revision-build.mdx) |
+| 专家团模板 | 多角色协作单元 | `agentkit.studio.team-template/v1`（本页） |
+
+本页只讲专家团模板——它是唯一有独立 schema 契约的模板类型。
+
+## 顶层字段
+
+| 字段 | 类型 | 必填 | 约束 | 源码 |
+| --- | --- | --- | --- | --- |
+| `kind` | string | ✅ | 必须严格等于 `"team"` | `team-template-contract.mjs:52` |
+| `id` | string | ✅ | `/^[a-z][a-z0-9-]*$/`，≤128 字符 | `:53-54` |
+| `version` | string | ✅ | 严格 `\d+\.\d+\.\d+`（不允许 `-rc` 后缀） | `:54` |
+| `name` | string | ✅ | ≤120 字符 | `:55` |
+| `instructions` | string | ✅ | ≤16000 字符，专家团级协作指令 | `:56` |
+| `roles` | array | ✅ | **2–9** 个，且 `roles[0].name` 必须是 `lead` | `:57-58` |
+| `defaultModel` / `model` | string | — | ≤256 字符；不能是占位模型 | `:80` |
+| `contract` | string | — | 缺省填 `agentkit.studio.team-template/v1` | `:83` |
+| `catalogId` | string | — | 目录归属，可选 | `:48` |
+
+<Callout type="warn" title="专家团必须是 2 个角色起步">
+  `roles.length < 2` 直接失败。只有一个角色时不需要专家团——用普通专家模板。
+  源码：`team-template-contract.mjs:58`。
+</Callout>
+
+## 角色字段
+
+| 字段 | 类型 | 必填 | 约束 | 源码 |
+| --- | --- | --- | --- | --- |
+| `name` | string | ✅ | `/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/`，≤64 字符，团队内唯一 | `:61-62` |
+| `label` | string | — | ≤80 字符，缺省等于 `name` | `:65` |
+| `instructions` | string | — | ≤8000 字符 | `:66-67` |
+| `agentPreset` / `agentPresetId` | string | — | ≤256 字符 | `:68` |
+| `model` / `modelId` / `modelProfileId` | string | — | ≤256 字符；不能是占位模型 | `:69` |
+| `template.id` | string | ✅ | ≤256 字符，指向不可变模板 | `:40` |
+| `template.version` | string | ✅ | semver，≤64；省略时回落到专家团 `version` | `:45-47` |
+| `template.digest` | string | ✅ | ≤256 字符，内容锁 | `:46` |
+| `template.catalogId` | string | — | 缺省回落到专家团 `catalogId` | `:48` |
+
+### 角色名的两条硬规则
+
+| 规则 | 违反时 | 源码 |
+| --- | --- | --- |
+| 只有**第一个**角色可以叫 `lead` | `TEAM_TEMPLATE_ROLE_INVALID` | `:62` |
+| 角色名不能重复 | `TEAM_TEMPLATE_ROLE_INVALID` | `:62` |
+
+### 角色不能引用普通 Agent
+
+```json
+{
+  "name": "writer",
+  "agentId": "ar-12345"
+}
+```
+
+这样写会失败：`TEAM_TEMPLATE_ROLE_INVALID`，消息是
+「角色「writer」不能引用普通 Agent，请改用不可变的 template 引用」。
+
+**为什么？** 普通 Agent 是可变的——它的 Revision 会前进。专家团需要一个内容可复现的成员，
+所以只能引用带 `digest` 的不可变模板。源码：`team-template-contract.mjs:63`。
+
+## 角色蓝图（role spec）
+
+专家团模板里的 `template` 指向一个 Agent 定义；那个定义的 `spec` 由 `validateTeamRoleSpec` 再校验一遍：
+
+| 字段 | 约束 | 违反时 |
+| --- | --- | --- |
+| `runtime.type` | 只允许 `dsh-native` 或 `harness` | `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` |
+| `subAgents` / `sub_agents` | 禁止声明 | `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` |
+| `instructions.system` | 必须是非空字符串 | `TEAM_TEMPLATE_ROLE_SPEC_INVALID` |
+| `bindings` | 必须是对象（不能是数组） | `TEAM_TEMPLATE_ROLE_SPEC_INVALID` |
+| `bindings.modelProfileId` / `modelProfileIds[]` | 不能是占位模型 | `TEAM_TEMPLATE_MODEL_INVALID` |
+
+<Callout type="error" title="Codex 不在专家团支持范围内">
+  `TEAM_TEMPLATE_RUNTIMES` 只有两个值：`dsh-native` 和 `harness`。
+  即使 Studio 的 Agent 表单提供 `codex`，专家团角色也用不了它。
+  源码：`team-template-contract.mjs:4,9,94`。
+</Callout>
+
+## 占位模型
+
+模板里不允许残留占位符，否则召唤出来的团队会拿假模型去跑：
+
+| 占位值 | 检查位置 | 错误码 |
+| --- | --- | --- |
+| `one-team-model` | 专家团 `defaultModel` / `model` | `TEAM_TEMPLATE_MODEL_INVALID` |
+| `one-team-model` | 角色 `model` 等字段 | `TEAM_TEMPLATE_MODEL_INVALID` |
+| `one-team-model` | 目录审计时递归扫描任意含 `model` 的键 | `TEAM_TEMPLATE_PLACEHOLDER_MODEL` |
+
+源码：`team-template-contract.mjs:16,30-34`、`team-template-audit.mjs:20-35,56`。
+
+## 完整示例
+
+```json
+{
+  "kind": "team",
+  "id": "release-crew",
+  "version": "1.2.0",
+  "name": "发布小队",
+  "instructions": "lead 拆解发布清单；writer 产出发布说明；reviewer 在合入前复核。",
+  "defaultModel": "model-profile-prod",
+  "roles": [
+    { "name": "lead", "label": "队长", "instructions": "拆解任务并分派，最终汇总。",
+      "template": { "id": "agent/team-lead", "version": "1.0.0", "digest": "sha256:9f2c…" } },
+    { "name": "writer", "label": "撰写", "instructions": "根据变更生成发布说明。",
+      "template": { "id": "agent/tech-writer", "version": "1.0.0", "digest": "sha256:4ab7…" } },
+    { "name": "reviewer", "label": "复核", "instructions": "检查事实与链接。",
+      "template": { "id": "agent/reviewer", "version": "1.0.0", "digest": "sha256:77e1…" } }
+  ]
+}
+```
+
+## 校验失败错误码对照
+
+| 错误码 | 触发条件 | 处理 |
+| --- | --- | --- |
+| `TEAM_TEMPLATE_INVALID` | `kind !== "team"`；`id` / `version` / `name` / `instructions` 为空或超长 | 对照顶层字段表逐项修正 |
+| `TEAM_TEMPLATE_ROLE_INVALID` | 角色数不在 2–9；`lead` 不在首位；角色名重复或不合法；角色引用了普通 Agent | 调整 `roles` 数组 |
+| `TEAM_TEMPLATE_ROLE_SOURCE_INVALID` | `template` 缺失、不是对象、缺 `id` 或 `digest`、`version` 非 semver | 补全 `template.id` / `.version` / `.digest` |
+| `TEAM_TEMPLATE_MODEL_INVALID` | 模型字段是占位模型 | 换成真实模型档案 id |
+| `TEAM_TEMPLATE_ROLE_SPEC_INVALID` | 角色蓝图不是对象；缺 `instructions.system`；`bindings` 不是对象 | 修正角色定义 |
+| `TEAM_TEMPLATE_RUNTIME_UNSUPPORTED` | `runtime.type` 不是 `dsh-native` / `harness` | 改运行时 |
+| `TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED` | 角色声明了 `subAgents` / `sub_agents` | 删掉嵌套声明 |
+| `TEAM_TEMPLATE_PLACEHOLDER_MODEL` | 目录审计发现残留占位模型 | 替换全部模型字段 |
+| `TEAM_ROLE_DEFINITION_MISSING` | 找不到角色模板定义（`requireRoleDefinitions` 时为 error，否则 warning） | 先发布角色模板 |
+| `TEAM_ROLE_DEFINITION_KIND_INVALID` | 角色模板的 `kind` 不是 `agent` | 换成 Agent 定义 |
+| `TEAM_ROLE_NOT_TEAM_ONLY` | 角色模板未标记 `teamRoleOnly: true` | 补标记 |
+| `TEAM_TEMPLATE_NONE`（warning） | 目录里没有任何 `kind=team` 的模板 | 不是错误，仅提示 |
+
+源码：`team-template-contract.mjs`、`team-template-audit.mjs:51-74`。
+
+## 审计
+
+发布前必须跑一次目录审计，它**不修改输入**，只返回报告：
+
+```js
+import { auditTeamTemplateCatalog } from './src/team-template-audit.mjs';
+const report = auditTeamTemplateCatalog({
+  items,                        // 目录列表项
+  definitions,                  // 角色模板定义（Map 或普通对象）
+  requireRoleDefinitions: true, // 缺定义时升级为 error
+});
+// report: { ok, teamCount, errors[], warnings[] }，每条问题 { code, message, path? }
+```
+
+源码：`team-template-audit.mjs:42-74`。
+
+## 发布与召唤
+
+| operation | 作用 |
+| --- | --- |
+| `team-templates/list` / `team-templates/detail` | 列出与读取专家团模板 |
+| `templates/summon-plan` / `templates/summon` | 生成召唤计划（不落库）与执行召唤 |
+| `template-workflows/{start,status,cancel,detail,cache,clearCache}` | 长任务的进度、取消与缓存管理 |
+
+召唤状态：`running` → `succeeded` / `failed` / `cancelled`；进程中断后读取会得到 `interrupted`。
+源码：`src/template-workflows.mjs:17-35`。
+
+## 相关
+
+专家与团队的运行语义见[专家与本地团队](../concepts/experts-teams.mdx)，机器可读的字段定义见[模板 Schema 参考](../reference/templates.mdx)，全部错误码见[错误码参考](../reference/errors.mdx)。

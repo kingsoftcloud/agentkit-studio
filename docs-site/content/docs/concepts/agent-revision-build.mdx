@@ -1,0 +1,119 @@
+---
+title: Agent · Revision · Build · Run
+description: 四层冻结模型：Agent 只是指针，Revision 不可变，Build 内容寻址，Run 是一个 turn。搞清哪一层能改、哪一层改不了。
+status: new
+---
+
+**Agent 是一份可编辑的配置指针，Revision 是它的一次不可变快照，Build 把某个 Revision 固化成内容寻址的运行包，Run 是在某个 Build 上执行的单个 turn。**
+
+四层各自负责一件事，任何一层都不能替代另一层。这一页说明它们各自冻结什么、为什么必须分层、以及哪些操作会破坏可复现性。
+
+<Diagram src="/assets/agentkit-lifecycle.png" alt="Agent → Revision（不可变）→ Build（内容寻址）→ Session → Run 的生命周期，标注编辑产生新 Revision、运行中的会话不受影响" />
+
+*读图要点：五个阶段各自冻结在不同层次上。编辑 Agent 只会追加一个新 Revision，正在跑的会话仍然绑在旧 Revision 上——这不是缺少热更新，而是「同一 Revision 加同一执行引擎必然算出同一 Run 身份」的前提。*
+
+## 为什么不能合并成一层
+
+如果只有「Agent」一个概念，会出现两个无法同时满足的需求：
+
+| 需求 | 合并成一层的后果 |
+| --- | --- |
+| 改配置不能影响已经在跑的会话 | 只能二选一：要么禁止编辑，要么让运行中的会话漂移 |
+| 同一份配置要能重复构建出同一个产物 | 构建 ID 只能带时间戳，重跑一次就多一个「新版本」 |
+
+分层之后两个需求都成立，代价是必须记住「我现在改的是哪一层」。这张对照表就是答案：
+
+| 层 | 你要改的东西 | 改完影响谁 | 影响不到谁 |
+| --- | --- | --- | --- |
+| Agent | 名称、描述、指向哪份快照 | 列表与后续编辑 | 已存在的 Revision 与 Build |
+| Revision | 提示词、运行时、资源绑定 | 下一次构建 | 已构建的运行包 |
+| Build | 构建产物本身 | 从它启动的 Run | 已发生的 Run |
+| Run | 一次对话 | 无 | 无（运行结束即定型） |
+
+## Agent：只拥有一个当前指向
+
+本地 Agent 的 ID 形如 `ar-local-` 加 16 位十六进制，格式不符直接拒绝（`INVALID_AGENT_ID`）。创建时立即写下 revision 1，所以**不存在「还没保存过的 Agent」**。
+
+Agent 记录本身只保存两样东西：元数据（名称、描述、revision 序号、时间戳）和「当前指向哪份快照」。它不保存历史，历史在 Revision 目录里。
+
+## Revision：只增不改
+
+每次保存都会写出一个新的 revision 序号，旧序号的原文件永远不被改写。规则有具体后果：
+
+- **覆盖写会被拒绝**：如果目标 revision 文件已存在且内容不同，返回 `AGENT_REVISION_CONFLICT`。这不是警告，是硬失败。
+- **并发编辑要带预期序号**：`expectedRevision` 与当前值不一致时返回 `AGENT_EXPECTED_REVISION_CONFLICT`，并附上 `expectedRevision` 与 `actualRevision` 两个值，让你能判断该重读还是该放弃。传了非法序号则是 `INVALID_EXPECTED_AGENT_REVISION`。
+- **同一 Agent 的发布串行化**：锁最多等 5 秒，超时返回 `AGENT_MUTATION_BUSY`，提示「Agent 正在更新，请稍后重试」。
+- **权威丢失**：调用方在一次异步等待后不再持有写入权时返回 `AGENT_UPDATE_AUTHORITY_LOST`，而不是默默写进一个过期状态。
+- **崩溃语义是保守的**：先落盘 revision、再切换指针。如果在两步之间崩溃，留下的是一个可被显式恢复的不可变 revision，而不是一次静默替换。
+
+<Callout type="warn" title="revision 是序号，不是版本号">
+  它是从 1 开始的正整数，没有语义化版本的「主版本 / 次版本」之分。跨 Agent 比较 revision 数字没有意义。
+</Callout>
+
+## Build：内容寻址，所以幂等
+
+Build ID 形如 `build_` 加 20 位十六进制，由 manifest 的 SHA-256 前 20 位决定。同一个修订版本加同一个执行引擎，**算出来的 ID 一定相同**——重建是幂等的，不会因为重跑而多出一个「新版本」。
+
+| 规则 | 表现 |
+| --- | --- |
+| 两种包格式 | 非 Star Harness 用 `agentkit.agent-bundle/v1`；Star Harness 用 `v2`，因为要额外固化执行引擎 |
+| 包内固定三件 | `agent-bundle/manifest.json`、`agent-bundle/spec.json`、`agent-bundle/README.md` |
+| 执行引擎被换掉 | `BUILD_ENGINE_BINDING_CHANGED`，不允许用新引擎解释旧包 |
+| 下载有硬上限 | 超过 4 MiB 返回 `BUILD_DOWNLOAD_TOO_LARGE` |
+| 产物被篡改 | 重新校验 manifest 与 spec 的对应关系，不一致返回 `BUILD_ARTIFACT_INVALID` |
+| 产物不存在 | `BUILD_NOT_FOUND` |
+
+其他构建错误码：`BUILD_AGENT_ID_INVALID`（AgentId 格式）、`BUILD_REVISION_INVALID`（revision 非正整数，或与 Agent 定义不一致）、`BUILD_DEFINITION_INVALID`（缺少有效 Agent 定义）、`BUILD_ID_INVALID`（BuildId 格式）。
+
+构建成功后的状态固定是 `SUCCEEDED`。**没有「部分成功」**——一个包要么完整可用，要么不存在。
+
+## Run：一个 turn，五个标识
+
+一次运行的完整身份必须五个字段齐全：`agentId`、`revision`、`buildId`、`sessionId`、`runId`。缺任何一个返回 `RUN_IDENTITY_INVALID`；`revision` 必须是从 1 开始的正整数。
+
+如果运行被绑定到一条具体路由（例如某个会话页签），额外校验 `agentId` 与 `sessionId` 是否与路由一致，不一致返回 `RUN_IDENTITY_MISMATCH`。这条校验防的是「在会话 A 的界面里触发了会话 B 的运行」这类串号。
+
+运行被 DSH 的会话事件驱动：`turn/start` 打开一个 turn，`turn/end` 关闭它，中间的 `step/start`、`tool/call`、`tool/result` 都在同一个 `runId` 下。事件词汇见[会话与工作区](./sessions-workspaces.mdx)。
+
+## 冻结运行时：Build 锁住了什么
+
+Star Harness 的 Build 会额外固化执行引擎（`agentkit.build-engine/v1`），所以「升级引擎」不是一次配置改动，而是一次新的构建。运行时本身还有两项固定预算：
+
+| 项 | 默认 | 上限 | 越界行为 |
+| --- | --- | --- | --- |
+| 单次运行超时 | 15 分钟 | 24 小时 | 环境变量配成非正整数或小于 1 秒时回落到默认值，不会静默变成 0 |
+| 宿主能力 | 必须支持请求指纹 | — | 不支持返回 `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` |
+| 冻结模型路由 | 必须可解析 | — | 解析不到返回 `RUNTIME_MODEL_UNAVAILABLE` |
+
+「冻结」的含义是：Build 里记录了什么模型路由，运行时就只能用这些路由。Build 之外的模型即使可用也不会被选中。
+
+## 硬规则
+
+1. **revision 永远只增不改**。覆盖写是错误，不是策略。
+2. **Build ID 只由内容决定**。同输入必然同 ID，看到不同 ID 就等于内容真的不同。
+3. **Run 的身份五字段缺一不可**，缺任何一个都是错误，没有降级形态。
+4. **换执行引擎必须重新构建**。旧包不会被新引擎解释。
+5. **编辑永远只产生新 revision**，不会「更新」任何已存在的 revision。
+
+## 相关任务
+
+<Cards>
+  <Card title="创建与编辑 Agent" href="/docs/guides/create-agent">
+    从空表单走到第一个修订版本与第一次构建。
+  </Card>
+  <Card title="运行与调试会话" href="/docs/guides/conversations">
+    用 runId 定位一次具体的 turn。
+  </Card>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">
+    把本地构建推进成常驻的托管运行时。
+  </Card>
+</Cards>
+
+## 相关参考
+
+| 你要查的东西 | 去哪一页 |
+| --- | --- |
+| 五个标识与 `agentkit.studio.runtime/v1` 的完整形状 | [运行时与实体契约](../reference/runtime-contract.mdx) |
+| `builds/*` 四个 operation 的参数 | [控制协议](../reference/operations.mdx) |
+| `BUILD_*`、`AGENT_*`、`RUN_*` 错误码 | [错误码](../reference/errors.mdx) |
+| 16 个会话事件与 3 个流帧 | [会话事件](../reference/session-events.mdx) |

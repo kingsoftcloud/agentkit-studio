@@ -1,0 +1,131 @@
+---
+title: 任务指南
+description: 按目标组织的 13 篇操作指南，从创建 Agent 到部署上线，每步都能直接复制执行。
+status: new
+---
+
+任务指南按「你要完成什么」组织。每一页给出前置条件、可复制的操作步骤、成功验证方式和错误码对照，不解释内部实现——原理在[核心概念](../concepts/index.mdx)里。
+
+## 这一章有什么
+
+| 阶段 | 页面 | 你要达成的结果 | 前置条件 |
+| --- | --- | --- | --- |
+| 起点 | [创建与编辑 Agent](./create-agent.mdx) | 得到一个可运行的 Agent 与第一个修订版本 | 至少配置一个模型 |
+| 模型 | [配置模型与凭证](./models-and-credentials.mdx) | 会话能选中并真实调用模型 | 一个 OpenAI 兼容端点与 API Key |
+| 能力 | [绑定 MCP Server](./mcp-servers.mdx) | Agent 能调用外部系统的工具 | MCP 服务地址或启动命令 |
+| 能力 | [绑定 Skill](./skills.mdx) | Agent 复用已有的操作说明与脚本 | 目录里有 `SKILL.md` |
+| 能力 | [绑定知识库与 Memory](./knowledge-memory.mdx) | Agent 能检索企业知识并跨会话记忆 | 已连接云端控制面 |
+| 运行 | [运行与调试会话](./conversations.mdx) | 看懂工具调用、文件变更与本轮用量 | 有一个可用 Agent |
+| 治理 | [审批与权限策略](./approvals-permissions.mdx) | 写入和未知副作用受策略约束 | 有一个可用 Agent |
+| 交付 | [部署到云端](./deploy-to-cloud.mdx) | Agent 7×24 常驻可用 | 云端凭证与镜像仓库 |
+| 交付 | [托管运行时更新与回滚](./update-rollback.mdx) | 更新可控、失败可回滚 | 已部署的托管运行时 |
+| 自动化 | [自动化与调度](./automation.mdx) | 按时间或事件触发运行 | 已部署的 Agent |
+| 接入 | [渠道（Channels）](./channels.mdx) | 从外部消息入口触发 Agent | 已部署的 Agent |
+| 观测 | [可观测性（OTel）](./observability.mdx) | 用 OpenTelemetry 采集运行轨迹 | 已部署的 Agent |
+
+## 创建表单的三步
+
+创建和编辑 Agent 共用同一张表单，左侧步骤条固定为三步（`src/client/pages/agent-form.mjs:79`）：
+
+| 步骤 | 你要决定什么 | 必填 | 可以留到之后改吗 |
+| --- | --- | --- | --- |
+| 基本信息 | Agent ID、名称、运行时、用途描述、系统 Prompt、任务说明 | Agent ID 与名称 | 除运行时外都能改 |
+| 绑定能力 | 默认模型、可用模型、工具、MCP 服务、技能、平台资源 | 默认模型 | 能改，保存后生成新版本 |
+| 策略与确认 | Agent 工具约束、跨会话记忆、确认配置摘要 | 无 | 能改 |
+
+**运行时在创建后不可更改**——表单里的运行时单选在编辑态是禁用的（`src/client/pages/agent-form.mjs:266`）。要换运行时只能新建一个 Agent。
+
+## 五类可绑定资源
+
+资源库和创建表单读取同一份目录契约（`src/resource-catalog.mjs:74`）：
+
+| kind | 来源 | 绑定后 Agent 得到什么 | 每类可绑几个 |
+| --- | --- | --- | --- |
+| `model` | 本地模型配置 + 模型网关 | 一段可切换的模型列表 | 多个，其中一个为默认 |
+| `mcp` | 本地 MCP store + 云端 | 该 Server 发现的全部工具 | 多个 |
+| `skill` | 已安装 Skill + 云端 Skill Space | 操作说明与随附脚本 | 多个 |
+| `knowledge-base` | AgentEngine `agentengine-server` | 只读检索能力 | 一个 |
+| `memory-instance` | AgentEngine `agentengine-server` | 跨会话召回与写入 | 一个 |
+
+本地 Skill 与云端 Skill Space 分开管理，两者可以同时绑定（`src/client/pages/platform-resource-picker.mjs:12`）。
+
+## 默认值速查
+
+这些默认值来自代码，不由界面文案决定。改配置前先确认你要覆盖的是哪一层：
+
+| 项 | 默认值 | 证据 |
+| --- | --- | --- |
+| 新建 Agent 的运行时 | `dsh-native`（界面显示 DSH Native Harness） | `src/authoring-defaults.mjs:4` |
+| 可选运行时集合 | `dsh-native` / `harness` / `codex` | `src/client/theme.mjs:26` |
+| 运行时显示名 | DSH Native Harness / Star Harness / Codex Agent | `src/client/theme.mjs:28-33` |
+| Agent 工具约束 | `strict` | `src/client/pages/agent-form.mjs:54` |
+| 执行策略 | `workspace-write` | `src/execution-policy.mjs:10` |
+| 记忆写入方式 | 新建 `explicit_only`，编辑 `candidate` | `src/client/state/agent-memory-config.mjs:76` |
+| 记忆写入开关 | `shadow`（只评估不写入） | `src/client/state/agent-memory-config.mjs:33` |
+| 默认模型凭证名 | `AGENTKIT_MODEL_API_KEY` | `src/client/dsh/model-bridge.mjs:17` |
+
+<Callout type="warn" title="Star Harness 处于暂停状态">
+  新建 Agent 时 Star Harness 默认不出现在运行时选项里，只有调用方显式放开才会出现；
+  编辑已有的 Star Harness Agent 不受影响（`src/client/pages/agent-form.mjs:60-61`）。
+</Callout>
+
+## 每页的结构约定
+
+所有任务指南按同一骨架组织，方便你直接跳到需要的小节：
+
+1. **前置条件** —— 开始之前必须已经具备的东西，缺一项就会在中间某步失败。
+2. **操作步骤** —— 编号步骤，命令、路径、字段名都是完整值，没有省略号。
+3. **成功后的样子** —— 怎么判断这一步真的成了，而不是「看起来没报错」。
+4. **常见错误** —— 错误码 → 原因 → 处理，错误码可以全文搜索。
+5. **相关参考** —— 对应的契约页面与源码入口。
+
+## 跨页通用错误
+
+| 错误码 | 出现位置 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| `AGENT_EXPECTED_REVISION_CONFLICT` | 保存 Agent | 另一个窗口已经保存了更新的版本 | 点「读取最新版本」，核对后重新保存 |
+| `AGENT_NOT_FOUND` | 编辑、绑定 | Agent 已被删除或不在当前工作区 | 回到智能体列表刷新 |
+| `AGENT_DEFINITION_REQUIRED` | 保存 Agent | 提交的 spec 为空 | 检查是否在表单未加载完成时就点了保存 |
+| `MODEL_CATALOG_UNAVAILABLE` | 绑定能力第一步 | 模型网关目录读取失败 | 只显示已配置的模型资源；到设置页检查凭证 |
+| `MANAGED_RESOURCE_INVALID` | 绑定平台资源 | 资源引用不符合 `agentengine.resources/v1` | 重新选择资源，不要手写 ID |
+| `RESOURCE_CATALOG_UNAVAILABLE` | 资源库 | 某类目录整体读取失败 | 其余类仍可用；点「刷新」重试 |
+
+完整的 188 个错误码见[错误码参考](../reference/errors.mdx)。
+
+## 建议的阅读顺序
+
+<Steps>
+
+<Step>
+### 先跑通一条最短路径
+
+从[快速开始](../getting-started/quickstart.mdx)走完安装 → 配模型 → 建 Agent → 发消息。四步都成功再回来看指南。
+</Step>
+
+<Step>
+### 再按需要加能力
+
+一次只加一类资源，加完立刻发一条会用到它的消息。同时加 MCP、Skill 和知识库，出问题时无法判断是哪一层。
+
+每加一类资源都会产生新的修订版本，[运行与调试会话](./conversations.mdx)里可以对照每一轮的差异。
+</Step>
+
+<Step>
+### 最后才考虑上线
+
+本地能跑通不代表云端资源可用。部署、托管运行时、知识库、记忆库都依赖 AgentEngine 控制面与凭证，
+见[产品与云端的关系](../concepts/managed-runtime.mdx)。
+</Step>
+
+</Steps>
+
+## 相关参考
+
+| 你想知道 | 去哪里 |
+| --- | --- |
+| 修订版本、构建、运行分别冻结了什么 | [Agent · Revision · Build · Run](../concepts/agent-revision-build.mdx) |
+| 三种运行时的能力差异 | [三种运行时](../concepts/runtimes.mdx) |
+| 资源绑定的数据形状 | [资源与绑定](../concepts/resources.mdx) |
+| 134 个控制协议 operation | [控制协议](../reference/operations.mdx) |
+| 环境变量与配置项 | [配置参考](../reference/configuration.mdx) |
+| 按错误码排障 | [排障](../help/troubleshooting.mdx) |

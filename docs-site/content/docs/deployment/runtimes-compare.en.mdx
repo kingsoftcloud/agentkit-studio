@@ -1,0 +1,120 @@
+---
+title: Runtime comparison
+description: Compare DSH Native, Star Harness and Codex across loop ownership, session ownership, Run persistence, the Studio seam and capability sets.
+status: new
+---
+
+The difference between the three runtimes is not "which one is smarter" — it is **which side owns the state**. Everything below comes from the capability matrix in `src/runtime-contract.mjs`; none of it comes from marketing copy.
+
+## Five dimensions side by side
+
+| Dimension | DSH Native Harness | Star Harness | Codex Agent |
+| --- | --- | --- | --- |
+| **Model/tool loop owner** | DSH native loop (`owner: 'dsh'`) | Standalone Harness process (`owner: 'ksadk-harness'`, `execution: 'native-kernel'`) | Codex App Server (`owner: 'studio'`, `execution: 'codex-app-server'`) |
+| **Session / transcript owner** | DSH Session, event source `dsh-session` | Native run store, event source `native-run-store` | DSH Session, event source `studio-codex-adapter` |
+| **Stream owner** | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
+| **Run persistence** | Native DSH persistence plus `replay` | Durable receipts (`durable-receipts`) plus `resume` | Native DSH persistence plus `replay` |
+| **Studio seam** | Native execution passes straight through; Studio only projects resources and models | Protocol client over `agentkit.engine/v1` or `agentkit.native-dsh-turn/v1` | In-process adapter plus an ephemeral Codex thread |
+| **Capability set** | `session`, `session-events`, `stream`, `cancel`, `replay`, `persistence`, `build-binding` | `native-run`, `durable-receipts`, `tool-approval`, `cancel`, `resume`, `child-tasks` | `session`, `stream`, `cancel`, `replay`, `build-binding` |
+| **Contract version** | `agentkit.studio.runtime/v1` | `agentkit.native-dsh-turn/v1` | `studio.codex.adapter/v1` |
+
+Source: `src/runtime-contract.mjs:19-35`.
+
+## What the capability sets imply
+
+| Capability | DSH Native | Star Harness | Codex | Meaning |
+| --- | :--: | :--: | :--: | --- |
+| `session` | yes | yes (`native-run`) | yes | All three produce a visible session |
+| `cancel` | yes | yes | yes | All three can abort the current turn |
+| `replay` | yes | no | yes | Only the DSH side can replay by native request |
+| `persistence` / `durable-receipts` | `persistence` | `durable-receipts` | no separate entry | Durability takes a different shape per runtime |
+| `resume` | no | **yes** | no | Only Star Harness can resume across processes |
+| `child-tasks` | no | **yes** | no | Only Star Harness has a child-task model |
+
+<Callout type="info" title="Absent is a boundary, not a gap">
+  A missing `resume` or `child-tasks` means DSH Native and Codex delegate Run lifetime to the DSH session. Star Harness owns its own Run ledger, so it must carry recovery semantics itself. Choose based on whether you need conversational continuity or a recoverable Run.
+</Callout>
+
+## Creatability matrix
+
+| Runtime | In `ALLOWED_RUNTIME_TYPES` | Creation form | Editing an existing Agent | Portable bundle / deployment |
+| --- | :--: | :--: | :--: | :--: |
+| `dsh-native` | yes | yes (default) | yes | yes |
+| `codex` | yes | yes | yes | yes |
+| `harness` | yes | **shown, not selectable** | yes | yes |
+| `native-engine` | **no** | no | no | **no** |
+
+Source: `src/client/theme.mjs:26`, `src/client/pages/agent-form.mjs:28`, `:61`.
+
+<Callout type="warn" title="Star Harness cannot be created right now">
+  `creatableRuntime` returns `false` for `harness` whenever `editing` is false, and no caller passes `allowHarnessRuntime: true` (`src/client/pages/agent-form.mjs:28`, `:61`). The button still renders, but carries an "unavailable" badge and is `disabled` (`:265-267`). Existing Star Harness Agents stay editable and runnable; a new Agent cannot select it.
+</Callout>
+
+## The `runtime.type` field
+
+<TypeTable
+  type={{
+    'runtime.type': {
+      description: 'The runtime that executes this revision loop. Read by the DSH session router; it does not follow the model selection.',
+      type: "'dsh-native' | 'harness' | 'codex' | 'native-engine'",
+      default: "'dsh-native'",
+    },
+    'runtime.contract': {
+      description: 'Capability-matrix contract version for that runtime, declared by the runtime itself.',
+      type: 'string',
+    },
+    'spec.bindings': {
+      description: 'Model, tool, MCP, Skill and policy bindings. A managed declaration overrides local authoring defaults.',
+      type: 'object',
+    },
+  }}
+/>
+
+The default comes from `STUDIO_DEFAULT_AUTHORING_RUNTIME = 'dsh-native'` (`src/authoring-defaults.mjs:4`).
+
+## The five mandatory Run identity fields
+
+Whichever path you take, a Run must resolve the same identity set or it is rejected before routing:
+
+| Field | Required | Validation |
+| --- | :--: | --- |
+| `agentId` | yes | Non-empty string |
+| `sessionId` | yes | Non-empty string |
+| `runId` | yes | Non-empty string |
+| `revision` | yes | Matches `^\d+$` and is at least 1 |
+| `buildId` | yes | Non-empty string |
+
+A missing field throws `RUN_IDENTITY_INVALID`; a mismatch against the bound route throws `RUN_IDENTITY_MISMATCH` (`src/runtime-contract.mjs:43-64`).
+
+## Switching runtimes
+
+| Action | Behaviour | Source |
+| --- | --- | --- |
+| Edit an existing Agent | Keeps its original runtime and never switches on its own | `src/client/pages/agent-form.mjs:48` |
+| Pick DSH Native while creating | Clears previously selected tools so no stale binding enters a new native loop | `:83` |
+| Pick Star Harness while creating | Not available — `creatableRuntime` only allows it when `editing` is true | `:61` |
+| Switch to `native-engine` | Not available — it is not in `ALLOWED_RUNTIME_TYPES` | `src/client/theme.mjs:26` |
+
+Switching a runtime does not migrate Run history: old sessions keep opening on their original runtime.
+
+## Whether a run target is ready
+
+The **run target catalogue** row inside start checks counts only types in `ALLOWED_RUNTIME_TYPES` and renders them by UI name:
+
+| Result | Meaning | Source |
+| --- | --- | --- |
+| `confirmed` | The Host returned at least one supported run target | `src/client/state/start-checks.mjs:21-24` |
+| `missing` | The Host has registered no supported run target | same |
+| `unknown` | The catalogue read failed, or an older RPC supplied only the default native entry | `:20`, `:23` |
+
+<Callout type="info" title="A legacy fallback is not a catalogue">
+  An older RPC carrier only returns a single `source: 'dsh'` default native entry, which is not a real run-target catalogue. Studio reports that as `unknown`, never `confirmed`, so a degraded connection is not displayed as a ready runtime (`src/client/state/start-checks.mjs:20`).
+</Callout>
+
+## Related pages
+
+<Cards>
+  <Card title="DSH Native Harness" href="/en/docs/deployment/dsh-native">Execution model and limits of the default runtime</Card>
+  <Card title="Star Harness" href="/en/docs/deployment/agentkit-harness">Configuration entry points for the standalone Harness process</Card>
+  <Card title="Codex Agent" href="/en/docs/deployment/codex">The Codex App Server adapter</Card>
+</Cards>

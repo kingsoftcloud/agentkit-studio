@@ -1,0 +1,69 @@
+---
+title: 参考
+description: 由源码生成的契约参考：134 个 operation、196 个错误码、132 个环境变量、56 个 make 目标。
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 这一章是什么
+
+这里是 AgentKit Studio 的**机器可读契约**：枚举值、字段名、错误码、operation id、环境变量与命令。本页所有数字都由 `docs-site/scripts/extract-reference.mjs` 从源码抽取，没有一个是手写的。
+
+```sh
+cd docs-site
+node scripts/extract-reference.mjs          # 重新生成 22 个页面
+node scripts/extract-reference.mjs --check  # CI：源码改了但页面没重生成就失败
+```
+
+改动 `src/` 里的枚举、错误码或 operation 列表后，必须重跑脚本；否则 `--check` 会让 CI 失败。
+
+## 页面索引
+
+| 页面 | 你会查到什么 | 条数 | 源 |
+| --- | --- | --- | --- |
+| [运行时与实体契约](./runtime-contract.mdx) | 三种运行时的能力矩阵、实体标识与校验错误 | 4 runtime types | `src/runtime-contract.mjs` |
+| [控制协议](./operations.mdx) | 每个 operation id 的作用与 Host 处理器 | 134 operations · 24 domains | `src/contracts/operations.mjs` |
+| [配置参考](./configuration.mdx) | 四个配置文件的全部键与默认值 | 4 manifests | `src/product.json` |
+| [环境变量参考](./environment.mdx) | 可配置 / 平台注入 / 禁止修改三档 | 132 names | `src/**` |
+| [模板 Schema](./templates.mdx) | 专家团模板的字段约束与拒绝形状 | 7 codes | `src/team-template-contract.mjs` |
+| [插件市场目录 Schema](./plugin-catalog.mdx) | 目录文档结构、合并规则与内置条目 | 18 fields · 3 rows | `src/dsh-plugin-catalog.mjs` |
+| [部署状态机](./deployment-states.mdx) | 状态、界面标签、轮询与需关注 | 19 states | `src/client/state/deployment.mjs` |
+| [错误码](./errors.mdx) | Top 30 用户动作 + 命名空间索引 | 196 codes | `src/**` |
+| [命令参考](./commands.mdx) | make 目标、依赖与校验脚本 | 56 make · 99 verify | `Makefile` |
+| [会话事件](./session-events.mdx) | 事件触发时机、配对规则与持久化 | 16 events · 3 frames | `src/host/dsh-session-contract.mjs` |
+
+## 按角色阅读
+
+| 你是 | 先看 | 为什么 |
+| --- | --- | --- |
+| 集成方 | `operations` · `errors` | 按 operation id 对接控制协议，按错误码做分支。 |
+| 插件作者 | `plugin-catalog` · `templates` | 写一个市场条目或一份专家团模板。 |
+| 运维 | `environment` · `deployment-states` · `commands` | 配环境变量、看部署状态、跑门禁。 |
+| 排障 | `errors` · `session-events` | 按错误码定位，再按事件流复现。 |
+
+## 抽取口径
+
+| 口径 | 规则 |
+| --- | --- |
+| 契约常量 | 直接 `import` 源码模块取值，不复制字面量 |
+| 错误码 | `src/**` 的 `code: '...'` 字面量 + `STUDIO_WIRE_ERRORS` |
+| 环境变量 | `process.env.X`、`env.X` 与 `*_ENV_NAMES` 常量数组的并集 |
+| 源码位置 | 取第一次出现的 `file:line`，`file` 相对仓库根 |
+| 脱敏 | commit SHA、发行源域名、内部模型代号在渲染时替换为占位符 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| 生成器 | `docs-site/scripts/extract-reference.mjs` |
+| operation 契约 | `src/contracts/operations.mjs` |
+| wire 错误 | `src/contracts/definitions.mjs` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |
+| desktop-module-graph.test.mjs | `tests/desktop-module-graph.test.mjs` |
+| studio-wire-contracts.test.mjs | `tests/studio-wire-contracts.test.mjs` |
+| host-dispatcher.test.mjs | `tests/host-dispatcher.test.mjs` |
+| host-route-contracts.test.mjs | `tests/host-route-contracts.test.mjs` |

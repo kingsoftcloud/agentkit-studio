@@ -1,0 +1,159 @@
+---
+title: Run and Debug a Session
+description: Issue instructions in a session, inspect tool calls, approve sensitive operations, rewind the conversation branch, and diagnose failed runs.
+status: new
+---
+
+A session is a conversation and transcript owned by DSH; a run is one turn inside it.
+This page covers everything after the agent already works: how to see what it did, when it needs your approval, and how to back out of a failure.
+
+<Callout type="info" title="Prerequisites">
+  You finished [Quickstart](../getting-started/quickstart.mdx) and at least one agent revision is saved.
+  A cloud session additionally needs that agent deployed to the cloud with state `READY`; see [Deploy to the Cloud](./deploy-to-cloud.mdx).
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Choose the agent bound to the session
+
+Pick a target in the agent selector at the top of the conversation area. Every row carries its execution location:
+
+| Label | Meaning |
+| --- | --- |
+| Local | Runs inside your Host process and can read and write the local workspace |
+| Cloud | Runs in a managed cloud instance and keeps running after you close the app |
+
+<Callout type="warn" title="The agent locks once the session starts">
+  After the first message the selector title becomes "Session started, agent locked".
+  Start a new session to switch agents: the transcript does not migrate, and a cloud session refuses to continue because its frozen version differs.
+</Callout>
+</Step>
+
+<Step>
+### Send an instruction
+
+Type one sentence in the composer and press Enter. Stating the **goal** and the **allowed action scope** beats writing steps:
+
+```text
+List every .mjs file in the current workspace, read-only, do not modify;
+describe each file in one sentence.
+```
+
+Then watch three things in order:
+
+- **Tool call cards**: each call expands as in progress and turns into `completed` or `failed` once a result arrives.
+- **Usage footer**: input tokens, output tokens, and total duration for this turn.
+- **File change cards**: when the agent edited files, the right side lists a diff per file that you can accept or discard individually.
+</Step>
+
+<Step>
+### Approve operations that need a human
+
+When the execution policy requires approval, a tool call stops on a pending approval card titled "`<tool name>` requests one-time authorization".
+
+1. Read the reason on the card.
+2. Choose **Allow once** — a risk confirmation appears; tick "I have reviewed this operation and its impact" and choose **Confirm allow once**.
+3. Or choose **Reject** — that call fails and the agent receives the rejection and continues.
+
+<Callout type="warn">
+  The approval panel authorizes **this one call** only; it is not reused for later calls of the same tool.
+  See [Approvals and Permission Policy](./approvals-permissions.mdx) for the full policy.
+</Callout>
+</Step>
+
+<Step>
+### Stop a running turn
+
+You can stop at any time. After stopping:
+
+- Results of finished tool calls remain and can be inspected one by one.
+- Tool calls that had not returned are marked as interrupted.
+- The session keeps accepting the next message; no new session is required.
+
+<Callout type="info" title="Stopping is not rewinding">
+  Stopping only ends the current turn; file changes already written to the workspace are **not** reverted.
+  To drop a conversation branch, use the next step.
+</Callout>
+</Step>
+
+<Step>
+### Rewind the conversation branch
+
+Open the **Conversation rewind** disclosure in the conversation area. It lists every rewindable user input in this session, each with two buttons:
+
+| Button | Scope |
+| --- | --- |
+| Rewind to before this input | Conversation only: this input and everything after it leaves the current branch, **workspace files stay** |
+| Preview rewinding files too | Conversation and files: a file preview appears first, and you commit after reviewing it |
+
+After choosing "Preview rewinding files too", the preview lists one action per file:
+
+```text
+restore: src/host/routes/agents.mjs
+delete:  src/host/routes/agents.mjs.bak
+```
+
+Choose **Confirm rewind conversation and files** when it looks right. A file judged unsafe (outside the workspace, or changed externally in the meantime) never appears in the applicable list; it is reported on its own warning line with a reason.
+
+<Callout type="error" title="Never reissue a rewind whose request is unconfirmed">
+  If the panel shows "The rewind request is not confirmed yet", choose **Retry the original rewind request**: it replays with the same `commandId` and does not produce a second rewind.
+  Issuing a new rewind can push the branch further back than intended.
+</Callout>
+</Step>
+
+<Step>
+### Export the session log
+
+Open the matching trace under **Operations → Observability** and choose **Export session**. The export needs a `SessionId` on that trace; otherwise it reports "This trace has no Session ID, so the session log cannot be exported".
+
+The export is the complete event record of that run — useful in a ticket or when aligning with a colleague.
+
+</Step>
+
+</Steps>
+
+## What success looks like
+
+A healthy session satisfies all of these:
+
+- The final answer appears in full, not as an error summary.
+- Every tool call has a result; none is stuck "in progress".
+- Every call needing approval has an `allow` or `deny` decision, with no pending approval card left over.
+- The transcript survives a page refresh.
+- A cloud session shows a corresponding `dsh.turn` span under **Observability → Trace detail**.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `DEPLOYMENT_SESSION_VERSION_CHANGED` | The cloud agent was upgraded or rolled back, so the session's frozen version no longer matches the current one | Start a new session; the old transcript stays readable |
+| `DEPLOYMENT_MODEL_FROZEN` | The selected model is not bound to this frozen version | Pick a model already bound in the "Cloud deployment" group; changing models requires editing the agent, rebuilding, and updating the instance |
+| `DEPLOYMENT_MODEL_SWITCH_UNAVAILABLE` | The current cloud image cannot switch bound models | Update the instance image under Build and deploy |
+| `DEPLOYMENT_SESSION_REQUIRED` | A cloud conversation is missing its native session or message identity | Enter through the "Start conversation" action instead of hand-crafting requests |
+| `DEPLOYMENT_ACCESS_REJECTED` | The cloud returned 401; the access token does not match | Check access configuration and logs in Operations, then use "Repair access configuration" if needed |
+| `RUNTIME_RUN_FAILED` | The runtime failed to execute | Open the turn's error detail; rerun once under a read-only policy to localize it |
+| `native_conversation_rewind_requires_idle` | A rewind was attempted while tasks were still running | Stop the current turn, then preview the rewind again |
+| `native_conversation_rewind_head_conflict` | The rewind target is no longer the head of the branch | Refresh, then pick the input to rewind to again |
+| `native_conversation_rewind_stop_unsettled` | Tasks stopped but execution results are still being verified | Retry the original rewind request once verification settles |
+| `checkpoint_control_compensated` | An unfinished file rewind was compensated | The conversation was not rewound; preview again before operating |
+| `STUDIO_NATIVE_AGENT_POLICY_INVALID` | The agent's permission rules are malformed | Fix the JSON per [Approvals and Permission Policy](./approvals-permissions.mdx#write-custom-permission-rules) |
+
+## Related
+
+<Cards>
+  <Card title="Approvals and permission policy" href="/en/docs/guides/approvals-permissions">
+    The three execution policies, defaults and ceilings, and how to write permission rule JSON.
+  </Card>
+  <Card title="Sessions and workspaces" href="/en/docs/concepts/sessions-workspaces">
+    Where session, run, and workspace end, and why rewinding does not revert files.
+  </Card>
+  <Card title="Session events" href="/en/docs/reference/session-events">
+    Fields and ordering of the 16 events such as `turn/start`, `tool/call`, and `approval/asked`.
+  </Card>
+  <Card title="Observability" href="/en/docs/guides/observability">
+    Where traces come from, how to read them, and how to confirm export.
+  </Card>
+</Cards>

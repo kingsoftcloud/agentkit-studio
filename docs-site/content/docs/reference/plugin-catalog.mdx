@@ -1,0 +1,115 @@
+---
+title: 插件市场目录 Schema
+description: 插件市场目录 schema v1：18 个条目字段、3 条内置条目与 6 个错误码。
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+## 目录文档结构
+
+插件市场目录的 schema 版本是 `1`。远程索引是一个 JSON 文档，可以是数组，也可以是 `{ schemaVersion, plugins, updatedAt }` 对象。
+
+```json
+{
+  "schemaVersion": 1,
+  "updatedAt": "1970-01-01T00:00:00Z",
+  "plugins": [
+    {
+      "id": "@scope/dsh-plugin",
+      "displayName": "示例插件",
+      "category": "协作",
+      "tags": [
+        "team"
+      ]
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `schemaVersion` | `number` | 缺省按 1 处理；其他值直接拒绝 |
+| `plugins` | `array` | 条目数组，上限 500 条 |
+| `updatedAt` | `string` | ISO 时间；无法解析时丢弃，不影响条目 |
+
+## 条目字段
+
+`source` 为 `builtin` 时额外接受就绪校验字段；远程文档**不能**声明它们，这是信任边界，不是可选项。
+
+| 字段 | 类型 | 上限 | 必填 | 说明 |
+| --- | --- | --- | --- | --- |
+| `id` | `string` | 120 | 是 | 插件包名，同时作为去重键。 |
+| `installSpec` | `string` | 140 | 是 | 安装规格，缺省等于 `id`。 |
+| `displayName` | `string` | 80 | 否 | 市场行标题，缺省等于 `id`。 |
+| `description` | `string` | 400 | 否 | 一行说明，超长截断。 |
+| `category` | `string` | 24 | 否 | 分组，缺省 `其他`。 |
+| `tags` | `string[]` | 8 × 24 | 否 | 去重后截断。 |
+| `featured` | `boolean` | — | 否 | 仅 `true` 生效。 |
+| `experimental` | `boolean` | — | 否 | 渲染 `beta` 徽章。 |
+| `capabilities` | `string[]` | 12 × 40 | 否 | 能力标签。 |
+| `homepage` | `https URL` | 400 | 否 | 非 HTTPS 丢弃。 |
+| `repository` | `https URL` | 400 | 否 | 非 HTTPS 丢弃。 |
+| `author` | `string` | 60 | 否 | 展示用署名。 |
+| `icon` | `glyph \\| https URL` | 8 字符 | 否 | 短字形或 HTTPS 图片，不接受内联 data。 |
+| `origin` | ``builtin` \\| `remote`` | — | 是 | 由加载来源决定，远程不可伪造。 |
+| `expectedEntries` | `string[]` | 12 × 60 | 否 | 仅 `builtin`：就绪校验的条目名。 |
+| `service` | `{name, methods, probe?}` | 16 methods | 否 | 仅 `builtin`：就绪校验的 Host 服务。 |
+| `readinessNote` | `string` | 200 | 否 | 仅 `builtin`：就绪提示。 |
+| `defaultEnabled` | `boolean` | — | 否 | 仅 `builtin`：安装后默认启用。 |
+
+## 内置条目
+
+产品自带 3 条精选条目，离线可用。就绪校验读取 Host 服务，未就绪时只给提示，不阻塞安装。
+
+| 插件 id | displayName | category | capabilities | 标记 | expectedEntries |
+| --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-experimental-agent-team-profile` | Agent Teams | 协作 | 4 | `beta` | `agent-team` `tool-agent-team` `ui-agent-team` |
+| `@deepseek-ai/dsh-experimental-voice-input-bundle` | 语音输入 | 输入 | 3 | `beta` | `speech-to-text` `speech-to-text-sensevoice` `api-speech-to-text` `ui-voice-input` |
+| `@deepseek-ai/dsh-experimental-auto-review` | Auto Review | 权限 | 3 | `beta` | `auto-review` |
+
+## 索引地址与合并
+
+| 项 | 值 |
+| --- | --- |
+| 环境变量 | `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` |
+| 别名 | `DSH_PLUGIN_INDEX_URL` |
+| 协议 | `https:`；`http:` 只允许 `localhost` / `127.0.0.1` / `::1` |
+| 拒绝 | 带用户名或密码的 URL、非 HTTP(S) 协议、无法解析的 URL |
+| 合并 | 内置条目优先占位；远程同 id 覆盖文案字段，不覆盖就绪校验字段；新 id 追加 |
+| 失败 | 刷新失败保留上一次成功文档并标记为 stale，市场不清空 |
+
+## 错误码
+
+| 错误码 | 源码位置 |
+| --- | --- |
+| `DSH_PLUGIN_CATALOG_INVALID` | `src/dsh-plugin-catalog.mjs:184` |
+| `DSH_PLUGIN_CATALOG_VERSION_UNSUPPORTED` | `src/dsh-plugin-catalog.mjs:187` |
+| `DSH_PLUGIN_CATALOG_TOO_LARGE` | `src/dsh-plugin-catalog.mjs:191` |
+| `DSH_PLUGIN_INDEX_TIMEOUT` | `src/dsh-plugin-index.mjs:57` |
+| `DSH_PLUGIN_INDEX_UNAVAILABLE` | `src/dsh-plugin-index.mjs:58` |
+| `DSH_PLUGIN_INDEX_URL_REJECTED` | `src/dsh-plugin-index.mjs:107` |
+
+## 版本与兼容性
+
+| 项 | 值 | 说明 |
+| --- | --- | --- |
+| schema 版本 | `1` | 不兼容变更必须升版本 |
+| 条目上限 | `500` | 超出抛 `DSH_PLUGIN_CATALOG_TOO_LARGE` |
+| 内置条目 | `3` | 随产品发布，不联网 |
+| 就绪校验 | 仅内置 | 远程文档无法声明探针 |
+
+## 开发者入口
+
+| 内容 | 源码位置 |
+| --- | --- |
+| 目录归一化 | `src/dsh-plugin-catalog.mjs` |
+| 远程索引刷新 | `src/dsh-plugin-index.mjs` |
+| 插件发现 | `src/dsh-plugin-discovery.mjs` |
+| 插件市场 UI | `src/client/state/plugins.mjs` |
+
+相关测试：
+
+| 测试文件 | 位置 |
+| --- | --- |
+| dsh-plugin-catalog.test.mjs | `tests/dsh-plugin-catalog.test.mjs` |
+| dsh-plugin-index.test.mjs | `tests/dsh-plugin-index.test.mjs` |

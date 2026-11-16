@@ -1,0 +1,118 @@
+---
+title: Star Harness
+description: "The standalone Harness runtime's two deployment shapes, its configuration surface, why it cannot create new Agents, and which error codes it returns."
+status: new
+---
+
+**Star Harness (`harness`) hands the entire turn to the Native Harness kernel, so DSH stops running the model-and-tool loop itself.** It delegates the whole turn through DSH's maintained external-turn interface, which is why Studio cannot run a second loop on the side (`src/runtime-contract.mjs:25-29`).
+
+## Execution model
+
+| Stage | Owner | Source |
+| --- | --- | --- |
+| Model / tool loop | The native kernel in `ksadk-harness` | `owner: 'ksadk-harness'`, `execution: 'native-kernel'` |
+| Contract | `agentkit.native-dsh-turn/v1` | `contract` |
+| Event source | `native-run-store` | `eventOwner` |
+| Streaming | `native-model-port` | `streamOwner` |
+| Capabilities | `native-run`, `durable-receipts`, `tool-approval`, `cancel`, `resume`, `child-tasks` | `capabilities` |
+
+Source: `src/runtime-contract.mjs:25-29`.
+
+It has two operating shapes whose configuration surfaces are entirely different:
+
+| Shape | Where the loop runs | Configuration needed |
+| --- | --- | --- |
+| Whole-turn delegation inside the Host | Inside the DSH process, over `dsh.external-turn/v1` | None beyond defaults |
+| Standalone engine process | A separate process, over `agentkit.engine/v1` | `AGENTKIT_ENGINE_COMMAND` or an engine service address |
+
+<Callout type="warn" title="The in-Host shape cannot use the ordinary stream seam">
+  In local mode, `harness` passing through DSH's stream adapter throws `STUDIO_NATIVE_TURN_REQUIRED` ("Native Harness requires the whole-turn execution port."). It must be served by the whole-turn port; it cannot be treated as one more model stream (`src/providers/dsh-runtime.mjs:591`).
+</Callout>
+
+## When to choose it
+
+- You need **cross-process resume** (`resume`): only Star Harness has it.
+- You need **child tasks** (`child-tasks`) and durable receipts (`durable-receipts`): multi-role task decomposition depends on both.
+- You need tool approval as a first-class runtime capability (`tool-approval`).
+- Your organisation already operates a standalone Harness service and wants to upgrade the engine without re-releasing Studio.
+
+When none of these apply, DSH Native is simpler — see [runtime comparison](./runtimes-compare.mdx).
+
+## Configuration entry points
+
+### Standalone engine process
+
+| Variable | Effect | Validation |
+| --- | --- | --- |
+| `AGENTKIT_ENGINE_COMMAND` | Path to the separately installed Harness executable | Required; missing throws `NATIVE_ENGINE_UNAVAILABLE` |
+| `AGENTKIT_ENGINE_ARGS` | Arguments for that process | Must be a JSON string array, otherwise `NATIVE_ENGINE_CONFIG_INVALID` |
+| `AGENTKIT_ENGINE_MODEL_API_KEY` | Engine-side model credential | The child env name is fixed to this one |
+| `AGENTKIT_ENGINE_MODEL_IMAGES` | Declares image capability | Only effective when set to `1` |
+
+Source: `src/providers/native-engine-runtime.mjs:92-100`, `:214-218`.
+
+### Engine service (local multi-project / managed)
+
+| Variable | Effect |
+| --- | --- |
+| `AGENTKIT_ENGINE_SERVICE_URL` | Engine service address (HTTPS, or `127.0.0.1` over HTTP) |
+| `AGENTKIT_ENGINE_SERVICE_TOKEN` | Service token, referenced indirectly through its env name |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | Absolute workspace path bound to that service |
+| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | Optional CA file; requires HTTPS |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACES` | Declares several `{workspace, endpoint, tokenEnv, caFile, model}` bindings at once |
+
+Single-service and multi-project forms are mutually exclusive: setting `AGENTKIT_ENGINE_SERVICE_WORKSPACES` together with `AGENTKIT_ENGINE_SERVICE_URL` is rejected (`src/providers/engine-service-workspaces.mjs:22-23`).
+
+```json
+[
+  {
+    "workspace": "/projects/alpha",
+    "endpoint": "https://engine-alpha.example.com",
+    "tokenEnv": "HARNESS_ALPHA_TOKEN",
+    "model": "your-model-name"
+  }
+]
+```
+
+### Managed declarations
+
+In the managed shape, a declaration with `framework: harness` that injects engine service variables projects the Agent's runtime type to `native-engine`, and model selection goes through the `agentkit-studio-harness-service` provider (`src/managed-runtime-definition.mjs:36-51`, `src/providers/engine-service-workspaces.mjs:5`).
+
+## Limits
+
+| Limit | Effect | Source |
+| --- | --- | --- |
+| **New Agents cannot be created** | The creation form only allows `harness` while editing an existing Agent; no caller passes `allowHarnessRuntime: true` | `src/client/pages/agent-form.mjs:28`, `:61` |
+| Must be served by the whole-turn port | Going through the ordinary stream seam throws `STUDIO_NATIVE_TURN_REQUIRED` | `src/providers/dsh-runtime.mjs:591` |
+| Workspaces must agree | A managed Harness whose service workspace differs from the host workspace throws `HARNESS_SERVICE_WORKSPACE_MISMATCH` | `src/managed-runtime-host.mjs:276-279` |
+| The model must resolve | Without a service and without a gateway address, throws `NATIVE_ENGINE_MODEL_UNAVAILABLE` | `src/providers/dsh-runtime.mjs:628-629` |
+| Upgrading is not a Studio change | The Studio-side client only changes on a protocol major | `src/providers/engine-protocol-client.mjs:1-13` |
+
+<Callout type="info" title="Studio compiles no engine code">
+  Studio keeps a single protocol client (`agentkit.engine/v1`). It contains no engine logic and imports none; it only pipes JSON-RPC frames to a child process's stdio. A host may reimplement it in another language from the protocol alone (`src/providers/engine-protocol-client.mjs:1-13`).
+</Callout>
+
+## Failure shapes
+
+| Code | Trigger | What you can do |
+| --- | --- | --- |
+| `STUDIO_NATIVE_TURN_REQUIRED` | `harness` reached the ordinary stream seam | Check whether the Host offers the whole-turn port; this usually means a DSH baseline mismatch |
+| `NATIVE_ENGINE_UNAVAILABLE` | `AGENTKIT_ENGINE_COMMAND` is unset, or no runtime is registered | Set the command path, or enable the engine service |
+| `NATIVE_ENGINE_CONFIG_INVALID` | `AGENTKIT_ENGINE_ARGS` is not a JSON string array | Use the `["--flag","value"]` form |
+| `NATIVE_ENGINE_MODEL_UNAVAILABLE` | The model has no configured gateway address | Bind a model that has a gateway URL to the Agent |
+| `MANAGED_HARNESS_SERVICE_BINDING_INVALID` | Managed service address, credential or workspace is invalid | Check the four `AGENTKIT_ENGINE_SERVICE_*` variables |
+| `HARNESS_SERVICE_WORKSPACE_MISMATCH` | The service workspace differs from the host workspace | Point both at the same absolute path |
+
+Degradation and retry when a resource is unavailable is covered in [degradation and retry](./degradation-retry.mdx).
+
+## Source of truth
+
+| Claim | Location |
+| --- | --- |
+| Capability matrix | `src/runtime-contract.mjs:25-29` |
+| Whole-turn port requirement | `src/providers/dsh-runtime.mjs:591` |
+| Engine process configuration | `src/providers/native-engine-runtime.mjs:92-100`, `:214-218` |
+| Engine service binding and exclusion | `src/providers/engine-service-workspaces.mjs:5`, `:20-35` |
+| Protocol client boundary | `src/providers/engine-protocol-client.mjs:1-13` |
+| Managed declaration projection | `src/managed-runtime-definition.mjs:36-51` |
+| Not creatable | `src/client/pages/agent-form.mjs:28`, `:61` |

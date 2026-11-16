@@ -1,0 +1,164 @@
+---
+title: 补丁治理
+description: DSH 宿主补丁的完整闭环：从维护分支导入、编辑维护提交、导出确定性补丁、到门禁校验为什么不能直接改 .patch。
+status: new
+---
+
+AgentKit Studio 依赖一份**固定的 DSH 基线**，并在这份基线上维护一串经过评审的补丁。
+补丁不是随手打的 diff，而是**构建输入**：它有摘要、有依赖顺序、有验证矩阵、有退出条件。
+这一页讲清楚怎么改它，以及为什么绕过工具直接改 `.patch` 一定会失败。
+
+## 为什么需要补丁
+
+DSH 是官方宿主，我们不改它的源码树。但产品需要的一些行为（侧栏生命周期、打包身份、更新源、
+会话事件、原生轮次恢复）必须落在宿主里。做法是：**把改动维持在一条维护分支上，补丁是该分支的确定性导出。**
+
+| 事实 | 值 | 依据 |
+| --- | --- | --- |
+| 固定基线版本 | `0.2.2-rc.1` | `dsh-pin.json` 的 `version` |
+| 基线 commit | `66491b05…`（完整 SHA） | `dsh-pin.json` 的 `commit` / `baseCommit` |
+| 上游 ref | `dsh-v0.2.2-rc.1` | `dsh-pin.json` 的 `ref` |
+| 当前补丁序列 | 53 个 | `patches/dsh-v0.2.2-rc.1/manifest.json` |
+| 已退役补丁 | 7 个 | 同上 `retired` |
+| 补丁目录 | `patches/dsh-v0.2.2-rc.1/` | `dsh-pin.json` 的 `patchDirectory` |
+
+<Callout type="warn" title="版本号不要凭记忆写">
+  仓库里同时存在 `patches/dsh-v0.2.0-rc.2/`、`patches/dsh-v0.2.1-rc.2/`、
+  `patches/dsh-v0.2.2-rc.1/` 三个历史目录，补丁数分别是 34、64、53。
+  只有 `dsh-pin.json` 指向的那个才是当前序列；写文档时以它为准。
+</Callout>
+
+## 目录布局
+
+```text
+dsh-pin.json                       固定基线：version / commit / ref / patchDirectory / 摘要
+patches/dsh-v0.2.2-rc.1/
+├─ 004-sidebar-panel-lifecycle.patch   编号 + 名称 + .patch
+├─ 080-native-owned-turn-recovery-and-dispatch.patch
+├─ …                                   共 53 个，按编号升序应用
+├─ manifest.json                       评审元数据：类别、风险、依赖、验证矩阵、退出条件
+└─ source.json                         导出物描述符：commit 序列、tree、bundle 摘要
+host-source/dsh-v0.2.2-rc.1/
+└─ maintenance.bundle                  Git bundle，含基线前置与维护分支
+```
+
+`PATCH_ROOT` 由 `Makefile` 从 `dsh-pin.json` 的 `patchDirectory` 解析，默认
+`patches/dsh-v0.2.2-rc.1`。`DSH_MAINTENANCE_ROOT` 是你自己的维护检出目录，必须显式指定。
+
+## 四步工作流
+
+### 1. 导入维护源
+
+```sh
+make patch-source-import DSH_MAINTENANCE_ROOT=../dsh-maintenance
+```
+
+它先在只读模式下校验当前补丁序列（描述符、bundle 摘要、commit 清单），然后把
+`maintenance.bundle` 里的维护分支检出到一个**全新目录**。目标目录已存在会直接拒绝——
+这个命令不覆盖、不重置，只新建。
+
+### 2. 编辑维护提交
+
+在维护检出里做改动，然后**一个补丁一个提交**：
+
+```sh
+cd ../dsh-maintenance
+git commit -m "004: fix sidebar panel lifecycle
+
+Studio-Patch: 004"
+```
+
+两条硬规则：
+
+- **必须线性**：提交历史是从 `baseCommit` 出发的直线，中间不能有 merge。
+- **必须带 `Studio-Patch: <id>` trailer**：导出时按它把提交和清单里的条目对齐。
+
+### 3. 导出补丁
+
+```sh
+make patch-source-export DSH_MAINTENANCE_ROOT=../dsh-maintenance
+```
+
+导出会拒绝工作树不干净的状态。它按 `baseCommit..HEAD` 逐个提交生成 unified diff，
+重新计算每个补丁的 `sha256`、整棵树的 `patchedTree` 与 `patchedSourceSha256`，
+重建 `maintenance.bundle`，并写回 `source.json` 与 `manifest.json`。
+**重复导出保持字节一致**——只要 commit 与分支没变，导出物就是确定的。
+
+### 4. 校验补丁
+
+```sh
+# 只读：描述符与导出摘要绑定
+make patch-source-check
+
+# 完整：从 bundle 重新生成补丁，逐字节比较，并校验 Git 祖先关系
+make patch-source-verify DSH_ROOT=../deepseek-harness
+```
+
+`patch-source-check` 不需要 DSH 检出，适合在快速循环里跑；`patch-source-verify` 需要真实检出，
+是提交前的最后一道。
+
+## 为什么不能直接改 .patch
+
+因为补丁有四重绑定，任何一层对不上都会失败：
+
+| 绑定 | 校验者 | 直接改会怎样 |
+| --- | --- | --- |
+| 每个补丁的 `sha256` 与文件内容 | `check-patch-manifest.mjs` | `content digest mismatch` |
+| `affectedFiles` 与补丁里的 `--- a/` `+++ b/` 路径集合 | 同上 | `unregistered modified files` |
+| 补丁应用顺序与清单顺序、依赖先后 | 同上 | `manifest order differs from application order` |
+| `source.json` 的 commit 序列、tree、bundle 摘要 | `dsh-maintenance-source.mjs` | `generated patch differs` 或 `bundle digest mismatch` |
+| 补丁是不是合法 unified diff | `check-patch-format.mjs` | `Git rejected the unified diff syntax` |
+
+换句话说：**补丁是导出物，不是源文件**。源文件是维护分支上的提交。改导出物等于改构建产物。
+
+## 补丁元数据
+
+`manifest.json` 每个条目都要求这些字段，缺一个就失败：
+
+| 字段 | 允许值 | 作用 |
+| --- | --- | --- |
+| `id` | 三位数字，如 `004` | 稳定标识，与文件名前缀一致 |
+| `category` | `product` / `packaging` / `lifecycle` / `session-contract` / `general-fix` / `generated-docs` / `updater` / `signing` | 归类，便于判断影响面 |
+| `risk` | `low` / `medium` / `high` | 决定评审强度 |
+| `dependsOn` | 其它 `id` 数组 | 必须指向序列中更早的补丁 |
+| `affectedFiles` | 补丁实际修改的路径集合 | 与 diff 路径逐项比对 |
+| `affectedPackages` | 受影响的 npm 包名 | 影响面声明 |
+| `contracts` | 中文契约描述 | 这个补丁保证什么 |
+| `maintainerRole` | 维护者角色 | 谁负责 |
+| `upstreamStatus.state` | `unverified` / `not-submitted` / `pending` / `merged-unreleased` / `in-baseline` | 上游进展 |
+| `upstreamStatus.evidence` | 文字证据 | 为什么是这个状态 |
+| `removeWhen` | 文字 | 退出条件：什么时候可以删掉这个补丁 |
+| `verification.hostTests` | `*.spec.*` 路径 | 宿主侧回归 |
+| `verification.integrations` | `verificationProfiles` 里已声明的名字 | 集成验证档位 |
+| `verification.nativeTests` | `native/system/test/*.test.js` | 原生侧回归 |
+
+`verificationProfiles` 目前有 13 个档位：`source`、`web`、`electron`、`lifecycle`、`frozen`、
+`persistence`、`macos`、`windows`、`installed-update`、`dsh-web`、`product-profiles`、
+`node-projection`、`native`。
+
+## 退役补丁
+
+上游把修复合并进发布版本后，补丁应该退役而不是删除：
+
+1. 从 `patches` 数组里移除条目；
+2. 在 `retired` 里加一条 `{ "id": "004", "reason": "…" }`；
+3. 重新导出并校验。
+
+`retired` 的 `id` 不能和仍活跃的 `id` 重复，`reason` 必须非空——这样"为什么少了这个补丁"
+永远有答案。
+
+## 常见失败
+
+| 报错 | 原因 | 处理 |
+| --- | --- | --- |
+| `import output already exists` | 目标目录已存在 | 换一个新目录，不要复用 |
+| `export requires the declared maintenance branch` | 维护检出不在 `refs/heads/codex/*` 上 | 切回声明分支 |
+| `commit maintenance edits before exporting` | 工作树有未提交改动 | 先提交 |
+| `maintenance history must be a linear chain` | 历史里有 merge 提交 | 变基成直线 |
+| `commit order or Studio-Patch trailer differs` | trailer 缺失或顺序错 | 补 `Studio-Patch: <id>` |
+| `empty maintenance commit` | 某个提交没有实际改动 | 合并或删除该提交 |
+| `commit count differs from patch inventory` | 提交数与清单条目数不等 | 一补丁一提交 |
+| `cyclic dependencies` | `dependsOn` 成环 | 拆开或调整顺序 |
+| `DSH checkout 有未提交改动` | `make patch-check` 前检出不干净 | 换独立检出 |
+
+下一步：确认改动通过[门禁与验证](./gates.mdx)里的 `make release-check`。

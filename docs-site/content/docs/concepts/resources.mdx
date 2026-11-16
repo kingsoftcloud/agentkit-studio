@@ -1,0 +1,145 @@
+---
+title: 资源与绑定
+description: 五类可绑定资源的形状、互斥与上限、凭证引用的唯一正确写法，以及资源不可用时的降级与严格模式。
+status: new
+---
+
+**资源绑定（resource binding）是把外部能力挂到某个修订版本上的方式。只有五类资源：模型、MCP、Skill、知识库、记忆库。凭证值本身永远不进绑定，只留在宿主侧。**
+
+这一页说明五类资源的形状、哪些组合互斥、凭证必须怎么写，以及绑定的资源不可用时产品会怎么表现。
+
+<Diagram src="/assets/agentkit-resource-binding.png" alt="修订版本位于中心，向下连接模型档案、MCP 绑定、技能空间、知识库、记忆库五类资源；五类资源都经由 Host 凭据服务解析凭证，凭证明文只从 Host 流向模型网关、MCP 服务与 AgentEngine，永不回流浏览器" />
+
+*读图要点：绑定写在修订版本上，所以换资源等于换修订版本。凭证的流向是单向的——Host 解析引用后自己调用供应商，修订版本里只留下引用，浏览器、表单回填与转录永远拿不到明文。*
+
+## 为什么需要「绑定」这一层
+
+资源库只负责资源目录的生命周期：发现、导入、探测、查看、删除、刷新状态。**新增或变更「哪个 Agent 用哪个资源」必须在 Agent 创建页或编辑页完成**——这是两个不同的动作，混在一起会导致一个误判：以为在资源库里删掉一条记录就等于解绑。
+
+绑定写在修订版本上，所以：
+
+| 你的操作 | 结果 |
+| --- | --- |
+| 在资源库里刷新状态 | 只影响目录展示，不影响任何 Agent |
+| 在 Agent 编辑页换一个 MCP Server | 生成新修订版本，旧版本保持原绑定 |
+| 在资源库里删掉云端资源 | 云端资源被清理；已存在的绑定变成不可用 |
+
+## 五类资源
+
+| kind | 界面标签 | 来源 | 每类可绑几个 | 绑定字段 |
+| --- | --- | --- | --- | --- |
+| `model` | 模型 | 本地模型配置 + 模型网关 | 多个，其中一个默认 | 模型档案 |
+| `mcp` | MCP | 本地 MCP 目录 + 云端目录 | 多个 | `mcp_servers[]` |
+| `skill` | Skill | 已安装 Skill + 云端 Skill Space | 多个 | `skill_space` / `skill_spaces[]` |
+| `knowledge-base` | 知识库 | 云端控制面 | 一个 | `knowledge_base` |
+| `memory-instance` | 记忆库 | 云端控制面 | 一个 | `memory` |
+
+模型这一类比较特殊：它同时合并「本地已配置的模型档案」和「模型网关目录」。本地档案的 `status` 是 `configured` 或 `credential-missing`，网关条目的 `status` 是 `available`。**凭证缺失的模型仍然会出现在列表里**，只是被标记出来，不会静默消失。
+
+## 托管资源契约的硬规则
+
+托管侧的资源引用走 `agentengine.resources/v1`，它只接受五个字段：`knowledge_base`、`memory`、`skill_space`、`skill_spaces`、`mcp_servers`。多一个字段就整体判定无效（`MANAGED_RESOURCE_INVALID`）。
+
+| 规则 | 约束 |
+| --- | --- |
+| 互斥 | `skill_space` 与 `skill_spaces` 不能同时出现 |
+| 列表上限 | `skill_spaces` 与 `mcp_servers` 各最多 16 项 |
+| 引用 ID | 匹配 `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$` |
+| 区域 | 匹配 `^[a-z0-9][a-z0-9-]{0,63}$` |
+| 直连 MCP 地址 | 只允许 HTTP(S)，长度 ≤ 2048，不能内嵌用户名密码或查询串 |
+| 直连 MCP 传输 | 只允许 `http` 或 `sse` |
+| 重复 ID | 同一列表内不允许重复 |
+
+## 凭证引用：唯一的正确写法
+
+凭证写成 `env://` 加名称，**永远不写明文**。写明文不是「不安全习惯」，是直接被拒绝：
+
+| 位置 | 规则 | 违规错误码 |
+| --- | --- | --- |
+| 本地 MCP 的 Header 名 | 只允许 `x-request-source`、`x-skill-version`、`x-*-client`、`x-*-surface`、`accept`、`content-type` | `MCP_HEADER_REQUIRES_REFERENCE` |
+| 本地 MCP 的 Header 值 | 不能含 `${...}` 占位 | `MCP_HEADER_REQUIRES_REFERENCE` |
+| 本地 MCP 的环境变量名 | 含 `TOKEN`/`SECRET`/`PASSWORD`/`API_KEY` 时必须走引用 | `MCP_ENV_REQUIRES_REFERENCE` |
+| 本地 MCP 的引用值 | 必须匹配 `env://` 加合法名称 | `MCP_ENV_REF_INVALID` |
+| 托管侧 `env_refs` 的变量名 | 匹配 `^MCP_[A-Z0-9_]{1,124}$`，且必须含 `KEY`/`TOKEN`/`SECRET`/`PASSWORD` 之一 | `MANAGED_RESOURCE_INVALID` |
+
+托管侧另外有一份**禁止 Header 清单**：`host`、`connection`、`content-length`、`transfer-encoding`、`accept`、`content-type`、`mcp-protocol-version`、`mcp-session-id`，以及三个原型污染名。这份清单防的是请求走私与协议混淆，不是风格约定。
+
+<Callout type="info" title="为什么凭证必须在宿主侧">
+  MCP 目录记录只保存连接元数据与最后一次探测契约，凭证值由 DSH 凭证服务拥有。把凭证写进绑定，等于把它写进会随构建产物分发的文件里。
+</Callout>
+
+## 平台资源：三类独立清单
+
+知识库、记忆库、Skill Space 走平台资源通道，只能从云端目录里选，不能手填 ID。三者的绑定配置各不相同：
+
+| kind | 绑定后 Agent 得到什么 | 关键配置 |
+| --- | --- | --- |
+| `knowledge-base` | 只读检索能力 | `mode: tool`、`topK: 5`、`maxChars: 16000` |
+| `memory-instance` | 跨会话召回与写入 | 写入模式默认 `explicit_only` |
+| `skill-space` | 云端 Skill 的发现与加载 | `selectionMode: discovery`、`includePublic: false`、`executionMode: outer-agent` |
+
+选择时只投影可选元数据（名称、区域、禁用标记、状态），**后端凭证与内部配置不会返回给浏览器**。
+
+## 降级与严格模式
+
+绑定不可用不是异常，是预期内的一种状态。产品的默认行为是「保持对话可用，只摘掉不可用的绑定」：
+
+| 项 | 默认行为 | 严格模式行为 |
+| --- | --- | --- |
+| 启动会话时某个绑定探测失败 | 立刻可用，移除该绑定，其余照常 | 失败关闭，拒绝启动 |
+| 提示词 | 保持完全一致，不因一次网络抖动改变 | 同默认 |
+| 后台重探 | 降级后 30 秒、2 分钟、10 分钟各重探一次 | 不重探（失败即终止） |
+| 恢复 | 任一次严格探测成功即恢复完整绑定 | 不适用 |
+
+重探间隔是**从降级时刻起算的偏移量**，不是固定周期。三次都失败就停在降级状态，直到下一次显式启动会话。
+
+有一条例外：**模型路由无法解析时不能降级启动**。降级运行会立刻失败（`RUNTIME_MODEL_UNAVAILABLE`），所以只有明确声明「允许带着不可用资源启动」的调用方才能走到这一步。降级本身的错误码是 `RESOURCE_UNAVAILABLE`。
+
+## 资源检查事件
+
+每次真实的资源调用都会在会话里留下一条 `studio/resource-check` 事件。它是**无内容的证据**：只有种类、资源 ID、动作、耗时、结果，没有返回值、没有参数、没有凭证。
+
+| 字段 | 取值 |
+| --- | --- |
+| `kind` | `skill`、`skill-space`、`knowledge-base`、`memory-instance` |
+| `action` | `load`、`search`、`recall`、`write` |
+| `status` | `succeeded`、`failed` |
+| 附加 | `durationMs`、`hitCount`、`definitionCount`、`accepted`、`code` |
+
+这条事件是「资源真的被调用过」的唯一依据。目录里显示「就绪」不代表 Agent 实际调用成功。
+
+## 目录分页规则
+
+资源目录有硬上限，因为它是跨本地与云端合并出来的：
+
+| 规则 | 值 |
+| --- | --- |
+| 单页条数 | 1–200，默认 100 |
+| 来源筛选 | `all` / `local` / `cloud`，其他值报 `INVALID_RESOURCE_SOURCE` |
+| 游标 | 绑定筛选条件，换条件后旧游标失效（`INVALID_RESOURCE_CURSOR`） |
+| 去重 | 按 `resourceId` 去重，本地优先 |
+| 总览 | 每类最多 200 项，超出提示 `RESOURCE_OVERVIEW_TRUNCATED` |
+| 云端目录过大 | 超过 1000 页报 `RESOURCE_CATALOG_TOO_LARGE` |
+
+## 相关任务
+
+<Cards>
+  <Card title="绑定 MCP Server" href="/docs/guides/mcp-servers">
+    从探测到绑定，含凭证引用的完整写法。
+  </Card>
+  <Card title="绑定 Skill" href="/docs/guides/skills">
+    本地 Skill 与云端 Skill Space 的区别。
+  </Card>
+  <Card title="绑定知识库与 Memory" href="/docs/guides/knowledge-memory">
+    平台资源的检索与写入配置。
+  </Card>
+</Cards>
+
+## 相关参考
+
+| 你要查的东西 | 去哪一页 |
+| --- | --- |
+| 五类 kind 的完整字段与枚举 | [运行时与实体契约](../reference/runtime-contract.mdx) |
+| `MCP_*`、`RESOURCE_*` 错误码 | [错误码](../reference/errors.mdx) |
+| 资源相关的环境变量 | [环境变量](../reference/environment.mdx) |
+| 降级与重试的完整策略 | [降级与重试](../deployment/degradation-retry.mdx) |

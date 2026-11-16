@@ -76,3 +76,17 @@ output/playwright/
 packages/agentkit-harness-ui/markdown/dist/
 # Local pnpm content store (never a build input)
 .pnpm-store/
+
+# `npx skills add` installs Archify per machine; it is a tool, not source.
+.agents/skills/
+.claude/skills/
+.codebuddy/skills/
+.hermes/skills/
+.junie/skills/
+.lingma/skills/
+.minimax/skills/
+.qoder/skills/
+.zcode/skills/
+
+# Archify CLI install target at the repository root.
+skills/

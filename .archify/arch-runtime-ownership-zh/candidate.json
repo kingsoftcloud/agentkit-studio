@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "三个运行时的所有权矩阵",
+    "subtitle": "四条泳道 × 三个可创建运行时；执行者不是转录所有者",
+    "output": ".archify/arch-runtime-ownership-zh/overview.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "h-native",
+      "type": "cloud",
+      "label": "DSH 原生",
+      "sublabel": "dsh-native · 新建默认",
+      "pos": [
+        200,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "h-harness",
+      "type": "cloud",
+      "label": "Star Harness",
+      "sublabel": "harness",
+      "pos": [
+        390,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "h-codex",
+      "type": "cloud",
+      "label": "Codex",
+      "sublabel": "codex",
+      "pos": [
+        580,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "h-engine",
+      "type": "external",
+      "label": "Native 引擎",
+      "sublabel": "native-engine",
+      "pos": [
+        790,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "tag": "仅路由"
+    },
+    {
+      "id": "loop-native",
+      "type": "backend",
+      "label": "DSH 自己",
+      "sublabel": "model = native",
+      "pos": [
+        200,
+        150
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "loop-harness",
+      "type": "backend",
+      "label": "KSADK 原生内核",
+      "sublabel": "model = native-kernel",
+      "pos": [
+        390,
+        150
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "loop-codex",
+      "type": "backend",
+      "label": "Codex App Server",
+      "sublabel": "model = codex-app-server",
+      "pos": [
+        580,
+        150
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "log-native",
+      "type": "database",
+      "label": "DSH 会话",
+      "sublabel": "dsh-session",
+      "pos": [
+        200,
+        275
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "log-harness",
+      "type": "database",
+      "label": "原生 run store",
+      "sublabel": "native-run-store",
+      "pos": [
+        390,
+        275
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "log-codex",
+      "type": "database",
+      "label": "Codex 适配器",
+      "sublabel": "studio-codex-adapter",
+      "pos": [
+        580,
+        275
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "stream-native",
+      "type": "backend",
+      "label": "assistant-stream",
+      "sublabel": "重放 · 持久化",
+      "pos": [
+        200,
+        400
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "stream-harness",
+      "type": "backend",
+      "label": "native-model-port",
+      "sublabel": "持久回执 · 恢复",
+      "pos": [
+        390,
+        400
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "stream-codex",
+      "type": "backend",
+      "label": "codex-turn/item",
+      "sublabel": "重放 · 构建绑定",
+      "pos": [
+        580,
+        400
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "seam-native",
+      "type": "external",
+      "label": "Runtime 适配器",
+      "sublabel": "agentkit.studio.runtime/v1",
+      "pos": [
+        200,
+        525
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "seam-harness",
+      "type": "external",
+      "label": "Runtime 适配器",
+      "sublabel": "DSH 原生 turn 契约",
+      "pos": [
+        390,
+        525
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "seam-codex",
+      "type": "external",
+      "label": "Codex 适配器",
+      "sublabel": "studio.codex.adapter/v1",
+      "pos": [
+        580,
+        525
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "engine-body",
+      "type": "external",
+      "label": "独立进程",
+      "sublabel": "可路由，不可创建",
+      "pos": [
+        790,
+        150
+      ],
+      "size": [
+        160,
+        460
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "① 模型与工具循环：谁决定下一步、谁跑工具",
+      "wraps": [
+        "loop-native",
+        "loop-harness",
+        "loop-codex"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "② 会话与转录：谁持久化事件日志",
+      "wraps": [
+        "log-native",
+        "log-harness",
+        "log-codex"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "③ 流与持久状态：重启后还能恢复什么",
+      "wraps": [
+        "stream-native",
+        "stream-harness",
+        "stream-codex"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "④ Studio 接缝：产品代码面对的契约",
+      "wraps": [
+        "seam-native",
+        "seam-harness",
+        "seam-codex"
+      ]
+    }
+  ],
+  "connections": [],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "怎么读这张图",
+      "items": [
+        "每一行是一条泳道，每一列是一个运行时；格子里的文字就是这一行在那一个运行时上的实际归属。",
+        "四条泳道的归属各不相同，所以「换运行时」不是换个模型后端，而是换掉整条执行与持久化链路。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "只有 cancel 是三者共有",
+      "items": [
+        "能力项不是功能开关，不能靠配置打开——它是运行时实现的一部分。",
+        "dsh-native 有会话事件与持久化，harness 有持久回执与子任务，codex 有重放与构建绑定，三者只共享 cancel。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "native-engine 为什么单独一列",
+      "items": [
+        "它可被路由选中，但不在创建表单的正式值列表里，所以没有和另外三个运行时的可比能力。",
+        "在它的资源工具走完协议之前，创建表单、可移植包与部署都不会提供它。"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+---
+title: 托管运行时
+description: 托管运行时是跑在云端的常驻运行环境。它由一份清单声明描述，能力面刻意保守，身份来自受信任的平台跳而非请求体。
+status: new
+---
+
+**托管运行时（managed runtime）是跑在云端的常驻运行环境。它由一份清单声明（manifest）描述，不打包模型、不复制 Studio 存储，身份由受信任的平台跳重建而不是从请求体读取。**
+
+本地会话随宿主进程退出而中断；托管运行时 7×24 常驻。但「常驻」不等于「能力更全」——托管面的能力声明是一份**保守的子集**，这一页把边界讲清。
+
+## 为什么需要独立的运行时形态
+
+| 维度 | 本地运行 | 托管运行时 |
+| --- | --- | --- |
+| 生命周期 | 跟随宿主进程 | 常驻，由平台调度 |
+| 定义来源 | 本地 Agent 存储 + 本地构建 | 一份 YAML 清单声明 |
+| 身份来源 | 本地 Agent 记录 | 平台注入的环境变量 + 受信任请求头 |
+| 会话存储 | 本机磁盘 | 本机磁盘（同一 Agent 版本内有效） |
+| 能力面 | 完整 | 保守子集，见下文 |
+
+托管运行时**不做本地 Build**，也不生成 ZIP 运行包。它把一份挂载好的声明投影成已有的 DSH 准入契约，原生会话存储仍然权威。
+
+## 清单声明
+
+清单格式是 `agentengine.dsh-manifest/v1`，最大 900 KiB。只接受八个字段：`name`、`description`、`framework`、`artifact_type`、`runtime`、`model`、`prompt`、`resources`。多一个字段直接判 `MANAGED_MANIFEST_FIELD_UNSUPPORTED`。
+
+| 规则 | 约束 |
+| --- | --- |
+| 编码 | 必须是合法 UTF-8 的 YAML 1.2 |
+| 键 | 必须是字符串，且不允许重复键 |
+| 别名 | 禁止 YAML 别名（`maxAliasCount: 0`） |
+| 根节点 | 必须是映射，不能是数组或标量 |
+| `runtime` | 只能有 `name` 和 `version` 两个键 |
+| `artifact_type` | 必须是 `ManagedRuntime` |
+| 三者一致 | `framework`、`runtime.name` 必须等于所选运行时；`runtime.version` 必须等于所选版本 |
+| 长度 | `name` ≤ 240、`model` ≤ 512、`description` ≤ 4096、`prompt` ≤ 900 KiB |
+| 控制字符 | 除 `prompt` 外，任何字段都不能含控制字符 |
+
+三者不一致返回 `MANAGED_RUNTIME_IDENTITY_MISMATCH`——这是「声明描述的运行时」与「平台实际选择启动的运行时」不符，不允许自动纠正。其他清单错误码：`MANAGED_MANIFEST_INVALID`、`MANAGED_MANIFEST_TOO_LARGE`、`MANAGED_RUNTIME_IDENTITY_INVALID`。
+
+`resources` 字段走托管资源契约，五类资源的形状与互斥规则见[资源与绑定](./resources.mdx)。
+
+## 身份：由受信任跳重建
+
+托管运行时的身份**不由请求体决定**。四个受信任请求头必须齐全，缺一个返回 `RUNTIME_TRUSTED_IDENTITY_REQUIRED`（401）：
+
+| 请求头 | 含义 |
+| --- | --- |
+| `x-agentengine-identity-namespace` | 身份命名空间 |
+| `x-agentengine-business-tenant-id` | 业务租户 |
+| `x-agentengine-subject-type` | 主体类型（≤ 32 字符） |
+| `x-agentengine-subject-id` | 主体标识（≤ 128 字符） |
+
+四个值按固定顺序排序后压缩成 JSON，取 SHA-256 摘要，得到 `aeu_` 加摘要的用户标识。任何超长或含控制字符的值返回 `RUNTIME_TRUSTED_IDENTITY_INVALID`。
+
+<Callout type="warn" title="身份不能从请求体伪造">
+  平台跳已经完成了认证。托管运行时不再读请求体里的租户或主体字段——否则任何能发请求的人都能声明自己是任意租户。
+</Callout>
+
+## 宿主侧输入
+
+| 输入 | 约束 | 失败码 |
+| --- | --- | --- |
+| 平台 AgentId 与 VersionId | 必须明确提供，匹配标识符规则 | `MANAGED_HOST_IDENTITY_INVALID` |
+| 声明输入与运行包 | 不能同时指定 portable Build 或运行包 | `MANAGED_HOST_INPUT_CONFLICT` |
+| 模型入口 | 必须是无内嵌凭证、无查询串、无片段的 HTTP(S) 地址 | `MANAGED_HOST_MODEL_INVALID` |
+| 模型凭证 | 必须由平台注入 | `MANAGED_HOST_MODEL_CREDENTIAL_MISSING` |
+| Codex 接口类型 | `responses` 或 `chat-completions` | `MANAGED_HOST_MODEL_INVALID` |
+
+模型入口指向一个 OpenAI 兼容端点，凭证名固定为 `AGENTKIT_MODEL_API_KEY`。运行时**不缓存、不落盘**任何模型密钥。
+
+## 能力面：一份保守声明
+
+托管运行时对外暴露的能力是显式的，未实现的动作一律标记为不可用，而不是静默失败或返回空结果：
+
+| 动作 | 支持 | 说明 |
+| --- | :---: | --- |
+| `submit_interaction` | ✅ 原生 | 宿主把每次审批持有为 Interaction 记录，通过该动作结算 |
+| `cancel` | ✅ 原生 | 取消运行 |
+| `stop_run` | ✅ | 停止当前运行 |
+| `pause` / `resume` | ❌ | `managed_surface_not_implemented` |
+| `steer` / `inject` | ❌ | 同上 |
+| `checkpoint` / `durable_restore` | ❌ | 无检查点 |
+| `goal` / `loop` / `plan` | ❌ | 同上 |
+| `resume_run` | ❌ | 只有停止，没有续跑 |
+| `background_run` | ❌ | 只支持前台运行 |
+
+其他被声明出来的能力：
+
+| 项 | 值 |
+| --- | --- |
+| 托管对话格式 | `responses`，地址 `/agentengine/api/v1/RunAgent`，版本 `v1` |
+| 取消 / 中断 | 取消支持，中断不支持 |
+| 历史读取 | `ksadk.history/v2`，会话契约版本 `2`，支持 epoch 与快照 |
+| 审批策略 | 模式 `ask` / `risk`，默认 `risk`，允许运行时覆盖 |
+| 持久化后端 | `dsh-native-disk` |
+| 跨 Pod 共享 | 否 |
+| 生效范围 | 同一 Agent 版本 |
+| 活跃运行恢复 | 否（历史可读，未完成的运行不自动续跑） |
+| 附件 / 工作区文件 | 均不支持 |
+| 内核会话事件 | 不支持 |
+
+「持久化生效范围是同一 Agent 版本」是一条容易忽略的约束：跨版本读不到会话历史。
+
+## 执行策略
+
+托管运行时的执行策略来自部署声明，有明确的两层：
+
+| 项 | 默认 | 上限 |
+| --- | --- | --- |
+| 权限模式 | `workspace-write` | `danger-full-access` |
+
+对外暴露的「允许的权限模式」是**到上限为止的子集**（含上限本身）。请求的模式如果超出上限，会被夹到上限值而不是报错，见[三种运行时](./runtimes.mdx)。
+
+## 部署状态机
+
+部署有 19 个状态。它们分成三类：轮询态（9 个，界面持续刷新）、需要关注态（7 个，需要人处理）、其余为终态或稳定态。
+
+| 状态 | 中文 | 状态 | 中文 | 状态 | 中文 |
+| --- | --- | --- | --- | --- | --- |
+| `PREPARED` | 待提交 | `UPLOADING` | 上传运行包 | `UPLOAD_UNKNOWN` | 上传结果待核对 |
+| `UPLOADED` | 已上传 | `CREATING` | 创建中 | `CREATE_UNKNOWN` | 创建结果待核对 |
+| `PROVISIONING` | 准备实例 | `CONFIGURING` | 配置访问令牌 | `TOKEN_PENDING` | 等待配置生效 |
+| `STARTING` | 启动中 | `UPDATING` | 切换版本 | `UPDATE_UNKNOWN` | 更新结果待核对 |
+| `READY` | 就绪 | `AVAILABLE_UPDATING` | 入口可用 · 平台更新中 | `ACTION_REQUIRED` | 需要处理 |
+| `FAILED` | 失败 | `DELETING` | 删除中 | `DELETE_UNKNOWN` | 删除结果待核对 |
+| `DELETED` | 已删除 | | | | |
+
+三个 `*_UNKNOWN` 状态（上传、创建、更新、删除）是**结果未知**，不是失败。它们的语义是「请求已发出但没有拿到确定回执」，处理方式是核对而不是重试。`TOKEN_PENDING` 同时属于轮询态与需要关注态——它在等平台配置生效。
+
+## 硬规则
+
+1. **清单不做自动纠正**。三者不一致就是错误，不会「按平台选择的值覆盖声明」。
+2. **身份只来自受信任请求头**，请求体里的身份字段一律不读。
+3. **未实现的动作必须显式标记不可用**，不能返回空结果冒充成功。
+4. **持久化不跨 Agent 版本**，也不跨 Pod。
+5. **托管部署只接受两个运行时**：DSH 原生与 Codex。
+
+## 相关任务
+
+<Cards>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">
+    从本地 Agent 到一份可用的清单声明。
+  </Card>
+  <Card title="托管运行时更新与回滚" href="/docs/guides/update-rollback">
+    用状态机判断什么时候可以重试。
+  </Card>
+  <Card title="可观测性（OTel）" href="/docs/guides/observability">
+    把常驻运行接入 OpenTelemetry。
+  </Card>
+</Cards>
+
+## 相关参考
+
+| 你要查的东西 | 去哪一页 |
+| --- | --- |
+| 19 个状态的完整枚举与轮询集合 | [部署状态机](../reference/deployment-states.mdx) |
+| `MANAGED_*`、`RUNTIME_*` 错误码 | [错误码](../reference/errors.mdx) |
+| 托管注入的环境变量清单 | [环境变量](../reference/environment.mdx) |
+| 生命周期与回滚细节 | [托管运行时生命周期](../deployment/managed-runtime-lifecycle.mdx) |

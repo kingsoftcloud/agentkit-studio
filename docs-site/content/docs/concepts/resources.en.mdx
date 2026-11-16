@@ -1,0 +1,145 @@
+---
+title: Resources and bindings
+description: The five bindable resource kinds, their exclusivity rules, credential references, and degradation.
+status: new
+---
+
+**A resource binding attaches external capability to one revision. There are only five kinds: model, MCP, Skill, knowledge base, and memory. Credential values never enter a binding — they stay on the Host.**
+
+This page covers each kind's shape, which combinations are exclusive, how credentials must be written, and what the product does when a bound resource is unavailable.
+
+<Diagram src="/assets/agentkit-resource-binding.en.png" alt="A revision at the centre connected down to five bindings — model profiles, MCP bindings, skill spaces, knowledge base and memory; all five resolve credentials through the Host credential service, and plaintext flows only from the Host to the model gateway, MCP server and AgentEngine, never back to the browser" />
+
+*How to read this: bindings are frozen with the revision, so swapping a resource means a new revision. The credential path is one-way — the Host resolves the reference and calls the provider itself, leaving only the reference in the revision. The browser, form back-fill and transcript never see the plaintext.*
+
+## Why a binding layer exists
+
+The resource library owns only the resource catalog's lifecycle: discovery, import, probe, view, delete, and status refresh. **Adding or changing which resource an agent uses must happen on the agent creation or editing page** — two different actions, and conflating them leads to a wrong conclusion: that deleting a row in the library unbinds it.
+
+Bindings live on the revision, so:
+
+| Your action | Result |
+| --- | --- |
+| Refresh status in the resource library | Affects catalog display only; no agent changes |
+| Swap an MCP server on the agent editing page | Produces a new revision; the old revision keeps its binding |
+| Delete a cloud resource in the library | The cloud resource is cleaned up; existing bindings become unavailable |
+
+## The five kinds
+
+| kind | UI label | Source | How many per agent | Binding field |
+| --- | --- | --- | --- | --- |
+| `model` | Model | Local model profiles plus the model gateway | Many, one of them default | Model profile |
+| `mcp` | MCP | Local MCP catalog plus the cloud catalog | Many | `mcp_servers[]` |
+| `skill` | Skill | Installed Skills plus cloud Skill Spaces | Many | `skill_space` / `skill_spaces[]` |
+| `knowledge-base` | Knowledge base | Cloud control plane | One | `knowledge_base` |
+| `memory-instance` | Memory | Cloud control plane | One | `memory` |
+
+The model kind is special: it merges locally configured model profiles with the model gateway catalog. Local profiles report `status` as `configured` or `credential-missing`; gateway entries report `available`. **A profile missing credentials still appears in the list**, marked rather than silently hidden.
+
+## Hard rules of the managed resource contract
+
+Managed-side resource references use `agentengine.resources/v1`, which accepts exactly five fields: `knowledge_base`, `memory`, `skill_space`, `skill_spaces`, `mcp_servers`. One extra field invalidates the whole object (`MANAGED_RESOURCE_INVALID`).
+
+| Rule | Constraint |
+| --- | --- |
+| Exclusivity | `skill_space` and `skill_spaces` cannot both appear |
+| List limits | `skill_spaces` and `mcp_servers` allow at most 16 entries each |
+| Reference ID | Matches `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$` |
+| Region | Matches `^[a-z0-9][a-z0-9-]{0,63}$` |
+| Direct MCP endpoint | HTTP(S) only, at most 2048 characters, no embedded username/password and no query string |
+| Direct MCP transport | `http` or `sse` only |
+| Duplicate IDs | Not allowed within one list |
+
+## Credential references: the only correct syntax
+
+Write credentials as `env://` plus a name. **Never write plaintext.** Plaintext is not an unsafe habit; it is rejected:
+
+| Location | Rule | Violation code |
+| --- | --- | --- |
+| Local MCP header name | Only `x-request-source`, `x-skill-version`, `x-*-client`, `x-*-surface`, `accept`, `content-type` | `MCP_HEADER_REQUIRES_REFERENCE` |
+| Local MCP header value | Must not contain a `${...}` placeholder | `MCP_HEADER_REQUIRES_REFERENCE` |
+| Local MCP environment variable name | Names containing `TOKEN`/`SECRET`/`PASSWORD`/`API_KEY` must use a reference | `MCP_ENV_REQUIRES_REFERENCE` |
+| Local MCP reference value | Must match `env://` plus a legal name | `MCP_ENV_REF_INVALID` |
+| Managed `env_refs` variable name | Matches `^MCP_[A-Z0-9_]{1,124}$` and contains one of `KEY`/`TOKEN`/`SECRET`/`PASSWORD` | `MANAGED_RESOURCE_INVALID` |
+
+The managed side additionally blocks a header list: `host`, `connection`, `content-length`, `transfer-encoding`, `accept`, `content-type`, `mcp-protocol-version`, `mcp-session-id`, plus three prototype-pollution names. That list guards against request smuggling and protocol confusion, not style.
+
+<Callout type="info" title="Why credentials stay on the Host">
+  An MCP catalog record stores connection metadata and the last probe contract only; credential values belong to the DSH credential service. Writing a credential into a binding writes it into a file that ships with the build artifact.
+</Callout>
+
+## Platform resources: three separate lists
+
+Knowledge bases, memory instances, and Skill Spaces go through the platform resource channel and can only be selected from the cloud catalog, never typed by hand. Their binding configuration differs:
+
+| kind | What the agent gains | Key configuration |
+| --- | --- | --- |
+| `knowledge-base` | Read-only retrieval | `mode: tool`, `topK: 5`, `maxChars: 16000` |
+| `memory-instance` | Cross-session recall and write-back | Write mode defaults to `explicit_only` |
+| `skill-space` | Discovery and loading of cloud Skills | `selectionMode: discovery`, `includePublic: false`, `executionMode: outer-agent` |
+
+Selection projects selectable metadata only (name, region, disabled flag, status). **Backend credentials and internal configuration are never returned to the browser.**
+
+## Degradation and strict mode
+
+An unavailable binding is not an exception; it is an expected state. The default is to keep the conversation usable and drop only the unavailable binding:
+
+| Item | Default behavior | Strict mode behavior |
+| --- | --- | --- |
+| A binding fails its probe when starting a session | Usable immediately; that binding is removed and the rest continue | Fail closed; refuse to start |
+| The prompt | Stays byte-identical; one network blip never rewrites it | Same as default |
+| Background re-probe | At 30 seconds, 2 minutes, and 10 minutes after degradation | None (failure is terminal) |
+| Recovery | Any strict probe that succeeds restores the full binding set | Not applicable |
+
+The re-probe delays are **offsets from the moment of degradation**, not a fixed period. Three failures leave the preset degraded until the next explicit session start.
+
+One exception: **an unresolvable model route cannot start degraded.** A degraded run fails immediately (`RUNTIME_MODEL_UNAVAILABLE`), so only a caller that explicitly opts into running with unavailable resources reaches that point. The degradation code itself is `RESOURCE_UNAVAILABLE`.
+
+## Resource check events
+
+Every real resource call appends one `studio/resource-check` event to the session. It is **content-free evidence**: kind, resource ID, action, duration, and outcome — no return value, no arguments, no credentials.
+
+| Field | Values |
+| --- | --- |
+| `kind` | `skill`, `skill-space`, `knowledge-base`, `memory-instance` |
+| `action` | `load`, `search`, `recall`, `write` |
+| `status` | `succeeded`, `failed` |
+| Optional | `durationMs`, `hitCount`, `definitionCount`, `accepted`, `code` |
+
+This event is the only evidence that a resource was actually called. "Ready" in the catalog does not mean the agent invoked it successfully.
+
+## Catalog pagination rules
+
+The resource catalog has hard limits because it merges local and cloud sources:
+
+| Rule | Value |
+| --- | --- |
+| Page size | 1–200, default 100 |
+| Source filter | `all` / `local` / `cloud`; anything else raises `INVALID_RESOURCE_SOURCE` |
+| Cursor | Bound to the filter values; a changed filter invalidates the old cursor (`INVALID_RESOURCE_CURSOR`) |
+| Deduplication | By `resourceId`, local wins |
+| Overview | At most 200 entries per kind, then `RESOURCE_OVERVIEW_TRUNCATED` |
+| Oversized cloud catalog | More than 1000 pages raises `RESOURCE_CATALOG_TOO_LARGE` |
+
+## Related tasks
+
+<Cards>
+  <Card title="Bind an MCP server" href="/en/docs/guides/mcp-servers">
+    From probe to binding, including the full credential-reference syntax.
+  </Card>
+  <Card title="Bind a Skill" href="/en/docs/guides/skills">
+    How a local Skill differs from a cloud Skill Space.
+  </Card>
+  <Card title="Bind knowledge bases and Memory" href="/en/docs/guides/knowledge-memory">
+    Retrieval and write configuration for platform resources.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| The full fields and enumerations of the five kinds | [Runtime and entity contract](../reference/runtime-contract.mdx) |
+| `MCP_*` and `RESOURCE_*` error codes | [Errors](../reference/errors.mdx) |
+| Resource-related environment variables | [Environment](../reference/environment.mdx) |
+| The full degradation and retry policy | [Degradation and retry](../deployment/degradation-retry.mdx) |

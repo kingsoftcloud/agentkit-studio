@@ -1,0 +1,118 @@
+---
+title: Star Harness
+description: 独立 Harness 运行时的两种部署形态、配置入口、它为什么不能新建 Agent，以及失败时返回哪些错误码。
+status: new
+---
+
+**Star Harness（`harness`）把整个 turn 交给 Native Harness 内核，DSH 不再自己跑模型与工具循环。** 它通过 DSH 维护的 external-turn 接口委托整轮执行，因此不存在「Studio 里再跑一次循环」的可能（`src/runtime-contract.mjs:25-29`）。
+
+## 执行模型
+
+| 环节 | 归属 | 依据 |
+| --- | --- | --- |
+| 模型 / 工具循环 | `ksadk-harness` 的 native kernel | `owner: 'ksadk-harness'`、`execution: 'native-kernel'` |
+| 契约 | `agentkit.native-dsh-turn/v1` | `contract` |
+| 事件源 | `native-run-store` | `eventOwner` |
+| 流式 | `native-model-port` | `streamOwner` |
+| 能力集 | `native-run`、`durable-receipts`、`tool-approval`、`cancel`、`resume`、`child-tasks` | `capabilities` |
+
+依据：`src/runtime-contract.mjs:25-29`。
+
+它有两种运行形态，配置面完全不同：
+
+| 形态 | 循环在哪 | 需要的配置 |
+| --- | --- | --- |
+| Host 内整轮委托 | DSH 进程内，走 `dsh.external-turn/v1` | 无额外配置 |
+| 独立引擎进程 | 单独进程，走 `agentkit.engine/v1` | `AGENTKIT_ENGINE_COMMAND` 或引擎服务地址 |
+
+<Callout type="warn" title="Host 内形态不能走普通流式接缝">
+  `harness` 在本地模式下经过 DSH 的流式适配器会直接抛 `STUDIO_NATIVE_TURN_REQUIRED`（「Native Harness requires the whole-turn execution port.」）。它必须由整轮端口承接，不能被当成「一条普通的模型流」（`src/providers/dsh-runtime.mjs:591`）。
+</Callout>
+
+## 什么时候选它
+
+- 需要**跨进程续跑**（`resume`）：只有 Star Harness 具备该能力。
+- 需要**子任务**（`child-tasks`）与持久回执（`durable-receipts`）：多角色任务分解依赖这两项。
+- 需要工具审批作为运行时一等能力（`tool-approval`）。
+- 组织已经独立部署了 Harness 服务，希望升级引擎不必重发 Studio。
+
+不需要这些时选 DSH Native 更省事（见[三运行时对照](./runtimes-compare.mdx)）。
+
+## 配置入口
+
+### 独立引擎进程
+
+| 环境变量 | 作用 | 校验 |
+| --- | --- | --- |
+| `AGENTKIT_ENGINE_COMMAND` | 指向独立安装的 Harness 可执行文件 | 必填，缺失抛 `NATIVE_ENGINE_UNAVAILABLE` |
+| `AGENTKIT_ENGINE_ARGS` | 传给该进程的参数 | 必须是 JSON 字符串数组，否则 `NATIVE_ENGINE_CONFIG_INVALID` |
+| `AGENTKIT_ENGINE_MODEL_API_KEY` | 引擎侧模型凭证 | 子进程环境变量名固定为这一个 |
+| `AGENTKIT_ENGINE_MODEL_IMAGES` | 声明引擎具备图片能力 | 设为 `1` 才生效 |
+
+依据：`src/providers/native-engine-runtime.mjs:92-100`、`:214-218`。
+
+### 引擎服务（本地多项目 / 托管）
+
+| 环境变量 | 作用 |
+| --- | --- |
+| `AGENTKIT_ENGINE_SERVICE_URL` | 引擎服务地址（HTTPS 或 `127.0.0.1` HTTP） |
+| `AGENTKIT_ENGINE_SERVICE_TOKEN` | 服务令牌，通过其环境变量名间接引用 |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | 该服务绑定的工作区绝对路径 |
+| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | 可选 CA 文件，要求 HTTPS |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACES` | 一次声明多个 `{workspace, endpoint, tokenEnv, caFile, model}` 绑定 |
+
+单服务与多项目两种写法互斥：同时设置 `AGENTKIT_ENGINE_SERVICE_WORKSPACES` 与 `AGENTKIT_ENGINE_SERVICE_URL` 会被拒绝（`src/providers/engine-service-workspaces.mjs:22-23`）。
+
+```json
+[
+  {
+    "workspace": "/projects/alpha",
+    "endpoint": "https://engine-alpha.example.com",
+    "tokenEnv": "HARNESS_ALPHA_TOKEN",
+    "model": "your-model-name"
+  }
+]
+```
+
+### 托管声明
+
+托管形态下 `framework: harness` 的声明若注入了引擎服务变量，Agent 的运行时类型会被投影成 `native-engine`，模型选择走 `agentkit-studio-harness-service` 提供方（`src/managed-runtime-definition.mjs:36-51`、`src/providers/engine-service-workspaces.mjs:5`）。
+
+## 限制
+
+| 限制 | 表现 | 依据 |
+| --- | --- | --- |
+| **新 Agent 不可创建** | 创建表单只在编辑既有 Agent 时放行 `harness`；`allowHarnessRuntime` 无调用方传 `true` | `src/client/pages/agent-form.mjs:28`、`:61` |
+| 必须由整轮端口承接 | 走普通流式接缝抛 `STUDIO_NATIVE_TURN_REQUIRED` | `src/providers/dsh-runtime.mjs:591` |
+| 工作区必须一致 | 托管 Harness 的服务工作区与宿主工作区不一致时抛 `HARNESS_SERVICE_WORKSPACE_MISMATCH` | `src/managed-runtime-host.mjs:276-279` |
+| 模型必须可解析 | 无服务托管且模型无接口地址时抛 `NATIVE_ENGINE_MODEL_UNAVAILABLE` | `src/providers/dsh-runtime.mjs:628-629` |
+| 升级不等于改 Studio | 协议只在 major 变化时更新 Studio 侧客户端 | `src/providers/engine-protocol-client.mjs:1-13` |
+
+<Callout type="info" title="Studio 不编译引擎代码">
+  Studio 侧只保留一个协议客户端（`agentkit.engine/v1`），它不含引擎逻辑、不 import 引擎代码，只把 JSON-RPC 帧管道接到子进程 stdio。宿主可以用别的语言按协议重写它（`src/providers/engine-protocol-client.mjs:1-13`）。
+</Callout>
+
+## 失败形态
+
+| 错误码 | 触发条件 | 你能做什么 |
+| --- | --- | --- |
+| `STUDIO_NATIVE_TURN_REQUIRED` | `harness` 走进了普通流式接缝 | 检查 Host 是否提供了整轮端口；这通常意味着 DSH 基线不匹配 |
+| `NATIVE_ENGINE_UNAVAILABLE` | 未配置 `AGENTKIT_ENGINE_COMMAND`，或运行时未注册 | 设置命令路径，或启用引擎服务 |
+| `NATIVE_ENGINE_CONFIG_INVALID` | `AGENTKIT_ENGINE_ARGS` 不是 JSON 字符串数组 | 改成 `["--flag","value"]` 形式 |
+| `NATIVE_ENGINE_MODEL_UNAVAILABLE` | 模型没有配置接口地址 | 在 Agent 上绑定一个配置了网关地址的模型 |
+| `MANAGED_HARNESS_SERVICE_BINDING_INVALID` | 托管形态下服务地址 / 凭据 / 工作区无效 | 检查四个 `AGENTKIT_ENGINE_SERVICE_*` 变量 |
+| `HARNESS_SERVICE_WORKSPACE_MISMATCH` | 服务工作区 ≠ 宿主工作区 | 让两者指向同一个绝对路径 |
+
+资源不可用时的降级与重试见[降级与重试](./degradation-retry.mdx)。
+
+## 源码依据
+
+| 结论 | 位置 |
+| --- | --- |
+| 能力矩阵 | `src/runtime-contract.mjs:25-29` |
+| 整轮端口要求 | `src/providers/dsh-runtime.mjs:591` |
+| 引擎进程配置 | `src/providers/native-engine-runtime.mjs:92-100`、`:214-218` |
+| 引擎服务绑定与互斥 | `src/providers/engine-service-workspaces.mjs:5`、`:20-35` |
+| 协议客户端边界 | `src/providers/engine-protocol-client.mjs:1-13` |
+| 托管声明投影 | `src/managed-runtime-definition.mjs:36-51` |
+| 不可创建 | `src/client/pages/agent-form.mjs:28`、`:61` |

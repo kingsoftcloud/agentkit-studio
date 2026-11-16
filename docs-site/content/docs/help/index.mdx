@@ -1,0 +1,107 @@
+---
+title: 帮助
+description: 遇到问题时从哪一页开始查；以及提 issue 前需要准备哪些信息才能被快速定位。
+---
+
+文档的其余部分讲「怎么用」，这一章讲「**用不成怎么办**」。
+
+## 三条路径
+
+| 你遇到的情况 | 去哪一页 |
+| --- | --- |
+| 「这个功能是不是本来就这样？」 | [常见问题](./faq.mdx) |
+| 界面上出现了一个**错误码**，或者某个操作一直失败 | [排障](./troubleshooting.mdx) |
+| 「这不是 bug，是你们还没做」 | [已知限制](./known-limitations.mdx) |
+
+## 按阶段定位
+
+| 你在哪一步卡住 | 先看 | 常见错误码前缀 |
+| --- | --- | --- |
+| 装不上、打不开 | [安装](../getting-started/install.mdx) → [已知限制](./known-limitations.mdx) | — |
+| 打不开但没报错 | 总览的「启动检查」 | `HOST_CONNECTION_MISSING`、`STUDIO_HOST_INCOMPATIBLE` |
+| 配不了模型 | [排障 · 模型与凭证](./troubleshooting.mdx#模型与凭证) | `MODEL_*`、`CLOUD_CREDENTIALS_MISSING` |
+| 创建不了 Agent | [排障 · Agent 与构建](./troubleshooting.mdx#agent-与构建) | `AGENT_*`、`BUILD_*`、`STUDIO_PRESET_*` |
+| 发消息没反应 | [排障 · 运行时](./troubleshooting.mdx#运行时) | `NATIVE_ENGINE_*`、`RUNTIME_*`、`DSH_TURN_FAILED` |
+| 资源绑定不上 | [排障 · 资源](./troubleshooting.mdx#资源) | `MCP_*`、`SKILL_*`、`MANAGED_RESOURCE_*` |
+| 部署失败 | [排障 · 云端](./troubleshooting.mdx#云端与部署) | `CLOUD_*`、`DEPLOYMENT_*` |
+| 会话历史不对 | [排障 · 会话](./troubleshooting.mdx#会话与历史) | `SESSION_*`、`STUDIO_LEGACY_HARNESS_RETIRED` |
+
+## 先做这三件事
+
+在翻文档之前，这三步能解决大半问题：
+
+<Steps>
+<Step>
+### 看「启动检查」
+
+**总览 → 启动检查**，展开后会跑三项并给三态结论（`src/client/state/start-checks.mjs:22-26`）：
+
+| 结论 | 含义 |
+| --- | --- |
+| 已确认 | 读到了真实配置 |
+| 缺少配置 | 明确没配，按提示去补 |
+| 未知 | 读不到（超时 / 连接失败），不是「没配」 |
+
+三项都有 8 秒超时。全是「未知」说明 Host 根本没连上，先解决连接问题。
+</Step>
+
+<Step>
+### 核对版本
+
+**设置 → AgentKit Studio → 版本与更新**，确认三个版本号（`src/client/pages/studio-settings.mjs:78-80`）：
+
+- **AgentKit Studio 版本** —— 桌面应用版本
+- **Studio 插件版本** —— 产品功能与运行适配层版本
+- **DSH 宿主兼容版本** —— 固定宿主基线
+
+三者不是同一个东西。报 issue 时三个都要给。
+</Step>
+
+<Step>
+### 复现一次
+
+关掉工作室重开，从干净状态复现。如果只在「跑了几轮之后」出现，多半和会话历史或运行时状态有关，记下是第几轮。
+</Step>
+</Steps>
+
+## 提 issue 需要什么
+
+信息不全的 issue 只能来回问。请直接给出：
+
+| 需要的信息 | 从哪拿 |
+| --- | --- |
+| 三个版本号 | 设置 → AgentKit Studio → 版本与更新 |
+| 平台与架构 | macOS（Apple Silicon）/ Windows（x64） |
+| 完整错误码 | 卡片上的错误文案，或 observability 里的 trace |
+| 复现步骤 | 从哪个面板、点了什么、输入了什么 |
+| 运行中心记录 | 运行中心 → 观测 → 对应 Trace 的 Span 与事件 |
+| 是否云端 | 本地 Host 还是云端托管运行时 |
+
+<Callout type="warn" title="不要贴凭证">
+截图和日志里请自行遮住 API Key、AK/SK、Cookie 与私有地址。
+Studio 展示历史时会自动把常见凭证形态替换成 `[已隐藏凭据]`（`src/dsh-history-display.mjs:10-21`），但**截图和终端输出不在此列**。
+</Callout>
+
+## 自检命令
+
+源码或插件形态可以用这几条自查：
+
+```sh
+# 插件形态：确认宿主版本
+dsh --version
+
+# 源码形态：跑门禁
+pnpm install --frozen-lockfile
+make check
+
+# 看 Node 是否达到安全基线
+node scripts/check-node-version.mjs
+```
+
+`make check` 覆盖语法、可移植性、源码体积、契约与产品面检查（`Makefile:71-72`）。它失败时给出的路径就是问题所在。
+
+## 相关
+
+- [第一次对话](../getting-started/first-conversation.mdx) —— 先确认一次正常运行长什么样
+- [界面导览](../getting-started/interface.mdx) —— 确认你没走错面板
+- [安全与公开边界](../contributing/security-boundary.mdx) —— 什么算内部信息、什么不能贴

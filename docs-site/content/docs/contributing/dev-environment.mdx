@@ -1,0 +1,126 @@
+---
+title: 开发环境
+description: 从零跑通 AgentKit Studio 开发宿主：Node 与 pnpm 版本、DSH 检出、make setup、数据目录隔离与常见失败。
+status: new
+---
+
+这一页把仓库从「刚 clone」带到「改一行代码就能看到效果」。所有命令都可以直接复制，
+目标与默认值来自 `Makefile`、`package.json` 与 `.node-version`。
+
+## 前置条件
+
+| 依赖 | 版本 | 依据 |
+| --- | --- | --- |
+| Node.js | 24.22.1（安全基线：22.23.4+ / 24.22.1+ / 26.12.1+） | `.node-version`、`scripts/node-version.mjs` |
+| pnpm | 10.33.2 | `package.json` 的 `packageManager` |
+| Git、Make、C 工具链 | 任意近期版本 | `make setup` 会编译 DSH 原生模块 |
+| Node 开发头文件 | 需要 `include/node/node_api.h` | `scripts/development-doctor.mjs` |
+
+<Callout type="error" title="Windows 原生环境不支持">
+  Make 目标依赖 POSIX 进程组与 shell。Windows 请使用 WSL2；`make setup` 在原生 Windows 上会直接报错退出。
+</Callout>
+
+## 一次性初始化
+
+```sh
+# 1. 启用 Corepack，让 pnpm 版本与 packageManager 一致
+corepack enable
+
+# 2. 安装本仓库依赖
+pnpm install --frozen-lockfile
+
+# 3. 准备 DSH 宿主：clone 固定基线、打补丁、构建、安装插件
+make setup DSH_ROOT=../deepseek-harness
+
+# 4. 启动开发宿主
+make dev DSH_ROOT=../deepseek-harness
+```
+
+`DSH_ROOT` 必须指向仓库**之外**的目录。默认值是 `Makefile` 里的
+`$(abspath ../../deepseek-harness)`，从 `agentengine/agentkit-studio` 解析到 `agent-sdk` 下的同级检出。
+
+### make setup 做了什么
+
+`make setup` 是一个顺序执行的复合目标，每一步失败都会停下：
+
+| 步骤 | 命令 | 作用 |
+| --- | --- | --- |
+| 1 | `node scripts/development-doctor.mjs --tools-only` | 校验 Node 版本、开发头文件、`git`/`make`/`cc`/`pnpm` |
+| 2 | `pnpm install --frozen-lockfile` | 安装依赖；锁文件不一致会失败 |
+| 3 | `make dsh-bootstrap` | 在 `DSH_ROOT` 处 clone 固定 `ref` 的 DSH，校验 `commit` 一致后安装其依赖 |
+| 4 | `node scripts/prepare-development.mjs` | 应用补丁序列；已有检出不会被重置 |
+| 5 | `node scripts/build-product-host.mjs --script build:official` | 构建 DSH 宿主产物 |
+| 6 | `make profile-install` | 把当前插件打包并装入 `DSH_PROFILE` 指定的 Profile |
+| 7 | `make doctor` | 复核基线、补丁、产物与已安装 Profile |
+
+## DSH 检出放在仓库外
+
+`dsh-bootstrap` 只做两件事：缺检出就 clone，然后校验 `HEAD` 等于 `dsh-pin.json` 的 `commit`。
+它**不会**把 DSH 源码复制进本仓库，也**不会**重置你已有的检出。
+
+```sh
+# 查看当前固定的 DSH 基线
+node scripts/check-dsh-pin.mjs
+```
+
+输出的 `version`、`commit`、`ref`、`patchDirectory`、`patchedTree` 就是全部构建输入。
+`check-dsh-pin` 同时校验 `package.json` 的 `engines.dsh`、`studio.plugin.json` 的
+`requiredDsh`、补丁清单与 `pnpm-lock.yaml` 是否都指向同一个版本——任意一处漂移都会失败。
+
+## 隔离数据目录
+
+开发运行时会在两个目录里写状态。把它们指向临时目录，可以避免污染你的日常 Profile：
+
+| 变量 | 内容 | 建议值 |
+| --- | --- | --- |
+| `DSH_HOME` | DSH 宿主数据，含 `profiles/<name>` | 仓库外的临时目录 |
+| `AGENTKIT_HOME` | Studio 自身的运行数据 | 仓库外的临时目录 |
+| `DSH_PROFILE` | 使用哪个 Profile（默认 `agentkit-studio`） | 保持默认或另建 |
+| `DSH_HOST` / `DSH_WEB_PORT` | 开发宿主监听地址（默认 `127.0.0.1:3098`） | 端口冲突时改这里 |
+
+```sh
+export DSH_HOME="$(mktemp -d)/dsh"
+export AGENTKIT_HOME="$(mktemp -d)/agentkit"
+make dev DSH_ROOT=../deepseek-harness
+```
+
+<Callout type="info" title="为什么必须隔离">
+  `profile-install` 会写入 `DSH_HOME`，`prepare-development` 会改变 DSH 检出的工作树状态。
+  指向临时目录后，你可以随时删掉整个实验环境重来，而不影响已安装的桌面端。
+</Callout>
+
+## 日常开发循环
+
+| 你要验证的 | 命令 | 说明 |
+| --- | --- | --- |
+| 浏览器界面 | `make dev` | 重新打包插件 → 装 Profile → 启动 Web 宿主 |
+| 只重装插件 | `make profile-install` | `pack` 之后按摘要装入 Profile |
+| 源码直连的插件 | `pnpm build:client` | 修改 `src/client/` 后必须重建 `dist/client.js` |
+| 桌面端 | `make desktop-dev` | 构建 Electron 输入并启动开发运行时 |
+| 校验环境 | `make doctor` | 只读诊断，不重置任何配置 |
+
+`dist/` 是生成产物，Git 忽略它，但 `package.json` 的 `files` 白名单包含它——所以不要手改，也不要提交。
+
+## 常见失败
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| `Node.js … 低于安全基线` | 运行时版本过旧 | 按 `.node-version` 安装 24.22.1 或更新 |
+| `Studio 需要 pnpm@10.33.2` | Corepack 未启用或版本不符 | `corepack enable` 后重试 |
+| `DSH checkout 不是 … 基线` | 检出 `HEAD` 与固定 `commit` 不符 | 重新 clone，或换一个新的 `DSH_ROOT` |
+| `DSH 原生模块需要 Node 开发头文件` | 安装的 Node 不含 `include/node` | 换用官方发行版或补装头文件 |
+| `已存在但不是 Git checkout` | `DSH_ROOT` 指向了普通目录 | 清空该目录，或换路径 |
+| 端口被占用 | `DSH_WEB_PORT` 冲突 | `make dev DSH_WEB_PORT=3099` |
+| 补丁应用结果不符 | 检出有额外改动 | 换独立 `DSH_ROOT`；工具会保留现场，不会重置 |
+
+## 清理
+
+```sh
+# 删除本地打包产物（.artifacts 下的文件）
+make clean
+
+# 实验环境：直接删掉隔离目录
+rm -rf "$DSH_HOME" "$AGENTKIT_HOME"
+```
+
+下一步：跑[门禁与验证](./gates.mdx)，确认你的改动在提交前能通过完整检查。

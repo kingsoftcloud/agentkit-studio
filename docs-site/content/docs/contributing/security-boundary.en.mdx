@@ -1,0 +1,128 @@
+---
+title: Security and public boundary
+description: "The repository is public: fourteen red lines (4 path classes, 10 content classes), why they never belong in docs, and the local self-check commands."
+status: new
+---
+
+This repository is public. **Anything committed to Git stays in history forever** — deleting a file does
+not delete the record. The boundary is therefore not a pre-release review; it is a rule you obey while
+writing.
+
+## Why this boundary exists
+
+Three reasons, each from a real failure mode:
+
+1. **History is irreversible.** Once a credential lands on `main`, the remedy is **rotation**, not
+   `git rm`. That is why the audit scans both current files and historical blobs.
+2. **Documentation leaves the repository.** The site, the release package, the mirror, and AI indexes
+   all copy the same content; a single leak propagates.
+3. **Agents read it.** This site serves `llms.txt` and per-page Markdown routes, so coding agents consume
+   it directly. A "sample credential" in docs is easily mistaken for real configuration.
+
+## The fourteen red lines
+
+`scripts/public-surface-audit.mjs` defines two groups: **paths** and **text content**.
+
+### Path classes (4)
+
+| # | Red line | Coverage |
+| --: | --- | --- |
+| 1 | Build and tool output | `.artifacts/`, `.playwright-cli/`, `.zread/` |
+| 2 | Runtime and cache directories | `node_modules/`, `.scratch/`, `.dsh/`, `.agentkit/`, `.codex/`, `.ssh/`, `profiles/` |
+| 3 | Private key files | `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, plus `.p12` / `.pfx` / `.p8` / `.key` |
+| 4 | Environment and credential names | `.env` and its variants; `json` / `yaml` / `toml` / `ini` / `env` files whose name carries credential, secret, or token; files named `private-key` |
+
+These paths are **rejected wholesale** without content inspection — they have no legitimate use in a
+public repository.
+
+### Content classes (10)
+
+| # | Red line | Match |
+| --: | --- | --- |
+| 5 | Private key block | A PEM private key header |
+| 6 | Internal forge host | The company-internal code hosting domain |
+| 7 | Internal service host | `.internal` / `.intranet` / `.corp` domains and internal API hosts |
+| 8 | Private network address | RFC 1918 private range addresses |
+| 9 | Embedded URL credential | The `scheme://user:password@host` form |
+| 10 | Personal absolute path | macOS / Linux / Windows user home paths |
+| 11 | GitHub token | `ghp_` / `ghs_` / `github_pat_` forms |
+| 12 | AWS access key | Long tokens starting with `AKIA` |
+| 13 | Provider API key | `sk-` and `AIza` forms of model provider keys |
+| 14 | Private classification marker | Upper-case internal classification labels and phrases such as "real account" or "customer information" |
+
+**Official service endpoint exception**: a small number of official service domains are reachable only
+from the internal network but are part of the public client contract, so they are explicitly listed in
+`APPROVED_INTERNAL_SERVICE_HOSTS`. That list changes only through review; never add an entry to make the
+scanner pass.
+
+## Why none of this belongs in docs
+
+| What you might think | Why it fails |
+| --- | --- |
+| "It is only a sample key" | Samples get copied into real configuration, and there is no way to prove it is not real |
+| "It is a test environment address" | Test and production often share naming, and the address alone is intelligence |
+| "There is no secret in the path" | A username identifies organization members and breaks local reproduction |
+| "This domain is public" | Internal reachability does not mean public; anything outside the approval list is rejected |
+| "I deleted it, so it is fine" | Historical blobs remain reachable; `public-history-audit.mjs` scans them |
+
+Replacements:
+
+- Credential → `<YOUR-API-KEY>`
+- Host → `example.test` (`.test` and `.example` are reserved domains)
+- Path → a relative path such as `<your-workspace>`
+- Private address → describe it as "a private address" instead of writing it
+
+## Local self-check
+
+Four commands, cheapest first:
+
+```sh
+# 1. Public surface: content and paths across tracked files plus non-ignored new files
+make public-surface-audit
+
+# 2. History: every blob and historical path reachable from the public branch (needs a complete checkout)
+node scripts/public-history-audit.mjs
+
+# 3. Secrets: Gitleaks 8.30.1, run twice — history and snapshot
+make secret-scan
+
+# 4. Portability: no personal absolute paths or file:/// URLs in version-controlled files
+node scripts/check-portability.mjs
+```
+
+<Callout type="warn" title="A shallow clone fails outright">
+  The history scan requires a complete checkout. CI uses `fetch-depth: 0`; locally, run
+  `git fetch --unshallow` first, otherwise the audit fails with "requires a complete checkout". That is
+  intentional: half a history is no scan at all.
+</Callout>
+
+<Callout type="info" title="The audit never leaks what it finds">
+  On a hit it prints only `file:line` and the rule name — never the matched content, author, remote URL,
+  or the report body. That is why running it locally is as safe as running it in CI.
+</Callout>
+
+## What to do about a false positive
+
+Assume it is real first. Once confirmed, only three treatments are legitimate:
+
+| Situation | Treatment |
+| --- | --- |
+| A public synthetic test fixture | Add the **exact value** to the approval list in `scripts/public-surface-audit.mjs` with a written reason |
+| A synthetic value already in history | Add it to `scripts/public-history-baseline.mjs`, bound to the blob digest and line |
+| An official service endpoint | Add it to `APPROVED_INTERNAL_SERVICE_HOSTS` and explain in review why it is a public contract |
+
+**Never**: exempt a whole file, exempt a whole commit, exempt by fingerprint, or comment out a rule.
+`ci/gitleaks.toml` contains no file- or commit-level exemptions — only three exact synthetic fixture values.
+
+## Reporting a security issue
+
+If you find a credential or sensitive value **already in the repository**:
+
+1. Do not open a public issue and do not quote the value in a discussion.
+2. Report it privately through the channel in `SECURITY.md`, including the file and line.
+3. Assume the credential is already leaked: rotate at the source first, then clean the repository.
+
+---
+
+For the full gate breakdown see [Gates and verification](./gates.mdx); for the documentation-side
+prohibitions see [Documentation style guide](./docs-style-guide.mdx).

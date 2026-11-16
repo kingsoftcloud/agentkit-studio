@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Runtime Ownership Matrix",
+    "subtitle": "Four ownership lanes across three creatable runtimes; the executor is not the transcript owner",
+    "output": ".archify/arch-runtime-ownership-en/overview.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "h-native",
+      "type": "cloud",
+      "label": "DSH Native",
+      "sublabel": "dsh-native · default",
+      "pos": [
+        200,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "h-harness",
+      "type": "cloud",
+      "label": "Star Harness",
+      "sublabel": "harness",
+      "pos": [
+        390,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "h-codex",
+      "type": "cloud",
+      "label": "Codex",
+      "sublabel": "codex",
+      "pos": [
+        580,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "h-engine",
+      "type": "external",
+      "label": "Native engine",
+      "sublabel": "native-engine",
+      "pos": [
+        790,
+        40
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "tag": "route only"
+    },
+    {
+      "id": "loop-native",
+      "type": "backend",
+      "label": "DSH itself",
+      "sublabel": "model = native",
+      "pos": [
+        200,
+        150
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "loop-harness",
+      "type": "backend",
+      "label": "KSADK native kernel",
+      "sublabel": "model = native-kernel",
+      "pos": [
+        390,
+        150
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "loop-codex",
+      "type": "backend",
+      "label": "Codex App Server",
+      "sublabel": "model = codex-app-server",
+      "pos": [
+        580,
+        150
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "log-native",
+      "type": "database",
+      "label": "DSH session",
+      "sublabel": "dsh-session",
+      "pos": [
+        200,
+        275
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "log-harness",
+      "type": "database",
+      "label": "Native run store",
+      "sublabel": "native-run-store",
+      "pos": [
+        390,
+        275
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "log-codex",
+      "type": "database",
+      "label": "Codex adapter",
+      "sublabel": "studio-codex-adapter",
+      "pos": [
+        580,
+        275
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "stream-native",
+      "type": "backend",
+      "label": "assistant-stream",
+      "sublabel": "replay · persistence",
+      "pos": [
+        200,
+        400
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "stream-harness",
+      "type": "backend",
+      "label": "native-model-port",
+      "sublabel": "receipts · resume",
+      "pos": [
+        390,
+        400
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "stream-codex",
+      "type": "backend",
+      "label": "codex-turn/item",
+      "sublabel": "replay · build binding",
+      "pos": [
+        580,
+        400
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "seam-native",
+      "type": "external",
+      "label": "Runtime adapter",
+      "sublabel": "agentkit.studio.runtime/v1",
+      "pos": [
+        200,
+        525
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "seam-harness",
+      "type": "external",
+      "label": "Runtime adapter",
+      "sublabel": "DSH native turn contract",
+      "pos": [
+        390,
+        525
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "seam-codex",
+      "type": "external",
+      "label": "Codex adapter",
+      "sublabel": "studio.codex.adapter/v1",
+      "pos": [
+        580,
+        525
+      ],
+      "size": [
+        160,
+        85
+      ]
+    },
+    {
+      "id": "engine-body",
+      "type": "external",
+      "label": "Separate process",
+      "sublabel": "routable, not creatable",
+      "pos": [
+        790,
+        150
+      ],
+      "size": [
+        160,
+        460
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "① Model & tool loop: who decides the next step and runs the tools",
+      "wraps": [
+        "loop-native",
+        "loop-harness",
+        "loop-codex"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "② Session & transcript: who persists the event log",
+      "wraps": [
+        "log-native",
+        "log-harness",
+        "log-codex"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "③ Stream & durable state: what survives a restart",
+      "wraps": [
+        "stream-native",
+        "stream-harness",
+        "stream-codex"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "④ Studio seam: the contract product code targets",
+      "wraps": [
+        "seam-native",
+        "seam-harness",
+        "seam-codex"
+      ]
+    }
+  ],
+  "connections": [],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How to read this",
+      "items": [
+        "Each row is one ownership lane and each column is one runtime; the text in a cell is the actual owner for that lane on that runtime.",
+        "All four lanes differ per runtime, which is why switching runtimes is not switching a model backend — it replaces the whole execution and persistence chain."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Only cancel is shared",
+      "items": [
+        "A capability is not a feature flag; it is part of the implementation and cannot be enabled by configuration.",
+        "dsh-native has session events and persistence, harness has durable receipts and child tasks, codex has replay and build binding — the only capability all three share is cancel."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Why native-engine gets its own column",
+      "items": [
+        "It can be selected by routing but is not in the official value list the creation form offers, so it has no comparable capabilities next to the other three.",
+        "Until its resource tools move onto the protocol, the creation form, portable bundles and deployments will not offer it."
+      ]
+    }
+  ]
+}

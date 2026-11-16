@@ -1,0 +1,161 @@
+---
+title: Documentation style guide
+description: "The writing contract for this site: page skeletons, 1:1 bilingual rules, link and component conventions, terminology, and the self-check commands."
+status: new
+---
+
+This site ships with the product; it is not an afterthought. **CI blocks changes that break this page** —
+`tests/docs-site-i18n.test.mjs` enforces bilingual structure, link resolution, and the public boundary.
+
+## Content must be rewritten, not copied
+
+The historical `docs/*.md` files in the repository **are not material; they are counter-examples.** They
+trail the current code and are full of internal implementation records. Use them as a **topic list**, but
+never copy their paragraphs, sentences, tables, or structure.
+
+| Allowed | Forbidden |
+| --- | --- |
+| Treat historical docs as a list of "what topics are worth covering" | Copying paragraphs, sentences, or tables from historical docs |
+| Derive facts from `src/**`, `scripts/**`, `Makefile`, `package.json` | Writing parameters, defaults, or enums from memory or from old docs |
+| Organizing content with the skeletons below | Rewriting an old document in different words |
+
+**Every fact must point at source.** If a claim has no `path:line`, delete it.
+
+## Page skeleton
+
+Every page starts with frontmatter, and the body **starts at `##`** — `title` is already the H1, so do
+not add a level-one heading.
+
+```yaml
+---
+title: Page title           # Required; matches the H1 semantics
+description: One sentence   # Required, ≤ 160 chars, feeds <meta description> and the OG image
+status: new                 # Optional: new | beta | deprecated, renders as a sidebar badge
+---
+```
+
+Each page type uses its own skeleton:
+
+| Page type | Skeleton |
+| --- | --- |
+| Concept | One-sentence definition → why it exists → relation to adjacent concepts → key rules → related tasks → related reference |
+| Task guide | Version and prerequisites (Callout) → steps (`<Steps>`, each copyable) → what success looks like → common errors table → related reference |
+| Reference | One sentence describing the contract → field and enum tables → constraints and defaults → version and compatibility → source entry point |
+| Troubleshooting | Symptom → error code → cause → fix, in four columns |
+| Contribution | Prerequisites → copyable commands → failure localization → next step (as this page does) |
+
+## Bilingual 1:1
+
+An English page is a **twin** of the Chinese page, not an excerpt.
+
+| Rule | Test |
+| --- | --- |
+| Filenames | Every `foo.mdx` must have a `foo.en.mdx` and vice versa |
+| Navigation | `pages` order in `meta.json` and `meta.en.json` must match exactly; titles must be translated |
+| Heading structure | The count and depth of `##` / `###` / `####` must match item by item |
+| Content | English is not machine translation; use the terminology table below, and never translate API field names or enum values |
+
+<Callout type="error" title="English fallback is forbidden">
+  `lib/i18n.ts` sets `fallbackLanguage: null`. A missing translation fails the build instead of rendering
+  Chinese at an English URL. This is deliberate: silent fallback is the most common way translated docs rot.
+</Callout>
+
+## Link rules
+
+| Scenario | Form | Example |
+| --- | --- | --- |
+| Markdown link in body | Relative to the current file, **with `.mdx`** | `[Quickstart](../getting-started/quickstart.mdx)` |
+| Cross-section | Relative path back to the section root | `[Concepts](../concepts/index.mdx)` |
+| `<Card href>` | Absolute: `/docs/...` for Chinese, `/en/docs/...` for English | `href="/docs/concepts"` |
+| Anchor | Plain `#section` | `[See below](#configuration)` |
+| External | Full URL | `https://github.com/...` |
+
+- Do not write `./quickstart` (missing `.mdx`; the route will not resolve).
+- Do not write `./quickstart.html`.
+- Do not write `docs/quickstart.mdx` (it is treated as a repository path).
+- Markdown links on English pages use the Chinese source path too; the runtime resolves by locale.
+
+## Components
+
+```mdx
+<Callout type="info" title="Optional title">Body text</Callout>
+<Callout type="warn">Risk notice</Callout>
+<Callout type="error">An operation that will fail</Callout>
+
+<Steps>
+<Step>### Step title
+Step content
+</Step>
+</Steps>
+
+<Tabs items={['macOS', 'Windows']}>
+  <Tab value="macOS">Content</Tab>
+  <Tab value="Windows">Content</Tab>
+</Tabs>
+
+<Cards>
+  <Card title="Title" href="/docs/concepts">Description</Card>
+</Cards>
+```
+
+- **Prefer tables over cards**, and text over images.
+- Fence every code block with a language: ` ```sh `, ` ```json `, ` ```ts `, ` ```text `.
+- Use `sh` for shell commands; give Windows differences their own `powershell` block instead of a sentence
+  in the body.
+- Draw diagrams with ` ```mermaid `, not screenshots.
+
+## Terminology
+
+One concept, one name. On first use, Chinese pages write "中文（English）" and then use Chinese; English
+pages do the reverse. **API field names, enum values, and error codes are never translated.**
+
+| Chinese | English | Code / value |
+| --- | --- | --- |
+| 智能体 | agent | `agentId` |
+| 修订版本 | revision | `revision` |
+| 构建 | build | `buildId` |
+| 会话 | session | `sessionId` |
+| 一次运行 | run | `runId` |
+| 运行时类型 | runtime type | `runtime.type` |
+| DSH 原生 | DSH Native | `dsh-native` |
+| Star Harness | Star Harness | `harness` |
+| Codex | Codex | `codex` |
+| 资源绑定 | resource binding | `resources` |
+| 托管运行时 | managed runtime | — |
+| 冻结运行时 | frozen runtime | — |
+| 专家模板 | expert template | — |
+| 专家团 | team | `teamId` |
+| 工作区 | workspace | — |
+| 思考深度 | reasoning effort | — |
+| 执行策略 | execution policy | `read-only` / `workspace-write` / `danger-full-access` |
+
+## Writing prohibitions
+
+| Prohibited | Why |
+| --- | --- |
+| "It is important to note", "simply", "powerful", "seamless", "one-stop" | Filler; deleting it loses no information |
+| Unfinished placeholder markers (to-do, to-be-decided, to-be-fixed) | Unfinished content does not ship; CI blocks it |
+| Capabilities that do not exist yet (empty states, design proposals) | Either mark `status: beta` or leave it out |
+| Internal hosts, private addresses, credentials, personal absolute paths | See [Security and public boundary](./security-boundary.mdx) |
+| Intel macOS installer names | The product supports Apple Silicon only; such information is wrong |
+
+## Self-check before you commit
+
+Run these from the `docs-site/` directory:
+
+```sh
+# 1. Bilingual pairing: output should be empty
+ls content/docs/**/*.mdx | sed 's/\.en\.mdx$//; s/\.mdx$//' | sort | uniq -c | awk '$1 != 1'
+
+# 2. No leftover unfinished markers
+grep -rniE '\b(todo|tbd|fixme)\b' content/docs || true
+
+# 3. No personal absolute paths or private key blocks
+grep -rnE '/(Users|home)/|-----BEGIN' content/docs || true
+
+# 4. Every relative link ends with .mdx
+grep -rnE '\]\(\./[^)]*[^x]\)' content/docs || true
+```
+
+If all four commands produce no output, structure, boundary, and links are compliant. For the full gate
+story see [Gates and verification](./gates.mdx).

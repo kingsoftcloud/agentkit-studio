@@ -1,0 +1,55 @@
+---
+title: Getting started
+description: From downloading the app to a real conversation — this chapter takes five minutes.
+status: new
+---
+
+AgentKit Studio runs in three shapes. Pick the one that matches you:
+
+<Tabs items={['Desktop (recommended)', 'As a DSH plugin', 'From source']}>
+  <Tab value="Desktop (recommended)">
+    Download the latest signed installer (`.exe` / `.dmg`) from the [download page](https://kingsoftcloud.github.io/agentkit-studio/)
+    and double-click. No Node.js, pnpm, or build toolchain required.
+  </Tab>
+  <Tab value="As a DSH plugin">
+    Install `@kingsoftcloud/agentkit-studio` into an existing DeepSeek Harness environment to
+    attach Studio capabilities to your own Host. For teams that already run DSH.
+  </Tab>
+  <Tab value="From source">
+    For development, patch debugging, or verifying behaviour against a real Host. Requires Node.js 24
+    and pnpm 10. See [Contributing](../contributing/index.mdx).
+  </Tab>
+</Tabs>
+
+## What is in this chapter
+
+<Cards>
+  <Card title="5-minute quickstart" href="/en/docs/getting-started/quickstart">
+    Install → configure a model → create an agent → send the first message.
+  </Card>
+  <Card title="Install" href="/en/docs/getting-started/install">
+    Per-platform notes, requirements, data directories, and uninstall.
+  </Card>
+  <Card title="First conversation" href="/en/docs/getting-started/first-conversation">
+    What you are looking at: tool calls, file delivery, run records, and recovery.
+  </Card>
+</Cards>
+
+## Before you start
+
+| You need | Notes |
+| --- | --- |
+| macOS 13+ (Apple Silicon) or Windows 11 (x64) | macOS ships a signed and notarized DMG; Windows uses an NSIS installer |
+| An API key for a model provider | Any OpenAI-compatible endpoint, or your organization's model gateway |
+| Optionally, cloud credentials | Only required to deploy agents to the cloud |
+
+<Callout type="warn" title="Cloud features need a control plane">
+  Deployment, managed runtimes, knowledge bases, and memory depend on the AgentEngine control plane
+  and credentials. A working local install does not imply cloud resources are reachable — see
+  [Managed runtime](../concepts/managed-runtime.mdx).
+</Callout>
+
+## Next
+
+Start with the [quickstart](./quickstart.mdx). If you would rather understand the product model
+first, read [Core concepts](../concepts/index.mdx).

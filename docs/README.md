@@ -1,30 +1,31 @@
-# Documentation
+# Internal documentation archive
 
-官网与下载：<https://kingsoftcloud.github.io/agentkit-studio/>
+The **public documentation site** now lives in [`docs-site/`](../docs-site):
 
-- [Expert catalog and local teams](expert-catalog.md): templates, resources and native team sessions.
-- [Expert template authoring](expert-template-authoring.md): how to add or customize ordinary experts and DSH Native Team templates, audit them and publish them safely.
+- Source: `docs-site/content/docs/` — Chinese `page.mdx` + English `page.en.mdx`
+- Writing rules: [`docs-site/AUTHORING.md`](../docs-site/AUTHORING.md)
+- Published site: <https://kingsoftcloud.github.io/agentkit-studio/docs/>
+- English: <https://kingsoftcloud.github.io/agentkit-studio/en/docs/>
 
-- [Getting started](getting-started.md): installation, models and local development.
-- [Architecture](architecture.md): DSH ownership, runtime adapters and package boundaries.
-- [Resource retry and MCP recovery](resource-retry-design.md): 资源绑定重试、MCP 连接恢复与失败分类（提案）。
-- [Lifecycle implementation](refactor-lifecycle.md): scope ownership changes, real DSH evidence and remaining acceptance work.
-- [Sidebar implementation](refactor-sidebar.md): native DSH list reuse, removed filtering and acceptance evidence.
-- [前端模块化实施与验收](refactor-client.md)
-- [Native Harness](https://github.com/kingsoftcloud/ksadk-harness): independently released Core, Node and UI packages consumed by Studio.
-- [Desktop updates](desktop-update.md): signed macOS releases, feeds and full updates.
-- [Windows releases](windows-release.md): NSIS, Certum signing and installed App checks.
-- [Runtime endpoints](runtime-endpoint-injection.md): configurable cloud client routing.
-- [Compatibility patches](../patches/dsh-v0.2.1-rc.2/README.md): pinned upstream changes.
-- [Host compatibility](host-compatibility.md): runtime baseline, required capabilities and feature-specific admission.
-- [Product configuration](product-configuration.md): shared brand and desktop inputs, version sources and migration status.
-- [Plugin presentation compatibility](upstream-plugin-compatibility.md): declared slots, optional copy contributions and execution admission boundaries.
-- [DSH 插件市场](dsh-plugin-market.md): 插件页内的内置精选与远程索引、安装/启停/更新和就绪校验边界。
-- [Visual system](brand/visual-system.md): AgentKit Studio identity and UI conventions.
-- [Public release checks](public-release-boundary.md) and [repository mirrors](branch-sync.md).
+```sh
+make docs-site-dev     # local dev server
+make docs-site-check   # bilingual parity + link gate
+make docs-site-build   # static export published by GitHub Pages
+```
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for validation and pull requests.
+## What is left in this directory
 
-- [Start checks](start-checks.md): read-only configuration checks and the meaning of confirmed, missing and unknown.
+| Path | Purpose |
+| --- | --- |
+| `index.html` | Hand-written landing / download page. Published verbatim at the site root by `docs-site/scripts/build-static.mjs`. |
+| `*.md` | **Internal design archive** — refactor records, implementation notes, and release engineering evidence. Not published. Kept for traceability; prefer the public site for anything a user or integrator needs. |
+| `assets/`, `brand/`, `contracts/`, `architecture/` | Assets and contracts referenced by the archive and by repository gates. |
+| `refactor-client-budget.json` | Read by `scripts/verify-client-modules.mjs` as the browser bundle budget. |
 
-- [Automatic assistant startup](assistant-automatic-startup.md): installed CLI cold-start/restart acceptance and explicit legacy profile migration.
+## Why the archive is not the public site
+
+The previous site rendered every Markdown file in this directory, which meant
+internal refactor logs and release scripts were published as if they were user
+documentation. The public site is now a purpose-built, bilingual, information-
+architecture-first application; this directory keeps the historical record
+without exposing it.

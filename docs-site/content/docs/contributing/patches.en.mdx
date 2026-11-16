@@ -1,0 +1,169 @@
+---
+title: Patch governance
+description: "The full DSH host patch loop: import a maintenance branch, edit commits, export deterministic patches, and why hand-editing a .patch fails."
+status: new
+---
+
+AgentKit Studio depends on a **pinned DSH baseline** and maintains a reviewed patch series on top of
+it. A patch is not an incidental diff; it is a **build input** with a digest, an ordering dependency, a
+verification matrix, and an exit condition. This page explains how to change one, and why bypassing the
+tooling and editing a `.patch` by hand always fails.
+
+## Why patches exist
+
+DSH is the official host; we do not fork its source tree. Some product behavior (sidebar lifecycle,
+packaging identity, update feed, session events, native turn recovery) has to live in the host. The
+approach: **keep changes on a maintenance branch and treat the patches as that branch's deterministic export.**
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| Pinned baseline version | `0.2.2-rc.1` | `version` in `dsh-pin.json` |
+| Baseline commit | `66491b05…` (full SHA) | `commit` / `baseCommit` in `dsh-pin.json` |
+| Upstream ref | `dsh-v0.2.2-rc.1` | `ref` in `dsh-pin.json` |
+| Current patch series | 53 patches | `patches/dsh-v0.2.2-rc.1/manifest.json` |
+| Retired patches | 7 | `retired` in the same file |
+| Patch directory | `patches/dsh-v0.2.2-rc.1/` | `patchDirectory` in `dsh-pin.json` |
+
+<Callout type="warn" title="Do not write version numbers from memory">
+  The repository carries three historical directories — `patches/dsh-v0.2.0-rc.2/`,
+  `patches/dsh-v0.2.1-rc.2/`, and `patches/dsh-v0.2.2-rc.1/` — with 34, 64, and 53 patches
+  respectively. Only the one `dsh-pin.json` points at is current; use it as the source of truth in docs.
+</Callout>
+
+## Directory layout
+
+```text
+dsh-pin.json                       Pinned baseline: version / commit / ref / patchDirectory / digests
+patches/dsh-v0.2.2-rc.1/
+├─ 004-sidebar-panel-lifecycle.patch   Sequence number + name + .patch
+├─ 080-native-owned-turn-recovery-and-dispatch.patch
+├─ …                                   53 files, applied in ascending order
+├─ manifest.json                       Review metadata: category, risk, dependencies, verification, exit condition
+└─ source.json                         Export descriptor: commit sequence, tree, bundle digest
+host-source/dsh-v0.2.2-rc.1/
+└─ maintenance.bundle                  Git bundle with the baseline prerequisite and the maintenance branch
+```
+
+`PATCH_ROOT` is derived by the `Makefile` from `patchDirectory` in `dsh-pin.json`, defaulting to
+`patches/dsh-v0.2.2-rc.1`. `DSH_MAINTENANCE_ROOT` is your own maintenance checkout and must be set
+explicitly.
+
+## The four-step workflow
+
+### 1. Import the maintenance source
+
+```sh
+make patch-source-import DSH_MAINTENANCE_ROOT=../dsh-maintenance
+```
+
+It first runs a read-only check of the current series (descriptor, bundle digest, commit inventory),
+then checks out the maintenance branch from `maintenance.bundle` into a **brand-new directory**. An
+existing target directory is rejected outright — this command never overwrites and never resets, it only
+creates.
+
+### 2. Edit maintenance commits
+
+Make your change in the maintenance checkout, then **one patch per commit**:
+
+```sh
+cd ../dsh-maintenance
+git commit -m "004: fix sidebar panel lifecycle
+
+Studio-Patch: 004"
+```
+
+Two hard rules:
+
+- **Linear history only.** The commit graph is a straight line from `baseCommit`; no merges.
+- **A `Studio-Patch: <id>` trailer is mandatory.** Export aligns commits with manifest entries by it.
+
+### 3. Export the patches
+
+```sh
+make patch-source-export DSH_MAINTENANCE_ROOT=../dsh-maintenance
+```
+
+Export refuses a dirty working tree. It walks `baseCommit..HEAD` commit by commit to produce unified
+diffs, recomputes each patch's `sha256`, the tree `patchedTree`, and `patchedSourceSha256`, rebuilds
+`maintenance.bundle`, and writes `source.json` and `manifest.json` back. **Repeated exports are
+byte-identical** — as long as the commit and branch are unchanged, the export is deterministic.
+
+### 4. Verify the patches
+
+```sh
+# Read-only: descriptor and export digests
+make patch-source-check
+
+# Full: regenerate patches from the bundle, compare byte by byte, verify Git ancestry
+make patch-source-verify DSH_ROOT=../deepseek-harness
+```
+
+`patch-source-check` needs no DSH checkout and fits a fast loop; `patch-source-verify` needs a real
+checkout and is the last gate before you commit.
+
+## Why you cannot edit a .patch directly
+
+Because a patch is bound in five places, and every one of them fails on a hand edit:
+
+| Binding | Enforced by | What a direct edit produces |
+| --- | --- | --- |
+| Per-patch `sha256` versus file content | `check-patch-manifest.mjs` | `content digest mismatch` |
+| `affectedFiles` versus the `--- a/` `+++ b/` path set | Same | `unregistered modified files` |
+| Manifest order and dependency order | Same | `manifest order differs from application order` |
+| `source.json` commit sequence, tree, bundle digest | `dsh-maintenance-source.mjs` | `generated patch differs` or `bundle digest mismatch` |
+| Whether the file is a legal unified diff | `check-patch-format.mjs` | `Git rejected the unified diff syntax` |
+
+In other words: **a patch is an export, not a source file.** The source is the maintenance commit.
+Editing the export is editing a build artifact.
+
+## Patch metadata
+
+Every entry in `manifest.json` requires these fields; omitting one fails the gate:
+
+| Field | Allowed values | Purpose |
+| --- | --- | --- |
+| `id` | Three digits, e.g. `004` | Stable identifier matching the filename prefix |
+| `category` | `product` / `packaging` / `lifecycle` / `session-contract` / `general-fix` / `generated-docs` / `updater` / `signing` | Classifies the blast radius |
+| `risk` | `low` / `medium` / `high` | Sets the review bar |
+| `dependsOn` | Array of other `id`s | Must point at earlier patches in the series |
+| `affectedFiles` | The paths the patch actually changes | Compared item by item with the diff |
+| `affectedPackages` | Affected npm package names | Declares the surface |
+| `contracts` | Human-readable guarantee | What this patch promises |
+| `maintainerRole` | Maintainer role | Who owns it |
+| `upstreamStatus.state` | `unverified` / `not-submitted` / `pending` / `merged-unreleased` / `in-baseline` | Upstream progress |
+| `upstreamStatus.evidence` | Text | Why that state holds |
+| `removeWhen` | Text | Exit condition: when this patch can be deleted |
+| `verification.hostTests` | `*.spec.*` paths | Host-side regressions |
+| `verification.integrations` | Names declared in `verificationProfiles` | Integration tiers |
+| `verification.nativeTests` | `native/system/test/*.test.js` | Native-side regressions |
+
+`verificationProfiles` currently declares 13 tiers: `source`, `web`, `electron`, `lifecycle`, `frozen`,
+`persistence`, `macos`, `windows`, `installed-update`, `dsh-web`, `product-profiles`,
+`node-projection`, and `native`.
+
+## Retiring a patch
+
+Once upstream ships the fix, retire the patch instead of deleting it:
+
+1. Remove the entry from the `patches` array.
+2. Add a record to `retired`, for example `{ "id": "004", "reason": "…" }`.
+3. Re-export and verify.
+
+A `retired` `id` may not collide with an active `id`, and `reason` must be non-empty — so "why did this
+patch disappear" always has an answer.
+
+## Common failures
+
+| Error | Cause | Fix |
+| --- | --- | --- |
+| `import output already exists` | Target directory already exists | Choose a new directory; never reuse |
+| `export requires the declared maintenance branch` | The checkout is not on `refs/heads/codex/*` | Switch back to the declared branch |
+| `commit maintenance edits before exporting` | Dirty working tree | Commit first |
+| `maintenance history must be a linear chain` | A merge commit is present | Rebase into a straight line |
+| `commit order or Studio-Patch trailer differs` | Missing or misordered trailer | Add `Studio-Patch: <id>` |
+| `empty maintenance commit` | A commit has no real change | Squash or drop it |
+| `commit count differs from patch inventory` | Commit count differs from manifest entries | One patch per commit |
+| `cyclic dependencies` | `dependsOn` forms a cycle | Split or reorder |
+| `DSH checkout 有未提交改动` | Checkout is dirty before `make patch-check` | Use an isolated checkout |
+
+Next: confirm your change passes `make release-check` in [Gates and verification](./gates.mdx).

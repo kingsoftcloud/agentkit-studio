@@ -1,0 +1,180 @@
+---
+title: npm 包
+description: 我们发布到 npm 的五个包、各自的安装命令、engines 要求、完整性校验，以及装完怎么验证。
+status: new
+---
+
+**Studio 的主分发形态是桌面安装包，npm 包是「装进已有 DSH 环境」的路径。** 五个包分两类：
+产品插件本体一个，独立 Harness 三个，专家目录一个。
+
+## 五个包
+
+| 包 | 版本 | 作用 | 源码 |
+| --- | --- | --- | --- |
+| `@kingsoftcloud/agentkit-studio` | `0.0.16` | 产品插件本体（DSH plugin） | `package.json:2-3` |
+| `@kingsoftcloud/agentkit-harness-core` | `0.0.23` | 独立 Harness 执行内核 | `package.json:133` |
+| `@kingsoftcloud/agentkit-harness-node` | `0.0.23` | Node 适配层 | `package.json:134` |
+| `@kingsoftcloud/agentkit-harness-ui` | `0.0.23` | Harness 任务 UI | `package.json:135` |
+| `@kingsoftcloud/agentkit-expert-catalog` | `0.0.1` | 专家模板目录 | `packages/expert-catalog/package.json:2-3` |
+
+<Callout type="info" title="三个 Harness 包是依赖，不是独立安装项">
+  `agentkit-harness-*` 由 `agentkit-studio` 的 `dependencies` 声明（`package.json:133-135`），
+  装 Studio 时会一起装上。只有在你需要锁定版本、或在独立仓库里做 Harness 开发时才单独安装。
+</Callout>
+
+## 安装
+
+<Tabs items={['DSH 插件管理器（推荐）', 'pnpm', '桌面端']}>
+  <Tab value="DSH 插件管理器（推荐）">
+    在 **智能体面板 → 插件 → 插件市场** 里找到条目点安装，或在 Host 侧手动指定 spec：
+
+    ```sh
+    AGENTKIT_DSH_HOME=/tmp/isolated-dsh pnpm verify-dsh-plugin-market --execute --all
+    ```
+
+    `--execute` 会真实写入 profile。**必须**设置隔离的 `AGENTKIT_DSH_HOME` 或 `DSH_HOME`，否则脚本拒绝执行。
+    源码：`scripts/verify-dsh-plugin-market.mjs:21-29`。
+  </Tab>
+  <Tab value="pnpm">
+    ```sh
+    pnpm add @kingsoftcloud/agentkit-studio@0.0.16
+    ```
+
+    包是 `private: false` + `publishConfig.access: public`，走公共 npm registry
+    （`package.json:4,160-163`）。
+  </Tab>
+  <Tab value="桌面端">
+    直接装安装包即可，插件已内置。macOS 只发 Apple Silicon，Windows 为 NSIS 安装器。
+    见[版本兼容表](../releases/compatibility.mdx)。
+  </Tab>
+</Tabs>
+
+## engines 与 peer 要求
+
+| 声明 | 值 | 位置 |
+| --- | --- | --- |
+| `engines` | `node >=24.9.0`、`dsh 0.2.2-rc.1` | `package.json:86-89` |
+| `peerDependencies` | `@deepseek-ai/cordis ^4.1.0` | `package.json:127-129` |
+| `packageManager` / `license` | `pnpm@10.33.2` / `Apache-2.0` | `package.json:6,172` |
+
+<Callout type="warn" title="专家目录的 engines 与主包不同">
+  `@kingsoftcloud/agentkit-expert-catalog` 声明 `node: "^22.23.4 || >=24.22.1"`
+  （`packages/expert-catalog/package.json:7`），比主包的 `>=24.9.0` 更严格。
+  用它自己的 peer `@deepseek-ai/cordis ^4.0.4` 也比主包低一个次版本。
+</Callout>
+
+## 包内容允许清单
+
+`files` 决定哪些文件进 npm 包（`package.json:25-45`）。理解它才能解释「为什么装了却缺东西」：
+
+| 类别 | 内容 |
+| --- | --- |
+| 源码 | `src`、`packages/expert-catalog/src` |
+| 构建产物 | `dist`（含 `dist/client.js`，由 `prepack` 生成） |
+| 清单与契约 | `studio.plugin.json`、`dsh-pin.json`、`cordis.patch.yml` |
+| 资源与文档 | `assets`、`third-party/ZCode-LICENSE`、`THIRD_PARTY_NOTICES.md`、`README.md`、`CHANGELOG.md` |
+| 运维脚本 | `scripts/` 下 6 个：`start-agent-bundle`、`verify-agent-manifest`、`start-agent-manifest`、`native-package-pins.json`、`native-package-integrity`、`verify-native-dependencies` |
+
+`dist/` 在 `.gitignore` 里但**必须**在 `files` 里——否则装完的包没有浏览器产物。
+`prepack` 会先跑 `verify-native-dependencies.mjs && build-client.mjs && build-mcp-client.mjs`（`package.json:56`）。
+
+## 在 Host 里怎么挂载
+
+包通过两份清单接入 Host，缺一不可：
+
+| 文件 | 作用 | 关键字段 |
+| --- | --- | --- |
+| `studio.plugin.json` | 声明身份、Host 基线、能力与贡献 | `id: agentkit-studio`、`requiredHostApi: dsh-native/0.2.2-rc.1`、`requiredDsh: 0.2.2-rc.1`、`requiredHostContract: 1`、4 个 `capabilities`、3 个 `contributes` |
+| `cordis.patch.yml` | 在 DSH 组合图上插入本插件 | 末尾 `insert: - id: agentkit-studio, name: '@kingsoftcloud/agentkit-studio'` |
+
+`package.json` 里另外三块告诉 DSH 前端怎么加载：`dsh.bundle.patch` 指向 `./cordis.patch.yml`（`:123-125`）、
+`dsh.client.inject` 声明 13 个 `@deepseek-ai/dsh-*` 包（`:92-105`）、`dsh.client.external` 外部化 14 个依赖（`:107-121`）。
+
+源码：`studio.plugin.json:1-18`、`cordis.patch.yml:58-60`。
+
+## 完整性校验
+
+三个 Harness 包带**逐文件 SHA-256 摘要**，不止顶层 integrity：
+
+```json
+{
+  "schemaVersion": "agentkit.native-registry-pins/v2",
+  "packages": {
+    "@kingsoftcloud/agentkit-harness-core": {
+      "version": "0.0.23",
+      "integrity": "sha512-68nKhUhrJp1uB3qkTDrKoELpEMlfVy8LBrK6Ddya5nqJb2RK6uuTrKVWQKJBcMJV2bGy9tGdTLS3U71GynxBtQ==",
+      "files": { "dist/capability-profile.mjs": "d9c394b03a34d0032d829e3f13f58d87f5132db5a3a02bdbc2281c4af9a2f5fc" }
+    }
+  }
+}
+```
+
+结构：`schemaVersion` + `packages`（3 个包）+ `dependencyPackages`（传递依赖）。
+每个包有 `version`、`integrity`（sha512）与 `files`（逐文件 sha256）。
+源码：`scripts/native-package-pins.json:1-3`。
+
+```sh
+# 校验已安装的依赖与摘要一致
+pnpm build:harness        # = node scripts/verify-native-dependencies.mjs
+```
+
+摘要不一致说明包被替换或版本漂移——**不要绕过**，重新安装。
+
+## 装完怎么验证
+
+```sh
+node -e "console.log(require('@kingsoftcloud/agentkit-studio/package.json').version)"  # 1. 清单可解析
+pnpm verify-dsh-plugin-market --execute --all   # 2. Host 兼容 + 三个精选插件的能力探针
+pnpm verify-studio-plugin-lifecycle             # 3. 安装/启用/停用/更新/卸载五个动作
+make check && make release-check                # 4. 全量门禁
+```
+
+| 步骤 | 验证什么 | 源码 |
+| --- | --- | --- |
+| 1 | 包版本号与预期一致 | `package.json:3` |
+| 2 | 启动真实 DSH Host、加载 Studio 适配器，对三个精选插件逐个跑 `expectedEntries` + `service` 探针 | `scripts/verify-dsh-plugin-market.mjs:15-40` |
+| 3 | 五个插件生命周期动作在真实 Host 上生效 | `package.json:61` |
+| 4 | DSH pin、Node 版本、契约类型、可移植性与完整测试 | `package.json:49` |
+
+## 个人助理插件是独立发布的
+
+`@kingsoftcloud/agentkit-personal-assistant` **不在** Studio 的依赖里，也不是内置能力。
+
+它在 `scripts/check-dsh-plugin-purity.mjs:13` 里作为**禁止依赖**出现——这条规则的作用是保证
+Studio 回归成通用 DSH 插件，不把个人助理运行时塞回主包。
+
+| 事实 | 含义 |
+| --- | --- |
+| 不在 `package.json` 的 `dependencies` | 装 Studio 不会带上它 |
+| 出现在纯度门禁的 `forbidden` 列表 | 任何引入它的 PR 都会失败 |
+| 需要单独安装 | 从它自己的发布渠道装，且要自己跟随 DSH 基线 |
+
+源码：`scripts/check-dsh-plugin-purity.mjs:9-17`。
+
+## 发布流程
+
+npm 包由 GitHub Actions 用 **Trusted Publishing（OIDC）** 发布，仓库里不存 token：
+
+| 步骤 | 内容 |
+| --- | --- |
+| 触发 / Runner | `release: published` 或手动 `workflow_dispatch`；`ubuntu-24.04`、Node 22、pnpm `10.33.2` |
+| 前置 / 构建 | `pnpm install --frozen-lockfile` → `pnpm test` → `npm run prepack` |
+| 幂等 | 版本已存在则跳过退出 |
+| 发布 | 用 GitHub OIDC token 换短期 npm token，`pnpm publish --access public --no-git-checks --ignore-scripts` |
+
+源码：`.github/workflows/publish-npm.yml:1-65`。
+
+## 常见失败
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| `EBADENGINE` / 启动即退出 | Node 低于 `24.9.0` | 升级 Node，见[版本兼容表](../releases/compatibility.mdx) |
+| `STUDIO_HOST_INCOMPATIBLE` | DSH 不是 `0.2.2-rc.1` | 精确对齐 DSH 版本 |
+| 装完没有界面 / 插件加载失败 | `dist/client.js` 缺失，或 `cordis.patch.yml` 未生效 | 确认 `files` 含 `dist`、`dsh.bundle.patch` 指向该文件，重装触发 `prepack` |
+| 摘要校验失败 | 包被替换或版本漂移 | 重新安装，不要改 `native-package-pins.json` 绕过 |
+| `Cannot find module '@deepseek-ai/cordis'` | peer 未满足 | 装 `^4.1.0`（专家目录为 `^4.0.4`） |
+| 个人助理功能缺失 | 它是独立包 | 单独安装，见上一节 |
+
+## 相关
+
+插件清单字段逐项说明见 [DSH 插件作者指南](./dsh-plugin-authoring.mdx)，市场里的精选插件见[插件市场](./plugin-market.mdx)，Host 版本协商见 [Host 兼容性](./host-compatibility.mdx)。

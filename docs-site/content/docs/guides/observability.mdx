@@ -1,0 +1,218 @@
+---
+title: 可观测性（OTel）
+description: 托管运行时把会话事件流导出成 OTLP trace；配置端点、Header 与证书，并在观测页确认 trace 已经上报。
+status: new
+---
+
+可观测性（observability）把一次运行拆成可检索的 trace：每个 turn、每个模型步骤、每次工具调用各是一个 span。
+导出走标准 **OTLP/HTTP JSON**，目标是平台注入的观测端点；Studio 的 **观测** 页读同一个 Trace Store。
+
+<Callout type="info" title="前置条件">
+  - 会话跑在**托管运行时**上。本地桌面会话永不导出——这类会话既没有平台身份，也没有注入的观测环境。
+  - 平台已注入观测环境变量。没有端点时插件不注册任何东西，Host 行为与之前完全一致。
+</Callout>
+
+## 两条上报路线
+
+**主路线**指向主观测后端（Langfuse 等），用 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`，或 `OTEL_EXPORTER_OTLP_ENDPOINT` 加 `/v1/traces`。
+**副路线**指向云监控（可选），用 `CLOUD_MONITOR_OTLP_TRACES_ENDPOINT`。
+两条路线**同时**发送：同一批 span 各投一份，任一条失败不影响另一条。
+
+## 环境变量
+
+### 路由与身份
+
+| 变量 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `AGENTENGINE_MANAGED_RUNTIME_NAME` | 其一 | — | 托管运行时名称；与下一个变量任一存在才启用导出 |
+| `AGENTENGINE_AGENT_ID` | 其一 | — | 平台 Agent 标识 |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 推荐 | — | 完整 trace 端点，优先级最高 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 可选 | — | Base 端点；未设上一条时自动补 `/v1/traces` |
+| `OTEL_SERVICE_NAME` | 可选 | `agentengine.dsh-observability` | 写入 `service.name` |
+| `OTEL_RESOURCE_ATTRIBUTES` | 可选 | 空 | 附加资源属性，格式 `k=v,k2=v2` |
+
+<Callout type="warn" title="两条都不设就完全不导出">
+  只设 endpoint 而没设身份，或只设身份而不设端点，都不导出——两者必须同时满足。
+</Callout>
+
+### Header
+
+| 变量 | 说明 |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | trace 专用 Header，优先 |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 通用 Header，作为后备 |
+| `CLOUD_MONITOR_OTLP_TRACES_HEADERS` | 副路线 trace 专用 Header，优先 |
+| `CLOUD_MONITOR_OTLP_HEADERS` | 副路线通用 Header |
+
+格式是逗号分隔的 `k=v,k2=v2`；值支持 percent 编码（`%20` 之类会先解码）。
+解析时**跳过没有键或没有 `=` 的片段**，不会因为一个畸形片段丢掉整行。
+
+```sh
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS='Authorization=Bearer%20<token>,X-Scope=agentkit'
+```
+
+### 证书
+
+主路线使用私有 CA 时，用标准 OTel 变量指向 PEM 文件：
+
+| 变量 | 说明 |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` | trace 专用证书路径，优先 |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE` | 通用证书路径，作为后备 |
+| `DSH_OTEL_CA_PEM_BASE64` | 遗留的内联 base64 PEM，仅在没有挂载文件时使用 |
+
+<Callout type="warn" title="证书是追加，不是替换">
+  这些证书会被**追加**到平台信任根之后，而不是替换它们。
+  这样主用私有 CA 时，仍然公开可信的云监控副路线不会被一并打断。
+  同理，运行时的 `ca` 选项不会覆盖默认证书存储。
+</Callout>
+
+## 接入步骤
+
+<Steps>
+
+<Step>
+### 在托管运行时上确认注入
+
+部署到云端后，在实例里确认三个变量都在：
+
+```sh
+printenv | grep -E '^(AGENTENGINE_(MANAGED_RUNTIME_NAME|AGENT_ID)|OTEL_EXPORTER_OTLP)'
+```
+
+三个都在，说明平台已经注入观测环境；缺身份变量就是没在托管运行时上，此时不会导出。
+</Step>
+
+<Step>
+### 需要时补端点和 Header
+
+如果平台只注入了身份而没注入端点，或者你要临时指向另一个后端：
+
+```sh
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT='https://otel.example.test/v1/traces'
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS='Authorization=Bearer%20<token>'
+```
+
+只改环境变量、不改代码。想彻底关掉导出，把端点变量清空即可——插件会退化成 no-op。
+私有 CA 的场景按上一节挂 PEM 文件，不要靠关闭证书校验绕过。
+</Step>
+
+
+<Step>
+### 打开观测页
+
+**运行中心 → 观测**。页面顶部徽章从「读取中」变成 **Trace Store 已连接** 就说明后端通了。
+
+汇总卡有四格：
+
+| 卡片 | 数据来源 |
+| --- | --- |
+| 运行次数 | 时间范围内的运行总数（近 24 小时 / 近 7 天） |
+| 完成率 | 已完成运行的比例 |
+| 平均耗时 | Runtime 上报的平均耗时，单位 ms |
+| Token 用量 | 输入与输出合计 |
+
+下面是时间分桶柱状图，以及可选的云端统计行（会话数 / Tokens / 错误数）。
+</Step>
+
+<Step>
+### 找到这次运行的 trace
+
+用工具栏四个筛选收窄：
+
+| 控件 | 作用 |
+| --- | --- |
+| 搜索框 | 同时匹配 Trace ID、Run、Session、Agent |
+| 时间范围 | **24 小时** 或 **7 天** |
+| 按 Agent 筛选 | 下拉选具体 Agent |
+| 状态筛选 | 全部 / 进行中 / 已完成 / 失败 |
+
+列表每页 **12 条**，列是 Trace（名称 + 等宽 ID）、执行位置（本地 / 云端 · 本机留存凭据）、Agent / Run、状态、耗时、Tokens、开始时间。
+还有 `RUNNING` / `PENDING` / `QUEUED` 的 trace 时，列表每 **5 秒**自动刷新；页面切到后台时暂停。
+</Step>
+
+<Step>
+### 打开 Trace 详情
+
+点任意一行打开详情弹窗，它有七个页签：
+
+| 页签 | 内容 |
+| --- | --- |
+| Spans | 每个 span 的名称、Span ID、耗时、状态；点一条可切换 |
+| 属性 | 选中 span 的属性 JSON |
+| 事件 | 选中 span 的事件数组 |
+| 资源 | `executionLocation`、来源（provenance）与资源属性 |
+| 轨迹 | 工具调用轨迹 |
+| 模型请求 | 请求体统计（见下） |
+| 原始 OTLP | 点 **读取 OTLP** 拉取实际发送的 JSON |
+
+**模型请求** 页签显示每条请求的字符数与字节数：总计、工具定义字符数（含工具个数）、系统提示词字符数、对话内容字符数。
+它只是**大小统计**，不保存提示词正文；字符数不等于 Token 用量。
+只有新运行的 Codex Chat Completions 代理会提供这份统计，其他记录显示「此记录没有请求体统计」。
+</Step>
+
+<Step>
+### 确认已经上报
+
+按顺序核对三件事：
+
+1. **列表里有这次运行** —— 状态是 `SUCCEEDED` / `COMPLETED`，耗时与 Tokens 都不为空。
+2. **Spans 页签里有层级** —— 顶层是 `dsh.turn`，下面挂 `chat` 生成 span，再下面是 `execute_tool <工具名>`。
+3. **原始 OTLP 里有内容** —— 点 **读取 OTLP**，返回的 `resourceSpans[0].scopeSpans[0].spans` 非空，且 `service.name` 是你配置的值（默认 `agentengine.dsh-observability`）。
+
+三条都满足就是真的发出去了。任一条不满足，先看下面「没有 Trace」那一行。
+</Step>
+
+<Step>
+### 导出会话日志
+
+详情弹窗右上角有 **导出 Session**。它要求该 trace 上带 `SessionId`，否则提示「当前 Trace 没有 Session ID，无法导出会话日志」。
+导出的是完整事件记录，适合贴进工单。
+</Step>
+
+</Steps>
+
+## Span 结构与上报行为
+
+| Span 名称 | 何时产生 | 关键属性 |
+| --- | --- | --- |
+| `dsh.turn` | 每个 turn（`turn/start` .. `turn/end`） | `dsh.turn.number`、`langfuse.session.id`、`dsh.turn.reason` |
+| `chat` | 每个模型步骤（`step/start` .. `step/end`），类型是 generation | `gen_ai.request.model`、`gen_ai.system`、`gen_ai.usage.*`、`dsh.step.number` |
+| `execute_tool <工具名>` | 每次 `tool/call` .. `tool/result`，以及 Codex 的工具生命周期 | `gen_ai.tool.name`、`dsh.tool.call_id`、`error.type` |
+
+每次运行还带身份属性：`agentengine.invocation_id`、`agentengine.run_id`、`agentengine.platform_session_id`、`agentengine.agent_id`、`agentengine.version_id`、`agentengine.runtime_name`。
+当运行有平台 InvocationId 时，**trace id 就是它那 32 位十六进制**，可以直接按 trace 查。
+
+导出行为：缓冲每 **3 秒**刷写（`step/end` 与 `turn/end` 立即刷写），单次请求超时 **5 秒**，缓冲上限 **512** 个 span（超出丢弃最旧），失败日志每 **60 秒**最多一条。
+
+**提示词、模型输出、工具参数、工具结果一律不导出。** 只导出模型名、供应商、Token 用量、工具名、运行身份和错误身份——这是代码里的硬约束，不是配置项。
+
+## 常见错误
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| 观测页显示「还没有 Trace」 | 会话不在托管运行时上，或端点/身份变量缺失 | 按「接入步骤」第 1 步核对三个变量；本地会话永远不会出现 |
+| 徽章停在「读取中」 | Trace Store 不可达 | 检查网络与后端地址，点 **重新读取** |
+| 列表为空但后端有数据 | 时间范围或筛选太窄 | 把范围切到 7 天，清空 Agent 与状态筛选 |
+| 提示「部分观测数据暂不可用」 | 汇总或列表其中一个请求失败 | 刷新；持续失败说明该子接口不可用 |
+| 详情里 Span 一直「正在读取 Span…」 | trace 详情请求失败 | 关掉弹窗重开；仍失败看错误提示 |
+| **导出 Session** 报没有 Session ID | 该 trace 未携带会话标识 | 用同一会话的另一次运行导出 |
+| **模型请求** 页显示没有统计 | 该记录不是 Codex Chat Completions 代理产生的 | 正常现象，不代表请求大小为零 |
+| 主路线通了、副路线报错 | 私有 CA 只影响了副路线的公开信任链 | 用标准证书变量追加，不要替换默认存储 |
+
+## 相关参考
+
+<Cards>
+  <Card title="环境变量参考" href="/docs/reference/environment">
+    `OTEL_*` 与 `AGENTENGINE_*` 的完整清单。
+  </Card>
+  <Card title="会话事件" href="/docs/reference/session-events">
+    Span 是从哪 16 个事件翻译出来的。
+  </Card>
+  <Card title="运行与调试会话" href="/docs/guides/conversations">
+    从会话视角定位一次失败运行。
+  </Card>
+  <Card title="托管运行时" href="/docs/concepts/managed-runtime">
+    为什么只有托管运行时才注入观测环境。
+  </Card>
+</Cards>

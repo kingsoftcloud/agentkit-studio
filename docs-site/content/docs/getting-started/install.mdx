@@ -1,0 +1,179 @@
+---
+title: 安装
+description: 按平台选择桌面安装包、作为 DSH 插件接入，或从源码运行；含系统要求、数据目录与完整卸载步骤。
+---
+
+AgentKit Studio 有三种安装形态，按你「想怎么用」而不是「装哪个」来选：
+
+| 你的情况 | 走哪条路 | 需要 Node.js |
+| --- | --- | --- |
+| 只想用产品 | **A. macOS 桌面端** 或 **B. Windows 桌面端** | 不需要 |
+| 已有 DeepSeek Harness 工作流，要把 Studio 挂上去 | **C. 作为 DSH 插件** | 需要 |
+| 参与开发、调试补丁 | **D. 从源码运行** | 需要 |
+
+<Callout type="info" title="先说清版本号">
+Studio 产品版本与 DSH 宿主版本是两件事。当前 Studio `0.0.16` 固定 DSH 宿主 `0.2.2-rc.1`（`package.json:2-3,85`）。
+安装后可在 **设置 → AgentKit Studio → 版本与更新** 里看到三个独立版本号（`src/client/pages/studio-settings.mjs:78-80`）。
+</Callout>
+
+## 系统要求
+
+| 平台 | 架构 | 安装包 | 说明 |
+| --- | --- | --- | --- |
+| macOS 13 及以上 | **Apple Silicon（arm64）** | `.dmg` | 已签名并公证 |
+| Windows 11 | **x64** | `.exe`（NSIS 安装器） | 已用代码签名证书签名 |
+| 浏览器 | — | npm 包 | 作为 DSH 插件加载 |
+
+<Callout type="warn" title="macOS 只有 Apple Silicon 安装包">
+不提供 Intel（x64）安装包。Intel Mac 无法使用桌面端，请改用[作为 DSH 插件](#c-作为-dsh-插件)。
+</Callout>
+
+## A. macOS（Apple Silicon）
+
+<Steps>
+<Step>
+### 下载
+
+从[下载页](https://kingsoftcloud.github.io/agentkit-studio/)获取 `AgentKit-Studio-mac-arm64.dmg`。下载页始终指向当前发布通道的最新构建。
+同目录的 `.zip` 是自动更新用的产物，手动安装请用 `.dmg`。
+</Step>
+
+<Step>
+### 安装
+
+打开 `.dmg`，把 AgentKit Studio 拖进「应用程序」。不要从 `.dmg` 里直接运行——自动更新会写不回只读镜像。
+</Step>
+
+<Step>
+### 首次启动
+
+从「应用程序」或启动台打开。安装包已完成代码签名与公证，正常情况下不会出现「无法验证开发者」。
+
+如果仍被拦截：**系统设置 → 隐私与安全性**，在页面底部点「仍要打开」。
+</Step>
+
+<Step>
+### 确认版本
+
+打开 **设置 → AgentKit Studio**，在「版本与更新」里核对三个版本号。
+
+**三个版本号**：AgentKit Studio 版本 = 桌面应用版本；Studio 插件版本 = 产品功能与运行适配层版本；DSH 宿主兼容版本 = 固定的宿主基线，不代表 Studio 产品版本。
+</Step>
+</Steps>
+
+## B. Windows（x64）
+
+<Steps>
+<Step>
+### 下载
+
+下载 `AgentKit-Studio-win-x64.exe`（NSIS 安装器）。
+</Step>
+
+<Step>
+### 运行安装器
+
+双击运行。SmartScreen 提示时选择 **更多信息 → 仍要运行**。
+</Step>
+
+<Step>
+### 完成安装并启动
+
+安装完成后从开始菜单启动。Windows 没有 Apple 公证这道关，但证书链仍需能验证——企业网络里如果装了 TLS 拦截代理，首次启动可能失败，见[已知限制](../help/known-limitations.mdx)。
+</Step>
+</Steps>
+
+## C. 作为 DSH 插件
+
+这条路径把 Studio 挂到你已有的 DeepSeek Harness 上，用浏览器访问。
+
+```sh
+# 1. 确认宿主版本（必须是固定的 DSH 基线）
+dsh --version   # 期望 0.2.2-rc.1
+
+# 2. 安装插件
+npm install @kingsoftcloud/agentkit-studio
+
+# 3. 在 DSH 的插件目录里启用 agentkit-studio
+```
+
+<Callout type="warn" title="宿主版本必须匹配">
+Studio 的 `engines.dsh` 声明为 `0.2.2-rc.1`（`package.json:85`）。宿主版本不匹配时，插件会在启动阶段被拒绝加载，而不是降级运行。
+</Callout>
+
+插件向宿主声明的贡献点是 `route`、`resource`、`command`（`studio.plugin.json:14-18`），所需 Host Contract 版本为 `1`。
+
+## D. 从源码运行
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+make setup DSH_ROOT=../deepseek-harness
+make dev   DSH_ROOT=../deepseek-harness
+```
+
+| 依赖 | 版本 | 依据 |
+| --- | --- | --- |
+| Node.js | `24.22.1` | `.node-version` |
+| pnpm | `10.33.2` | `package.json:6` |
+| DSH 源码树 | 固定在 `dsh-pin.json` 的提交 | 必须放在本仓库之外 |
+
+<Callout type="info" title="Node 版本为什么以 .node-version 为准">
+`engines.node` 写的是 `>=24.9.0`，而 `scripts/node-version.mjs` 维护的是按安全基线划分的矩阵（22.23.4+ / 24.22.1+ / 26.12.1+）。两者口径不同，**本地开发统一用 `.node-version` 的 24.22.1**。
+</Callout>
+
+`dist/` 是本地生成产物，不入 Git。`make dev`、`make web-dev` 会先重建并安装插件再启动。
+
+## 数据目录
+
+Studio 不在仓库里保存任何用户数据。所有状态都在你的主目录下，可用环境变量重定向：
+
+| 目录 | 环境变量 | 默认位置 | 里面有什么 |
+| --- | --- | --- | --- |
+| Studio 数据根 | `AGENTKIT_HOME` | `~/.agentkit` | 全局配置、Skill、授权草稿 |
+| DSH 宿主数据 | `DSH_HOME` | `~/.dsh` | 会话、转录、工作区绑定 |
+| Codex 数据 | `CODEX_HOME` | `~/.codex` | Codex 运行时状态 |
+| 插件发现缓存 | — | `~/.cache/agentkit-studio/` | 插件市场索引缓存，可随时删除 |
+| 托管会话注册表 | `AGENTKIT_MANAGED_SESSIONS` | `$AGENTKIT_HOME/managed-sessions` | 云端托管会话的归属登记 |
+
+配置读取是分层的：`AGENTKIT_HOME` 下的全局配置 → 当前工作区的 `.agentkit/config.yaml` → 环境变量（`src/global-config.mjs:135-144`）。
+
+<Callout type="warn" title="别把这些目录放进同步盘">
+部署记录写失败时会明确提示「网络主目录或同步盘会拒绝文件同步」。把 `AGENTKIT_HOME` 指向本机磁盘，不要指向 iCloud、OneDrive 或 NFS 主目录。
+</Callout>
+
+## 卸载与清理
+
+<Steps>
+<Step>
+### 卸载应用
+
+- **macOS**：把 AgentKit Studio 从「应用程序」拖到废纸篓。
+- **Windows**：设置 → 应用 → AgentKit Studio → 卸载。
+- **插件形态**：`npm uninstall @kingsoftcloud/agentkit-studio`，并从 DSH 插件目录移除条目。
+</Step>
+
+<Step>
+### 清理数据（可选）
+
+卸载应用**不会**删除数据目录。确认不再需要会话历史后再执行：
+
+```sh
+rm -rf ~/.agentkit ~/.cache/agentkit-studio
+```
+
+<Callout type="error" title="~/.dsh 和 ~/.codex 是共用目录">
+这两个目录属于 DSH 宿主和 Codex，可能同时被其他产品使用。只在你确认整个 DSH 环境都不再需要时删除。
+</Callout>
+</Step>
+
+<Step>
+### 确认已清理
+
+重新安装后首次启动应重新进入凭证引导，而不是直接进入已有会话。如果还能看到旧会话，说明 `DSH_HOME` 指向了别处。
+</Step>
+</Steps>
+
+## 下一步
+
+装完之后，用[5 分钟快速开始](./quickstart.mdx)跑通第一次对话；想先理解界面，看[界面导览](./interface.mdx)。

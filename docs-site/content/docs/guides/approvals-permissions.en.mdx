@@ -1,0 +1,177 @@
+---
+title: Approvals and Permission Policy
+description: Choose an execution policy, understand defaults and ceilings, write per-tool permission rules, and handle approval requests during a run.
+status: new
+---
+
+An execution policy decides how far one run can reach: read-only, workspace modifications only, or full access.
+Permission rules narrow that further, per **tool name**. Neither lives in the prompt; writing them into a prompt has no effect.
+
+<Callout type="info" title="Prerequisites">
+  You already saved a revision in [Create and Edit an Agent](./create-agent.mdx).
+  A cloud policy additionally needs that agent deployed and its image declaring the `cloud-execution-policy/v1` capability.
+</Callout>
+
+## The three execution policies
+
+Policies are ordered; the index is the privilege rank (`read-only` < `workspace-write` < `danger-full-access`).
+
+| Value | UI label | Allowed | Not allowed |
+| --- | --- | --- | --- |
+| `read-only` | View only | Read files, search, read-only commands | Any file write, any command with side effects |
+| `workspace-write` | Workspace modifications | Read and write inside the session workspace, run builds and tests | Paths outside the workspace |
+| `danger-full-access` | Full access | Any path, any command | Nothing — this is the ceiling |
+
+### Defaults and ceiling
+
+| Item | Value | Meaning |
+| --- | --- | --- |
+| Default policy | `workspace-write` | Used when cloud execution names no mode |
+| Policy ceiling | `danger-full-access` | Highest rank a cloud instance may declare |
+| Fallback without a declaration | `read-only` | Treated as read-only when no valid policy is available |
+
+**The runtime declares a ceiling and a client can only narrow it, never widen it.** A requested policy above the ceiling is clamped rather than rejected, and an unparseable declaration falls back to `read-only` — "unknown" never upgrades to "allowed".
+
+<Callout type="warn" title="Local settings do not change cloud permissions">
+  A cloud agent's permissions come from the policy its **frozen image** declares. Whatever you pick in the local DSH permission picker grants the cloud instance nothing extra, and vice versa.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Confirm the current policy
+
+**Local agent**: read the current value in the permission picker at the top of the conversation area.
+
+**Cloud agent**: read the permission badge at the top of the conversation area. It has three states:
+
+| Badge | Meaning |
+| --- | --- |
+| `Cloud · View only` / `Cloud · Workspace modifications` / `Cloud · Full access` | A valid cloud policy declaration was read |
+| `Cloud permission unknown` | No valid declaration; the writable scope cannot be judged |
+| `Verifying cloud permission` | Reading the declaration; wait a moment |
+
+The badge is clickable; each click re-verifies. The declaration also carries `approvalPolicy`, which is always `never` for the cloud — **the cloud never waits for human approval**, so perform operations that need confirmation in a local session.
+</Step>
+
+<Step>
+### Switch cloud execution permission
+
+1. Click the permission badge to open the menu. It lists only the modes the image declares; a ✓ marks the current one.
+2. Pick a target mode.
+
+Switching affects only the cloud agent's **subsequent runs** and never retro-grants permissions to a turn already in flight. Two outcomes are possible:
+
+- The applied value equals what you picked.
+- The applied value is clamped to the ceiling and the UI reports "Adjusted to the declared deployment ceiling".
+
+<Callout type="info" title="The choice is persisted">
+  The selected mode is written to the Host-side `cloud-execution-modes.json` (contract `agentkit.cloud-execution-modes/v1`) and stays in effect the next time you connect to the same cloud agent. Delete that file to return to the image default.
+</Callout>
+</Step>
+
+<Step>
+### Write custom permission rules
+
+Permission rules live on the agent revision's `spec.bindings.nativeAgentPolicy` and form a **versioned contract**, not a display label. Complete example:
+
+```json
+{
+  "contract": "agentkit.native-agent-policy/v1",
+  "mode": "custom",
+  "rules": {
+    "shell": "ask",
+    "apply_patch": "ask",
+    "web_search": "inherit",
+    "browser.open": "deny"
+  }
+}
+```
+
+Field constraints:
+
+| Field | Value | Notes |
+| --- | --- | --- |
+| `contract` | Always `agentkit.native-agent-policy/v1` | Anything else is rejected |
+| `mode` | `strict` / `loose` / `custom` | Only `custom` may carry `rules` |
+| `rules` keys | `^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$` | Tool names; `:` `/` `.` separate namespaces |
+| `rules` values | `inherit` / `ask` / `deny` | Semantics below |
+
+**No key other than `contract`, `mode`, and `rules`** is allowed on the object; an unknown field is rejected as a configuration error. `rules` is sorted by key before saving, so replaying the same rules yields the same result.
+
+<Callout type="warn" title="The legacy policy template does not count">
+  The historical `policyTemplate` field is display-only. Only the versioned object above changes tool behavior, including for an already frozen build.
+</Callout>
+</Step>
+
+<Step>
+### Understand the three decisions
+
+| Decision | Read-only tools | Writable tools | Notes |
+| --- | --- | --- | --- |
+| `inherit` | Host behavior | Host behavior | No extra constraint; the runtime's native policy applies |
+| `ask` | Host behavior | Human approval on every call | One approval card authorizes one call |
+| `deny` | Host behavior | Rejected outright | Never reaches approval; the agent receives the rejection |
+
+`mode` overrides the default for tools absent from `rules`:
+
+| `mode` | Tools absent from `rules` |
+| --- | --- |
+| `loose` | Always `inherit` (`rules` must be empty) |
+| `strict` | Writable tools `ask`, read-only tools `inherit` |
+| `custom` | Writable tools `deny`, read-only tools `inherit` |
+
+In other words `custom` means **deny by default**: list only the tools you want to allow; every other writable tool is blocked.
+</Step>
+
+<Step>
+### Handle approval requests
+
+When a tool resolves to `ask`, a pending approval card appears in the conversation area:
+
+1. The card is titled "`<tool name>` requests one-time authorization" and shows the call reason.
+2. Choose **Allow once** — a risk confirmation appears; tick "I have reviewed this operation and its impact", then choose **Confirm allow once**.
+3. Choose **Reject** — that call fails and the agent receives `deny` and continues.
+
+<Callout type="error" title="Approval requests expire">
+  Every pending item carries `expiresAt`. Once it expires the item disappears from the list, and confirming then reports "The approval request is no longer valid; refresh to verify".
+  Decisions are compared by generation (`generation`), so a stale decision on screen never overwrites newer runtime state.
+</Callout>
+</Step>
+
+</Steps>
+
+## What success looks like
+
+- The permission badge shows `Cloud · <known mode>`, never "Cloud permission unknown".
+- Every call that needed confirmation received its `allow` or `deny`; nothing is left pending.
+- A `deny`-ed tool shows as `failed` in the tool timeline, with a policy rejection rather than a runtime crash.
+- After saving the agent and reopening it, the `rules` order in `nativeAgentPolicy` is stable.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `STUDIO_NATIVE_AGENT_POLICY_INVALID` | The rules are not an object, `contract` is missing, `mode` is invalid, a tool name is malformed, or a non-`custom` mode carries `rules` | Check each field against the example above; empty `rules` when `mode` is not `custom` |
+| `CLOUD_EXECUTION_MODE_INVALID` | The submitted `permissionMode` is not one of the three values | Use only `read-only` / `workspace-write` / `danger-full-access` |
+| `CLOUD_EXECUTION_MODE_UNAVAILABLE` | Cloud execution mode storage is not enabled on this Host | Confirm the Host initialized its cloud execution mode directory, then retry |
+| `CLOUD_EXECUTION_MODE_UNSUPPORTED` | The current cloud image does not declare `cloud-execution-policy/v1` | Update the instance image, then switch |
+| `CLOUD_EXECUTION_MODE_DENIED` | The requested mode exceeds the deployment's declared scope | Pick a mode the menu lists; the ceiling belongs to the image |
+| `CLOUD_AGENT_ID_INVALID` | The cloud agent id is malformed | Pick again from the cloud deployment list instead of typing it |
+| `INVALID_AGENT_ID` | `agentId` is empty in the request | Select a cloud agent first |
+
+## Related
+
+<Cards>
+  <Card title="Run and debug a session" href="/en/docs/guides/conversations">
+    Where approval cards appear, how to stop, and how to rewind.
+  </Card>
+  <Card title="Configuration reference" href="/en/docs/reference/configuration">
+    The full agent and revision configuration, including `bindings`.
+  </Card>
+  <Card title="Error codes" href="/en/docs/reference/errors">
+    Look up a cause and fix by error code.
+  </Card>
+</Cards>

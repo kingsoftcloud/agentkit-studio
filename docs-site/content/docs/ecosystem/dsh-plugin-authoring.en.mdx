@@ -1,0 +1,180 @@
+---
+title: DSH plugin authoring
+description: Build a plugin package a DSH host can load and the Studio market can discover — manifest fields, capability declarations, publishing, and self-checks.
+status: new
+---
+
+**A DSH plugin is an npm package plus a manifest.** The manifest declares what it needs from the host; the package provides the implementation.
+DSH owns loading, dependency resolution, and lifecycle. Studio only makes the plugin *discoverable*.
+
+## Minimum shape of a plugin package
+
+| You provide | Notes | Studio's own example |
+| --- | --- | --- |
+| Package name | Must pass `PACKAGE_SPEC`; scopes allowed | `@kingsoftcloud/agentkit-studio` |
+| Version | semver | `0.0.16` |
+| `exports` entries | At least one, pointing at an ESM module | 14 entries, see `package.json#exports` |
+| Manifest file | What DSH uses to admit the plugin | `studio.plugin.json` |
+| `keywords` | What the market searches | `dsh-plugin` |
+
+<Callout type="warn" title="The package name is not free-form">
+  Both `id` and `installSpec` must match
+  `^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9.^~<>=*+-]+)?$` from
+  `src/dsh-plugin-catalog.mjs:21`. Uppercase or unusual symbols make the row get **silently dropped** —
+  the market will not error, you simply will not appear.
+</Callout>
+
+## Manifest fields
+
+```json
+{
+  "id": "agentkit-studio",
+  "version": "0.0.16",
+  "requiredHostApi": "dsh-native/0.2.2-rc.1",
+  "requiredDsh": "0.2.2-rc.1",
+  "requiredHostContract": 1,
+  "capabilities": [
+    "studio.agent.catalog",
+    "studio.runtime.capabilities",
+    "studio.session.adapter",
+    "studio.workspace.dock"
+  ],
+  "contributes": ["route", "resource", "command"]
+}
+```
+
+| Field | Type | Required | Purpose | When unmet |
+| --- | --- | --- | --- | --- |
+| `id` | string | ✅ | Plugin identity, globally unique | Load fails |
+| `version` | semver | ✅ | Must equal `package.json` | Packaging gate fails |
+| `requiredHostApi` | string | ✅ | Host API namespace you need | Load refused |
+| `requiredDsh` | string | ✅ | DSH version — **exact equality** | `STUDIO_HOST_INCOMPATIBLE` |
+| `requiredHostContract` | number | ✅ | Compatibility contract version | Same |
+| `capabilities` | string[] | ✅ | Capability names you provide | Downstream probes fail |
+| `contributes` | string[] | ✅ | Extension point kinds you contribute | Extension does not mount |
+
+`requiredDsh` is compared for **exact equality**, not `>=`. Writing `0.2.2` does not authorize `0.2.2-rc.1`.
+Source: `src/host/compatibility.mjs:25`.
+
+## The four capabilities and three contributions
+
+| Capability | Meaning | Probe |
+| --- | --- | --- |
+| `studio.agent.catalog` | Exposes an agent catalog | `agentPresets.register` / `pluginsFor` |
+| `studio.runtime.capabilities` | Exposes runtime capability queries | See [host compatibility](./host-compatibility.mdx) |
+| `studio.session.adapter` | Exposes session adaptation | `sessionController.create` and five more |
+| `studio.workspace.dock` | Exposes workspace docking | Checked at mount time |
+
+| Contribution | What you register | How the host uses it |
+| --- | --- | --- |
+| `route` | Control protocol routes | Dispatched over the `/agentkit` channel |
+| `resource` | Resource kinds | Enters the resource catalog and binding pickers |
+| `command` | Commands | Enters the Host command table |
+
+Source: `studio.plugin.json:7-17`.
+
+## Module entry
+
+```js
+// src/index.mjs
+export const name = 'agentkit-studio';
+export const inject = ['connection', 'webServer', 'credentials'];
+
+export async function apply(ctx) {
+  // Mount Host services, register routes, inject documents here.
+}
+```
+
+`inject` declares the host services you depend on. **Do not call `ctx.get()` before `apply`** — Cordis only exposes
+a service after the plugin providing it is active. Resolve services at the moment you actually use them.
+Source: `src/index.mjs:16-43`.
+
+## Making the market discover you
+
+| Channel | Mechanism | Source |
+| --- | --- | --- |
+| npm search | Package `keywords` contains `dsh-plugin` | `src/dsh-plugin-discovery.mjs:22` |
+| GitHub search | Repository `topic: dsh-plugin` | `src/dsh-plugin-discovery.mjs:24` |
+| Built-in catalog / remote index | Open a PR against `DSH_CURATED_PLUGINS`, or configure `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | `src/dsh-plugin-catalog.mjs:112` |
+
+Only **first-party** entries in the built-in catalog may declare `expectedEntries` / `service` / `readinessNote`.
+Third-party plugins are discovered via npm or GitHub, and the market reports
+"Host loaded this plugin; Studio has no capability probe for it."
+Source: `src/studio-plugins.mjs:100-104`.
+
+## Pre-publish checklist
+
+<Steps>
+
+<Step>
+### Version consistency
+
+```sh
+node -p "require('./package.json').version"
+node -p "require('./studio.plugin.json').version"
+```
+
+Both must match. `make release-check` enforces this.
+</Step>
+
+<Step>
+### Exports resolve
+
+```sh
+node -e "for (const [k,v] of Object.entries(require('./package.json').exports)) console.log(k, '->', v)"
+```
+
+Every relative entry must actually exist — DSH resolves each one.
+</Step>
+
+<Step>
+### Manifest loads
+
+```sh
+node -e "console.log(require('./studio.plugin.json'))"
+```
+
+The manifest must be valid JSON, and `requiredDsh` must equal the Host version you actually verified against.
+</Step>
+
+<Step>
+### Package contents are clean
+
+```sh
+make public-gate
+```
+
+`public-gate` runs the source audit, secret scan, patch format, and package content checks.
+</Step>
+
+</Steps>
+
+## Readiness states
+
+After install, the market reports one of six states:
+
+| State | Meaning | What to do |
+| --- | --- | --- |
+| `not-installed` | Not installed | Click install |
+| `disabled` | Installed but not enabled | Click enable |
+| `loaded` | Host loaded it; no capability probe exists | Nothing (normal for third-party plugins) |
+| `ready` | Capability rows and service probes all pass | Nothing |
+| `failed` | Load or probe failure | Read the method name in `note` |
+| `not-configured` | No capability verification list configured | Nothing |
+
+Source: `src/studio-plugins.mjs:96-115`.
+
+## Common errors
+
+| Error code | Cause | Fix |
+| --- | --- | --- |
+| `STUDIO_HOST_INCOMPATIBLE` | `requiredDsh` differs from the running DSH | Upgrade the Host or edit the manifest |
+| `DSH_PLUGIN_NOT_FOUND` | Package name does not resolve | Check the name and registry |
+| `DSH_PLUGIN_NOT_USABLE` | Installed but cannot load | Read the load error in the Host log |
+| `DSH_PLUGIN_INSPECTION_REFUSED` | Inspection snapshot refused | Shrink the snapshot, see `CHANGELOG` 0.0.14 |
+| `DSH_PLUGIN_OPERATION_FAILED` | Change did not take effect | Read `details.error.diagnostic` |
+| `SERVICE_UNAVAILABLE` | Host service missing | Confirm the Host meets the manifest requirement |
+
+## Related
+
+Remote index fields and examples live in [plugin market](./plugin-market.mdx), negotiation details in [host compatibility](./host-compatibility.mdx), and every error code in the [error reference](../reference/errors.mdx).

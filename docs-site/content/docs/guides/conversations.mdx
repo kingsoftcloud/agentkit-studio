@@ -1,0 +1,159 @@
+---
+title: 运行与调试会话
+description: 在一个会话里发出指令、检查工具调用、批准敏感操作、回退对话分支，并定位运行失败的原因。
+status: new
+---
+
+会话（session）是 DSH 拥有的一段对话与转录；一次运行（run）是其中的一个 turn。
+这一页讲的是「Agent 已经能跑起来之后」的所有操作：怎么看它做了什么、什么时候要你批准、出错时怎么收手。
+
+<Callout type="info" title="前置条件">
+  已完成[快速开始](../getting-started/quickstart.mdx)，并且至少有一个 Agent 的修订版本（Revision）已保存。
+  云端会话还需要该 Agent 已经部署到云端且状态为 `READY`，见[部署到云端](./deploy-to-cloud.mdx)。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 选择会话绑定的 Agent
+
+在对话区顶部的 Agent 选择器里挑一个目标。列表里每一项都标注了执行位置：
+
+| 标注 | 含义 |
+| --- | --- |
+| 本地 | 在你的 Host 进程里执行，可以读写本机工作区 |
+| 云端 | 在云端常驻实例里执行，本机关闭应用也继续运行 |
+
+<Callout type="warn" title="会话开始后 Agent 会锁定">
+  发出第一条消息后，选择器标题会变成「会话已开始，Agent 已锁定」。
+  换 Agent 请新建会话——历史转录不会跟着迁移，云端会话还会因为冻结版本不同而拒绝继续。
+</Callout>
+</Step>
+
+<Step>
+### 发出指令
+
+在输入框写一句话，按 Enter 发送。写清楚**目标**和**允许的动作范围**比写清步骤更有用：
+
+```text
+列出当前工作区里所有 .mjs 文件，只读，不要修改；
+对每个文件用一句话说明它负责什么。
+```
+
+发出后按顺序观察三样东西：
+
+- **工具调用卡片**：每条调用先展开为进行中，拿到结果后变成 `completed` 或 `failed`。
+- **底部用量**：本轮输入的 Token、输出 Token 与总耗时。
+- **文件变更卡片**：如果 Agent 改了文件，右侧按文件逐份列出差异，可以逐份接受或丢弃。
+</Step>
+
+<Step>
+### 批准需要人工确认的操作
+
+当执行策略要求审批时，工具调用会停在一个待审批卡片上，卡片标题是「`<工具名>` 请求一次性授权」。
+
+1. 读卡片里的原因说明。
+2. 点 **允许一次** —— 会再弹一次风险确认，勾选「我已核对这次操作及其影响」后点 **确认允许一次**。
+3. 或者点 **拒绝** —— 该次调用直接失败，Agent 会收到拒绝结果并继续。
+
+<Callout type="warn">
+  审批面板只对**这一次调用**授权，不复用给同一工具的后续调用。
+  完整策略说明见[审批与权限策略](./approvals-permissions.mdx)。
+</Callout>
+</Step>
+
+<Step>
+### 停止正在运行的 turn
+
+运行中随时可以停。停止后：
+
+- 已完成的工具调用结果保留，可以逐条查看。
+- 尚未返回的工具调用标记为中断。
+- 会话可以继续发下一条消息，不需要新建会话。
+
+<Callout type="info" title="停止不等于回退">
+  停止只是结束当前 turn，已经写进工作区的文件改动**不会**被撤销。
+  要撤销对话分支，用下一步。
+</Callout>
+</Step>
+
+<Step>
+### 回退对话分支
+
+打开对话区的 **对话回退** 折叠面板。它列出本次会话里所有可回退的用户输入，每条后面有两个按钮：
+
+| 按钮 | 作用范围 |
+| --- | --- |
+| 回退到这条输入之前 | 只回退对话：这条输入及其后的转录移出当前分支，**工作区文件保留** |
+| 预览同时回退文件 | 同时回退文件：先给出文件预览，可应用后再提交 |
+
+选择「预览同时回退文件」后，预览区会列出每个文件的动作：
+
+```text
+恢复：src/host/routes/agents.mjs
+删除：src/host/routes/agents.mjs.bak
+```
+
+确认无误后点 **确认回退对话和文件**。如果某个文件被判定为不安全（例如超出工作区、或在此期间被外部修改），它不会出现在可应用列表里，而是单独以告警行说明原因。
+
+<Callout type="error" title="回退请求未确认时不要重复发起">
+  如果面板显示「回退请求尚未确认」，点 **重试原回退请求** —— 它用同一个 `commandId` 重放，
+  不会产生第二次回退。新发一次回退请求可能把分支推到更早的位置。
+</Callout>
+</Step>
+
+<Step>
+### 导出会话日志
+
+从 **运行中心 → 观测** 打开对应的 Trace，点 **导出 Session**。导出要求该 Trace 上带 `SessionId`，否则会提示「当前 Trace 没有 Session ID，无法导出会话日志」。
+
+导出内容是这次运行的完整事件记录，适合贴进工单或与同事对齐。
+
+</Step>
+
+</Steps>
+
+## 成功后的样子
+
+一次健康的会话同时满足：
+
+- 最终回答完整出现，不是一条错误摘要。
+- 每条工具调用都有结果，没有停在「进行中」。
+- 需要审批的调用都拿到了 `allow` 或 `deny` 决策，没有遗留待审批卡片。
+- 刷新页面后转录仍在。
+- 云端会话在 **观测 → Trace 详情** 里能看到对应的 `dsh.turn` span。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `DEPLOYMENT_SESSION_VERSION_CHANGED` | 云端 Agent 已升级或回滚，会话记录的冻结版本不再等于当前版本 | 开一个新会话；旧会话历史仍保留，可以只读查看 |
+| `DEPLOYMENT_MODEL_FROZEN` | 选中的模型不在这个冻结版本绑定的模型列表里 | 改选「云端部署」组里已绑定的模型；要换模型需改 Agent 后重新构建并更新实例 |
+| `DEPLOYMENT_MODEL_SWITCH_UNAVAILABLE` | 当前云端镜像不支持切换绑定模型 | 在构建与部署里更新实例镜像版本 |
+| `DEPLOYMENT_SESSION_REQUIRED` | 云端对话缺少原生会话或消息标识 | 用界面上的「开始对话」入口进入，不要手工拼请求 |
+| `DEPLOYMENT_ACCESS_REJECTED` | 云端返回 401，访问令牌不匹配 | 到运行中心核对访问配置与日志，必要时用「修复访问配置」 |
+| `RUNTIME_RUN_FAILED` | 运行时执行失败 | 打开该 turn 的错误详情；先用只读策略重跑一次定位 |
+| `native_conversation_rewind_requires_idle` | 回退时还有未结束的任务 | 先停止当前 turn，再重新预览回退 |
+| `native_conversation_rewind_head_conflict` | 回退目标已不是当前分支的头 | 刷新后重新选择要回退的输入 |
+| `native_conversation_rewind_stop_unsettled` | 任务已停止，但仍有执行结果待核实 | 等结果核实完成后再重试原回退请求 |
+| `checkpoint_control_compensated` | 未完成的文件回退已被补偿 | 对话未回退，重新预览后再操作 |
+| `STUDIO_NATIVE_AGENT_POLICY_INVALID` | Agent 的权限规则格式不合法 | 按[审批与权限策略](./approvals-permissions.mdx#编写自定义权限规则)修正 JSON |
+
+## 相关参考
+
+<Cards>
+  <Card title="审批与权限策略" href="/docs/guides/approvals-permissions">
+    三种执行策略、默认值与上限、权限规则 JSON 怎么写。
+  </Card>
+  <Card title="会话与工作区" href="/docs/concepts/sessions-workspaces">
+    会话、运行、工作区三者的边界，以及为什么回退不会自动撤销文件。
+  </Card>
+  <Card title="会话事件" href="/docs/reference/session-events">
+    `turn/start`、`tool/call`、`approval/asked` 等 16 个事件的字段与顺序。
+  </Card>
+  <Card title="可观测性" href="/docs/guides/observability">
+    Trace 从哪来、怎么读、怎么确认已经上报。
+  </Card>
+</Cards>

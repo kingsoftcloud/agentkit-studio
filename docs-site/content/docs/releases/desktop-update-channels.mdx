@@ -1,0 +1,155 @@
+---
+title: 桌面更新通道
+description: 4 个通道 × 2 个 feed 目标 × 2 种布局：更新怎么发、为什么默认 nightly、兼容车道做什么。
+---
+
+**一次发布不是一个文件，是 8 个 feed 键的矩阵。** 客户端只认自己 `app-update.yml` 里封死的通道，改不了——所以每次发布都要同时维护多条车道。
+
+## 通道（4 个）
+
+| 通道 | 类型 | 接受预发布版本 | 默认 | 说明 |
+| --- | --- | --- | --- | --- |
+| `nightly` | 原生 | ✅ | **是** | 产品默认车道，`allowPrerelease = true` |
+| `latest` | 原生 | ❌ | — | GA 车道，只接三段式正式版本 |
+| `preview` | 兼容 | ✅ | — | 历史车道，每次发布自动镜像 |
+| `stable` | 兼容 | ❌ | — | 历史车道，与 `latest` 同比较规则 |
+
+源码：`src/desktop-release-channels.mjs:20-26,59`。
+
+### 为什么默认是 nightly
+
+| 事实 | 后果 |
+| --- | --- |
+| 固定的 DSH 版本带 `-rc.N` 后缀 | 桌面版本 `<DSH 版本>.<日期>.<序号>` 继承了这个后缀 |
+| 每个 Studio 构建因此都是预发布版本 | `latest` / `stable` 会拒绝 |
+| DSH 更新协调器 `allowPrerelease = channel === 'nightly'` | 只有 `nightly` 接受预发布 |
+
+源码：`src/desktop-release-channels.mjs:10-16,51-58`。
+
+<Callout type="error" title="把预发布 feed 发到 latest 会让所有客户端失去更新">
+  DSH 的更新协调器遇到 `latest` 车道上的预发布版本会直接抛错，
+  客户端连「检查更新」都做不了。所以打包前就拒绝：`assertChannelSupportsVersion` 在发布计划生成阶段就失败。
+  源码：`src/desktop-release-channels.mjs:108-124`。
+</Callout>
+
+## Feed 目标（2 个）
+
+| 目标 | 平台 | 通道元数据文件名 |
+| --- | --- | --- |
+| `mac-arm64` | macOS Apple Silicon | `<channel>-mac.yml` |
+| `win-x64` | Windows x64 | `<channel>.yml` |
+
+源码：`src/desktop-release-channels.mjs:49,127-134`。
+
+<Callout type="warn" title="没有第三个目标">
+  `RELEASE_FEED_TARGETS` 只有两项。`product.json` 里能看到第二个 macOS 架构的图标配置，
+  但那只用于打包输入校验，**没有对应 feed**。
+</Callout>
+
+## Feed 布局（2 种）
+
+| 布局 | 对象根 | 允许的二进制前缀 | 用途 |
+| --- | --- | --- | --- |
+| `studio` | `studio/` | `/studio/` | 当前规范布局 |
+| `legacy` | `dsh-desk/` | `/studio/` 或 `/dsh-desk/bin/` | 历史 `dsh-desk/feeds/...` 入口 |
+
+源码：`src/desktop-release-feed.mjs:25-42`。
+
+布局与二进制位置是**分开校验**的：`legacy` 布局的 feed 合法地指向规范 `studio/<version>/` 字节，
+而 Studio 之前写入的 feed 指向 `dsh-desk/bin/...`。两个前缀都接受。
+
+## 8 个 feed 键
+
+```text
+<对象根>/feeds/<目标>/<通道元数据文件名>
+```
+
+| 目标 | 原生通道（`studio` 布局） | 兼容通道（`legacy` 布局） |
+| --- | --- | --- |
+| `mac-arm64` | `studio/feeds/mac-arm64/{nightly,latest}-mac.yml` | `dsh-desk/feeds/mac-arm64/{preview,stable}-mac.yml` |
+| `win-x64` | `studio/feeds/win-x64/{nightly,latest}.yml` | `dsh-desk/feeds/win-x64/{preview,stable}.yml` |
+
+源码：`src/desktop-release-feed.mjs:71-76`。
+
+## 发布产物路径
+
+macOS 发布的资产布局：
+
+| 资产 | 路径 |
+| --- | --- |
+| DMG | `studio/<version>/AgentKit-Studio-mac-arm64.dmg` |
+| ZIP（增量） | `studio/<version>/AgentKit-Studio-mac-arm64.zip` |
+| ZIP（全量） | `studio/<version>/full/AgentKit-Studio-mac-arm64.zip` |
+| Blockmap | `studio/<version>/AgentKit-Studio-mac-arm64.zip.blockmap` |
+| Feed | `studio/feeds/mac-arm64/<channel>-mac.yml` |
+| 发布记录 | `studio/feeds/mac-arm64/mac-arm64-release.json` |
+
+源码：`src/desktop-release-metadata.mjs:16-32`。
+
+<Callout type="info" title="两种发布模式">
+  `mode` 只有 `incremental` 和 `full` 两个值。全量模式把 ZIP 放到 `full/` 子目录，
+  blockmap 仍然指向版本根目录——这样差分更新与全量更新共用同一份元数据。
+</Callout>
+
+## 兼容镜像
+
+每次成功发布后，同一份 feed **字节**会被复制到兼容车道：
+
+| 属性 | 值 |
+| --- | --- |
+| 兼容车道 | `preview`（`COMPATIBILITY_RELEASE_CHANNELS`） |
+| 复制方式 | 字节级复制，不重新签名、不重新上传二进制 |
+| 幂等性 | 已一致则记 `unchanged`，不重复上传 |
+| 目的 | 历史安装能**一步**跳到最新发布，而不是先跳到车道冻结的那个版本 |
+
+源码：`src/desktop-release-feed.mjs:82-220`、`src/desktop-release-channels.mjs:35-46`。
+
+镜像证据记录在发布报告里，字段固定：`version`、`sourceChannel`、`targetChannel`、`targetLayout`、`objectKey`、
+`feedUrl`、`feedBytes`、`feedSha512`、`status`。`status` 只能是 `updated` 或 `unchanged`。
+源码：`src/desktop-release-feed.mjs:82-101`。
+
+## 发布流程
+
+```sh
+make desktop-package-preflight            # 1. 拒绝非法通道×版本组合
+make desktop-package-mac-arm64            # 2. 打包，产物落在 .artifacts/
+make desktop-package-win-x64
+node scripts/desktop-release.mjs publish  # 3. 先发不可变资产，再推进 feed
+```
+
+| 顺序 | 动作 | 为什么不能反 |
+| --- | --- | --- |
+| 1 | 预检 | 调 `assertChannelSupportsVersion`：`latest` / `stable` 配预发布版本直接失败 |
+| 2 | 打包 | 产物落在 `.artifacts/` |
+| 3 | 上传 DMG / ZIP / blockmap | **URL 不可变**，重复上传无副作用 |
+| 4 | 推进 feed | feed 是唯一可变对象，用绝对 URL 指向不可变二进制并带 `electron-updater` 校验的摘要；反了会让客户端拿到 404 |
+| 5 | 镜像兼容车道 | 发布脚本自动把同一份 feed 字节写到 `preview` 车道 |
+
+## 配置
+
+| 配置项 | 位置 | 当前值 |
+| --- | --- | --- |
+| 默认环境 | `product.json#desktop.updates.environment` | `production` |
+| 默认通道 | `product.json#desktop.updates.channel` | `nightly` |
+| 更新源 | `product.json#desktop.updates.origin` | 由构建注入（不写进文档） |
+| 允许的环境值 | `scripts/product-config.mjs:47` | `production` / `test` |
+
+## 常见错误
+
+| 错误 | 原因 | 处理 |
+| --- | --- | --- |
+| `channel is required` | 通道为空 | 传 `--channel` 或保留产品默认 |
+| `channel must be one of …` | 通道名不在 4 个取值里 | 用 `nightly` / `latest` / `preview` / `stable` |
+| `latest channel requires a stable three-segment version` | 预发布版本发到稳定车道 | 改发 `nightly` |
+| `feed layout must be one of …` | 布局不是 `studio` / `legacy` | 检查 `--compat-layouts` |
+| `feed target must be one of …` | 目标不是 `mac-arm64` / `win-x64` | 检查 `--target` |
+| `Studio storage must be an HTTPS origin` | 更新源不是纯 HTTPS origin | 去掉 path / query / 凭据 |
+| `release metadata does not identify its signed ZIP` | feed 里的文件名与预期不符 | 重新生成元数据 |
+
+源码：`src/desktop-release-channels.mjs:77-124`、`src/desktop-release-feed.mjs:51-68`、`src/desktop-release-metadata.mjs:4-13`。
+
+## 相关
+
+- 平台支持矩阵：[版本兼容表](./compatibility.mdx)
+- 升级操作：[升级到 v0.0.16](./upgrade-to-0.0.16.mdx)
+- 版本变化：[版本说明](./release-notes.mdx)

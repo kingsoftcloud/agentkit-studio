@@ -1,0 +1,184 @@
+---
+title: 审批与权限策略
+description: 选择执行策略、理解默认值与上限、编写「工具名 → 决策」的权限规则，并处理运行中的审批请求。
+status: new
+---
+
+执行策略（execution policy）决定 Agent 的一次运行能触碰多大范围：只读、只能改工作区，还是完全访问。
+权限规则（permission rules）在此之上按**工具名**逐个收窄。两者都不是提示词，写进提示词也不会生效。
+
+<Callout type="info" title="前置条件">
+  已在[创建与编辑 Agent](./create-agent.mdx)里保存过修订版本。
+  云端策略还要该 Agent 已部署且镜像声明了 `cloud-execution-policy/v1` 能力。
+</Callout>
+
+## 三种执行策略
+
+策略是有序的，索引即权限等级（`read-only` < `workspace-write` < `danger-full-access`）。
+
+| 值 | 界面文案 | 能做什么 | 不能做什么 |
+| --- | --- | --- | --- |
+| `read-only` | 仅可查看 | 读文件、搜索、只读命令 | 任何写文件、任何有副作用的命令 |
+| `workspace-write` | 工作区内修改 | 在会话工作区内读写文件、跑构建与测试 | 触碰工作区之外的路径 |
+| `danger-full-access` | 完全权限 | 任意路径读写、任意命令 | 无——这是能力上限 |
+
+### 默认值与上限
+
+| 项 | 值 | 含义 |
+| --- | --- | --- |
+| 默认策略 | `workspace-write` | 云端执行未指定时使用 |
+| 策略上限 | `danger-full-access` | 云端实例能声明的最高等级 |
+| 未声明上限时的后备 | `read-only` | 拿不到有效策略声明时按只读处理 |
+
+**运行时会声明一个上限，客户端只能收窄，不能放大。** 请求的策略高于上限时会被夹到上限，
+不会报错；解析不到有效声明时按 `read-only` 处理——「不知道」永远不升级为「允许」。
+
+<Callout type="warn" title="本机设置不改变云端权限">
+  云端 Agent 的权限由**冻结镜像**声明的策略决定。你在本机 DSH 的权限选择器里怎么选，
+  都不会让云端实例多出任何权限。反过来也一样。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 确认当前策略
+
+**本地 Agent**：在对话区顶部的权限选择器里看当前值。
+
+**云端 Agent**：在对话区顶部看权限徽章，它有三种形态：
+
+| 徽章 | 含义 |
+| --- | --- |
+| `云端 · 只读` / `云端 · 工作区内修改` / `云端 · 完全访问` | 已取得有效的云端策略声明 |
+| `云端权限未知` | 未取得有效策略声明，不能据此判断可写范围 |
+| `正在核验云端权限` | 正在读声明，稍等 |
+
+徽章可点，点一次重新核验。策略声明本身还带 `approvalPolicy`，云端固定为 `never`——
+**云端不等待人工审批**，需要确认的操作请在本地会话里做。
+</Step>
+
+<Step>
+### 切换云端执行权限
+
+1. 点权限徽章打开菜单。菜单只列出镜像声明允许的模式，列表里带 ✓ 的是当前值。
+2. 选一个目标模式。
+
+切换只影响该云端 Agent 的**后续运行**，不会补授已经开始的回合。切换结果有两种：
+
+- 实际生效值等于你选的值。
+- 实际生效值被夹到上限，界面提示「已按部署声明上限调整」。
+
+<Callout type="info" title="选择会被持久化">
+  选中的模式写入 Host 侧的 `cloud-execution-modes.json`（合同 `agentkit.cloud-execution-modes/v1`），
+  下次连上同一个云端 Agent 时继续生效。清掉该文件即回到镜像默认值。
+</Callout>
+</Step>
+
+<Step>
+### 编写自定义权限规则
+
+权限规则挂在 Agent 修订版本的 `spec.bindings.nativeAgentPolicy` 上，是**版本化合同**，
+不是显示用标签。完整示例：
+
+```json
+{
+  "contract": "agentkit.native-agent-policy/v1",
+  "mode": "custom",
+  "rules": {
+    "shell": "ask",
+    "apply_patch": "ask",
+    "web_search": "inherit",
+    "browser.open": "deny"
+  }
+}
+```
+
+字段约束：
+
+| 字段 | 取值 | 说明 |
+| --- | --- | --- |
+| `contract` | 固定 `agentkit.native-agent-policy/v1` | 其他值一律拒绝 |
+| `mode` | `strict` / `loose` / `custom` | 只有 `custom` 允许带 `rules` |
+| `rules` 的键 | `^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$` | 工具名；`:` `/` `.` 用来区分命名空间 |
+| `rules` 的值 | `inherit` / `ask` / `deny` | 三种决策语义见下 |
+
+对象上除 `contract`、`mode`、`rules` 之外**不允许任何其他键**，未知字段会被当成配置错误拒绝。
+`rules` 会按键名排序后保存，所以同一份规则重放得到同样的结果。
+
+<Callout type="warn" title="旧版本的「策略模板」不算数">
+  历史版本里的 `policyTemplate` 只是显示标签，不影响执行。
+  只有上面这个带 `contract` 的对象才会改变工具行为，包括对已经冻结的旧构建。
+</Callout>
+</Step>
+
+<Step>
+### 理解三种决策语义
+
+| 决策 | 只读工具 | 可写工具 | 说明 |
+| --- | --- | --- | --- |
+| `inherit` | 沿用 Host 行为 | 沿用 Host 行为 | 不额外约束，交给运行时原生策略 |
+| `ask` | 沿用 Host 行为 | 每次调用都要人工审批 | 审批卡片一次一授权 |
+| `deny` | 沿用 Host 行为 | 直接拒绝 | 不进入审批流程，Agent 收到拒绝结果 |
+
+`mode` 会整体覆盖 `rules` 的默认行为：
+
+| `mode` | 未在 `rules` 里出现的工具 |
+| --- | --- |
+| `loose` | 一律 `inherit`（`rules` 必须为空） |
+| `strict` | 可写工具 `ask`，只读工具 `inherit` |
+| `custom` | 可写工具 `deny`，只读工具 `inherit` |
+
+也就是说 `custom` 是**默认拒绝**的：只写你想放行的工具，其余可写工具全部被挡。
+</Step>
+
+<Step>
+### 处理审批请求
+
+当某个工具解析为 `ask` 时，对话区出现待审批卡片：
+
+1. 卡片标题是「`<工具名>` 请求一次性授权」，下面是调用原因。
+2. 点 **允许一次** —— 弹风险确认，勾选「我已核对这次操作及其影响」，再点 **确认允许一次**。
+3. 点 **拒绝** —— 该次调用失败，Agent 收到 `deny` 并继续。
+
+<Callout type="error" title="审批请求会过期">
+  每个待审批项都带 `expiresAt`，过期后从列表消失，此时点确认会提示「审批请求已失效，请刷新后核对」。
+  审批决定带版本号（`generation`）比对，页面上的旧决定不会覆盖新的运行时状态。
+</Callout>
+</Step>
+
+</Steps>
+
+## 成功后的样子
+
+- 权限徽章显示 `云端 · <已知模式>`，不是「云端权限未知」。
+- 运行中需要确认的调用都在卡片上拿到了 `allow` 或 `deny`，没有遗留。
+- 被 `deny` 的工具在工具时间线里是 `failed`，错误信息说明是策略拒绝，而不是运行时崩溃。
+- 保存 Agent 后再打开，`nativeAgentPolicy` 的 `rules` 顺序稳定不变。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `STUDIO_NATIVE_AGENT_POLICY_INVALID` | 权限规则不是对象、缺 `contract`、`mode` 非法、工具名不合规，或非 `custom` 模式带了 `rules` | 对照上面的完整示例逐字段核对；`mode` 不是 `custom` 时把 `rules` 清空 |
+| `CLOUD_EXECUTION_MODE_INVALID` | 提交的 `permissionMode` 不在三种取值里 | 只用 `read-only` / `workspace-write` / `danger-full-access` |
+| `CLOUD_EXECUTION_MODE_UNAVAILABLE` | Host 侧没有启用云端执行权限存储 | 确认该 Host 已初始化云端执行权限目录后重试 |
+| `CLOUD_EXECUTION_MODE_UNSUPPORTED` | 当前云端镜像没有声明 `cloud-execution-policy/v1` | 更新实例镜像版本后再切换 |
+| `CLOUD_EXECUTION_MODE_DENIED` | 请求的模式超出部署声明的范围 | 选菜单里列出的模式；上限由镜像决定，改不了 |
+| `CLOUD_AGENT_ID_INVALID` | 云端 Agent 标识格式不对 | 从云端部署列表里重新选择，不要手输 |
+| `INVALID_AGENT_ID` | 请求里 `agentId` 为空 | 先选中一个云端 Agent 再操作 |
+
+## 相关参考
+
+<Cards>
+  <Card title="运行与调试会话" href="/docs/guides/conversations">
+    审批卡片出现在哪、怎么停、怎么回退。
+  </Card>
+  <Card title="配置参考" href="/docs/reference/configuration">
+    Agent 与 revision 的完整配置结构，含 `bindings`。
+  </Card>
+  <Card title="错误码" href="/docs/reference/errors">
+    按错误码检索原因与处理。
+  </Card>
+</Cards>

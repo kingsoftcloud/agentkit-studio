@@ -1,0 +1,126 @@
+---
+title: Contributing
+description: Entry point for working on AgentKit Studio — environment, three gate layers, DSH patch governance, docs style, and the public boundary.
+status: new
+---
+
+AgentKit Studio is a product plugin, not a fork of DSH. It extends the official DeepSeek Harness
+(DSH) host and ships product capability as a plugin. That boundary decides how you contribute:
+**change Studio's behavior, follow DSH's public contracts, and never copy the DSH source tree into
+this repository.**
+
+## What this chapter solves
+
+| Where you are now | Start here | What you get |
+| --- | --- | --- |
+| You just cloned the repository and nothing runs yet | [Development environment](./dev-environment.mdx) | One copy-pasteable setup path, plus how to isolate the three data directories |
+| You changed something and do not know what to run | [Gates and verification](./gates.mdx) | What each of the three gate layers runs, which checks a pull request must pass, and how to localize a failure |
+| You need to change DSH host behavior | [Patch governance](./patches.mdx) | The full loop: maintenance commit → export patch → verify |
+| You are writing or editing docs | [Documentation style guide](./docs-style-guide.mdx) | Page skeleton, terminology, link rules, and the 1:1 bilingual contract |
+| You are unsure whether some content may be public | [Security and public boundary](./security-boundary.mdx) | Fourteen red lines and the local self-check commands |
+
+## Three non-negotiable rules
+
+1. **Single purpose.** One pull request does one thing. A behavior change ships with regression
+   coverage; a docs-only change does not also touch code. Mixed scope makes "what is the risk
+   boundary of this change" unanswerable in review.
+2. **Every fact traces to source.** Each command, default value, enum, and error code must point at a
+   concrete location in `Makefile`, `package.json`, `scripts/**`, `ci/**`, or `src/**`. If you cannot
+   point at it, do not write it — every contradictory version number and count in the old docs came
+   from writing from memory.
+3. **The public boundary wins.** The repository is public. Never commit credentials, customer data,
+   personal paths, internal endpoints, or private deployment evidence. `make public-surface-audit`
+   and `secret-scan` block this class of content in CI, historical blobs included.
+
+Run the minimum set before you commit:
+
+```sh
+make check
+```
+
+This covers the static contract checks and the full unit suite.
+
+<Callout type="warn" title="When to add another layer">
+  For changes that affect the release package, the patch series, or security, also run
+  `make release-check`. For the layers and failure localization, see
+  [Gates and verification](./gates.mdx).
+</Callout>
+
+## Repository map
+
+| Path | Contents | What you change here |
+| --- | --- | --- |
+| `src/` | Studio host services, API adapters, product plugin | Product behavior, contracts, runtime adapters |
+| `src/client/` | Browser modules and DSH UI extensions | Interface and interaction |
+| `src/providers/` | Integration for the three runtimes | Runtime admission and execution paths |
+| `src/contracts/operations.mjs` | Control protocol, 134 operations | Contract changes must update tests |
+| `patches/dsh-v0.2.2-rc.1/` | 53 patches against the pinned DSH baseline | Host compatibility fixes |
+| `host-source/` | Archived maintenance branch bundles | Patch provenance and verification |
+| `scripts/` | Development, verification, packaging, release tooling | Gates and automation |
+| `ci/` | CI-specific scripts and the Gitleaks config | Gate execution environment |
+| `tests/` | Unit, contract, and packaging regressions | Regression coverage |
+| `docs-site/` | Source of this site | Documentation and navigation |
+
+## What you need
+
+| Dependency | Version | Notes |
+| --- | --- | --- |
+| Node.js | 24.22.1 | Security baseline 22.23.4+ / 24.22.1+ / 26.12.1+, per `.node-version` |
+| pnpm | 10.33.2 | Enabled through Corepack; must match `packageManager` |
+| Git | Any recent version | Patch governance needs full history; CI uses `fetch-depth: 0` |
+| Make and a C toolchain | Any recent version | DSH native modules compile |
+| DSH checkout | The pinned baseline | Lives **outside** this repository and is used to apply patches |
+
+Native Windows is not supported for these Make targets; use WSL2. Full steps are in
+[Development environment](./dev-environment.mdx).
+
+## The minimum docs change
+
+Documentation changes go through gates too, but the path is shorter:
+
+1. Read the page skeletons and terminology in [Documentation style guide](./docs-style-guide.mdx) and
+   confirm the page type.
+2. Edit `foo.mdx` and `foo.en.mdx` together — **1:1 bilingual coverage is mandatory**; half a pair
+   fails the build.
+3. Run the four self-check commands under `docs-site/` (pairing, leftover markers, internal
+   information, links ending in `.mdx`).
+4. Run `make public-surface-audit` to confirm nothing crosses the boundary.
+5. Confirm `git diff --check` is clean before you commit.
+
+<Callout type="info" title="Do not edit meta.json">
+  Sidebar order is maintained centrally in `meta.json` / `meta.en.json`. When adding a page, confirm
+  where it belongs in navigation instead of inserting an entry yourself — the `pages` order must match
+  exactly between the two locales.
+</Callout>
+
+## Frequently asked questions
+
+**I only want to change one line of docs. Do I need a DSH checkout?**
+No. Docs changes only need Node.js and the repository dependencies: run
+`pnpm install --frozen-lockfile`, then edit the `.mdx` files under `docs-site/content/docs/`. A DSH
+checkout is only required when you need to verify against a real host.
+
+**My pull request is green locally but red in CI. Why?**
+Three most common causes: `pnpm-lock.yaml` disagreeing with `package.json` (so `--frozen-lockfile`
+fails); a new dependency entering the browser bundle (the client gate's size budget); or a commit
+carrying a non-ignored temporary file or credential (the public surface audit). Work through the
+failure table in [Gates and verification](./gates.mdx).
+
+**Must I write both Chinese and English?**
+Yes. 1:1 bilingual coverage is a build-time constraint: a missing English page, a `meta.json` versus
+`meta.en.json` order mismatch, or a heading-structure difference each fail the `docs-site-i18n` test.
+
+**May I edit a `.patch` under `patches/` directly?**
+No. A patch is an export of the maintenance branch; editing it breaks the digest, manifest, and
+application-order checks. Use the four-step workflow in [Patch governance](./patches.mdx).
+
+**How long does `make check` take?**
+The static contract checks take seconds; the full unit suite depends on the machine. `make release-check`
+is minutes because it also packs and scans history. In CI the `public-gate` job has a 35-minute timeout.
+
+## Getting help
+
+- Run the minimum set in [Gates and verification](./gates.mdx) before asking; it surfaces most problems locally.
+- Stuck on the DSH checkout version or the patch series: see "Common failures" in [Patch governance](./patches.mdx).
+- Unsure whether content crosses the boundary: read [Security and public boundary](./security-boundary.mdx), or delete it under the strictest reading.
+- Found a security vulnerability: do not open a public issue; report it privately through the channel in `SECURITY.md`.

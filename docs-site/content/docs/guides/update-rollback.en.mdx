@@ -1,0 +1,151 @@
+---
+title: Managed Runtime Update and Rollback
+description: Move a ready cloud instance to a new build or back to a verified historical version, and read every rollout stage.
+status: new
+---
+
+Upgrade and rollback are two directions along the same path: both replace a cloud instance's frozen version **in place**.
+The instance id, spec, disk, and region stay the same, so conversation history is kept, but **you cannot start a conversation while the switch is in progress**.
+
+<Callout type="info" title="Prerequisites">
+  - The cloud instance is `READY`, `STARTING`, or `ACTION_REQUIRED`.
+  - No unconfirmed rollout is in flight (`PREPARED` / `UPLOADING` / `APPLYING` / `UNKNOWN` all count as unconfirmed).
+  - The instance really is running: cloud `Basic.Status` is `RUNNING` with a non-zero ready replica count.
+  - You are still the deployment's **verified subaccount** and the cloud configuration scope is unchanged.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Prepare the target version
+
+An update needs a `SUCCEEDED` build. After editing the agent, rebuild under **Operations → Build and deploy → Build**;
+otherwise you can only update to the previous version, which `DEPLOYMENT_VERSION_UNCHANGED` rejects ("The selected frozen bundle and image are already running").
+</Step>
+
+<Step>
+### Open the cloud instance record
+
+Find the target row under **Operations → Build and deploy → Cloud instances**. The row's **⋯** menu offers:
+
+| Item | Appears when |
+| --- | --- |
+| Details | Always |
+| Upgrade to the selected version | The current version is `READY` and a different build is selected |
+| Repair with the selected version | The instance is `STARTING` or `ACTION_REQUIRED` |
+| Select historical version / Check rollback | The instance is `READY` and other versions exist |
+| Logs | The instance already has a cloud agent |
+| Repair access configuration | `TOKEN_PENDING` with `tokenBound` false |
+| Delete | After expanding **Details** |
+</Step>
+
+<Step>
+### Run the version check
+
+Choose **Check update** (or **Upgrade to the selected version** in the menu). The step is read-only and returns a confirmation preview:
+
+| Row | Why it matters |
+| --- | --- |
+| Target runtime image | Image version and **digest** — the deployment identity before the switch; stop if it disagrees with the record |
+| Runtime | Runtime type · current image version |
+| Instance spec | An update never changes the spec; confirm it did not move |
+| Bound resources | Model / MCP / Skill counts of the new version |
+| Operator | Subaccount user name |
+
+The check also confirms the new version really differs from the current one (both the frozen bundle hash and the image address must change).
+The warning lines say two things: **no conversation during the switch**, and **start a new session afterwards** (history is kept).
+
+<Callout type="warn" title="An upgrade changes the version, never the scope">
+  Seven fields must match the current deployment exactly: agent, runtime, credential scope, region, environment, bucket, and storage endpoint.
+  A change in any of them yields `DEPLOYMENT_UPDATE_SCOPE_CHANGED` — create a separate deployment instead of editing in place.
+</Callout>
+</Step>
+
+<Step>
+### Confirm the upgrade
+
+Choose **Confirm upgrading the current instance**. The instance state becomes `UPDATING` ("Switching version · waiting for endpoint confirmation") and the rollout runs through:
+
+| Rollout status | Meaning |
+| --- | --- |
+| `PREPARED` | The rollout is registered and awaiting execution |
+| `UPLOADING` | Uploading the new frozen runtime bundle |
+| `APPLYING` | Submitting the cloud container configuration (image plus environment patch) |
+| `UNKNOWN` | The submit was interrupted; the outcome needs reconciling |
+| `SUCCEEDED` | The endpoint version is confirmed and the instance returns to `READY` |
+| `FAILED` | The submit did not go through; the instance moves to `ACTION_REQUIRED` |
+
+Expanding the row shows a one-line summary such as "Upgrade to Revision 7 · Waiting for the target version to take effect".
+Nothing needs your input; the page refreshes every 5 seconds.
+</Step>
+
+<Step>
+### Roll back to a historical version
+
+1. In the **⋯** menu, pick a version from the **Select historical version** dropdown (it lists only versions other than the current one, as `Revision 3 · <image version> · <completed time>`).
+2. Choose **Check rollback**. It runs the same validation as an upgrade plus one more: the historical version's image catalog must still match, or you get `DEPLOYMENT_PREVIEW_STALE`.
+3. Choose **Confirm rolling back the current instance**.
+
+After a successful rollback the current-version pointer moves to that historical version, which is also appended to the version list — **a rollback is itself a new version**, so you can roll forward again.
+
+<Callout type="error" title="Never reissue when the submit outcome is unconfirmed">
+  If the page reports "The rollback request is not confirmed yet" or "Update submit outcome unconfirmed", retry with the same idempotency key rather than issuing a new update.
+  Reusing one request identity with different content yields `DEPLOYMENT_IDEMPOTENCY_CONFLICT`.
+</Callout>
+</Step>
+
+<Step>
+### Wrap up
+
+Once the switch completes:
+
+- Use **Start conversation** to open a **new session**. The old session remains readable, but refuses to continue because its frozen version differs (`DEPLOYMENT_SESSION_VERSION_CHANGED`).
+- If the instance sits at `TOKEN_PENDING` with no bound access token, use **Repair access configuration** to rewrite it.
+- If the instance is stuck at `UPDATE_UNKNOWN`, choose **Refresh status** to trigger version probing; a passing probe settles it on `READY`.
+
+</Step>
+
+</Steps>
+
+## What success looks like
+
+- The instance state is `READY` with a green tone.
+- **Details** shows a runtime image equal to the version you checked, digest included.
+- The row's rollout summary reads "Endpoint version confirmed".
+- The version list contains the update or rollback you just finished, with a `completedAt` of a moment ago.
+- A newly started session converses normally; an old one reports that its version changed.
+
+## Common errors
+
+| Code | Cause | Fix |
+| --- | --- | --- |
+| `DEPLOYMENT_UPDATE_UNAVAILABLE` | The instance is not in an updatable state, or a rollout is still unconfirmed | Wait for the current rollout to confirm; get the instance to `READY` first if it is not running |
+| `DEPLOYMENT_VERSION_NOT_FOUND` | The named historical version does not exist | Refresh and pick again from the dropdown |
+| `DEPLOYMENT_PREVIEW_STALE` | The version, image catalog, or configuration changed after the check | Choose **Check update** again for a fresh preview |
+| `DEPLOYMENT_IMAGE_UPGRADE_REQUIRED` | The target image does not declare version probing | Publish a Studio image that supports upgrade and rollback, then retry |
+| `DEPLOYMENT_UPDATE_SCOPE_CHANGED` | An attempt to change agent, runtime, account, or deployment location | Those do not change with an upgrade; create a separate deployment for a different scope |
+| `DEPLOYMENT_VERSION_UNCHANGED` | The selected frozen bundle and image are already running | Pick a version that really differs |
+| `DEPLOYMENT_UPDATE_INTERRUPTED` | The update was interrupted before reaching the cloud | Refresh to confirm the original instance state, then check the version again |
+| `DEPLOYMENT_IDEMPOTENCY_CONFLICT` | One request identity was used for another update | Refresh the deployment record and reconcile the existing rollout |
+| `CLOUD_SUBACCOUNT_REQUIRED` | The current identity is not the deployment's verified subaccount | Switch back to the original account configuration |
+| `DEPLOYMENT_ACCOUNT_CHANGED` | The cloud configuration scope differs from the record | Switch back to the original configuration before managing it |
+| `DEPLOYMENT_CLOUD_DELETED` | The cloud agent was deleted elsewhere | The local record is marked deleted; enable "Show deleted" to see it |
+
+## Related
+
+<Cards>
+  <Card title="Deploy to the cloud" href="/en/docs/guides/deploy-to-cloud">
+    Creating the first instance, the 19 deployment states, and reconciling unconfirmed outcomes.
+  </Card>
+  <Card title="Managed runtime lifecycle" href="/en/docs/deployment/managed-runtime-lifecycle">
+    The full lifecycle from creation to deletion, and what rollback means.
+  </Card>
+  <Card title="Deployment state machine" href="/en/docs/reference/deployment-states">
+    Every deployment and rollout state side by side.
+  </Card>
+  <Card title="Degradation and retry" href="/en/docs/deployment/degradation-retry">
+    Which operations are safe to retry while the platform is briefly unavailable.
+  </Card>
+</Cards>

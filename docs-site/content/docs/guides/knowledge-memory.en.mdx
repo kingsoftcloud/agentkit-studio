@@ -1,0 +1,202 @@
+---
+title: Bind knowledge bases and Memory
+description: Bind a knowledge base, pick a memory source, and configure recall and writes.
+status: new
+---
+
+Knowledge bases and Memory are two different things: a **knowledge base** is read-only retrieval, while **Memory** is writable long-term memory. Both are configured in the **Bind capabilities** and **Policy and confirmation** steps of the agent form.
+
+<Callout type="info" title="Prerequisites">
+  - A connected cloud control plane. Without one, the platform resource dropdowns only offer "connect to the cloud first".
+  - Knowledge base and memory instances already created in the cloud, with access granted to the current account.
+  - Local memory (DSH Native local memory) needs no cloud binding, but is available only under the **Star Harness** runtime.
+</Callout>
+
+## Steps
+
+<Steps>
+
+<Step>
+### Bind a knowledge base
+
+Open **Agents** → select the target agent → Edit → **Bind capabilities** step → scroll to the **Platform resources** block → **Knowledge base** dropdown → pick one.
+
+The resulting configuration is fixed and cannot be hand-edited:
+
+| Field | Value |
+| --- | --- |
+| `retrieval.mode` | `tool` (read-only retrieval, triggered through a tool call) |
+| `retrieval.topK` | `5` |
+| `retrieval.maxChars` | `16000` |
+| `required` | `true` (fixed by code, cannot be turned off) |
+
+Only available instances are selectable: when a resource is disabled or disappears from the cloud, `platformBinding` throws `PLATFORM_RESOURCE_UNAVAILABLE` instead of writing a binding that points at nothing.
+
+**Only one knowledge base can be bound per agent.** Selecting another replaces the previous one.
+
+<Callout type="info" title="Where to look">The Platform resources block in **Bind capabilities** with a knowledge base instance selected.</Callout>
+</Step>
+
+<Step>
+### Bind a memory instance
+
+In the same **Platform resources** block, choose **Memory instance** → pick one instance.
+
+Memory configuration is simpler than knowledge bases: only `binding`, no `retrieval`. It decides whether `memory.providerRef` points at the cloud:
+
+| Memory instance bound? | Memory source | `providerRef` |
+| --- | --- | --- |
+| No | Local memory | `local-default` |
+| Yes | Cloud memory | `binding://platform-memory-instance` |
+
+<Callout type="warn" title="Stale resources block saving">
+  If a previously bound resource was deleted in the cloud, the dropdown shows a grey "currently unavailable, please re-select" option
+  plus a red "stale platform resources detected" notice. **You must re-select or clear it before saving.**
+</Callout>
+</Step>
+
+<Step>
+### Turn on cross-session memory
+
+Switch to the **Policy and confirmation** step → **Memory** section → turn on **Cross-session memory**.
+
+Do not skip this section when it is off: turning it off only sets `memory.enabled` to `false`. It **never** changes the existing provider, scopes, recall, write, or rollout configuration. Turning it back on restores the previous settings.
+</Step>
+
+<Step>
+### Choose the memory source
+
+A **Memory settings** panel appears. The first row is a two-way source choice:
+
+| Source | When it appears | Notes |
+| --- | --- | --- |
+| Local memory | The runtime is Star Harness and you are not editing a cloud agent | Built-in local memory; no cloud instance needed |
+| Cloud memory | Every non-cloud-editing path | Binds a cloud memory instance, recalled and written by AICP |
+
+Choosing **Local memory** automatically drops any bound memory instance so no dangling reference remains. Choosing **Cloud memory** without an instance bound blocks the save with "before enabling cloud memory, select a memory instance in the Bind capabilities step."
+
+<Callout type="info" title="Where to look">The source radio group in the **Memory settings** panel together with the fields below it.</Callout>
+</Step>
+
+<Step>
+### Configure local recall (local memory only)
+
+| Field | Default | Range | Notes |
+| --- | --- | --- | --- |
+| Local recall | On | Toggle | When off, existing facts are no longer recalled automatically |
+| Recall max tokens | `1600` | 0–100000 | Context budget for recall |
+| Recall top K | `8` | 1–64 | Maximum number of results |
+| Minimum score | `0.45` | 0–1, step 0.05 | Results below this score are dropped |
+
+<Callout type="warn" title="Recall is term coverage, not semantic relevance">
+  Local recall scores by term coverage. It is insensitive to paraphrase and always misses when the keywords never appear.
+  Use cloud memory when you need semantic retrieval.
+</Callout>
+
+`recall.enabled` and `memory.enabled` are **independent**: you can turn writes off while keeping recall on.
+</Step>
+
+<Step>
+### Configure memory writes
+
+**Memory write mode** has three values:
+
+| Value | UI label | Behavior |
+| --- | --- | --- |
+| `off` | Do not extract memory candidates | No extraction at all. Offered only on the local memory path |
+| `explicit_only` | Remember only when I explicitly ask | Writes only when you explicitly say "remember this" |
+| `candidate` | Extract usable memories after each turn | Automatically extracts candidates at the end of every turn |
+
+A new agent defaults to `explicit_only`; an existing agent defaults to `candidate`.
+
+**Two flush points** (both on by default):
+
+| Switch | Timing |
+| --- | --- |
+| Flush before compaction | Extract memory candidates before context compression |
+| Flush after turn | Extract candidates from the current user message after the turn completes |
+
+**Use a model to extract memories automatically** (off by default): derives long-term facts and preferences from accumulated new conversation and consumes extra model usage. When enabled you can set **accumulated user characters** (default `64`, range 1–100000).
+
+<Callout type="warn" title="Automatic extraction is rate-limited">
+  Each task makes at most 5 model calls. A short window only accumulates; it issues no model call and does not advance the cursor.
+  The run and sub-task panel shows status and extra usage.
+</Callout>
+
+**Memory write switch** (rollout) has three values, default `shadow`:
+
+| Value | UI label | Behavior |
+| --- | --- | --- |
+| `off` | Writes off | Nothing is written, but previously written facts remain recallable |
+| `shadow` | Evaluate only (shadow) | Evaluates candidate policies without writing |
+| `enabled` | Actually write | Really writes; enable only after confirming |
+
+<Callout type="warn" title="shadow writes nothing">
+  `shadow` is the default. For an agent to actually remember facts you must explicitly switch to `enabled`.
+  This is the most common reason for "memory is on but it remembers nothing".
+</Callout>
+</Step>
+
+<Step>
+### Save and verify
+
+Click **Create agent** or **Save agent**. Back on **Policy and confirmation**, check that the **Memory** row in the summary shows the right source:
+
+- `本地记忆` or `云记忆库` — memory is enabled.
+- `未启用` — `memory.enabled` is `false`.
+
+After saving, send two messages: the first states a fact and asks the agent to remember it, the second asks about that fact in a new session.
+</Step>
+
+</Steps>
+
+## How cloud agents differ
+
+Editing an agent whose source is `agentengine-server` or `agentengine-managed-runtime` behaves differently:
+
+| Item | Cloud agent |
+| --- | --- |
+| Bind capabilities step | Saves only the three cloud ComponentConfigs: knowledge base, memory instance, Skill Center |
+| Models, MCP, local skills, tools | Managed by the AgentEngine Runtime itself; not offered in the UI |
+| Cross-session memory switch | Disabled, with "cloud agent memory is managed by the AgentEngine Server memory binding" |
+| Memory write mode | Only `explicit_only` and `candidate`; no `off` |
+| Save semantics | Calls AgentEngine `UpdateAgent`; existing sessions keep the old snapshot, new runs use the new bindings |
+
+## What success looks like
+
+- The knowledge base and memory instance dropdowns under **Platform resources** both show a selected instance name.
+- The Memory row in **Confirm configuration** is not "not enabled".
+- Asking about a fact from the first session in a second session produces it back — the only real proof that memory works.
+- Asking a question that exists in the knowledge base but that the model cannot know triggers a retrieval tool call before answering.
+
+## Common errors
+
+| Error code | Cause | Fix |
+| --- | --- | --- |
+| `PLATFORM_RESOURCE_UNAVAILABLE` | The selected instance was disabled or disappeared from the cloud | Re-select; stale entries show as a grey "currently unavailable" |
+| `INVALID_RESOURCE_KIND` | The resource kind is not `knowledge-base` / `memory-instance` / `skill-space` | Pick from the dropdown instead of typing a kind |
+| `MANAGED_RESOURCE_INVALID` | The reference violates `agentengine.resources/v1` (`id` matches `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`, `region` matches `^[a-z0-9][a-z0-9-]{0,63}$`) | Re-select from the dropdown instead of typing an ID |
+| `MANAGED_RESOURCE_MEMORY_UNBOUND` | Memory is enabled but no instance is bound | Pick a memory instance in **Bind capabilities**, or switch the source to local memory |
+| `MEMORY_BINDING_SKIPPED` | The memory binding was skipped (resource unavailable) | Verify the instance exists and is accessible |
+| `MEMORY_SERVICE_UNAVAILABLE` | The memory service is unreachable | Check the cloud connection and control plane URL |
+| `MEMORY_WRITE_FAILED` | Writing memory failed | Check whether rollout is `shadow`; `shadow` never writes |
+| `MEMORY_WRITE_AUTHORITY_LOST` | Authority expired during the write | Start a new session |
+| `MEMORY_RECALL_SKIPPED` | Recall was skipped | Check whether local recall is off, and whether the runtime is Star Harness |
+| `MEMORY_DURABLE_WRITER_UNAVAILABLE` | The durable writer is unavailable | Restart the Host and retry |
+| `MEMORY_PARTITION_MISMATCH` | The memory partition does not match the current user or agent | Confirm the instance is not shared across accounts |
+| `MEMORY_OUTCOME_UNKNOWN` / `MEMORY_RESPONSE_UNKNOWN` | The write outcome is unconfirmed | Do not retry blindly; inspect the run record first |
+| `MANAGED_RESOURCE_ACCESS_REVOKED` | Resource access was revoked | Re-authorize, then save again |
+| `MANAGED_RESOURCE_SERVER_UNAVAILABLE` | The AgentEngine control plane is unreachable | Check the network and control plane URL |
+| `启用云记忆前，请在「绑定能力」步骤选择记忆库。` | The source is cloud memory but no instance is bound | Either bind an instance or switch back to local memory |
+
+## Related reference
+
+| What you want to know | Where to go |
+| --- | --- |
+| Resources and bindings | [Resources and bindings](../concepts/resources.mdx) |
+| Managed runtime lifecycle | [Managed runtime](../concepts/managed-runtime.mdx) |
+| The in-memory model of memory configuration | `src/client/state/agent-memory-config.mjs` |
+| Managed resource contract | `src/managed-resource-contract.mjs` |
+| Platform resource picker | `src/client/pages/platform-resource-picker.mjs` |
+| Permissions and approvals | [Approvals and permission policies](./approvals-permissions.mdx) |
+| The 21 memory-related error codes | [Error codes](../reference/errors.mdx) |

@@ -1,0 +1,132 @@
+---
+title: 门禁与验证
+description: 三层门禁各自跑什么：make check 的静态契约与单测、make release-check 的完整准入、CI 的 public-gate job，以及失败定位与必过清单。
+status: new
+---
+
+AgentKit Studio 的门禁不是一道关卡，而是三层。**下层越早失败越便宜**：
+`make check` 在本地几十秒内给出结论，`make release-check` 覆盖发布包与安全面，
+CI 上的 `public-gate` job 再用隔离身份把同一套检查重跑一遍。
+
+## 三层门禁模型
+
+| 层 | 入口 | 跑在哪 | 覆盖 | 典型耗时 |
+| --- | --- | --- | --- | --- |
+| 1 | `make check` | 本地 | 静态契约、可移植性、客户端门禁、全部单元测试 | 秒级到分钟级 |
+| 2 | `make release-check` | 本地 | 公开面、历史、密钥、补丁序列、打包产物 | 分钟级 |
+| 3 | `ci/run-public-gate.sh` | CI | 以专用 UID 重跑第 2 层，并追加浏览器与并发约束 | 受 35 分钟超时约束 |
+
+`make release-check` 与 `make ci` 都是 `public-gate` 的别名——**第 2 层和第 3 层跑的是同一串目标**，
+差别只在执行身份与 CI 环境准备。
+
+```sh
+# 第 1 层：本地，秒级到分钟级
+make check
+
+# 第 2 层：本地，含安全面与打包
+make release-check
+
+# 第 3 层：CI 上由 ci/run-public-gate.sh 以专用用户执行
+make public-gate
+```
+
+## 第一层：make check
+
+`make check` 展开为 `pnpm check`，再叠加 `precheck` 生命周期。
+
+### 它跑什么
+
+| 顺序 | 命令 | 检查什么 |
+| --- | --- | --- |
+| 1 | `node scripts/check-dsh-pin.mjs` | 固定基线在 `package.json`、`studio.plugin.json`、补丁清单、`pnpm-lock.yaml`、`Makefile` 之间是否一致 |
+| 2 | `node scripts/check-node-version.mjs` | 运行时是否达到安全基线 |
+| 3 | `tsc -p tsconfig.contracts.json` | 契约类型 |
+| 4 | `node scripts/check-portability.mjs` | 受版本控制的文件里没有个人绝对路径或 `file:///` URL |
+| 5 | `node --check …` × 7 | 入口文件语法：`src/index.mjs`、`src/client.js`、`dist/client.js`、`src/brand.js`、`src/session-adapter.mjs`、`src/host-remote.mjs`、`src/agent-preset-admission.mjs` |
+| 6 | `node scripts/verify-client-modules.mjs` | 浏览器产物的架构与体积预算 |
+| 7 | `node scripts/test-studio.mjs` | `tests/`、`tests/native-host/integration/`、`packages/expert-catalog/test/` 下的全部 `*.test.mjs` |
+
+客户端门禁（第 6 步）值得单独理解。它读取已提交的
+`scripts/client-module-baseline.json` 与 `docs/refactor-client-budget.json`，对真实的
+`.artifacts/client/metafile.json` 和 `dist/client.js` 做判定：模块依赖无环、没有 Node 专用输入
+漏进浏览器包、React 由宿主提供而不被打包、私有属性没有意外改名、只有一个模块注册点、
+gzip 体积不超过批准的增长预算。**预算文件是受版本控制的源码**——否则这道门禁在 CI 上永远不会失败。
+
+### 什么时候跑
+
+- 任何改动提交前，至少跑一次。
+- 只改文档时可以只跑 `make public-surface-audit`，但 CI 仍会跑完整 `public-gate`。
+- 契约改动（`src/contracts/operations.mjs` 的 134 个 operation）必须同步测试，
+  否则第 3 步的类型检查会先失败。
+
+## 第二层：make release-check
+
+### 它跑什么
+
+| 顺序 | 目标 | 检查什么 |
+| --- | --- | --- |
+| 1 | `make public-surface-audit` | 全部受控与非忽略文件的内容红线（见[安全与公开边界](./security-boundary.mdx)） |
+| 2 | `node scripts/public-history-audit.mjs` | 公共分支可达的**每一个历史 blob 与历史路径** |
+| 3 | `make secret-scan` | Gitleaks 8.30.1，历史 + 快照两次扫描 |
+| 4 | `make dsh-pin-check` | 固定基线一致性（第 1 层第 1 步的完整版） |
+| 5 | `make patch-manifest-check` | 补丁清单：id、类别、风险、依赖、摘要、验证矩阵 |
+| 6 | `make patch-source-check` | 导出物与 `source.json` 描述符、bundle 摘要是否绑定 |
+| 7 | `make check` | 第 1 层全量 |
+| 8 | `make patch-format-check` | 每个 `.patch` 是合法 unified diff |
+| 9 | `make pack` | 打出发布 tarball 到 `.artifacts/` |
+| 10 | `node scripts/check-package.mjs …` | 包内不含开发内容、导出齐全、原生依赖固定、无凭证样式值 |
+| 11 | `git diff --check` | 空白与冲突标记 |
+
+顺序是有意的：安全面（1–3）在构建（9）之前，补丁（5–6、8）在测试（7）前后各有一道，
+打包（9–10）在最后。这样一次失败就能定位到"安全 / 补丁 / 代码 / 包"四类之一。
+
+## 第三层：CI 的 public-gate job
+
+`.github/workflows/ci.yml` 里的 `public-gate` job 在 `ubuntu-24.04` 上运行，超时 35 分钟，
+最终调用 `ci/run-public-gate.sh`。这个脚本不是简单转发，它做了四件事：
+
+1. **创建专用系统用户** `agentkit-ci`。原因是 Linux 上 `RLIMIT_NPROC` 按 UID 计——共享的
+   Actions 用户无法表达"隔离的执行所有者"，并发 Node worker 会互相吃掉配额。
+2. **准备私有临时根目录**：`TMPDIR`、`XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 全部指向它，
+   并安装校验过的 Gitleaks 二进制。
+3. **授予最小遍历权限**：只给父目录 `o+x`（不可列目录），退出时恢复原模式。
+4. **以该用户执行 `make public-gate`**，并固定 `AGENTKIT_TEST_CONCURRENCY=1` 与浏览器路径。
+
+`ci/run-with-deadline.mjs` 是配套的进程组所有者：它让"整个安装进程组"共享一个截止时间，
+超时后用 `SIGTERM` → 宽限 → `SIGKILL` 收尾，避免残留子进程把下一次重跑搅乱。
+
+## 哪些 PR 必过
+
+| 检查 | 工作流 | 是否 PR 必过 | 说明 |
+| --- | --- | --- | --- |
+| `public-gate` | `ci.yml` | **是** | 三层里最重的一层，35 分钟超时 |
+| `secret-scan` | `secret-patterns.yml` | **是** | 公开面审计 + Gitleaks |
+| `patched-dsh-host` | `ci.yml` | 合并队列必过 | 构建打过补丁的真实 DSH 宿主，跑冻结宿主与原生轮次证明 |
+| `native-engine-integration` | `ci.yml` | 建议 | 服务审批与原生引擎接受度 |
+| Forge Ref Parity | `ref-parity.yml` | 否 | 手动触发，校验镜像与 GitHub `main` 一致 |
+
+`main` 走合并队列。队列条目会重跑与 PR 相同的必需检查（`public-gate`、`patched-dsh-host`），
+所以不要用直接 push 绕过队列；条目失败就修好 PR 再入队。
+
+## 失败怎么定位
+
+| 报错片段 | 层 | 先看什么 |
+| --- | --- | --- |
+| `DSH pin mismatch` | 1 | `dsh-pin.json` 与 `package.json`、`studio.plugin.json`、锁文件是否同时更新 |
+| `Node.js … 低于安全基线` | 1 | 本地 Node 版本，对照 `.node-version` |
+| `发现不可分发的个人路径或 file URL` | 1 | 把绝对路径换成相对路径或占位符 |
+| `client-module` / `sizePassed: false` | 1 | 新增依赖是否进了浏览器包；必要时走预算审批而不是改基线 |
+| `forbidden public path` / `internal-service-host` | 2 | 见[安全与公开边界](./security-boundary.mdx) |
+| `patch manifest:` | 2 | 补丁清单字段；改补丁必须走[补丁治理](./patches.mdx) |
+| `generated patch differs` | 2 | 有人在检出里直接改了 `.patch`，重新导出 |
+| `package integrity` / `Missing Studio export` | 2 | `package.json` 的 `files` 与 `exports` 白名单 |
+| `Gitleaks 8.30.1 is required` | 3 | 用 `ci/install-gitleaks.sh` 安装指定版本 |
+
+## 相关门禁
+
+- **`make doctor`**：只读诊断，回答"我的环境到底哪一步不对"，不重置任何配置。
+- **`make verify-patched-host`**：构建打过补丁的宿主并产出接受度报告。
+- **`make ref-parity`**：只读比较镜像分支与 GitHub `main`，不写远端。
+- **`ci/verify-public-web.mjs`**：用合成回环模型服务跑真实浏览器断言，不接触外部供应商。
+
+完整的命令清单见 `Makefile` 与 `scripts/` 目录。补丁相关的四个目标见[补丁治理](./patches.mdx)。

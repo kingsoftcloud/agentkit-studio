@@ -1,0 +1,134 @@
+---
+title: Development environment
+description: Take AgentKit Studio from a fresh clone to a running dev host — Node and pnpm versions, DSH checkout, make setup, data isolation, and common failures.
+status: new
+---
+
+This page takes the repository from "just cloned" to "edit one line and see the result." Every command
+is copy-pasteable; the targets and defaults come from `Makefile`, `package.json`, and `.node-version`.
+
+## Prerequisites
+
+| Dependency | Version | Source of truth |
+| --- | --- | --- |
+| Node.js | 24.22.1 (security baseline: 22.23.4+ / 24.22.1+ / 26.12.1+) | `.node-version`, `scripts/node-version.mjs` |
+| pnpm | 10.33.2 | `packageManager` in `package.json` |
+| Git, Make, C toolchain | Any recent version | `make setup` compiles DSH native modules |
+| Node development headers | `include/node/node_api.h` must exist | `scripts/development-doctor.mjs` |
+
+<Callout type="error" title="Native Windows is not supported">
+  The Make targets depend on POSIX process groups and a POSIX shell. Use WSL2 on Windows;
+  `make setup` exits with an error on native Windows.
+</Callout>
+
+## One-time setup
+
+```sh
+# 1. Enable Corepack so pnpm matches packageManager
+corepack enable
+
+# 2. Install this repository's dependencies
+pnpm install --frozen-lockfile
+
+# 3. Prepare the DSH host: clone the pinned baseline, apply patches, build, install the plugin
+make setup DSH_ROOT=../deepseek-harness
+
+# 4. Start the development host
+make dev DSH_ROOT=../deepseek-harness
+```
+
+`DSH_ROOT` must point **outside** this repository. The `Makefile` default is
+`$(abspath ../../deepseek-harness)`, which resolves from `agentengine/agentkit-studio` to a sibling
+checkout under `agent-sdk`.
+
+### What make setup does
+
+`make setup` is a sequential composite target; any failing step stops the run:
+
+| Step | Command | Purpose |
+| --- | --- | --- |
+| 1 | `node scripts/development-doctor.mjs --tools-only` | Validate the Node version, dev headers, and `git`/`make`/`cc`/`pnpm` |
+| 2 | `pnpm install --frozen-lockfile` | Install dependencies; a stale lockfile fails here |
+| 3 | `make dsh-bootstrap` | Clone DSH at the pinned `ref` into `DSH_ROOT`, verify `commit`, install its dependencies |
+| 4 | `node scripts/prepare-development.mjs` | Apply the patch series; an existing checkout is never reset |
+| 5 | `node scripts/build-product-host.mjs --script build:official` | Build the DSH host artifacts |
+| 6 | `make profile-install` | Pack the current plugin and install it into the `DSH_PROFILE` profile |
+| 7 | `make doctor` | Re-check baseline, patches, artifacts, and the installed profile |
+
+## Keep the DSH checkout outside the repository
+
+`dsh-bootstrap` does exactly two things: clone when the checkout is missing, then verify `HEAD` equals
+the `commit` in `dsh-pin.json`. It never copies DSH sources into this repository and never resets an
+existing checkout.
+
+```sh
+# Show the pinned DSH baseline
+node scripts/check-dsh-pin.mjs
+```
+
+The printed `version`, `commit`, `ref`, `patchDirectory`, `patchedTree`, and `maintenanceSource` are
+the entire build input. `check-dsh-pin` also verifies that `engines.dsh` in `package.json`,
+`requiredDsh` in `studio.plugin.json`, the patch manifest, and `pnpm-lock.yaml` all agree — any drift
+fails the check.
+
+## Isolate the data directories
+
+A development runtime writes state into two directories. Point them at temporary paths so your daily
+profile stays clean:
+
+| Variable | Contents | Suggested value |
+| --- | --- | --- |
+| `DSH_HOME` | DSH host data, including `profiles/<name>` | A temporary directory outside the repository |
+| `AGENTKIT_HOME` | Studio's own runtime data | A temporary directory outside the repository |
+| `DSH_PROFILE` | Which profile to use (defaults to `agentkit-studio`) | Keep the default or create a new one |
+| `DSH_HOST` / `DSH_WEB_PORT` | Development host bind address (defaults to `127.0.0.1:3098`) | Change these on a port conflict |
+
+```sh
+export DSH_HOME="$(mktemp -d)/dsh"
+export AGENTKIT_HOME="$(mktemp -d)/agentkit"
+make dev DSH_ROOT=../deepseek-harness
+```
+
+<Callout type="info" title="Why isolation is mandatory">
+  `profile-install` writes into `DSH_HOME`, and `prepare-development` changes the working tree of the
+  DSH checkout. With temporary directories you can delete the whole experiment and start over without
+  touching an installed desktop build.
+</Callout>
+
+## The daily development loop
+
+| What you are verifying | Command | Notes |
+| --- | --- | --- |
+| Browser UI | `make dev` | Repack the plugin → install the profile → start the web host |
+| Repack only | `make profile-install` | Packs, then installs by digest |
+| Source-linked plugin | `pnpm build:client` | Required after editing `src/client/` |
+| Desktop | `make desktop-dev` | Build Electron inputs and start the dev runtime |
+| Environment | `make doctor` | Read-only diagnostics; resets nothing |
+
+`dist/` is generated. Git ignores it, but the `files` allowlist in `package.json` ships it — do not
+hand-edit it and do not commit it.
+
+## Common failures
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `Node.js … 低于安全基线` | Runtime predates the security baseline | Install 24.22.1 or newer per `.node-version` |
+| `Studio 需要 pnpm@10.33.2` | Corepack not enabled or wrong version | Run `corepack enable` and retry |
+| `DSH checkout 不是 … 基线` | Checkout `HEAD` differs from the pinned `commit` | Re-clone, or use a fresh `DSH_ROOT` |
+| `DSH 原生模块需要 Node 开发头文件` | Node installed without `include/node` | Use an official distribution or add the headers |
+| `已存在但不是 Git checkout` | `DSH_ROOT` points at a plain directory | Empty that directory or choose another path |
+| Port already in use | `DSH_WEB_PORT` conflict | `make dev DSH_WEB_PORT=3099` |
+| Patch apply result mismatch | Checkout has extra changes | Use an isolated `DSH_ROOT`; the tool preserves your state instead of resetting |
+
+## Cleaning up
+
+```sh
+# Remove local packaging output (files under .artifacts)
+make clean
+
+# Experiment: delete the isolated directories
+rm -rf "$DSH_HOME" "$AGENTKIT_HOME"
+```
+
+Next: run [Gates and verification](./gates.mdx) to confirm your change passes the full check before
+you commit.

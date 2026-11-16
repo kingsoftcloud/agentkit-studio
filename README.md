@@ -1,6 +1,6 @@
 # AgentKit Studio
 
-[官网与下载](https://kingsoftcloud.github.io/agentkit-studio/) · [文档索引](docs/README.md) · [GitHub Releases](https://github.com/kingsoftcloud/agentkit-studio/releases)
+[官网与下载](https://kingsoftcloud.github.io/agentkit-studio/) · [文档](https://kingsoftcloud.github.io/agentkit-studio/docs/) · [English docs](https://kingsoftcloud.github.io/agentkit-studio/en/docs/) · [GitHub Releases](https://github.com/kingsoftcloud/agentkit-studio/releases)
 
 AgentKit Studio is a product plugin for the public [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) host. It provides Agent authoring, resource management, local conversations, deployment controls, automation, and plugin discovery in the Harness Web and desktop surfaces.
 
@@ -27,10 +27,12 @@ Cloud features require a compatible AgentEngine control plane and credentials co
 
 ## Install and use
 
-Start with the [desktop and development guide](docs/getting-started.md), or browse
+Start with the [5-minute quickstart](https://kingsoftcloud.github.io/agentkit-studio/docs/getting-started/quickstart/), or browse
 [GitHub Releases](https://github.com/kingsoftcloud/agentkit-studio/releases).
-The [documentation index](docs/README.md) covers runtimes, plugin development,
-signing and updates.
+The documentation site is bilingual: every page exists in
+[Chinese](https://kingsoftcloud.github.io/agentkit-studio/docs/) and [English](https://kingsoftcloud.github.io/agentkit-studio/en/docs/), and covers agent
+authoring, the three runtimes, resource binding, cloud deployment, plugin
+authoring, and release engineering.
 
 ## Development setup
 
@@ -55,7 +57,7 @@ launch targets also build the client first. `pnpm check`, `pnpm test` and
 
 ## Agents and local teams
 
-The Agents panel includes an expert catalog, resource templates and local teams built on official DSH Agent Teams. Existing Agents use the same editor, frozen revisions and native conversations. See [expert catalog and local teams](docs/expert-catalog.md).
+The Agents panel includes an expert catalog, resource templates and local teams built on official DSH Agent Teams. Existing Agents use the same editor, frozen revisions and native conversations. See [expert templates](https://kingsoftcloud.github.io/agentkit-studio/docs/ecosystem/expert-templates/).
 
 ## Checks
 
@@ -69,8 +71,9 @@ make public-gate
 
 `make check` runs syntax, portability, source-size, contract, and product-surface checks. `make release-check` additionally validates package contents, DSH patch format, and archive integrity.
 `make public-gate` is the shared source, package, and public-surface gate used by
-both forge pipelines. The read-only [`branch-sync.md`](docs/branch-sync.md)
-contract describes the separate exact-ref parity check.
+both forge pipelines. The read-only
+[branch-sync contract](https://kingsoftcloud.github.io/agentkit-studio/docs/contributing/patches/) describes the separate
+exact-ref parity check.
 
 The curated DSH plugin market can be verified against a real pinned Host in an isolated profile:
 
@@ -87,11 +90,12 @@ The verification command does not approve dependency build scripts automatically
 - `src/` — Studio Host and browser implementation
 - `src/client/` — browser ES Modules with scoped state and page composition, bundled into `dist/client.js`
 - `examples/` — minimal public configuration examples
-- `docs/` — usage, architecture and release guides
+- `docs-site/` — the bilingual documentation site (Fumadocs + Next.js static export)
+- `docs-site/content/docs/` — every published page, Chinese as `page.mdx` and English as `page.en.mdx`
+- `docs/` — internal design archive and the hand-written landing page (`docs/index.html`)
 - `patches/` — versioned compatibility patches for the pinned DSH release
-- `scripts/` — build, package, portability, and Host verification tools
-- `tests/` — unit, contract, packaging, and product-surface tests
-- `docs/brand/` — public visual guidance
+- `scripts/` — build, package, portability, Host verification, and docs reference generation
+- `tests/` — unit, contract, packaging, product-surface, and documentation parity tests
 
 ## Contributions
 

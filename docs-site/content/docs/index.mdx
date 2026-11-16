@@ -1,0 +1,61 @@
+---
+title: AgentKit Studio 文档
+description: 在 DeepSeek Harness 之上创作、运行、部署和观测企业级 Agent 的完整文档。
+---
+
+<div className="ak-hero">
+  <h1>把想法交给 Agent</h1>
+  <p>AgentKit Studio 是 DeepSeek Harness（DSH）的产品插件：在同一个工作台里创作 Agent、绑定企业资源、 跑原生会话、把 Agent 部署到云端长期在线。这份文档覆盖从第一分钟到生产运维的全部内容。</p>
+  <div className="ak-hero-actions">
+    <a data-primary="true" href="./getting-started/quickstart/">5 分钟快速开始 →</a>
+    <a href="./concepts/">了解核心概念</a>
+    <a href="./reference/">查阅参考</a>
+  </div>
+</div>
+
+## 从这里开始
+
+<Cards>
+  <Card title="5 分钟快速开始" href="/docs/getting-started/quickstart">
+    装好桌面端、配好模型、创建第一个 Agent 并跑通一次真实对话。
+  </Card>
+  <Card title="核心概念" href="/docs/concepts">
+    Agent、修订版本、构建、运行、会话、资源绑定——六个词讲清产品模型。
+  </Card>
+  <Card title="任务指南" href="/docs/guides">
+    按任务组织的操作手册：绑定 MCP、部署上云、配置审批、接入可观测性。
+  </Card>
+  <Card title="参考" href="/docs/reference">
+    CLI、配置、环境变量、错误码、模板 Schema——全部由代码生成，不会过期。
+  </Card>
+</Cards>
+
+## 文档地图
+
+| 章节 | 你会在这里找到 | 适合谁 |
+| --- | --- | --- |
+| [入门](./getting-started/index.mdx) | 安装、快速开始、第一次对话 | 第一次接触产品的人 |
+| [概念](./concepts/index.mdx) | 产品模型、三种运行时、资源与绑定、术语表 | 需要判断「该用哪个能力」的人 |
+| [任务指南](./guides/index.mdx) | 一步步的操作手册与验收方式 | 每天使用产品的开发者与运维 |
+| [参考](./reference/index.mdx) | 契约、枚举、错误码、命令 | 集成方、插件作者、排障 |
+| [运行时与部署](./deployment/index.mdx) | 三运行时对照、托管运行时生命周期、降级与重试 | 负责上线与稳定性的人 |
+| [生态与插件](./ecosystem/index.mdx) | DSH 插件作者指南、插件市场、专家模板 | 扩展产品能力的人 |
+| [发布与迁移](./releases/index.mdx) | 版本说明、兼容性、升级步骤 | 跟进版本的人 |
+| [帮助](./help/index.mdx) | FAQ、排障、已知限制 | 卡住的人 |
+| [贡献](./contributing/index.mdx) | 开发环境、门禁、补丁治理、文档写作规范 | 参与开发的人 |
+
+## 产品能力
+
+<Cards>
+  <Card title="Agent 创作">分步表单、修订版本、冻结运行时，改配置不影响已经在跑的会话。</Card>
+  <Card title="三运行时">DSH Native、Star Harness、Codex 三条执行路径，能力矩阵一目了然。</Card>
+  <Card title="资源绑定">MCP Server、Skill、知识库、Memory 挂到某个修订版本上，凭证只留在 Host。</Card>
+  <Card title="部署上云">托管运行时 7×24 常驻，19 个部署状态可观测、可回滚。</Card>
+  <Card title="专家与团队">专家模板、专家团、本地团队会话，复用同一套编辑与冻结语义。</Card>
+  <Card title="插件生态">DSH 插件市场、Codex 插件、远程索引与就绪校验。</Card>
+</Cards>
+
+<Callout type="info" title="文档与产品同版本">
+  文档站跟随 `main` 分支自动发布。页面底部的「最后更新」来自 Git 提交时间，正文与代码在同一个
+  PR 里评审——不存在「文档写完了但代码改了」的窗口期。
+</Callout>

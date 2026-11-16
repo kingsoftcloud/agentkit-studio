@@ -59,6 +59,40 @@ jobs:
           bash ci/install-gitleaks.sh "$RUNNER_TEMP/gitleaks"
           echo "GITLEAKS_BIN=$RUNNER_TEMP/gitleaks/gitleaks" >> "$GITHUB_ENV"
       - run: bash ci/run-public-gate.sh
+  docs-site:
+    name: docs-site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: docs-site/pnpm-lock.yaml
+      - name: Install documentation dependencies
+        working-directory: docs-site
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      # Bilingual parity, navigation order, link integrity, frontmatter, and the
+      # public boundary. Runs here as well as inside `make check` so a docs-only
+      # contributor gets a fast, self-describing failure.
+      - name: Verify bilingual parity and links
+        run: node --test tests/docs-site-i18n.test.mjs
+      # A broken MDX file or YAML frontmatter only surfaces during the build, so
+      # the pull request must compile the site the Pages workflow will publish.
+      - name: Build the documentation site
+        working-directory: docs-site
+        env:
+          NEXT_PUBLIC_BASE_PATH: /agentkit-studio
+        run: pnpm build:static
+      - name: Report the exported site
+        run: |
+          echo "pages: $(find docs-site/out/docs docs-site/out/en -name index.html | wc -l)"
+          du -sh docs-site/out
+
   native-engine-integration:
     name: native-engine-integration
     runs-on: ubuntu-24.04

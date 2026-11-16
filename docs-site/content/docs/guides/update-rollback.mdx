@@ -1,0 +1,151 @@
+---
+title: 托管运行时更新与回滚
+description: 把已就绪的云端实例切换到新的构建版本，或退回已验证过的历史版本，并读懂 rollout 的每个阶段。
+status: new
+---
+
+更新（upgrade）与回滚（rollback）是同一条路径的两个方向：都是**原地**把云端实例的冻结版本换成另一个已核验的版本。
+实例 ID、规格、存储、区域都不变，所以对话历史保留，但**切换期间暂不可发起对话**。
+
+<Callout type="info" title="前置条件">
+  - 云端实例状态是 `READY`、`STARTING` 或 `ACTION_REQUIRED` 之一。
+  - 当前没有未确认的 rollout（`PREPARED` / `UPLOADING` / `APPLYING` / `UNKNOWN` 都算未确认）。
+  - 实例确实在运行：云端 `Basic.Status` 为 `RUNNING` 且就绪副本数大于 0。
+  - 你仍是原部署的**已核验子账号**，且云端配置范围没变。
+</Callout>
+
+## 操作步骤
+
+<Steps>
+
+<Step>
+### 准备目标版本
+
+更新需要一个 `SUCCEEDED` 的构建。改完 Agent 配置后先在 **运行中心 → 构建与部署 → 构建** 里重新构建，
+否则你只能更新到旧版本——那会被 `DEPLOYMENT_VERSION_UNCHANGED` 挡下（「所选冻结包和镜像已在运行」）。
+</Step>
+
+<Step>
+### 打开云端实例记录
+
+在 **运行中心 → 构建与部署 → 云端实例** 里找到目标实例行。行尾 **⋯** 菜单里有：
+
+| 菜单项 | 何时出现 |
+| --- | --- |
+| 详情 | 始终 |
+| 升级到所选版本 | 当前版本是 `READY`，且已选中一个不同的构建 |
+| 用所选版本修复 | 实例是 `STARTING` 或 `ACTION_REQUIRED` |
+| 选择历史版本 / 检查回滚 | 实例是 `READY`，且存在其他历史版本 |
+| 日志 | 实例已有云端 Agent |
+| 修复访问配置 | `TOKEN_PENDING` 且 `tokenBound` 为假 |
+| 删除 | 展开「详情」后 |
+</Step>
+
+<Step>
+### 跑版本检查
+
+点 **检查更新**（或菜单里的 **升级到所选版本**）。这一步只读，返回「确认升级」预览：
+
+| 行 | 为什么要看 |
+| --- | --- |
+| 目标运行镜像 | 镜像版本与 **digest** —— 这是切换前的部署身份，和记录对不上就停下 |
+| 运行时 | 运行时类型 · 当前镜像版本 |
+| 实例规格 | 更新不改规格，确认它没变 |
+| 已绑定资源 | 新版本的模型 / MCP / Skill 数量 |
+| 操作人 | 子账号用户名 |
+
+检查还会确认：新版本与当前版本必须真的不同（冻结包哈希与镜像地址都不相同）。
+警告行提醒两件事——**切换期间暂不可发起对话**、**完成后请开启新会话**（历史会话仍保留）。
+
+<Callout type="warn" title="升级只能换版本，不能换范围">
+  Agent、运行时、凭证范围、区域、环境、存储桶、存储端点这七项必须与当前部署完全一致。
+  任何一项变化都会得到 `DEPLOYMENT_UPDATE_SCOPE_CHANGED`——那种情况请创建独立部署，不要试图原地改。
+</Callout>
+</Step>
+
+<Step>
+### 确认升级
+
+点 **确认升级当前实例**。提交后实例状态变成 `UPDATING`（文案「切换版本 · 等待入口确认」），rollout 依次经过：
+
+| rollout 状态 | 含义 |
+| --- | --- |
+| `PREPARED` | rollout 已登记，等待执行 |
+| `UPLOADING` | 正在上传新的冻结运行包 |
+| `APPLYING` | 正在提交云端容器配置（镜像 + 环境变量补丁）|
+| `UNKNOWN` | 提交过程中断，结果待核对 |
+| `SUCCEEDED` | 入口版本已确认，实例回到 `READY` |
+| `FAILED` | 未提交成功，实例转到 `ACTION_REQUIRED` |
+
+展开记录行能看到一行摘要，例如「升级到 Revision 7 · 等待目标版本生效」。
+整个过程不需要你点任何东西，每 5 秒自动刷新。
+</Step>
+
+<Step>
+### 回滚到历史版本
+
+1. 在 **⋯** 菜单里从「选择历史版本」下拉中挑一个（只列出与当前版本不同的那些，形如 `Revision 3 · <镜像版本> · <完成时间>`）。
+2. 点 **检查回滚**。检查和升级走同一套校验，另外多一条：历史版本的镜像目录必须仍然一致，否则得到 `DEPLOYMENT_PREVIEW_STALE`。
+3. 点 **确认回滚当前实例**。
+
+回滚成功后当前版本指针指回那个历史版本，它同时被追加进版本列表——**回滚本身也是一次新版本**，所以你可以再回滚回来。
+
+<Callout type="error" title="提交结果未确认时不要重发">
+  如果提示「回退请求尚未确认」或「更新提交结果未确认」，用同一个幂等键重试，
+  而不是新发一次更新请求。同一请求标识配不同内容会得到 `DEPLOYMENT_IDEMPOTENCY_CONFLICT`。
+</Callout>
+</Step>
+
+<Step>
+### 收尾
+
+切换完成后：
+
+- 用 **开始对话** 开一个**新会话**。旧会话仍可只读查看，但会因冻结版本不同而拒绝继续（`DEPLOYMENT_SESSION_VERSION_CHANGED`）。
+- 如果实例停在 `TOKEN_PENDING` 且访问令牌没有绑上，用 **修复访问配置** 重写令牌。
+- 如果实例卡在 `UPDATE_UNKNOWN`，点 **刷新状态** 触发版本探测；探测通过会自动落到 `READY`。
+
+</Step>
+
+</Steps>
+
+## 成功后的样子
+
+- 实例状态 `READY`，色调为绿色。
+- **详情**里的「运行镜像」等于你检查时看到的版本（含 digest）。
+- 记录行的 rollout 摘要显示「入口版本已确认」。
+- 版本列表里能看到刚完成的那次更新或回滚，`completedAt` 是刚才的时间。
+- 新开的会话能正常对话；旧会话提示版本已变化。
+
+## 常见错误
+
+| 错误码 | 原因 | 处理 |
+| --- | --- | --- |
+| `DEPLOYMENT_UPDATE_UNAVAILABLE` | 实例不处于可更新状态，或仍有未确认的 rollout | 等当前 rollout 确认完成；实例未运行时先让它 `READY` |
+| `DEPLOYMENT_VERSION_NOT_FOUND` | 指定的历史版本不存在 | 刷新后从下拉里重新选择 |
+| `DEPLOYMENT_PREVIEW_STALE` | 检查之后版本、镜像目录或配置发生变化 | 重新点 **检查更新** 生成新的预览 |
+| `DEPLOYMENT_IMAGE_UPGRADE_REQUIRED` | 目标镜像没有声明版本探测能力 | 发布支持升级回滚的 Studio 镜像后再试 |
+| `DEPLOYMENT_UPDATE_SCOPE_CHANGED` | 试图改变 Agent、运行时、账号或部署位置 | 这些不随升级改变；需要不同范围请创建独立部署 |
+| `DEPLOYMENT_VERSION_UNCHANGED` | 所选冻结包与镜像就是正在运行的 | 选一个真正不同的版本 |
+| `DEPLOYMENT_UPDATE_INTERRUPTED` | 更新在提交云端之前中断 | 刷新确认原实例状态后，重新检查版本 |
+| `DEPLOYMENT_IDEMPOTENCY_CONFLICT` | 同一请求标识被用于另一次更新 | 刷新部署记录，核对已有的那次 rollout |
+| `CLOUD_SUBACCOUNT_REQUIRED` | 当前身份不是原部署的已核验子账号 | 切回原账号配置后重试 |
+| `DEPLOYMENT_ACCOUNT_CHANGED` | 云端配置范围与部署记录不同 | 切回原配置后管理该记录 |
+| `DEPLOYMENT_CLOUD_DELETED` | 云端 Agent 已在别处删除 | 本地记录被标记为已删除；勾选「显示已删除」查看 |
+
+## 相关参考
+
+<Cards>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">
+    第一次创建实例、19 个部署状态、未确认结果的对账动作。
+  </Card>
+  <Card title="托管运行时生命周期" href="/docs/deployment/managed-runtime-lifecycle">
+    从创建到删除的完整生命周期与回滚语义。
+  </Card>
+  <Card title="部署状态机" href="/docs/reference/deployment-states">
+    19 个部署状态与 rollout 状态的完整对照。
+  </Card>
+  <Card title="降级与重试" href="/docs/deployment/degradation-retry">
+    平台短暂不可用时哪些操作可以安全重试。
+  </Card>
+</Cards>

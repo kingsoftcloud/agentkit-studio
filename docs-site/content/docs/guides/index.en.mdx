@@ -1,0 +1,130 @@
+---
+title: Guides
+description: Thirteen task guides from creating an agent to shipping it, with copyable steps.
+status: new
+---
+
+Guides are organized by what you want to accomplish. Each page gives prerequisites, copyable steps, a success check, and an error-code table. For the underlying model, read [Core Concepts](../concepts/index.mdx).
+
+## What this chapter contains
+
+| Stage | Page | What you end up with | Prerequisites |
+| --- | --- | --- | --- |
+| Start | [Create and edit an agent](./create-agent.mdx) | A runnable agent with its first revision | At least one configured model |
+| Models | [Configure models and credentials](./models-and-credentials.mdx) | Sessions can select and actually call a model | An OpenAI-compatible endpoint and API key |
+| Capabilities | [Bind an MCP server](./mcp-servers.mdx) | The agent can call tools from an external system | An MCP endpoint or a launch command |
+| Capabilities | [Bind a skill](./skills.mdx) | The agent reuses existing instructions and scripts | A directory containing `SKILL.md` |
+| Capabilities | [Bind knowledge bases and Memory](./knowledge-memory.mdx) | The agent retrieves enterprise knowledge and remembers across sessions | A connected cloud control plane |
+| Run | [Run and debug a session](./conversations.mdx) | You can read tool calls, file changes, and per-turn usage | A working agent |
+| Govern | [Approvals and permission policies](./approvals-permissions.mdx) | Writes and unknown side effects are constrained | A working agent |
+| Ship | [Deploy to the cloud](./deploy-to-cloud.mdx) | The agent runs around the clock | Cloud credentials and an image registry |
+| Ship | [Managed runtime update and rollback](./update-rollback.mdx) | Updates are controlled and reversible | A deployed managed runtime |
+| Automate | [Automation and scheduling](./automation.mdx) | Runs trigger on a schedule or an event | A deployed agent |
+| Connect | [Channels](./channels.mdx) | External message entry points trigger the agent | A deployed agent |
+| Observe | [Observability (OTel)](./observability.mdx) | Traces are exported over OpenTelemetry | A deployed agent |
+
+## The three steps of the creation form
+
+Creating and editing an agent share one form whose left-hand stepper is fixed at three steps (`src/client/pages/agent-form.mjs:79`):
+
+| Step | What you decide | Required | Can you change it later? |
+| --- | --- | --- | --- |
+| Basic information | Agent ID, name, runtime, purpose, system prompt, task description | Agent ID and name | Everything except the runtime |
+| Bind capabilities | Default model, available models, tools, MCP servers, skills, platform resources | Default model | Yes, saving creates a new revision |
+| Policy and confirmation | Agent tool policy, cross-session memory, configuration summary | None | Yes |
+
+**The runtime cannot be changed after creation** — the runtime radio group is disabled in edit mode (`src/client/pages/agent-form.mjs:266`). To switch runtimes, create a new agent.
+
+## The five bindable resource kinds
+
+The resource library and the creation form read the same catalog contract (`src/resource-catalog.mjs:74`):
+
+| kind | Source | What the agent gets after binding | How many per kind |
+| --- | --- | --- | --- |
+| `model` | Local model profiles + model gateway | A switchable model list, one of them default | Many, one default |
+| `mcp` | Local MCP store + cloud | Every tool that server discovered | Many |
+| `skill` | Installed skills + cloud Skill Space | Instructions and bundled scripts | Many |
+| `knowledge-base` | AgentEngine `agentengine-server` | Read-only retrieval | One |
+| `memory-instance` | AgentEngine `agentengine-server` | Cross-session recall and writes | One |
+
+Local skills and cloud Skill Spaces are managed separately, and both can be bound at the same time (`src/client/pages/platform-resource-picker.mjs:12`).
+
+## Defaults at a glance
+
+These defaults come from code, not from UI copy. Before changing configuration, confirm which layer you are overriding:
+
+| Item | Default | Evidence |
+| --- | --- | --- |
+| Runtime for a new agent | `dsh-native` (shown as DSH Native Harness) | `src/authoring-defaults.mjs:4` |
+| Selectable runtimes | `dsh-native` / `harness` / `codex` | `src/client/theme.mjs:26` |
+| Runtime display names | DSH Native Harness / Star Harness / Codex Agent | `src/client/theme.mjs:28-33` |
+| Agent tool policy | `strict` | `src/client/pages/agent-form.mjs:54` |
+| Execution policy | `workspace-write` | `src/execution-policy.mjs:10` |
+| Memory write mode | `explicit_only` on create, `candidate` on edit | `src/client/state/agent-memory-config.mjs:76` |
+| Memory write switch | `shadow` (evaluate only, never write) | `src/client/state/agent-memory-config.mjs:33` |
+| Default model credential name | `AGENTKIT_MODEL_API_KEY` | `src/client/dsh/model-bridge.mjs:17` |
+
+<Callout type="warn" title="Star Harness is paused">
+  Star Harness is hidden from the runtime options when creating an agent unless the caller explicitly opts in;
+  editing an existing Star Harness agent is unaffected (`src/client/pages/agent-form.mjs:60-61`).
+</Callout>
+
+## How every page is structured
+
+All guides follow the same skeleton so you can jump straight to the section you need:
+
+1. **Prerequisites** — what must already be in place; missing one makes a later step fail.
+2. **Steps** — numbered, with complete commands, paths, and field names. No ellipses.
+3. **What success looks like** — how to tell the step really worked, rather than "it did not error".
+4. **Common errors** — error code → cause → fix, searchable by code.
+5. **Related reference** — the matching contract page and source entry point.
+
+## Errors that cross pages
+
+| Error code | Where it appears | Cause | Fix |
+| --- | --- | --- | --- |
+| `AGENT_EXPECTED_REVISION_CONFLICT` | Saving an agent | Another window already saved a newer revision | Click **Load latest version**, verify, then save again |
+| `AGENT_NOT_FOUND` | Editing, binding | The agent was deleted or is outside this workspace | Refresh from the Agents list |
+| `AGENT_DEFINITION_REQUIRED` | Saving an agent | The submitted spec is empty | Check whether you saved before the form finished loading |
+| `MODEL_CATALOG_UNAVAILABLE` | First step of capability binding | The model gateway catalog failed to load | Only configured profiles are shown; check credentials in Settings |
+| `MANAGED_RESOURCE_INVALID` | Binding platform resources | The reference does not satisfy `agentengine.resources/v1` | Re-select the resource instead of typing an ID |
+| `RESOURCE_CATALOG_UNAVAILABLE` | Resource library | One catalog kind failed entirely | Other kinds still work; click **Refresh** to retry |
+
+All 188 error codes are listed in the [error code reference](../reference/errors.mdx).
+
+## Suggested reading order
+
+<Steps>
+
+<Step>
+### Get one short path working first
+
+Start with [Quickstart](../getting-started/quickstart.mdx) and finish install → configure a model → create an agent → send a message. Come back to the guides only after all four succeed.
+</Step>
+
+<Step>
+### Then add capabilities one at a time
+
+Add one resource kind, then immediately send a message that uses it. Adding MCP, skills, and a knowledge base at once makes failures impossible to attribute.
+
+Each addition produces a new revision; [Run and debug a session](./conversations.mdx) lets you compare turns.
+</Step>
+
+<Step>
+### Only then think about shipping
+
+Working locally does not mean cloud resources are available. Deployment, managed runtimes, knowledge bases, and memory all depend on the AgentEngine control plane and credentials — see [How the product relates to the cloud](../concepts/managed-runtime.mdx).
+</Step>
+
+</Steps>
+
+## Related reference
+
+| What you want to know | Where to go |
+| --- | --- |
+| What a revision, build, and run freeze | [Agent · Revision · Build · Run](../concepts/agent-revision-build.mdx) |
+| How the three runtimes differ | [The three runtimes](../concepts/runtimes.mdx) |
+| The shape of a resource binding | [Resources and bindings](../concepts/resources.mdx) |
+| All 134 control-protocol operations | [Control protocol](../reference/operations.mdx) |
+| Environment variables and configuration keys | [Configuration reference](../reference/configuration.mdx) |
+| Troubleshoot by error code | [Troubleshooting](../help/troubleshooting.mdx) |

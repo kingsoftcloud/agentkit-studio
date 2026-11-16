@@ -1,0 +1,146 @@
+---
+title: 概念
+description: 用六个名词讲清 AgentKit Studio 的产品模型——智能体、修订版本、构建、会话、一次运行，以及承载它们的运行时。
+status: new
+---
+
+**AgentKit Studio 的产品模型只有六个名词：智能体（agent）、修订版本（revision）、Agent 构建（build）、会话（session）、一次运行（run），以及决定这些实体在哪执行的运行时类型（runtime type）。**
+
+这一章逐个讲透它们，并给出它们之间的硬性约束。读完这一章你可以自己回答「改一个配置会不会影响已经在跑的会话」这类问题，而不必先试一次。
+
+## 系统分层
+
+<Diagram src="/assets/agentkit-studio-overview.png" alt="AgentKit Studio 五层架构：浏览器 UI、Studio 控制面、Host 服务域、运行时适配层与外部内核，以及 /agentkit RPC 与 HTTP 前缀两条物理通道" />
+
+*读图要点：浏览器只发 operation id，不持有任何状态；Host 服务域是唯一持久化边界；运行时适配层之下全部是外部内核。两条物理通道里，只有 `/agentkit` RPC 会经过 134 个 operation 的分发器，模型代理与对话流走的是 HTTP 前缀路由。*
+
+## 为什么需要概念层
+
+四个面板各自只暴露产品模型的一部分，同一批术语却在同一个屏幕上交叉出现：
+
+| 你在界面上看到的 | 它背后的概念 | 最容易被误解成 |
+| --- | --- | --- |
+| 保存后提示生成了新的修订版本 | 修订版本 | 可以被覆盖的草稿 |
+| 运行中心里的构建记录 | Agent 构建 | CI 构建或镜像构建 |
+| 智能体列表里的一行 | 智能体 | 一个正在运行的进程 |
+| 会话列表里的一条历史 | 会话 | 一次请求的日志 |
+| 底部显示的用量与耗时 | 一次运行 | 整个会话的累计量 |
+
+把修订版本当成可覆盖的草稿，或者把构建当成流水线产物，都会导向同一个误判：以为改完配置，正在跑的会话会跟着变。事实是**都不会变**。原因不是产品「没做热更新」，而是这四个实体各自冻结在不同层次上，见[Agent · Revision · Build · Run](./agent-revision-build.mdx)。
+
+四个面板与它们的二级标签是这样组织的：
+
+```mermaid
+flowchart LR
+  UI["浏览器 UI"] --> OV["总览"]
+  UI --> AG["智能体"]
+  UI --> RS["资源库"]
+  UI --> OP["运行中心"]
+
+  AG --> A1["本地"]
+  AG --> A2["云端"]
+  AG --> A3["运行目标"]
+
+  RS --> R1["模型 / MCP / Skill"]
+  RS --> R2["知识库 / 记忆库"]
+  RS --> R3["运行资源"]
+
+  OP --> P1["构建与部署"]
+  OP --> P2["自动化"]
+  OP --> P3["评测"]
+  OP --> P4["观测"]
+  OP --> P5["Channels"]
+```
+
+「运行中心」的五个标签不是一个页面的五个分区，而是五个独立的工作面：构建与部署管产物，自动化管定时，评测管通过率，观测管 Trace，Channels 管远端渠道。它们之间没有共享的选中状态——切换标签不改变你正在看的是哪个 Agent。
+
+## 六个核心实体的分工
+
+| 实体 | 主键 | 冻结了什么 | 生命周期由谁拥有 |
+| --- | --- | --- | --- |
+| 智能体 | `agentId` | 只拥有一份「当前指向」 | Studio 本地存储 |
+| 修订版本 | `revision` | 一次编辑后的完整不可变快照 | 智能体，只增不改 |
+| Agent 构建 | `buildId` | 某个修订版本加执行引擎的内容寻址包 | 智能体，可重复构建 |
+| 会话 | `sessionId` | 一条 DSH 持久事件日志 | 宿主（Host） |
+| 一次运行 | `runId` | 一个 turn 从开始到结束 | 会话 |
+| 运行时类型 | `runtime.type` | 这次运行由谁的执行模型负责 | 智能体创建时锁定 |
+
+后两个标识（`sessionId`、`runId`）不由 Studio 生成，也不由 Studio 存储。Studio 只校验它们的绑定关系是否正确——绑定对不上就是错误，不会「尽量猜一个」。
+
+## 概念之间的关系
+
+```text
+智能体 agentId
+  └─ 修订版本 revision 1..N        （不可变，保存即新增）
+       └─ Agent 构建 buildId        （内容寻址，同一输入只有同一个 id）
+            └─ 会话 sessionId       （DSH 拥有日志）
+                 └─ 一次运行 runId  （一个 turn）
+```
+
+一次运行的完整身份必须五个字段齐全：`agentId`、`revision`、`buildId`、`sessionId`、`runId`。缺一个就拒绝，而不是降级成「部分身份」。这条规则同时意味着：**没有构建的智能体也能对话，但没有构建就没有可复现的运行身份**。
+
+## 三种运行时与一个不可创建的值
+
+`runtime.type` 是概念章里最容易踩坑的一项，因为它有 3 个正式值和 1 个可路由值：
+
+| 值 | 界面名称 | 可以创建 | 执行模型 |
+| --- | --- | --- | --- |
+| `dsh-native` | DSH Native Harness | 是（新建默认） | `native` |
+| `harness` | Star Harness | 是 | `native-kernel` |
+| `codex` | Codex Agent | 是 | `codex-app-server` |
+| `native-engine` | Native 引擎（独立进程） | **否** | 独立进程 |
+
+写「支持 4 种运行时」是错的，因为创建表单只提供前三个。`native-engine` 只在本地路由时被选中，见[三种运行时](./runtimes.mdx)。
+
+## 五类可绑定资源
+
+资源不是概念章的附注，它决定了「同一个提示词为什么在两个环境里表现不同」：
+
+| kind | 界面标签 | 来源 | 每类可绑几个 |
+| --- | --- | --- | --- |
+| `model` | 模型 | 本地模型配置 + 模型网关 | 多个，其中一个默认 |
+| `mcp` | MCP | 本地 MCP 目录 + 云端目录 | 多个 |
+| `skill` | Skill | 已安装 Skill + 云端 Skill Space | 多个 |
+| `knowledge-base` | 知识库 | 云端控制面 | 一个 |
+| `memory-instance` | 记忆库 | 云端控制面 | 一个 |
+
+绑定写在修订版本上，所以**换资源等于换修订版本**。凭证值本身从不进修订版本，见[资源与绑定](./resources.mdx)。
+
+## 哪些页面属于这一章
+
+| 页面 | 回答的问题 |
+| --- | --- |
+| [Agent · Revision · Build · Run](./agent-revision-build.mdx) | 四层冻结各自保证什么，哪些操作会破坏可复现性 |
+| [三种运行时](./runtimes.mdx) | 3+1 个值分别由谁执行，能力矩阵怎么读 |
+| [资源与绑定](./resources.mdx) | 五类资源的形状、互斥规则与降级行为 |
+| [会话与工作区](./sessions-workspaces.mdx) | 事件日志归谁所有，工作区边界如何决定能写哪里 |
+| [专家与本地团队](./experts-teams.mdx) | 专家模板与专家团怎么复用同一套冻结语义 |
+| [托管运行时](./managed-runtime.mdx) | 云端常驻与本地运行差在哪一层 |
+| [术语表](./glossary.mdx) | 每个词唯一正确的写法 |
+
+## 相关任务
+
+<Cards>
+  <Card title="创建与编辑 Agent" href="/docs/guides/create-agent">
+    把这一章的概念落成一次真实创建，含每一步的验收方式。
+  </Card>
+  <Card title="运行与调试会话" href="/docs/guides/conversations">
+    看懂工具调用、文件变更与本轮用量。
+  </Card>
+  <Card title="审批与权限策略" href="/docs/guides/approvals-permissions">
+    执行策略如何约束写入范围。
+  </Card>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">
+    从本地运行到 7×24 常驻。
+  </Card>
+</Cards>
+
+## 相关参考
+
+| 你要查的东西 | 去哪一页 |
+| --- | --- |
+| 五个实体标识与能力矩阵的完整枚举 | [运行时与实体契约](../reference/runtime-contract.mdx) |
+| 134 个控制协议 operation | [控制协议](../reference/operations.mdx) |
+| 错误码与用户动作对照 | [错误码](../reference/errors.mdx) |
+| 16 个会话事件 | [会话事件](../reference/session-events.mdx) |
+| 19 个部署状态 | [部署状态机](../reference/deployment-states.mdx) |

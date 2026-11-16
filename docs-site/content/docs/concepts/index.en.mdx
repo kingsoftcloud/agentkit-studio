@@ -1,0 +1,146 @@
+---
+title: Concepts
+description: "Six nouns explain the product model: agent, revision, build, session, run, and runtime type."
+status: new
+---
+
+**The AgentKit Studio product model has exactly six nouns: agent, revision, build, session, run, and runtime type — the value that decides where those entities execute.**
+
+This chapter takes each one in turn and states the hard constraints between them. When you finish, you can answer questions like "will changing this setting affect a session that is already running?" without trying it first.
+
+## System layers
+
+<Diagram src="/assets/agentkit-studio-overview.en.png" alt="AgentKit Studio five-layer architecture: browser UI, Studio control plane, Host service domains, runtime adapters and external kernels, with the /agentkit RPC and HTTP prefix channels" />
+
+*How to read this: the browser only sends operation ids and holds no state; the Host service domains are the only persistence boundary; everything below the runtime adapters is an external kernel. Of the two physical channels, only `/agentkit` RPC goes through the 134-operation dispatcher — model proxying and conversation streaming use HTTP prefix routes instead.*
+
+## Why a concepts chapter exists
+
+The four panels each expose one slice of the product model, yet the same vocabulary appears together on the same screen:
+
+| What the UI shows | The concept behind it | Most often mistaken for |
+| --- | --- | --- |
+| A notice that saving produced a new revision | Revision | A draft you can overwrite |
+| A build record in the operations panel | Agent build | A CI or image build |
+| A row in the agent list | Agent | A running process |
+| An entry in the session list | Session | A log of one request |
+| Usage and duration at the bottom | Run | A cumulative total for the session |
+
+Treating a revision as an overwritable draft, or a build as a pipeline artifact, leads to the same wrong conclusion: that editing configuration changes a session already in flight. It does not. Not because the product lacks hot reload, but because these four entities freeze at different layers — see [Agent · Revision · Build · Run](./agent-revision-build.mdx).
+
+The four panels and their secondary tabs are organised like this:
+
+```mermaid
+flowchart LR
+  UI["Browser UI"] --> OV["Overview"]
+  UI --> AG["Agents"]
+  UI --> RS["Resources"]
+  UI --> OP["Operations"]
+
+  AG --> A1["Local"]
+  AG --> A2["Cloud"]
+  AG --> A3["Runtime targets"]
+
+  RS --> R1["Model / MCP / Skill"]
+  RS --> R2["Knowledge base / Memory"]
+  RS --> R3["Runtime resources"]
+
+  OP --> P1["Builds & deployments"]
+  OP --> P2["Automation"]
+  OP --> P3["Evaluation"]
+  OP --> P4["Observability"]
+  OP --> P5["Channels"]
+```
+
+The five tabs under Operations are not five sections of one page — they are five independent surfaces: builds and deployments own artifacts, automation owns schedules, evaluation owns pass rates, observability owns traces, and Channels owns remote channels. They share no selection state, so switching tabs never changes which Agent you are looking at.
+
+## What each of the six entities owns
+
+| Entity | Primary key | What it freezes | Who owns its lifecycle |
+| --- | --- | --- | --- |
+| Agent | `agentId` | Only a "current pointer" | Studio local store |
+| Revision | `revision` | A complete immutable snapshot after one edit | The agent; append-only |
+| Agent build | `buildId` | A content-addressed package of one revision plus its execution engine | The agent; rebuildable |
+| Session | `sessionId` | One durable DSH event journal | The Host |
+| Run | `runId` | One turn from start to end | The session |
+| Runtime type | `runtime.type` | Which execution model serves this agent | Locked when the agent is created |
+
+Studio neither generates nor stores the last two identifiers (`sessionId`, `runId`). It only validates that their binding is correct. A mismatched binding is an error, never a guess.
+
+## How the concepts relate
+
+```text
+Agent agentId
+  └─ Revision revision 1..N        (immutable; saving appends)
+       └─ Agent build buildId       (content-addressed; same input, same id)
+            └─ Session sessionId    (DSH owns the journal)
+                 └─ Run runId       (one turn)
+```
+
+A complete run identity needs all five fields: `agentId`, `revision`, `buildId`, `sessionId`, `runId`. Missing one is rejected rather than degraded to a partial identity. The same rule implies: **an agent without a build can still converse, but without a build there is no reproducible run identity.**
+
+## Three runtimes and one value you cannot create
+
+`runtime.type` is the easiest place to get the model wrong, because it has three official values and one routable value:
+
+| Value | UI name | Creatable | Execution model |
+| --- | --- | --- | --- |
+| `dsh-native` | DSH Native Harness | Yes (default for new agents) | `native` |
+| `harness` | Star Harness | Yes | `native-kernel` |
+| `codex` | Codex Agent | Yes | `codex-app-server` |
+| `native-engine` | Native engine (separate process) | **No** | Separate process |
+
+Writing "four supported runtimes" is wrong, because the creation form offers only the first three. `native-engine` is selected only when routing locally — see [The three runtimes](./runtimes.mdx).
+
+## Five bindable resource kinds
+
+Resources are not an appendix to the concepts chapter; they explain why the same prompt behaves differently in two environments:
+
+| kind | UI label | Source | How many per agent |
+| --- | --- | --- | --- |
+| `model` | Model | Local model profiles plus the model gateway | Many, one of them default |
+| `mcp` | MCP | Local MCP catalog plus the cloud catalog | Many |
+| `skill` | Skill | Installed Skills plus cloud Skill Spaces | Many |
+| `knowledge-base` | Knowledge base | Cloud control plane | One |
+| `memory-instance` | Memory | Cloud control plane | One |
+
+Bindings live on the revision, so **changing resources means changing the revision**. Credential values never enter a revision — see [Resources and bindings](./resources.mdx).
+
+## What this chapter covers
+
+| Page | Question it answers |
+| --- | --- |
+| [Agent · Revision · Build · Run](./agent-revision-build.mdx) | What each freezing layer guarantees, and which operations break reproducibility |
+| [The three runtimes](./runtimes.mdx) | Who executes each of the 3+1 values, and how to read the capability matrix |
+| [Resources and bindings](./resources.mdx) | The shape, exclusivity rules and degradation behavior of the five kinds |
+| [Sessions and workspaces](./sessions-workspaces.mdx) | Who owns the event journal, and how the workspace boundary decides what is writable |
+| [Experts and local teams](./experts-teams.mdx) | How expert templates and teams reuse the same freezing semantics |
+| [Managed runtime](./managed-runtime.mdx) | Where a cloud-resident runtime differs from a local one |
+| [Glossary](./glossary.mdx) | The one correct spelling of every term |
+
+## Related tasks
+
+<Cards>
+  <Card title="Create and edit an agent" href="/en/docs/guides/create-agent">
+    Turn this chapter's concepts into one real creation, with a success check at each step.
+  </Card>
+  <Card title="Run and debug sessions" href="/en/docs/guides/conversations">
+    Read tool calls, file changes, and per-turn usage.
+  </Card>
+  <Card title="Approvals and permission policy" href="/en/docs/guides/approvals-permissions">
+    How execution policy constrains what can be written.
+  </Card>
+  <Card title="Deploy to the cloud" href="/en/docs/guides/deploy-to-cloud">
+    From a local run to 24/7 residency.
+  </Card>
+</Cards>
+
+## Related reference
+
+| What you need | Which page |
+| --- | --- |
+| The full enumeration of the five identifiers and the capability matrix | [Runtime and entity contract](../reference/runtime-contract.mdx) |
+| The 134 control-protocol operations | [Operations](../reference/operations.mdx) |
+| Error codes against user actions | [Errors](../reference/errors.mdx) |
+| The 16 session events | [Session events](../reference/session-events.mdx) |
+| The 19 deployment states | [Deployment states](../reference/deployment-states.mdx) |

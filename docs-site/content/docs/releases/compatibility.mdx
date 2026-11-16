@@ -1,0 +1,143 @@
+---
+title: 版本兼容表
+description: 插件版本 × DSH 基线 × 最低 Node × 支持平台四维对照，以及 macOS 只发布 Apple Silicon 的原因。
+---
+
+**先确认三件事再升级：插件版本对得上、DSH 基线精确相等、Node 满足安全补丁。** 三者任一不满足都会在启动时被拒绝。
+
+## 四维对照表
+
+| 插件版本 | DSH 基线 | `requiredHostApi` | Host 契约 | 最低 Node（运行时） | macOS | Windows | 浏览器 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **0.0.16**（当前） | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.15 | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.14 | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.13 | `0.2.2-rc.1` | `dsh-native/0.2.2-rc.1` | `1` | `>=24.9.0` | ✅ arm64 | ✅ x64 | ✅ |
+| 0.0.2 | `0.2.0-rc.2` | `dsh-native/0.2.0-rc.2` | 未声明 | `>=22.19.0` | ✅ arm64 | ✅ x64 | ✅ |
+
+源码：`studio.plugin.json:4-6`、`package.json#engines`、`dsh-pin.json:9`。
+
+<Callout type="info" title="为什么 0.0.3–0.0.12 不在表里">
+  Git 只有 `v0.0.2`、`v0.0.13`、`v0.0.14`、`v0.0.15`、`v0.0.16` 五个标签。
+  中间版本的基线无法从源码核对，所以不写——**宁可缺，不要猜。**
+  这些版本可以从 [版本说明](./release-notes.mdx) 看到用户可感知的变化。
+</Callout>
+
+## 三个必查项
+
+### 1. 插件版本
+
+```sh
+node -p "require('./package.json').version"
+node -p "require('./studio.plugin.json').version"
+```
+
+两者必须相同。`make release-check` 会校验。
+
+### 2. DSH 基线（精确相等）
+
+`requiredDsh` 是**字符串相等**比较，不是版本范围：
+
+| 你的 DSH | `requiredDsh` | 结果 |
+| --- | --- | --- |
+| `0.2.2-rc.1` | `0.2.2-rc.1` | ✅ 通过 |
+| `0.2.2` | `0.2.2-rc.1` | ❌ `STUDIO_HOST_INCOMPATIBLE` |
+| `0.2.1-rc.2` | `0.2.2-rc.1` | ❌ 同上 |
+| 读不到 | `0.2.2-rc.1` | ❌ 同上（`actual: null`） |
+
+源码：`src/host/compatibility.mjs:25`。判定细节见 [Host 兼容性](../ecosystem/host-compatibility.mdx)。
+
+### 3. Node 版本
+
+这里有**两套不同的门槛**，容易混：
+
+| 门槛 | 值 | 谁在用 | 不满足时 |
+| --- | --- | --- | --- |
+| 运行时最低版本 | `>=24.9.0` | `package.json#engines`、`dsh-pin.json#nodeRange` | 安装/启动失败 |
+| 安全补丁基线 | 22.23.4+ / 24.22.1+ / 26.12.1+ | `scripts/node-version.mjs`、`make check:node` | 门禁失败 |
+| 仓库默认版本 | `24.22.1` | `.node-version` | nvm/fnm 会切到它 |
+
+<Callout type="warn" title="两套门槛都满足才算通过">
+  `engines` 说 `>=24.9.0`，但安全基线要求 24.x 至少到 `24.22.1`。
+  从源码开发时两个都会检查：`>=24.9.0` 过不了 `make check:node`。
+  安全基线来自 2026 年 10 月的 Node.js 安全版本（Brotli 解码 RCE 与 TLS 主机名校验修复）。
+  源码：`scripts/node-version.mjs:1-14`。
+</Callout>
+
+## 支持平台
+
+| 平台 | 架构 | 安装包 | 状态 | 更新 feed 目标 |
+| --- | --- | --- | --- | --- |
+| macOS | **Apple Silicon（arm64）** | `.dmg` | ✅ 支持 | `mac-arm64` |
+| macOS | Intel（x64） | — | ❌ **不支持** | — |
+| Windows | x64 | `.exe`（NSIS） | ✅ 支持 | `win-x64` |
+| 浏览器 | — | npm 包 | ✅ 支持 | — |
+
+> 文档里**不要出现** Intel Mac 的安装包文件名。它曾经出现在历史文档里，是错误信息。
+
+### 为什么 macOS 只发 arm64
+
+| 原因 | 说明 |
+| --- | --- |
+| Feed 目标只有两个 | `RELEASE_FEED_TARGETS = ['mac-arm64', 'win-x64']`，没有第三个目标 |
+| 图标配置仍有三项 | `product.json` 的 `platforms` 还保留了第二个 macOS 架构的图标路径，但那只用于打包输入校验 |
+| 签名与公证成本 | 每个架构都要独立签名与公证，当前只对 arm64 做验收 |
+
+源码：`src/desktop-release-channels.mjs:49`、`src/product.json:34-38`、`scripts/product-config.mjs:50-54`。
+
+<Callout type="info" title="有图标 ≠ 有安装包">
+  `product.json` 里能看到第二个 macOS 架构的图标配置，但**没有**对应的更新 feed。
+  如果你在发布产物里找不到该架构的 `.dmg`，那是预期行为。
+</Callout>
+
+## 版本号之间的关系
+
+| 版本 | 0.0.16 时的值 | 变化频率 |
+| --- | --- | --- |
+| 插件 semver | `0.0.16` | 每次发布 |
+| DSH 基线 | `0.2.2-rc.1` | 跟随 DSH 升级，低频 |
+| Host 契约号 | `1` | 只在能力面变更时递增 |
+| 桌面版本 | `0.2.2-rc.1.<YYYYMMDD>.<序号>` | 每天可分多次构建 |
+
+**桌面版本继承 DSH 版本**，所以它天然带 `-rc` 后缀——这就是默认通道必须是 `nightly` 的原因，
+见[桌面更新通道](./desktop-update-channels.mdx)。
+
+## 兼容性排查顺序
+
+<Steps>
+
+<Step>
+### 先看错误码
+
+`STUDIO_HOST_INCOMPATIBLE` 的 `details` 里直接给出 `baseline`、`contract`、`missingCapabilities` 三组值。
+</Step>
+
+<Step>
+### 再看基线
+
+```sh
+node -e "import('@deepseek-ai/dsh-app-boot').then(m => console.log(m.getDshRuntimeVersion?.()))"
+```
+
+输出必须等于 `requiredDsh`。`undefined` 表示 DSH 启动包不在环境里。
+</Step>
+
+<Step>
+### 然后看契约号
+
+`details.contract.required` 与 `details.contract.actual` 必须相等。
+</Step>
+
+<Step>
+### 最后看能力
+
+`details.missingCapabilities` 非空说明宿主版本对但服务没挂载——检查所有官方插件是否加载。
+</Step>
+
+</Steps>
+
+## 相关
+
+- 能力探针细节：[Host 兼容性](../ecosystem/host-compatibility.mdx)
+- 升级步骤：[升级到 v0.0.16](./upgrade-to-0.0.16.mdx)
+- 通道规则：[桌面更新通道](./desktop-update-channels.mdx)
