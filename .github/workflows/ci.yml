@@ -162,6 +162,8 @@ jobs:
           pnpm run build:official
       - name: Install Studio dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build the Studio client bundle required by the real Host
+        run: pnpm build:client
       - name: Move the built DSH out of the Studio workspace
         shell: bash
         run: |
