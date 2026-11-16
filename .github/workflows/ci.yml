@@ -164,6 +164,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify the pinned Studio native dependencies
         run: pnpm build:harness
+      - name: Build the native MCP client required by the Host
+        run: pnpm build:mcp
       - name: Build the Studio client bundle required by the real Host
         run: pnpm build:client
       - name: Move the built DSH out of the Studio workspace
