@@ -1,6 +1,5 @@
 /** Catalog Studio-owned revisions and explicitly supported cloud runtimes. */
-const SUPPORTED_RUNTIMES = new Set(['dsh-native', 'harness', 'codex', 'native-engine']);
-const SUPPORTED_MANAGED_RUNTIMES = new Set(['dsh-native', 'codex']);
+import { isRoutableRuntimeType, isManagedRuntimeType } from './runtime-contract.mjs';
 function createdAt(item) {
   return Date.parse(String(item.metadata?.createdAt || item.createdAt || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1')) || 0;
 }
@@ -15,14 +14,14 @@ export function createAgentCatalog({ store, builds, deployments, managedAgents }
     const managed = source === 'local' || !managedAgents ? { items: [], warnings: [] } : await managedAgents({ page: 1, pageSize: 100, query: needle });
     const local = source === 'cloud' ? [] : await (await store()).list();
     const managedItems = (managed.items || []).filter(item => item.source === 'agentengine-managed-runtime'
-      && item.managedRuntime === true && SUPPORTED_MANAGED_RUNTIMES.has(item.spec?.runtime?.type));
+      && item.managedRuntime === true && isManagedRuntimeType(item.spec?.runtime?.type));
     // A Studio deployment is also present in Server's Agent list. Prefer its
     // durable receipt because it carries the frozen version provenance needed
     // by the Studio cloud transport.
     const cloudItems = [...(cloud.items || []).filter(item => item.source === 'studio-deployment' && item.deployment?.id), ...managedItems]
       .filter((item, index, all) => all.findIndex(candidate => String(candidate.metadata?.id || candidate.id) === String(item.metadata?.id || item.id)) === index);
     const rows = [...local, ...cloudItems]
-      .filter(item => SUPPORTED_RUNTIMES.has(item.spec?.runtime?.type))
+      .filter(item => isRoutableRuntimeType(item.spec?.runtime?.type))
       .filter(item => !needle || [item.metadata?.id, item.metadata?.name, item.metadata?.description, item.spec?.description].filter(Boolean).join(' ').toLowerCase().includes(needle))
       .sort((a, b) => createdAt(b) - createdAt(a) || String(a.metadata?.id).localeCompare(String(b.metadata?.id)));
     const items = rows.slice((page - 1) * pageSize, page * pageSize);

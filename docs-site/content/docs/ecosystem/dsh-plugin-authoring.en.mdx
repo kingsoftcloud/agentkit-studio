@@ -149,6 +149,27 @@ make public-gate
 
 </Steps>
 
+## Plugin boundary: depend only on public contracts
+
+Studio defines itself as a **generic DSH product plugin** with a deliberately small boundary. The same applies when you write a plugin:
+
+| Rule | Meaning |
+| --- | --- |
+| Import public contracts only | Depend on public DSH / AgentEngine contracts and your own product code; never import another product's private modules |
+| Cross-plugin traffic goes through registration and admission | Communicate via DSH registration, connection admission and versioned wire contracts, not private service names |
+| Cloud access goes through `agentkitHostCloud` | When you need host-side cloud configuration and credentials, take only this narrow capability; **it does not hand out credentials**, and consumers build their own adapters |
+| Runtime images advertise opaque labels | An image declares capability labels; each plugin interprets the ones it owns after checking DSH kernel compatibility |
+
+```js
+// Host-provided: read-only configuration plus client factories, no credential values
+const cloud = await ctx.get('agentkitHostCloud');
+const client = await cloud.getClient();      // AgentEngine client
+```
+
+`studio.agent.catalog`, `studio.runtime.capabilities`, `studio.session.adapter` and `studio.workspace.dock` are capabilities Studio declares **as a plugin**; `agentkitHostCloud` is the service Studio provides **as a host** to other plugins. The directions are opposite — do not mix them up.
+
+The repository gates this with `scripts/check-dsh-plugin-purity.mjs`, which scans `src/`, `tests/`, `scripts/` and the packaging config and fails on product-specific imports, service names or package references (`src/host/bootstrap.mjs:193-200`, `scripts/check-dsh-plugin-purity.mjs:8-23`).
+
 ## Readiness states
 
 After install, the market reports one of six states:

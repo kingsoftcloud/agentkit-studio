@@ -5,6 +5,7 @@ import { canonical, copy, invariant, parseNativeJson } from '@kingsoftcloud/agen
 import { awaitA2aControl } from '../../providers/native-a2a-controls.mjs';
 import { requestStudioA2aApproval } from './a2a-control-approval.mjs';
 import { a2aDecisionDigest } from '../../providers/native-a2a-decision.mjs';
+import { isRoutableRuntimeType } from '../../runtime-contract.mjs';
 const id = value => typeof value === 'string' && value.trim() && value.length <= 256;
 export function validateDshA2aRequest(request, control = false) {
   const allowed = control ? ['agentId', 'sessionId', 'agentRevision', 'buildId', 'operationKey', 'callId', 'kind', 'commandId', 'parts', 'json', 'pauseDigest']
@@ -53,7 +54,7 @@ export function createStudioDshA2aControls({ ctx, agentEvents, resolveManagedBin
       if (!binding && !control) return { contract: 'agentkit.studio-dsh-a2a-inventory/v1', applicable: false,
         agentId: original.agentId, sessionId: original.sessionId, items: [], complete: true, offset: 0, total: 0 };
       invariant(binding?.contract === 'agentkit.studio-dsh-a2a-binding/v1' && binding.local === true
-        && ['dsh-native', 'harness', 'codex', 'native-engine'].includes(binding.runtime) && binding.agentId === original.agentId
+        && isRoutableRuntimeType(binding.runtime) && binding.agentId === original.agentId
         && Number.isSafeInteger(binding.agentRevision) && binding.agentRevision > 0
         && (binding.buildId === null || id(binding.buildId)), 'STUDIO_DSH_A2A_BINDING_CHANGED');
       const tools = binding.tools;

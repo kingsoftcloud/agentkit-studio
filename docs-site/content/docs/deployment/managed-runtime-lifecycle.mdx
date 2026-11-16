@@ -135,7 +135,9 @@ stateDiagram-v2
 
 同一 VersionId 换一份不同字节的声明会失败——版本不可变（`:292-296`）。
 
-## 认证与隐私边界
+## 本机端口认证与隐私边界
+
+> 这一节只讲**托管 Host 本机监听的端口**。想调**已部署 Agent 的云端接口**（`RunAgent`、SSE 流、37 个 AgentEngine Action），见[云端 Agent HTTP API](../reference/agent-engine-api.mdx) —— 那是另一套认证，与本节的令牌无关。
 
 | 项 | 规则 | 依据 |
 | --- | --- | --- |
@@ -145,6 +147,33 @@ stateDiagram-v2
 | 版本护栏 | `X-AgentEngine-Target-Version-Id` 与 `X-AgentEngine-Manifest-Sha256` 必须与加载的声明一致，否则 409 `RUNTIME_DEPLOYMENT_CHANGED` | `src/build-runtime-http.mjs:105` |
 | 单活动 Run | 同一会话已有活动 Run 时返回 409 `RUNTIME_SESSION_BUSY` | `:193` |
 | 审批超时 | 2 分钟 | `src/managed-runtime-approval.mjs:25` |
+
+## 托管 Host 端点
+
+托管 Host 在本机监听一个 HTTP 端口，平台通过它驱动会话。端点分两类：健康/身份探针，以及 `/agentengine/api/v1/` 下的 Action。
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/health` | 就绪探针：`ready` 返回 200，停机中返回 503 `stopping` |
+| `GET` | `/v1/agentkit/runtime` | 身份探针：AgentId、VersionId、manifest 摘要与运行时版本 |
+| `POST` | `/v1/responses`、`/runs` | 模型运行入口（Responses 传输） |
+| `POST` | `/runs/<runId>/cancel`、`/v1/responses/<id>/cancel` | 取消一次运行 |
+| `POST` | `/agentengine/api/v1/<Action>` | 会话与历史 Action（下表） |
+
+| Action | 必填字段 |
+| --- | --- |
+| `GetAgentUiBootstrap` | `Name`、`SessionId` |
+| `ListAgentModels` | `Name` |
+| `CreateSession` | `SessionId` |
+| `GetSession` | `SessionId` |
+| `ListSessions` | `Page`、`PageSize` |
+| `DeleteSession` | `SessionId` |
+| `CancelRun` | `SessionId`、`InvocationId`、`ResponseId`、`ClientToken` |
+| `SubmitInteraction` | `SessionId`、`RunId`、`InteractionId`、`ExpectedRevision`、`Action`、`Response`、`IdempotencyKey` |
+| `ListSessionMessages` | `SessionId`、`Limit`、`AfterSeqId`、`BeforeSeqId`、`HistoryEpoch`、`SnapshotSeqId`、`CursorSource`、`IncludeReasoning`、`IncludeToolEvents`、`IncludeAttachments` |
+| `ListSessionEvents` | 同左，另加 `EventTypes`、`EventOrder`、`Offset`、`CheckpointIds` |
+
+`AgentId` 与 `UserId` 始终允许；未列出字段抛 `RUNTIME_ACTION_INPUT_UNSUPPORTED`，未知 Action 返回 404 `RUNTIME_ACTION_UNSUPPORTED`（`src/managed-runtime-actions.mjs:158-167`、`src/build-runtime-http.mjs:128-132`）。
 
 ## 相关页面
 

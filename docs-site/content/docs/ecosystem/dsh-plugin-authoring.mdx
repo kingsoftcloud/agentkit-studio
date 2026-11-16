@@ -146,6 +146,27 @@ make public-gate
 
 </Steps>
 
+## 插件边界：只依赖公开契约
+
+Studio 把自己定义成一个**通用 DSH 产品插件**，边界刻意做小。写插件时同样适用：
+
+| 规则 | 含义 |
+| --- | --- |
+| 只 import 公开契约 | 只依赖 DSH / AgentEngine 的公开契约与你自己的产品代码，不 import 别的产品的私有模块 |
+| 跨插件走注册与准入 | 通过 DSH 注册、连接准入和带版本的 wire 契约通信，不用私有服务名 |
+| 云访问走 `agentkitHostCloud` | 需要宿主侧云配置与凭证时，只拿这个窄能力；**它不发放凭证**，消费者自己构造适配器 |
+| 运行时镜像只报不透明标签 | 镜像声明能力标签，插件在核对 DSH 内核兼容后解释自己那部分 |
+
+```js
+// 宿主提供：只读配置 + 客户端工厂，不含凭证值
+const cloud = await ctx.get('agentkitHostCloud');
+const client = await cloud.getClient();      // AgentEngine 客户端
+```
+
+`studio.agent.catalog` / `studio.runtime.capabilities` / `studio.session.adapter` / `studio.workspace.dock` 是 Studio **作为插件**声明的能力；`agentkitHostCloud` 是 Studio **作为宿主**提供给其他插件的服务。两者方向相反，不要混用。
+
+仓库用 `scripts/check-dsh-plugin-purity.mjs` 扫描 `src/`、`tests/`、`scripts/` 与打包配置，发现产品私有 import、服务名或包引用就失败（`src/host/bootstrap.mjs:193-200`、`scripts/check-dsh-plugin-purity.mjs:8-23`）。
+
 ## 就绪状态
 
 装好之后，市场会给出六种之一的状态：

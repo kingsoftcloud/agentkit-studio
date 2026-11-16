@@ -15,11 +15,10 @@ import { CODEX_PROVIDER } from './codex-models.mjs';
 import { NATIVE_ENGINE_EVENT, NATIVE_ENGINE_TEXT, NATIVE_ENGINE_TOOL_DRAFT } from './native-engine-runtime.mjs';
 
 /** Runtimes that run in their own process behind the stream seam. */
-const PROCESS_RUNTIMES = new Set(['codex', 'native-engine']);
 import { dshModelFailure } from '../model-failure.mjs';
 import { createCodexToolRecorder } from './codex-tool-events.mjs';
 import { gatewayHistory, isDshUserInput, isDshAgentNotice } from './dsh-messages.mjs';
-import { assertStudioRuntimeType, assertStudioRunBinding } from '../runtime-contract.mjs';
+import { assertStudioRuntimeType, assertStudioRunBinding, isProcessRuntimeType } from '../runtime-contract.mjs';
 import { resolveRuntimeBridge } from '../host/runtime-bridge.mjs';
 import { createUserQuestionTool } from './user-question-tool.mjs';
 import { hasManagedApprovalRun, hasManagedRun, requestManagedApproval } from '../managed-runtime-approval.mjs';
@@ -38,7 +37,7 @@ export function bindDshAgentRoute(sessionId, binding = {}, owner, scope) {
   const local = binding.local === true;
   const buildId = String(binding.buildId || '').trim();
   const revision = Number(binding.agentRevision);
-  if (local && !PROCESS_RUNTIMES.has(runtime) && buildId && (!Number.isInteger(revision) || revision < 1)) {
+  if (local && !isProcessRuntimeType(runtime) && buildId && (!Number.isInteger(revision) || revision < 1)) {
     throw Object.assign(new Error('冻结 DSH Build 路由必须绑定正整数 Agent revision'), { code: 'RUN_IDENTITY_INVALID' });
   }
   const route = {
@@ -89,7 +88,7 @@ export function streamDshRuntime(options, { agentId, runtime, local, buildId, ag
   if (!id) throw new Error('AgentKit Studio runtime bridge is unavailable');
   const runtimeType = assertStudioRuntimeType(runtime || 'harness');
   const sessionId = String(options.sessionId || '').trim();
-  const frozenDshBuild = local === true && !PROCESS_RUNTIMES.has(runtimeType) && Boolean(String(buildId || '').trim());
+  const frozenDshBuild = local === true && !isProcessRuntimeType(runtimeType) && Boolean(String(buildId || '').trim());
   const runId = String(options.runId || options.turnId || options.requestId || (frozenDshBuild ? `run_${randomUUID()}` : '')).trim();
   if (frozenDshBuild) {
     assertStudioRunBinding({ agentId: id, buildId, revision: agentRevision, sessionId, runId }, { agentId: id, sessionId });
@@ -596,7 +595,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       const toolAgent = routed?.agent || options.agent;
       if (mode === 'local' && typeof toolAgent?.session?.id === 'string' && toolAgent.session.id.trim()) bindDshInvocationContext(toolAgent, {
         userId: String(options.userId || options.metadata?.userId || options.user?.id || 'studio-anonymous'),
-        runnerType: PROCESS_RUNTIMES.has(runtime) ? runtime : 'dsh-native',
+        runnerType: isProcessRuntimeType(runtime) ? runtime : 'dsh-native',
       });
       const user = lastUser(options.messages, nativeTools);
       const input = textOf(user).trim();
@@ -612,7 +611,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
         const history = await gatewayHistory(runtime === 'native-engine' ? [user] : options.messages,
           { attachments, signal: options.signal, includeNotices: nativeTools });
         const content = [...history].reverse().find(message => message.role === 'user')?.content || input;
-        if (PROCESS_RUNTIMES.has(runtime)) {
+        if (isProcessRuntimeType(runtime)) {
           // Both process runtimes share this branch: same workspace, model, resource-context,
           // approval and trace handling. Only the process behind the stream differs.
           const processRuntime = runtime === 'codex' ? codexRuntime : nativeEngineRuntime;

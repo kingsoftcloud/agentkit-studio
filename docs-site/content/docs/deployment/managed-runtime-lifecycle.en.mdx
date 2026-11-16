@@ -135,7 +135,9 @@ Persistence is declared as `dsh-native-disk` with `SharedAcrossPods: false`, `Ef
 
 Reusing one VersionId with different declaration bytes fails: a version is immutable (`:292-296`).
 
-## Authentication and privacy boundary
+## Local port authentication and privacy boundary
+
+> This section covers **the port the managed Host listens on locally**. To call a **deployed Agent's cloud API** (`RunAgent`, the SSE stream, the 37 AgentEngine Actions), see [Cloud Agent HTTP API](../reference/agent-engine-api.mdx) — that is a different authentication scheme and has nothing to do with the token here.
 
 | Item | Rule | Source |
 | --- | --- | --- |
@@ -145,6 +147,33 @@ Reusing one VersionId with different declaration bytes fails: a version is immut
 | Version fence | `X-AgentEngine-Target-Version-Id` and `X-AgentEngine-Manifest-Sha256` must match the loaded declaration, otherwise 409 `RUNTIME_DEPLOYMENT_CHANGED` | `src/build-runtime-http.mjs:105` |
 | One active run | A session with an active run returns 409 `RUNTIME_SESSION_BUSY` | `:193` |
 | Approval timeout | 2 minutes | `src/managed-runtime-approval.mjs:25` |
+
+## Managed Host endpoints
+
+A managed Host listens on a local HTTP port and the platform drives sessions through it. The surface splits into health/identity probes and the Actions under `/agentengine/api/v1/`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Readiness probe: 200 `ready`, 503 `stopping` |
+| `GET` | `/v1/agentkit/runtime` | Identity probe: AgentId, VersionId, manifest digest and runtime version |
+| `POST` | `/v1/responses`, `/runs` | Model run entry point (Responses transport) |
+| `POST` | `/runs/<runId>/cancel`, `/v1/responses/<id>/cancel` | Cancel one run |
+| `POST` | `/agentengine/api/v1/<Action>` | Session and history Actions (table below) |
+
+| Action | Required fields |
+| --- | --- |
+| `GetAgentUiBootstrap` | `Name`, `SessionId` |
+| `ListAgentModels` | `Name` |
+| `CreateSession` | `SessionId` |
+| `GetSession` | `SessionId` |
+| `ListSessions` | `Page`, `PageSize` |
+| `DeleteSession` | `SessionId` |
+| `CancelRun` | `SessionId`, `InvocationId`, `ResponseId`, `ClientToken` |
+| `SubmitInteraction` | `SessionId`, `RunId`, `InteractionId`, `ExpectedRevision`, `Action`, `Response`, `IdempotencyKey` |
+| `ListSessionMessages` | `SessionId`, `Limit`, `AfterSeqId`, `BeforeSeqId`, `HistoryEpoch`, `SnapshotSeqId`, `CursorSource`, `IncludeReasoning`, `IncludeToolEvents`, `IncludeAttachments` |
+| `ListSessionEvents` | As above, plus `EventTypes`, `EventOrder`, `Offset`, `CheckpointIds` |
+
+`AgentId` and `UserId` are always allowed; an unlisted field fails with `RUNTIME_ACTION_INPUT_UNSUPPORTED` and an unknown Action returns 404 `RUNTIME_ACTION_UNSUPPORTED` (`src/managed-runtime-actions.mjs:158-167`, `src/build-runtime-http.mjs:128-132`).
 
 ## Related pages
 

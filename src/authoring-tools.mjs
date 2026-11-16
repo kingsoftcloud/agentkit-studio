@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import { createStudioHostRemote } from './host-remote.mjs';
 import { STUDIO_DEFAULT_AUTHORING_RUNTIME } from './authoring-defaults.mjs';
 import { NATIVE_AGENT_POLICY_CONTRACT } from './native-agent-policy.mjs';
+import { STUDIO_RUNTIME_TYPES } from './runtime-contract.mjs';
 
-const RUNTIMES = ['dsh-native', 'harness', 'codex'];
+const RUNTIMES = STUDIO_RUNTIME_TYPES;
 const KINDS = ['model', 'mcp', 'skill'];
 const FIELDS = ['name', 'description', 'runtimeType', 'systemPrompt', 'taskPrompt', 'modelProfileIds', 'mcpResourceIds', 'skillResourceIds'];
 const output = { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] };

@@ -92,7 +92,7 @@ The verification command does not approve dependency build scripts automatically
 - `examples/` — minimal public configuration examples
 - `docs-site/` — the bilingual documentation site (Fumadocs + Next.js static export)
 - `docs-site/content/docs/` — every published page, Chinese as `page.mdx` and English as `page.en.mdx`
-- `docs/` — internal design archive and the hand-written landing page (`docs/index.html`)
+- `docs-site/landing/index.html` — the hand-written landing page copied to the site root
 - `patches/` — versioned compatibility patches for the pinned DSH release
 - `scripts/` — build, package, portability, Host verification, and docs reference generation
 - `tests/` — unit, contract, packaging, product-surface, and documentation parity tests

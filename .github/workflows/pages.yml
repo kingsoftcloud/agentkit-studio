@@ -2,14 +2,14 @@ name: Deploy AgentKit Studio site
 
 # The public site is a Fumadocs static export (bilingual: Chinese at /docs,
 # English at /en/docs). This workflow only builds the documentation app; the
-# hand-written landing page at docs/index.html is copied in by the build script
+# hand-written landing page at docs-site/landing/index.html is copied in by the build script
 # and is intentionally outside the documentation app.
 on:
   push:
     branches: [main]
     paths:
       - docs-site/**
-      - docs/index.html
+      - docs-site/landing/index.html
       - .github/workflows/pages.yml
   workflow_dispatch:
 

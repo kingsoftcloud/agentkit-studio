@@ -76,7 +76,7 @@ dsh-pin-check:
 	node scripts/check-dsh-pin.mjs
 
 # The browser bundle budget is committed so the gate can fail in CI. See
-# docs/refactor-client-budget.json for the approved allowance and its history.
+# ci/refactor-client-budget.json for the approved allowance and its history.
 client-module-gate:
 	node scripts/verify-client-modules.mjs
 
@@ -331,7 +331,7 @@ docs-site-dev:
 	cd docs-site && pnpm install --ignore-workspace && pnpm dev
 
 docs-site-check:
-	node --test tests/docs-site-i18n.test.mjs
+	node --test tests/docs-site-i18n.test.mjs tests/docs-runtime-count.test.mjs tests/docs-agent-engine-api.test.mjs
 
 docs-site-preview: docs-site-build
 	cd docs-site && node scripts/preview.mjs 4321

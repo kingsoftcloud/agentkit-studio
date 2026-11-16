@@ -43,9 +43,9 @@ description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、�
 
 | 错误码 | 触发条件 | 源码 |
 | --- | --- | --- |
-| `RUNTIME_UNSUPPORTED` | `runtime.type` 不在公开或实验列表中 | `src/runtime-contract.mjs:39` |
-| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` 缺失，或 `revision` 不是正整数 | `src/runtime-contract.mjs:46` |
-| `RUN_IDENTITY_MISMATCH` | 运行身份与绑定的路由不一致 | `src/runtime-contract.mjs:60` |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` 不在公开或实验列表中 | `src/runtime-contract.mjs:67` |
+| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` 缺失，或 `revision` 不是正整数 | `src/runtime-contract.mjs:74` |
+| `RUN_IDENTITY_MISMATCH` | 运行身份与绑定的路由不一致 | `src/runtime-contract.mjs:88` |
 
 `studioRunIdentity()` 会先补齐字段再校验，因此空白字符串与缺字段等价；`revision` 会被强制转成数字。
 
@@ -70,3 +70,4 @@ description: "`agentkit.studio.runtime/v1` 的 3 种运行时、能力矩阵、�
 | 测试文件 | 位置 |
 | --- | --- |
 | runtime-contract.test.mjs | `tests/runtime-contract.test.mjs` |
+| runtime-registry.test.mjs | `tests/runtime-registry.test.mjs` |
