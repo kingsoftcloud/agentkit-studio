@@ -213,10 +213,24 @@ async def call_tool(name: str, arguments: dict):
 | 适配器 | 共享连接下的按请求注入、并发隔离 | `tests/local-resource-adapters.test.mjs` |
 | 托管入口 | 私有 sidecar 只能由 RunAgent 铸造、require 模式、审批恢复 | `tests/managed-runtime-approval.test.mjs` |
 | Native 集成 | 实际 `NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP peer | `tests/native-mcp-dispatch-authority.test.mjs` |
-| **未覆盖** | **真实 DSH Host 进程（隔离 `DSH_HOME` 启动）** | 属发布门禁，不在单元测试内声明 |
+| **未覆盖** | **真实 DSH Host 进程（隔离 `DSH_HOME` 启动）** | 属发布门禁，见下方「发布门禁」 |
 
 Native 集成用例里模型与 ToolRegistry 策略层是受控替身，也没有启动 DSH Host 进程；它证明的是
 「Native 运行时确实把 Host 绑定的身份送到了 MCP 线上」，不是「整机 Host 验收」。
+
+## 发布门禁
+
+以下项目**当前未在本地通过**，必须在合入前由具备对应环境的门禁补齐（GitHub Actions 的
+`public-gate` / `patched-dsh-host` 作业即为此环境）：
+
+| 门禁 | 为什么本地跑不了 | 通过标准 |
+| --- | --- | --- |
+| `make check` / `public-gate` | 本机 Node.js 26.3.0 低于仓库基线（`.node-version` = 24.22.1，26.x 需 ≥ 26.12.1） | `scripts/check-node-version.mjs` 通过，全量套件无失败 |
+| 真实 DSH Host 进程 | 需要启动 DSH Host 并绑定隔离 `DSH_HOME`，本地无对应装机 | 在隔离 `DSH_HOME` 下启动 Host，`RunAgent` 一轮经真实 DSH 到达 MCP Server 并观察到 `businessUserId` / `businessSessionId` |
+| Chromium 相关用例 | 无缓存 Chromium 且未设 `AGENTKIT_NATIVE_TEST_CHROMIUM` | `dsh-node-browser-tools.test.mjs` 通过 |
+
+本地已验证的部分不替代门禁结论：身份单元、适配器、托管入口与 Native 集成四层共 111 个用例通过，
+`node --check` 与 `git diff --check` 干净。
 
 ## 回归
 
