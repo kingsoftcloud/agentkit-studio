@@ -152,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           for patch in "${{ steps.dsh-pin.outputs.patches }}"/*.patch; do
-            git -C .ci-dsh apply --whitespace=nowarn "$patch"
+            git -C .ci-dsh apply --whitespace=nowarn "$GITHUB_WORKSPACE/$patch"
           done
       - name: Build the patched DSH host
         working-directory: .ci-dsh
