@@ -36,7 +36,9 @@ function setup(t, extra = {}, instrumentPage) {
     assert.equal(intent.value.request.agentId, options.agentId);
     for (const key of ['scope', 'runId', 'turnId', 'executionFence', 'taskChainId']) assert.equal(Object.hasOwn(intent.value.request, key), false);
     let browser;
-    try { browser = await chromium.launch({ executablePath: executable, headless: true }); }
+    // Use the same owned process teardown as the tool. Plain Playwright close
+    // can wait on a helper's inherited pipe after Chromium exits on macOS.
+    try { browser = await launchOwnedInspectionBrowser(chromium, executable); }
     catch (error) { t.diagnostic('Chromium launch failed: ' + redactDiagnosticText(error.message, 8192)); throw error; }
     live.push(browser);
     const contexts = new Set(), closeBrowser = browser.close.bind(browser);
@@ -87,10 +89,10 @@ for (const recovered of [true, false]) test(`static browser screenshot timeout $
   assert.deepEqual(await h.invoke(args, h.exec(args), h.create()), result);
   assert.equal(h.launches, 1);
   if (recovered) {
-    assert.equal(result.status, 'ok');
+    assert.equal(result.status, 'ok', canonical(result));
     assert.match(result.content.body_text_preview, /count:1/);
   } else {
-    assert.equal(result.status, 'error');
+    assert.equal(result.status, 'error', canonical(result));
     assert.equal(result.content.error_type, 'browser_evidence_failed');
     assert.equal(result.content.stage, 'screenshot');
     assert.equal(result.content.cause, 'timeout');
