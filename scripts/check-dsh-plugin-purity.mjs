@@ -17,7 +17,6 @@ const forbidden = [
 ];
 const ignored = new Set([
   'CHANGELOG.md',
-  'docs/architecture/dsh-plugin-purity.md',
   'scripts/check-dsh-plugin-purity.mjs',
 ]);
 

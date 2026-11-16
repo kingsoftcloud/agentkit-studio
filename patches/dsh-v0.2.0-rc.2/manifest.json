@@ -18,7 +18,7 @@
         "testFile": "apps/desktop/tests/main-startup.spec.ts",
         "passed": 114,
         "failed": 0,
-        "evidence": "docs/refactor-patches.md"
+        "evidence": "docs-site/content/docs/contributing/patches.mdx"
       }
     },
     {
@@ -27,7 +27,7 @@
       "equivalence": {
         "replacement": "035",
         "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-        "evidence": "docs/product-configuration.md",
+        "evidence": "docs-site/content/docs/reference/configuration.mdx",
         "remaining": "Final cross-platform and installed-update acceptance remains required."
       }
     },
@@ -37,7 +37,7 @@
       "equivalence": {
         "replacement": "035",
         "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-        "evidence": "docs/product-configuration.md",
+        "evidence": "docs-site/content/docs/reference/configuration.mdx",
         "remaining": "Final cross-platform and installed-update acceptance remains required."
       }
     },
@@ -47,7 +47,7 @@
       "equivalence": {
         "replacement": "035",
         "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-        "evidence": "docs/product-configuration.md",
+        "evidence": "docs-site/content/docs/reference/configuration.mdx",
         "remaining": "Final cross-platform and installed-update acceptance remains required."
       }
     },
@@ -57,7 +57,7 @@
       "equivalence": {
         "replacement": "035",
         "patchedTree": "c2426c392335dde1ca31d5373fefef1940cb01db",
-        "evidence": "docs/product-configuration.md",
+        "evidence": "docs-site/content/docs/reference/configuration.mdx",
         "remaining": "Final cross-platform and installed-update acceptance remains required."
       }
     }
