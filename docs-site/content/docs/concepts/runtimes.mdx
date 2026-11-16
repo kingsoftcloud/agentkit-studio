@@ -1,12 +1,12 @@
 ---
 title: 三种运行时
-description: 运行时类型决定一次运行由谁的执行模型负责。三个可创建的值、一个可路由但不可创建的值，以及它们的能力差异与执行策略。
+description: 运行时类型决定一次运行由谁的执行模型负责。三种运行时各自的能力差异、Star Harness 为什么必须先安装，以及执行策略如何限制写入范围。
 status: new
 ---
 
-**运行时类型（`runtime.type`）决定一次运行由谁的执行模型负责。正式值是三个——DSH 原生、Star Harness、Codex——另有一个 `native-engine` 只能被路由选中，不能创建。**
+**运行时类型（`runtime.type`）决定一次运行由谁的执行模型负责。只有三种：DSH 原生、Star Harness、Codex**（`src/runtime-contract.mjs:6` 的 `STUDIO_RUNTIME_TYPES`）。
 
-这一页讲清三个值各自的归属与能力、`native-engine` 这个陷阱、以及运行时之外那一层「执行策略」如何限制写入范围。
+这一页讲清三种运行时各自的归属与能力、Star Harness 为什么必须先安装才能选、以及运行时之外那一层「执行策略」如何限制写入范围。
 
 ## 为什么运行时不是「引擎选项」
 
@@ -21,24 +21,27 @@ status: new
 
 所以选运行时不是风格偏好，它决定了后面能做哪些事。**运行时在创建时锁定，之后不能改**——换运行时只能新建一个 Agent。
 
-## 3+1 陷阱
+## Star Harness 必须先安装
 
-这是全站最容易写错的一处，因为它有两份都正确的清单：
+三种运行时里只有 Star Harness 是**可插拔的**：它由三个独立的 npm 包提供（`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`，当前 `0.0.25`），Studio 单向依赖它，它不反向依赖 Studio。
 
-| 清单 | 包含几个值 | 谁在用 |
-| --- | --- | --- |
-| 类型断言接受的运行时 | **4** 个（含 `native-engine`） | 路由层：本地会话可能被路由到独立引擎进程 |
-| 创建表单列出的运行时 | **3** 个 | 用户界面：三个值都可见，但 Star Harness 在新建时带「未开放」徽章且不可选中 |
+所以「新建 Agent 时能不能选 Star Harness」是一个**状态判断**，不是常量：
 
-类型断言接受 4 个值，是因为本地 Star Harness 会话在满足条件时会被路由到 `native-engine` 进程上执行；创建表单只列出 3 个，因为 `native-engine` 的实验路径还没走到可创建的地步。
+| 条件 | 含义 |
+| --- | --- |
+| 已安装 | 插件页装过经过摘要校验的发布包 |
+| 已启用 | 当前部署允许使用该运行时 |
+| 至少一个可用工作区 | 绑定了工作区，或存在外部托管的工作区路由 |
 
-三个可见值里，**Star Harness 在新建时不可选**：按钮带「未开放」徽章并处于 `disabled` 状态（`src/client/pages/agent-form.mjs:265-267`）。编辑一个已经使用 Star Harness 的既有 Agent 时它是可选的，因为 `creatableRuntime` 对 `editing` 放行（`src/client/pages/agent-form.mjs:61`）。
+三条同时满足时 `canCreate` 为真（`src/host/services/star-harness.mjs:162`），表单才会放开 Star Harness 选项（`src/client/pages/agent-form.mjs:79`）。任一不满足，运行时会渲染成「未开放」徽章且不可选中（`:265-267`）。
 
-<Callout type="warn" title="所以「支持 4 种运行时」是错的">
-  创建表单里能看到 3 个，其中只有 2 个能在新建时选中。`native-engine` 是可路由值，不是可选项。写「4 种」会让读者在创建表单里找不到第四个选项。
+<Callout type="info" title="安装与升级">
+  安装、升级、回退与工作区绑定都在**插件页 → Star Harness** 里完成，见[安装、升级与绑定 Star Harness](../guides/star-harness.mdx)。
 </Callout>
 
-历史文档里这个运行时还有两个别名——AgentKit Harness 与 Native Harness。**两个别名都已废弃**，统一写 **Star Harness**（`harness`）。
+<Callout type="warn" title="Star Harness 的两个历史别名已废弃">
+  历史文档里 Star Harness 还叫过 AgentKit Harness 与 Native Harness。**两个别名都已废弃**，统一写 **Star Harness**（`harness`）。
+</Callout>
 
 ## 三个正式运行时
 
@@ -51,11 +54,11 @@ status: new
 | 契约 | `agentkit.studio.runtime/v1` | DSH 原生 turn 契约 | `studio.codex.adapter/v1` |
 | 事件所有者 | DSH 会话 | 原生 run store | Studio Codex 适配器 |
 | 流所有者 | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
-| 新建默认 | **是** | 否 | 否 |
+| 新建默认 | **是** | 条件可创建（见上节） | 否 |
 
-<Diagram src="/assets/agentkit-runtime-ownership.png" alt="三个运行时在模型与工具循环、会话转录、持久运行状态、Studio 接缝四条泳道上的归属矩阵" />
+<Diagram src="/assets/agentkit-runtime-ownership.png" alt="三种运行时（三列）在模型与工具循环、会话转录、持久运行状态与 Studio 接缝上的归属矩阵" />
 
-*读图要点：执行者不是转录所有者——同一个运行时里，「谁在跑模型循环」和「谁在保存事件日志」是两个不同实体。四条泳道里只有 `cancel` 是三者共有的能力，其余能力都属于某一个实现，不能靠配置打开。*
+*读图要点：执行者不是转录所有者——同一个运行时里，「谁在跑模型循环」和「谁在保存事件日志」是两个不同实体。三列里只有 `cancel` 是三者共有的能力，其余能力都属于某一个实现，不能靠配置打开。*
 
 ## 能力矩阵
 

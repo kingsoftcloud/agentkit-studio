@@ -1,13 +1,13 @@
 ---
-title: 错误码
-description: 196 个错误码：Top 30 给「错误码 → 用户动作」，其余按 44 个命名空间给含义与排查入口。
+title: "错误码"
+description: "198 个错误码：Top 30 给「错误码 → 用户动作」，其余按 45 个命名空间给含义与排查入口。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 错误码口径
 
-共 196 个错误码：191 个来自 `src/**` 的 `code: '...'` 字面量，5 个来自 wire 边界的 `STUDIO_WIRE_ERRORS`（两者有重叠，取并集）。
+共 198 个错误码：193 个来自 `src/**` 的 `code: '...'` 字面量，5 个来自 wire 边界的 `STUDIO_WIRE_ERRORS`（两者有重叠，取并集）。
 
 错误码是**稳定契约**：它出现在客户端分支、日志与排障文档里，改名就是破坏性变更。
 
@@ -62,19 +62,19 @@ description: 196 个错误码：Top 30 给「错误码 → 用户动作」，其
 
 ## 命名空间索引
 
-其余 168 个码按命名空间分组，每组的含义与首个排查入口如下。
+其余 170 个码按命名空间分组，每组的含义与首个排查入口如下。
 
 | 命名空间 | 条数 | 含义 | 排查入口 |
 | --- | --- | --- | --- |
 | `STUDIO` | 25 | Studio 宿主与路由。 | `src/agent-preset-admission.mjs:161` |
-| `NATIVE` | 16 | 原生引擎、A2A 与 Web 授权。 | `src/agent-preset-admission.mjs:335` |
+| `NATIVE` | 16 | 原生引擎、A2A 与 Web 授权。 | `src/agent-preset-admission.mjs:336` |
 | `CLOUD` | 15 | 云端执行模式与流式响应。 | `src/cloud-execution-modes.mjs:41` |
 | `CODEX` | 11 | Codex App Server 与插件市场。 | `src/client/dsh/codex-tool.mjs:33` |
 | `SKILL` | 10 | Skill 下载、授权与运行。 | `src/providers/native-skill-connection.mjs:92` |
 | `INVALID` | 8 | 入参校验。 | `src/agent-catalog.mjs:10` |
-| `MANAGED` | 8 | 托管运行时、资源与输入冲突。 | `src/host/bootstrap.mjs:157` |
+| `MANAGED` | 8 | 托管运行时、资源与输入冲突。 | `src/host/bootstrap.mjs:158` |
 | `MODEL` | 8 | 模型目录、端点与凭证。 | `src/model-endpoint.mjs:9` |
-| `DSH` | 7 | DSH 基座与插件索引。 | `src/agent-preset-admission.mjs:343` |
+| `DSH` | 7 | DSH 基座与插件索引。 | `src/agent-preset-admission.mjs:344` |
 | `RUNTIME` | 7 | 运行时路由与传输。 | `src/cloud-runtime-fetch.mjs:6` |
 | `MCP` | 6 | MCP Server 绑定与配置。 | `src/host/services/resource-tools.mjs:16` |
 | `RESOURCE` | 5 | 资源目录与适配器。 | `src/host/services/optional-resource.mjs:9` |
@@ -90,13 +90,14 @@ description: 196 个错误码：Top 30 给「错误码 → 用户动作」，其
 | `UPSTREAM` | 3 | 上游流式传输。 | `src/model-proxy-handler.mjs:150` |
 | `A2A` | 2 | Agent-to-Agent 控制面。 | `src/providers/native-a2a-receipt.mjs:97` |
 | `AGENT` | 2 | Agent 目录与修订版本解析。 | `src/host/routes/agents.mjs:13` |
-| `BUILD` | 2 | 构建与冻结运行时。 | `src/agent-preset-admission.mjs:325` |
+| `BUILD` | 2 | 构建与冻结运行时。 | `src/agent-preset-admission.mjs:326` |
 | `CREDENTIAL` | 2 | 凭证引用与取值。 | `src/host/routes/credentials.mjs:6` |
 | `DEPLOYMENT` | 2 | 部署中断与恢复。 | `src/deployment-rollouts.mjs:167` |
 | `DISCOVERY` | 2 | MCP / Skill 发现。 | `src/dsh-plugin-discovery.mjs:244` |
 | `EVALUATION` | 2 | 评测目标与执行。 | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | 请求体与取消。 | `src/model-proxy-handler.mjs:47` |
 | `RUN` | 2 | 运行标识。 | `src/providers/dsh-runtime.mjs:42` |
+| `STAR` | 2 | 本机 Star Harness 的安装、版本与工作区绑定。 | `src/host/routes/http.mjs:65` |
 | `BOUND` | 1 | 资源绑定解析。 | `src/providers/codex-resource-context.mjs:136` |
 | `CHANNELS` | 1 | 渠道子系统可用性。 | `src/host/routes/channels.mjs:8` |
 | `GATEWAY` | 1 | 未归入命名空间的独立错误码。 | `src/host/routes/dispatcher.mjs:28` |
@@ -177,6 +178,8 @@ description: 196 个错误码：Top 30 给「错误码 → 用户动作」，其
 
 **RUN** (2) — `RUN_IDENTITY_INVALID` · `RUN_IDENTITY_MISMATCH`
 
+**STAR** (2) — `STAR_HARNESS_OWNER_REQUIRED` · `STAR_HARNESS_UNSUPPORTED`
+
 **BOUND** (1) — `BOUND_TOOL_NOT_FOUND`
 
 **CHANNELS** (1) — `CHANNELS_UNAVAILABLE`
@@ -207,9 +210,9 @@ description: 196 个错误码：Top 30 给「错误码 → 用户动作」，其
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| 错误码总数 | `196` | 新增只增不改；改名要留别名 |
+| 错误码总数 | `198` | 新增只增不改；改名要留别名 |
 | wire 码 | `5` | `src/contracts/definitions.mjs` |
-| 命名空间 | `44` | 首段下划线前缀 |
+| 命名空间 | `45` | 首段下划线前缀 |
 | 非错误码排除 | `ENOTFOUND · UNKNOWN · CLOUD` | Node errno / A2A 信封 / 工具标签，不是 Studio 错误码 |
 
 ## 开发者入口

@@ -1,6 +1,6 @@
 ---
 title: Guides
-description: Thirteen task guides from creating an agent to shipping it, with copyable steps.
+description: Fourteen task guides from creating an agent to shipping it, with copyable steps.
 status: new
 ---
 
@@ -22,6 +22,7 @@ Guides are organized by what you want to accomplish. Each page gives prerequisit
 | Automate | [Automation and scheduling](./automation.mdx) | Runs trigger on a schedule or an event | A deployed agent |
 | Connect | [Channels](./channels.mdx) | External message entry points trigger the agent | A deployed agent |
 | Observe | [Observability (OTel)](./observability.mdx) | Traces are exported over OpenTelemetry | A deployed agent |
+| Runtimes | [Install, upgrade, and bind Star Harness](./star-harness.mdx) | Take `harness` from "not enabled" to creatable | Node.js and npm available |
 
 ## The three steps of the creation form
 
@@ -64,9 +65,10 @@ These defaults come from code, not from UI copy. Before changing configuration, 
 | Memory write switch | `shadow` (evaluate only, never write) | `src/client/state/agent-memory-config.mjs:33` |
 | Default model credential name | `AGENTKIT_MODEL_API_KEY` | `src/client/dsh/model-bridge.mjs:17` |
 
-<Callout type="warn" title="Star Harness is paused">
-  Star Harness is hidden from the runtime options when creating an agent unless the caller explicitly opts in;
-  editing an existing Star Harness agent is unaffected (`src/client/pages/agent-form.mjs:60-61`).
+<Callout type="warn" title="Star Harness must be installed and bound first">
+  Star Harness is the only pluggable one of the three runtimes: install it on the plugin page, enable it, and bind a workspace,
+  and only then does the Agent form offer it (`creatableRuntime`, `src/client/pages/agent-form.mjs:78`).
+  See [Install, upgrade, and bind Star Harness](./star-harness.mdx).
 </Callout>
 
 ## How every page is structured

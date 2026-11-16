@@ -1,107 +1,123 @@
 ---
 title: Star Harness
-description: 独立 Harness 运行时的两种部署形态、配置入口、它为什么不能新建 Agent，以及失败时返回哪些错误码。
+description: Star Harness 作为 npm 插件的执行模型、安装升级与工作区绑定的完整生命周期，以及它为什么必须先装好才能被选中。
 status: new
 ---
 
-**Star Harness（`harness`）把整个 turn 交给 Native Harness 内核，DSH 不再自己跑模型与工具循环。** 它通过 DSH 维护的 external-turn 接口委托整轮执行，因此不存在「Studio 里再跑一次循环」的可能（`src/runtime-contract.mjs:25-29`）。
+**Star Harness（`harness`）把整个 turn 交给 Harness 原生内核，DSH 不再自己跑模型与工具循环。** 它只有一种发布形态：从 npm 安装 `@kingsoftcloud/agentkit-harness-node`。没有独立进程，也没有需要你手写的引擎地址——你在插件页装好、启用、绑定工作区之后，Agent 表单才会出现 Star Harness 这个选项。
 
 ## 执行模型
 
 | 环节 | 归属 | 依据 |
 | --- | --- | --- |
-| 模型 / 工具循环 | `ksadk-harness` 的 native kernel | `owner: 'ksadk-harness'`、`execution: 'native-kernel'` |
-| 契约 | `agentkit.native-dsh-turn/v1` | `contract` |
+| 模型 / 工具循环 | Harness 原生内核 | `owner: 'ksadk-harness'`、`execution: 'native-kernel'` |
+| Studio 与它的契约 | `agentkit.native-dsh-turn/v1` | `contract` |
 | 事件源 | `native-run-store` | `eventOwner` |
 | 流式 | `native-model-port` | `streamOwner` |
 | 能力集 | `native-run`、`durable-receipts`、`tool-approval`、`cancel`、`resume`、`child-tasks` | `capabilities` |
 
 依据：`src/runtime-contract.mjs:25-29`。
 
-它有两种运行形态，配置面完全不同：
+DSH 侧提供整轮端口（宿主契约 `dsh.external-turn-host/v1`），每轮由它把控制权交给 Harness 引擎（`dsh.external-turn/v1`）。Harness 包在接管前会校验宿主具备 `claim`、`pending`、`resume` 三个方法（`@kingsoftcloud/agentkit-harness-node` 的 `native/dsh-turn-ownership.mjs:47-52`）。
 
-| 形态 | 循环在哪 | 需要的配置 |
-| --- | --- | --- |
-| Host 内整轮委托 | DSH 进程内，走 `dsh.external-turn/v1` | 无额外配置 |
-| 独立引擎进程 | 单独进程，走 `agentkit.engine/v1` | `AGENTKIT_ENGINE_COMMAND` 或引擎服务地址 |
-
-<Callout type="warn" title="Host 内形态不能走普通流式接缝">
+<Callout type="warn" title="不能走普通流式接缝">
   `harness` 在本地模式下经过 DSH 的流式适配器会直接抛 `STUDIO_NATIVE_TURN_REQUIRED`（「Native Harness requires the whole-turn execution port.」）。它必须由整轮端口承接，不能被当成「一条普通的模型流」（`src/providers/dsh-runtime.mjs:591`）。
 </Callout>
 
+## 依赖方向
+
+Studio 单向依赖 Harness 的 npm 包，版本精确锁定：
+
+| 包 | 版本 | 用途 |
+| --- | --- | --- |
+| `@kingsoftcloud/agentkit-harness-core` | `0.0.25` | 规范值、不变量、内核原语 |
+| `@kingsoftcloud/agentkit-harness-node` | `0.0.25` | 整轮 turn 契约、Run 归属、包完整性校验 |
+| `@kingsoftcloud/agentkit-harness-ui` | `0.0.25` | 引擎视图适配器 |
+
+依据：`package.json:133-135`（三个包都精确锁定，不用 `^` 或 `~`）。
+
+**Harness 不依赖 Studio。** 三个包的 `dependencies` 里没有任何 `@kingsoftcloud/agentkit-studio*` 条目——依赖是单向的，所以升级 Harness 不需要 Studio 一起发版。
+
+## 安装与生命周期
+
+Star Harness 由**插件页里的「Star Harness 管理」**驱动，五个操作对应五个控制端点：
+
+| 操作 | 端点 | 界面文案 |
+| --- | --- | --- |
+| 读取状态 | `star-harness/status` | 已安装 `<version>` / 未安装，附「已启用 / 已停用」 |
+| 安装 / 升级 | `star-harness/install` | 「安装」「升级」「重新安装」 |
+| 启停 | `star-harness/enable` | 「启用」「停用」 |
+| 绑定工作区 | `star-harness/bind` | 「绑定工作区」 |
+| 解除绑定 | `star-harness/unbind` | 「解除绑定」 |
+
+依据：`src/host/routes/star-harness.mjs:7-11`、`src/remote/control-client.mjs:469-473`、`src/client/pages/star-harness.mjs:64-112`。
+
+### 版本规则
+
+| 规则 | 表现 | 依据 |
+| --- | --- | --- |
+| 版本格式 | 必须是 `x.y.z` 三段数字 | `src/host/services/star-harness-release.mjs:14-15` |
+| 只能升或回退 | 想切到既不是「更新」也不是「上一版」的版本 → `STAR_HARNESS_VERSION_UNSUPPORTED` | `src/host/services/star-harness.mjs:186-191` |
+| 回退 | 有 `previousVersion` 时出现「回退到 `<版本>`」按钮 | `src/client/pages/star-harness.mjs:88` |
+| 出厂校验 | 只接受当前 Studio 已核验的版本，否则 `STAR_HARNESS_RELEASE_UNREVIEWED` | `src/host/services/star-harness-release.mjs:22-28` |
+| 包完整性 | 逐文件核对摘要，依赖解析不得逃出安装目录 | `:32-59` |
+| 注册表 | 固定 `https://registry.npmjs.org` | `:12` |
+
+<Callout type="info" title="为什么版本要校验">
+  Studio 会先确认这个 Harness 版本被当前 Studio 核验过，再安装。换 Harness 版本改的是依赖版本号，不涉及 Studio 源码——但没被核验的版本会明确拒绝，而不是装上再炸。
+</Callout>
+
+### 工作区绑定
+
+一个工作区对应一个模型配置和一份独立的运行状态：
+
+| 规则 | 表现 | 依据 |
+| --- | --- | --- |
+| 必须绝对路径 | 非规范绝对路径 → `STAR_HARNESS_INVALID_REQUEST` | `src/host/services/star-harness.mjs:212-217` |
+| 不得重叠 | 与已有绑定、Star Harness 状态目录或外部 Harness 路由重叠 → `STAR_HARNESS_WORKSPACE_CONFLICT` | `:71-72`、`:214-215` |
+| 模型必须可用 | 选择的模型配置必须存在且启用 | `:216-217` |
+| 模型漂移 | 绑定后模型变了 → `STAR_HARNESS_MODEL_CHANGED`，需重新绑定 | `:61-64` |
+| 目录失效 | 工作区被删后显示「目录已失效」，且不再参与路由 | `src/client/pages/star-harness.mjs:97`、`src/host/services/star-harness.mjs:132` |
+
 ## 什么时候选它
 
-- 需要**跨进程续跑**（`resume`）：只有 Star Harness 具备该能力。
+- 需要**跨进程续跑**（`resume`）：三条运行时里只有 Star Harness 具备。
 - 需要**子任务**（`child-tasks`）与持久回执（`durable-receipts`）：多角色任务分解依赖这两项。
 - 需要工具审批作为运行时一等能力（`tool-approval`）。
-- 组织已经独立部署了 Harness 服务，希望升级引擎不必重发 Studio。
+- 你已经在用 DeepSeek Harness，希望整轮交给 Harness 内核而不是 DSH 原生循环。
 
 不需要这些时选 DSH Native 更省事（见[三运行时对照](./runtimes-compare.mdx)）。
-
-## 配置入口
-
-### 独立引擎进程
-
-| 环境变量 | 作用 | 校验 |
-| --- | --- | --- |
-| `AGENTKIT_ENGINE_COMMAND` | 指向独立安装的 Harness 可执行文件 | 必填，缺失抛 `NATIVE_ENGINE_UNAVAILABLE` |
-| `AGENTKIT_ENGINE_ARGS` | 传给该进程的参数 | 必须是 JSON 字符串数组，否则 `NATIVE_ENGINE_CONFIG_INVALID` |
-| `AGENTKIT_ENGINE_MODEL_API_KEY` | 引擎侧模型凭证 | 子进程环境变量名固定为这一个 |
-| `AGENTKIT_ENGINE_MODEL_IMAGES` | 声明引擎具备图片能力 | 设为 `1` 才生效 |
-
-依据：`src/providers/native-engine-runtime.mjs:92-100`、`:214-218`。
-
-### 引擎服务（本地多项目 / 托管）
-
-| 环境变量 | 作用 |
-| --- | --- |
-| `AGENTKIT_ENGINE_SERVICE_URL` | 引擎服务地址（HTTPS 或 `127.0.0.1` HTTP） |
-| `AGENTKIT_ENGINE_SERVICE_TOKEN` | 服务令牌，通过其环境变量名间接引用 |
-| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | 该服务绑定的工作区绝对路径 |
-| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | 可选 CA 文件，要求 HTTPS |
-| `AGENTKIT_ENGINE_SERVICE_WORKSPACES` | 一次声明多个 `{workspace, endpoint, tokenEnv, caFile, model}` 绑定 |
-
-单服务与多项目两种写法互斥：同时设置 `AGENTKIT_ENGINE_SERVICE_WORKSPACES` 与 `AGENTKIT_ENGINE_SERVICE_URL` 会被拒绝（`src/providers/engine-service-workspaces.mjs:22-23`）。
-
-```json
-[
-  {
-    "workspace": "/projects/alpha",
-    "endpoint": "https://engine-alpha.example.com",
-    "tokenEnv": "HARNESS_ALPHA_TOKEN",
-    "model": "your-model-name"
-  }
-]
-```
-
-### 托管声明
-
-托管形态下 `framework: harness` 的声明若注入了引擎服务变量，Agent 的运行时类型会被投影成 `native-engine`，模型选择走 `agentkit-studio-harness-service` 提供方（`src/managed-runtime-definition.mjs:36-51`、`src/providers/engine-service-workspaces.mjs:5`）。
 
 ## 限制
 
 | 限制 | 表现 | 依据 |
 | --- | --- | --- |
-| **新 Agent 不可创建** | 创建表单只在编辑既有 Agent 时放行 `harness`；`allowHarnessRuntime` 无调用方传 `true` | `src/client/pages/agent-form.mjs:28`、`:61` |
-| 必须由整轮端口承接 | 走普通流式接缝抛 `STUDIO_NATIVE_TURN_REQUIRED` | `src/providers/dsh-runtime.mjs:591` |
-| 工作区必须一致 | 托管 Harness 的服务工作区与宿主工作区不一致时抛 `HARNESS_SERVICE_WORKSPACE_MISMATCH` | `src/managed-runtime-host.mjs:276-279` |
-| 模型必须可解析 | 无服务托管且模型无接口地址时抛 `NATIVE_ENGINE_MODEL_UNAVAILABLE` | `src/providers/dsh-runtime.mjs:628-629` |
-| 升级不等于改 Studio | 协议只在 major 变化时更新 Studio 侧客户端 | `src/providers/engine-protocol-client.mjs:1-13` |
+| **必须先装好才能选** | 只有「已安装 + 已启用 + 至少一个工作区」才允许新建 Agent | `src/client/pages/agent-form.mjs:79`、`src/host/services/star-harness.mjs:162`、`:174` |
+| 未安装 | 安装或启用前抛 `STAR_HARNESS_NOT_INSTALLED` | `src/host/services/star-harness.mjs:14` |
+| 未绑定工作区 | 启用时若无可用工作区 → `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | `:15` |
+| 忙时不可变更 | 有任务运行或正在变更 → `STAR_HARNESS_BUSY` | `:11` |
+| 一次只允许一个写入者 | 新 worker 必须在旧 worker 停止后接管；切换失败回滚原版本 | `:95-125` |
+| 版本精确锁定 | 三个包均为 `0.0.25`，不接受浮动范围 | `package.json:133-135` |
+| 无独立 `persistence` 项 | 持久化以 `durable-receipts` 形态提供，与 DSH 的 `persistence` 不是同一实现 | `src/runtime-contract.mjs:27` |
 
-<Callout type="info" title="Studio 不编译引擎代码">
-  Studio 侧只保留一个协议客户端（`agentkit.engine/v1`），它不含引擎逻辑、不 import 引擎代码，只把 JSON-RPC 帧管道接到子进程 stdio。宿主可以用别的语言按协议重写它（`src/providers/engine-protocol-client.mjs:1-13`）。
+<Callout type="warn" title="Star Harness 与 DSH Native 的 Run 账本不同">
+  切换运行时不迁移已有的 Run 历史：旧会话仍按原运行时打开。Star Harness 的 Run 由 Harness 账本拥有，DSH Native 的 Run 由 DSH 会话拥有。
 </Callout>
 
 ## 失败形态
 
 | 错误码 | 触发条件 | 你能做什么 |
 | --- | --- | --- |
-| `STUDIO_NATIVE_TURN_REQUIRED` | `harness` 走进了普通流式接缝 | 检查 Host 是否提供了整轮端口；这通常意味着 DSH 基线不匹配 |
-| `NATIVE_ENGINE_UNAVAILABLE` | 未配置 `AGENTKIT_ENGINE_COMMAND`，或运行时未注册 | 设置命令路径，或启用引擎服务 |
-| `NATIVE_ENGINE_CONFIG_INVALID` | `AGENTKIT_ENGINE_ARGS` 不是 JSON 字符串数组 | 改成 `["--flag","value"]` 形式 |
-| `NATIVE_ENGINE_MODEL_UNAVAILABLE` | 模型没有配置接口地址 | 在 Agent 上绑定一个配置了网关地址的模型 |
-| `MANAGED_HARNESS_SERVICE_BINDING_INVALID` | 托管形态下服务地址 / 凭据 / 工作区无效 | 检查四个 `AGENTKIT_ENGINE_SERVICE_*` 变量 |
-| `HARNESS_SERVICE_WORKSPACE_MISMATCH` | 服务工作区 ≠ 宿主工作区 | 让两者指向同一个绝对路径 |
+| `STAR_HARNESS_NOT_INSTALLED` | 尚未安装就启用或绑定 | 先安装一个已核验的版本 |
+| `STAR_HARNESS_RELEASE_UNREVIEWED` | 指定版本未被当前 Studio 核验 | 升级 Studio，或改成已核验版本 |
+| `STAR_HARNESS_VERSION_UNSUPPORTED` | 目标版本既不是新版也不是上一版 | 选择更新版本，或回退到上一版 |
+| `STAR_HARNESS_WORKSPACE_CONFLICT` | 工作区与已有绑定或状态目录重叠 | 换一个不重叠的绝对路径 |
+| `STAR_HARNESS_MODEL_CHANGED` | 绑定的模型配置已变化 | 重新绑定该工作区 |
+| `STAR_HARNESS_BUSY` | 有任务在跑或正在变更 | 等任务结束再改版本或绑定 |
+| `STAR_HARNESS_CONFIG_INVALID` | 本地设置文件无法读取 | 检查 Star Harness 状态目录的 `settings.json` |
+| `NATIVE_ENGINE_WORKSPACE_UNAVAILABLE` | 该工作区未绑定或未启用 | 先绑定并启用工作区 |
+| `STUDIO_NATIVE_TURN_REQUIRED` | `harness` 走进了普通流式接缝 | 检查 Host 是否提供整轮端口；通常是 DSH 基线不匹配 |
+| `STAR_HARNESS_UNSUPPORTED` | 该部署由管理员托管，不提供本机管理 | 联系管理员 |
 
 资源不可用时的降级与重试见[降级与重试](./degradation-retry.mdx)。
 
@@ -109,10 +125,12 @@ status: new
 
 | 结论 | 位置 |
 | --- | --- |
-| 能力矩阵 | `src/runtime-contract.mjs:25-29` |
+| 能力矩阵与归属 | `src/runtime-contract.mjs:25-29` |
 | 整轮端口要求 | `src/providers/dsh-runtime.mjs:591` |
-| 引擎进程配置 | `src/providers/native-engine-runtime.mjs:92-100`、`:214-218` |
-| 引擎服务绑定与互斥 | `src/providers/engine-service-workspaces.mjs:5`、`:20-35` |
-| 协议客户端边界 | `src/providers/engine-protocol-client.mjs:1-13` |
-| 托管声明投影 | `src/managed-runtime-definition.mjs:36-51` |
-| 不可创建 | `src/client/pages/agent-form.mjs:28`、`:61` |
+| 宿主能力校验 | `agentkit-harness-node` 的 `native/dsh-turn-ownership.mjs:47-52` |
+| 管理服务与状态机 | `src/host/services/star-harness.mjs:21-251` |
+| 版本核验与包完整性 | `src/host/services/star-harness-release.mjs:14-61` |
+| 控制端点 | `src/host/routes/star-harness.mjs:7-11` |
+| 客户端交互 | `src/client/pages/star-harness.mjs:64-112` |
+| 可创建门控 | `src/client/pages/agent-form.mjs:61-79` |
+| 三个包精确锁定 | `package.json:133-135` |

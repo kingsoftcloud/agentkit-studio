@@ -64,7 +64,7 @@ Intel Mac 请改用[作为 DSH 插件](../getting-started/install.mdx#c-作为-d
 | **Star Harness**（`harness`） | 需要独立 Harness 服务的场景 |
 | **Codex**（`codex`） | 走 Codex App Server |
 
-还有一个 `native-engine`（Native 引擎，独立进程）**不在可创建列表里**，见[已知限制](./known-limitations.mdx#运行时)。
+**只有这三种。** 其中 `harness` 是唯一可插拔的：它由 ksadk-harness 的 npm 包提供，装好、启用并绑定工作区之后才会出现在 Agent 表单里，见[安装、升级与绑定 Star Harness](../guides/star-harness.mdx)。
 
 </Accordion>
 <Accordion title="改了 Agent 配置，为什么正在跑的会话没变？">

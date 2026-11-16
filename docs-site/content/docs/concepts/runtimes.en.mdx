@@ -1,12 +1,12 @@
 ---
 title: The three runtimes
-description: Three creatable runtime values, one routable-only value, their capability matrix, and execution policy.
+description: A runtime type decides whose execution model serves a run. The three runtimes, their capabilities, when each becomes ready, and the execution policy.
 status: new
 ---
 
-**A runtime type (`runtime.type`) decides whose execution model serves a run. There are three official values — DSH Native, Star Harness, and Codex — plus `native-engine`, which can only be selected by routing and never at creation.**
+**A runtime type (`runtime.type`) decides whose execution model serves a run. There are exactly three: DSH Native, Star Harness, and Codex** (`STUDIO_RUNTIME_TYPES` in `src/runtime-contract.mjs:6`).
 
-This page covers each value's ownership and capabilities, the `native-engine` trap, and the execution-policy layer that constrains what a run may write.
+This page covers each runtime's ownership and capabilities, what has to be true before each one is selectable, and the execution-policy layer that constrains what a run may write.
 
 ## Why a runtime is not an "engine option"
 
@@ -21,26 +21,25 @@ Reading a runtime as "a different model backend" runs into an immediate contradi
 
 Choosing a runtime is therefore not a style preference; it decides what you can do later. **The runtime is locked at creation and cannot be changed** — switching runtimes means creating a new agent.
 
-## The 3+1 trap
+## Star Harness must be installed first
 
-This is the easiest place in the documentation to get wrong, because two different lists are both correct:
+Only Star Harness is **pluggable** among the three: it is delivered as three npm packages (`@kingsoftcloud/agentkit-harness-core` / `-node` / `-ui`, currently `0.0.25`), and Studio depends on them one-way — they do not depend on Studio in return.
 
-| List | How many values | Who uses it |
+| Runtime | Ready when | What you see before that |
 | --- | --- | --- |
-| Runtimes the type assertion accepts | **4** (including `native-engine`) | The routing layer: a local session may be routed onto a separate engine process |
-| Runtimes the creation form lists | **3** | The UI shows all three, but Star Harness carries an "unavailable" badge and cannot be selected for a new agent |
+| `dsh-native` | Ready with Studio | — |
+| `codex` | The official Codex plugin is installed and enabled | Run targets shows "Provider not registered" and creation will not offer it |
+| `harness` | Installed on the plugin page + enabled + at least one usable workspace | Run targets shows "Not enabled", and the creation button is disabled with "Install and enable Star Harness on the plugin page" |
 
-The assertion accepts 4 because a local Star Harness session is routed onto the `native-engine` process when conditions allow. The creation form lists only 3 because the experimental `native-engine` path has not reached creatable status.
+The check is `canCreate` from `starHarnessStatus()` (`creatableRuntime` in `src/client/pages/agent-form.mjs:78`). For the full procedure see [Install, upgrade, and bind Star Harness](../guides/star-harness.mdx).
 
-Among the three visible values, **Star Harness cannot be selected for a new agent**: its button carries an "unavailable" badge and is `disabled` (`src/client/pages/agent-form.mjs:265-267`). Editing an existing Star Harness agent makes it selectable, because `creatableRuntime` admits `editing` (`src/client/pages/agent-form.mjs:61`).
+**The runtime is locked at creation and cannot be changed** — switching runtimes means creating a new agent. Editing an existing Star Harness agent is unaffected by the install state, because `creatableRuntime` admits `editing`.
 
-<Callout type="warn" title="So four supported runtimes is wrong">
-  The form shows 3 runtimes and only 2 of them can be selected for a new agent. `native-engine` is a routable value, not an option. Writing "4" sends readers looking for a fourth choice that is not in the form.
+<Callout type="warn" title="Star Harness has two retired aliases">
+  Historical documentation also called Star Harness "AgentKit Harness" and "Native Harness". **Both are retired.** Write **Star Harness** (`harness`).
 </Callout>
 
-Historical documentation used two aliases for this runtime — AgentKit Harness and Native Harness. **Both are retired.** Write **Star Harness** (`harness`).
-
-## The three official runtimes
+## The three runtimes
 
 | Item | DSH Native | Star Harness | Codex |
 | --- | --- | --- | --- |

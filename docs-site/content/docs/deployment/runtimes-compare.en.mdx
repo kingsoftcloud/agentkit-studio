@@ -10,11 +10,11 @@ The difference between the three runtimes is not "which one is smarter" — it i
 
 | Dimension | DSH Native Harness | Star Harness | Codex Agent |
 | --- | --- | --- | --- |
-| **Model/tool loop owner** | DSH native loop (`owner: 'dsh'`) | Standalone Harness process (`owner: 'ksadk-harness'`, `execution: 'native-kernel'`) | Codex App Server (`owner: 'studio'`, `execution: 'codex-app-server'`) |
+| **Model/tool loop owner** | DSH native loop (`owner: 'dsh'`) | Harness native kernel (`owner: 'ksadk-harness'`, `execution: 'native-kernel'`) | Codex App Server (`owner: 'studio'`, `execution: 'codex-app-server'`) |
 | **Session / transcript owner** | DSH Session, event source `dsh-session` | Native run store, event source `native-run-store` | DSH Session, event source `studio-codex-adapter` |
 | **Stream owner** | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
 | **Run persistence** | Native DSH persistence plus `replay` | Durable receipts (`durable-receipts`) plus `resume` | Native DSH persistence plus `replay` |
-| **Studio seam** | Native execution passes straight through; Studio only projects resources and models | Protocol client over `agentkit.engine/v1` or `agentkit.native-dsh-turn/v1` | In-process adapter plus an ephemeral Codex thread |
+| **Studio seam** | Native execution passes straight through; Studio only projects resources and models | npm plugin plus the whole-turn contract `agentkit.native-dsh-turn/v1` | In-process adapter plus an ephemeral Codex thread |
 | **Capability set** | `session`, `session-events`, `stream`, `cancel`, `replay`, `persistence`, `build-binding` | `native-run`, `durable-receipts`, `tool-approval`, `cancel`, `resume`, `child-tasks` | `session`, `stream`, `cancel`, `replay`, `build-binding` |
 | **Contract version** | `agentkit.studio.runtime/v1` | `agentkit.native-dsh-turn/v1` | `studio.codex.adapter/v1` |
 
@@ -41,13 +41,12 @@ Source: `src/runtime-contract.mjs:19-35`.
 | --- | :--: | :--: | :--: | :--: |
 | `dsh-native` | yes | yes (default) | yes | yes |
 | `codex` | yes | yes | yes | yes |
-| `harness` | yes | **shown, not selectable** | yes | yes |
-| `native-engine` | **no** | no | no | **no** |
+| `harness` | yes | selectable once installed and enabled | yes | yes |
 
-Source: `src/client/theme.mjs:26`, `src/client/pages/agent-form.mjs:28`, `:61`.
+Source: `src/client/theme.mjs:26`, `src/client/pages/agent-form.mjs:61-79`.
 
-<Callout type="warn" title="Star Harness cannot be created right now">
-  `creatableRuntime` returns `false` for `harness` whenever `editing` is false, and no caller passes `allowHarnessRuntime: true` (`src/client/pages/agent-form.mjs:28`, `:61`). The button still renders, but carries an "unavailable" badge and is `disabled` (`:265-267`). Existing Star Harness Agents stay editable and runnable; a new Agent cannot select it.
+<Callout type="warn" title="Star Harness is configurable, not permanently unavailable">
+  For `harness`, `creatableRuntime` additionally requires `starHarnessReady`, which comes from `canCreate` on `star-harness/status` — **installed + enabled + at least one usable workspace** (`src/client/pages/agent-form.mjs:61-79`, `src/host/services/star-harness.mjs:150`). Before it is installed the button renders `disabled` with an "unavailable" badge; once installed and bound to a workspace it can be selected for a new Agent. See [Star Harness](./agentkit-harness.mdx) for the install and binding flow.
 </Callout>
 
 ## The `runtime.type` field
@@ -56,7 +55,7 @@ Source: `src/client/theme.mjs:26`, `src/client/pages/agent-form.mjs:28`, `:61`.
   type={{
     'runtime.type': {
       description: 'The runtime that executes this revision loop. Read by the DSH session router; it does not follow the model selection.',
-      type: "'dsh-native' | 'harness' | 'codex' | 'native-engine'",
+      type: "'dsh-native' | 'harness' | 'codex'",
       default: "'dsh-native'",
     },
     'runtime.contract': {
@@ -92,8 +91,7 @@ A missing field throws `RUN_IDENTITY_INVALID`; a mismatch against the bound rout
 | --- | --- | --- |
 | Edit an existing Agent | Keeps its original runtime and never switches on its own | `src/client/pages/agent-form.mjs:48` |
 | Pick DSH Native while creating | Clears previously selected tools so no stale binding enters a new native loop | `:83` |
-| Pick Star Harness while creating | Not available — `creatableRuntime` only allows it when `editing` is true | `:61` |
-| Switch to `native-engine` | Not available — it is not in `ALLOWED_RUNTIME_TYPES` | `src/client/theme.mjs:26` |
+| Pick Star Harness while creating | Requires installing it, enabling it and binding a workspace first; otherwise not selectable | `src/client/pages/agent-form.mjs:61-79` |
 
 Switching a runtime does not migrate Run history: old sessions keep opening on their original runtime.
 
@@ -115,6 +113,6 @@ The **run target catalogue** row inside start checks counts only types in `ALLOW
 
 <Cards>
   <Card title="DSH Native Harness" href="/en/docs/deployment/dsh-native">Execution model and limits of the default runtime</Card>
-  <Card title="Star Harness" href="/en/docs/deployment/agentkit-harness">Configuration entry points for the standalone Harness process</Card>
+  <Card title="Star Harness" href="/en/docs/deployment/agentkit-harness">The full install, upgrade and workspace-binding lifecycle</Card>
   <Card title="Codex Agent" href="/en/docs/deployment/codex">The Codex App Server adapter</Card>
 </Cards>

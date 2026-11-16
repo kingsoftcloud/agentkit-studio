@@ -77,13 +77,12 @@ status: new
 
 - **编辑不会自动改运行时。** 打开既有 Agent 时，`initialRuntime` 优先取 `originalSpec.runtime.type`，只有缺失时才回落默认值（`src/client/pages/agent-form.mjs:48`）。
 - **Star Harness 与 Codex 的 Run 账本不同。** 切换到 `dsh-native` 不会迁移已有的 Run 历史；旧会话仍按原运行时打开。
-- **`native-engine` 不在选项里。** 它没有出现在 `ALLOWED_RUNTIME_TYPES` 中，所以表单无法切换到它（`src/client/theme.mjs:26`）。
 
 ## 失败形态
 
 | 错误码 | 触发条件 | 你能做什么 |
 | --- | --- | --- |
-| `RUNTIME_UNSUPPORTED` | `runtime.type` 不是四个合法值之一 | 检查 Agent 定义里的 `spec.runtime.type` |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` 不是三种运行时之一 | 检查 Agent 定义里的 `spec.runtime.type` |
 | `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` 缺失，或 `revision` 不是正整数 | 重新选择 Agent 或重开应用 |
 | `RUN_IDENTITY_MISMATCH` | 身份与路由绑定的 Agent / Session 不一致 | 关闭该会话重开，避免跨会话复用 |
 | `STUDIO_HOST_INCOMPATIBLE` | Host 缺少必需的执行契约 | 升级到匹配的 DSH 基线；管理路由仍可用 |

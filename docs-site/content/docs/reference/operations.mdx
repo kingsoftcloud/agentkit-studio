@@ -1,17 +1,17 @@
 ---
-title: 控制协议
-description: 134 个 operation id 的完整清单，按 24 个域分组，每条给出 Host 侧处理器位置。
+title: "控制协议"
+description: "139 个 operation id 的完整清单，按 25 个域分组，每条给出 Host 侧处理器位置。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 传输约定
 
-控制通道固定为 `/agentkit`，共 134 个 operation id，分布在 24 个域。
+控制通道固定为 `/agentkit`，共 139 个 operation id，分布在 25 个域。
 
 | 约定 | 值 | 源码 |
 | --- | --- | --- |
-| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:139` |
+| 控制通道 | `/agentkit` | `src/contracts/operations.mjs:144` |
 | 请求信封 | `{ operationId, payload }`，payload 必须是可序列化 JSON | `src/contracts/wire.mjs` |
 | 响应信封 | `{ ok: true, value }` 或 `{ ok: false, error }` | `src/contracts/wire.mjs` |
 | 取消 | 第四个参数 `AbortSignal`；取消后只回一个终态信封，不重试未知副作用 | `src/contracts/definitions.mjs:8` |
@@ -19,7 +19,7 @@ description: 134 个 operation id 的完整清单，按 24 个域分组，每条
 
 ## 域摘要
 
-24 个域，按 operation 数量降序。`sessions` 与 `agents` 承担了大部分交互面。
+25 个域，按 operation 数量降序。`sessions` 与 `agents` 承担了大部分交互面。
 
 | 域 | 条数 | 说明 |
 | --- | --- | --- |
@@ -39,6 +39,7 @@ description: 134 个 operation id 的完整清单，按 24 个域分组，每条
 | `settings` | 2 | 全局设置的读取与更新。 |
 | `skills` | 5 | Skill 的发现、预览、提交与安装预览。 |
 | `plugins` | 12 | DSH 与 Codex 插件的安装、启用、禁用与移除。 |
+| `star-harness` | 5 | 本机 Star Harness 的安装、启用与工作区绑定。只有 Studio 宿主所有者可调用。 |
 | `builds` | 4 | 构建创建、列出、下载与可移植导出。 |
 | `operations` | 2 | 长操作的列出与取消。 |
 | `schedules` | 8 | 计划任务的增删改查、手动触发与投递目标。 |
@@ -148,6 +149,11 @@ description: 134 个 operation id 的完整清单，按 24 个域分组，每条
 | `plugins` | `plugins/codex-inspect` | 检查 Codex 插件 | `src/host/routes/plugins.mjs:32` |
 | `plugins` | `plugins/codex-install` | 安装 Codex 插件 | `src/host/routes/plugins.mjs:25` |
 | `plugins` | `plugins/codex-remove` | 移除 Codex 插件 | `src/host/routes/plugins.mjs:25` |
+| `star-harness` | `star-harness/status` | 查询状态 | `src/host/routes/star-harness.mjs:4` |
+| `star-harness` | `star-harness/install` | 安装 | `src/host/routes/star-harness.mjs:8` |
+| `star-harness` | `star-harness/enable` | 启用 | `src/host/routes/star-harness.mjs:9` |
+| `star-harness` | `star-harness/bind` | 绑定工作区 | `src/host/routes/star-harness.mjs:10` |
+| `star-harness` | `star-harness/unbind` | 解绑工作区 | `src/host/routes/star-harness.mjs:11` |
 | `builds` | `builds/create` | 创建 | `src/host/routes/builds.mjs:5` |
 | `builds` | `builds/list` | 列出 | `src/host/routes/builds.mjs:5` |
 | `builds` | `builds/download` | 下载 | `src/host/routes/builds.mjs:5` |
@@ -203,8 +209,8 @@ description: 134 个 operation id 的完整清单，按 24 个域分组，每条
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| operation id 数 | `134` | 新增或删除都是破坏性变更 |
-| 域数 | `24` | 新增域需要同步本页与路由 |
+| operation id 数 | `139` | 新增或删除都是破坏性变更 |
+| 域数 | `25` | 新增域需要同步本页与路由 |
 | 通道 | `/agentkit` | 客户端硬编码，不可配置 |
 
 ## 开发者入口

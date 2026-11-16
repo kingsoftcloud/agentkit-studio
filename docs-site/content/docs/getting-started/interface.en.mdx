@@ -61,7 +61,7 @@ Only three secondary tabs (`src/client/pages/agents.mjs:170`):
 | **Cloud** | Agents deployed to the cloud |
 | **Runtime targets** | Execution targets this host can offer |
 
-"Runtime targets" reads the runtime catalog, which can report four states: catalog read / reading / unavailable / not yet enabled (`src/client/pages/runtime-catalog.mjs`). "Not yet enabled" means the host registered no matching capability — enable the official plugin in the plugin center.
+"Runtime targets" reads the runtime catalog, which has three page states: reading / catalog read / unavailable (`src/client/pages/runtime-catalog.mjs`). Each row also carries its own availability: "Not enabled" means the host registered no matching capability — install and enable the official plugin in the plugin center.
 
 ### Resources
 

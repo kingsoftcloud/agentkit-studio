@@ -21,18 +21,16 @@ Intel Mac 请改用[作为 DSH 插件](../getting-started/install.mdx#c-作为-d
 
 ## 运行时
 
-Studio 支持三种运行时（`src/client/theme.mjs:26`）：
+Studio 支持**三种**运行时（`src/client/theme.mjs:26`）：
 
 | 运行时 | 值 | 能否在 Agent 表单里选 |
 | --- | --- | --- |
 | DSH 原生 | `dsh-native` | ✅ 默认 |
 | Star Harness | `harness` | ✅ |
 | Codex | `codex` | ✅ |
-| Native 引擎（独立进程） | `native-engine` | ❌ **不可创建** |
 
-<Callout type="info" title="native-engine 是实验性的">
-`native-engine` 有中文标签「Native 引擎（独立进程）」，但它**不在** `ALLOWED_RUNTIME_TYPES` 里，所以 Agent 创建表单根本不会提供这个选项（`src/client/theme.mjs:26-34` 的注释写明了这一点）。
-已有的 `native-engine` Agent 不会被删除，但无法通过界面新建。
+<Callout type="info" title="Star Harness 必须先安装">
+`harness` 是三者里唯一可插拔的：它由 ksadk-harness 的 npm 包提供，没安装、没启用、或没有可用工作区时，Agent 创建表单不会放开这个选项（`src/client/pages/agent-form.mjs:61-79`、`src/host/services/star-harness.mjs:162`）。安装与绑定流程见[安装、升级与绑定 Star Harness](../guides/star-harness.mdx)。
 </Callout>
 
 另外，**进程内 Harness 已经退役**：

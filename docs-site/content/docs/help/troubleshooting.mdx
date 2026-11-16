@@ -1,6 +1,6 @@
 ---
 title: 排障
-description: 按「症状 → 错误码 → 原因 → 处理」四条定位问题，覆盖 Studio 源码中最高频的四十余个错误码。
+description: 按「症状 → 错误码 → 原因 → 处理」四列定位问题，覆盖 Studio 源码中最高频的七十余个错误码。
 ---
 
 Studio 的错误码全部来自 `src/**` 里的 `code: '...'` 字面量，可以直接在源码里搜。这一页按**出错位置**分组，同一个错误码只出现一次。
@@ -58,6 +58,29 @@ Studio 的错误码全部来自 `src/**` 里的 `code: '...'` 字面量，可以
 | 宿主能力不足 | `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` | 冻结运行时需要支持请求指纹的 DSH 宿主（`frozen-build-runtime.mjs:58`） | 升级宿主 |
 | 自动化跑不起来 | `AUTOMATION_SERVICE_UNAVAILABLE` | 自动化需要的 DSH 服务未启动（`src/native-automation-runner.mjs:32`） | 按提示启动对应服务 |
 | 自动化卡住 | `AUTOMATION_TIMEOUT` | 自动化运行超时（`native-automation-runner.mjs:85`） | 缩短任务或拆成多步 |
+
+## Star Harness
+
+`star-harness/*` 五个 operation 管的是**本机** Star Harness（`harness` 运行时）的安装、启停与工作区绑定。它们只对 Studio 宿主所有者开放，非所有者调用会直接拿到 `STAR_HARNESS_OWNER_REQUIRED`。
+
+| 症状 | 错误码 | 原因 | 处理 |
+| --- | --- | --- | --- |
+| 点安装没反应 | `STAR_HARNESS_NOT_INSTALLED` | 还没装就点了启用或绑定（`src/host/services/star-harness.mjs:14`） | 先在插件页安装 Star Harness，再启用 |
+| 安装报找不到 npm | `STAR_HARNESS_NPM_MISSING` | Studio 宿主进程找不到 `npm`（`star-harness-release.mjs:72`） | 装 Node.js 与 npm，确保宿主启动时的 `PATH` 里有 `npm` |
+| 安装卡在下载 | `STAR_HARNESS_DOWNLOAD_FAILED` | 从 npm registry 下载失败（`star-harness-release.mjs:138`） | 检查网络与代理；确认版本号在 registry 上存在 |
+| 安装报文件完整性失败 | `STAR_HARNESS_RELEASE_INVALID` | 版本号无效，或下载产物摘要不匹配（`star-harness-release.mjs:80`） | 重新安装；反复失败说明本地缓存损坏，删掉 Star Harness 状态目录后重装 |
+| 安装后启动不起来 | `STAR_HARNESS_START_FAILED` | 子进程启动失败或协议握手超时（`star-harness-release.mjs:225`） | 看宿主日志里的子进程 stderr；确认端口与工作区目录可写 |
+| 这份版本没被校验 | `STAR_HARNESS_RELEASE_UNREVIEWED` | 该版本没有当前 Studio 的校验记录（`star-harness-release.mjs:28`） | 先更新 Studio，再装与之匹配的版本 |
+| 版本与 Studio 不兼容 | `STAR_HARNESS_INCOMPATIBLE` | 引擎协议版本、包名或能力集不匹配（`star-harness-release.mjs:168`） | 换成 Studio 校验过的版本；不要手改 `pins` |
+| 选的版本不被接受 | `STAR_HARNESS_VERSION_UNSUPPORTED` | 既不是新版，也不是上次回退的那个版本（`star-harness.mjs:191`） | 选更新的版本，或回退到「上次使用的版本」 |
+| 版本号格式被拒 | `STAR_HARNESS_INVALID_REQUEST` | 版本号不是三段 semver，或参数类型不对（`star-harness.mjs:13`） | 用 `x.y.z` 形式；从列表里选，不要手打 |
+| 绑定工作区被拒 | `STAR_HARNESS_WORKSPACE_CONFLICT` | 目录与已有绑定、外部 Harness 或 Star Harness 状态目录重叠（`star-harness.mjs:71`） | 换一个不嵌套、不重叠的目录 |
+| 绑了工作区却起不来 | `STAR_HARNESS_MODEL_CHANGED` | 工作区绑定的模型档案被改过（`star-harness.mjs:65`） | 解绑后重新绑定，选当前可用的模型档案 |
+| 任务跑着改版本被拒 | `STAR_HARNESS_BUSY` | 有任务在运行，或有变更正在应用（`star-harness.mjs:11`） | 等当前任务结束或取消后再改；不要在运行中连续点 |
+| 管理服务已关闭 | `STAR_HARNESS_CLOSED` | 宿主正在关闭，管理服务已释放（`star-harness.mjs:12`） | 重启 Studio 宿主 |
+| 本地设置读不出来 | `STAR_HARNESS_CONFIG_INVALID` | `settings.json` 缺失、损坏或字段类型不对（`star-harness.mjs:41`） | 删掉 Star Harness 状态目录下的 `settings.json` 后重新绑定 |
+| 提示没有权限 | `STAR_HARNESS_OWNER_REQUIRED` | 非所有者主体调用了 `star-harness/*`（`src/host/routes/http.mjs:65`） | 用 Studio 宿主所有者账号操作 |
+| 当前部署不支持 | `STAR_HARNESS_UNSUPPORTED` | 该部署没有挂载本机 Star Harness 管理器（`src/host/routes/star-harness.mjs:6`） | 改用独立 Harness 服务；本机管理只存在于桌面端与源码运行 |
 
 ## 资源
 

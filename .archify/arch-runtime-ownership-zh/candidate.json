@@ -2,8 +2,8 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "三个运行时的所有权矩阵",
-    "subtitle": "四条泳道 × 三个可创建运行时；执行者不是转录所有者",
+    "title": "三种运行时的所有权",
+    "subtitle": "三种运行时各自负责哪一段；Studio 不实现模型循环，只做路由与会话归属",
     "output": ".archify/arch-runtime-ownership-zh/overview.html",
     "locale": "zh-CN",
     "quality_profile": "showcase"
@@ -50,21 +50,6 @@
         160,
         64
       ]
-    },
-    {
-      "id": "h-engine",
-      "type": "external",
-      "label": "Native 引擎",
-      "sublabel": "native-engine",
-      "pos": [
-        790,
-        40
-      ],
-      "size": [
-        160,
-        64
-      ],
-      "tag": "仅路由"
     },
     {
       "id": "loop-native",
@@ -232,20 +217,6 @@
       "size": [
         160,
         85
-      ]
-    },
-    {
-      "id": "engine-body",
-      "type": "external",
-      "label": "独立进程",
-      "sublabel": "可路由，不可创建",
-      "pos": [
-        790,
-        150
-      ],
-      "size": [
-        160,
-        460
       ]
     }
   ],

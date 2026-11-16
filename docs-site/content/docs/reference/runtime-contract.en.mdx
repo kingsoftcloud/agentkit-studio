@@ -1,5 +1,5 @@
 ---
-title: Runtime and entity contract
+title: "Runtime and entity contract"
 description: "The three runtimes, capability matrix, entity identifiers and validation codes of `agentkit.studio.runtime/v1`."
 ---
 
@@ -13,8 +13,9 @@ The runtime contract has exactly one version constant: `agentkit.studio.runtime/
 | --- | --- | --- |
 | `STUDIO_RUNTIME_CONTRACT_VERSION` | `agentkit.studio.runtime/v1` | Contract version and admission gate |
 | `STUDIO_RUNTIME_TYPES` | `dsh-native` · `harness` · `codex` | Publicly routable runtime types |
-| `STUDIO_EXPERIMENTAL_RUNTIME_TYPES` | `native-engine` | Routable locally, outside the frozen public list |
 | `STUDIO_CANONICAL_IDENTIFIERS` | `agentId` · `revision` · `buildId` · `sessionId` · `runId` | Identifier field names shared by every entity |
+
+**Exactly three public runtimes.** `native-engine` is an internal experimental value: `assertStudioRuntimeType()` accepts it, but it is not a public runtime and never appears in the Agent form, portable bundles or deployments. The count is **3**, not 4 — never treat it as a selectable option. See [the three runtimes](../concepts/runtimes.mdx).
 
 ## Capability matrix
 
@@ -54,7 +55,6 @@ Six entities share one identifier vocabulary. A missing layer means an invalid i
 | --- | --- | --- |
 | Contract version | `agentkit.studio.runtime/v1` | Evolves in the same PR as the Studio version |
 | Public runtimes | 3 | dsh-native / harness / codex |
-| Experimental runtimes | 1 | Absent from the Agent form, portable bundles and deployments |
 | Identifier fields | 5 | Renaming one is a breaking change |
 
 ## Developer entry points

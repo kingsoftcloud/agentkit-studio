@@ -64,7 +64,7 @@ Navigating away shows an "unsaved" chip, and refreshing or closing the window di
 | **Star Harness** (`harness`) | Cases that need an independent Harness service |
 | **Codex** (`codex`) | Goes through the Codex App Server |
 
-There is also `native-engine` (native engine, separate process), which is **not in the creatable list** — see [known limitations](./known-limitations.mdx#runtimes).
+**Those three are the only ones.** Of the three, `harness` is the only pluggable one: it is delivered as npm packages from ksadk-harness, and it only appears in the Agent form once it is installed, enabled and bound to a workspace. See [installing, upgrading and binding Star Harness](../guides/star-harness.mdx).
 
 </Accordion>
 <Accordion title="I changed the Agent configuration, but the running session did not change. Why?">

@@ -1,27 +1,24 @@
 ---
 title: Runtimes and deployment
-description: Which process owns each of the four runtime paths, the 19 states a managed runtime moves through, and whether a failed resource recovery degrades or refuses.
+description: Which process owns each of the three runtimes, the 19 states a managed runtime moves through, and whether a failed resource recovery degrades or refuses.
 status: new
 ---
 
-**A runtime decides which process executes the model-and-tool loop.** Studio does not implement that loop; it routes an Agent revision to one of four paths and only owns session identity, resource binding and approval around the outside.
+**A runtime decides which process executes the model-and-tool loop.** Studio does not implement that loop; it routes an Agent revision to one of three runtimes and only owns session identity, resource binding and approval around the outside.
 
-## The four `runtime.type` values
+## The three `runtime.type` values
 
 | `runtime.type` | UI name | Loop owner | Selectable when creating an Agent |
 | --- | --- | --- | --- |
 | `dsh-native` | DSH Native Harness | DSH native loop | Yes (default) |
+| `harness` | Star Harness | Harness native kernel | Only when editing an existing Agent |
 | `codex` | Codex Agent | Codex App Server | Yes |
-| `harness` | Star Harness | Standalone Harness process | Only when editing an existing Agent |
-| `native-engine` | Native engine (separate process) | Standalone engine process | No |
 
-`assertStudioRuntimeType` accepts all four values (`src/runtime-contract.mjs:37-41`), but the creation form only renders the three in `ALLOWED_RUNTIME_TYPES` (`src/client/theme.mjs:26`).
+`STUDIO_RUNTIME_TYPES` holds exactly these three values (`src/runtime-contract.mjs:6`), and `ALLOWED_RUNTIME_TYPES`, which the creation form renders, is the same set (`src/client/theme.mjs:26`).
 
-<Callout type="warn" title="Star Harness is closed for new Agents">
-  `creatableRuntime` only lets `harness` through when `editing` is true, while `allowHarnessRuntime` defaults to `false` and no caller ever passes `true` (`src/client/pages/agent-form.mjs:28`, `:61`). The creation form therefore offers exactly **DSH Native Harness** and **Codex Agent**; `harness` appears only when editing an existing Star Harness Agent.
+<Callout type="warn" title="Star Harness must be installed before it can be selected">
+  For `harness`, `creatableRuntime` additionally requires `starHarnessReady`, which comes from `canCreate` on `star-harness/status` — that is, **installed + enabled + at least one usable workspace**, all three at once (`src/client/pages/agent-form.mjs:61-79`, `src/host/services/star-harness.mjs:150`). Before it is installed, the creation form lists only **DSH Native Harness** and **Codex Agent**; editing an existing Star Harness Agent is always allowed.
 </Callout>
-
-`native-engine` sits one level further out: it can be routed and it can back a managed declaration, but it is not in `ALLOWED_RUNTIME_TYPES`, so the Agent form never offers it (`src/client/theme.mjs:31-32`).
 
 ## Which one to pick
 
@@ -42,7 +39,7 @@ status: new
     The default runtime: execution model, configuration entry points, limits and failure shapes.
   </Card>
   <Card title="Star Harness" href="/en/docs/deployment/agentkit-harness">
-    A standalone Harness process with child tasks, resume and durable receipts.
+    The Harness runtime, published as an npm plugin, with child tasks, resume and durable receipts.
   </Card>
   <Card title="Codex Agent" href="/en/docs/deployment/codex">
     The Codex App Server adapter: ephemeral threads, sandbox and timeout budgets.
@@ -62,18 +59,17 @@ Choosing a runtime is not a purely local decision — it decides whether the Age
 | Runtime | Portable bundle / deployment | `framework` in a managed declaration | Source |
 | --- | :--: | --- | --- |
 | `dsh-native` | yes | `dsh-native` | `src/managed-runtime-manifest.mjs:11` |
+| `harness` | yes | `harness` | same |
 | `codex` | yes | `codex` | same |
-| `harness` | yes | `harness` (projected to `native-engine` when engine service variables are injected) | `src/managed-runtime-definition.mjs:36-68` |
-| `native-engine` | **no** | — | `src/runtime-contract.mjs:7-10` |
 
-`native-engine` is explicitly excluded from the frozen public runtime list: it can be routed and it can back a managed declaration, but it does not enter portable bundles or deployments until its resource tools are carried over the protocol (`src/runtime-contract.mjs:7-10`).
+A managed declaration's `runtimes` allowlist is the same three-value set as `STUDIO_RUNTIME_TYPES` (`src/managed-runtime-manifest.mjs:11`), so a valid declaration can only land on one of the three runtimes.
 
 ## The three paths have different failure semantics
 
 | Runtime | Who owns the Run ledger | Can it recover in place after a failure |
 | --- | --- | --- |
 | `dsh-native` | DSH Session | Only by reloading session history; no Run checkpoints |
-| `harness` | The standalone Harness ledger | Supports `resume`, so it can continue across processes |
+| `harness` | The Harness native Run ledger | Supports `resume`, so it can continue across processes |
 | `codex` | DSH Session | Only by reloading session history; cancellation is cooperative |
 
 This is why the real selection criterion is "who owns the state", not "whose feature list is longer" (see [runtime comparison](./runtimes-compare.mdx) for the full matrix).

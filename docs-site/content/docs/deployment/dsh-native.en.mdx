@@ -77,13 +77,12 @@ Do **not** choose it when you need cross-process resume (`resume`) or child task
 
 - **Editing never changes the runtime on its own.** Opening an existing Agent takes `initialRuntime` from `originalSpec.runtime.type` and only falls back to the default when it is missing (`src/client/pages/agent-form.mjs:48`).
 - **Star Harness and Codex own different Run ledgers.** Switching to `dsh-native` does not migrate existing Run history; old sessions keep opening on their original runtime.
-- **`native-engine` is not an option.** It is absent from `ALLOWED_RUNTIME_TYPES`, so the form cannot switch to it (`src/client/theme.mjs:26`).
 
 ## Failure shapes
 
 | Code | Trigger | What you can do |
 | --- | --- | --- |
-| `RUNTIME_UNSUPPORTED` | `runtime.type` is not one of the four legal values | Check `spec.runtime.type` in the Agent definition |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` is not one of the three runtimes | Check `spec.runtime.type` in the Agent definition |
 | `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` missing, or `revision` is not a positive integer | Re-select the Agent or reopen the app |
 | `RUN_IDENTITY_MISMATCH` | The identity disagrees with the Agent / Session bound to the route | Close and reopen that session; never reuse it across sessions |
 | `STUDIO_HOST_INCOMPATIBLE` | The Host lacks a required execution contract | Upgrade to the matching DSH baseline; management routes stay available |

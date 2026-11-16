@@ -61,18 +61,17 @@ status: new
 
 一次运行的完整身份必须五个字段齐全：`agentId`、`revision`、`buildId`、`sessionId`、`runId`。缺一个就拒绝，而不是降级成「部分身份」。这条规则同时意味着：**没有构建的智能体也能对话，但没有构建就没有可复现的运行身份**。
 
-## 三种运行时与一个不可创建的值
+## 三种运行时
 
-`runtime.type` 是概念章里最容易踩坑的一项，因为它有 3 个正式值和 1 个可路由值：
+`runtime.type` 只有三个值，就是 `STUDIO_RUNTIME_TYPES`（`src/runtime-contract.mjs:6`）：
 
 | 值 | 界面名称 | 可以创建 | 执行模型 |
 | --- | --- | --- | --- |
 | `dsh-native` | DSH Native Harness | 是（新建默认） | `native` |
-| `harness` | Star Harness | 是 | `native-kernel` |
+| `harness` | Star Harness | 条件可创建：已安装 + 已启用 + 有可用工作区 | `native-kernel` |
 | `codex` | Codex Agent | 是 | `codex-app-server` |
-| `native-engine` | Native 引擎（独立进程） | **否** | 独立进程 |
 
-写「支持 4 种运行时」是错的，因为创建表单只提供前三个。`native-engine` 只在本地路由时被选中，见[三种运行时](./runtimes.mdx)。
+Star Harness 是三者里唯一可插拔的：它由 ksadk-harness 的 npm 包提供，装好并绑定工作区后才会出现在创建表单里。见[三种运行时](./runtimes.mdx)。
 
 ## 五类可绑定资源
 
@@ -93,7 +92,7 @@ status: new
 | 页面 | 回答的问题 |
 | --- | --- |
 | [Agent · Revision · Build · Run](./agent-revision-build.mdx) | 四层冻结各自保证什么，哪些操作会破坏可复现性 |
-| [三种运行时](./runtimes.mdx) | 3+1 个值分别由谁执行，能力矩阵怎么读 |
+| [三种运行时](./runtimes.mdx) | 三种值分别由谁执行，能力矩阵怎么读 |
 | [资源与绑定](./resources.mdx) | 五类资源的形状、互斥规则与降级行为 |
 | [会话与工作区](./sessions-workspaces.mdx) | 事件日志归谁所有，工作区边界如何决定能写哪里 |
 | [专家与本地团队](./experts-teams.mdx) | 专家模板与专家团怎么复用同一套冻结语义 |

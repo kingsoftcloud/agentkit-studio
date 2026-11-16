@@ -10,11 +10,11 @@ status: new
 
 | 维度 | DSH Native Harness | Star Harness | Codex Agent |
 | --- | --- | --- | --- |
-| **model/tool loop 归属** | DSH 原生循环（`owner: 'dsh'`） | 独立 Harness 进程（`owner: 'ksadk-harness'`，`execution: 'native-kernel'`） | Codex App Server（`owner: 'studio'`，`execution: 'codex-app-server'`） |
+| **model/tool loop 归属** | DSH 原生循环（`owner: 'dsh'`） | Harness 原生内核（`owner: 'ksadk-harness'`，`execution: 'native-kernel'`） | Codex App Server（`owner: 'studio'`，`execution: 'codex-app-server'`） |
 | **会话 / transcript 归属** | DSH Session，事件源 `dsh-session` | 原生 Run 存储，事件源 `native-run-store` | DSH Session，事件源 `studio-codex-adapter` |
 | **流式归属** | `dsh-agent/assistant-stream` | `native-model-port` | `codex-turn/item` |
 | **Run 持久状态** | DSH 原生持久化 + `replay` | 持久回执（`durable-receipts`）+ `resume` | DSH 原生持久化 + `replay` |
-| **Studio 接缝** | 原生执行直通，Studio 只做资源与模型投影 | 协议客户端 `agentkit.engine/v1` 或 `agentkit.native-dsh-turn/v1` | 进程内适配器 + 临时 Codex thread |
+| **Studio 接缝** | 原生执行直通，Studio 只做资源与模型投影 | npm 插件 + 整轮端口契约 `agentkit.native-dsh-turn/v1` | 进程内适配器 + 临时 Codex thread |
 | **能力集** | `session`、`session-events`、`stream`、`cancel`、`replay`、`persistence`、`build-binding` | `native-run`、`durable-receipts`、`tool-approval`、`cancel`、`resume`、`child-tasks` | `session`、`stream`、`cancel`、`replay`、`build-binding` |
 | **契约版本** | `agentkit.studio.runtime/v1` | `agentkit.native-dsh-turn/v1` | `studio.codex.adapter/v1` |
 
@@ -41,13 +41,12 @@ status: new
 | --- | :--: | :--: | :--: | :--: |
 | `dsh-native` | 是 | 是（默认） | 是 | 是 |
 | `codex` | 是 | 是 | 是 | 是 |
-| `harness` | 是 | **显示但不可选** | 是 | 是 |
-| `native-engine` | **否** | 否 | 否 | **否** |
+| `harness` | 是 | 装好并启用后可选 | 是 | 是 |
 
-依据：`src/client/theme.mjs:26`、`src/client/pages/agent-form.mjs:28`、`:61`。
+依据：`src/client/theme.mjs:26`、`src/client/pages/agent-form.mjs:61-79`。
 
-<Callout type="warn" title="Star Harness 当前不可新建">
-  `creatableRuntime` 在 `editing` 为假时返回 `false`，而 `allowHarnessRuntime` 没有任何调用方传 `true`（`src/client/pages/agent-form.mjs:28`、`:61`）。按钮仍然渲染出来，但带「未开放」徽章且 `disabled`（`:265-267`）。已有 Star Harness Agent 仍可编辑与运行，新建 Agent 时无法选中它。
+<Callout type="warn" title="Star Harness 是可配置的，不是恒不可选">
+  `creatableRuntime` 对 `harness` 还要求 `starHarnessReady`，它取自 `star-harness/status` 的 `canCreate`——**已安装 + 已启用 + 至少一个可用工作区**（`src/client/pages/agent-form.mjs:61-79`、`src/host/services/star-harness.mjs:150`）。没装好之前按钮渲染为 `disabled` 并带「未开放」徽章；装好并绑定工作区后即可新建。安装与绑定流程见 [Star Harness](./agentkit-harness.mdx)。
 </Callout>
 
 ## `runtime.type` 字段
@@ -56,7 +55,7 @@ status: new
   type={{
     'runtime.type': {
       description: '执行该修订版本循环的运行时。写入后由 DSH 会话路由读取，不随模型选择变化。',
-      type: "'dsh-native' | 'harness' | 'codex' | 'native-engine'",
+      type: "'dsh-native' | 'harness' | 'codex'",
       default: "'dsh-native'",
     },
     'runtime.contract': {
@@ -92,8 +91,7 @@ status: new
 | --- | --- | --- |
 | 编辑既有 Agent | 保留原运行时，不自动切换 | `src/client/pages/agent-form.mjs:48` |
 | 新建时选 DSH Native | 清空已选工具，避免残留绑定进入全新原生循环 | `:83` |
-| 新建时想选 Star Harness | 不可用——`creatableRuntime` 只在 `editing` 为真时放行 | `:61` |
-| 切到 `native-engine` | 不可用——不在 `ALLOWED_RUNTIME_TYPES` 内 | `src/client/theme.mjs:26` |
+| 新建时想选 Star Harness | 需先安装、启用并绑定工作区；否则不可选 | `src/client/pages/agent-form.mjs:61-79` |
 
 切换运行时不会迁移已有的 Run 历史：旧会话仍按原运行时打开。
 
@@ -115,6 +113,6 @@ status: new
 
 <Cards>
   <Card title="DSH Native Harness" href="/docs/deployment/dsh-native">默认运行时的执行模型与限制</Card>
-  <Card title="Star Harness" href="/docs/deployment/agentkit-harness">独立 Harness 进程的配置入口</Card>
+  <Card title="Star Harness" href="/docs/deployment/agentkit-harness">安装、升级与工作区绑定的完整生命周期</Card>
   <Card title="Codex Agent" href="/docs/deployment/codex">Codex App Server 适配层</Card>
 </Cards>

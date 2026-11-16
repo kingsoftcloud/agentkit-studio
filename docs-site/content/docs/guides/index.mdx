@@ -1,6 +1,6 @@
 ---
 title: 任务指南
-description: 按目标组织的 13 篇操作指南，从创建 Agent 到部署上线，每步都能直接复制执行。
+description: 按目标组织的 14 篇操作指南，从创建 Agent 到部署上线，每步都能直接复制执行。
 status: new
 ---
 
@@ -22,6 +22,7 @@ status: new
 | 自动化 | [自动化与调度](./automation.mdx) | 按时间或事件触发运行 | 已部署的 Agent |
 | 接入 | [渠道（Channels）](./channels.mdx) | 从外部消息入口触发 Agent | 已部署的 Agent |
 | 观测 | [可观测性（OTel）](./observability.mdx) | 用 OpenTelemetry 采集运行轨迹 | 已部署的 Agent |
+| 运行时 | [安装、升级与绑定 Star Harness](./star-harness.mdx) | `harness` 从「未启用」变成可创建 | Node.js 与 npm 可用 |
 
 ## 创建表单的三步
 
@@ -64,9 +65,10 @@ status: new
 | 记忆写入开关 | `shadow`（只评估不写入） | `src/client/state/agent-memory-config.mjs:33` |
 | 默认模型凭证名 | `AGENTKIT_MODEL_API_KEY` | `src/client/dsh/model-bridge.mjs:17` |
 
-<Callout type="warn" title="Star Harness 处于暂停状态">
-  新建 Agent 时 Star Harness 默认不出现在运行时选项里，只有调用方显式放开才会出现；
-  编辑已有的 Star Harness Agent 不受影响（`src/client/pages/agent-form.mjs:60-61`）。
+<Callout type="warn" title="Star Harness 要先安装并绑定工作区">
+  三种运行时里只有 Star Harness 是可插拔的：插件页装好、启用、并绑定一个工作区之后，
+  创建 Agent 时才会提供它（`creatableRuntime`，`src/client/pages/agent-form.mjs:78`）。
+  见[安装、升级与绑定 Star Harness](./star-harness.mdx)。
 </Callout>
 
 ## 每页的结构约定

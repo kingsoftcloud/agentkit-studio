@@ -1,17 +1,17 @@
 ---
-title: 环境变量参考
-description: Studio 读取的 132 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。
+title: "环境变量参考"
+description: "Studio 读取的 133 个环境变量名，按「可配置 / 平台注入 / 禁止修改」三档与命名空间分组。"
 ---
 
 {/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
 
 ## 三档口径
 
-Studio 从进程环境读取 132 个变量名：其中 7 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
+Studio 从进程环境读取 133 个变量名：其中 8 个是直接 `process.env.X` 读取，其余经注入的 `env` 参数或 `*_ENV_NAMES` 常量数组转发。
 
 | 档位 | 标识 | 条数 | 含义 |
 | --- | --- | --- | --- |
-| 可配置 | `configurable` | 35 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
+| 可配置 | `configurable` | 36 | 运维或开发者可以显式设置，未设置时走代码默认值。 |
 | 平台注入 | `platform` | 84 | 由容器、托管运行时或桌面外壳注入，手工设置通常会被覆盖或不生效。 |
 | 禁止修改 | `forbidden` | 13 | Studio 会读取，但值必须由凭证服务或设置界面持有；不要写进 shell profile、`.env` 或 CI 变量。 |
 
@@ -27,7 +27,7 @@ Studio 从进程环境读取 132 个变量名：其中 7 个是直接 `process.e
 | `KSADK` | 30 | Skill、沙箱、记忆库与知识库的运行参数。 |
 | `AGENTENGINE` | 11 | AgentEngine 控制面注入的运行时身份与端点。 |
 | `OTEL` | 10 | OpenTelemetry 标准导出变量。 |
-| `OTHER` | 9 | 未归入命名空间的独立变量。 |
+| `OTHER` | 10 | 未归入命名空间的独立变量。 |
 | `DSH` | 5 | DSH 宿主（home、agents home、可观测性）。 |
 | `E2B` | 4 | E2B 沙箱后端。 |
 | `KSYUN` | 3 | 金山云签名凭证。 |
@@ -42,138 +42,139 @@ Studio 从进程环境读取 132 个变量名：其中 7 个是直接 `process.e
 
 | 环境变量 | 档位 | 首次读取 |
 | --- | --- | --- |
-| `AGENTKIT_STUDIO_HOST_URL` | 可配置 | `src/authoring-tools.mjs` |
-| `AGENTKIT_STUDIO_HOST_SESSION_TOKEN` | 禁止修改 | `src/authoring-tools.mjs` |
-| `AGENTKIT_HOME` | 可配置 | `src/authoring-tools.mjs` |
-| `AGENTKIT_STUDIO_NATIVE_HARNESS` | 平台注入 | `src/build-engine.mjs` |
-| `AGENTKIT_RUNTIME_TOKEN` | 禁止修改 | `src/bundle-host.mjs` |
-| `AGENTKIT_BUNDLE_SOURCE` | 平台注入 | `src/bundle-source.mjs` |
-| `AGENTKIT_BUNDLE_SHA256` | 平台注入 | `src/bundle-source.mjs` |
-| `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | 可配置 | `src/dsh-plugin-catalog.mjs` |
-| `AGENTKIT_STUDIO_GITHUB_TOKEN` | 禁止修改 | `src/dsh-plugin-discovery.mjs` |
-| `AGENTKIT_STUDIO_DISCOVERY_CACHE` | 可配置 | `src/dsh-plugin-discovery.mjs` |
-| `AGENTKIT_RUNTIME_TIMEOUT_MS` | 平台注入 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_RUNTIME_AGENT_ID` | 平台注入 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_RUNTIME_BUILD_ID` | 平台注入 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_EXECUTION_POLICY_DEFAULT` | 可配置 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_EXECUTION_POLICY_MAX` | 可配置 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_MANAGED_SESSIONS` | 可配置 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_DEPLOYMENT_VERSION` | 平台注入 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_RUNTIME_HOST` | 平台注入 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_RUNTIME_PORT` | 平台注入 | `src/frozen-build-runtime.mjs` |
-| `AGENTKIT_STRICT_RESOURCES` | 可配置 | `src/host/bootstrap.mjs` |
-| `AGENTKIT_STUDIO_BUNDLE_DIR` | 平台注入 | `src/host/bootstrap.mjs` |
-| `AGENTKIT_STUDIO_WORKSPACE` | 平台注入 | `src/host/bootstrap.mjs` |
-| `AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE` | 平台注入 | `src/host/bootstrap.mjs` |
-| `AGENTKIT_KS3_ENDPOINT_MODE` | 可配置 | `src/ks3-endpoints.mjs` |
-| `AGENTKIT_MODEL_API_KEY` | 禁止修改 | `src/managed-runtime-definition.mjs` |
-| `AGENTKIT_MANAGED_CODEX_API` | 可配置 | `src/managed-runtime-definition.mjs` |
-| `AGENTKIT_ENGINE_SERVICE_URL` | 平台注入 | `src/managed-runtime-definition.mjs` |
-| `AGENTKIT_ENGINE_SERVICE_TOKEN` | 禁止修改 | `src/managed-runtime-definition.mjs` |
-| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | 平台注入 | `src/managed-runtime-definition.mjs` |
-| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | 平台注入 | `src/managed-runtime-definition.mjs` |
-| `AGENTKIT_USER_HOME` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_WORKSPACE_ROOT` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_MODEL` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_SANDBOX` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_APPROVAL_POLICY` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_REASONING_SUMMARY` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_IDLE_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` |
-| `AGENTKIT_PROMPT_PREDICTION_ENABLED` | 可配置 | `src/prompt-prediction/host.mjs` |
-| `AGENTKIT_PROMPT_PREDICTION_AUDIT` | 可配置 | `src/prompt-prediction/host.mjs` |
-| `AGENTKIT_CODEX_BIN` | 可配置 | `src/providers/codex-command.mjs` |
-| `AGENTKIT_ENGINE_SERVICE_WORKSPACES` | 平台注入 | `src/providers/engine-service-workspaces.mjs` |
-| `AGENTKIT_ENGINE_SERVICE_MODEL` | 平台注入 | `src/providers/engine-service-workspaces.mjs` |
-| `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN` | 平台注入 | `src/providers/engine-service-workspaces.mjs` |
-| `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ENTRY` | 平台注入 | `src/providers/engine-service-workspaces.mjs` |
-| `AGENTKIT_ENGINE_COMMAND` | 可配置 | `src/providers/native-engine-runtime.mjs` |
-| `AGENTKIT_ENGINE_ARGS` | 可配置 | `src/providers/native-engine-runtime.mjs` |
-| `AGENTKIT_ENGINE_MODEL_API_KEY` | 禁止修改 | `src/providers/native-engine-runtime.mjs` |
-| `AGENTKIT_STUDIO_DEPLOYMENT_TYPE` | 平台注入 | `src/studio-deployments.mjs` |
-| `AGENTKIT_STUDIO_DESKTOP_VERSION` | 平台注入 | `src/studio-version.mjs` |
-| `AGENTKIT_STUDIO_DSH_VERSION` | 平台注入 | `src/studio-version.mjs` |
-| `AGENTKIT_TEMPLATE_SERVER_URL` | 可配置 | `src/template-catalog-source.mjs` |
-| `AGENTKIT_TEMPLATE_CATALOG_FILE` | 可配置 | `src/template-catalog-source.mjs` |
-| `AGENTKIT_TEMPLATE_ENVIRONMENT` | 可配置 | `src/template-catalog-source.mjs` |
-| `KSADK_TRAFFIC_SOURCE` | 平台注入 | `src/aicp-resource-connection.mjs` |
-| `KSADK_LOCAL_SKILLS_DIR` | 平台注入 | `src/host/bootstrap.mjs` |
-| `KSADK_KB_DATASET_ID` | 平台注入 | `src/knowledge-tools.mjs` |
-| `KSADK_KB_TOP_K` | 平台注入 | `src/knowledge-tools.mjs` |
-| `KSADK_KB_SEARCH_METHOD` | 平台注入 | `src/knowledge-tools.mjs` |
-| `KSADK_KB_SCORE_THRESHOLD` | 平台注入 | `src/knowledge-tools.mjs` |
-| `KSADK_KB_RERANKING_ENABLE` | 平台注入 | `src/knowledge-tools.mjs` |
-| `KSADK_LTM_BACKEND` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_INDEX` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_APP_NAME` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_NAMESPACE` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_TOP_K` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_SCENE_ID` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_FORCE_INMEMORY` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_HTTP_TOKEN` | 禁止修改 | `src/legacy-memory-tools.mjs` |
-| `KSADK_MEMORY_DB_PATH` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_LTM_HTTP_URL` | 平台注入 | `src/legacy-memory-tools.mjs` |
-| `KSADK_SANDBOX_BACKEND` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SANDBOX_TEMPLATE_ID` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SKILL_RUNTIME_TEMPLATE_ID` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SANDBOX_TIMEOUT` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SKILL_RUNTIME_TIMEOUT` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SANDBOX_ALLOW_INTERNET_ACCESS` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SKILL_RUNTIME_ALLOW_INTERNET_ACCESS` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_SANDBOX_TYPE` | 平台注入 | `src/providers/native-e2b-host.mjs` |
-| `KSADK_MODEL_COMPAT_RULE` | 平台注入 | `src/providers/native-engine-runtime.mjs` |
-| `KSADK_SKILL_SPACE_IDS` | 平台注入 | `src/providers/native-skill-host.mjs` |
-| `KSADK_SKILL_RUNTIME_BACKEND` | 平台注入 | `src/providers/native-skill-runtime.mjs` |
-| `KSADK_SKILL_PROJECT_NAME` | 平台注入 | `src/providers/native-skill-runtime.mjs` |
-| `KSADK_SKILL_ARTIFACT_PROJECT` | 平台注入 | `src/providers/native-skill-runtime.mjs` |
-| `AGENTENGINE_INNER_KOP_URL` | 平台注入 | `src/host/bootstrap.mjs` |
-| `AGENTENGINE_INNER_IAM_URL` | 平台注入 | `src/host/bootstrap.mjs` |
-| `AGENTENGINE_MANIFEST_PATH` | 平台注入 | `src/host/bootstrap.mjs` |
-| `AGENTENGINE_NETWORK_MODE` | 平台注入 | `src/ks3-endpoints.mjs` |
-| `AGENTENGINE_RESOURCE_SERVER_URL` | 平台注入 | `src/managed-resource-client.mjs` |
-| `AGENTENGINE_AGENT_ID` | 平台注入 | `src/managed-runtime-definition.mjs` |
-| `AGENTENGINE_AGENT_VERSION_ID` | 平台注入 | `src/managed-runtime-definition.mjs` |
-| `AGENTENGINE_MANAGED_RUNTIME_NAME` | 平台注入 | `src/managed-runtime-manifest.mjs` |
-| `AGENTENGINE_MANAGED_RUNTIME_VERSION` | 平台注入 | `src/managed-runtime-manifest.mjs` |
-| `AGENTENGINE_MANIFEST_PROTOCOL` | 平台注入 | `src/managed-runtime-manifest.mjs` |
-| `AGENTENGINE_MANIFEST_SHA256` | 平台注入 | `src/managed-runtime-manifest.mjs` |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_EXPORTER_OTLP_CERTIFICATE` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_SERVICE_NAME` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `OTEL_RESOURCE_ATTRIBUTES` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `STUDIO_DOWNLOAD_PROD_KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` |
-| `DOWNLOAD_PROD_KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` |
-| `CLOUD_MONITOR_OTLP_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `CLOUD_MONITOR_OTLP_TRACES_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `CLOUD_MONITOR_OTLP_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `CLOUD_MONITOR_OTLP_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `CLOUD_MONITOR_OTLP_TRACES_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `CLOUD_MONITOR_OTLP_TRACES_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `CLOUD_MONITOR_APP_KEY` | 禁止修改 | `src/managed-runtime-host.mjs` |
-| `DSH_PLUGIN_INDEX_URL` | 可配置 | `src/dsh-plugin-catalog.mjs` |
-| `DSH_OTEL_CA_PEM_BASE64` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `DSH_OBSERVABILITY_CAPTURE_CONTENT` | 平台注入 | `src/managed-runtime-host.mjs` |
-| `DSH_HOME` | 可配置 | `src/providers/native-dsh-tools.mjs` |
-| `DSH_AGENTS_HOME` | 可配置 | `src/providers/native-dsh-tools.mjs` |
-| `E2B_API_URL` | 可配置 | `src/providers/native-e2b-host.mjs` |
-| `E2B_DOMAIN` | 可配置 | `src/providers/native-e2b-host.mjs` |
-| `E2B_API_KEY` | 禁止修改 | `src/providers/native-e2b-host.mjs` |
-| `E2B_SANDBOX_URL` | 可配置 | `src/providers/native-e2b-sdk-transport.mjs` |
-| `KSYUN_ACCESS_KEY` | 禁止修改 | `src/bundle-source.mjs` |
-| `KSYUN_SECRET_KEY` | 禁止修改 | `src/bundle-source.mjs` |
-| `KSYUN_SESSION_TOKEN` | 禁止修改 | `src/bundle-source.mjs` |
-| `CODEX_HOME` | 可配置 | `src/model-credential-sync.mjs` |
-| `GITHUB_TOKEN` | 禁止修改 | `src/dsh-plugin-discovery.mjs` |
-| `KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` |
-| `OPENAI_BASE_URL` | 可配置 | `src/managed-runtime-definition.mjs` |
+| `AGENTKIT_STUDIO_HOST_URL` | 可配置 | `src/authoring-tools.mjs` | — |
+| `AGENTKIT_STUDIO_HOST_SESSION_TOKEN` | 禁止修改 | `src/authoring-tools.mjs` | — |
+| `AGENTKIT_HOME` | 可配置 | `src/authoring-tools.mjs` | — |
+| `AGENTKIT_STUDIO_NATIVE_HARNESS` | 平台注入 | `src/build-engine.mjs` | — |
+| `AGENTKIT_RUNTIME_TOKEN` | 禁止修改 | `src/bundle-host.mjs` | — |
+| `AGENTKIT_BUNDLE_SOURCE` | 平台注入 | `src/bundle-source.mjs` | — |
+| `AGENTKIT_BUNDLE_SHA256` | 平台注入 | `src/bundle-source.mjs` | — |
+| `AGENTKIT_STUDIO_DSH_PLUGIN_INDEX` | 可配置 | `src/dsh-plugin-catalog.mjs` | — |
+| `AGENTKIT_STUDIO_GITHUB_TOKEN` | 禁止修改 | `src/dsh-plugin-discovery.mjs` | — |
+| `AGENTKIT_STUDIO_DISCOVERY_CACHE` | 可配置 | `src/dsh-plugin-discovery.mjs` | — |
+| `AGENTKIT_RUNTIME_TIMEOUT_MS` | 平台注入 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_RUNTIME_AGENT_ID` | 平台注入 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_RUNTIME_BUILD_ID` | 平台注入 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_EXECUTION_POLICY_DEFAULT` | 可配置 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_EXECUTION_POLICY_MAX` | 可配置 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_MANAGED_SESSIONS` | 可配置 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_DEPLOYMENT_VERSION` | 平台注入 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_RUNTIME_HOST` | 平台注入 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_RUNTIME_PORT` | 平台注入 | `src/frozen-build-runtime.mjs` | — |
+| `AGENTKIT_STRICT_RESOURCES` | 可配置 | `src/host/bootstrap.mjs` | — |
+| `AGENTKIT_STUDIO_BUNDLE_DIR` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTKIT_STUDIO_WORKSPACE` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTKIT_STUDIO_NATIVE_CHROMIUM_EXECUTABLE` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTKIT_ENGINE_SERVICE_TOKEN` | 禁止修改 | `src/host/services/star-harness-worker.mjs` | — |
+| `AGENTKIT_KS3_ENDPOINT_MODE` | 可配置 | `src/ks3-endpoints.mjs` | — |
+| `AGENTKIT_MODEL_API_KEY` | 禁止修改 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTKIT_MANAGED_CODEX_API` | 可配置 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTKIT_ENGINE_SERVICE_URL` | 平台注入 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTKIT_ENGINE_SERVICE_CA_FILE` | 平台注入 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACE` | 平台注入 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTKIT_USER_HOME` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_WORKSPACE_ROOT` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_MODEL` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_SANDBOX` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_APPROVAL_POLICY` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_REASONING_SUMMARY` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_IDLE_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_STREAM_IDLE_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_CODEX_MODEL_IDLE_TIMEOUT_MS` | 可配置 | `src/managed-runtime-host.mjs` | — |
+| `AGENTKIT_PROMPT_PREDICTION_ENABLED` | 可配置 | `src/prompt-prediction/host.mjs` | — |
+| `AGENTKIT_PROMPT_PREDICTION_AUDIT` | 可配置 | `src/prompt-prediction/host.mjs` | — |
+| `AGENTKIT_CODEX_BIN` | 可配置 | `src/providers/codex-command.mjs` | — |
+| `AGENTKIT_ENGINE_SERVICE_WORKSPACES` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
+| `AGENTKIT_ENGINE_SERVICE_MODEL` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
+| `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ORIGIN` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
+| `AGENTKIT_STUDIO_NATIVE_APPLICATION_PREVIEW_ENTRY` | 平台注入 | `src/providers/engine-service-workspaces.mjs` | — |
+| `AGENTKIT_ENGINE_COMMAND` | 可配置 | `src/providers/native-engine-runtime.mjs` | 内部实验，非公开 |
+| `AGENTKIT_ENGINE_ARGS` | 可配置 | `src/providers/native-engine-runtime.mjs` | 内部实验，非公开 |
+| `AGENTKIT_ENGINE_MODEL_API_KEY` | 禁止修改 | `src/providers/native-engine-runtime.mjs` | 内部实验，非公开 |
+| `AGENTKIT_STUDIO_DEPLOYMENT_TYPE` | 平台注入 | `src/studio-deployments.mjs` | — |
+| `AGENTKIT_STUDIO_DESKTOP_VERSION` | 平台注入 | `src/studio-version.mjs` | — |
+| `AGENTKIT_STUDIO_DSH_VERSION` | 平台注入 | `src/studio-version.mjs` | — |
+| `AGENTKIT_TEMPLATE_SERVER_URL` | 可配置 | `src/template-catalog-source.mjs` | — |
+| `AGENTKIT_TEMPLATE_CATALOG_FILE` | 可配置 | `src/template-catalog-source.mjs` | — |
+| `AGENTKIT_TEMPLATE_ENVIRONMENT` | 可配置 | `src/template-catalog-source.mjs` | — |
+| `KSADK_TRAFFIC_SOURCE` | 平台注入 | `src/aicp-resource-connection.mjs` | — |
+| `KSADK_LOCAL_SKILLS_DIR` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `KSADK_MODEL_COMPAT_RULE` | 平台注入 | `src/host/services/star-harness-release.mjs` | — |
+| `KSADK_KB_DATASET_ID` | 平台注入 | `src/knowledge-tools.mjs` | — |
+| `KSADK_KB_TOP_K` | 平台注入 | `src/knowledge-tools.mjs` | — |
+| `KSADK_KB_SEARCH_METHOD` | 平台注入 | `src/knowledge-tools.mjs` | — |
+| `KSADK_KB_SCORE_THRESHOLD` | 平台注入 | `src/knowledge-tools.mjs` | — |
+| `KSADK_KB_RERANKING_ENABLE` | 平台注入 | `src/knowledge-tools.mjs` | — |
+| `KSADK_LTM_BACKEND` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_INDEX` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_APP_NAME` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_NAMESPACE` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_TOP_K` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_SCENE_ID` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_FORCE_INMEMORY` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_HTTP_TOKEN` | 禁止修改 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_MEMORY_DB_PATH` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_LTM_HTTP_URL` | 平台注入 | `src/legacy-memory-tools.mjs` | — |
+| `KSADK_SANDBOX_BACKEND` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SANDBOX_TEMPLATE_ID` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SKILL_RUNTIME_TEMPLATE_ID` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SANDBOX_TIMEOUT` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SKILL_RUNTIME_TIMEOUT` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SANDBOX_ALLOW_INTERNET_ACCESS` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SKILL_RUNTIME_ALLOW_INTERNET_ACCESS` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SANDBOX_TYPE` | 平台注入 | `src/providers/native-e2b-host.mjs` | — |
+| `KSADK_SKILL_SPACE_IDS` | 平台注入 | `src/providers/native-skill-host.mjs` | — |
+| `KSADK_SKILL_RUNTIME_BACKEND` | 平台注入 | `src/providers/native-skill-runtime.mjs` | — |
+| `KSADK_SKILL_PROJECT_NAME` | 平台注入 | `src/providers/native-skill-runtime.mjs` | — |
+| `KSADK_SKILL_ARTIFACT_PROJECT` | 平台注入 | `src/providers/native-skill-runtime.mjs` | — |
+| `AGENTENGINE_INNER_KOP_URL` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTENGINE_INNER_IAM_URL` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTENGINE_MANIFEST_PATH` | 平台注入 | `src/host/bootstrap.mjs` | — |
+| `AGENTENGINE_NETWORK_MODE` | 平台注入 | `src/ks3-endpoints.mjs` | — |
+| `AGENTENGINE_RESOURCE_SERVER_URL` | 平台注入 | `src/managed-resource-client.mjs` | — |
+| `AGENTENGINE_AGENT_ID` | 平台注入 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTENGINE_AGENT_VERSION_ID` | 平台注入 | `src/managed-runtime-definition.mjs` | — |
+| `AGENTENGINE_MANAGED_RUNTIME_NAME` | 平台注入 | `src/managed-runtime-manifest.mjs` | — |
+| `AGENTENGINE_MANAGED_RUNTIME_VERSION` | 平台注入 | `src/managed-runtime-manifest.mjs` | — |
+| `AGENTENGINE_MANIFEST_PROTOCOL` | 平台注入 | `src/managed-runtime-manifest.mjs` | — |
+| `AGENTENGINE_MANIFEST_SHA256` | 平台注入 | `src/managed-runtime-manifest.mjs` | — |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_SERVICE_NAME` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `OTEL_RESOURCE_ATTRIBUTES` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `PATH` | 可配置 | `src/host/services/star-harness-release.mjs` | — |
+| `STUDIO_DOWNLOAD_PROD_KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` | — |
+| `DOWNLOAD_PROD_KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` | — |
+| `CLOUD_MONITOR_OTLP_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `CLOUD_MONITOR_OTLP_TRACES_ENDPOINT` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `CLOUD_MONITOR_OTLP_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `CLOUD_MONITOR_OTLP_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `CLOUD_MONITOR_OTLP_TRACES_PROTOCOL` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `CLOUD_MONITOR_OTLP_TRACES_HEADERS` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `CLOUD_MONITOR_APP_KEY` | 禁止修改 | `src/managed-runtime-host.mjs` | — |
+| `DSH_PLUGIN_INDEX_URL` | 可配置 | `src/dsh-plugin-catalog.mjs` | — |
+| `DSH_OTEL_CA_PEM_BASE64` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `DSH_OBSERVABILITY_CAPTURE_CONTENT` | 平台注入 | `src/managed-runtime-host.mjs` | — |
+| `DSH_HOME` | 可配置 | `src/providers/native-dsh-tools.mjs` | — |
+| `DSH_AGENTS_HOME` | 可配置 | `src/providers/native-dsh-tools.mjs` | — |
+| `E2B_API_URL` | 可配置 | `src/providers/native-e2b-host.mjs` | — |
+| `E2B_DOMAIN` | 可配置 | `src/providers/native-e2b-host.mjs` | — |
+| `E2B_API_KEY` | 禁止修改 | `src/providers/native-e2b-host.mjs` | — |
+| `E2B_SANDBOX_URL` | 可配置 | `src/providers/native-e2b-sdk-transport.mjs` | — |
+| `KSYUN_ACCESS_KEY` | 禁止修改 | `src/bundle-source.mjs` | — |
+| `KSYUN_SECRET_KEY` | 禁止修改 | `src/bundle-source.mjs` | — |
+| `KSYUN_SESSION_TOKEN` | 禁止修改 | `src/bundle-source.mjs` | — |
+| `CODEX_HOME` | 可配置 | `src/model-credential-sync.mjs` | — |
+| `GITHUB_TOKEN` | 禁止修改 | `src/dsh-plugin-discovery.mjs` | — |
+| `KS3_BUCKET` | 平台注入 | `src/ks3-release-store.mjs` | — |
+| `OPENAI_BASE_URL` | 可配置 | `src/managed-runtime-definition.mjs` | — |
 
 ## 常见配置
 
@@ -196,8 +197,8 @@ Studio 从进程环境读取 132 个变量名：其中 7 个是直接 `process.e
 
 | 项 | 值 | 说明 |
 | --- | --- | --- |
-| 环境变量名 | `132` | 改名即破坏性变更 |
-| 直读 | `7` | `process.env.X` 字面量 |
+| 环境变量名 | `133` | 改名即破坏性变更 |
+| 直读 | `8` | `process.env.X` 字面量 |
 | Host 转发 | `31` | `*_ENV_NAMES` 常量数组声明 |
 | 平台注入 | `84` | 手工设置会被覆盖 |
 

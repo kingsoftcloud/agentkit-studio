@@ -37,7 +37,6 @@ status: new
 | DSH 原生 | DSH Native | `dsh-native` | 默认运行时，由 DSH 自己执行。 |
 | Star Harness | Star Harness | `harness` | 由 KSADK Harness 原生内核执行的运行时。 |
 | Codex | Codex | `codex` | 由 Codex App Server 适配器执行的运行时。 |
-| Native 引擎 | native engine | `native-engine` | 以独立进程启动的引擎，可被路由选中但不能创建。 |
 | 执行策略 | execution policy | `read-only` / `workspace-write` / `danger-full-access` | 限制运行能写哪里的三档策略，默认 `workspace-write`。 |
 | 权限模式 | permission mode | `permissionMode` | 执行策略里描述写入范围的那一项。 |
 | 审批策略 | approval policy | `ask` / `never` | 遇到需要确认的动作时是否停下来询问。 |
@@ -115,7 +114,7 @@ status: new
     六个核心实体与它们之间的硬性约束。
   </Card>
   <Card title="三种运行时" href="/docs/concepts/runtimes">
-    3+1 个运行时值与完整能力矩阵。
+    三种运行时与完整能力矩阵。
   </Card>
   <Card title="运行时与实体契约" href="/docs/reference/runtime-contract">
     五个标识与 `agentkit.studio.runtime/v1` 的原始枚举。

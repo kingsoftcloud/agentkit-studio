@@ -2,8 +2,8 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Runtime Ownership Matrix",
-    "subtitle": "Four ownership lanes across three creatable runtimes; the executor is not the transcript owner",
+    "title": "Runtime ownership",
+    "subtitle": "Which process owns which part; Studio does not implement the model loop, it routes and owns the session seam",
     "output": ".archify/arch-runtime-ownership-en/overview.html",
     "locale": "en",
     "quality_profile": "showcase"
@@ -50,21 +50,6 @@
         160,
         64
       ]
-    },
-    {
-      "id": "h-engine",
-      "type": "external",
-      "label": "Native engine",
-      "sublabel": "native-engine",
-      "pos": [
-        790,
-        40
-      ],
-      "size": [
-        160,
-        64
-      ],
-      "tag": "route only"
     },
     {
       "id": "loop-native",
@@ -233,26 +218,12 @@
         160,
         85
       ]
-    },
-    {
-      "id": "engine-body",
-      "type": "external",
-      "label": "Separate process",
-      "sublabel": "routable, not creatable",
-      "pos": [
-        790,
-        150
-      ],
-      "size": [
-        160,
-        460
-      ]
     }
   ],
   "boundaries": [
     {
       "kind": "region",
-      "label": "① Model & tool loop: who decides the next step and runs the tools",
+      "label": "1. Model and tool loop: who decides the next step and runs tools",
       "wraps": [
         "loop-native",
         "loop-harness",
@@ -261,7 +232,7 @@
     },
     {
       "kind": "region",
-      "label": "② Session & transcript: who persists the event log",
+      "label": "2. Session and transcript: who persists the event log",
       "wraps": [
         "log-native",
         "log-harness",
@@ -270,7 +241,7 @@
     },
     {
       "kind": "region",
-      "label": "③ Stream & durable state: what survives a restart",
+      "label": "3. Stream and durable state: what survives a restart",
       "wraps": [
         "stream-native",
         "stream-harness",
@@ -279,7 +250,7 @@
     },
     {
       "kind": "region",
-      "label": "④ Studio seam: the contract product code targets",
+      "label": "4. Studio seam: the contract product code depends on",
       "wraps": [
         "seam-native",
         "seam-harness",

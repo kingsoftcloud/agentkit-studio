@@ -21,18 +21,16 @@ On Intel Macs use [the DSH plugin path](../getting-started/install.mdx#c-as-a-ds
 
 ## Runtimes
 
-Studio supports three runtimes (`src/client/theme.mjs:26`):
+Studio supports **three** runtimes (`src/client/theme.mjs:26`):
 
 | Runtime | Value | Selectable in the Agent form |
 | --- | --- | --- |
 | DSH Native | `dsh-native` | ✅ Default |
 | Star Harness | `harness` | ✅ |
 | Codex | `codex` | ✅ |
-| Native engine (separate process) | `native-engine` | ❌ **Not creatable** |
 
-<Callout type="info" title="native-engine is experimental">
-`native-engine` has a label ("Native engine (separate process)") but is **not** in `ALLOWED_RUNTIME_TYPES`, so the Agent creation form never offers it (the comment in `src/client/theme.mjs:26-34` says exactly this).
-Existing `native-engine` Agents are not deleted, but no new ones can be created through the interface.
+<Callout type="info" title="Star Harness must be installed first">
+`harness` is the only pluggable one of the three: it is delivered as npm packages from ksadk-harness, and until it is installed, enabled and bound to a usable workspace, the Agent creation form does not offer it (`src/client/pages/agent-form.mjs:61-79`, `src/host/services/star-harness.mjs:162`). See [installing, upgrading and binding Star Harness](../guides/star-harness.mdx).
 </Callout>
 
 In addition, the **in-process Harness is retired**:

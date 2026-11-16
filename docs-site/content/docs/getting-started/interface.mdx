@@ -61,7 +61,7 @@ Host 状态胶囊会先请求 `health()`，失败时再退到 `bootstrap()`；�
 | **云端** | 已部署到云端的 Agent |
 | **运行目标** | 当前 Host 可用的执行目标目录 |
 
-「运行目标」读的是 `runtimeCatalog`，可能返回四种状态：目录已读取 / 正在读取 / 运行目标不可用 / 该能力暂未开放（`src/client/pages/runtime-catalog.mjs`）。「未开放」意味着 Host 没注册对应 capability，需要去插件中心启用官方插件。
+「运行目标」读的是 `runtimeCatalog`，整页有三个状态：正在读取 / 目录已读取 / 运行目标不可用（`src/client/pages/runtime-catalog.mjs`）。每一行另有自己的可用性：「未启用」意味着 Host 没注册对应 capability，需要去插件中心安装并启用官方插件。
 
 ### 资源库
 

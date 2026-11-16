@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Locate a problem through symptom, error code, cause and fix — covering the forty-plus most frequent error codes in the Studio source tree.
+description: Locate a problem through symptom, error code, cause and fix — covering the seventy-odd most frequent error codes in the Studio source tree.
 ---
 
 Every Studio error code comes from a `code: '...'` literal under `src/**`, so you can search the source directly. This page groups codes by **where they surface**; each code appears exactly once.
@@ -58,6 +58,29 @@ The text on screen is sometimes prose, and the code lives inside a collapsed det
 | The host lacks a capability | `RUNTIME_HOST_CAPABILITY_UNAVAILABLE` | Frozen runtimes need a DSH host that supports request fingerprints (`frozen-build-runtime.mjs:58`) | Upgrade the host |
 | Automation will not run | `AUTOMATION_SERVICE_UNAVAILABLE` | The DSH service automation needs is not running (`src/native-automation-runner.mjs:32`) | Start the service named in the message |
 | Automation hangs | `AUTOMATION_TIMEOUT` | The automation run timed out (`native-automation-runner.mjs:85`) | Shorten the task or split it |
+
+## Star Harness
+
+The five `star-harness/*` operations manage the **local** Star Harness (the `harness` runtime): installing it, enabling it and binding workspaces. They are owner-only; a non-owner caller gets `STAR_HARNESS_OWNER_REQUIRED` immediately.
+
+| Symptom | Error code | Cause | Fix |
+| --- | --- | --- | --- |
+| Install does nothing | `STAR_HARNESS_NOT_INSTALLED` | Enable or bind was called before installing (`src/host/services/star-harness.mjs:14`) | Install Star Harness from the plugin page first, then enable it |
+| Install cannot find npm | `STAR_HARNESS_NPM_MISSING` | The Studio host process cannot find `npm` (`star-harness-release.mjs:72`) | Install Node.js and npm, and make sure `npm` is on the `PATH` the host was started with |
+| Install hangs on download | `STAR_HARNESS_DOWNLOAD_FAILED` | The download from the npm registry failed (`star-harness-release.mjs:138`) | Check the network and proxy; confirm the version exists in the registry |
+| Install reports an integrity failure | `STAR_HARNESS_RELEASE_INVALID` | The version is invalid, or the downloaded digest does not match (`star-harness-release.mjs:80`) | Reinstall; if it keeps failing the local cache is corrupt — delete the Star Harness state directory and retry |
+| Installed but will not start | `STAR_HARNESS_START_FAILED` | The child process failed to start or the protocol handshake timed out (`star-harness-release.mjs:225`) | Read the child's stderr in the host log; confirm the port and workspace directory are writable |
+| This version is not reviewed | `STAR_HARNESS_RELEASE_UNREVIEWED` | No review record for this version in the current Studio (`star-harness-release.mjs:28`) | Update Studio first, then install the matching version |
+| Version is incompatible | `STAR_HARNESS_INCOMPATIBLE` | Engine protocol version, package name or capability set does not match (`star-harness-release.mjs:168`) | Switch to a version Studio has reviewed; never hand-edit `pins` |
+| Version is rejected | `STAR_HARNESS_VERSION_UNSUPPORTED` | It is neither newer nor the previous rollback version (`star-harness.mjs:191`) | Pick a newer version, or roll back to the previous one |
+| Version format is rejected | `STAR_HARNESS_INVALID_REQUEST` | The version is not three-part semver, or an argument has the wrong type (`star-harness.mjs:13`) | Use `x.y.z`; pick from the list instead of typing |
+| Workspace binding is rejected | `STAR_HARNESS_WORKSPACE_CONFLICT` | The directory overlaps an existing binding, an external Harness or the Star Harness state directory (`star-harness.mjs:71`) | Pick a directory that neither nests nor overlaps |
+| Bound workspace will not start | `STAR_HARNESS_MODEL_CHANGED` | The model profile the workspace was bound to has changed (`star-harness.mjs:65`) | Unbind and rebind with a currently available model profile |
+| Changing version during a run is rejected | `STAR_HARNESS_BUSY` | A task is running, or a change is being applied (`star-harness.mjs:11`) | Wait for the current task to finish or cancel it; do not click repeatedly while running |
+| Management service is closed | `STAR_HARNESS_CLOSED` | The host is shutting down and the management service was released (`star-harness.mjs:12`) | Restart the Studio host |
+| Local settings cannot be read | `STAR_HARNESS_CONFIG_INVALID` | `settings.json` is missing, corrupt or has the wrong field types (`star-harness.mjs:41`) | Delete `settings.json` under the Star Harness state directory and rebind |
+| It says you lack permission | `STAR_HARNESS_OWNER_REQUIRED` | A non-owner principal called `star-harness/*` (`src/host/routes/http.mjs:65`) | Operate as the Studio host owner |
+| This deployment is unsupported | `STAR_HARNESS_UNSUPPORTED` | The deployment did not mount the local Star Harness manager (`src/host/routes/star-harness.mjs:6`) | Use an independent Harness service; local management exists only on desktop and source runs |
 
 ## Resources
 

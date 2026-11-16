@@ -1,27 +1,24 @@
 ---
 title: 运行时与部署
-description: 四条运行时路径各自归谁执行、托管运行时从创建到删除的 19 个状态，以及资源恢复失败时降级还是拒绝。
+description: 三种运行时各自归谁执行、托管运行时从创建到删除的 19 个状态，以及资源恢复失败时降级还是拒绝。
 status: new
 ---
 
-**运行时（runtime）决定一次「模型 + 工具」循环由哪个进程执行。** Studio 不实现这个循环，它把 Agent 修订版本路由到四条路径之一，并只在循环外侧负责会话归属、资源绑定与审批。
+**运行时（runtime）决定一次「模型 + 工具」循环由哪个进程执行。** Studio 不实现这个循环，它把 Agent 修订版本路由到三种运行时之一，并只在循环外侧负责会话归属、资源绑定与审批。
 
-## 四种 `runtime.type`
+## 三种 `runtime.type`
 
 | `runtime.type` | 界面名称 | 循环归属方 | 新建 Agent 时可选 |
 | --- | --- | --- | --- |
 | `dsh-native` | DSH Native Harness | DSH 原生循环 | 是（默认） |
+| `harness` | Star Harness | Harness 原生内核 | 仅编辑既有 Agent |
 | `codex` | Codex Agent | Codex App Server | 是 |
-| `harness` | Star Harness | 独立 Harness 进程 | 仅编辑既有 Agent |
-| `native-engine` | Native 引擎（独立进程） | 独立引擎进程 | 否 |
 
-`assertStudioRuntimeType` 接受四个值（`src/runtime-contract.mjs:37-41`），但创建表单只渲染 `ALLOWED_RUNTIME_TYPES` 中的三个（`src/client/theme.mjs:26`）。
+`STUDIO_RUNTIME_TYPES` 就是这三个值（`src/runtime-contract.mjs:6`），创建表单渲染的 `ALLOWED_RUNTIME_TYPES` 也是同一组（`src/client/theme.mjs:26`）。
 
-<Callout type="warn" title="Star Harness 对新 Agent 关闭">
-  `creatableRuntime` 只在 `editing` 为真时放行 `harness`，而 `allowHarnessRuntime` 默认 `false` 且没有任何调用方传入 `true`（`src/client/pages/agent-form.mjs:28`、`:61`）。因此新建表单里实际只有 **DSH Native Harness** 与 **Codex Agent** 两项；`harness` 只出现在编辑一条既有的 Star Harness Agent 时。
+<Callout type="warn" title="Star Harness 需要先装好才能选">
+  `creatableRuntime` 对 `harness` 额外要求 `starHarnessReady`，它来自 `star-harness/status` 的 `canCreate`——即**已安装 + 已启用 + 至少一个可用工作区**三者同时成立（`src/client/pages/agent-form.mjs:61-79`、`src/host/services/star-harness.mjs:150`）。没装好之前，新建表单只列出 **DSH Native Harness** 与 **Codex Agent**；编辑既有 Star Harness Agent 则始终可选。
 </Callout>
-
-`native-engine` 更外层：它可被路由、可被托管声明使用，但不在 `ALLOWED_RUNTIME_TYPES` 里，所以 Agent 表单永远不提供它（`src/client/theme.mjs:31-32`）。
 
 ## 该选哪一条
 
@@ -42,7 +39,7 @@ status: new
     默认运行时：执行模型、配置入口、限制与失败形态。
   </Card>
   <Card title="Star Harness" href="/docs/deployment/agentkit-harness">
-    独立 Harness 进程，支持子任务、恢复与持久回执。
+    以 npm 插件形式发布的 Harness 运行时，支持子任务、恢复与持久回执。
   </Card>
   <Card title="Codex Agent" href="/docs/deployment/codex">
     Codex App Server 适配层：临时 thread、沙箱与超时预算。
@@ -62,18 +59,17 @@ status: new
 | 运行时 | 进便携包 / 部署 | 托管声明里的 `framework` | 依据 |
 | --- | :--: | --- | --- |
 | `dsh-native` | 是 | `dsh-native` | `src/managed-runtime-manifest.mjs:11` |
+| `harness` | 是 | `harness` | 同上 |
 | `codex` | 是 | `codex` | 同上 |
-| `harness` | 是 | `harness`（注入引擎服务时投影为 `native-engine`） | `src/managed-runtime-definition.mjs:36-68` |
-| `native-engine` | **否** | — | `src/runtime-contract.mjs:7-10` |
 
-`native-engine` 被明确排除在「冻结的公开运行时列表」之外：它可路由、可被托管声明使用，但在地协议把资源工具搬完之前不进入便携包与部署（`src/runtime-contract.mjs:7-10`）。
+托管声明的 `runtimes` 白名单与 `STUDIO_RUNTIME_TYPES` 是同一组三个值（`src/managed-runtime-manifest.mjs:11`），所以一份合法声明只可能落在三种运行时之一。
 
 ## 三条路径的失败语义不同
 
 | 运行时 | 谁拥有 Run 账本 | 失败后能否原地恢复 |
 | --- | --- | --- |
 | `dsh-native` | DSH Session | 靠会话历史重开，无 Run 断点 |
-| `harness` | 独立 Harness 账本 | 支持 `resume`，可跨进程续跑 |
+| `harness` | Harness 原生 Run 账本 | 支持 `resume`，可跨进程续跑 |
 | `codex` | DSH Session | 靠会话历史重开；取消是协作式的 |
 
 这也是为什么选型时真正要看的是「谁拥有状态」，而不是「谁的功能列表更长」（详见[三运行时对照](./runtimes-compare.mdx)）。
