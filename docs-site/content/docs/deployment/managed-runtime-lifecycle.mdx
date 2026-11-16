@@ -135,7 +135,9 @@ stateDiagram-v2
 
 同一 VersionId 换一份不同字节的声明会失败——版本不可变（`:292-296`）。
 
-## 认证与隐私边界
+## 本机端口认证与隐私边界
+
+> 这一节只讲**托管 Host 本机监听的端口**。想调**已部署 Agent 的云端接口**（`RunAgent`、SSE 流、37 个 AgentEngine Action），见[云端 Agent HTTP API](../reference/agent-engine-api.mdx) —— 那是另一套认证，与本节的令牌无关。
 
 | 项 | 规则 | 依据 |
 | --- | --- | --- |

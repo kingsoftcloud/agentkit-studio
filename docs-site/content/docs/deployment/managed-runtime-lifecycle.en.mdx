@@ -135,7 +135,9 @@ Persistence is declared as `dsh-native-disk` with `SharedAcrossPods: false`, `Ef
 
 Reusing one VersionId with different declaration bytes fails: a version is immutable (`:292-296`).
 
-## Authentication and privacy boundary
+## Local port authentication and privacy boundary
+
+> This section covers **the port the managed Host listens on locally**. To call a **deployed Agent's cloud API** (`RunAgent`, the SSE stream, the 37 AgentEngine Actions), see [Cloud Agent HTTP API](../reference/agent-engine-api.mdx) — that is a different authentication scheme and has nothing to do with the token here.
 
 | Item | Rule | Source |
 | --- | --- | --- |
