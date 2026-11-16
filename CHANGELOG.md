@@ -1,12 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.0.15 - 2026-11-16
 
+- Studio 连接独立 Harness 服务并恢复任务投递：原生会话、Team 角色和绑定的 A2A 任务都交给独立服务执行，审批决策、排队引导和原始 A2A receipt 随 Run 回传；桌面端重新连回原始 Run 与 A2A receipt，任务进度和交付网站在侧栏直接打开。浏览器工具改走 Host 批处理执行器，启动错误与匿名轮次分开处理，折叠的失败轮次在 hydration 后仍能展开；托管 transport 边界与 Run 引擎补齐集成测试。Studio 固定已发布的 Harness 0.0.20 包。
+- ManagedRuntime 统一交付 Studio bundle：portable bundle 改用托管 MCP 的 env 名，云端资源跳过托管 bundle 上传；CI 复用 Playwright Chromium 缓存。
 - 托管运行时把 `AGENTKIT_CODEX_*` 调整项（`TIMEOUT_MS` / `IDLE_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` / `MODEL_IDLE_TIMEOUT_MS` / `MODEL` / `SANDBOX` / `APPROVAL_POLICY` / `REASONING_SUMMARY`）加入 Host 子进程的 env 白名单：之前 `codex-runtime` 会读这些变量，但白名单没放行，长任务的超时预算实际上是硬编码的，只能靠发新镜像调整。
 - 托管 DSH 的 Hosted UI 会话注册表改为 **Agent 作用域**（`<state>/managed-sessions`），不再放在版本目录下：此前每次被接受的 UpdateAgent 都会换到一个空的注册表目录，Hosted UI 于是列不出、也打不开更新前的会话，尽管 DSH 原生 transcript 一直保留。首次启动会把最近写入的一份旧版本注册表复制过来（旧目录保留供旧镜像回滚），`AGENTKIT_MANAGED_SESSIONS` 由 Host 显式导出，未提供时回退到旧的版本目录。
+- 一个 Agent 的 DSH home、用户 home 与工作区跨部署版本保持：只有不可变 receipt 和导入的 running bundle 按版本隔离，接受 UpdateAgent 后不再从空的 DSH home 启动；最近一份带会话状态的旧版本目录用硬链接一次性接管（源目录原样保留供回滚），profile marker 改用 Agent 身份。
+- 从 Agent 作用域会话注册表解析资源身份：Host 同时读取 `AGENTKIT_MANAGED_SESSIONS`，版本目录只在未显式提供路径时回退，并加 wiring guard 防止两份注册表再次漂移，修复更新后 Hosted UI 列得出会话却以 `MANAGED_RESOURCE_IDENTITY_UNAVAILABLE` 失败。
+- Codex 多轮 400 修复：`local_shell_call` 与其输出现在参与 Responses→Chat 转换，缺失 `call_id` 的输出按顺序与待处理调用配对；重放的 reasoning item 原样转发，只有 provider 真的拒绝时才去掉 `content: null` 重试一次，未相关的 400 保持原样。超出 yield 预算的命令按运行中继续（带 `sessionId`），并观察 `write_stdin` 输出，长命令不再以 `RUNTIME_RUN_FAILED` 收场。
+- 资源重试与 MCP 会话恢复落地第一批安全修复：托管 Memory 写入不再自动重试，MCP 首次并发建连使用 single-flight，已有 session 明确返回「session not found」时清理缓存并重建、最多重放一次；资源事件、UI 动作与 safe-read 仍按后续阶段验收。
+- 恢复冻结 host 的 MCP 轮次并延长 deadline：冻结运行时请求预算改为 15 分钟（`AGENTKIT_RUNTIME_TIMEOUT_MS` 可调），首次 turn 的 schema 以冻结契约为准，不再因预设晚挂载丢工具或整轮失败。
+- 浏览器 bundle 尺寸预算成为门禁：`scripts/verify-client-modules.mjs` 接入 `pnpm check`，基线与其允许增量一起入库；只统计 allowlist 之外的 `node_modules` 输入，第三方包内部循环降级为报告，Studio 自身模块必须无环。
+- 部署面展示冻结运行时镜像 tag：部署记录的 meta 行与详情显示镜像 tag，更新检查预览拆成当前镜像与目标镜像（tag + digest），只改展示不改部署行为。
 - MCP 资源页的「认证 Header / 环境变量凭证」改为可折叠的进阶区块：默认收起，识别到自定义 Header 时自动展开；仍可直接填 Header 名称与凭证名称添加凭证行。JSON 输入框随内容自动增高，多服务配置不再挤在 5 行里。
 - 修复浅色主题下主按钮 hover 时文字不可见：全局 hover 规则不再把白色标签的主按钮改成浅色底，`.sq-btn.primary` 等类样式按钮与凭据引导弹窗一并覆盖；禁用态主按钮的标签改用次要文字色。
 - 新建 Agent 默认运行时改为 DSH Native，并在创建流程中暂时隐藏 Star Harness（编辑既有 Star Harness Agent 不受影响），待该运行时稳定后再开放创建。
+- Studio 界面按 DSH 设计系统统一：Agent 表单改用共享表单原语并合并为三步（运行时在绑定能力之前选择，切换不再静默重置已绑工具），Agent 列表入口页改为分段控件加「更多创建方式」菜单，资源库、交付与运行中心等页面统一 DSH 设计 token；macOS 图标按 Apple 824px 网格留白，Windows 使用全出血图标。
+- 桌面端本地 Host 认证与 Chromium 隔离，并用 bundled pnpm 恢复插件 profile；专家分组以原生 DSH team 运行，冷启动 team 保留 native lead；Codex reasoning 与托管会话正确渲染；预留 native team 工具与默认模型；Agent 会话绑定到作用域 preset；恢复打包技能与托管运行时管理。
+- 保留被拒绝的上游请求的诊断信息（原始 name、数字 code、受限 message 与调用点），run 失败在 code 归一化前记录原始信息；长 AbortSignal 截止时间在进程入口与创建时追踪并记录 abort 来源；组合后的 Agent preset 日志让 bash 超时能点出具体工具。CI 的 mounted Studio Native Host proof 改为非门禁项。
+- 重新固定官方 DSH Windows 安装器摘要。
 
 ## 0.0.14 - 2026-11-10
 
