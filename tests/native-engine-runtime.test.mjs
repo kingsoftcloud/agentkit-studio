@@ -2,7 +2,7 @@
 // against a local model fixture. Studio code under test imports no engine module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -755,6 +755,7 @@ test('Studio-installed Star Harness binds two isolated workers and retains Run h
     return { ...project, label };
   }));
   const [alpha, beta] = projects;
+  const unbound = await setup(t, [final('Unbound still works.')]);
   const root = join(alpha.cwd, '..', 'manager');
   const release = fileURLToPath(new URL('../..', pathToFileURL(installedEngine)));
   const { version } = JSON.parse(readFileSync(join(release, 'package.json'), 'utf8'));
@@ -779,6 +780,15 @@ test('Studio-installed Star Harness binds two isolated workers and retains Run h
     await manager.setEnabled(true);
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: true });
     assert.deepEqual(runtime(manager).serviceModels, ['Alpha', 'Beta']);
+    const mixedRuntime = createNativeEngineRuntime({ stateRoot: join(root, 'mixed'),
+      env: { PATH: process.env.PATH, AGENTKIT_ENGINE_COMMAND: engineCommand, AGENTKIT_ENGINE_ARGS: engineArgs }, starHarness: manager });
+    assert.equal(mixedRuntime.usesServiceFor(alpha.cwd), true);
+    assert.equal(mixedRuntime.usesServiceFor(unbound.cwd), false);
+    assert.equal(mixedRuntime.requiresServiceWorkspace, false);
+    const local = await collect(mixedRuntime.stream({ ...unbound.options, input: 'Reply with the fixture text.' }));
+    assert.equal(local.findLast(chunk => chunk.type === 'text').text, 'Unbound still works.');
+    assert.equal(unbound.model.requests.length, 1);
+    assert.equal(alpha.model.requests.length + beta.model.requests.length, 0);
     const lease = await manager.acquire(runtime(manager).serviceWorkspace(alpha.cwd).workspaceRoot);
     try {
       assert.throws(() => manager.setEnabled(false), { code: 'STAR_HARNESS_BUSY' });
@@ -803,7 +813,15 @@ test('Studio-installed Star Harness binds two isolated workers and retains Run h
     assert.equal(next.findLast(chunk => chunk.type === 'text').text, 'Alpha continued.');
     assert.match(JSON.stringify(alpha.model.requests.at(-1).messages), /Alpha complete/);
     assert.doesNotMatch(JSON.stringify(alpha.model.requests.at(-1).messages), /Beta complete/);
-    await manager.setEnabled(false);
+    const alphaRoot = runtime(manager).serviceWorkspace(alpha.cwd).workspaceRoot;
+    const relocated = alpha.cwd + '-relocated';
+    renameSync(alpha.cwd, relocated);
+    try {
+      const status = await manager.status();
+      assert.equal(status.workspaces.find(item => item.workspace === alphaRoot).missing, true);
+      await assert.rejects(manager.acquire(alphaRoot), { code: 'NATIVE_ENGINE_WORKSPACE_UNAVAILABLE' });
+      await manager.setEnabled(false);
+    } finally { renameSync(relocated, alpha.cwd); }
     assert.deepEqual(await manager.status({ includeWorkspaces: false }), { canCreate: false });
   } finally { await manager.close(); }
 });

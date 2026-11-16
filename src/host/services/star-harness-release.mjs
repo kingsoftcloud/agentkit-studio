@@ -1,19 +1,64 @@
 import { execFile, fork } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { delimiter, dirname, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { connectEngineService, ENGINE_COMMAND_VERIFIER, ENGINE_VERIFICATION } from '../../providers/engine-service-client.mjs';
 import { ENGINE_PROTOCOL } from '../../providers/engine-protocol-client.mjs';
+import { verifyPackageFiles } from '@kingsoftcloud/agentkit-harness-node/package-integrity';
 
 export const STAR_HARNESS_PACKAGE = '@kingsoftcloud/agentkit-harness-node';
 export const STAR_HARNESS_REGISTRY = 'https://registry.npmjs.org';
 export const starHarnessVersion = version => typeof version === 'string' && /^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(version);
-export const starHarnessError = (code, message) => Object.assign(new Error(message), { code });
+export const starHarnessError = (code, message, options) => Object.assign(new Error(message, options), { code });
 const run = promisify(execFile);
 const workerEntry = fileURLToPath(new URL('./star-harness-worker.mjs', import.meta.url));
+const corePackage = '@kingsoftcloud/agentkit-harness-core';
+const pinsFile = new URL('../../../scripts/native-package-pins.json', import.meta.url);
+
+function pinnedRelease(pins, version) {
+  if (pins.schemaVersion !== 'agentkit.native-registry-pins/v2') throw new Error('Invalid Native registry pins');
+  const current = pins.packages[STAR_HARNESS_PACKAGE]?.version;
+  const release = current === version
+    ? { packages: pins.packages, dependencies: pins.runtimeDependencies }
+    : pins.previousRuntime?.version === version ? pins.previousRuntime : undefined;
+  if (!release?.dependencies) throw starHarnessError('STAR_HARNESS_RELEASE_UNREVIEWED',
+    '此版本尚未由当前 Studio 校验。请先更新 Studio，再安装对应的 Star Harness 版本。');
+  return release;
+}
+
+function verifyReleaseTree(folder, version, pins, release) {
+  const root = realpathSync(folder);
+  const visited = new Map();
+  function visit(name, directory) {
+    const path = realpathSync(directory);
+    const offset = relative(root, path);
+    if (!offset || isAbsolute(offset) || offset === '..' || offset.startsWith('..' + sep))
+      throw new Error('Release dependency resolves outside the installation');
+    if (visited.get(path) === name) return path;
+    const manifest = join(path, 'package.json');
+    if (!lstatSync(manifest).isFile()) throw new Error(`Invalid release package manifest: ${name}`);
+    const metadata = JSON.parse(readFileSync(manifest, 'utf8'));
+    const pin = name === STAR_HARNESS_PACKAGE || name === corePackage
+      ? release.packages[name] : pins.dependencyPackages?.[`${name}@${release.dependencies[name]}`];
+    if (metadata.name !== name || !pin || metadata.version !== pin.version
+      || (name === STAR_HARNESS_PACKAGE || name === corePackage) && metadata.version !== version)
+      throw new Error(`Release package identity mismatch: ${name}@${metadata.version} (expected ${pin?.version ?? 'reviewed version'})`);
+    verifyPackageFiles(path, pin.files, { dependencyPackages: pins.dependencyPackages });
+    visited.set(path, name);
+    const require = createRequire(join(path, 'package.json'));
+    for (const dependency of Object.keys(metadata.dependencies ?? {})) {
+      const candidate = require.resolve.paths(dependency)?.map(base => join(base, dependency)).find(existsSync);
+      if (!candidate) throw new Error('Release dependency is missing');
+      visit(dependency, candidate);
+    }
+    return path;
+  }
+  return visit(STAR_HARNESS_PACKAGE, join(folder, 'node_modules', STAR_HARNESS_PACKAGE));
+}
 
 function childEnvironment(env) {
   const names = /^(?:PATH|HOME|LANG|LC_ALL|TMPDIR|USER|LOGNAME|SHELL|SystemRoot|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|NODE_EXTRA_CA_CERTS)$/i;
@@ -28,14 +73,20 @@ function npmCommand(env) {
   return [process.execPath, cli];
 }
 
-export function createStarHarnessReleases({ directory, env = process.env, packageManager, fetchImpl = fetch } = {}) {
+export function createStarHarnessReleases({ directory, env = process.env, packageManager, fetchImpl = fetch,
+  pins = JSON.parse(readFileSync(pinsFile, 'utf8')) } = {}) {
   const revision = version => join(directory, version);
-  const entry = folder => join(folder, 'node_modules', STAR_HARNESS_PACKAGE);
   const assertRelease = async (folder, version) => {
-    const manifest = JSON.parse(await readFile(join(entry(folder), 'package.json'), 'utf8'));
-    if (manifest.name !== STAR_HARNESS_PACKAGE || manifest.version !== version)
-      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', '下载的 Star Harness 版本与请求不一致。');
-    return entry(folder);
+    if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 版本无效。');
+    const release = pinnedRelease(pins, version);
+    const stat = await lstat(folder);
+    try {
+      if (!stat.isDirectory()) throw new Error('Release directory is invalid');
+      return verifyReleaseTree(folder, version, pins, release);
+    }
+    catch (cause) {
+      throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 文件完整性校验失败，请重新安装。', { cause });
+    }
   };
   return {
     entry: version => assertRelease(revision(version), version),
@@ -45,19 +96,32 @@ export function createStarHarnessReleases({ directory, env = process.env, packag
       if (!response.ok) { await response.body?.cancel(); throw Error('registry unavailable'); }
       const release = await response.json();
       if (release.name !== STAR_HARNESS_PACKAGE || !starHarnessVersion(release.version)) throw Error('registry release invalid');
-      return release.version;
+      try { pinnedRelease(pins, release.version); return release.version; }
+      catch (error) { if (error.code !== 'STAR_HARNESS_RELEASE_UNREVIEWED') throw error; return null; }
     },
     async install(version, signal) {
+      if (!starHarnessVersion(version)) throw starHarnessError('STAR_HARNESS_RELEASE_INVALID', 'Star Harness 版本无效。');
+      const release = pinnedRelease(pins, version);
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      try { return await assertRelease(revision(version), version); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      try { return await assertRelease(revision(version), version); } catch (error) {
+        if (error.code === 'STAR_HARNESS_RELEASE_INVALID') await rm(revision(version), { recursive: true, force: true });
+        else if (error.code !== 'ENOENT') throw error;
+      }
       const stage = await mkdtemp(join(directory, '.install-'));
       try {
         const config = join(stage, '.npmrc');
         await writeFile(config, '', { mode: 0o600 });
-        await writeFile(join(stage, 'package.json'), JSON.stringify({ name: 'studio-star-harness-runtime', version: '1.0.0', private: true }), { mode: 0o600 });
+        const overrides = release.dependencies;
+        await writeFile(join(stage, 'package.json'), JSON.stringify({ name: 'studio-star-harness-runtime', version: '1.0.0',
+          private: true, overrides }), { mode: 0o600 });
+        if (packageManager) {
+          await writeFile(join(stage, 'pnpm-workspace.yaml'), JSON.stringify({ packages: [], overrides }), { mode: 0o600 });
+        }
         try {
           const [command, ...prefix] = packageManager ? [packageManager.command, ...packageManager.args] : npmCommand(env);
-          const installArgs = packageManager ? ['add', '--ignore-workspace'] : ['install', '--no-audit', '--no-fund'];
+          const installArgs = packageManager
+            ? ['add', '--workspace-root', '--config.node-linker=hoisted']
+            : ['install', '--no-audit', '--no-fund'];
           await run(command, [...prefix, ...installArgs, '--save-exact', '--ignore-scripts',
             '--registry=' + STAR_HARNESS_REGISTRY, STAR_HARNESS_PACKAGE + '@' + version,
           ], {

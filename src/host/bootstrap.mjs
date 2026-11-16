@@ -376,8 +376,8 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
       });
       if (config.runtime !== 'native-engine') return create(workspaceRoot);
       return createWorkspaceRoutedBuiltins({ create, defaultRoot: nativeEngineRuntime.serviceCatalogWorkspace ?? workspaceRoot,
-        resolveHarnessWorkspace: cwd => nativeEngineRuntime.usesService
-          ? resolveHarnessWorkspace(cwd) : { workspaceRoot: canonicalEngineWorkspace(cwd) },
+        resolveHarnessWorkspace: cwd => resolveHarnessWorkspace(cwd)
+          ?? (nativeEngineRuntime.requiresServiceWorkspace ? undefined : { workspaceRoot: canonicalEngineWorkspace(cwd) }),
         applicationPreviewAvailable: nativeEngineRuntime.applicationPreviewAvailable });
     }), 'agentkit-studio: Node builtin environment');
   }
@@ -451,7 +451,7 @@ export async function mountStudioHost(ctx, { env: runtimeEnv = process.env, conf
   const createPresetAdmission = registry => new DshPresetAdmission({
     registry,
     resolveHarnessWorkspace,
-    requiresHarnessWorkspace: () => nativeEngineRuntime.usesService,
+    requiresHarnessWorkspace: () => nativeEngineRuntime.requiresServiceWorkspace,
     strictResources,
     nativeEngineContract,
     assertHostCompatible: () => hostCompatibility.require('agent-presets'),

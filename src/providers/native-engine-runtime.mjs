@@ -117,6 +117,8 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
   const modelCapabilities = new Map();
   return {
     get usesService() { return serviceRoutes().length > 0; },
+    get requiresServiceWorkspace() { return routes.size > 0; },
+    usesServiceFor(cwd) { return Boolean(routeFor(cwd)); },
     get serviceCatalogWorkspace() { return serviceRoutes()[0]?.workspaceRoot; },
     applicationPreviewAvailable: [...routes.values()].some(route => route.preview),
     get serviceModels() { return [...new Set(serviceRoutes().map(route => route.modelSelection.model))]; },
@@ -161,7 +163,7 @@ export function createNativeEngineRuntime({ stateRoot, env = process.env, spawnE
       const workspaceRoot = canonicalEngineWorkspace(cwd);
       const route = routeFor(workspaceRoot);
       const useService = Boolean(route);
-      if (!workspaceRoot || serviceRoutes().length && !route)
+      if (!workspaceRoot || routes.size && !route)
         throw failure('NATIVE_ENGINE_WORKSPACE_UNAVAILABLE', '该会话的工作区没有绑定到配置的 Harness 服务。');
       if (!useService && (!text(model) || !text(modelProvider?.baseUrl))) throw failure('NATIVE_ENGINE_MODEL_UNAVAILABLE', '所选模型缺少可用的接口地址，请检查模型设置。');
       const session = text(sessionId) ? sessionId : 'studio-session';
