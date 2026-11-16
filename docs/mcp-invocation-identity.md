@@ -218,19 +218,23 @@ async def call_tool(name: str, arguments: dict):
 Native 集成用例里模型与 ToolRegistry 策略层是受控替身，也没有启动 DSH Host 进程；它证明的是
 「Native 运行时确实把 Host 绑定的身份送到了 MCP 线上」，不是「整机 Host 验收」。
 
-## 发布门禁
+## 门禁结果
 
-以下项目**当前未在本地通过**，必须在合入前由具备对应环境的门禁补齐（GitHub Actions 的
-`public-gate` / `patched-dsh-host` 作业即为此环境）：
+本机 Node.js 26.3.0 低于 `.node-version` 基线（24.22.1；26.x 需 ≥ 26.12.1），`make check` 与
+真实 Host 验证在本地无法执行，因此全部门禁在 GitHub Actions 上跑：
 
-| 门禁 | 为什么本地跑不了 | 通过标准 |
+| 门禁 | 环境 | 结果 |
 | --- | --- | --- |
-| `make check` / `public-gate` | 本机 Node.js 26.3.0 低于仓库基线（`.node-version` = 24.22.1，26.x 需 ≥ 26.12.1） | `scripts/check-node-version.mjs` 通过，全量套件无失败 |
-| 真实 DSH Host 进程 | 需要启动 DSH Host 并绑定隔离 `DSH_HOME`，本地无对应装机 | 在隔离 `DSH_HOME` 下启动 Host，`RunAgent` 一轮经真实 DSH 到达 MCP Server 并观察到 `businessUserId` / `businessSessionId` |
-| Chromium 相关用例 | 无缓存 Chromium 且未设 `AGENTKIT_NATIVE_TEST_CHROMIUM` | `dsh-node-browser-tools.test.mjs` 通过 |
+| `public-gate`（`make check` 全量套件） | ubuntu-24.04 / Node 24.22.1 / Playwright Chromium | **通过**：5431 项，5430 pass，0 fail，1 skipped |
+| `patched-dsh-host` | 真实 DSH Host，`DSH_HOME` 指向 runner 临时目录 | **通过**：真实 Node 退出 + JSONL 重开 + 进程恢复，5 个场景全 PASS |
+| `native-engine-integration` | ubuntu-24.04 | **通过** |
 
-本地已验证的部分不替代门禁结论：身份单元、适配器、托管入口与 Native 集成四层共 111 个用例通过，
-`node --check` 与 `git diff --check` 干净。
+CI 运行：<https://github.com/kingsoftcloud/agentkit-studio/actions/runs/43837904193>
+
+**仍未覆盖的部分必须明确**：`patched-dsh-host` 验证的是 Host 归属、审批与进程恢复，**没有**断言
+「`RunAgent` 一轮经真实 DSH Host 进程到达 MCP Server 并观察到业务身份」。该身份断言目前止于
+Native 集成层（`NativeKernel` + SQLite + 生产 MCP 适配器 + 本地 HTTP peer），不声称是整机 Host
+验收。若接入方要求这一条，需要单独补一个启动真实 Host 的身份用例。
 
 ## 回归
 
