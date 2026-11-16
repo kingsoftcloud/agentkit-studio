@@ -1,0 +1,324 @@
+---
+title: "云端 Agent HTTP API"
+description: "调用已部署 Agent 的 AgentEngine HTTP 接口：37 个 Action、两条调用路径、SSE 帧、错误信封与超时重试。"
+---
+
+{/* 本页由 docs-site/scripts/extract-reference.mjs 生成，请勿手工编辑。 */}
+
+**这一页讲的是「部署到云端之后，怎么用 HTTP 调它」。它和参考章里的 [控制协议](./operations.mdx) 不是同一套东西。**
+
+| | Studio RPC | AgentEngine Action（本页） |
+| --- | --- | --- |
+| 谁和谁说话 | 浏览器 ↔ 本地 Host | 本地 Host ↔ 云控制面 |
+| 规模 | `139` 个 operation | `37` 个 Action + `5` 个 Skill 服务 Action |
+| 通道 | `/agentkit` | `POST /agentengine/api/v1/{Action}` 或 KOP `/?Action=…&Version=v1` |
+| 信封 | `{ ok, value }` / `{ ok, error }` | `{ Code, RequestId, Error, Data }` |
+| 认证 | 本地 Host 会话 | `Authorization: Bearer` 或 AWS SigV4 |
+
+把两者混用是本页最常见的错误：Studio RPC 的 operation id 不是云侧 Action 名，反过来也不成立。
+
+## 三层地址，别混
+
+| 层 | 地址形状 | 用途 | 形状校验 |
+| --- | --- | --- | --- |
+| Studio RPC | 本地 Host 端口 | 浏览器驱动本地 Host | — |
+| 控制面 KOP | `https://aicp.api.ksyun.com` （公网）<br />`<inner-kop-host>` （内网，通常是 `http://`） | Host 调云侧 `37` 个 Action | 必须是干净的 origin：带端口、userinfo、query 或非根 path 一律 `SERVER_URL_INVALID` (`src/server-client.mjs:507`) |
+| 运行时端点 | `https://<AgentId>.agent.kspmas.ksyun.com` | 调**已部署 Agent** 的 `/v1/responses`、`/health`、`/v1/agentkit/runtime` | 只校验公网形状 (`src/studio-deployments.mjs:47-49`) |
+
+<Callout type="warn" title="内网地址没有形状校验">
+内网运行时地址（以及部分账号只能走的 `<inner-kop-host>`）**没有形状校验**——那是控制台与网关侧的能力，SDK 不做判断。本页不声称「SDK 会校验内网地址」。
+</Callout>
+
+## 端点发现
+
+**推荐路径（人来看）**：AICP 控制台 → 部署详情 → 复制端点。公网地址和内网地址都会展示，同时能拿到 API Key。
+
+**程序化路径（代码来取）**：`GetAgent` 返回的部署记录里带两种形态，按顺序回退 (`src/studio-deployments.mjs:44-46`)：
+
+| 字段 | 何时有 |
+| --- | --- |
+| `Network.PublicEndpoint` | 网络已就绪的部署 |
+| `QuickAccess.PublicEndpoint` | 快速访问入口 |
+
+`QuickAccess.ApiKey` 是运行时令牌 (`src/studio-deployments.mjs:381,445,511`)，用它换运行时端点的访问权。
+
+身份探针：`GET /v1/agentkit/runtime` (`src/build-runtime-http.mjs:99`) 返回运行时身份与执行策略；`GET /health` 返回 `{ status: "ready" | "stopping" }` (第 95 行)。
+
+## 认证
+
+两条路由的认证方式**完全不同**，不要互相套用。
+
+| 项 | 自定义 Server | KOP (AICP 网关) |
+| --- | --- | --- |
+| 凭证 | 服务令牌 | 子账号 AK/SK |
+| 主 Header | `Authorization: Bearer <token>` | `Authorization` 由 AWS SigV4 生成 |
+| 签名 | — | SigV4, `service=aicp`, `region=cn-beijing-6` |
+| 会话头 | loopback 时加 `X-AgentKit-Session` | — |
+| 必带头 | `X-Ksc-Request-Id`、`X-Ksc-Region`、`X-Ksc-Source` | 同上 + `X-Action`、`X-Version` |
+| 可选头 | — | `X-Ksc-Account-Id`、`X-Ksc-User-uuid` |
+| 预发（pre-online） | — | 额外 `X-KSC-CUSTOM-SOURCE: pre` |
+| 请求体 | 原样 payload | 额外带 `Service`、`Action`、`Version`、`SdkVersion`、`Region`、`Accesskey` |
+
+<Callout type="warn" title="内网回退只对 403 生效">
+公网 IAM 返回 **403 且报文含 `inner account`** 时，客户端会改走内网 IAM 重试一次（`src/cloud-identity.mjs:82-83`、`src/server-client.mjs:556`）。这是**端点选择**，不是对写请求的重试——其他 4xx 一律不重试。
+</Callout>
+
+## 两条调用路径，body 不同
+
+调「已部署的 Agent」有两条路，**请求体形状不一样**，混用会得到 400 或空响应：
+
+| | 控制面 RunAgent | 运行时 /v1/responses |
+| --- | --- | --- |
+| 地址 | `POST {controlPlane}/agentengine/api/v1/RunAgent` (KOP: `POST /?Action=RunAgent&Version=v1`) | `POST https://<AgentId>.agent.kspmas.ksyun.com/v1/responses` |
+| 认证 | `Authorization: Bearer` 或 AWS SigV4 | `Authorization: Bearer <runtime-token>` |
+| 字段风格 | PascalCase | snake_case |
+| 谁在用 | Host 的本地会话桥 (`src/host/routes/http.mjs:110-113`) | 直连部署的 Agent (`src/deployment-conversation.mjs:26-27,99`) |
+
+### 控制面 RunAgent
+
+字段来自 `src/host/routes/http.mjs:110-113`：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `AgentId` | string | 是 | 已部署的 Agent 标识 |
+| `SessionId` | string | 是 | 云侧会话标识，缺失报 `INVALID_CONVERSATION_INPUT` |
+| `Messages` | array | 是 | `[{ role: 'user', content: string }]` |
+| `Stream` | boolean | 是 | 固定 `true`；流式是唯一支持形态 |
+| `ApiFormat` | string | 是 | 固定 `'responses'`，走 OpenAI Responses 兼容帧 |
+| `InvocationId` | string | 否 | 幂等键，见 [超时与重试](#超时与重试) |
+
+```sh
+curl -N "https://aicp.api.ksyun.com/agentengine/api/v1/RunAgent" \
+  -H "Authorization: Bearer <service-token>" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -H "X-Ksc-Request-Id: $(uuidgen)" \
+  -H "X-Ksc-Region: cn-beijing-6" \
+  -H "X-Ksc-Source: agentkit-studio" \
+  -d '{
+    "AgentId": "<AgentId>",
+    "SessionId": "<SessionId>",
+    "Messages": [{ "role": "user", "content": "list the files in this workspace" }],
+    "Stream": true,
+    "ApiFormat": "responses",
+    "InvocationId": "'"$(uuidgen)"'"
+  }'
+```
+
+### 运行时 /v1/responses
+
+字段来自 `src/deployment-conversation.mjs:26-27`。注意 `session_id` 与 `request_id` 都由调用方从原始标识**确定性派生**，不是随机值——这样重发同一轮才能被认成同一请求：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `input` | string | 是 | 本轮用户输入 |
+| `stream` | boolean | 是 | 固定 `true` |
+| `model` | string | 是 | 绑定模型名，必须与冻结版本一致 |
+| `session_id` | string | 是 | `studio-` 加 `sha256(sessionId)` |
+| `request_id` | string | 是 | `message-` 加 `sha256(JSON.stringify([sessionId, messageId]))` |
+| `x-agentkit-permission-mode` | header | 否 | 只在冻结镜像声明了允许模式时携带 (第 34-35 行) |
+
+```js
+const sha = (value) => createHash('sha256').update(value).digest('hex').slice(0, 40);
+
+const response = await fetch(`https://${agentId}.agent.kspmas.ksyun.com/v1/responses`, {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${runtimeToken}`,
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  },
+  body: JSON.stringify({
+    input: userText,
+    stream: true,
+    model,
+    session_id: `studio-${sha(sessionId)}`,
+    request_id: `message-${sha(JSON.stringify([sessionId, messageId]))}`,
+  }),
+  redirect: 'error',
+});
+if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) {
+  throw new Error(`cloud conversation rejected (HTTP ${response.status})`);
+}
+```
+
+## 消费 SSE 流
+
+响应是 `text/event-stream`，帧格式是 OpenAI `responses` 兼容的，**不是** Action 的 JSON 信封：
+
+| 帧 | 含义 |
+| --- | --- |
+| `response.created` | 本轮开始，带 `runId` |
+| `response.output_text.delta` | 正文增量，追加拼接 |
+| `response.output_item.added` | 出现一个工具调用或消息项 |
+| `response.completed` | 本轮完成，带用量 |
+| `response.failed` | 本轮失败，带错误摘要 |
+
+```js
+const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+let buffer = '';
+for (;;) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buffer += value;
+  const frames = buffer.split('\n\n');
+  buffer = frames.pop() ?? '';
+  for (const frame of frames) {
+    const data = frame.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+    if (!data || data === '[DONE]') continue;
+    const event = JSON.parse(data);
+    if (event.type === 'response.output_text.delta') process.stdout.write(event.delta ?? '');
+    if (event.type === 'response.failed') throw new Error(event.response?.error?.message ?? 'run failed');
+  }
+}
+```
+
+<Callout type="info" title="Stream 和 ApiFormat 都不能省">
+`Stream: true` 决定响应是 SSE 而不是 JSON；`ApiFormat: 'responses'` 决定帧是 Responses 形状。少任何一个，客户端都会按错误的解析器读响应。
+</Callout>
+
+## Action 总表
+
+`42` 个 Action 全部从 `src/server-client.mjs` 的两处 `new Set([...])` 派生（`37` 个 AgentEngine Action + `5` 个 Skill 服务 Action）。**新增 Action 必须补 `ACTION_DOCS`，否则 `--check` 失败。**
+
+| 域 | Action | 路由 | 说明 | 已知请求字段 | 调用点 |
+| --- | --- | --- | --- | --- | --- |
+| 模板 | `ListStudioTemplates` | AgentEngine Action（POST） | 列出专家模板市场条目 | — | `src/server-client.mjs` |
+| 模板 | `GetStudioTemplate` | AgentEngine Action（POST） | 读取单个模板详情 | — | `src/server-client.mjs` |
+| 模板 | `GetStudioTemplateDownload` | AgentEngine Action（POST） | 取模板下载地址 | — | `src/server-client.mjs` |
+| 模板 | `GetStudioTemplateCatalogCapabilities` | AgentEngine Action（POST） | 模板目录声明的能力 | — | `src/server-client.mjs` |
+| Agent | `ListAgents` | AgentEngine Action（POST） | 列出账号下的 Agent | `Page, PageSize` | `src/server-client.mjs:193` |
+| Agent | `GetAgent` | AgentEngine Action（POST） | 读取 Agent 详情与部署记录 | `AgentId` | `src/server-client.mjs:210` |
+| Agent | `UpdateAgent` | AgentEngine Action（POST） | 更新 Agent 声明 | `AgentId` | `src/server-client.mjs:211` |
+| 会话 | `CreateSession` | AgentEngine Action（POST） | 为 Agent 建一个云会话 | — | `src/server-client.mjs` |
+| 知识库 | `ListKnowledgeBases` | AgentEngine Action（POST） | 列出知识库 | — | `src/server-client.mjs` |
+| 记忆 | `ListMemoryInstances` | AgentEngine Action（POST） | 列出记忆库实例 | — | `src/server-client.mjs` |
+| MCP | `ListMCPs` | AgentEngine Action（POST） | 列出 MCP Server | — | `src/server-client.mjs` |
+| MCP | `GetMCP` | AgentEngine Action（POST） | 读取单个 MCP Server | — | `src/server-client.mjs` |
+| MCP | `DeleteMCP` | AgentEngine Action（POST） | 删除 MCP Server 并清理云端资源 | — | `src/server-client.mjs` |
+| 知识库 | `RetrieveKnowledge` | AgentEngine Action（POST） | 按查询检索知识片段 | — | `src/server-client.mjs` |
+| 记忆 | `QueryMemorySdk` | AgentEngine Action（POST） | 按查询读记忆 | — | `src/server-client.mjs` |
+| 记忆 | `CreateMemorySdk` | AgentEngine Action（POST） | 写入一条记忆 | — | `src/server-client.mjs` |
+| 记忆 | `ListMemories` | AgentEngine Action（POST） | 分页列记忆记录 | — | `src/server-client.mjs` |
+| 记忆 | `UpdateMemory` | AgentEngine Action（POST） | 更新一条记忆 | — | `src/server-client.mjs` |
+| 记忆 | `DeleteMemory` | AgentEngine Action（POST） | 删除一条记忆 | — | `src/server-client.mjs` |
+| Skill | `ListSkillWorkspaces` | AgentEngine Action（POST） | 列出 Skill 工作空间 | — | `src/server-client.mjs` |
+| Agent | `ListAgentModels` | AgentEngine Action（POST） | 列出该 Agent 可用的模型 | — | `src/server-client.mjs` |
+| 会话 | `ListSessions` | AgentEngine Action（POST） | 列出会话 | — | `src/server-client.mjs` |
+| 会话 | `GetSession` | AgentEngine Action（POST） | 读取会话详情 | — | `src/server-client.mjs` |
+| 会话 | `ListSessionMessages` | AgentEngine Action（POST） | 分页读会话消息 | — | `src/server-client.mjs` |
+| 会话 | `ListSessionEvents` | AgentEngine Action（POST） | 读会话事件流 | — | `src/server-client.mjs` |
+| 调度 | `ListAgentSchedules` | AgentEngine Action（POST） | 列出该 Agent 的定时任务 | `AgentId` | `src/server-client.mjs:215` |
+| 调度 | `GetAgentSchedule` | AgentEngine Action（POST） | 读取单个定时任务 | `AgentId` | `src/server-client.mjs:216` |
+| 调度 | `ListAgentScheduleOccurrences` | AgentEngine Action（POST） | 列出定时任务的执行实例 | `AgentId` | `src/server-client.mjs:217` |
+| 观测 | `GetObservabilityOverview` | AgentEngine Action（POST） | 区间观测总览 | `StartTime, EndTime` | `src/server-client.mjs:563` |
+| 观测 | `ListAgentRuntimeStats` | AgentEngine Action（POST） | 按 Agent 列运行统计 | `StartTime, EndTime` | `src/server-client.mjs:569` |
+| 运行控制 | `RunAgent` | AgentEngine Action（POST） | 发一轮对话，可流式 | `AgentId, SessionId, Messages, Stream, ApiFormat, InvocationId` | `src/server-client.mjs` |
+| 运行控制 | `CancelRun` | AgentEngine Action（POST） | 取消当前 Run | — | `src/server-client.mjs` |
+| 运行控制 | `ResumeRun` | AgentEngine Action（POST） | 续跑（当前声明为不可用） | — | `src/server-client.mjs` |
+| 运行控制 | `SubmitInteraction` | AgentEngine Action（POST） | 提交人工审批决定 | — | `src/server-client.mjs` |
+| 运行控制 | `SubmitAgentControl` | AgentEngine Action（POST） | 下发运行期控制指令 | — | `src/server-client.mjs` |
+| 凭证 | `ListAgentApiKeys` | AgentEngine Action（POST） | 列出 Agent 的 API Key | — | `src/server-client.mjs` |
+| 凭证 | `CreateAgentApiKey` | AgentEngine Action（POST） | 新建 Agent 的 API Key | — | `src/server-client.mjs` |
+| Skill | `ListSkillSpaces` | Skill 服务（AICP GET） | 列出 Skill Space（AICP） | — | `src/server-client.mjs` |
+| Skill | `ListAvailablePremadeSkills` | Skill 服务（AICP GET） | 列出可用的预置 Skill | — | `src/server-client.mjs` |
+| Skill | `ListSkillsBySpaceId` | Skill 服务（AICP GET） | 按 Space 列出 Skill | — | `src/server-client.mjs` |
+| Skill | `GetSkillDownloadUrl` | Skill 服务（AICP GET） | 取 Skill 下载地址 | — | `src/server-client.mjs` |
+| Skill | `GetPremadeSkillDownloadUrl` | Skill 服务（AICP GET） | 取预置 Skill 下载地址 | — | `src/server-client.mjs` |
+
+按域统计：
+
+| 域 | 数量 | Action |
+| --- | --- | --- |
+| 模板 | 4 | `ListStudioTemplates` · `GetStudioTemplate` · `GetStudioTemplateDownload` · `GetStudioTemplateCatalogCapabilities` |
+| Agent | 4 | `ListAgents` · `GetAgent` · `UpdateAgent` · `ListAgentModels` |
+| 会话 | 5 | `CreateSession` · `ListSessions` · `GetSession` · `ListSessionMessages` · `ListSessionEvents` |
+| 知识库 | 2 | `ListKnowledgeBases` · `RetrieveKnowledge` |
+| 记忆 | 6 | `ListMemoryInstances` · `QueryMemorySdk` · `CreateMemorySdk` · `ListMemories` · `UpdateMemory` · `DeleteMemory` |
+| MCP | 3 | `ListMCPs` · `GetMCP` · `DeleteMCP` |
+| Skill | 6 | `ListSkillWorkspaces` · `ListSkillSpaces` · `ListAvailablePremadeSkills` · `ListSkillsBySpaceId` · `GetSkillDownloadUrl` · `GetPremadeSkillDownloadUrl` |
+| 调度 | 3 | `ListAgentSchedules` · `GetAgentSchedule` · `ListAgentScheduleOccurrences` |
+| 观测 | 2 | `GetObservabilityOverview` · `ListAgentRuntimeStats` |
+| 运行控制 | 5 | `RunAgent` · `CancelRun` · `ResumeRun` · `SubmitInteraction` · `SubmitAgentControl` |
+| 凭证 | 2 | `ListAgentApiKeys` · `CreateAgentApiKey` |
+
+## 错误信封与错误码
+
+成功与失败都是同一个信封 (`src/server-client.mjs:420-431`)：
+
+```json
+{
+  "Code": 0,
+  "RequestId": "<request-id>",
+  "Data": {},
+  "Error": null
+}
+```
+
+判定规则：`Code` 为 `0` 或 `200` 且没有 `Error` 才算成功；少数资源类 Action（如 `ListSessions`）允许 `Code` 缺省。失败时客户端抛出 `AgentEngineError`，把 `RequestId` 一起带出来。
+
+| 错误码 | 触发条件 | 客户端该做什么 | 抛出处 |
+| --- | --- | --- | --- |
+| `SERVER_ACTION_FAILED` | 云端返回非 0/200 的 Code 或 `Error` 字段 | 读 `RequestId` 找云侧日志；不要原样重试写请求 | `src/server-client.mjs:434` |
+| `SERVER_ACTION_NOT_REGISTERED` | KOP 报 `InvalidActionOrVersion`，该 Action 未在该环境发布 | 确认环境与 API 版本；发布后再重试 | `src/server-client.mjs:427` |
+| `SERVER_URL_INVALID` | 控制面地址不是 HTTPS origin，或带端口/userinfo/query | 只传 origin；HTTP 仅限本机或运行时配置的内网入口 | `src/server-client.mjs:507` |
+| `SERVER_CREDENTIALS_MISSING` | 自定义 Server 是非 loopback 但没配服务令牌 | 配置 `cloudServiceToken` | `src/server-client.mjs:392` |
+| `SERVER_UNAVAILABLE` | 请求未完成（连接失败或超时） | 检查网络；写请求不会自动重试 | `src/server-client.mjs:404` |
+| `SERVER_INVALID_RESPONSE` | 响应体不是合法 JSON | 检查网关/代理是否改写了响应 | `src/server-client.mjs:418` |
+| `SERVER_RATE_LIMITED` | 上游返回 429 | 退避后重试；流式请求同样受限 | `src/server-client.mjs:434` |
+| `ACTION_NOT_ALLOWED` | 该 Action 不在 `SERVER_ACTIONS` 白名单里 | Studio 不开放这个 Action，换受支持的动作 | `src/server-client.mjs:348` |
+| `CLOUD_CREDENTIALS_MISSING` | KOP 路由需要 AK/SK 但没配置 | 设置 → 模型与凭证 → 云端配置 | `src/server-client.mjs:375` |
+| `CLOUD_SUBACCOUNT_REQUIRED` | 创建类 Action 用了主账号 AK/SK | 改用已核验的子账号 AK/SK | `src/server-client.mjs:357` |
+| `REQUEST_CANCELLED` | 调用方 AbortSignal 已触发 | 这不是失败，按取消处理 | `src/server-client.mjs:404` |
+| `SKILL_SERVICE_FAILED` | Skill Service 返回非 0/200 | 同上：读 `RequestId` 定位 | `src/server-client.mjs:492` |
+| `SKILL_SERVICE_UNAVAILABLE` | Skill Service 需要 AICP 云端凭证但当前不是 KOP 路由 | 切到 KOP 云端凭证 | `src/server-client.mjs:457` |
+| `INVALID_QUERY` | 分页参数越界（`pageSize` 1–100） | 收敛分页参数 | `src/server-client.mjs:575` |
+| `INVALID_AGENT_ID` | `AgentId` 为空 | 传非空 AgentId | `src/server-client.mjs:596` |
+| `DEPLOYMENT_AGENT_MISMATCH` | 请求里的 `AgentId` 与部署记录不一致 | 用部署记录里的 AgentId | `src/server-client.mjs:206` |
+| `DEPLOYMENT_ENDPOINT_INVALID` | 运行地址协议/hostname/端口/path 与部署不匹配 | 从控制台复制完整地址，不要自己拼 | `src/studio-deployments.mjs:49` |
+| `RUNTIME_SESSION_BUSY` | 同一会话已有活动 Run | 先取消或等当前 Run 结束 | `src/build-runtime-http.mjs:193` |
+| `RUNTIME_DEPLOYMENT_CHANGED` | 版本护栏头与加载的声明不一致 | 重新读取运行时身份后再发 | `src/build-runtime-http.mjs:105` |
+| `RUNTIME_ACTION_UNSUPPORTED` | 该运行时声明里此动作不可用 | 查能力声明，不要重试 | `src/frozen-hosted-actions.mjs:106` |
+| `RUNTIME_ACTION_INPUT_UNSUPPORTED` | 请求体带了声明外的字段 | 只传声明允许的字段 | `src/managed-runtime-actions.mjs:168` |
+| `RUNTIME_TRANSPORT_CLOSED` | 传输层已关闭 | 重建客户端 | `src/cloud-runtime-fetch.mjs:7` |
+
+## 能力声明
+
+部署后的 Agent 通过 `GET /v1/agentkit/runtime` (`src/managed-runtime-capabilities.mjs:12-37`) 声明自己支持什么。当前清单里的能力键：
+
+| 能力键 | 含义 | 默认可用 |
+| --- | --- | --- |
+
+
+<Callout type="warn" title="不可用的能力是显式的，不是静默近似">
+`ResumeRun`、`BackgroundRun`、`CheckpointResume`、`KernelSessionEvents`、`Attachments`、`WorkspaceFiles`、`Thinking` 当前都声明为不可用。调用方应当**读声明再决定**，而不是先调一次看报错。
+</Callout>
+
+## 超时与重试
+
+两个窗口分开，因为流式请求会在托管运行时准入上花更久（`src/server-client.mjs:537-540`  注释）：
+
+| 场景 | 默认超时 | 依据 |
+| --- | --- | --- |
+| 普通 JSON Action | 15 秒 | `timeoutMs = 15000` |
+| 流式 `RunAgent` | 180 秒（取两者较大值） | `streamTimeoutMs = Math.max(timeoutMs, 180000)` |
+
+<Callout type="error" title="写请求不会自动重试">
+`SERVER_UNAVAILABLE` 的文案里写死了「写请求不会自动重试」——因为客户端无法判断上游是否已经受理。要做幂等，靠调用方自己传键：
+
+| 键 | 作用域 | 依据 |
+| --- | --- | --- |
+| `InvocationId` | 一次 `RunAgent` | `src/host/routes/http.mjs:113` |
+| `X-Ksc-Request-Id` | 一次 HTTP 请求 | `src/server-client.mjs:378` |
+
+同一个 `InvocationId` 重发，云端才能把两次请求认成同一轮。**不要**用随机值伪装重试——那等于两次独立提交。
+</Callout>
+
+## 相关页面
+
+<Cards>
+  <Card title="控制协议" href="/docs/reference/operations">`139` 个 Studio RPC operation（浏览器 ↔ 本地 Host）</Card>
+  <Card title="托管运行时生命周期" href="/docs/deployment/managed-runtime-lifecycle">19 个部署状态与能力矩阵</Card>
+  <Card title="错误码" href="/docs/reference/errors">全量错误码索引</Card>
+  <Card title="部署到云端" href="/docs/guides/deploy-to-cloud">从 Studio 发起一次部署</Card>
+</Cards>

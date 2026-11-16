@@ -1270,6 +1270,504 @@ async function extractPluginCatalog() {
 // Aggregate
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 12. AgentEngine Action API — src/server-client.mjs + src/managed-runtime-capabilities.mjs
+// ---------------------------------------------------------------------------
+
+/**
+ * Cloud-side Action catalog.
+ *
+ * The *ids* are read out of the two `new Set([...])` literals in
+ * `src/server-client.mjs`; this table only supplies the domain and the one-line
+ * meaning a reader needs. A new Action therefore fails `--check` until it is
+ * described here, which is what stops the page from drifting away from the
+ * client — the same contract `OPERATION_VERBS` gives the RPC chapter.
+ *
+ * `fields` lists the request members the client demonstrably sends. Only
+ * `RunAgent` is specified end-to-end by the product; the rest are read from the
+ * call site, so a dash means "see the call site" rather than "no fields".
+ */
+// Plain `{ zh, en }` objects rather than `T(...)`: this table is evaluated at
+// module load, before the `T` helper below is initialized.
+const ACTION_DOMAINS = [
+  ["template", { zh: "模板", en: "Templates" }],
+  ["agent", { zh: "Agent", en: "Agents" }],
+  ["session", { zh: "会话", en: "Sessions" }],
+  ["knowledge", { zh: "知识库", en: "Knowledge base" }],
+  ["memory", { zh: "记忆", en: "Memory" }],
+  ["mcp", { zh: "MCP", en: "MCP" }],
+  ["skill", { zh: "Skill", en: "Skill" }],
+  ["schedule", { zh: "调度", en: "Schedules" }],
+  ["observability", { zh: "观测", en: "Observability" }],
+  ["run", { zh: "运行控制", en: "Run control" }],
+  ["credential", { zh: "凭证", en: "Credentials" }],
+];
+
+const ACTION_DOCS = {
+  ListStudioTemplates: { domain: "template", zh: "列出专家模板市场条目", en: "List expert template market entries" },
+  GetStudioTemplate: { domain: "template", zh: "读取单个模板详情", en: "Read one template" },
+  GetStudioTemplateDownload: { domain: "template", zh: "取模板下载地址", en: "Resolve the template download URL" },
+  GetStudioTemplateCatalogCapabilities: { domain: "template", zh: "模板目录声明的能力", en: "Capabilities the template catalog declares" },
+  ListAgents: { domain: "agent", zh: "列出账号下的 Agent", en: "List Agents in the account", fields: "Page, PageSize" },
+  GetAgent: { domain: "agent", zh: "读取 Agent 详情与部署记录", en: "Read an Agent and its deployment record", fields: "AgentId" },
+  UpdateAgent: { domain: "agent", zh: "更新 Agent 声明", en: "Update an Agent declaration" },
+  ListAgentModels: { domain: "agent", zh: "列出该 Agent 可用的模型", en: "List models available to the Agent" },
+  CreateSession: { domain: "session", zh: "为 Agent 建一个云会话", en: "Create a cloud session for an Agent" },
+  ListSessions: { domain: "session", zh: "列出会话", en: "List sessions" },
+  GetSession: { domain: "session", zh: "读取会话详情", en: "Read one session" },
+  ListSessionMessages: { domain: "session", zh: "分页读会话消息", en: "Page through session messages" },
+  ListSessionEvents: { domain: "session", zh: "读会话事件流", en: "Read the session event stream" },
+  ListKnowledgeBases: { domain: "knowledge", zh: "列出知识库", en: "List knowledge bases" },
+  RetrieveKnowledge: { domain: "knowledge", zh: "按查询检索知识片段", en: "Retrieve knowledge chunks for a query" },
+  ListMemoryInstances: { domain: "memory", zh: "列出记忆库实例", en: "List memory instances" },
+  QueryMemorySdk: { domain: "memory", zh: "按查询读记忆", en: "Query memory" },
+  CreateMemorySdk: { domain: "memory", zh: "写入一条记忆", en: "Write one memory record" },
+  ListMemories: { domain: "memory", zh: "分页列记忆记录", en: "Page through memory records" },
+  UpdateMemory: { domain: "memory", zh: "更新一条记忆", en: "Update one memory record" },
+  DeleteMemory: { domain: "memory", zh: "删除一条记忆", en: "Delete one memory record" },
+  ListMCPs: { domain: "mcp", zh: "列出 MCP Server", en: "List MCP servers" },
+  GetMCP: { domain: "mcp", zh: "读取单个 MCP Server", en: "Read one MCP server" },
+  DeleteMCP: { domain: "mcp", zh: "删除 MCP Server 并清理云端资源", en: "Delete an MCP server and its cloud resources" },
+  ListSkillWorkspaces: { domain: "skill", zh: "列出 Skill 工作空间", en: "List skill workspaces" },
+  ListSkillSpaces: { domain: "skill", zh: "列出 Skill Space（AICP）", en: "List skill spaces (AICP)" },
+  ListAvailablePremadeSkills: { domain: "skill", zh: "列出可用的预置 Skill", en: "List available premade skills" },
+  ListSkillsBySpaceId: { domain: "skill", zh: "按 Space 列出 Skill", en: "List skills in a space" },
+  GetSkillDownloadUrl: { domain: "skill", zh: "取 Skill 下载地址", en: "Resolve a skill download URL" },
+  GetPremadeSkillDownloadUrl: { domain: "skill", zh: "取预置 Skill 下载地址", en: "Resolve a premade skill download URL" },
+  ListAgentSchedules: { domain: "schedule", zh: "列出该 Agent 的定时任务", en: "List schedules for the Agent" },
+  GetAgentSchedule: { domain: "schedule", zh: "读取单个定时任务", en: "Read one schedule" },
+  ListAgentScheduleOccurrences: { domain: "schedule", zh: "列出定时任务的执行实例", en: "List schedule occurrences" },
+  GetObservabilityOverview: { domain: "observability", zh: "区间观测总览", en: "Observability overview for a window", fields: "StartTime, EndTime" },
+  ListAgentRuntimeStats: { domain: "observability", zh: "按 Agent 列运行统计", en: "Per-Agent runtime statistics", fields: "StartTime, EndTime" },
+  RunAgent: { domain: "run", zh: "发一轮对话，可流式", en: "Send one turn, optionally streamed", fields: "AgentId, SessionId, Messages, Stream, ApiFormat, InvocationId" },
+  CancelRun: { domain: "run", zh: "取消当前 Run", en: "Cancel the current Run" },
+  ResumeRun: { domain: "run", zh: "续跑（当前声明为不可用）", en: "Resume a Run (declared unsupported)" },
+  SubmitInteraction: { domain: "run", zh: "提交人工审批决定", en: "Submit a human approval decision" },
+  SubmitAgentControl: { domain: "run", zh: "下发运行期控制指令", en: "Send a run-time control command" },
+  ListAgentApiKeys: { domain: "credential", zh: "列出 Agent 的 API Key", en: "List the Agent's API keys" },
+  CreateAgentApiKey: { domain: "credential", zh: "新建 Agent 的 API Key", en: "Create an API key for the Agent" },
+};
+
+/** Request members the client provably always sends, keyed by dispatch helper. */
+const SCOPED_AGENT_ID = "AgentId";
+
+function extractActionSet(source, name) {
+  const match = new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`).exec(source);
+  if (!match) throw new Error(`cannot find ${name} in src/server-client.mjs`);
+  return [...match[1].matchAll(/'([A-Za-z]+)'/g)].map((entry) => entry[1]);
+}
+
+function extractAgentEngineApi() {
+  const client = read("src/server-client.mjs");
+  const lines = client.split("\n");
+  const server = extractActionSet(client, "SERVER_ACTIONS");
+  const skill = extractActionSet(client, "SKILL_SERVICE_ACTIONS");
+  const capabilities = read("src/managed-runtime-capabilities.mjs");
+
+  const callSite = (name) => {
+    const re = new RegExp(`(?:^|[^A-Za-z])(?:action|scoped|skillAction|streamAction)\\(\\s*'${name}'`);
+    for (let i = 0; i < lines.length; i += 1) if (re.test(lines[i])) return i + 1;
+    return 0;
+  };
+
+  const actions = [...server, ...skill].map((name) => {
+    const doc = ACTION_DOCS[name];
+    if (!doc) throw new Error(`Action ${name} has no ACTION_DOCS entry; describe it before regenerating.`);
+    const line = callSite(name);
+    const scoped = new RegExp(`scoped\\(\\s*'${name}'`).test(client);
+    const fields = doc.fields || (scoped ? SCOPED_AGENT_ID : "");
+    return { name, domain: doc.domain, zh: doc.zh, en: doc.en, fields, line, scoped, skill: skill.includes(name) };
+  });
+
+  const orphaned = Object.keys(ACTION_DOCS).filter((name) => !actions.some((action) => action.name === name));
+  if (orphaned.length) throw new Error(`ACTION_DOCS describes Actions the client no longer sends: ${orphaned.join(", ")}`);
+
+  // Capability keys are read from the returned manifest object literal.
+  const manifestKeys = [...capabilities.matchAll(/^\s{4}([A-Z][A-Za-z0-9_]*):/gm)].map((entry) => entry[1]);
+
+  return { actions, server, skill, manifestKeys, total: actions.length, clientLines: lines.length };
+}
+
+/** Error codes this page documents; each pointer is the throw site. */
+const AGENT_ENGINE_ERRORS = [
+  ["SERVER_ACTION_FAILED", "src/server-client.mjs:434", "云端返回非 0/200 的 Code 或 `Error` 字段", "The cloud returned a Code other than 0/200, or an `Error` field", "读 `RequestId` 找云侧日志；不要原样重试写请求", "Read `RequestId` in the cloud logs; do not blind-retry a mutating request"],
+  ["SERVER_ACTION_NOT_REGISTERED", "src/server-client.mjs:427", "KOP 报 `InvalidActionOrVersion`，该 Action 未在该环境发布", "KOP reports `InvalidActionOrVersion`; the Action is not published in this environment", "确认环境与 API 版本；发布后再重试", "Confirm the environment and API version; retry after it is published"],
+  ["SERVER_URL_INVALID", "src/server-client.mjs:507", "控制面地址不是 HTTPS origin，或带端口/userinfo/query", "The control-plane address is not an HTTPS origin, or carries a port, userinfo or query", "只传 origin；HTTP 仅限本机或运行时配置的内网入口", "Pass an origin only; HTTP is limited to loopback or a runtime-configured intranet entry"],
+  ["SERVER_CREDENTIALS_MISSING", "src/server-client.mjs:392", "自定义 Server 是非 loopback 但没配服务令牌", "A non-loopback custom server has no service token", "配置 `cloudServiceToken`", "Configure `cloudServiceToken`"],
+  ["SERVER_UNAVAILABLE", "src/server-client.mjs:404", "请求未完成（连接失败或超时）", "The request did not complete (connection failure or timeout)", "检查网络；写请求不会自动重试", "Check the network; mutating requests are not retried"],
+  ["SERVER_INVALID_RESPONSE", "src/server-client.mjs:418", "响应体不是合法 JSON", "The response body is not valid JSON", "检查网关/代理是否改写了响应", "Check whether a gateway or proxy rewrote the response"],
+  ["SERVER_RATE_LIMITED", "src/server-client.mjs:434", "上游返回 429", "The upstream returned 429", "退避后重试；流式请求同样受限", "Back off and retry; streaming requests are limited too"],
+  ["ACTION_NOT_ALLOWED", "src/server-client.mjs:348", "该 Action 不在 `SERVER_ACTIONS` 白名单里", "The Action is not in the `SERVER_ACTIONS` allowlist", "Studio 不开放这个 Action，换受支持的动作", "Studio does not expose this Action; use a supported one"],
+  ["CLOUD_CREDENTIALS_MISSING", "src/server-client.mjs:375", "KOP 路由需要 AK/SK 但没配置", "The KOP route needs AK/SK and none is configured", "设置 → 模型与凭证 → 云端配置", "Settings → Models & credentials → cloud credentials"],
+  ["CLOUD_SUBACCOUNT_REQUIRED", "src/server-client.mjs:357", "创建类 Action 用了主账号 AK/SK", "A create Action used a root-account AK/SK", "改用已核验的子账号 AK/SK", "Use a verified sub-account AK/SK"],
+  ["REQUEST_CANCELLED", "src/server-client.mjs:404", "调用方 AbortSignal 已触发", "The caller's AbortSignal fired", "这不是失败，按取消处理", "Not a failure — treat it as a cancellation"],
+  ["SKILL_SERVICE_FAILED", "src/server-client.mjs:492", "Skill Service 返回非 0/200", "The Skill Service returned a Code other than 0/200", "同上：读 `RequestId` 定位", "As above: use `RequestId` to locate it"],
+  ["SKILL_SERVICE_UNAVAILABLE", "src/server-client.mjs:457", "Skill Service 需要 AICP 云端凭证但当前不是 KOP 路由", "The Skill Service needs AICP credentials and this is not a KOP route", "切到 KOP 云端凭证", "Switch to KOP cloud credentials"],
+  ["INVALID_QUERY", "src/server-client.mjs:575", "分页参数越界（`pageSize` 1–100）", "Paging is out of range (`pageSize` 1–100)", "收敛分页参数", "Clamp the paging parameters"],
+  ["INVALID_AGENT_ID", "src/server-client.mjs:596", "`AgentId` 为空", "`AgentId` is empty", "传非空 AgentId", "Pass a non-empty AgentId"],
+  ["DEPLOYMENT_AGENT_MISMATCH", "src/server-client.mjs:206", "请求里的 `AgentId` 与部署记录不一致", "The request `AgentId` does not match the deployment record", "用部署记录里的 AgentId", "Use the AgentId from the deployment record"],
+  ["DEPLOYMENT_ENDPOINT_INVALID", "src/studio-deployments.mjs:49", "运行地址协议/hostname/端口/path 与部署不匹配", "The runtime address protocol, hostname, port or path does not match the deployment", "从控制台复制完整地址，不要自己拼", "Copy the full address from the console; do not build it by hand"],
+  ["RUNTIME_SESSION_BUSY", "src/build-runtime-http.mjs:193", "同一会话已有活动 Run", "The session already has an active Run", "先取消或等当前 Run 结束", "Cancel or wait for the current Run"],
+  ["RUNTIME_DEPLOYMENT_CHANGED", "src/build-runtime-http.mjs:105", "版本护栏头与加载的声明不一致", "A version-guard header does not match the loaded declaration", "重新读取运行时身份后再发", "Re-read the runtime identity before sending"],
+  ["RUNTIME_ACTION_UNSUPPORTED", "src/frozen-hosted-actions.mjs:106", "该运行时声明里此动作不可用", "The action is unavailable in this runtime's declaration", "查能力声明，不要重试", "Read the capability declaration; do not retry"],
+  ["RUNTIME_ACTION_INPUT_UNSUPPORTED", "src/managed-runtime-actions.mjs:168", "请求体带了声明外的字段", "The body carries a field outside the declaration", "只传声明允许的字段", "Send only the declared fields"],
+  ["RUNTIME_TRANSPORT_CLOSED", "src/cloud-runtime-fetch.mjs:7", "传输层已关闭", "The transport is closed", "重建客户端", "Rebuild the client"],
+];
+
+const CAPABILITY_DOCS = {
+  HostedChat: ["托管对话传输声明", "Hosted chat transports"],
+  HistoryRead: ["历史读取契约", "History read contract"],
+  Attachments: ["附件", "Attachments"],
+  WorkspaceFiles: ["工作区文件", "Workspace files"],
+  Approval: ["人工审批", "Human approval"],
+  Thinking: ["思考过程透出", "Reasoning exposure"],
+  ApprovalPolicy: ["审批策略模式", "Approval policy modes"],
+  StopRun: ["停止 Run", "Stop a Run"],
+  ResumeRun: ["续跑", "Resume a Run"],
+  BackgroundRun: ["后台运行", "Background run"],
+  KernelSessionEvents: ["内核会话事件", "Kernel session events"],
+  InteractionV1: ["交互协议 v1", "Interaction protocol v1"],
+  RunLifecycle: ["Run 生命周期", "Run lifecycle"],
+  RuntimeCapabilities: ["运行时能力开关", "Runtime capability switches"],
+  RuntimeCapabilityMatrix: ["能力矩阵", "Capability matrix"],
+  Persistence: ["持久化后端声明", "Persistence declaration"],
+};
+
+function pageAgentEngineApi(lang) {
+  const api = DATA.agentEngineApi;
+  const L = (zh, en) => (lang === 'zh' ? zh : en);
+  const byDomain = new Map(ACTION_DOMAINS.map(([id, label]) => [id, { id, label: pick(label, lang), actions: [] }]));
+  for (const action of api.actions) byDomain.get(action.domain).actions.push(action);
+
+  const domainRows = [...byDomain.values()]
+    .filter((domain) => domain.actions.length)
+    .map((domain) => [domain.label, String(domain.actions.length), codeList(domain.actions.map((a) => a.name))]);
+
+  const actionRows = api.actions.map((action) => [
+    byDomain.get(action.domain).label,
+    C(action.name),
+    action.skill ? L('Skill 服务（AICP GET）', 'Skill service (AICP GET)') : L('AgentEngine Action（POST）', 'AgentEngine Action (POST)'),
+    pick(ACTION_DOCS[action.name], lang),
+    action.fields ? C(action.fields) : '—',
+    C(cite('src/server-client.mjs', action.line)),
+  ]);
+
+  const errorRows = AGENT_ENGINE_ERRORS.map(([code, site, zhCause, enCause, zhFix, enFix]) => [
+    C(code),
+    L(zhCause, enCause),
+    L(zhFix, enFix),
+    C(site),
+  ]);
+
+  const capabilityRows = api.manifestKeys
+    .filter((key) => CAPABILITY_DOCS[key])
+    .map((key) => [
+      C(key),
+      L(CAPABILITY_DOCS[key][0], CAPABILITY_DOCS[key][1]),
+      ['ResumeRun', 'BackgroundRun', 'CheckpointResume', 'KernelSessionEvents', 'Attachments', 'WorkspaceFiles', 'Thinking'].includes(key)
+        ? L('**否**', '**No**')
+        : L('是（见声明原文）', 'Yes (see the declaration)'),
+    ]);
+
+  const body = `
+${L(
+  '**这一页讲的是「部署到云端之后，怎么用 HTTP 调它」。它和参考章里的 [控制协议](./operations.mdx) 不是同一套东西。**',
+  '**This page covers how to call an Agent over HTTP once it is deployed to the cloud. It is not the same surface as the [control protocol](./operations.mdx).**',
+)}
+
+| | ${L('Studio RPC', 'Studio RPC')} | ${L('AgentEngine Action（本页）', 'AgentEngine Action (this page)')} |
+| --- | --- | --- |
+| ${L('谁和谁说话', 'Who talks to whom')} | ${L('浏览器 ↔ 本地 Host', 'Browser ↔ local Host')} | ${L('本地 Host ↔ 云控制面', 'Local Host ↔ cloud control plane')} |
+| ${L('规模', 'Size')} | ${C(String(DATA.operations.total))} ${L('个 operation', 'operations')} | ${C(String(api.server.length))} ${L('个 Action +', 'Actions +')} ${C(String(api.skill.length))} ${L('个 Skill 服务 Action', 'skill-service Actions')} |
+| ${L('通道', 'Channel')} | ${C(DATA.operations.channel)} | ${C('POST /agentengine/api/v1/{Action}')} ${L('或 KOP', 'or KOP')} ${C('/?Action=…&Version=v1')} |
+| ${L('信封', 'Envelope')} | ${C('{ ok, value }')} / ${C('{ ok, error }')} | ${C('{ Code, RequestId, Error, Data }')} |
+| ${L('认证', 'Authentication')} | ${L('本地 Host 会话', 'Local Host session')} | ${C('Authorization: Bearer')} ${L('或 AWS SigV4', 'or AWS SigV4')} |
+
+${L(
+  '把两者混用是本页最常见的错误：Studio RPC 的 operation id 不是云侧 Action 名，反过来也不成立。',
+  'Mixing the two is the most common mistake here: a Studio RPC operation id is not a cloud Action name, and the reverse is also false.',
+)}
+
+## ${L('三层地址，别混', 'Three address layers, never mixed')}
+
+| ${L('层', 'Layer')} | ${L('地址形状', 'Address shape')} | ${L('用途', 'Purpose')} | ${L('形状校验', 'Shape validation')} |
+| --- | --- | --- | --- |
+| Studio RPC | ${L('本地 Host 端口', 'Local Host port')} | ${L('浏览器驱动本地 Host', 'Browser drives the local Host')} | — |
+| ${L('控制面 KOP', 'Control plane (KOP)')} | ${C('https://aicp.api.ksyun.com')} ${L('（公网）', '(public)')}<br />${C('<inner-kop-host>')} ${L('（内网，通常是', '(intranet, usually')} ${C('http://')}） | Host ${L('调云侧', 'calls')} ${C(String(api.server.length))} ${L('个 Action', 'Actions on the cloud')} | ${L('必须是干净的 origin：带端口、userinfo、query 或非根 path 一律', 'Must be a clean origin: a port, userinfo, query or non-root path yields')} ${C('SERVER_URL_INVALID')} (${C('src/server-client.mjs:507')}) |
+| ${L('运行时端点', 'Runtime endpoint')} | ${C('https://<AgentId>.agent.kspmas.ksyun.com')} | ${L('调**已部署 Agent** 的', 'Call a **deployed Agent** at')} ${C('/v1/responses')}${L('、', ', ')}${C('/health')}${L('、', ', ')}${C('/v1/agentkit/runtime')} | ${L('只校验公网形状', 'Only the public shape is validated')} (${C('src/studio-deployments.mjs:47-49')}) |
+
+<Callout type="warn" title="${L('内网地址没有形状校验', 'Intranet addresses have no shape validation')}">
+${L(
+  '内网运行时地址（以及部分账号只能走的 `<inner-kop-host>`）**没有形状校验**——那是控制台与网关侧的能力，SDK 不做判断。本页不声称「SDK 会校验内网地址」。',
+  'Intranet runtime addresses (and the `<inner-kop-host>` some accounts are restricted to) have **no shape validation** — that is a console and gateway capability, and the SDK does not guess. This page does not claim the SDK validates intranet addresses.',
+)}
+</Callout>
+
+## ${L('端点发现', 'Endpoint discovery')}
+
+**${L('推荐路径（人来看）', 'Recommended (for a human)')}**：${L(
+  'AICP 控制台 → 部署详情 → 复制端点。公网地址和内网地址都会展示，同时能拿到 API Key。',
+  'AICP console → deployment details → copy the endpoint. Both the public and intranet addresses are shown, together with the API key.',
+)}
+
+**${L('程序化路径（代码来取）', 'Programmatic path (for code)')}**：${C('GetAgent')} ${L(
+  '返回的部署记录里带两种形态，按顺序回退',
+  'returns a deployment record with two shapes; fall back in this order',
+)} (${C('src/studio-deployments.mjs:44-46')})：
+
+| ${L('字段', 'Field')} | ${L('何时有', 'When it is present')} |
+| --- | --- |
+| ${C('Network.PublicEndpoint')} | ${L('网络已就绪的部署', 'Deployments whose network is ready')} |
+| ${C('QuickAccess.PublicEndpoint')} | ${L('快速访问入口', 'Quick-access entry point')} |
+
+${C('QuickAccess.ApiKey')} ${L('是运行时令牌', 'is the runtime token')} (${C('src/studio-deployments.mjs:381,445,511')})${L('，用它换运行时端点的访问权。', '; it authorises access to the runtime endpoint.')}
+
+${L('身份探针', 'Identity probe')}：${C('GET /v1/agentkit/runtime')} (${C('src/build-runtime-http.mjs:99')}) ${L(
+  '返回运行时身份与执行策略；',
+  'returns the runtime identity and execution policy; ',
+)}${C('GET /health')} ${L('返回', 'returns')} ${C('{ status: "ready" | "stopping" }')} (${L('第 95 行', 'line 95')})${L('。', '.')}
+
+## ${L('认证', 'Authentication')}
+
+${L('两条路由的认证方式**完全不同**，不要互相套用。', 'The two routes authenticate **completely differently**. Do not mix them.')}
+
+| ${L('项', 'Item')} | ${L('自定义 Server', 'Custom server')} | KOP (AICP ${L('网关', 'gateway')}) |
+| --- | --- | --- |
+| ${L('凭证', 'Credential')} | ${L('服务令牌', 'Service token')} | ${L('子账号 AK/SK', 'Sub-account AK/SK')} |
+| ${L('主 Header', 'Primary header')} | ${C('Authorization: Bearer <token>')} | ${C('Authorization')} ${L('由 AWS SigV4 生成', 'generated by AWS SigV4')} |
+| ${L('签名', 'Signing')} | — | SigV4, ${C('service=aicp')}, ${C('region=cn-beijing-6')} |
+| ${L('会话头', 'Session header')} | loopback ${L('时加', 'adds')} ${C('X-AgentKit-Session')} | — |
+| ${L('必带头', 'Required headers')} | ${C('X-Ksc-Request-Id')}${L('、', ', ')}${C('X-Ksc-Region')}${L('、', ', ')}${C('X-Ksc-Source')} | ${L('同上 +', 'Same, plus')} ${C('X-Action')}${L('、', ', ')}${C('X-Version')} |
+| ${L('可选头', 'Optional headers')} | — | ${C('X-Ksc-Account-Id')}${L('、', ', ')}${C('X-Ksc-User-uuid')} |
+| ${L('预发（pre-online）', 'Pre-online')} | — | ${L('额外', 'Extra')} ${C('X-KSC-CUSTOM-SOURCE: pre')} |
+| ${L('请求体', 'Request body')} | ${L('原样 payload', 'The payload as-is')} | ${L('额外带', 'Also carries')} ${C('Service')}${L('、', ', ')}${C('Action')}${L('、', ', ')}${C('Version')}${L('、', ', ')}${C('SdkVersion')}${L('、', ', ')}${C('Region')}${L('、', ', ')}${C('Accesskey')} |
+
+<Callout type="warn" title="${L('内网回退只对 403 生效', 'The intranet fallback only applies to 403')}">
+${L(
+  '公网 IAM 返回 **403 且报文含 `inner account`** 时，客户端会改走内网 IAM 重试一次（`src/cloud-identity.mjs:82-83`、`src/server-client.mjs:556`）。这是**端点选择**，不是对写请求的重试——其他 4xx 一律不重试。',
+  'When the public IAM returns **403 whose body contains `inner account`**, the client retries once against the intranet IAM (`src/cloud-identity.mjs:82-83`, `src/server-client.mjs:556`). That is **endpoint selection**, not a retry of a mutating request — every other 4xx is never retried.',
+)}
+</Callout>
+
+## ${L('两条调用路径，body 不同', 'Two call paths, two body shapes')}
+
+${L('调「已部署的 Agent」有两条路，**请求体形状不一样**，混用会得到 400 或空响应：', 'There are two ways to call a deployed Agent, and their **request bodies differ**. Mixing them yields a 400 or an empty response:')}
+
+| | ${L('控制面 RunAgent', 'Control-plane RunAgent')} | ${L('运行时 /v1/responses', 'Runtime /v1/responses')} |
+| --- | --- | --- |
+| ${L('地址', 'Address')} | ${C('POST {controlPlane}/agentengine/api/v1/RunAgent')} (KOP: ${C('POST /?Action=RunAgent&Version=v1')}) | ${C('POST https://<AgentId>.agent.kspmas.ksyun.com/v1/responses')} |
+| ${L('认证', 'Authentication')} | ${C('Authorization: Bearer')} ${L('或 AWS SigV4', 'or AWS SigV4')} | ${C('Authorization: Bearer <runtime-token>')} |
+| ${L('字段风格', 'Field style')} | PascalCase | snake_case |
+| ${L('谁在用', 'Used by')} | Host ${L('的本地会话桥', 'local conversation bridge')} (${C('src/host/routes/http.mjs:110-113')}) | ${L('直连部署的 Agent', 'Direct to the deployed Agent')} (${C('src/deployment-conversation.mjs:26-27,99')}) |
+
+### ${L('控制面 RunAgent', 'Control-plane RunAgent')}
+
+${L('字段来自', 'Fields come from')} ${C('src/host/routes/http.mjs:110-113')}：
+
+| ${L('字段', 'Field')} | ${L('类型', 'Type')} | ${L('必填', 'Required')} | ${L('说明', 'Notes')} |
+| --- | --- | --- | --- |
+| ${C('AgentId')} | string | ${L('是', 'Yes')} | ${L('已部署的 Agent 标识', 'Identifier of the deployed Agent')} |
+| ${C('SessionId')} | string | ${L('是', 'Yes')} | ${L('云侧会话标识，缺失报', 'Cloud session id; missing yields')} ${C('INVALID_CONVERSATION_INPUT')} |
+| ${C('Messages')} | array | ${L('是', 'Yes')} | ${C("[{ role: 'user', content: string }]")} |
+| ${C('Stream')} | boolean | ${L('是', 'Yes')} | ${L('固定', 'Fixed to')} ${C('true')}${L('；流式是唯一支持形态', '; streaming is the only supported form')} |
+| ${C('ApiFormat')} | string | ${L('是', 'Yes')} | ${L('固定', 'Fixed to')} ${C("'responses'")}${L('，走 OpenAI Responses 兼容帧', ', OpenAI Responses-compatible frames')} |
+| ${C('InvocationId')} | string | ${L('否', 'No')} | ${L('幂等键，见', 'Idempotency key, see')} [${L('超时与重试', 'Timeouts and retries')}](#${L('超时与重试', 'timeouts-and-retries')}) |
+
+\`\`\`sh
+curl -N "https://aicp.api.ksyun.com/agentengine/api/v1/RunAgent" \\
+  -H "Authorization: Bearer <service-token>" \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: text/event-stream" \\
+  -H "X-Ksc-Request-Id: $(uuidgen)" \\
+  -H "X-Ksc-Region: cn-beijing-6" \\
+  -H "X-Ksc-Source: agentkit-studio" \\
+  -d '{
+    "AgentId": "<AgentId>",
+    "SessionId": "<SessionId>",
+    "Messages": [{ "role": "user", "content": "list the files in this workspace" }],
+    "Stream": true,
+    "ApiFormat": "responses",
+    "InvocationId": "'"$(uuidgen)"'"
+  }'
+\`\`\`
+
+### ${L('运行时 /v1/responses', 'Runtime /v1/responses')}
+
+${L('字段来自', 'Fields come from')} ${C('src/deployment-conversation.mjs:26-27')}${L('。注意 ', '. Note that ')}${C('session_id')} ${L('与', 'and')} ${C('request_id')} ${L(
+  '都由调用方从原始标识**确定性派生**，不是随机值——这样重发同一轮才能被认成同一请求：',
+  'are **derived deterministically** from the original identifiers rather than being random — that is what lets a resend be recognised as the same request:',
+)}
+
+| ${L('字段', 'Field')} | ${L('类型', 'Type')} | ${L('必填', 'Required')} | ${L('说明', 'Notes')} |
+| --- | --- | --- | --- |
+| ${C('input')} | string | ${L('是', 'Yes')} | ${L('本轮用户输入', 'The user input for this turn')} |
+| ${C('stream')} | boolean | ${L('是', 'Yes')} | ${L('固定', 'Fixed to')} ${C('true')} |
+| ${C('model')} | string | ${L('是', 'Yes')} | ${L('绑定模型名，必须与冻结版本一致', 'Bound model name; must match the frozen version')} |
+| ${C('session_id')} | string | ${L('是', 'Yes')} | ${C('studio-')} ${L('加', 'plus the first 40 chars of')} ${C('sha256(sessionId)')} |
+| ${C('request_id')} | string | ${L('是', 'Yes')} | ${C('message-')} ${L('加', 'plus the first 40 chars of')} ${C('sha256(JSON.stringify([sessionId, messageId]))')} |
+| ${C('x-agentkit-permission-mode')} | header | ${L('否', 'No')} | ${L('只在冻结镜像声明了允许模式时携带', 'Sent only when the frozen image declares allowed modes')} (${L('第 34-35 行', 'lines 34-35')}) |
+
+\`\`\`js
+const sha = (value) => createHash('sha256').update(value).digest('hex').slice(0, 40);
+
+const response = await fetch(\`https://\${agentId}.agent.kspmas.ksyun.com/v1/responses\`, {
+  method: 'POST',
+  headers: {
+    Authorization: \`Bearer \${runtimeToken}\`,
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+  },
+  body: JSON.stringify({
+    input: userText,
+    stream: true,
+    model,
+    session_id: \`studio-\${sha(sessionId)}\`,
+    request_id: \`message-\${sha(JSON.stringify([sessionId, messageId]))}\`,
+  }),
+  redirect: 'error',
+});
+if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) {
+  throw new Error(\`cloud conversation rejected (HTTP \${response.status})\`);
+}
+\`\`\`
+
+## ${L('消费 SSE 流', 'Consuming the SSE stream')}
+
+${L('响应是', 'The response is')} ${C('text/event-stream')}${L('，帧格式是 OpenAI', ', with OpenAI')} ${C('responses')} ${L(
+  '兼容的，**不是** Action 的 JSON 信封：',
+  '-compatible frames and **not** the Action JSON envelope:',
+)}
+
+| ${L('帧', 'Frame')} | ${L('含义', 'Meaning')} |
+| --- | --- |
+| ${C('response.created')} | ${L('本轮开始，带', 'The turn starts; carries')} ${C('runId')} |
+| ${C('response.output_text.delta')} | ${L('正文增量，追加拼接', 'Text delta; append it')} |
+| ${C('response.output_item.added')} | ${L('出现一个工具调用或消息项', 'A tool call or message item appears')} |
+| ${C('response.completed')} | ${L('本轮完成，带用量', 'The turn finished; carries usage')} |
+| ${C('response.failed')} | ${L('本轮失败，带错误摘要', 'The turn failed; carries an error summary')} |
+
+\`\`\`js
+const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+let buffer = '';
+for (;;) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buffer += value;
+  const frames = buffer.split('\\n\\n');
+  buffer = frames.pop() ?? '';
+  for (const frame of frames) {
+    const data = frame.split('\\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+    if (!data || data === '[DONE]') continue;
+    const event = JSON.parse(data);
+    if (event.type === 'response.output_text.delta') process.stdout.write(event.delta ?? '');
+    if (event.type === 'response.failed') throw new Error(event.response?.error?.message ?? 'run failed');
+  }
+}
+\`\`\`
+
+<Callout type="info" title="${L('Stream 和 ApiFormat 都不能省', 'Neither Stream nor ApiFormat is optional')}">
+${L('`Stream: true` 决定响应是 SSE 而不是 JSON；`ApiFormat: \'responses\'` 决定帧是 Responses 形状。少任何一个，客户端都会按错误的解析器读响应。', '`Stream: true` makes the response SSE rather than JSON; `ApiFormat: \'responses\'` makes the frames Responses-shaped. Drop either one and the client parses the response with the wrong reader.')}
+</Callout>
+
+## ${L('Action 总表', 'Action reference')}
+
+${C(String(api.total))} ${L('个 Action 全部从', 'Actions, all derived from the two')} ${C('src/server-client.mjs')} ${L('的两处', '`new Set([...])` literals in')} ${C('new Set([...])')} ${L('派生（', ' — ')}${C(String(api.server.length))} ${L('个 AgentEngine Action +', 'AgentEngine Actions +')} ${C(String(api.skill.length))} ${L('个 Skill 服务 Action）。**新增 Action 必须补 `ACTION_DOCS`，否则 `--check` 失败。**', 'skill-service Actions. **A new Action must be added to `ACTION_DOCS` or `--check` fails.**')}
+
+| ${L('域', 'Domain')} | ${L('Action', 'Action')} | ${L('路由', 'Route')} | ${L('说明', 'Meaning')} | ${L('已知请求字段', 'Known request fields')} | ${L('调用点', 'Call site')} |
+| --- | --- | --- | --- | --- | --- |
+${actionRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
+
+${L('按域统计：', 'Counted by domain:')}
+
+| ${L('域', 'Domain')} | ${L('数量', 'Count')} | ${L('Action', 'Actions')} |
+| --- | --- | --- |
+${domainRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
+
+## ${L('错误信封与错误码', 'Error envelope and codes')}
+
+${L('成功与失败都是同一个信封', 'Success and failure share one envelope')} (${C('src/server-client.mjs:420-431')})：
+
+\`\`\`json
+{
+  "Code": 0,
+  "RequestId": "<request-id>",
+  "Data": {},
+  "Error": null
+}
+\`\`\`
+
+${L('判定规则：', 'Rule: ')}${C('Code')} ${L('为', 'must be')} ${C('0')} ${L('或', 'or')} ${C('200')} ${L('且没有', 'and there must be no')} ${C('Error')} ${L('才算成功；少数资源类 Action（如', '. A few resource Actions (such as')} ${C('ListSessions')}${L('）允许', ') allow')} ${C('Code')} ${L('缺省。失败时客户端抛出', ' to be absent. On failure the client throws')} ${C('AgentEngineError')}${L('，把', ' and carries the')} ${C('RequestId')} ${L('一起带出来。', ' with it.')}
+
+| ${L('错误码', 'Code')} | ${L('触发条件', 'Trigger')} | ${L('客户端该做什么', 'What the client should do')} | ${L('抛出处', 'Thrown at')} |
+| --- | --- | --- | --- |
+${errorRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
+
+## ${L('能力声明', 'Capability declaration')}
+
+${L('部署后的 Agent 通过', 'A deployed Agent declares what it supports through')} ${C('GET /v1/agentkit/runtime')} (${C('src/managed-runtime-capabilities.mjs:12-37')})${L(' 声明自己支持什么。当前清单里的能力键：', '. The capability keys in the current manifest:')}
+
+| ${L('能力键', 'Capability')} | ${L('含义', 'Meaning')} | ${L('默认可用', 'Enabled')} |
+| --- | --- | --- |
+${capabilityRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
+
+<Callout type="warn" title="${L('不可用的能力是显式的，不是静默近似', 'Unsupported capabilities are explicit, not silently approximated')}">
+${C('ResumeRun')}${L('、', ', ')}${C('BackgroundRun')}${L('、', ', ')}${C('CheckpointResume')}${L('、', ', ')}${C('KernelSessionEvents')}${L('、', ', ')}${C('Attachments')}${L('、', ', ')}${C('WorkspaceFiles')}${L('、', ', ')}${C('Thinking')} ${L('当前都声明为不可用。调用方应当**读声明再决定**，而不是先调一次看报错。', 'are all declared unsupported today. Callers should **read the declaration first**, not call once and read the error.')}
+</Callout>
+
+## ${L('超时与重试', 'Timeouts and retries')}
+
+${L('两个窗口分开，因为流式请求会在托管运行时准入上花更久（', 'The two windows are separate because a streaming request can spend longer in hosted-runtime admission (')}${C('src/server-client.mjs:537-540')} ${L(' 注释）：', ' comment):')}
+
+| ${L('场景', 'Case')} | ${L('默认超时', 'Default timeout')} | ${L('依据', 'Source')} |
+| --- | --- | --- |
+| ${L('普通 JSON Action', 'Regular JSON Action')} | 15 ${L('秒', 's')} | ${C('timeoutMs = 15000')} |
+| ${L('流式', 'Streaming')} ${C('RunAgent')} | 180 ${L('秒（取两者较大值）', 's (the larger of the two)')} | ${C('streamTimeoutMs = Math.max(timeoutMs, 180000)')} |
+
+<Callout type="error" title="${L('写请求不会自动重试', 'Mutating requests are never retried automatically')}">
+${L('`SERVER_UNAVAILABLE` 的文案里写死了「写请求不会自动重试」——因为客户端无法判断上游是否已经受理。要做幂等，靠调用方自己传键：', 'The `SERVER_UNAVAILABLE` message states outright that mutating requests are not retried, because the client cannot know whether the upstream accepted the call. For idempotency the caller must supply a key:')}
+
+| ${L('键', 'Key')} | ${L('作用域', 'Scope')} | ${L('依据', 'Source')} |
+| --- | --- | --- |
+| ${C('InvocationId')} | ${L('一次', 'One')} ${C('RunAgent')} | ${C('src/host/routes/http.mjs:113')} |
+| ${C('X-Ksc-Request-Id')} | ${L('一次 HTTP 请求', 'One HTTP request')} | ${C('src/server-client.mjs:378')} |
+
+${L('同一个', 'Resending with the same')} ${C('InvocationId')} ${L('重发，云端才能把两次请求认成同一轮。**不要**用随机值伪装重试——那等于两次独立提交。', ' is what lets the cloud treat the two calls as one turn. **Do not** use a fresh random value to fake a retry — that is two independent submissions.')}
+</Callout>
+
+## ${L('相关页面', 'Related pages')}
+
+<Cards>
+  <Card title="${L('控制协议', 'Control protocol')}" href="/docs/reference/operations">${C(String(DATA.operations.total))} ${L('个 Studio RPC operation（浏览器 ↔ 本地 Host）', 'Studio RPC operations (browser ↔ local Host)')}</Card>
+  <Card title="${L('托管运行时生命周期', 'Managed runtime lifecycle')}" href="/docs/deployment/managed-runtime-lifecycle">${L('19 个部署状态与能力矩阵', '19 deployment states and the capability matrix')}</Card>
+  <Card title="${L('错误码', 'Error codes')}" href="/docs/reference/errors">${L('全量错误码索引', 'The full error-code index')}</Card>
+  <Card title="${L('部署到云端', 'Deploy to the cloud')}" href="/docs/guides/deploy-to-cloud">${L('从 Studio 发起一次部署', 'Start a deployment from Studio')}</Card>
+</Cards>
+`;
+
+  // The English page must not carry fullwidth punctuation; the Chinese branch
+  // of every `L()` is the only place those characters belong. Code fences and
+  // inline code on this page are pure ASCII, so a global sweep is safe.
+  const rendered = lang === 'en'
+    ? body
+        .replace(/\s*：/g, ': ')
+        .replace(/\s*，/g, ', ')
+        .replace(/\s*；/g, '; ')
+        .replace(/\s*、/g, ', ')
+        .replace(/\s*（/g, ' (')
+        .replace(/\s*）/g, ')')
+    : body;
+
+  return page(
+    L('云端 Agent HTTP API', 'Cloud Agent HTTP API'),
+    L(
+      `调用已部署 Agent 的 AgentEngine HTTP 接口：${api.server.length} 个 Action、两条调用路径、SSE 帧、错误信封与超时重试。`,
+      `The AgentEngine HTTP surface for a deployed Agent: ${api.server.length} Actions, two call paths, SSE frames, the error envelope, and timeouts.`,
+    ),
+    rendered,
+    lang,
+  );
+}
+
 const DATA = {
   operations: await extractOperations(),
   environment: extractEnvironment(),
@@ -1281,6 +1779,7 @@ const DATA = {
   team: await extractTeamTemplates(),
   configuration: extractConfiguration(),
   catalog: await extractPluginCatalog(),
+  agentEngineApi: extractAgentEngineApi(),
 };
 
 /** Test files that import a given source path — the "related tests" citation. */
@@ -4358,6 +4857,7 @@ const PAGES = [
   ["index", pageIndex],
   ["runtime-contract", pageRuntimeContract],
   ["operations", pageOperations],
+  ["agent-engine-api", pageAgentEngineApi],
   ["configuration", pageConfiguration],
   ["environment", pageEnvironment],
   ["templates", pageTemplates],
@@ -4415,6 +4915,7 @@ function main() {
       `deployment states ${DATA.deployment.total} (poll ${DATA.deployment.pollTotal}, attention ${DATA.deployment.attentionTotal})`,
       `session events    ${DATA.session.total} (+${DATA.session.frameTotal} frames)`,
       `grouped errors    ${DATA.errors.groups.length} namespaces`,
+      `agentengine       ${DATA.agentEngineApi.total} actions (${DATA.agentEngineApi.server.length} Action + ${DATA.agentEngineApi.skill.length} skill service)`,
     ].join("\n"),
   );
   process.stdout.write("\n");
