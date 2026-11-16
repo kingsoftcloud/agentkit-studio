@@ -121,8 +121,10 @@ export async function verifyStudioClientPages(page) {
     const builds = await rpc('builds/list', { agentId: local[0].id });
     const build = builds.items.find(item => item.id === buildId);
     assert.ok(buildId && build); assert.equal(build.revision, saved.revision); assert.equal(build.status, 'SUCCEEDED');
-    await page.getByRole('region', { name: '云端部署', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByRole('region', { name: '部署记录', exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    // The deployment view now renders numbered form sections (构建 / 部署 /
+    // 云端实例) instead of role=region landmarks.
+    await page.locator('[data-delivery-section="deploy"]').waitFor({ state: 'visible', timeout: 10000 });
+    await page.locator('[data-delivery-section="records"]').waitFor({ state: 'visible', timeout: 10000 });
     checks.push({ name: 'create-real-local-build-and-view-deployment', passed: true, revision: build.revision, cloudMutation: false });
 
     phase = 'automation-crud';
