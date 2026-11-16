@@ -25,20 +25,59 @@ function setup(t) {
 }
 
 const lockModule = import.meta.resolve('@kingsoftcloud/agentkit-harness-node/native/workspace-mutation-lock');
-async function competingProcess(t, workspaceRoot, mode) {
+async function competingProcess(t, workspaceRoot, mode, { holdMs = 400 } = {}) {
   const code = `import {writeFileSync} from 'node:fs';
     const {acquireWorkspaceMutationLock}=await import(process.argv[1]);
     const release=acquireWorkspaceMutationLock(process.argv[2]);
     process.send('locked');
     if(process.argv[3]==='crash')setInterval(()=>{},1000);
     else setTimeout(()=>{if(process.argv[3]==='publish')writeFileSync(process.argv[2]+'/file.txt','child-publication');
-      release();process.disconnect();},400);`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code, lockModule, workspaceRoot, mode],
+      release();process.disconnect();},Number(process.argv[4]));`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code, lockModule, workspaceRoot, mode, String(holdMs)],
     { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   const exited = once(child, 'exit');
   const [message] = await once(child, 'message', { signal: AbortSignal.timeout(5000) });
   assert.equal(message, 'locked'); return { child, exited };
+}
+
+/** Controllable wall clock for the Host lease.
+ *
+ * `NativeKernel` reads every lease deadline through `options.now` (default
+ * `Date.now`), so freezing it removes the wall-clock race between the
+ * `leaseMs / 3` heartbeat renewal and the first claim. On a loaded CI runner
+ * the driver loop can be starved for longer than `leaseMs`; with a real-time
+ * lease the heartbeat then renews first and the run rejects with `stale_fence`
+ * while the intent is still `prepared` — a property this test never meant to
+ * assert. Here the test advances the clock itself, so the expiry is caused
+ * rather than raced.
+ *
+ * The Host's tool authority still reads the real `Date.now()` (it lives in the
+ * published `@kingsoftcloud/agentkit-harness-node`), so the real lock wait is
+ * what makes the post-lock authority read fail: both clocks agree the lease is
+ * gone before the write can be published. */
+function controllableClock(start = Date.now()) {
+  let current = start;
+  const now = () => current;
+  now.advance = milliseconds => { current += milliseconds; return current; };
+  return now;
+}
+
+/** Expire the lease as soon as the kernel has durably claimed the *tool*
+ * intent, instead of hoping the 33 ms heartbeat loses a race with the claim.
+ * Production reaches the same state from the other side: the tool then blocks
+ * on the cross-process lock for longer than the lease, so every later fenced
+ * read — the post-lock authority read and the commit — sees an expired lease.
+ * Advancing at the claim makes the expiry independent of how long the driver
+ * loop is starved, which is exactly what made this test flaky. */
+function expireLeaseAfterToolClaim(store, clock, milliseconds) {
+  const claim = store.claim.bind(store);
+  store.claim = (...args) => {
+    const claimed = claim(...args);
+    if (claimed?.kind === 'tool') clock.advance(milliseconds);
+    return claimed;
+  };
+  return store;
 }
 
 test('parent writer waits for the competing publication then rejects its stale create proposal', async t => {
@@ -80,8 +119,11 @@ test('permission-wait identity replacement and asynchronous authority cannot pub
   assert.equal(existsSync(join(f.workspaceRoot, 'file.txt')), false);
 });
 
-function gateway(t, f, limits = {}) {
-  const store = new SqliteRunStore(join(f.root, 'ledger.sqlite')), registry = new Map(), agent = { session: { id: 'session' } };
+function gateway(t, f, limits = {}, { now, expireAfterClaimMs } = {}) {
+  const store = expireAfterClaimMs === undefined
+    ? new SqliteRunStore(join(f.root, 'ledger.sqlite'))
+    : expireLeaseAfterToolClaim(new SqliteRunStore(join(f.root, 'ledger.sqlite')), now, expireAfterClaimMs);
+  const registry = new Map(), agent = { session: { id: 'session' } };
   t.after(() => store.close());
   const ctx = { effect: install => install(), sandboxPolicy: { resolve: () => ({ mode: 'workspace-write' }) }, tools: nativeDshBatchPeer({
     register: tool => { registry.set(tool.name, tool); return () => registry.delete(tool.name); },
@@ -94,7 +136,7 @@ function gateway(t, f, limits = {}) {
   const tools = bound.definitions(agent, [...registry.values()]), { config, snapshot } = fixture({ tools, limits });
   snapshot.sessionId = 'session';
   let calls = 0;
-  const kernel = new NativeKernel({ store, owner: 'host', digest, ports: { ...bound.forAgent(agent, { scope, store }), model: {
+  const kernel = new NativeKernel({ store, owner: 'host', digest, ...(now ? { now } : {}), ports: { ...bound.forAgent(agent, { scope, store }), model: {
     generate: async () => !calls++ ? { kind: 'tool_calls', text: '', usage: emptyUsage(), toolCalls: [{
       callId: 'write', name: 'write_workspace_file', arguments: { path: 'file.txt', content: 'Native actual write' },
     }] } : { kind: 'final_candidate', text: 'Done', usage: emptyUsage(), toolCalls: [] },
@@ -128,13 +170,42 @@ test('production gateway publishes only against its actual current SQLite tool i
 });
 
 test('actual lease expiry while waiting for the shared lock prevents the production Host write', async t => {
-  const f = setup(t), host = gateway(t, f, { leaseMs: 100 });
+  const f = setup(t), clock = controllableClock();
+  const host = gateway(t, f, { leaseMs: 100 }, { now: clock, expireAfterClaimMs: 101 });
   const peer = await competingProcess(t, f.workspaceRoot, 'wait');
-  await assert.rejects(host.kernel.runUntilIdle(scope, host.snapshot.runId), { code: 'stale_fence' }); await peer.exited;
+  await assert.rejects(host.kernel.runUntilIdle(scope, host.snapshot.runId), { code: 'stale_fence' });
+  await peer.exited;
   assert.equal(existsSync(join(f.workspaceRoot, 'file.txt')), false);
   const loaded = host.store.load(scope, host.snapshot.runId);
   const intent = loaded.intents.find(intent => intent.operationKey === loaded.snapshot.pendingIntent);
-  assert.equal(intent.status, 'running'); assert.equal(intent.payload.calls[0].name, 'write_workspace_file');
+  assert.equal(intent.status, 'running');
+  assert.deepEqual(intent.payload.calls.map(call => call.name), ['write_workspace_file']);
+  assert.ok(intent.claimedFence > 0, 'the publication was claimed before the lease was lost');
+  assert.equal(loaded.receipts.some(receipt => receipt.operationKey === intent.operationKey), false);
+  assert.notEqual(loaded.snapshot.phase, 'completed');
+});
+
+test('an event-loop stall longer than the lease cannot turn the expiry into a prepared intent', async t => {
+  const f = setup(t), clock = controllableClock();
+  const host = gateway(t, f, { leaseMs: 100 }, { now: clock, expireAfterClaimMs: 101 });
+  const peer = await competingProcess(t, f.workspaceRoot, 'wait', { holdMs: 1200 });
+  const run = host.kernel.runUntilIdle(scope, host.snapshot.runId);
+  const rejected = assert.rejects(run, { code: 'stale_fence' });
+  // Reproduce the loaded-runner shape: block the event loop synchronously for
+  // five times the lease before the driver can claim, while the peer keeps the
+  // shared lock. A real-time lease used to renew-expire here and reject with
+  // the intent still `prepared`; the frozen clock keeps the lease valid across
+  // the stall, so the claim still happens and the expiry stays a lease loss
+  // while the publication is in flight.
+  const until = Date.now() + 500;
+  while (Date.now() < until) { /* starve the driver loop */ }
+  await rejected;
+  peer.child.kill('SIGKILL'); await peer.exited;
+  assert.equal(existsSync(join(f.workspaceRoot, 'file.txt')), false);
+  const loaded = host.store.load(scope, host.snapshot.runId);
+  const intent = loaded.intents.find(intent => intent.operationKey === loaded.snapshot.pendingIntent);
+  assert.equal(intent.status, 'running');
+  assert.deepEqual(intent.payload.calls.map(call => call.name), ['write_workspace_file']);
   assert.equal(loaded.receipts.some(receipt => receipt.operationKey === intent.operationKey), false);
 });
 
