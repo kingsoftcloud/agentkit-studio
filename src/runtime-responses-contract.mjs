@@ -11,8 +11,12 @@ const INLINE_IMAGE = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]
 const MAX_RESPONSE_IMAGE_BYTES = 6 * 1024 * 1024;
 
 export function responsesRequestFingerprint(request) {
-  return createHash('sha256').update(JSON.stringify({ version: 1, input: request.input, model: request.model ?? null,
-    ...(request.images?.length ? { images: request.images } : {}) })).digest('hex');
+  // Only an actual business identity changes the replay fingerprint; a run that
+  // never named one keeps its pre-existing fingerprint.
+  const businessDigest = request.businessInvocation?.businessDigest;
+  return createHash('sha256').update(JSON.stringify({ version: businessDigest ? 2 : 1, input: request.input,
+    model: request.model ?? null, ...(request.images?.length ? { images: request.images } : {}),
+    ...(businessDigest ? { businessDigest } : {}) })).digest('hex');
 }
 
 function userInput(input, allowImages) {

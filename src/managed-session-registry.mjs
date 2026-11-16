@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { privateRuntimeDirectory } from './runtime-host-installation.mjs';
 import { runtimeError } from './runtime-responses-contract.mjs';
+import { businessInvocationId } from './providers/business-invocation-context.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 export const managedSessionKey = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
@@ -55,6 +56,8 @@ export async function createManagedSessionRegistry(directory) {
   function validate(value, id) {
     if (value && (value.format !== 'agentengine.dsh-session/v1' || value.sessionId !== id || !managedSessionKey(value.nativeSessionId)
       || !/^[a-f0-9]{64}$/.test(value.owner || '') || !/^[a-f0-9-]{36}$/.test(value.epoch || '')
+      || (value.businessUserId !== undefined && businessInvocationId(value.businessUserId) !== value.businessUserId)
+      || (value.businessSessionId !== undefined && businessInvocationId(value.businessSessionId) !== value.businessSessionId)
       || !['creating', 'ready', 'deleting', 'deleted'].includes(value.phase))) throw runtimeError('RUNTIME_SESSION_METADATA_INVALID', 503);
     return value;
   }

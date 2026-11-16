@@ -843,6 +843,10 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
       if (!cloudClient || typeof cloudClient.streamAction !== 'function') throw new Error('AgentEngine cloud runtime is unavailable');
       const sessionId = String(options.sessionId || '');
       const invocationId = String(options.invocationId || options.runId || '').trim();
+      // When Studio itself calls the deployed RunAgent endpoint, carry the
+      // business caller explicitly. Platform credentials authenticate the
+      // API caller; this field identifies the business subject for MCP.
+      const businessUserId = String(options.businessUserId || options.metadata?.businessUserId || '').trim();
       // ComponentConfig persists a cloud resource reference, but a custom
       // runtime does not automatically expose a knowledge or Skill tool to
       // RunAgent. Materialize bound resources at the Host boundary and send
@@ -900,6 +904,7 @@ export function createDshRuntimeAdapter({ cloudClient, cloudRuntime, localHandle
           Stream: true,
           ApiFormat: 'responses',
           ...(invocationId ? { InvocationId: invocationId } : {}),
+          ...(businessUserId ? { UserId: businessUserId } : {}),
         }, { signal: options.signal });
         let assistantText = '';
         for await (const frame of cloudFrames(upstream.body, options.signal)) {

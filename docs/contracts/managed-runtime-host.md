@@ -103,11 +103,16 @@ responsibility, including its existing revision checks.
 Every managed data request requires the private runtime bearer and the complete
 trusted business carrier: identity namespace, business tenant, subject type and
 subject ID. The platform hop must rebuild these headers after authentication.
-Body UserId/AccountId and metadata cannot grant authority. Native user keys use
-the same canonical SHA-256 derivation as Server/KsADK. The bearer is a private
-runtime-hop credential; it is not a browser or public API key.
+Body UserId/AccountId and metadata cannot grant platform authority. A managed
+Agent may forward validated RunAgent `UserId`/`SessionId` to its bound MCP
+servers as `businessUserId`/`businessSessionId`. This is opt-in attribution:
+`AGENTKIT_MCP_BUSINESS_IDENTITY=require` makes it mandatory, and MCP or its
+trusted Server hop must still verify any authorization decision that depends on
+that value. Native user keys use the same canonical SHA-256 derivation as
+Server/KsADK. The bearer is a private runtime-hop credential; it is not a
+browser or public API key.
 
-Only metadata is stored under `agentkit/managed-sessions`: public/native IDs,
+Only metadata is stored under `agentkit/managed-sessions`: public/native IDs, business user binding,
 principal digest, immutable platform version, native source creation identity,
 history epoch, lifecycle phase and request-ID mapping. Metadata writes use a
 private atomic file and durability barrier. Message bodies remain in DSH.

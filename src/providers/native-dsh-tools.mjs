@@ -43,6 +43,7 @@ import { nativeChildRoles, STUDIO_NATIVE_CHILD_SKILLS_CONTRACT } from './native-
 import { createNativeToolAuthority } from './native-tool-authority.mjs';
 import { NATIVE_DSH_TURN_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/dsh-turn-contract';
 import { WORKSPACE_MUTATION_LOCK } from '@kingsoftcloud/agentkit-harness-node/native/workspace-mutation-lock';
+import { nativeMcpInvocation } from './native-mcp-invocation.mjs';
 import { nativeChildMergeDefinition } from './native-child-merge.mjs';
 import { nativeComponentToolDefinitions, NATIVE_COMPONENT_TOOLS_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/component-tools';
 import { nativeSkillDisclosureDefinitions, SKILL_DISCLOSURE_CONTRACT } from '@kingsoftcloud/agentkit-harness-node/native/skill-disclosure';
@@ -310,10 +311,13 @@ export function createNativeDshTools({ ctx, config, workspaceRoot, assertWorkspa
             outcome = { status: observation.status, content, context: { content: canonical(content),
               ...(observation.screenshot ? { media: [observation.screenshot.contentBlock] } : {}) } };
           } else if (mcpContracts.has(name)) {
-            const contract = mcpContracts.get(name);
+            const contract = mcpContracts.get(name), scope = invocation.request.scope;
+            const mcpInvocation = nativeMcpInvocation({ scope, agent: exec.agent, agentId: config.agentId,
+              runId: invocation.request.runId, callId: String(exec.callId) });
             outcome = nativeMcpOutcome(await executeMcpTool({ agentId: config.agentId,
               resourceId: String(contract.mcpResourceId || contract.resourceId).trim(), name,
               arguments: args, signal: exec.signal, callId: exec.callId, agent: exec.agent, resultFormat: 'mcp-result/v1',
+              invocation: mcpInvocation,
               ...(invocation.assertMcpCurrent ? { assertCurrent: invocation.assertMcpCurrent } : {}) }),
               { validateOutput: mcpSchemas.get(name)?.validateOutput, deduplicateStructured: invocation.splitModelObservation });
           } else if (childNames.has(name)) {

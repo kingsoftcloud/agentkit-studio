@@ -9,6 +9,8 @@
 - 修复经 magpie 等严格网关时的 `400 Invalid assistant message: content or tool_calls must be set`：Responses 线只接受「带文本的 assistant 消息」或「带工具调用」的轮次，而重放的 `reasoning` 项会在模型上一轮没有产出文本与工具调用时形成只有推理的轮次。代理现在把这种轮次的 `reasoning` 项整体丢弃（有文本或工具调用的轮次保持原样，推理连续性不变），并顺手丢弃既无文本也无工具调用的空 assistant 轮次；两者都只在网关拒绝后重试一次。此前「去掉 `content: null` 再重试」的修复对这类请求是无效的（重试体同样被拒）。同一条链路上还会出现 `400 Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`（历史里只剩工具回执、对应调用已被裁掉）：代理现在同样在发送前丢弃孤立回执，回执与调用按 `call_id` 顺序配对。
 
 - 模型与凭证设置的「高级」段新增默认收起的「请求预算与请求头」：按模型配置最大输出 Token、上下文窗口、请求超时（毫秒）与自定义请求头（可增删的键值行）。请求头随「读取模型」的目录读取一起发送（配置的 `Authorization` 优先于凭证生成的 Bearer，不同请求头各自读取一次目录），名称按 RFC 7230 token 校验、值拒绝换行等控制字符，空行与重复名称在保存时被丢弃，全部清空即移除该字段；预算必须是大于 0 的整数，留空沿用网关默认值。字段随 `modelProfiles` 持久化，`config.yaml` 与导出的运行包往返都保留；未配置时请求与历史行为完全一致。
+- MCP 调用现在携带 Host 侧调用身份：每次 `tools/call` 的 JSON-RPC `_meta`（`io.agentkit.studio/invocation`）与 HTTP `x-agentkit-*` 请求头保留 Native/平台 `sessionId`/`userId`，并在托管 `RunAgent` 场景增加 `businessUserId`/`businessSessionId`/`businessInvocationId`；业务身份由 `RunAgent.UserId`/`SessionId` 绑定到当前 Runtime 请求，模型生成的工具参数不能选择或覆盖身份。身份字段分两类：`sessionId`/`userId`/`invocationId` 等是**关联 ID**，每次托管调用必定产生、永远透传；`businessUserId`/`businessSessionId` 是**业务归属**，只有调用方主动声明时才有，不会用平台会话或平台主体反推。整体默认不强制，只有需要按业务用户分区/审计的部署才设置 `AGENTKIT_MCP_BUSINESS_IDENTITY=require` 开启必填与冲突校验。MCP 连接仍按资源共享，身份按请求注入，并发会话不会串号；业务身份不进入 DSH prompt 或 transcript。详见 `docs/mcp-invocation-identity.md`。
+
 
 ## 0.0.16 - 2026-11-16
 
@@ -23,6 +25,7 @@
 
 - Studio 连接独立 Harness 服务并恢复任务投递：原生会话、Team 角色和绑定的 A2A 任务都交给独立服务执行，审批决策、排队引导和原始 A2A receipt 随 Run 回传；桌面端重新连回原始 Run 与 A2A receipt，任务进度和交付网站在侧栏直接打开。浏览器工具改走 Host 批处理执行器，启动错误与匿名轮次分开处理，折叠的失败轮次在 hydration 后仍能展开；托管 transport 边界与 Run 引擎补齐集成测试。Studio 固定已发布的 Harness 0.0.20 包。
 - ManagedRuntime 统一交付 Studio bundle：portable bundle 改用托管 MCP 的 env 名，云端资源跳过托管 bundle 上传；CI 复用 Playwright Chromium 缓存。
+
 - 托管运行时把 `AGENTKIT_CODEX_*` 调整项（`TIMEOUT_MS` / `IDLE_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` / `MODEL_IDLE_TIMEOUT_MS` / `MODEL` / `SANDBOX` / `APPROVAL_POLICY` / `REASONING_SUMMARY`）加入 Host 子进程的 env 白名单：之前 `codex-runtime` 会读这些变量，但白名单没放行，长任务的超时预算实际上是硬编码的，只能靠发新镜像调整。
 - 托管 DSH 的 Hosted UI 会话注册表改为 **Agent 作用域**（`<state>/managed-sessions`），不再放在版本目录下：此前每次被接受的 UpdateAgent 都会换到一个空的注册表目录，Hosted UI 于是列不出、也打不开更新前的会话，尽管 DSH 原生 transcript 一直保留。首次启动会把最近写入的一份旧版本注册表复制过来（旧目录保留供旧镜像回滚），`AGENTKIT_MANAGED_SESSIONS` 由 Host 显式导出，未提供时回退到旧的版本目录。
 - 一个 Agent 的 DSH home、用户 home 与工作区跨部署版本保持：只有不可变 receipt 和导入的 running bundle 按版本隔离，接受 UpdateAgent 后不再从空的 DSH home 启动；最近一份带会话状态的旧版本目录用硬链接一次性接管（源目录原样保留供回滚），profile marker 改用 Agent 身份。

@@ -4,6 +4,7 @@ import { codexPresentationBindings } from './dsh-presentation-tools.mjs';
 import { harnessServiceHostBindings } from './dsh-node-builtin-catalog.mjs';
 import { nativeAgentPolicyFromSpec } from '../native-agent-policy.mjs';
 import { nativeHostToolCallId } from './native-engine-runtime.mjs';
+import { currentBusinessInvocation } from './business-invocation-context.mjs';
 
 export function createCodexResourceContext({ agentStore: agentStorePromise, builds: studioBuildPromise, resources: resourceAdaptersPromise, augmentContext }) {
   return async ({ agentId, buildId, agentRevision, input, userId, sessionId, toolAdapter, agent, runtime, nativeService, runtimeRecord } = {}) => {
@@ -141,7 +142,14 @@ export function createCodexResourceContext({ agentStore: agentStorePromise, buil
         if (binding.tool._source === 'dsh') {
           return toolAdapter.callTool(binding.tool.name, args || {}, { callId, signal, agent });
         }
-        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal });
+        const business = currentBusinessInvocation();
+        return resourceAdapter.callMcpTool(binding.tool._resourceId, binding.tool.name, args || {}, { signal,
+          invocation: business
+            ? { source: 'run-agent', sessionId, userId,
+              businessUserId: business.userId, businessSessionId: business.sessionId,
+              nativeSessionId: business.nativeSessionId || sessionId, invocationId: business.requestId,
+              businessInvocationId: business.requestId, agentId }
+            : { source: 'codex', sessionId, userId, agentId } });
       },
     };
     return augmentContext ? augmentContext(context, record.spec?.bindings || record.bindings || {}) : context;

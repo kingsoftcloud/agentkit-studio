@@ -80,6 +80,11 @@ for (const lossAt of ['none', 'registry', 'credentials', 'connection']) test(`pa
   kernel.start(data.snapshot, data.config);
   if (lossAt === 'none') {
     assert.equal((await kernel.runUntilIdle(scope, 'run')).phase, 'completed'); assert.equal(effects, 1); assert.equal(models, 2);
+    // The production Native path forwards the live Session and trusted
+    // principal to the MCP server; the model never selects the identity.
+    assert.deepEqual({ ...dispatch.invocation, callId: undefined }, { source: 'dsh-native', sessionId: 'session',
+      userId: 'user', tenantId: 'tenant', workspaceId: 'workspace', agentId: 'agent', runId: 'run', callId: undefined });
+    assert.match(dispatch.invocation.callId, /^ak-native-[0-9a-f]{64}$/);
     assert.equal(typeof dispatch.assertCurrent, 'function'); assert.throws(dispatch.assertCurrent, /mcp_authority_stale/);
     await kernel.runUntilIdle(scope, 'run'); assert.equal(effects, 1);
     const record = store.load(scope, 'run'), intent = record.intents.find(item => item.kind === 'tool');

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { materializeCloudSkill, runtimeSkill } from './skill-files.mjs';
 import { fetchNativeSkillArchive } from './providers/native-skill-loader.mjs';
 import { MCP_JSON_PARSER_CONTRACT, NATIVE_MCP_JSON_CODEC, nativeMcpJsonParser, nativeMcpSchemaValidator } from './providers/native-mcp-json.mjs';
+import { applyMcpInvocationHeaders, createMcpInvocationScope, mcpInvocationMeta, normalizeMcpInvocationIdentity } from './providers/mcp-invocation-identity.mjs';
 import { memorySubjectId, memorySessionId } from './memory-identity.mjs';
 
 export class LocalResourceError extends Error {
@@ -128,10 +129,18 @@ function mcpFailure(error, resourceId, phase = 'connect', toolName = '', extra =
   });
 }
 
-export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = hostFetch, cacheDir = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'cloud-skills') } = {}) {
+export function createLocalResourceAdapters({ serverClient, skillDiscovery, credentials, resourceStore, fetchImpl = hostFetch, invocationIdentity = true, cacheDir = join(process.env.AGENTKIT_HOME || join(homedir(), '.agentkit'), 'studio', 'cloud-skills') } = {}) {
   const mcpClients = new Map();
   const connectingClients = new Set();
   const connecting = new Map();
+  // An MCP connection is cached per resource; the caller is per turn. Every
+  // HTTP request re-reads the live invocation so two Sessions sharing one
+  // connection cannot observe each other's identity.
+  const invocationScope = createMcpInvocationScope();
+  const mcpFetch = (url, init) => {
+    const identity = invocationScope.current();
+    return identity ? fetchImpl(url, { ...(init || {}), headers: applyMcpInvocationHeaders(init?.headers, identity) }) : fetchImpl(url, init);
+  };
   let nextGeneration = 0;
   const cloudSkillSpaces = new Map();
   let closed = false;
@@ -196,7 +205,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
       if (exact && Transport.jsonParserContract !== MCP_JSON_PARSER_CONTRACT) throw new LocalResourceError('MCP_JSON_CODEC_UNAVAILABLE', 'MCP 客户端缺少精确 JSON 解析接口');
       const jsonOptions = exact ? { jsonParser: nativeMcpJsonParser } : {};
       const transport = stdio ? new Transport({ command: detail.command, args: detail.args, env: environment, stderr: 'pipe', ...jsonOptions })
-        : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: fetchImpl, ...jsonOptions });
+        : new Transport(new URL(endpoint), { requestInit: { headers }, fetch: mcpFetch, ...jsonOptions });
       const client = new Client({ name: 'agentkit-studio-local-runtime', version: '0.0.1' },
         exact ? { jsonSchemaValidator: nativeMcpSchemaValidator } : undefined);
       assertCurrent?.();
@@ -243,7 +252,7 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     }
   }
 
-  async function callMcpTool(id, name, args = {}, { signal, resultFormat = 'content', assertCurrent } = {}) {
+  async function callMcpTool(id, name, args = {}, { signal, resultFormat = 'content', assertCurrent, invocation } = {}) {
     const check = () => {
       signal?.throwIfAborted();
       if (assertCurrent === undefined) return;
@@ -260,49 +269,59 @@ export function createLocalResourceAdapters({ serverClient, skillDiscovery, cred
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(name || ''))) throw new LocalResourceError('MCP_TOOL_NAME_INVALID', 'MCP 工具名无效');
     const key = resourceId(id);
     const codec = resultFormat === 'mcp-result/v1' ? NATIVE_MCP_JSON_CODEC : undefined;
-    let entry;
-    try {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        let enteredCall = false;
-        try {
-          entry = await mcp(id, codec, undefined, check);
-          // Credentials and connection initialization may wait. A connected client
-          // cannot extend the original parent or child's Native dispatch authority.
-          check();
-          enteredCall = true;
-          const result = await entry.client.callTool({ name: String(name), arguments: args }, undefined, { signal });
-          if (resultFormat === 'mcp-result/v1') return result;
-          if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
-          return result?.content || result;
-        } catch (error) {
-          // The SDK sends cancellation asynchronously on this shared transport.
-          signal?.throwIfAborted();
-          if (!enteredCall) {
-            if (error instanceof LocalResourceError) throw error;
-            throw mcpFailure(error, key, 'connect', name, { attempts: attempt, retryClass: 'pre_dispatch' });
+    // The identity is bound by the Host to the live Session and never read
+    // from tool arguments. `_meta` is the only channel that also works for
+    // stdio; HTTP headers are added by `mcpFetch` for the same request.
+    // A deployment that must keep an MCP server with hand-written strict
+    // request validation can opt out of the identity channel as a whole.
+    const identity = invocationIdentity ? normalizeMcpInvocationIdentity(invocation) : null;
+    const params = identity ? { name: String(name), arguments: args, _meta: mcpInvocationMeta(identity) } : { name: String(name), arguments: args };
+    const dispatch = async () => {
+      let entry;
+      try {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          let enteredCall = false;
+          try {
+            entry = await mcp(id, codec, undefined, check);
+            // Credentials and connection initialization may wait. A connected client
+            // cannot extend the original parent or child's Native dispatch authority.
+            check();
+            enteredCall = true;
+            const result = await entry.client.callTool(params, undefined, { signal });
+            if (resultFormat === 'mcp-result/v1') return result;
+            if (result?.isError) throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具执行失败', { resourceId: key, name });
+            return result?.content || result;
+          } catch (error) {
+            // The SDK sends cancellation asynchronously on this shared transport.
+            signal?.throwIfAborted();
+            if (!enteredCall) {
+              if (error instanceof LocalResourceError) throw error;
+              throw mcpFailure(error, key, 'connect', name, { attempts: attempt, retryClass: 'pre_dispatch' });
+            }
+            // A normal MCP tool error is a returned application result, not a
+            // transport failure. Keep the shared session reusable for the caller's
+            // next explicit action.
+            if (error instanceof LocalResourceError && error.code === 'MCP_TOOL_FAILED') throw error;
+            const expired = sessionExpired(error, entry);
+            if (expired && attempt === 1) {
+              await retireMcpEntry(entry);
+              entry = undefined;
+              continue;
+            }
+            if (entry) await retireMcpEntry(entry);
+            throw mcpFailure(error, key, 'call', name, {
+              attempts: attempt,
+              retryClass: expired ? 'session_expired' : 'transport_ambiguous',
+              sessionExpired: expired,
+            });
           }
-          // A normal MCP tool error is a returned application result, not a
-          // transport failure. Keep the shared session reusable for the caller's
-          // next explicit action.
-          if (error instanceof LocalResourceError && error.code === 'MCP_TOOL_FAILED') throw error;
-          const expired = sessionExpired(error, entry);
-          if (expired && attempt === 1) {
-            await retireMcpEntry(entry);
-            entry = undefined;
-            continue;
-          }
-          if (entry) await retireMcpEntry(entry);
-          throw mcpFailure(error, key, 'call', name, {
-            attempts: attempt,
-            retryClass: expired ? 'session_expired' : 'transport_ambiguous',
-            sessionExpired: expired,
-          });
         }
+        throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具调用失败', { resourceId: key, name, attempts: 2 });
+      } finally {
+        await closeRetiredMcpEntry(entry);
       }
-      throw new LocalResourceError('MCP_TOOL_FAILED', 'MCP 工具调用失败', { resourceId: key, name, attempts: 2 });
-    } finally {
-      await closeRetiredMcpEntry(entry);
-    }
+    };
+    return identity ? invocationScope.run(identity, dispatch) : dispatch();
   }
 
   async function loadCloudSkillSpace(id) {
