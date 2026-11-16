@@ -2,6 +2,7 @@ import { createFormKit } from '../components/form-kit.mjs';
 import { focusOperations } from '../operations-focus.mjs';
 import { createHeaderAction } from '../components/header-action.mjs';
 import { refreshIcon } from '../components/refresh-icon.mjs';
+import { MANUAL_AGENT_CREATE_EVENT, consumeManualAgentCreate } from '../state/agent-create-intent.mjs';
 
 export function createAgentPages({
   ui,
@@ -15,6 +16,15 @@ export function createAgentPages({
     const [tab, setTab] = useState('local');
     const [created, setCreated] = useState(null);
     const [editingAgent, setEditingAgent] = useState(null);
+    // The Overview start card asks for the manual form from another panel. This
+    // workspace owns the list/create/edit view state, so it opens the form from
+    // the announced intent and also consumes one that arrived before mounting.
+    useEffect(() => {
+      const openManualCreate = () => { consumeManualAgentCreate(); setView('create'); };
+      window.addEventListener(MANUAL_AGENT_CREATE_EVENT, openManualCreate);
+      if (consumeManualAgentCreate()) setView('create');
+      return () => window.removeEventListener(MANUAL_AGENT_CREATE_EVENT, openManualCreate);
+    }, []);
     if (view === 'create') {
       return h(AgentCreatePage, {
         onBack: () => setView('list'),
