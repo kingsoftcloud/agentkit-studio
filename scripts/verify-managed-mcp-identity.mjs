@@ -150,7 +150,7 @@ try {
   const plan = await prepareManagedRuntimeHost({ manifest, state, installation: installRoot,
     env: { PATH: process.env.PATH, HOME: home, AGENTKIT_USER_HOME: home, AGENTKIT_WORKSPACE_ROOT: cwd,
       OPENAI_BASE_URL: model.url, AGENTKIT_MODEL_API_KEY: 'fixture-key', AGENTKIT_MANAGED_CODEX_API: 'chat-completions',
-      AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: String(port),
+      AGENTKIT_RUNTIME_TOKEN: token, AGENTKIT_RUNTIME_PORT: String(port), AGENTKIT_STRICT_RESOURCES: 'true',
       AGENTENGINE_AGENT_ID: 'ar-identity-gate', AGENTENGINE_AGENT_VERSION_ID: 'v1',
       AGENTENGINE_MANAGED_RUNTIME_NAME: 'dsh-native', AGENTENGINE_MANAGED_RUNTIME_VERSION: 'studio-identity.1',
       AGENTENGINE_MANIFEST_PROTOCOL: 'runtime-manifest/v1', AGENTENGINE_MANIFEST_SHA256: plan_sha(raw),
