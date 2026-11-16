@@ -6,8 +6,8 @@ import { verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256 } from './portable-resources.mjs';
 import { verifyDeploymentStorage } from './deployment-storage.mjs';
 import { frozenModels } from './frozen-models.mjs';
+import { isStudioRuntimeType } from './runtime-contract.mjs';
 
-const supported = new Set(['harness', 'dsh-native', 'codex']);
 const available = new Set(['READY', 'AVAILABLE_UPDATING']);
 export const CLOUD_PROVIDER = 'agentkit-studio-cloud';
 
@@ -16,7 +16,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
     const { values } = await configuration.resolve();
     const scope = credentialScope(values);
     return (await store.list()).filter(row => row.cloudAgentId && (includeDeleted || row.state !== 'DELETED')
-      && row.plan.credentialScope === scope && supported.has(row.plan.runtime));
+      && row.plan.credentialScope === scope && isStudioRuntimeType(row.plan.runtime));
   }
   async function project(record) {
     record = currentDeployment(record);
@@ -89,7 +89,7 @@ export function createDeploymentAgents({ store, build, portableBundles, configur
   return { list: async () => projectRows(await records()), get, connect,
     // Restore display-only presets even after deletion or a credential switch.
     // Every new turn still passes connect() with the current credential scope.
-    recover: async () => projectRows((await store.list()).filter(row => row.cloudAgentId && supported.has(row.plan.runtime))
+    recover: async () => projectRows((await store.list()).filter(row => row.cloudAgentId && isStudioRuntimeType(row.plan.runtime))
       .flatMap(row => deploymentVersions(row).map(version => ({ ...row, activeVersion: version })))) };
 }
 

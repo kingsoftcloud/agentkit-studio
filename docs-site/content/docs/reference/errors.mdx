@@ -50,10 +50,10 @@ description: "198 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | 确认 `sessionId` 属于当前 Host |
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:196` | `sessionId` 不能为空 |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | 等构建进入可用状态再下载 |
-| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:39` | `runtime.type` 不是 `STUDIO_RUNTIME_TYPES` 里的值时 |
-| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:42` | 补全 `agentId` / `sessionId` / `runId` / `buildId` |
+| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:67` | `runtime.type` 不是 `STUDIO_RUNTIME_TYPES` 里的值时 |
+| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:41` | 补全 `agentId` / `sessionId` / `runId` / `buildId` |
 | `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:47` | 缩小请求体，或改用分片上传 |
-| `INVALID_QUERY` | `src/agent-catalog.mjs:10` | 检查查询串的类型与枚举值 |
+| `INVALID_QUERY` | `src/agent-catalog.mjs:9` | 检查查询串的类型与枚举值 |
 | `CREDENTIAL_VALUE_MISSING` | `src/host/routes/credentials.mjs:7` | 填写该凭证引用的值 |
 | `EVALUATION_TARGET_NOT_FOUND` | `src/host/services/automation.mjs:47` | 先登记评测目标 |
 | `CHANNEL_URL_INVALID` | `src/channel-connector.mjs:8` | 渠道地址必须是 HTTPS 绝对地址 |
@@ -66,15 +66,15 @@ description: "198 个错误码：Top 30 给「错误码 → 用户动作」，�
 
 | 命名空间 | 条数 | 含义 | 排查入口 |
 | --- | --- | --- | --- |
-| `STUDIO` | 25 | Studio 宿主与路由。 | `src/agent-preset-admission.mjs:161` |
-| `NATIVE` | 16 | 原生引擎、A2A 与 Web 授权。 | `src/agent-preset-admission.mjs:336` |
+| `STUDIO` | 25 | Studio 宿主与路由。 | `src/agent-preset-admission.mjs:162` |
+| `NATIVE` | 16 | 原生引擎、A2A 与 Web 授权。 | `src/agent-preset-admission.mjs:337` |
 | `CLOUD` | 15 | 云端执行模式与流式响应。 | `src/cloud-execution-modes.mjs:41` |
 | `CODEX` | 11 | Codex App Server 与插件市场。 | `src/client/dsh/codex-tool.mjs:33` |
 | `SKILL` | 10 | Skill 下载、授权与运行。 | `src/providers/native-skill-connection.mjs:92` |
-| `INVALID` | 8 | 入参校验。 | `src/agent-catalog.mjs:10` |
+| `INVALID` | 8 | 入参校验。 | `src/agent-catalog.mjs:9` |
 | `MANAGED` | 8 | 托管运行时、资源与输入冲突。 | `src/host/bootstrap.mjs:158` |
 | `MODEL` | 8 | 模型目录、端点与凭证。 | `src/model-endpoint.mjs:9` |
-| `DSH` | 7 | DSH 基座与插件索引。 | `src/agent-preset-admission.mjs:344` |
+| `DSH` | 7 | DSH 基座与插件索引。 | `src/agent-preset-admission.mjs:345` |
 | `RUNTIME` | 7 | 运行时路由与传输。 | `src/cloud-runtime-fetch.mjs:6` |
 | `MCP` | 6 | MCP Server 绑定与配置。 | `src/host/services/resource-tools.mjs:16` |
 | `RESOURCE` | 5 | 资源目录与适配器。 | `src/host/services/optional-resource.mjs:9` |
@@ -90,13 +90,13 @@ description: "198 个错误码：Top 30 给「错误码 → 用户动作」，�
 | `UPSTREAM` | 3 | 上游流式传输。 | `src/model-proxy-handler.mjs:150` |
 | `A2A` | 2 | Agent-to-Agent 控制面。 | `src/providers/native-a2a-receipt.mjs:97` |
 | `AGENT` | 2 | Agent 目录与修订版本解析。 | `src/host/routes/agents.mjs:13` |
-| `BUILD` | 2 | 构建与冻结运行时。 | `src/agent-preset-admission.mjs:326` |
+| `BUILD` | 2 | 构建与冻结运行时。 | `src/agent-preset-admission.mjs:327` |
 | `CREDENTIAL` | 2 | 凭证引用与取值。 | `src/host/routes/credentials.mjs:6` |
 | `DEPLOYMENT` | 2 | 部署中断与恢复。 | `src/deployment-rollouts.mjs:167` |
 | `DISCOVERY` | 2 | MCP / Skill 发现。 | `src/dsh-plugin-discovery.mjs:244` |
 | `EVALUATION` | 2 | 评测目标与执行。 | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | 请求体与取消。 | `src/model-proxy-handler.mjs:47` |
-| `RUN` | 2 | 运行标识。 | `src/providers/dsh-runtime.mjs:42` |
+| `RUN` | 2 | 运行标识。 | `src/providers/dsh-runtime.mjs:41` |
 | `STAR` | 2 | 本机 Star Harness 的安装、版本与工作区绑定。 | `src/host/routes/http.mjs:65` |
 | `BOUND` | 1 | 资源绑定解析。 | `src/providers/codex-resource-context.mjs:136` |
 | `CHANNELS` | 1 | 渠道子系统可用性。 | `src/host/routes/channels.mjs:8` |

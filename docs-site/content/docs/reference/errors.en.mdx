@@ -50,10 +50,10 @@ Ordered by how soon a user hits them. Every action is directly executable withou
 | `SESSION_NOT_FOUND` | `src/host/routes/sessions.mjs:27` | Confirm `sessionId` belongs to this Host |
 | `SESSION_ID_INVALID` | `src/prompt-prediction/host.mjs:196` | `sessionId` must not be empty |
 | `BUILD_NOT_READY` | `src/host-remote.mjs:166` | Wait for the build to become available before downloading |
-| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:39` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
-| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:42` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
+| `RUNTIME_UNSUPPORTED` | `src/runtime-contract.mjs:67` | `runtime.type` is not one of `STUDIO_RUNTIME_TYPES` |
+| `RUN_IDENTITY_INVALID` | `src/providers/dsh-runtime.mjs:41` | Fill in `agentId` / `sessionId` / `runId` / `buildId` |
 | `REQUEST_TOO_LARGE` | `src/model-proxy-handler.mjs:47` | Shrink the request body or switch to chunked upload |
-| `INVALID_QUERY` | `src/agent-catalog.mjs:10` | Check the query string types and enum values |
+| `INVALID_QUERY` | `src/agent-catalog.mjs:9` | Check the query string types and enum values |
 | `CREDENTIAL_VALUE_MISSING` | `src/host/routes/credentials.mjs:7` | Fill in the value for that credential reference |
 | `EVALUATION_TARGET_NOT_FOUND` | `src/host/services/automation.mjs:47` | Register the evaluation target first |
 | `CHANNEL_URL_INVALID` | `src/channel-connector.mjs:8` | A channel URL must be an absolute HTTPS URL |
@@ -66,15 +66,15 @@ The remaining 170 codes are grouped by namespace, with meaning and the first tri
 
 | Namespace | Size | Meaning | Triage entry |
 | --- | --- | --- | --- |
-| `STUDIO` | 25 | Studio host and routing. | `src/agent-preset-admission.mjs:161` |
-| `NATIVE` | 16 | Native engine, A2A and web authorization. | `src/agent-preset-admission.mjs:336` |
+| `STUDIO` | 25 | Studio host and routing. | `src/agent-preset-admission.mjs:162` |
+| `NATIVE` | 16 | Native engine, A2A and web authorization. | `src/agent-preset-admission.mjs:337` |
 | `CLOUD` | 15 | Cloud execution modes and streaming responses. | `src/cloud-execution-modes.mjs:41` |
 | `CODEX` | 11 | Codex App Server and plugin market. | `src/client/dsh/codex-tool.mjs:33` |
 | `SKILL` | 10 | Skill download, authorization and runtime. | `src/providers/native-skill-connection.mjs:92` |
-| `INVALID` | 8 | Input validation. | `src/agent-catalog.mjs:10` |
+| `INVALID` | 8 | Input validation. | `src/agent-catalog.mjs:9` |
 | `MANAGED` | 8 | Managed runtime, resources and input conflicts. | `src/host/bootstrap.mjs:158` |
 | `MODEL` | 8 | Model catalog, endpoints and credentials. | `src/model-endpoint.mjs:9` |
-| `DSH` | 7 | DSH base and plugin index. | `src/agent-preset-admission.mjs:344` |
+| `DSH` | 7 | DSH base and plugin index. | `src/agent-preset-admission.mjs:345` |
 | `RUNTIME` | 7 | Runtime routing and transport. | `src/cloud-runtime-fetch.mjs:6` |
 | `MCP` | 6 | MCP server binding and configuration. | `src/host/services/resource-tools.mjs:16` |
 | `RESOURCE` | 5 | Resource catalog and adapters. | `src/host/services/optional-resource.mjs:9` |
@@ -90,13 +90,13 @@ The remaining 170 codes are grouped by namespace, with meaning and the first tri
 | `UPSTREAM` | 3 | Upstream streaming. | `src/model-proxy-handler.mjs:150` |
 | `A2A` | 2 | Agent-to-Agent control plane. | `src/providers/native-a2a-receipt.mjs:97` |
 | `AGENT` | 2 | Agent catalog and revision resolution. | `src/host/routes/agents.mjs:13` |
-| `BUILD` | 2 | Builds and frozen runtime. | `src/agent-preset-admission.mjs:326` |
+| `BUILD` | 2 | Builds and frozen runtime. | `src/agent-preset-admission.mjs:327` |
 | `CREDENTIAL` | 2 | Credential references and values. | `src/host/routes/credentials.mjs:6` |
 | `DEPLOYMENT` | 2 | Deployment interruption and recovery. | `src/deployment-rollouts.mjs:167` |
 | `DISCOVERY` | 2 | MCP and Skill discovery. | `src/dsh-plugin-discovery.mjs:244` |
 | `EVALUATION` | 2 | Evaluation targets and runs. | `src/host/routes/evaluations.mjs:8` |
 | `REQUEST` | 2 | Request body and cancellation. | `src/model-proxy-handler.mjs:47` |
-| `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:42` |
+| `RUN` | 2 | Run identity. | `src/providers/dsh-runtime.mjs:41` |
 | `STAR` | 2 | Local Star Harness install, version and workspace binding. | `src/host/routes/http.mjs:65` |
 | `BOUND` | 1 | Resource binding resolution. | `src/providers/codex-resource-context.mjs:136` |
 | `CHANNELS` | 1 | Channel subsystem availability. | `src/host/routes/channels.mjs:8` |

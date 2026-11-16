@@ -1,4 +1,5 @@
 /** Recover persisted Studio definitions through DSH's public preset registry. */
+import { isManagedRuntimeType } from './runtime-contract.mjs';
 export async function restoreLocalPresets({store,build,admission,warn=console.warn}) {
   const rows = new Map();
   for (const current of await store.list()) {
@@ -49,7 +50,7 @@ export function createStartupReconciler({ store, build, deployments, managedAgen
         if (typeof managedAgents === 'function') void managedAgents().then(async result => {
           for (const agent of result?.items || []) {
             if (agent?.source !== 'agentengine-managed-runtime' || agent.managedRuntime !== true
-              || !['codex', 'dsh-native'].includes(String(agent.spec?.runtime?.type || '').toLowerCase())) continue;
+              || !isManagedRuntimeType(String(agent.spec?.runtime?.type || '').toLowerCase())) continue;
             try { await admission.ensure(agent.metadata.id, { agent }); }
             catch (error) { warn('[agentkit-studio] ManagedRuntime preset restore skipped:', error?.code || 'RECOVERY_FAILED'); }
           }

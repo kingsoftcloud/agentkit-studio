@@ -1,12 +1,12 @@
 /** Shared contract for catalog Team templates before they become a TeamDefinition. */
+import { STUDIO_TEAM_RUNTIME_TYPES, isTeamRuntimeType } from './runtime-contract.mjs';
 
 const fail = (code, message) => Object.assign(new Error(message), { code, status: 400 });
-const supportedRuntimes = new Set(['dsh-native', 'harness']);
 const roleName = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const semver = /^\d+\.\d+\.\d+$/;
 
 export const TEAM_TEMPLATE_CONTRACT = 'agentkit.studio.team-template/v1';
-export const TEAM_TEMPLATE_RUNTIMES = Object.freeze([...supportedRuntimes]);
+export const TEAM_TEMPLATE_RUNTIMES = STUDIO_TEAM_RUNTIME_TYPES;
 /**
  * The default model is resolved by the current Studio model profile.  Keeping
  * the identifier here gives authoring and catalog audit tools one documented
@@ -91,7 +91,7 @@ export function validateTeamTemplate(input) {
 export function validateTeamRoleSpec(spec, roleNameValue) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw fail('TEAM_TEMPLATE_ROLE_SPEC_INVALID', `角色「${roleNameValue}」蓝图无效`);
   const runtime = String(spec.runtime?.type || '').trim();
-  if (!supportedRuntimes.has(runtime)) throw fail('TEAM_TEMPLATE_RUNTIME_UNSUPPORTED', `角色「${roleNameValue}」必须使用 DSH Native 或 Harness`);
+  if (!isTeamRuntimeType(runtime)) throw fail('TEAM_TEMPLATE_RUNTIME_UNSUPPORTED', `角色「${roleNameValue}」必须使用 DSH Native 或 Harness`);
   if (spec.subAgents || spec.sub_agents) throw fail('TEAM_TEMPLATE_NESTED_TEAM_UNSUPPORTED', `角色「${roleNameValue}」不能再声明普通 subagent`);
   if (!spec.instructions || typeof spec.instructions.system !== 'string' || !spec.instructions.system.trim()) {
     throw fail('TEAM_TEMPLATE_ROLE_SPEC_INVALID', `角色「${roleNameValue}」缺少系统指令`);
