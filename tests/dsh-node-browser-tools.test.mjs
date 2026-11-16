@@ -197,11 +197,16 @@ for (const cause of ['cancel', 'retire', 'timeout']) test(`actual page ${cause} 
   const h = setup(t), controller = new AbortController(), args = { path: '.', wait_ms: 30000 };
   const screenshot = join(h.options.workspaceRoot, 'proof.png'); writeFileSync(screenshot, 'original'); args.screenshot_path = 'proof.png';
   let entered; const navigation = new Promise(resolve => { entered = resolve; }); h.onNavigated(entered);
-  const exec = h.exec(args, { signal: cause === 'timeout' ? AbortSignal.timeout(2000) : controller.signal });
+  const exec = h.exec(args, { signal: controller.signal });
   const pending = h.invoke(args, exec);
   await Promise.race([navigation, pending.then(result => assert.fail('inspection ended before actual navigation: ' + canonical(result)))]);
   checkpoint('actual navigation observed');
-  if (cause === 'retire') void h.port.close(); else if (cause === 'cancel') controller.abort();
+  if (cause === 'retire') void h.port.close();
+  else if (cause === 'timeout') {
+    // Browser startup is outside the timeout-after-navigation scenario.
+    const deadline = AbortSignal.timeout(10);
+    deadline.addEventListener('abort', () => controller.abort(deadline.reason), { once: true });
+  } else controller.abort();
   checkpoint(`interruption submitted, caller.aborted=${exec.signal.aborted}`);
   const result = await pending; assert.equal(result.status, 'uncertain', canonical(result)); assert.equal(h.launches, 1);
   checkpoint('original call settled');
