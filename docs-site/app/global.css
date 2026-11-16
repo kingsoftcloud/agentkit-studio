@@ -357,20 +357,12 @@ body {
 
 /* Architecture diagrams.
    Archify bakes the theme into the pixels, so each diagram ships a light and a
-   dark capture and CSS shows the matching one. Clicking opens the full-size
-   image (react-medium-image-zoom). */
+   dark capture and CSS shows the matching one. Clicking opens a lightbox with
+   wheel zoom and drag-to-pan (components/diagram.tsx). */
 .ak-diagram {
+  position: relative;
   margin: 2rem 0;
   padding: 0;
-}
-
-.ak-diagram > span {
-  display: block;
-  overflow-x: auto;
-  border-radius: 18px;
-  border: 1px solid var(--fd-border);
-  background: var(--fd-card);
-  box-shadow: var(--ak-glow);
 }
 
 .ak-diagram-img {
@@ -378,7 +370,17 @@ body {
   width: 100%;
   min-width: 680px;
   height: auto;
+  border-radius: 18px;
+  border: 1px solid var(--fd-border);
+  background: var(--fd-card);
+  box-shadow: var(--ak-glow);
   cursor: zoom-in;
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.ak-diagram-img:hover {
+  border-color: color-mix(in oklab, var(--ak-cyan) 55%, var(--fd-border));
+  box-shadow: 0 16px 40px -22px color-mix(in oklab, var(--ak-blue) 70%, transparent);
 }
 
 .ak-diagram-dark {
@@ -393,10 +395,126 @@ body {
   display: block;
 }
 
+.ak-diagram-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--fd-border);
+  background: color-mix(in oklab, var(--fd-card) 82%, transparent);
+  color: var(--fd-muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.5;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.ak-diagram:hover .ak-diagram-hint {
+  opacity: 1;
+}
+
 @media (max-width: 700px) {
   .ak-diagram-img {
     min-width: 560px;
   }
+  .ak-diagram-hint {
+    display: none;
+  }
+}
+
+/* Lightbox ---------------------------------------------------------------- */
+
+.ak-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in oklab, #04060a 88%, transparent);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+.ak-lightbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px clamp(12px, 3vw, 28px);
+  border-bottom: 1px solid rgb(255 255 255 / 0.12);
+  color: #eef1f7;
+  font-size: 13px;
+}
+
+.ak-lightbox-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.82;
+}
+
+.ak-lightbox-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.ak-lightbox-controls button {
+  min-width: 38px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06);
+  color: #eef1f7;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.ak-lightbox-controls button:hover {
+  background: rgb(255 255 255 / 0.14);
+  border-color: rgb(255 255 255 / 0.32);
+}
+
+.ak-lightbox-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+
+.ak-lightbox-stage[data-zoomed='true'] {
+  cursor: grab;
+}
+
+.ak-lightbox-stage[data-zoomed='true']:active {
+  cursor: grabbing;
+}
+
+.ak-lightbox-stage img {
+  max-width: min(96vw, 1800px);
+  max-height: calc(100vh - 130px);
+  border-radius: 12px;
+  user-select: none;
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform 60ms linear;
+}
+
+.ak-lightbox-hint {
+  margin: 0;
+  padding: 10px 16px 16px;
+  text-align: center;
+  color: rgb(255 255 255 / 0.55);
+  font-size: 12px;
 }
 
 /* --------------------------------------------------------- navigation ---- */
