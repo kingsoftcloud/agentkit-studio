@@ -119,11 +119,13 @@ test('read and stop cannot use an unowned task locator even when policy allows t
   }
 });
 test('owned stop requests cancellation and a subsequent read observes process-group completion', async t => {
-  const host = setup(t); let step = 0, taskId;
+  // Leave time for the separate model and tool turns to reach stop before the
+  // background command expires on a loaded test runner.
+  const host = setup(t, { wallSeconds: 15 }); let step = 0, taskId;
   const done = await host.run('cancel', async request => {
-    if (!step++) return call('run_command', { command: 'trap "" TERM; exec /bin/sleep 60', background: true, background_timeout: 3 });
+    if (!step++) return call('run_command', { command: 'trap "" TERM; exec /bin/sleep 60', background: true });
     if (step === 2) { taskId = last(request).task_id; return call('stop_command', { task_id: taskId }); }
-    if (step === 3) { assert.equal(last(request).cancel_requested, true); return call('read_command_output', { task_id: taskId, wait_seconds: 1 }); }
+    if (step === 3) { assert.equal(last(request).cancel_requested, true); return call('read_command_output', { task_id: taskId, wait_seconds: 5 }); }
     assert.equal(last(request).status, 'canceled'); return final();
   });
   assert.equal(done.phase, 'completed'); assert.equal(host.handles().connect(taskId).readOutput().status, 'canceled');
