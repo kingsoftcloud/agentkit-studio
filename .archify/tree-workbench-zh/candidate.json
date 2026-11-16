@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "diagram_type": "tree",
+  "meta": {
+    "title": "工作台地图",
+    "subtitle": "每个面板下的二级 tab 属于该面板；连线表示归属，不表示调用",
+    "output": ".archify/tree-workbench-zh/workbench.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "nodes": [
+    {
+      "id": "ui",
+      "label": "浏览器 UI",
+      "sublabel": "一个外壳，四个面板"
+    },
+    {
+      "id": "overview",
+      "parent": "ui",
+      "label": "总览",
+      "sublabel": "工作区状态"
+    },
+    {
+      "id": "agents",
+      "parent": "ui",
+      "label": "智能体",
+      "sublabel": "我的智能体与模板广场"
+    },
+    {
+      "id": "resources",
+      "parent": "ui",
+      "label": "资源库",
+      "sublabel": "模型、工具与运行资源"
+    },
+    {
+      "id": "operations",
+      "parent": "ui",
+      "label": "运行中心",
+      "sublabel": "构建、部署与观测"
+    },
+    {
+      "id": "o-status",
+      "parent": "overview",
+      "label": "工作区状态",
+      "sublabel": "启动检查"
+    },
+    {
+      "id": "o-recent",
+      "parent": "overview",
+      "label": "最近会话",
+      "sublabel": "继续上次的工作"
+    },
+    {
+      "id": "a-local",
+      "parent": "agents",
+      "label": "本地",
+      "sublabel": "本机 Agent"
+    },
+    {
+      "id": "a-cloud",
+      "parent": "agents",
+      "label": "云端",
+      "sublabel": "已部署 Agent"
+    },
+    {
+      "id": "a-target",
+      "parent": "agents",
+      "label": "运行目标",
+      "sublabel": "部署到哪里"
+    },
+    {
+      "id": "r-model",
+      "parent": "resources",
+      "label": "模型 / MCP / Skill",
+      "sublabel": "资源广场"
+    },
+    {
+      "id": "r-knowledge",
+      "parent": "resources",
+      "label": "知识库 / 记忆库",
+      "sublabel": "平台资源"
+    },
+    {
+      "id": "r-runtime",
+      "parent": "resources",
+      "label": "运行资源",
+      "sublabel": "沙箱与工作区"
+    },
+    {
+      "id": "p-build",
+      "parent": "operations",
+      "label": "构建与部署",
+      "sublabel": "19 状态机"
+    },
+    {
+      "id": "p-auto",
+      "parent": "operations",
+      "label": "自动化",
+      "sublabel": "定时与事件触发"
+    },
+    {
+      "id": "p-eval",
+      "parent": "operations",
+      "label": "评测",
+      "sublabel": "EvalSet 与回归"
+    },
+    {
+      "id": "p-observe",
+      "parent": "operations",
+      "label": "观测",
+      "sublabel": "OTLP 链路"
+    },
+    {
+      "id": "p-channel",
+      "parent": "operations",
+      "label": "渠道",
+      "sublabel": "外部消息入口"
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "diagram_type": "tree",
+  "meta": {
+    "title": "Workbench map",
+    "subtitle": "Every second-level tab belongs to one panel; links show containment, not calls",
+    "output": ".archify/tree-workbench-en/workbench.html",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "nodes": [
+    {
+      "id": "ui",
+      "label": "Browser UI",
+      "sublabel": "one shell, four panels"
+    },
+    {
+      "id": "overview",
+      "parent": "ui",
+      "label": "Overview",
+      "sublabel": "workspace status"
+    },
+    {
+      "id": "agents",
+      "parent": "ui",
+      "label": "Agents",
+      "sublabel": "my agents and template gallery"
+    },
+    {
+      "id": "resources",
+      "parent": "ui",
+      "label": "Resources",
+      "sublabel": "models, tools and runtime"
+    },
+    {
+      "id": "operations",
+      "parent": "ui",
+      "label": "Operations",
+      "sublabel": "builds, deployments and traces"
+    },
+    {
+      "id": "o-status",
+      "parent": "overview",
+      "label": "Workspace status",
+      "sublabel": "start checks"
+    },
+    {
+      "id": "o-recent",
+      "parent": "overview",
+      "label": "Recent sessions",
+      "sublabel": "resume the last task"
+    },
+    {
+      "id": "a-local",
+      "parent": "agents",
+      "label": "Local",
+      "sublabel": "agents on this machine"
+    },
+    {
+      "id": "a-cloud",
+      "parent": "agents",
+      "label": "Cloud",
+      "sublabel": "deployed agents"
+    },
+    {
+      "id": "a-target",
+      "parent": "agents",
+      "label": "Run targets",
+      "sublabel": "where it deploys"
+    },
+    {
+      "id": "r-model",
+      "parent": "resources",
+      "label": "Models / MCP / Skills",
+      "sublabel": "resource marketplace"
+    },
+    {
+      "id": "r-knowledge",
+      "parent": "resources",
+      "label": "Knowledge / Memory",
+      "sublabel": "platform resources"
+    },
+    {
+      "id": "r-runtime",
+      "parent": "resources",
+      "label": "Runtime resources",
+      "sublabel": "sandbox and workspace"
+    },
+    {
+      "id": "p-build",
+      "parent": "operations",
+      "label": "Builds and deployments",
+      "sublabel": "19-state machine"
+    },
+    {
+      "id": "p-auto",
+      "parent": "operations",
+      "label": "Automation",
+      "sublabel": "time and event triggers"
+    },
+    {
+      "id": "p-eval",
+      "parent": "operations",
+      "label": "Evaluation",
+      "sublabel": "EvalSet and regressions"
+    },
+    {
+      "id": "p-observe",
+      "parent": "operations",
+      "label": "Observability",
+      "sublabel": "OTLP traces"
+    },
+    {
+      "id": "p-channel",
+      "parent": "operations",
+      "label": "Channels",
+      "sublabel": "external message ingress"
+    }
+  ]
+}

@@ -30,27 +30,9 @@ Treating a revision as an overwritable draft, or a build as a pipeline artifact,
 
 The four panels and their secondary tabs are organised like this:
 
-```mermaid
-flowchart LR
-  UI["Browser UI"] --> OV["Overview"]
-  UI --> AG["Agents"]
-  UI --> RS["Resources"]
-  UI --> OP["Operations"]
+<Diagram src="/assets/agentkit-workbench-map.en.png" alt="Workbench map: the browser UI splits into Overview, Agents, Resources and Operations, with each panel's second-level tabs and their responsibility" />
 
-  AG --> A1["Local"]
-  AG --> A2["Cloud"]
-  AG --> A3["Runtime targets"]
-
-  RS --> R1["Model / MCP / Skill"]
-  RS --> R2["Knowledge base / Memory"]
-  RS --> R3["Runtime resources"]
-
-  OP --> P1["Builds & deployments"]
-  OP --> P2["Automation"]
-  OP --> P3["Evaluation"]
-  OP --> P4["Observability"]
-  OP --> P5["Channels"]
-```
+*How to read it: the four panels are peers, not a hierarchy. What decides where a run executes is the agent's runtime type, not the panel.*
 
 The five tabs under Operations are not five sections of one page — they are five independent surfaces: builds and deployments own artifacts, automation owns schedules, evaluation owns pass rates, observability owns traces, and Channels owns remote channels. They share no selection state, so switching tabs never changes which Agent you are looking at.
 
