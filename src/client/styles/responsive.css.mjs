@@ -9,8 +9,10 @@ export default String.raw`
 .agentkit-settings-launcher:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4b73e8); outline-offset: 2px; }
 .agentkit-settings-launcher[data-wide="false"] { flex: none; width: 36px; height: 36px; padding: 0; gap: 0; justify-content: center; }
 /* Secondary buttons keep their own label color on the neutral hover surface.
-   Primary buttons are excluded here so their white label never lands on it. */
-:where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button:not(:disabled):not([style*="--dsw-alias-label-primary-foreground"]):not([style*="--dsw-alias-button-primary-fill"]):not([data-variant="primary"]):not(.sq-btn.primary):hover {
+   Primary buttons are excluded here so their white label never lands on it.
+   Switches are excluded too: their white knob would vanish on the same
+   neutral surface, so they keep their own state colors and hover separately. */
+:where([data-agentkit-studio="product-application"], [data-studio-model-settings], [data-studio-controls], .agentkit-credential-onboarding-content) button:not(:disabled):not([role="switch"]):not([style*="--dsw-alias-label-primary-foreground"]):not([style*="--dsw-alias-button-primary-fill"]):not([data-variant="primary"]):not(.sq-btn.primary):hover {
   background: var(--dsw-alias-interactive-bg-hover, #f0f0f0) !important;
 }
 /* Primary buttons (white label on a dark fill) keep a dark hover fill and the

@@ -4,6 +4,7 @@ import { readdir, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolvePortableNativeBuiltins } from './portable-native-tools.mjs';
 import { nativeVisionProfileId } from './native-vision-model.mjs';
+import { modelRuntimeOptions } from './model-profile-contract.mjs';
 
 export const portableError = (code, message) => Object.assign(new Error(message), { code });
 export const sha256 = data => createHash('sha256').update(data).digest('hex');
@@ -102,8 +103,9 @@ export async function capturePortableResources({ record, models, adapters, confi
     profiles.push({ id, provider: profile.provider, modelName: profile.modelName, baseUrl: endpoint(profile.baseUrl),
       credentialName, enabled: true, default: profiles.length === 0, ...(profile.input ? { input: profile.input } : {}),
       ...(profile.codexApi ? { codexApi: profile.codexApi } : {}),
-      ...Object.fromEntries(['protocol', 'contextWindow', 'maxOutputTokens', 'requestTimeoutMs', 'parameters']
-        .filter(key => profile[key] !== undefined).map(key => [key, structuredClone(profile[key])])) });
+      // One shared key list: a runtime option added to the contract travels
+      // with the bundle without another projection to keep in sync.
+      ...modelRuntimeOptions(profile) });
   }
   const mcps = [];
   for (const binding of bindings.mcpServers || []) {

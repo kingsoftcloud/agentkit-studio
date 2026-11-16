@@ -24,7 +24,7 @@ test('overview start cards and workspace use only existing actions and totals', 
   const stats = all.find(node => node.props.className === 'studio-stats studio-panel');
   assert.deepEqual(stats.children.map(cell => cell.children.map(text)), [['3', 'Agent'], ['2', '运行时'], ['—', '资源'], ['—', '交付']]);
   for (const label of ['对话创建', '手动配置', '从模板开始', '去配置']) all.find(node => node.type === 'button' && (text(node) === label || node.children.some(child => child.type === 'strong' && text(child) === label))).props.onClick();
-  assert.deepEqual(events, ['agentkit-studio:open-authoring', 'agentkit-studio:open-settings']);
+  assert.deepEqual(events, ['agentkit-studio:open-authoring', 'agentkit-studio:create-manual-agent', 'agentkit-studio:open-settings']);
   assert.deepEqual(routes, ['agents', 'experts']);
   assert.equal(all.some(node => node.props.onClick && text(node).startsWith('运行时')), false);
 });
@@ -106,4 +106,20 @@ test('operational headings group multiple actions at the right without losing em
   assert.equal(group.children[0], actions);
   assert.ok(nodes(heading).some(node => node.props.title === '连接错误'));
   assert.equal(OperationalPageHeading({ title: '观测' }).children.length, 1);
+});
+
+test('manual Agent create intent survives the panel switch and is consumed once', async () => {
+  const { MANUAL_AGENT_CREATE_EVENT, consumeManualAgentCreate, requestManualAgentCreate } = await import('../src/client/state/agent-create-intent.mjs');
+  const events = [];
+  const window = { dispatchEvent: event => events.push(event.type) };
+  requestManualAgentCreate(window);
+  assert.deepEqual(events, [MANUAL_AGENT_CREATE_EVENT]);
+  // A workspace that mounts after the click consumes the pending intent once.
+  assert.equal(consumeManualAgentCreate(), true);
+  assert.equal(consumeManualAgentCreate(), false);
+  // A workspace that is already mounted takes the announced event instead.
+  requestManualAgentCreate(window);
+  assert.deepEqual(events, [MANUAL_AGENT_CREATE_EVENT, MANUAL_AGENT_CREATE_EVENT]);
+  assert.equal(consumeManualAgentCreate(), true);
+  assert.equal(consumeManualAgentCreate(), false);
 });

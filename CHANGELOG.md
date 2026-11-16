@@ -4,6 +4,21 @@
 
 - Star Harness 使用 Studio 随包发布的固定摘要校验运行时及其依赖，通过校验后再启动。插件只接管已绑定的工作区。
 
+- 流式 Action（`RunAgent` 等 SSE 接口）不再把「HTTP 200 + JSON 错误信封」当成事件流：网关在流式接口上返回 `{ Code, RequestId, Error }`（例如 `Code: 409` 运行时就绪）或非 `text/event-stream` 的响应时，客户端按真实状态码与 `requestId` 抛出 `AgentEngineError`（429 → `SERVER_RATE_LIMITED`，信封错误 → `SERVER_ACTION_FAILED`，其余 → `SERVER_INVALID_RESPONSE`），界面显示真实原因而不是 SSE 解析失败或卡住；未带 content-type 的响应保持原有行为，KOP inner-account 403 回退不变。
+
+- 修复经 magpie 等严格网关时的 `400 Invalid assistant message: content or tool_calls must be set`：Responses 线只接受「带文本的 assistant 消息」或「带工具调用」的轮次，而重放的 `reasoning` 项会在模型上一轮没有产出文本与工具调用时形成只有推理的轮次。代理现在把这种轮次的 `reasoning` 项整体丢弃（有文本或工具调用的轮次保持原样，推理连续性不变），并顺手丢弃既无文本也无工具调用的空 assistant 轮次；两者都只在网关拒绝后重试一次。此前「去掉 `content: null` 再重试」的修复对这类请求是无效的（重试体同样被拒）。同一条链路上还会出现 `400 Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`（历史里只剩工具回执、对应调用已被裁掉）：代理现在同样在发送前丢弃孤立回执，回执与调用按 `call_id` 顺序配对。
+
+- 模型与凭证设置的「高级」段新增默认收起的「请求预算与请求头」：按模型配置最大输出 Token、上下文窗口、请求超时（毫秒）与自定义请求头（可增删的键值行）。请求头随「读取模型」的目录读取一起发送（配置的 `Authorization` 优先于凭证生成的 Bearer，不同请求头各自读取一次目录），名称按 RFC 7230 token 校验、值拒绝换行等控制字符，空行与重复名称在保存时被丢弃，全部清空即移除该字段；预算必须是大于 0 的整数，留空沿用网关默认值。字段随 `modelProfiles` 持久化，`config.yaml` 与导出的运行包往返都保留；未配置时请求与历史行为完全一致。
+
+## 0.0.16 - 2026-11-16
+
+- 升级 Studio Harness 到 0.0.23：原生消息保留已发送图片与纯图片消息（缩略图、放大、历史刷新），纯回答的每轮耗时改用已提交起止时间；新增转发事件唤醒与浏览器绘制合并，真实模型正文更新可测量。
+- 多工作区独立 Harness：Studio 按会话持久化的工作区各自连接独立 Harness 服务，切换 Alpha/Beta 后模型、工作目录和历史跟随各自服务；未绑定目录明确拒绝，不回落到其他项目。
+- 移除生产进程内 Harness：删除进程内 Harness 启动、执行/工具工厂桥、旧 `sessions/native-*` 控制入口和三个 bundledDependencies，执行只走独立服务或显式外部命令；锁定 npm Harness Core/Node/UI 0.0.23（同步 lockfile、Core override 与逐文件 registry pins）。
+- 交互修复：显式依赖完整会话展示接口，移除重复引擎 iframe；过程默认折叠、用量保留在输入框底部、失败以中性色摘要展开查看完整原因；保留带请求身份、游标和偏移的正文增量、图片能力握手、按账本期限等待重试和按请求回执去重的用户气泡；独立引擎读取搜索提供方配置，未配置时不向模型提供无效的 `web_search`；Ezone 安装超时由独立进程组监管。
+- 验证：三个 npm 包均核对发布来源和归档摘要，安装后校验 541 个 Harness 文件与 551 个 Studio 归档文件；真实打包 Studio 使用 DeepSeek V4.1 Flash 完成联网搜索，只有一个 Native 视图，升级前后 45 个 Run 记录逐一保持不变。
+- 发布门禁跟上新的 Agent 列表交互：「手动配置」改为从「更多创建方式」菜单进入，运行时改由 radiogroup 选择，客户端页面验收重新走通创建与编辑绑定流程。
+
 ## 0.0.15 - 2026-11-16
 
 - Studio 连接独立 Harness 服务并恢复任务投递：原生会话、Team 角色和绑定的 A2A 任务都交给独立服务执行，审批决策、排队引导和原始 A2A receipt 随 Run 回传；桌面端重新连回原始 Run 与 A2A receipt，任务进度和交付网站在侧栏直接打开。浏览器工具改走 Host 批处理执行器，启动错误与匿名轮次分开处理，折叠的失败轮次在 hydration 后仍能展开；托管 transport 边界与 Run 引擎补齐集成测试。Studio 固定已发布的 Harness 0.0.20 包。

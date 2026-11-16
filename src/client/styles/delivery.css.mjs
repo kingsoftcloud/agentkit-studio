@@ -55,6 +55,10 @@ export default String.raw`
 .ad-records-table .ad-record-meta { display: block; max-width: 260px; }
 .ad-record-scope > .studio-tabs { flex-wrap: wrap; gap: 4px; padding: 0; margin-bottom: 16px; background: transparent; }
 .ad-record-scope > .studio-tabs > button { height: 28px; padding: 0 10px; border-radius: 8px; color: var(--dsw-alias-label-tertiary); font-size: 13px; }
+/* This scope re-declares the tab label color after the generic .studio-tabs
+   hover rule, so the neutral hover surface would otherwise land under the
+   tertiary label. Restore the hover color with a matching scope. */
+.ad-record-scope > .studio-tabs > button:not([aria-selected="true"]):hover { color: var(--dsw-alias-label-primary); }
 .ad-record-scope > .studio-tabs > button[aria-selected="true"] { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-module-platform); box-shadow: none; }
 .ad-radio { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; cursor: pointer; }
 
