@@ -75,7 +75,9 @@ export async function verifyStudioClientPages(page) {
     checks.push({ name: 'edit-prompt-and-model-binding-durable-revision', passed: true });
 
     phase = 'native-binding';
-    await row.getByRole('button', { name: '绑定到新会话', exact: true }).click();
+    // The row action that binds the Agent to a new native conversation is the
+    // plain 对话 button now; the previous 绑定到新会话 label is gone.
+    await row.getByRole('button', { name: '对话', exact: true }).click();
     await page.locator('.studio-agent-trigger').filter({ hasText: name }).waitFor({ state: 'visible', timeout: 30000 });
     checks.push({ name: 'created-agent-opens-official-native-session', passed: true, sentToModel: false });
 
