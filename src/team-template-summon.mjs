@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import { paginateResources } from './resource-catalog.mjs';
 import { platformBinding } from './platform-resource-bindings.mjs';
 import { validateTeamRoleSpec, validateTeamTemplate } from './team-template-contract.mjs';
+import { isTeamRuntimeType } from './runtime-contract.mjs';
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
-const nativeRuntimes = new Set(['dsh-native', 'harness']);
 
 export function createTeamTemplateSummon({ catalog, summon, teams }) {
   async function definition(ref, options = {}) {
@@ -20,7 +20,7 @@ export function createTeamTemplateSummon({ catalog, summon, teams }) {
     const sourceRef = roleRef(role, ref);
     const prepared = catalog.prepare(sourceRef);
     const runtimeType = String(plan?.runtimeType || prepared.spec?.runtime?.type || '').trim();
-    if (!nativeRuntimes.has(runtimeType)) fail('TEAM_TEMPLATE_RUNTIME_UNSUPPORTED', '角色「' + (role.label || role.name) + '」必须使用 DSH Native 或 Harness');
+    if (!isTeamRuntimeType(runtimeType)) fail('TEAM_TEMPLATE_RUNTIME_UNSUPPORTED', '角色「' + (role.label || role.name) + '」必须使用 DSH Native 或 Harness');
     const spec = { ...structuredClone(prepared.spec || {}), runtime: { ...(prepared.spec?.runtime || {}), type: runtimeType } };
     validateTeamRoleSpec(spec, role.name);
     const installed = await summon.prepareDependencies(sourceRef, { signal: plan?.signal, onProgress: plan?.onProgress });

@@ -1,3 +1,8 @@
+// The runtime vocabulary lives in the dependency-free registry module; the client
+// only re-exports it so a new runtime cannot appear in the bundle without also
+// being admitted by the Host. `runtime-contract.mjs` re-exports the same values.
+import { STUDIO_RUNTIME_TYPES } from '../runtime-types.mjs';
+
 export const BRAND = {
   // Use the established Studio neutral console tokens. The AgentKit mark,
   // layout and product surfaces remain owned by this application.
@@ -23,7 +28,7 @@ export const PANELS = [
   { id: 'studio-operations', page: 'operations', label: '运行中心', note: '构建、部署与观测', glyph: '↗' },
 ];
 
-export const ALLOWED_RUNTIME_TYPES = ['dsh-native', 'harness', 'codex'];
+export const ALLOWED_RUNTIME_TYPES = STUDIO_RUNTIME_TYPES;
 
 export const RUNTIME_LABELS = {
   'dsh-native': 'DSH Native Harness',

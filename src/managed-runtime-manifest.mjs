@@ -5,10 +5,10 @@ import { createHash } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import { isScalar, parseDocument, visit } from 'yaml';
 import { validateManagedResources } from './managed-resource-contract.mjs';
+import { isStudioRuntimeType } from './runtime-contract.mjs';
 
 export const DSH_MANIFEST_FORMAT = 'agentengine.dsh-manifest/v1';
 export const MANAGED_MANIFEST_MAX_BYTES = 900 * 1024;
-const runtimes = new Set(['dsh-native', 'harness', 'codex']);
 const fields = new Set(['name', 'description', 'framework', 'artifact_type', 'runtime', 'model', 'prompt', 'resources']);
 const mapping = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
@@ -21,7 +21,7 @@ function text(value, field, limit, empty = false) {
 }
 
 export function parseManagedRuntimeManifest(raw, { runtimeName, runtimeVersion } = {}) {
-  if (!runtimes.has(runtimeName) || typeof runtimeVersion !== 'string' || !runtimeVersion) fail('MANAGED_RUNTIME_IDENTITY_INVALID', 'runtime selection is required');
+  if (!isStudioRuntimeType(runtimeName) || typeof runtimeVersion !== 'string' || !runtimeVersion) fail('MANAGED_RUNTIME_IDENTITY_INVALID', 'runtime selection is required');
   let source;
   try { source = typeof raw === 'string' ? raw : new TextDecoder('utf-8', { fatal: true }).decode(raw); }
   catch { fail('MANAGED_MANIFEST_INVALID', 'declaration must be UTF-8 YAML'); }

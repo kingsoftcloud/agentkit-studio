@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { importPortableBundle, loadPortableRuntime, verifyPortableBundle } from './portable-bundle.mjs';
 import { portableError, sha256, validatePortableCredentialNames } from './portable-resources.mjs';
 import { privateRuntimeDirectory as directory, inspectRuntimeInstallation, prepareRuntimeProfile, runtimeProfileArgs } from './runtime-host-installation.mjs';
+import { isStudioRuntimeType } from './runtime-contract.mjs';
 export { acquireBundleProfileLock } from './runtime-host-installation.mjs';
 
 const fail = (code, message) => { throw portableError(code, message); };
@@ -120,7 +121,7 @@ export async function prepareBundleHost({ archive, state, installation, env = pr
   const zip = await archiveBytes(resolve(archive)), hash = sha256(zip);
   if (expectedSha256 && (!/^[a-f0-9]{64}$/.test(expectedSha256) || expectedSha256 !== hash)) fail('BUNDLE_HOST_DIGEST_MISMATCH', '运行包与部署指定的 SHA256 不一致');
   const { manifest, definition, files } = verifyPortableBundle(zip);
-  if (!['dsh-native', 'harness', 'codex'].includes(definition.spec?.runtime?.type)) fail('PORTABLE_RUNTIME_UNSUPPORTED', '此运行包的运行时不受支持');
+  if (!isStudioRuntimeType(definition.spec?.runtime?.type)) fail('PORTABLE_RUNTIME_UNSUPPORTED', '此运行包的运行时不受支持');
   validatePortableCredentialNames(manifest.requirements);
   if (typeof env.AGENTKIT_RUNTIME_TOKEN !== 'string' || env.AGENTKIT_RUNTIME_TOKEN.length < 24) fail('BUNDLE_HOST_TOKEN_REQUIRED', '运行入口需要至少 24 字符的独立访问令牌');
   for (const [key, value] of [['AGENTKIT_RUNTIME_AGENT_ID', manifest.agentId], ['AGENTKIT_RUNTIME_BUILD_ID', manifest.buildId]]) {

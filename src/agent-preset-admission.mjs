@@ -17,6 +17,7 @@ import { selectedNativeBuildContract } from './build-engine.mjs';
 import { dshComponentBindings } from './providers/dsh-component-bindings.mjs';
 import { knowledgeBindings } from './knowledge-tools.mjs';
 import { legacyMemoryBindings } from './legacy-memory-tools.mjs';
+import { isRoutableRuntimeType, isNativeTurnRuntimeType } from './runtime-contract.mjs';
 
 // A degraded preset is usable immediately, but the Host keeps the exact same
 // prompt: one transport blip must not remove an MCP/Skill binding for the rest
@@ -157,7 +158,7 @@ export function dshPresetEligibility(agent = {}, options = {}) {
   const runtime = String(agent?.spec?.runtime?.type || agent?.runtime?.type || agent?.framework || '').trim().toLowerCase();
   const local = agent?.metadata?.local === true || agent?.source === 'local-studio'
     || (agent?.source === undefined && agent?.metadata?.local !== false);
-  if (!['dsh-native', 'harness', 'codex', 'native-engine'].includes(runtime)) {
+  if (!isRoutableRuntimeType(runtime)) {
     return { ok: false, code: 'STUDIO_PRESET_RUNTIME_UNSUPPORTED', message: '当前 Agent runtime 没有 DSH 原生会话适配器', runtime };
   }
   const studioDeployment = agent.source === 'studio-deployment' && /^dep_[a-f0-9]{32}$/.test(agent.deployment?.id || '');
@@ -329,7 +330,7 @@ export class DshPresetAdmission {
       eligibility.presetId = dshPresetId(eligibility.agentId, eligibility.revision, buildId);
       eligibility.mode = 'studio-bridge';
     }
-    const native = eligibility.local && ['harness', 'native-engine'].includes(eligibility.runtime);
+    const native = eligibility.local && isNativeTurnRuntimeType(eligibility.runtime);
     if (native && eligibility.runtime === 'harness') selectedNativeBuildContract(agent, this.nativeEngineContract);
     const route = native ? this.resolveHarnessWorkspace?.(cwd) : undefined;
     if (native && this.requiresHarnessWorkspace() && !route && (!allowUnavailableResources || requireModelSelection)) {

@@ -43,9 +43,9 @@ Six entities share one identifier vocabulary. A missing layer means an invalid i
 
 | Code | Trigger | Source |
 | --- | --- | --- |
-| `RUNTIME_UNSUPPORTED` | `runtime.type` is neither public nor experimental | `src/runtime-contract.mjs:39` |
-| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` missing, or `revision` is not a positive integer | `src/runtime-contract.mjs:46` |
-| `RUN_IDENTITY_MISMATCH` | Run identity disagrees with the bound route | `src/runtime-contract.mjs:60` |
+| `RUNTIME_UNSUPPORTED` | `runtime.type` is neither public nor experimental | `src/runtime-contract.mjs:67` |
+| `RUN_IDENTITY_INVALID` | `agentId` / `sessionId` / `runId` / `buildId` missing, or `revision` is not a positive integer | `src/runtime-contract.mjs:74` |
+| `RUN_IDENTITY_MISMATCH` | Run identity disagrees with the bound route | `src/runtime-contract.mjs:88` |
 
 `studioRunIdentity()` normalizes before validating, so a blank string equals a missing field; `revision` is coerced to a number.
 
@@ -70,3 +70,4 @@ Related tests:
 | Test file | Location |
 | --- | --- |
 | runtime-contract.test.mjs | `tests/runtime-contract.test.mjs` |
+| runtime-registry.test.mjs | `tests/runtime-registry.test.mjs` |

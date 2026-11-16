@@ -2,10 +2,10 @@
 import { createHash } from 'node:crypto';
 import { containerStorageCapability } from './deployment-storage.mjs';
 import { studioVersions } from './studio-version.mjs';
+import { isStudioRuntimeType } from './runtime-contract.mjs';
 
 export const STUDIO_IMAGE_CONFIG_KEY = 'studio.runtime.images.v1';
 const FORMAT = 'agentkit.runtime-images/v1';
-const RUNTIMES = new Set(['dsh-native', 'harness', 'codex']);
 const VERSION = /^\d+\.\d+\.\d+$/;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/;
 const IMAGE = /^(hub(?:-vpc)?(?:-[a-z0-9-]+)?\.kce\.ksyun\.com)\/([a-z0-9][a-z0-9_-]*)\/([a-z0-9][a-z0-9_.-]*)@sha256:([a-f0-9]{64})$/;
@@ -23,7 +23,7 @@ const supportedVersion = (current, minimum) => {
 };
 
 export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1' } = {}) {
-  if (!RUNTIMES.has(runtime) || !VERSION.test(clientVersion)) fail('DEPLOYMENT_RUNTIME_UNSUPPORTED', '部署仅支持 DSH Native、Codex 和 AgentKit Harness');
+  if (!isStudioRuntimeType(runtime) || !VERSION.test(clientVersion)) fail('DEPLOYMENT_RUNTIME_UNSUPPORTED', '部署仅支持 DSH Native、Codex 和 AgentKit Harness');
   if (!object(data) || data.Product !== 'agentkit-studio' || data.ClientType !== 'studio'
     || !ID.test(data.Environment || '') || !ID.test(data.Region || '')) {
     fail('DEPLOYMENT_CATALOG_INVALID', '云端镜像目录的产品、环境或区域不匹配');
@@ -43,7 +43,7 @@ export function parseStudioImageCatalog(data, { runtime, clientVersion = '0.0.1'
       || (item.runtimeIdentity !== undefined && typeof item.runtimeIdentity !== 'boolean')
       || typeof item.enabled !== 'boolean' || !['preview', 'stable'].includes(item.channel)
       || !Array.isArray(item.runtimes) || !item.runtimes.length || new Set(item.runtimes).size !== item.runtimes.length
-      || item.runtimes.some(value => !RUNTIMES.has(value)) || item.bundleFormat !== 'agentkit.portable-bundle/v1'
+      || item.runtimes.some(value => !isStudioRuntimeType(value)) || item.bundleFormat !== 'agentkit.portable-bundle/v1'
       || !VERSION.test(item.minimumStudioVersion || '') || !Number.isInteger(item.port) || item.port !== 8080 || item.platform !== 'linux/amd64'
       || !ID.test(item.version || '') || typeof item.label !== 'string' || !item.label.trim() || item.label.length > 120
       || !Array.isArray(item.notices) || item.notices.some(value => typeof value !== 'string' || value.length > 300)) {

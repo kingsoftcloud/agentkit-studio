@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { HARNESS_SERVICE_PRESET_SUFFIX } from './agent-preset-admission.mjs';
 import { OFFICIAL_TEAM_TOOL_MODULE, usesOfficialTeamTools } from './studio-team-runtime.mjs';
 import { installStudioTeamTools, studioTeammateRequest } from './studio-team-tools.mjs';
+import { isTeamRuntimeType } from './runtime-contract.mjs';
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const copy = value => structuredClone(value);
-const nativeRuntimes = new Set(['dsh-native', 'harness']);
 
 function text(value, label, max) {
   const result = String(value || '').trim();
@@ -191,7 +191,7 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
     }
     const spec = copy(role.spec || source.spec || {});
     const runtime = String(spec.runtime?.type || '').trim();
-    if (!nativeRuntimes.has(runtime)) throw fail('TEAM_AGENT_UNSUPPORTED', '专家团成员必须使用本机 DSH Native 或 Harness');
+    if (!isTeamRuntimeType(runtime)) throw fail('TEAM_AGENT_UNSUPPORTED', '专家团成员必须使用本机 DSH Native 或 Harness');
     if (role.bindings && typeof role.bindings === 'object') {
       spec.bindings = { ...(spec.bindings || {}), ...copy(role.bindings) };
       if (role.bindings.modelId) {
@@ -379,7 +379,7 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
       const items = (await all('definitions')).filter(Boolean).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       const choices = (await agents.list()).filter(agent => !agent.metadata?.teamRole).map(agent => ({
         ...agent,
-        selectable: agent.metadata?.local === true && nativeRuntimes.has(agent.spec?.runtime?.type),
+        selectable: agent.metadata?.local === true && isTeamRuntimeType(agent.spec?.runtime?.type),
       }));
       return { items, presets: [], agents: choices };
     },
@@ -393,7 +393,7 @@ export function createStudioTeams({ ctx, directory, agents, getAdmission, runtim
         for (const role of [value.lead, ...value.members]) {
           if (role.source.kind === 'agent') {
             const source = await agents.get(role.source.agentId);
-            if (!source || source.metadata?.local !== true || !nativeRuntimes.has(source.spec?.runtime?.type)) {
+            if (!source || source.metadata?.local !== true || !isTeamRuntimeType(source.spec?.runtime?.type)) {
               throw fail('TEAM_AGENT_UNSUPPORTED', '请选用本机 DSH Native 或 Harness 专家；云端与 Codex 成员尚未接入');
             }
           }
